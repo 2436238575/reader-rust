@@ -1,7 +1,7 @@
 use crate::app::config::AppConfig;
 use crate::error::error::AppError;
 use crate::model::user::User;
-use crate::util::crypto::{gen_encrypted_password, random_string};
+use crate::util::crypto::{hash_password, random_string, verify_password};
 use crate::util::time::now_ts;
 use serde_json::Value;
 use sqlx::{sqlite::SqliteRow, Row, SqlitePool};
@@ -26,6 +26,24 @@ struct LoginAttempt {
     failures: Vec<i64>,
     /// 锁定期截止时间；0 表示未锁定。
     locked_until: i64,
+}
+
+/// Argon2 是刻意的慢哈希（默认参数数十毫秒），统一放进 blocking 线程池，
+/// 避免撞库流量占满 tokio worker 影响其他请求。
+async fn hash_password_async(password: &str) -> Result<String, AppError> {
+    let password = password.to_owned();
+    tokio::task::spawn_blocking(move || hash_password(&password))
+        .await
+        .map_err(|e| AppError::Internal(anyhow::anyhow!("密码哈希任务中断: {e}")))?
+        .map_err(|e| AppError::Internal(anyhow::anyhow!("密码哈希失败: {e}")))
+}
+
+async fn verify_password_async(password: &str, stored: &str) -> Result<bool, AppError> {
+    let password = password.to_owned();
+    let stored = stored.to_owned();
+    tokio::task::spawn_blocking(move || verify_password(&password, &stored))
+        .await
+        .map_err(|e| AppError::Internal(anyhow::anyhow!("密码校验任务中断: {e}")))
 }
 
 #[derive(Clone)]
@@ -146,8 +164,7 @@ impl UserService {
             if !is_login {
                 return Err(AppError::BadRequest("用户名已被占用".to_string()));
             }
-            let encrypted = gen_encrypted_password(password, &user.salt);
-            if encrypted != user.password {
+            if !verify_password_async(password, &user.password).await? {
                 self.login_throttle_record_failure(username);
                 return Err(AppError::BadRequest("密码错误".to_string()));
             }
@@ -168,7 +185,7 @@ impl UserService {
         }
 
         let salt = random_string(8);
-        let encrypted = gen_encrypted_password(password, &salt);
+        let encrypted = hash_password_async(password).await?;
         let now = now_ms();
         let mut user = User {
             username: username.to_string(),
@@ -281,7 +298,7 @@ impl UserService {
             return Err(AppError::BadRequest("超过用户数上限".to_string()));
         }
         let salt = random_string(8);
-        let encrypted = gen_encrypted_password(password, &salt);
+        let encrypted = hash_password_async(password).await?;
         let now = now_ms();
         let user = User {
             username: username.to_string(),
@@ -312,7 +329,7 @@ impl UserService {
             .await?
             .ok_or_else(|| AppError::BadRequest("用户不存在".to_string()))?;
         let salt = random_string(8);
-        let encrypted = gen_encrypted_password(password, &salt);
+        let encrypted = hash_password_async(password).await?;
         user.salt = salt;
         user.password = encrypted;
         self.upsert_user_row(&user).await?;
@@ -333,13 +350,12 @@ impl UserService {
             .find_user(&username)
             .await?
             .ok_or_else(|| AppError::BadRequest("用户不存在".to_string()))?;
-        let encrypted_old = gen_encrypted_password(old_password, &user.salt);
-        if encrypted_old != user.password {
+        if !verify_password_async(old_password, &user.password).await? {
             return Err(AppError::BadRequest("当前密码错误".to_string()));
         }
 
         let salt = random_string(8);
-        let encrypted = gen_encrypted_password(new_password, &salt);
+        let encrypted = hash_password_async(new_password).await?;
         let now = now_ms();
         user.salt = salt;
         user.password = encrypted;
@@ -544,8 +560,7 @@ impl UserService {
         if !user.enable_webdav {
             return Ok(None);
         }
-        let encrypted = gen_encrypted_password(password, &user.salt);
-        if encrypted != user.password {
+        if !verify_password_async(password, &user.password).await? {
             return Ok(None);
         }
         Ok(Some(user))
@@ -572,7 +587,7 @@ impl UserService {
     async fn save_new_session(&self, user: &mut User) -> Result<Value, AppError> {
         let now = now_ms();
         user.last_login_at = now;
-        user.token = self.generate_session_token(&user.username);
+        user.token = self.generate_session_token();
         self.update_user_session_fields(&user.username, &user.token, now)
             .await?;
         self.delete_expired_sessions(&user.username, now).await?;
@@ -615,10 +630,10 @@ impl UserService {
         map
     }
 
-    fn generate_session_token(&self, username: &str) -> String {
-        // 32 位 alphanumeric ≈ 190 bit 熵。此前是 8 位（≈47.6 bit），
-        // 叠加可预测的 now_ms() 后足以被离线暴力枚举出他人的会话 token。
-        gen_encrypted_password(username, &format!("{}{}", now_ms(), random_string(32)))
+    fn generate_session_token(&self) -> String {
+        // 48 位 alphanumeric ≈ 285 bit 熵，直接取自 CSPRNG。
+        // 此前是 8 位（≈47.6 bit），叠加可预测的 now_ms() 后足以被离线暴力枚举出他人的会话 token。
+        random_string(48)
     }
 
     async fn load_users(&self) -> Result<HashMap<String, User>, AppError> {
@@ -963,7 +978,7 @@ mod tests {
     async fn migrates_legacy_users_json_to_sqlite_and_keeps_ai_permission() {
         let (service, temp_dir) = create_user_service().await;
         let salt = "salt1234".to_string();
-        let password = gen_encrypted_password("password123", &salt);
+        let password = hash_password("password123").unwrap();
         let token = "legacy-token".to_string();
         let users = serde_json::json!({
             "reader1": {
@@ -1198,7 +1213,7 @@ mod tests {
     async fn ai_model_permission_reads_legacy_snake_case_user_fields() {
         let (service, temp_dir) = create_user_service().await;
         let salt = "salt1234".to_string();
-        let password = gen_encrypted_password("password123", &salt);
+        let password = hash_password("password123").unwrap();
         let users = serde_json::json!({
             "reader1": {
                 "username": "reader1",
