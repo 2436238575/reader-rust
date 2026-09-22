@@ -5,19 +5,19 @@ test.describe('Standard E2E: app shell', () => {
   test('navigates across core tabs', async ({ page }) => {
     await gotoApp(page, '/')
 
-    await expect(page.getByTitle('书架')).toBeVisible()
-    await page.getByTitle('书海').click()
+    await expect(page.getByTitle('书架', { exact: true })).toBeVisible()
+    await page.getByTitle('书海', { exact: true }).click()
     await expect(page).toHaveURL(/#\/explore$/)
     await expect(page.getByRole('heading', { name: '发现书海' })).toBeVisible()
 
-    await page.getByTitle('最近').click()
+    await page.getByTitle('最近', { exact: true }).click()
     await expect(page).toHaveURL(/#\/recent$/)
 
-    await page.getByTitle('RSS').click()
+    await page.getByTitle('RSS', { exact: true }).click()
     await expect(page).toHaveURL(/#\/rss$/)
     await expect(page.getByRole('heading', { name: '文章列表' })).toBeVisible()
 
-    await page.getByTitle('书架').click()
+    await page.getByTitle('书架', { exact: true }).click()
     await expect(page).toHaveURL(/#\/?$/)
     await expect(page.getByRole('heading', { name: /书架/ })).toBeVisible()
   })
