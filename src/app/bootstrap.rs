@@ -18,16 +18,20 @@ use crate::service::{
 use crate::storage::{cache::file_cache::FileCache, db, fs::storage_fs::StorageFs};
 
 pub async fn run() -> anyhow::Result<()> {
-    println!("DEBUG: starting bootstrap::run");
     let cfg = config::load()?;
-    println!(
-        "DEBUG: config loaded: addr={}:{}",
-        cfg.server_host, cfg.server_port
-    );
 
+    // 初始化日志：之后所有输出统一走 tracing，不再直接 println!/eprintln!
     tracing_subscriber::fmt()
         .with_env_filter(EnvFilter::new(cfg.log_level.clone()))
         .init();
+
+    // 把 panic 也记录进 tracing，便于在日志里定位崩溃位置；
+    // 同时保留默认行为（stderr + abort 策略交给运行时）
+    let default_panic_hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        tracing::error!(panic = %info, "进程内发生 panic");
+        default_panic_hook(info);
+    }));
 
     // 出站守卫策略：默认跟随 SECURE（本地单用户放行私网，多用户/公网拦截）
     let allow_private = cfg
@@ -42,16 +46,15 @@ pub async fn run() -> anyhow::Result<()> {
 
     let storage_fs = StorageFs::new(&cfg.storage_dir, &cfg.assets_dir);
     storage_fs.ensure().await?;
+    tracing::info!("storage ready: dir={}", cfg.storage_dir);
 
     let pool = db::init_pool(&cfg.database_url).await?;
-    println!("DEBUG: db pool initialized");
     let repo = db::repo::BookSourceRepo::new(pool.clone());
 
     let http = HttpClient::new(cfg.request_timeout_secs, None)?;
-    println!("DEBUG: http client created");
     let parser = RuleEngine::new()?;
-    println!("DEBUG: rule engine created");
     let cache = FileCache::new(format!("{}/cache", cfg.storage_dir));
+    tracing::info!("core services initialized (db/http/rule engine/cache)");
 
     let book_service = Arc::new(BookService::new(http, parser, cache, &cfg.storage_dir));
     let book_source_service = Arc::new(BookSourceService::new(repo, &cfg.storage_dir));
@@ -90,7 +93,39 @@ pub async fn run() -> anyhow::Result<()> {
 
     let addr = SocketAddr::new(cfg.server_host.parse()?, cfg.server_port);
     tracing::info!("listening on {}", addr);
-    println!("DEBUG: starting axum::serve on {}", addr);
-    axum::serve(tokio::net::TcpListener::bind(addr).await?, app).await?;
+    let listener = tokio::net::TcpListener::bind(addr).await?;
+    axum::serve(listener, app)
+        .with_graceful_shutdown(shutdown_signal())
+        .await?;
+    tracing::info!("server stopped gracefully");
     Ok(())
+}
+
+/// 等待优雅停机信号：SIGINT（Ctrl+C）或 SIGTERM（容器编排下发）。
+///
+/// 收到信号后停止接收新连接，等已有请求处理完再退出，
+/// 避免部署/重启时粗暴掐断正在进行的请求。
+async fn shutdown_signal() {
+    let ctrl_c = async {
+        tokio::signal::ctrl_c()
+            .await
+            .expect("failed to install Ctrl+C handler");
+    };
+
+    #[cfg(unix)]
+    let terminate = async {
+        tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+            .expect("failed to install SIGTERM handler")
+            .recv()
+            .await;
+    };
+
+    #[cfg(not(unix))]
+    let terminate = std::future::pending::<()>();
+
+    tokio::select! {
+        _ = ctrl_c => {},
+        _ = terminate => {},
+    }
+    tracing::info!("shutdown signal received, draining in-flight requests");
 }

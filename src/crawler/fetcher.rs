@@ -137,24 +137,21 @@ pub async fn fetch(
                     "application/x-www-form-urlencoded",
                 );
             }
-            println!("DEBUG: fetch sending body: {}", body);
+            // 注意：body 可能包含登录表单等敏感内容，绝不要打印
             builder = builder.body(body);
         }
 
-        println!(
-            "DEBUG: fetch executing {} request to: {}",
-            match req.method {
-                HttpMethod::GET => "GET",
-                HttpMethod::POST => "POST",
-            },
-            req.url
+        tracing::debug!(
+            method = ?req.method,
+            url = %req.url,
+            "fetch 发起请求"
         );
         match builder.send().await {
             Ok(res) => {
                 let status = res.status().as_u16();
-                println!("DEBUG: fetch response status: {}", status);
                 let is_successful = res.status().is_success();
                 let url = res.url().to_string();
+                tracing::debug!(status = status, url = %url, "fetch 收到响应");
                 let content_type = res
                     .headers()
                     .get(reqwest::header::CONTENT_TYPE)

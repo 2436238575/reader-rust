@@ -55,7 +55,8 @@ impl<T> ApiResponse<T> {
 
 impl IntoResponse for AppError {
     fn into_response(self) -> Response {
-        println!("ERROR: {:?}", self);
+        // 走 tracing 而非 println!：可被统一收集/过滤，也避免向 stdout 倾倒
+        tracing::error!(error = ?self, "请求处理失败");
         let (status, message) = match &self {
             AppError::NotFound(msg) => (StatusCode::NOT_FOUND, msg.clone()),
             AppError::BadRequest(msg) => (StatusCode::BAD_REQUEST, msg.clone()),

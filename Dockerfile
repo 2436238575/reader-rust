@@ -4,7 +4,8 @@
 
 FROM alpine:3.19
 
-RUN apk add --no-cache ca-certificates tzdata
+RUN apk add --no-cache ca-certificates tzdata \
+    && addgroup -S app && adduser -S -G app app
 
 WORKDIR /app
 
@@ -14,8 +15,12 @@ COPY target/aarch64-unknown-linux-musl/release/reader-rust /app/reader-rust
 # Copy frontend dist
 COPY frontend/dist /app/web/dist
 
-# Create storage directory
-RUN mkdir -p /app/storage/assets
+# Create storage directory and hand ownership to the non-root user
+# (SQLite database, file cache and uploaded assets all live under /app/storage)
+RUN mkdir -p /app/storage/assets && chown -R app:app /app
+
+# Drop privileges: the server must not run as root
+USER app
 
 # Environment defaults
 ENV SERVER_HOST=0.0.0.0

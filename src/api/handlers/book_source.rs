@@ -1079,17 +1079,20 @@ pub async fn read_remote_source_file(
         .await
         .map_err(|e| AppError::BadRequest(format!("读取响应失败: {}", e)))?;
 
-    println!("DEBUG: remote source file length: {}", text.len());
-    println!(
-        "DEBUG: remote source file preview: {}",
-        &text.chars().take(500).collect::<String>()
+    tracing::debug!(
+        length = text.len(),
+        "remote source file fetched"
+    );
+    tracing::trace!(
+        preview = %&text.chars().take(500).collect::<String>(),
+        "remote source file preview"
     );
 
     let sources: Vec<BookSource> = serde_json::from_str::<serde_json::Value>(&text)
         .map_err(|_| AppError::BadRequest("invalid book sources json format".to_string()))
         .and_then(extract_sources)?;
 
-    println!("DEBUG: parsed {} book sources", sources.len());
+    tracing::debug!(count = sources.len(), "parsed remote book sources");
 
     // Return as array of JSON strings (frontend expects each item to be a JSON string)
     let json_str = serde_json::to_string(&sources)
