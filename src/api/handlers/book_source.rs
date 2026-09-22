@@ -620,7 +620,12 @@ async fn forward_book_source_request(
         .iter()
         .filter_map(|v| v.to_str().ok().map(|s| s.to_string()))
         .collect();
-    let bytes = upstream.bytes().await.map_err(AppError::Http)?;
+    let bytes = crate::crawler::fetcher::read_body_limited(
+        upstream,
+        crate::crawler::fetcher::MAX_RESPONSE_BYTES,
+    )
+    .await
+    .map_err(|e| AppError::BadRequest(e.to_string()))?;
     tracing::info!(
         "bookSourceProxy upstream response: method={} target={} status={} final_url={}",
         method,

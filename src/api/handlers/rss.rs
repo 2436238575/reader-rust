@@ -245,10 +245,12 @@ pub async fn get_rss_articles(
         .send()
         .await
         .map_err(|e| AppError::Internal(e.into()))?;
-    let bytes = res
-        .bytes()
-        .await
-        .map_err(|e| AppError::Internal(e.into()))?;
+    let bytes = crate::crawler::fetcher::read_body_limited(
+        res,
+        crate::crawler::fetcher::MAX_RESPONSE_BYTES,
+    )
+    .await
+    .map_err(AppError::Internal)?;
     let feed =
         feed_rs::parser::parse(&bytes[..]).map_err(|e| AppError::BadRequest(e.to_string()))?;
 

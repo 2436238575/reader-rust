@@ -1594,7 +1594,12 @@ pub async fn get_book_cover(
             }
             Ok(resp)
         }
-        Err(_) => Ok(StatusCode::NOT_FOUND.into_response()),
+        Err(e) => {
+            // 对外仍统一 404（不向匿名调用方泄露上游细节），但必须留下日志，
+            // 否则“体积超限 / 守卫拒绝 / 上游异常”在运维侧完全不可见。
+            tracing::warn!("封面抓取失败 url={} err={:?}", url, e);
+            Ok(StatusCode::NOT_FOUND.into_response())
+        }
     }
 }
 

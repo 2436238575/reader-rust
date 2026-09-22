@@ -66,6 +66,21 @@ pub struct BookSourceAvailability {
     pub explore_error: Option<String>,
 }
 
+/// 把同步的规则解析放到阻塞线程池执行，避免独占 tokio worker 线程。
+///
+/// 规则解析包含 CSS/XPath/JSONPath/正则以及 QuickJS 求值，全都是同步 CPU 工作。
+/// 直接跑在 async 上下文里时，一个 worker 会被一条请求长期占住；配合书源里
+/// 可控的 JS 就会演变成服务级 DoS。
+async fn parse_blocking<T, F>(f: F) -> Result<T, AppError>
+where
+    F: FnOnce() -> T + Send + 'static,
+    T: Send + 'static,
+{
+    tokio::task::spawn_blocking(f)
+        .await
+        .map_err(|e| AppError::Internal(anyhow::anyhow!("解析任务执行失败: {e}")))
+}
+
 impl BookService {
     pub fn new(http: HttpClient, parser: RuleEngine, cache: FileCache, storage_dir: &str) -> Self {
         let storage_dir = PathBuf::from(storage_dir);
@@ -121,6 +136,50 @@ impl BookService {
         self.source_cookies.write().await.remove(&key);
     }
 
+    /// 在阻塞线程池里执行 URL 规则分析（内部可能求值 JS）。
+    async fn analyze_url_blocking(
+        &self,
+        url_rule: &str,
+        key: &str,
+        page: i32,
+        base_url: &str,
+        source: &BookSource,
+    ) -> Result<RequestSpec, AppError> {
+        let url_rule = url_rule.to_string();
+        let key = key.to_string();
+        let base_url = base_url.to_string();
+        let source = source.clone();
+        parse_blocking(move || analyze_url(&url_rule, &key, page, &base_url, &source)).await?
+    }
+
+    /// 在阻塞线程池里执行书源登录检查 JS。
+    async fn login_check_blocking(
+        &self,
+        source: &BookSource,
+        res: FetchResponse,
+    ) -> Result<FetchResponse, AppError> {
+        let source = source.clone();
+        parse_blocking(move || apply_login_check_js(&source, res)).await
+    }
+
+    /// 在阻塞线程池里对 (source, body, url) 跑一段同步解析。
+    async fn parse_response_blocking<T, F>(
+        &self,
+        source: &BookSource,
+        res: &FetchResponse,
+        f: F,
+    ) -> Result<T, AppError>
+    where
+        F: FnOnce(&RuleEngine, &BookSource, &str, &str) -> T + Send + 'static,
+        T: Send + 'static,
+    {
+        let parser = self.parser.clone();
+        let source = source.clone();
+        let body = res.body.clone();
+        let url = res.url.clone();
+        parse_blocking(move || f(&parser, &source, &body, &url)).await
+    }
+
     async fn fetch_source_url(
         &self,
         user_ns: &str,
@@ -128,11 +187,13 @@ impl BookService {
         url_rule: &str,
         base_url: &str,
     ) -> Result<FetchResponse, AppError> {
-        let mut spec = analyze_url(url_rule, "", 1, base_url, source)?;
+        let mut spec = self
+            .analyze_url_blocking(url_rule, "", 1, base_url, source)
+            .await?;
         self.apply_source_cookie(user_ns, source, &mut spec.headers)
             .await;
         let res = self.fetch_with_rate(source, spec).await?;
-        Ok(apply_login_check_js(source, res))
+        self.login_check_blocking(source, res).await
     }
 
     async fn fetch_with_rate(
@@ -246,7 +307,9 @@ impl BookService {
             page,
             search_url
         );
-        let mut spec = analyze_url(&search_url, key, page, &source.book_source_url, source)
+        let mut spec = self
+            .analyze_url_blocking(&search_url, key, page, &source.book_source_url, source)
+            .await
             .map_err(|e| {
                 tracing::error!("analyze_url failed: {:?}", e);
                 e
@@ -260,9 +323,11 @@ impl BookService {
             tracing::error!("fetch failed: {:?}", e);
             e
         })?;
-        let res = apply_login_check_js(source, res);
+        let res = self.login_check_blocking(source, res).await?;
         tracing::debug!("fetch success, body length: {}", res.body.len());
-        let books = self.parser.search_books(source, &res.body, &res.url);
+        let books = self
+            .parse_response_blocking(source, &res, |p, s, b, u| p.search_books(s, b, u))
+            .await?;
         tracing::info!("found {} books", books.len());
         Ok(books)
     }
@@ -277,13 +342,17 @@ impl BookService {
         if rule_find_url.trim().is_empty() {
             return Err(AppError::BadRequest("ruleFindUrl required".to_string()));
         }
-        let mut spec = analyze_url(rule_find_url, "", page, &source.book_source_url, source)?;
+        let mut spec = self
+            .analyze_url_blocking(rule_find_url, "", page, &source.book_source_url, source)
+            .await?;
 
         self.apply_source_cookie(user_ns, source, &mut spec.headers)
             .await;
 
-        let res = apply_login_check_js(source, self.fetch_with_rate(source, spec).await?);
-        Ok(self.parser.explore_books(source, &res.body, &res.url))
+        let res = self.fetch_with_rate(source, spec).await?;
+        let res = self.login_check_blocking(source, res).await?;
+        self.parse_response_blocking(source, &res, |p, s, b, u| p.explore_books(s, b, u))
+            .await
     }
 
     pub fn explore_kinds(&self, source: &BookSource) -> Result<Vec<ExploreKind>, AppError> {
@@ -363,7 +432,9 @@ impl BookService {
             .filter(|v| !v.trim().is_empty())
             .ok_or_else(|| AppError::BadRequest("missing loginUrl".to_string()))?;
 
-        let spec = analyze_url(&login_url, "", 1, &source.book_source_url, source)?;
+        let spec = self
+            .analyze_url_blocking(&login_url, "", 1, &source.book_source_url, source)
+            .await?;
 
         let res = self.fetch_with_rate(source, spec).await?;
         let check_result = if let Some(login_check_js) = source
@@ -371,9 +442,16 @@ impl BookService {
             .as_deref()
             .filter(|s| !s.trim().is_empty())
         {
-            Some(with_js_lib(source.js_lib.as_deref(), || {
-                eval_js(login_check_js, &res.body, &res.url).unwrap_or_default()
-            }))
+            let js = login_check_js.to_string();
+            let js_lib = source.js_lib.clone();
+            let body = res.body.clone();
+            let url = res.url.clone();
+            Some(
+                parse_blocking(move || {
+                    with_js_lib(js_lib.as_deref(), || eval_js(&js, &body, &url)).unwrap_or_default()
+                })
+                .await?,
+            )
         } else {
             None
         };
@@ -397,7 +475,11 @@ impl BookService {
         let res = self
             .fetch_source_url(user_ns, source, book_url, &source.book_source_url)
             .await?;
-        Ok(self.parser.book_info(source, &res.body, &res.url, book_url))
+        let book_url_owned = book_url.to_string();
+        self.parse_response_blocking(source, &res, move |p, s, b, u| {
+            p.book_info(s, b, u, &book_url_owned)
+        })
+        .await
     }
 
     pub async fn get_chapter_list(
@@ -445,7 +527,9 @@ impl BookService {
         let res = self
             .fetch_source_url(user_ns, source, toc_url, &source.book_source_url)
             .await?;
-        let (chapters, next_urls) = self.parser.chapter_list(source, &res.body, &res.url);
+        let (chapters, next_urls) = self
+            .parse_response_blocking(source, &res, |p, s, b, u| p.chapter_list(s, b, u))
+            .await?;
 
         let mut chapter_index = 0i32;
         let mut result = Vec::new();
@@ -634,7 +718,9 @@ impl BookService {
         let res = self
             .fetch_source_url(user_ns, source, toc_url, &source.book_source_url)
             .await?;
-        let (chapters, next_urls) = self.parser.chapter_list(source, &res.body, &res.url);
+        let (chapters, next_urls) = self
+            .parse_response_blocking(source, &res, |p, s, b, u| p.chapter_list(s, b, u))
+            .await?;
 
         visited_page_urls.insert(toc_url.to_string());
 
@@ -671,7 +757,9 @@ impl BookService {
                 let res = self
                     .fetch_source_url(user_ns, source, &url, &source.book_source_url)
                     .await?;
-                let (chapters, _) = self.parser.chapter_list(source, &res.body, &res.url);
+                let (chapters, _) = self
+                    .parse_response_blocking(source, &res, |p, s, b, u| p.chapter_list(s, b, u))
+                    .await?;
 
                 for ch in chapters {
                     if seen_chapter_urls.contains(&ch.url) {
@@ -699,7 +787,9 @@ impl BookService {
                 let res = self
                     .fetch_source_url(user_ns, source, &current_url, &source.book_source_url)
                     .await?;
-                let (chapters, next_urls) = self.parser.chapter_list(source, &res.body, &res.url);
+                let (chapters, next_urls) = self
+                    .parse_response_blocking(source, &res, |p, s, b, u| p.chapter_list(s, b, u))
+                    .await?;
 
                 for ch in chapters {
                     if seen_chapter_urls.contains(&ch.url) {
@@ -765,7 +855,9 @@ impl BookService {
                 .fetch_source_url(user_ns, source, &current_url, &source.book_source_url)
                 .await?;
             tracing::debug!("get_content fetch done, body len={}", res.body.len());
-            let content = self.parser.content(source, &res.body, &res.url);
+            let content = self
+                .parse_response_blocking(source, &res, |p, s, b, u| p.content(s, b, u))
+                .await?;
             tracing::debug!("get_content parsed content len={}", content.len());
 
             if !content.is_empty() {
@@ -776,7 +868,10 @@ impl BookService {
             }
 
             // Check for next page
-            if let Some(next_url) = self.parser.next_content_url(source, &res.body, &res.url) {
+            let next_url = self
+                .parse_response_blocking(source, &res, |p, s, b, u| p.next_content_url(s, b, u))
+                .await?;
+            if let Some(next_url) = next_url {
                 tracing::debug!("get_content found next_url: {}", next_url);
                 if should_follow_content_page(chapter_url, &current_url, &next_url) {
                     current_url = next_url;
@@ -1098,11 +1193,13 @@ impl BookService {
             .and_then(|v| v.to_str().ok())
             .map(|s| s.to_string())
             .unwrap_or_else(|| content_type_from_ext(&ext));
-        let bytes = res
-            .bytes()
-            .await
-            .map_err(|e| AppError::Internal(e.into()))?
-            .to_vec();
+        let bytes = crate::crawler::fetcher::read_body_limited(
+            res,
+            crate::crawler::fetcher::MAX_RESPONSE_BYTES,
+        )
+        .await
+        .map_err(AppError::Internal)?
+        .to_vec();
         let _ = fs::write(&path, &bytes).await;
         Ok((bytes, content_type))
     }

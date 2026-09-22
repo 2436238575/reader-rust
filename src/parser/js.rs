@@ -13,14 +13,28 @@ use serde_json::Value as JsonValue;
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::sync::Mutex;
+use std::time::{Duration, Instant};
 use uuid::Uuid;
 
 static JS_KV: Lazy<Mutex<HashMap<String, String>>> = Lazy::new(|| Mutex::new(HashMap::new()));
 static JS_LIB_CACHE: Lazy<Mutex<HashMap<String, String>>> =
     Lazy::new(|| Mutex::new(HashMap::new()));
+/// 书源 JS 的运行时资源上限。
+///
+/// 书源内容完全由第三方提供，而 QuickJS 求值是同步的；不设边界时一条
+/// `while(true){}` 或一次正则灾难性回溯就能永久占住一个 worker 线程。
+const JS_MEMORY_LIMIT_BYTES: usize = 128 * 1024 * 1024;
+const JS_MAX_STACK_BYTES: usize = 1024 * 1024;
+/// 单次求值的最长时间；由中断处理器打断并抛出不可捕获异常。
+const JS_EVAL_TIMEOUT: Duration = Duration::from_secs(5);
+/// 单次求值允许返回的最大字符串长度。
+const JS_MAX_RESULT_BYTES: usize = 32 * 1024 * 1024;
+/// `java.ajax` 等内部请求的超时。
+const JS_HTTP_TIMEOUT: Duration = Duration::from_secs(30);
 static JS_HTTP_CLIENT: Lazy<Client> = Lazy::new(|| {
     Client::builder()
         .cookie_store(true)
+        .timeout(JS_HTTP_TIMEOUT)
         .gzip(true)
         .brotli(true)
         .deflate(true)
@@ -129,6 +143,11 @@ fn eval_js_inner_with_source(
     bindings: Option<&HashMap<String, JsonValue>>,
 ) -> anyhow::Result<String> {
     let rt = Runtime::new()?;
+    // 资源上限：内存 / 调用栈 / 执行时间（超时由中断处理器打断）
+    rt.set_memory_limit(JS_MEMORY_LIMIT_BYTES);
+    rt.set_max_stack_size(JS_MAX_STACK_BYTES);
+    let deadline = Instant::now() + JS_EVAL_TIMEOUT;
+    rt.set_interrupt_handler(Some(Box::new(move || Instant::now() >= deadline)));
     let ctx = Context::full(&rt)?;
     ctx.with(|ctx| {
         let globals = ctx.globals();
@@ -338,6 +357,9 @@ fn eval_js_inner_with_source(
                 _ => String::new(),
             }
         };
+        if result.len() > JS_MAX_RESULT_BYTES {
+            anyhow::bail!("JS 返回结果过大: {} 字节", result.len());
+        }
         Ok(result)
     })
 }
@@ -535,4 +557,50 @@ fn split_ajax_spec(spec: &str) -> (&str, Option<&str>) {
     }
 
     (spec, None)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::mpsc;
+    use std::time::Duration;
+
+    /// 带看门狗的求值。JS 沙箱若失去超时能力，测试会失败而不是永久挂死整个
+    /// `cargo test`（泄漏一个线程，但能拿到明确结论）。
+    fn eval_watched(script: &str, wait: Duration) -> Option<anyhow::Result<String>> {
+        let (tx, rx) = mpsc::channel();
+        let script = script.to_string();
+        std::thread::spawn(move || {
+            let _ = tx.send(eval_js(&script, "", ""));
+        });
+        rx.recv_timeout(wait).ok()
+    }
+
+    #[test]
+    fn normal_js_still_works() {
+        assert_eq!(eval_js("'hello' + ' ' + 'world'", "", "").unwrap(), "hello world");
+        // 字符串方法 / 正则等常用能力不受资源上限影响
+        assert_eq!(eval_js("'a,b,c'.split(',').length", "", "").unwrap(), "3");
+    }
+
+    #[test]
+    fn infinite_loop_is_interrupted_not_hung() {
+        // 书源里的 while(true){} 必须被中断处理器在超时后打断
+        match eval_watched("while(true){}", Duration::from_secs(20)) {
+            None => panic!("JS 死循环未被中断处理器打断：20s 内未返回"),
+            Some(Ok(v)) => panic!("JS 死循环竟然返回成功: {v:?}"),
+            Some(Err(_)) => {}
+        }
+    }
+
+    #[test]
+    fn unbounded_allocation_is_rejected() {
+        // 持续分配必须撞上 128MB 内存上限（或先撞 5s 超时），而不是打爆进程
+        let script = "var a=[]; while(true){ a.push(new Array(65536).fill(1)); }";
+        match eval_watched(script, Duration::from_secs(30)) {
+            None => panic!("JS 无限分配未被内存上限或超时拦住：30s 内未返回"),
+            Some(Ok(v)) => panic!("JS 无限分配竟然返回成功: {v:?}"),
+            Some(Err(_)) => {}
+        }
+    }
 }

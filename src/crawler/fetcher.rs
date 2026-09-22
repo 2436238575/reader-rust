@@ -4,6 +4,32 @@ use serde::{Deserialize, Serialize};
 use std::time::Duration;
 use tokio::time::sleep;
 
+/// 单次抓取的响应体上限（解压后的字节数）。
+///
+/// 抓取目标由用户导入的书源决定，可能返回超大响应或高度压缩的“解压炸弹”；
+/// 不做限制时整包读入内存会直接把进程打爆。
+pub const MAX_RESPONSE_BYTES: u64 = 32 * 1024 * 1024;
+
+/// 边收边计数地读取响应体，超过 `limit` 立即中断。
+pub async fn read_body_limited(
+    mut res: reqwest::Response,
+    limit: u64,
+) -> anyhow::Result<bytes::Bytes> {
+    if let Some(len) = res.content_length() {
+        if len > limit {
+            anyhow::bail!("响应体过大: {len} 字节（上限 {limit}）");
+        }
+    }
+    let mut buf: Vec<u8> = Vec::new();
+    while let Some(chunk) = res.chunk().await? {
+        if buf.len() as u64 + chunk.len() as u64 > limit {
+            anyhow::bail!("响应体超过上限 {limit} 字节");
+        }
+        buf.extend_from_slice(&chunk);
+    }
+    Ok(bytes::Bytes::from(buf))
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub enum HttpMethod {
     GET,
@@ -135,7 +161,7 @@ pub async fn fetch(client: &HttpClient, req: RequestSpec) -> anyhow::Result<Fetc
                             .map(|value| (name.to_string(), value.to_string()))
                     })
                     .collect::<Vec<_>>();
-                let bytes = res.bytes().await?;
+                let bytes = read_body_limited(res, MAX_RESPONSE_BYTES).await?;
                 let mut body = if req
                     .response_type
                     .as_deref()

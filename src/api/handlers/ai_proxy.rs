@@ -15,6 +15,8 @@ use crate::model::ai_proxy::{
 };
 
 const MAX_PROXY_IMAGE_BYTES: u64 = 20 * 1024 * 1024;
+/// 通用 AI 代理响应体上限。
+const MAX_PROXY_RESPONSE_BYTES: u64 = 32 * 1024 * 1024;
 
 pub async fn ai_proxy(
     State(state): State<AppState>,
@@ -182,7 +184,9 @@ pub async fn ai_proxy_image(
         .get(reqwest::header::CONTENT_TYPE)
         .and_then(|v| v.to_str().ok())
         .and_then(|v| HeaderValue::from_str(v).ok());
-    let body = upstream.bytes().await?;
+    let body = crate::crawler::fetcher::read_body_limited(upstream, MAX_PROXY_IMAGE_BYTES)
+        .await
+        .map_err(|e| AppError::BadRequest(e.to_string()))?;
     if body.len() as u64 > MAX_PROXY_IMAGE_BYTES {
         return Err(AppError::BadRequest("图片超过代理大小限制".to_string()));
     }
@@ -208,7 +212,9 @@ async fn response_from_upstream(upstream: reqwest::Response) -> Result<Response,
         .get(reqwest::header::CONTENT_TYPE)
         .and_then(|v| v.to_str().ok())
         .and_then(|v| HeaderValue::from_str(v).ok());
-    let body = upstream.bytes().await?;
+    let body = crate::crawler::fetcher::read_body_limited(upstream, MAX_PROXY_RESPONSE_BYTES)
+        .await
+        .map_err(|e| AppError::BadRequest(e.to_string()))?;
     if !status.is_success() {
         return Ok(build_upstream_error_response(status, &body));
     }
