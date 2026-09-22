@@ -7,9 +7,26 @@ use serde_json::Value;
 use sqlx::{sqlite::SqliteRow, Row, SqlitePool};
 use std::collections::HashMap;
 use std::path::PathBuf;
+use std::sync::{Arc, Mutex};
 use tokio::fs;
 
 const TOKEN_TTL_MS: i64 = 7 * 86_400 * 1000;
+
+/// 登录失败限速：在窗口内失败达到上限即锁定一段时间。
+///
+/// 此前登录接口完全没有尝试次数限制，可对已知用户名做无限次口令爆破。
+const LOGIN_FAILURE_WINDOW_MS: i64 = 10 * 60 * 1000;
+const LOGIN_MAX_FAILURES: usize = 8;
+const LOGIN_LOCKOUT_MS: i64 = 5 * 60 * 1000;
+
+/// 单个用户名的登录失败记录（进程内，单实例部署足够）。
+#[derive(Default, Clone)]
+struct LoginAttempt {
+    /// 窗口内的失败时间戳（毫秒）。
+    failures: Vec<i64>,
+    /// 锁定期截止时间；0 表示未锁定。
+    locked_until: i64,
+}
 
 #[derive(Clone)]
 pub struct UserService {
@@ -17,6 +34,7 @@ pub struct UserService {
     users_path: PathBuf,
     data_root: PathBuf,
     pool: SqlitePool,
+    login_attempts: Arc<Mutex<HashMap<String, LoginAttempt>>>,
 }
 
 impl UserService {
@@ -28,6 +46,7 @@ impl UserService {
             users_path,
             data_root,
             pool,
+            login_attempts: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 
@@ -64,6 +83,54 @@ impl UserService {
         !self.cfg.secure_key.is_empty() && self.cfg.secure_key == key
     }
 
+    /// 登录前置检查：命中锁定期则直接拒绝，不再校验口令。
+    fn login_throttle_check(&self, username: &str) -> Result<(), AppError> {
+        let mut map = self
+            .login_attempts
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let Some(attempt) = map.get_mut(username) else {
+            return Ok(());
+        };
+        let now = now_ms();
+        attempt
+            .failures
+            .retain(|ts| now - *ts < LOGIN_FAILURE_WINDOW_MS);
+        if attempt.locked_until > now {
+            let remain_secs = (attempt.locked_until - now) / 1000 + 1;
+            return Err(AppError::BadRequest(format!(
+                "登录失败次数过多，请 {remain_secs} 秒后再试"
+            )));
+        }
+        Ok(())
+    }
+
+    /// 记录一次登录失败；窗口内累计到上限则锁定。
+    fn login_throttle_record_failure(&self, username: &str) {
+        let mut map = self
+            .login_attempts
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let now = now_ms();
+        let attempt = map.entry(username.to_string()).or_default();
+        attempt
+            .failures
+            .retain(|ts| now - *ts < LOGIN_FAILURE_WINDOW_MS);
+        attempt.failures.push(now);
+        if attempt.failures.len() >= LOGIN_MAX_FAILURES {
+            attempt.locked_until = now + LOGIN_LOCKOUT_MS;
+            attempt.failures.clear();
+        }
+    }
+
+    fn login_throttle_clear(&self, username: &str) {
+        let mut map = self
+            .login_attempts
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        map.remove(username);
+    }
+
     pub async fn login(
         &self,
         username: &str,
@@ -72,19 +139,26 @@ impl UserService {
         code: Option<&str>,
     ) -> Result<Value, AppError> {
         self.ensure_admin_user().await?;
+        if is_login {
+            self.login_throttle_check(username)?;
+        }
         if let Some(mut user) = self.find_user(username).await? {
             if !is_login {
                 return Err(AppError::BadRequest("用户名已被占用".to_string()));
             }
             let encrypted = gen_encrypted_password(password, &user.salt);
             if encrypted != user.password {
+                self.login_throttle_record_failure(username);
                 return Err(AppError::BadRequest("密码错误".to_string()));
             }
+            self.login_throttle_clear(username);
             let login_data = self.save_new_session(&mut user).await?;
             return Ok(login_data);
         }
 
         if is_login {
+            // 对不存在的用户名同样计数，避免通过错误信息差异区分账号是否存在
+            self.login_throttle_record_failure(username);
             return Err(AppError::BadRequest("用户不存在".to_string()));
         }
         self.validate_new_user(username, password, code)?;
@@ -542,7 +616,9 @@ impl UserService {
     }
 
     fn generate_session_token(&self, username: &str) -> String {
-        gen_encrypted_password(username, &format!("{}{}", now_ms(), random_string(8)))
+        // 32 位 alphanumeric ≈ 190 bit 熵。此前是 8 位（≈47.6 bit），
+        // 叠加可预测的 now_ms() 后足以被离线暴力枚举出他人的会话 token。
+        gen_encrypted_password(username, &format!("{}{}", now_ms(), random_string(32)))
     }
 
     async fn load_users(&self) -> Result<HashMap<String, User>, AppError> {

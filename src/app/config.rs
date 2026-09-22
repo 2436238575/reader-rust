@@ -19,6 +19,11 @@ pub struct AppConfig {
     /// 出站请求是否允许访问私网/环回/链路本地地址。
     /// 未设置时跟随 `SECURE`：单用户本地部署（secure=false）放行，多用户/公网部署拦截。
     pub allow_private_network: Option<bool>,
+    /// 允许跨域访问的来源列表（逗号分隔，如 `https://a.example,https://b.example`）。
+    ///
+    /// 留空表示**仅同源**：不发送任何 CORS 响应头，浏览器同源策略自然生效。
+    /// 前端与后端同域部署（`WEB_ROOT` 静态托管）时无需配置。
+    pub cors_allowed_origins: String,
 }
 
 impl Default for AppConfig {
@@ -39,6 +44,7 @@ impl Default for AppConfig {
             user_book_limit: 2000,
             user_local_book_limit: 0,
             allow_private_network: None,
+            cors_allowed_origins: String::new(),
         }
     }
 }
@@ -64,6 +70,7 @@ pub fn load() -> anyhow::Result<AppConfig> {
             "user_local_book_limit",
             defaults.user_local_book_limit as i64,
         )?
+        .set_default("cors_allowed_origins", defaults.cors_allowed_origins)?
         .add_source(config::Environment::default().try_parsing(true))
         .build()?;
     Ok(cfg.try_deserialize()?)

@@ -202,7 +202,10 @@ pub async fn login_book_source(
         .get(&user_ns, &url)
         .await?
         .ok_or_else(|| AppError::NotFound("bookSource not found".to_string()))?;
-    let result = state.book_service.login_book_source(&source).await?;
+    let result = state
+        .book_service
+        .login_book_source(&user_ns, &source)
+        .await?;
     Ok(Json(ApiResponse::ok(result)))
 }
 
@@ -454,6 +457,7 @@ pub async fn book_source_proxy(
     let response = forward_book_source_request(
         &state,
         &source,
+        &user_ns,
         auth.access_token(),
         &method,
         &headers,
@@ -534,6 +538,7 @@ fn extract_upstream_referer(headers: &HeaderMap) -> Option<String> {
 async fn forward_book_source_request(
     state: &AppState,
     source: &BookSource,
+    user_ns: &str,
     access_token: Option<&str>,
     method: &Method,
     headers: &HeaderMap,
@@ -541,7 +546,10 @@ async fn forward_book_source_request(
     upstream_referer: Option<&str>,
     body: Bytes,
 ) -> Result<Response, AppError> {
-    let client = state.book_service.http_client();
+    let client = state
+        .book_service
+        .http_client(user_ns)
+        .map_err(AppError::Internal)?;
     let req_method = match *method {
         Method::GET => reqwest::Method::GET,
         Method::POST => reqwest::Method::POST,

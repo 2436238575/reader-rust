@@ -16,6 +16,10 @@ use std::sync::Mutex;
 use std::time::{Duration, Instant};
 use uuid::Uuid;
 
+/// 书源 JS 的全局 KV（`cache.put/get`、`kv_put/get`）。
+///
+/// 键一律经过 [`scoped_key`] 加用户前缀，避免不同书源/不同用户的键互相覆盖
+/// 或读取到他人写入的值。
 static JS_KV: Lazy<Mutex<HashMap<String, String>>> = Lazy::new(|| Mutex::new(HashMap::new()));
 static JS_LIB_CACHE: Lazy<Mutex<HashMap<String, String>>> =
     Lazy::new(|| Mutex::new(HashMap::new()));
@@ -31,30 +35,19 @@ const JS_EVAL_TIMEOUT: Duration = Duration::from_secs(5);
 const JS_MAX_RESULT_BYTES: usize = 32 * 1024 * 1024;
 /// `java.ajax` 等内部请求的超时。
 const JS_HTTP_TIMEOUT: Duration = Duration::from_secs(30);
-static JS_HTTP_CLIENT: Lazy<Client> = Lazy::new(|| {
-    Client::builder()
-        .cookie_store(true)
-        .timeout(JS_HTTP_TIMEOUT)
-        .gzip(true)
-        .brotli(true)
-        .deflate(true)
-        // 与全局一致的重定向策略：限制跳数，开启防护时拒绝跳往内网
-        .redirect(crate::crawler::url_guard::guarded_redirect_policy())
-        .build()
-        .expect("failed to build JS HTTP client")
-});
-static JS_DEVICE_ID: Lazy<String> = Lazy::new(|| {
-    let mut map = JS_KV.lock().unwrap_or_else(|e| e.into_inner());
-    if let Some(existing) = map.get("__device_id") {
-        return existing.clone();
-    }
-    let generated = Uuid::new_v4().to_string();
-    map.insert("__device_id".to_string(), generated.clone());
-    generated
-});
+/// 书源 JS 内 `java.ajax/get/post/put` 使用的客户端池。
+///
+/// 同样按用户命名空间隔离：否则 A 用户在站点登录得到的会话 Cookie
+/// 会被 B 用户书源的 `java.ajax` 自动带上。
+static JS_HTTP_CLIENTS: Lazy<Mutex<HashMap<String, Client>>> =
+    Lazy::new(|| Mutex::new(HashMap::new()));
+/// 未显式指定命名空间时的归属（封面等匿名请求同此）。
+const DEFAULT_USER_NS: &str = "public";
 type Aes128CbcDecryptor = cbc::Decryptor<Aes128>;
 thread_local! {
     static ACTIVE_JS_LIB: RefCell<Option<String>> = const { RefCell::new(None) };
+    /// 当前求值所属的用户命名空间。
+    static ACTIVE_USER_NS: RefCell<Option<String>> = const { RefCell::new(None) };
 }
 
 pub fn with_js_lib<T>(js_lib: Option<&str>, f: impl FnOnce() -> T) -> T {
@@ -64,6 +57,73 @@ pub fn with_js_lib<T>(js_lib: Option<&str>, f: impl FnOnce() -> T) -> T {
         cell.replace(previous);
         result
     })
+}
+
+/// 在指定用户命名空间下执行闭包。
+///
+/// 书源 JS 的 `cache`/`kv`/`java.*` 都会读取当前命名空间做隔离；
+/// 未设置时归入 [`DEFAULT_USER_NS`]，绝不与其他用户共享。
+pub fn with_user_ns<T>(user_ns: &str, f: impl FnOnce() -> T) -> T {
+    ACTIVE_USER_NS.with(|cell| {
+        let previous = cell.replace(Some(user_ns.to_string()));
+        let result = f();
+        cell.replace(previous);
+        result
+    })
+}
+
+fn current_user_ns() -> String {
+    ACTIVE_USER_NS
+        .with(|cell| cell.borrow().clone())
+        .unwrap_or_else(|| DEFAULT_USER_NS.to_string())
+}
+
+/// 给 KV 键加上命名空间前缀（用 Unit Separator 分隔，避免与业务键混淆）。
+fn scoped_key(key: &str) -> String {
+    format!("{}\u{1f}{}", current_user_ns(), key)
+}
+
+fn kv_get_scoped(key: &str) -> Option<String> {
+    let map = JS_KV.lock().unwrap_or_else(|e| e.into_inner());
+    map.get(&scoped_key(key)).cloned()
+}
+
+fn kv_put_scoped(key: &str, value: &str) {
+    let mut map = JS_KV.lock().unwrap_or_else(|e| e.into_inner());
+    map.insert(scoped_key(key), value.to_string());
+}
+
+/// 每个命名空间一个稳定的设备标识（模拟阅读 App 的 deviceID）。
+fn device_id() -> String {
+    const DEVICE_KEY: &str = "__device_id";
+    if let Some(existing) = kv_get_scoped(DEVICE_KEY) {
+        return existing;
+    }
+    let generated = Uuid::new_v4().to_string();
+    kv_put_scoped(DEVICE_KEY, &generated);
+    generated
+}
+
+/// 取当前命名空间的 JS HTTP 客户端（独立 Cookie jar）。
+fn js_http_client() -> Client {
+    let ns = current_user_ns();
+    if let Ok(map) = JS_HTTP_CLIENTS.lock() {
+        if let Some(client) = map.get(&ns) {
+            return client.clone();
+        }
+    }
+    let client = Client::builder()
+        .cookie_store(true)
+        .timeout(JS_HTTP_TIMEOUT)
+        .gzip(true)
+        .brotli(true)
+        .deflate(true)
+        // 与全局一致的重定向策略：限制跳数，开启防护时拒绝跳往内网
+        .redirect(crate::crawler::url_guard::guarded_redirect_policy())
+        .build()
+        .expect("failed to build JS HTTP client");
+    let mut map = JS_HTTP_CLIENTS.lock().unwrap_or_else(|e| e.into_inner());
+    map.entry(ns).or_insert(client).clone()
 }
 
 pub fn eval_js(script: &str, input: &str, base_url: &str) -> anyhow::Result<String> {
@@ -188,16 +248,12 @@ fn eval_js_inner_with_source(
         let cache_obj = Object::new(ctx.clone())?;
         cache_obj.set(
             "get",
-            Func::new(|key: String| -> Option<String> {
-                let map = JS_KV.lock().unwrap_or_else(|e| e.into_inner());
-                map.get(&key).cloned()
-            }),
+            Func::new(|key: String| -> Option<String> { kv_get_scoped(&key) }),
         )?;
         cache_obj.set(
             "put",
             Func::new(|key: String, val: String| -> bool {
-                let mut map = JS_KV.lock().unwrap_or_else(|e| e.into_inner());
-                map.insert(key, val);
+                kv_put_scoped(&key, &val);
                 true
             }),
         )?;
@@ -216,11 +272,8 @@ fn eval_js_inner_with_source(
             "timeFormat",
             Func::new(|timestamp: i64| -> String { java_time_format(timestamp) }),
         )?;
-        java_obj.set(
-            "androidId",
-            Func::new(|| -> String { JS_DEVICE_ID.clone() }),
-        )?;
-        java_obj.set("deviceID", Func::new(|| -> String { JS_DEVICE_ID.clone() }))?;
+        java_obj.set("androidId", Func::new(|| -> String { device_id() }))?;
+        java_obj.set("deviceID", Func::new(|| -> String { device_id() }))?;
         java_obj.set(
             "get",
             Func::new(|url: String| -> String {
@@ -299,16 +352,12 @@ fn eval_js_inner_with_source(
 
         globals.set(
             "kv_get",
-            Func::new(|key: String| -> Option<String> {
-                let map = JS_KV.lock().unwrap_or_else(|e| e.into_inner());
-                map.get(&key).cloned()
-            }),
+            Func::new(|key: String| -> Option<String> { kv_get_scoped(&key) }),
         )?;
         globals.set(
             "kv_put",
             Func::new(|key: String, val: String| -> bool {
-                let mut map = JS_KV.lock().unwrap_or_else(|e| e.into_inner());
-                map.insert(key, val);
+                kv_put_scoped(&key, &val);
                 true
             }),
         )?;
@@ -444,7 +493,7 @@ fn compile_js_lib(js_lib: &str) -> anyhow::Result<String> {
 fn resolve_js_lib_entry(entry: &str) -> anyhow::Result<String> {
     let value = entry.trim();
     if value.starts_with("http://") || value.starts_with("https://") {
-        let response = JS_HTTP_CLIENT.get(value).send()?;
+        let response = js_http_client().get(value).send()?;
         return Ok(response.text().unwrap_or_default());
     }
     Ok(value.to_string())
@@ -483,7 +532,7 @@ fn java_ajax(spec: &str) -> anyhow::Result<String> {
         .to_uppercase();
     let method = Method::from_bytes(method.as_bytes()).unwrap_or(Method::GET);
 
-    let mut req = JS_HTTP_CLIENT.request(method, url.trim());
+    let mut req = js_http_client().request(method, url.trim());
 
     if let Some(headers) = options_json.get("headers").and_then(|v| v.as_object()) {
         for (key, value) in headers {
@@ -513,7 +562,7 @@ fn java_request_simple(method: &str, url: &str, body: Option<String>) -> anyhow:
         return Ok(String::new());
     }
     let method = Method::from_bytes(method.as_bytes()).unwrap_or(Method::GET);
-    let mut req = JS_HTTP_CLIENT.request(method, url.trim());
+    let mut req = js_http_client().request(method, url.trim());
     if let Some(body) = body {
         req = req.body(body);
     }
@@ -602,5 +651,53 @@ mod tests {
             Some(Ok(v)) => panic!("JS 无限分配竟然返回成功: {v:?}"),
             Some(Err(_)) => {}
         }
+    }
+
+    #[test]
+    fn kv_is_isolated_between_users() {
+        with_user_ns("alice", || kv_put_scoped("shared", "alice-value"));
+        // bob 既读不到 alice 的值，也覆盖不了它
+        with_user_ns("bob", || {
+            assert_eq!(kv_get_scoped("shared"), None, "bob 不应读到 alice 的键");
+            kv_put_scoped("shared", "bob-value");
+        });
+        with_user_ns("alice", || {
+            assert_eq!(
+                kv_get_scoped("shared").as_deref(),
+                Some("alice-value"),
+                "alice 的值不应被 bob 覆盖"
+            );
+        });
+        // 未设置命名空间时归入 public，同样与具名用户隔离
+        assert_eq!(kv_get_scoped("shared"), None);
+    }
+
+    #[test]
+    fn device_id_is_stable_per_user_and_distinct_across_users() {
+        let alice_first = with_user_ns("alice", device_id);
+        let alice_second = with_user_ns("alice", device_id);
+        let bob = with_user_ns("bob", device_id);
+        assert_eq!(alice_first, alice_second, "同一用户的 deviceID 应保持稳定");
+        assert_ne!(alice_first, bob, "不同用户不应共享 deviceID");
+    }
+
+    #[test]
+    fn js_cache_binding_is_isolated_between_users() {
+        with_user_ns("alice", || {
+            eval_js("cache.put('token', 'from-alice')", "", "").unwrap();
+        });
+        let miss_for_bob = with_user_ns("bob", || {
+            eval_js(
+                "(cache.get('token') == null) ? 'MISS' : 'HIT'",
+                "",
+                "",
+            )
+            .unwrap()
+        });
+        assert_eq!(miss_for_bob, "MISS", "bob 不应读到 alice 写入的 cache");
+        let hit_for_alice = with_user_ns("alice", || {
+            eval_js("String(cache.get('token'))", "", "").unwrap()
+        });
+        assert_eq!(hit_for_alice, "from-alice");
     }
 }

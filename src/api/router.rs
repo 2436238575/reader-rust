@@ -1,14 +1,36 @@
 use crate::api::{handlers, AppState};
 use axum::{
     extract::DefaultBodyLimit,
+    http::HeaderValue,
     routing::{any, get, post},
     Router,
 };
 use std::path::PathBuf;
-use tower_http::cors::CorsLayer;
+use tower_http::cors::{AllowOrigin, Any, CorsLayer};
 use tower_http::request_id::{MakeRequestUuid, PropagateRequestIdLayer, SetRequestIdLayer};
 use tower_http::services::ServeDir;
 use tower_http::trace::TraceLayer;
+
+/// 构建 CORS 层。
+///
+/// 此前使用 `very_permissive()`，等于向任意站点反射 Origin 并允许携带凭据，
+/// 任何第三方页面都能用受害者的登录态读取本服务响应。默认改为**仅同源**
+/// （不发送 CORS 头）；确需跨域时用 `CORS_ALLOWED_ORIGINS` 显式列出来源。
+fn build_cors_layer(cors_allowed_origins: &str) -> CorsLayer {
+    let origins: Vec<HeaderValue> = cors_allowed_origins
+        .split(',')
+        .map(str::trim)
+        .filter(|origin| !origin.is_empty())
+        .filter_map(|origin| origin.parse::<HeaderValue>().ok())
+        .collect();
+    if origins.is_empty() {
+        return CorsLayer::new();
+    }
+    CorsLayer::new()
+        .allow_origin(AllowOrigin::list(origins))
+        .allow_methods(Any)
+        .allow_headers(Any)
+}
 
 pub fn build_router(state: AppState) -> Router {
     let api = Router::new()
@@ -309,5 +331,5 @@ pub fn build_router(state: AppState) -> Router {
         .layer(TraceLayer::new_for_http())
         .layer(PropagateRequestIdLayer::x_request_id())
         .layer(SetRequestIdLayer::x_request_id(MakeRequestUuid::default()))
-        .layer(CorsLayer::very_permissive())
+        .layer(build_cors_layer(&state.config.cors_allowed_origins))
 }

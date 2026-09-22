@@ -23,7 +23,9 @@ async fn yckceo_live_non_webview_sources_end_to_end() {
     let pages = env_usize("YCKCEO_INDEX_PAGES", 1);
 
     let http = HttpClient::new(20, None).expect("http client");
-    let ids = fetch_yckceo_ids(http.client(), pages)
+    // 测试自身用一个独立命名空间的客户端，与生产的按用户隔离机制一致
+    let shared = http.client_for("test").expect("http client");
+    let ids = fetch_yckceo_ids(&shared, pages)
         .await
         .expect("fetch YCKCeo index");
     assert!(!ids.is_empty(), "YCKCeo index returned no source ids");
@@ -44,7 +46,7 @@ async fn yckceo_live_non_webview_sources_end_to_end() {
             break;
         }
 
-        let Some((source, keyword)) = fetch_candidate_source(http.client(), &id)
+        let Some((source, keyword)) = fetch_candidate_source(&shared, &id)
             .await
             .unwrap_or_else(|err| {
                 attempted.push(format!("{id}: fetch/import failed: {err}"));

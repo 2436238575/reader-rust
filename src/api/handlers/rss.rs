@@ -240,7 +240,8 @@ pub async fn get_rss_articles(
 
     let res = state
         .book_service
-        .http_client()
+        .http_client(&user_ns)
+        .map_err(AppError::Internal)?
         .get(&sort_url)
         .send()
         .await
@@ -341,7 +342,8 @@ pub async fn get_rss_content(
 
     let res = state
         .book_service
-        .http_client()
+        .http_client(&user_ns)
+        .map_err(AppError::Internal)?
         .get(&link)
         .send()
         .await

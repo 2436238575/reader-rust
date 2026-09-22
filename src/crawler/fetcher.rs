@@ -97,20 +97,29 @@ pub struct StrResponse {
     pub is_successful: bool,
 }
 
-pub async fn fetch(client: &HttpClient, req: RequestSpec) -> anyhow::Result<FetchResponse> {
+/// 抓取入口。
+///
+/// `user_ns` 决定使用哪个隔离的 HTTP 客户端（独立 Cookie jar），
+/// 避免不同用户的站点会话相互串用。
+pub async fn fetch(
+    client: &HttpClient,
+    user_ns: &str,
+    req: RequestSpec,
+) -> anyhow::Result<FetchResponse> {
     // 出站守卫：书源 URL 由用户导入，可能指向内网/云元数据地址
     if let Err(reason) =
         crate::crawler::url_guard::ensure_outbound_url_str_allowed(&req.url).await
     {
         anyhow::bail!("请求被出站策略拒绝: {reason}");
     }
+    let http = client.client_for(user_ns)?;
     let mut last_err: Option<anyhow::Error> = None;
     let max_retries = req.retry;
     for attempt in 0..=max_retries {
         let req = req.clone();
         let mut builder = match req.method {
-            HttpMethod::GET => client.client().get(&req.url),
-            HttpMethod::POST => client.client().post(&req.url),
+            HttpMethod::GET => http.get(&req.url),
+            HttpMethod::POST => http.post(&req.url),
         };
 
         let mut has_content_type = false;
