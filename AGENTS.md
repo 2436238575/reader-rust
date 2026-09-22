@@ -100,8 +100,10 @@ cp .env.example .env
 | `SECURE_KEY` | 空 | 安全模式密钥 |
 | `INVITE_CODE` | 空 | 注册邀请码，为空表示不限制 |
 | `USER_LIMIT` | `50` | 用户数上限 |
-| `USER_BOOK_LIMIT` | `2000` | 单用户书架上限 |
+| `USER_BOOK_LIMIT` | `2000` | 单用户书架上限。**未实现**：配置项已定义但代码未校验 |
 | `USER_LOCAL_BOOK_LIMIT` | `0` | 单用户本地上传上限，`0` 表示不限制 |
+| `ALLOW_PRIVATE_NETWORK` | 跟随 `SECURE` | 出站请求是否允许访问私网/内网地址；见 `docs/guide/configuration.md` |
+| `CORS_ALLOWED_ORIGINS` | 空 | 跨域来源白名单；留空仅同源 |
 
 两点需要注意：
 
@@ -170,7 +172,7 @@ HTTP 请求
 ```
 
 - `isSuccess=false` 时从 `errorMsg` 读取失败原因。
-- `errorMsg` 为 `"NEED_LOGIN"`（或直接返回 HTTP 401）表示未登录，前端据此弹出登录框。
+- `errorMsg` 为 `"NEED_LOGIN"` 表示未登录（HTTP 400；后端唯一的 HTTP 401 来自 WebDAV Basic 认证），前端据此弹出登录框。
 
 鉴权说明：**不使用 JWT**。登录返回的 `accessToken` 形如 `用户名:token`，服务端把 token 持久化在 SQLite（`users.token` 与 `user_sessions` 表），因此同一账号可多端登录。请求时放在 `Authorization` 头（也支持 URL 查询参数 `accessToken`）。
 

@@ -48,7 +48,7 @@ let books = self.parser.search_books(source, &res.body, &res.url);  // parser �
 | `mod.rs` | `AppState`：共享配置与各 service 实例 |
 | `handlers/` | 按领域拆分，共 12 个模块：`book`、`book_source`、`book_group`、`bookmark`、`rss`、`user`、`ai_book`、`ai_model`、`ai_proxy`、`replace_rule`、`update`、`webdav` |
 
-`handlers/book.rs` 是最大的单个文件（约 2900 行），涵盖书架、章节、缓存、上传等书籍相关接口。
+`handlers/book.rs` 是最大的单个文件（约 3200 行），涵盖书架、章节、缓存、上传等书籍相关接口。
 
 静态资源由同一台 axum 实例托管：
 
@@ -74,7 +74,7 @@ let books = self.parser.search_books(source, &res.body, &res.url);  // parser �
 
 ### `src/parser/`
 
-规则解析引擎，6 个文件合计约 4100 行。
+规则解析引擎，6 个文件合计约 4200 行。
 
 | 文件 | 职责 |
 |------|------|
@@ -84,7 +84,9 @@ let books = self.parser.search_books(source, &res.body, &res.url);  // parser �
 | `jsonpath.rs` | JSONPath（`jsonpath_lib`） |
 | `js.rs` | JavaScript 求值（`rquickjs`） |
 
-`RuleEngine` 的方法都是**同步函数** —— JS 求值通过 rquickjs 同步完成，调用方在 async 上下文里自行处理阻塞。
+`RuleEngine` 的方法都是**同步函数** —— JS 求值通过 rquickjs 同步完成。`BookService` 统一通过 `spawn_blocking` 把它们搬到 tokio 阻塞线程池执行，避免同步解析占住 async worker。
+
+JS 求值本身带资源上限：内存 128MiB、调用栈 1MiB、单次求值 5 秒超时（中断处理器打断）、返回值 32MiB 上限；`java.*` 内部请求有独立 Cookie jar（按 `user_ns` 隔离）与 30 秒超时。
 
 解析方式识别顺序与显式前缀见 [书源规则引擎](/book-source/rules)；完整兼容规格（含字段表与求值语义）见 [参考规格](/reference/book-source-rules)。
 
@@ -92,8 +94,10 @@ let books = self.parser.search_books(source, &res.body, &res.url);  // parser �
 
 | 文件 | 职责 |
 |------|------|
-| `http_client.rs` | 可配置的 reqwest 客户端，支持 gzip / brotli / deflate 与 Cookie |
+| `http_client.rs` | 按 `user_ns` 缓存独立 reqwest Client（各自独立 Cookie jar 与连接池，数量受 `USER_LIMIT` 约束），支持 gzip / brotli / deflate |
 | `url_analyzer.rs` | URL 占位符展开（`{key}`、`{page}`、<code v-pre>{{js}}</code>、`<1,2,3>`）、分页生成、内联 JS |
+| `url_guard.rs` | 出站请求守卫：协议 + 主机名 + DNS 解析后逐 IP 校验（拦截私网、环回、链路本地、云元数据地址），跟随重定向时逐跳校验；`ALLOW_PRIVATE_NETWORK` 控制开关 |
+| `fetcher.rs` | 抓取重试与响应读取；`read_body_limited` 边收边计数，响应体超过 32MiB 直接拒绝，避免超大响应/解压炸弹打爆内存 |
 
 ### `src/storage/`
 
@@ -146,7 +150,7 @@ let books = self.parser.search_books(source, &res.body, &res.url);  // parser �
 
 因为按会话存表，同一账号可**多端同时登录**，且服务端可以逐会话失效。
 
-校验失败时返回 `errorMsg = "NEED_LOGIN"`（或直接 HTTP 401），前端据此弹出登录框。
+校验失败时返回 HTTP 400 且 `errorMsg = "NEED_LOGIN"`（后端唯一的 HTTP 401 来自 WebDAV 的 Basic 认证，不走这套 JSON 结构），前端据此弹出登录框。
 
 `SECURE=true` 是**另一层**独立机制，只校验 `secureKey`，与用户登录无关。两者可以叠加：安全模式挡机器访问，登录挡未授权用户。
 
@@ -155,6 +159,25 @@ let books = self.parser.search_books(source, &res.body, &res.url);  // parser �
 `user_ns` 是**多用户数据隔离键**，不是用户表字段。`book_sources` 表用 `(user_ns, book_source_url)` 作复合主键 —— 每个命名空间持有自己的一整套书源，书架、AI 资料等也按 `user_ns` 隔离。默认命名空间是 `'default'`。
 
 它还可以由客户端直接指定（不登录也能带），这为「同一实例服务多个独立用户组」提供了可能。
+
+## 安全机制
+
+书源由用户导入、抓取 URL 由查询参数传入，这些输入都不可信。主要防线：
+
+| 机制 | 位置 | 说明 |
+|------|------|------|
+| 出站守卫（SSRF 防护） | `crawler/url_guard.rs` | 所有用户可控的出站请求统一校验：仅 http/https、拒绝私网/环回/链路本地/云元数据地址（含 DNS 解析后逐 IP 检查）、重定向逐跳校验。`ALLOW_PRIVATE_NETWORK` 可放行（默认跟随 `SECURE`） |
+| 响应体上限 | `crawler/fetcher.rs` | 单次抓取响应体上限 32MiB，边收边计数；显式 Content-Length 超限直接拒绝 |
+| JS 沙箱资源上限 | `parser/js.rs` | QuickJS Runtime 设内存（128MiB）/栈（1MiB）/执行时间（5s）上限；`java.*` 请求 30 秒超时、返回值 32MiB 上限 |
+| 同步解析隔离 | `service/book_service.rs` | 规则解析全部走 `spawn_blocking`，第三方书源的 JS 死循环拖不垮 worker |
+| Cookie jar 隔离 | `crawler/http_client.rs` | 按 `user_ns` 独立 Cookie jar 与连接池，避免用户间站点会话串号 |
+| JS 状态隔离 | `parser/js.rs` | 书源 JS 的 `cache`/`kv` 键按 `user_ns` 加前缀，`java.*` 的 HTTP 客户端同样按用户池化 |
+| 上传/删除路径校验 | `api/handlers/user.rs`、`util/safe_path.rs` | 文件名白名单 + 词法级路径解析，杜绝 `..` 穿越写删 `storage/` 之外的文件 |
+| 登录限速 | `service/user_service.rs` | 同用户名 10 分钟窗口失败 8 次锁定 5 分钟 |
+| CORS | `api/router.rs` | 默认仅同源（不下发任何 CORS 头）；跨域需 `CORS_ALLOWED_ORIGINS` 显式白名单 |
+| 会话 token | `service/user_service.rs` | 随机源 32 位（≈190 bit 熵），SQLite 按会话存储、可逐会话失效 |
+
+文件缓存（`storage/cache`）有 7 天 TTL 与单用户 512MiB 容量上限，超限按最旧优先淘汰。
 
 ## 存储设计
 

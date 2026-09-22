@@ -143,7 +143,7 @@ POST /reader3/deleteInvalidBookSources
 ## 获取失效书源列表
 
 ```text
-GET /reader3/getInvalidBookSources
+POST /reader3/getInvalidBookSources
 ```
 
 响应：`data` 为失效书源数组。
