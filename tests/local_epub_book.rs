@@ -126,7 +126,7 @@ async fn epub_import_saves_manifest_chapters_and_assets() {
     let service = LocalEpubBookService::new(&storage_dir);
 
     let book = service
-        .import_epub_book("alice", "测试.epub", &epub3_fixture())
+        .import_epub_book("alice", "测试.epub", epub3_fixture())
         .await
         .unwrap();
     let chapters = service
@@ -181,7 +181,7 @@ async fn epub2_ncx_titles_are_used_for_chapter_list() {
     let service = LocalEpubBookService::new(&storage_dir);
 
     let book = service
-        .import_epub_book("alice", "ncx.epub", &epub2_fixture())
+        .import_epub_book("alice", "ncx.epub", epub2_fixture())
         .await
         .unwrap();
     let chapters = service
@@ -205,14 +205,14 @@ async fn epub_import_rejects_non_epub_and_path_traversal() {
     let service = LocalEpubBookService::new(&storage_dir);
 
     let err = service
-        .import_epub_book("alice", "bad.txt", b"not epub")
+        .import_epub_book("alice", "bad.txt", b"not epub".to_vec())
         .await
         .expect_err("non epub file should be rejected");
     assert!(err.to_string().contains(".epub"));
 
     let traversal = make_epub(&[("../evil.txt", "x")], &[]);
     let err = service
-        .import_epub_book("alice", "bad.epub", &traversal)
+        .import_epub_book("alice", "bad.epub", traversal)
         .await
         .expect_err("traversal path should be rejected");
     assert!(err.to_string().contains("非法路径") || err.to_string().contains("缺少文件"));
@@ -240,7 +240,7 @@ async fn real_sample_epub_imports_from_repo_epub_folder_when_present() {
         .import_epub_book(
             "alice",
             sample.file_name().unwrap().to_str().unwrap(),
-            &bytes,
+            bytes,
         )
         .await
         .unwrap();

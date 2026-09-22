@@ -1107,7 +1107,7 @@ pub async fn upload_epub_book(
     let bytes = bytes.ok_or_else(|| AppError::BadRequest("file required".to_string()))?;
     let book = state
         .local_epub_book_service
-        .import_epub_book(&user_ns, &file_name, &bytes)
+        .import_epub_book(&user_ns, &file_name, bytes)
         .await?;
     if let Err(err) = ensure_user_local_book_limit(&state, &user_ns, &book.book_url).await {
         if let Err(cleanup_err) = state

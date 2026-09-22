@@ -105,18 +105,23 @@ impl LocalEpubBookService {
         &self,
         user_ns: &str,
         file_name: &str,
-        bytes: &[u8],
+        bytes: Vec<u8>,
     ) -> Result<Book, AppError> {
         validate_epub_upload(file_name, bytes.len())?;
         let safe_file_name = sanitize_epub_file_name(file_name);
-        let files = read_epub_files(bytes)?;
+        // 解压是 CPU 密集的同步工作，移出 tokio worker，避免大 EPUB 阻塞请求处理
+        let (files, bytes) = tokio::task::spawn_blocking(move || {
+            read_epub_files(&bytes).map(|files| (files, bytes))
+        })
+        .await
+        .map_err(|e| AppError::Internal(anyhow::anyhow!("EPUB 解析任务失败: {e}")))??;
         let rootfile =
             parse_container_rootfile(&read_text_file(&files, "META-INF/container.xml")?)?;
         let opf_text = read_text_file(&files, &rootfile)?;
         let opf_base = parent_zip_dir(&rootfile);
         let package = parse_opf(&opf_text, &opf_base)?;
 
-        let hash = md5_bytes_hex(format!("{}:{}:", user_ns, safe_file_name).as_bytes(), bytes);
+        let hash = md5_bytes_hex(format!("{}:{}:", user_ns, safe_file_name).as_bytes(), &bytes);
         let book_url = format!("{}:{}", LOCAL_EPUB_ORIGIN, hash);
         let book_dir = self.book_dir(user_ns, &book_url)?;
 
@@ -131,6 +136,7 @@ impl LocalEpubBookService {
         fs::create_dir_all(book_dir.join("assets"))
             .await
             .map_err(|e| AppError::Internal(e.into()))?;
+        let byte_len = bytes.len();
         fs::write(book_dir.join("original.epub"), bytes)
             .await
             .map_err(|e| AppError::Internal(e.into()))?;
@@ -215,7 +221,7 @@ impl LocalEpubBookService {
             name: name.clone(),
             author: author.clone(),
             file_name: safe_file_name,
-            byte_len: bytes.len(),
+            byte_len,
             char_len,
             cover_url: cover_url.clone(),
             chapters,
@@ -379,19 +385,25 @@ fn read_epub_files(bytes: &[u8]) -> Result<HashMap<String, Vec<u8>>, AppError> {
         if !file.is_file() {
             continue;
         }
-        unpacked_bytes = unpacked_bytes.saturating_add(file.size());
-        if unpacked_bytes > MAX_EPUB_UNPACKED_BYTES {
-            return Err(AppError::BadRequest("EPUB 解压后体积过大".to_string()));
-        }
         let Some(enclosed) = file.enclosed_name().map(|path| path.to_path_buf()) else {
             return Err(AppError::BadRequest("EPUB 包含非法路径".to_string()));
         };
         let Some(path) = normalize_pathbuf(&enclosed) else {
             return Err(AppError::BadRequest("EPUB 包含非法路径".to_string()));
         };
-        let mut data = Vec::with_capacity(file.size().min(usize::MAX as u64) as usize);
-        file.read_to_end(&mut data)
+        // 限额必须按实际解压输出累计：zip 头里的 file.size() 只是攻击者可控的声明值，
+        // 「声明 1 字节、实际膨胀数 GB」的条目可以绕过基于声明值的检查（解压炸弹）。
+        // take(remaining + 1) 让实际输出超出预算时能被可靠检出。
+        let remaining = MAX_EPUB_UNPACKED_BYTES.saturating_sub(unpacked_bytes);
+        let mut data = Vec::new();
+        (&mut file)
+            .take(remaining.saturating_add(1))
+            .read_to_end(&mut data)
             .map_err(|_| AppError::BadRequest("EPUB 文件损坏".to_string()))?;
+        if data.len() as u64 > remaining {
+            return Err(AppError::BadRequest("EPUB 解压后体积过大".to_string()));
+        }
+        unpacked_bytes += data.len() as u64;
         files.insert(path, data);
     }
     Ok(files)
@@ -1210,4 +1222,67 @@ fn plain_text_len(html: &str) -> usize {
                 .count()
         })
         .unwrap_or_else(|| html.chars().filter(|ch| !ch.is_whitespace()).count())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Write;
+
+    fn build_zip_with_entry(name: &str, payload: &[u8]) -> Vec<u8> {
+        let mut cursor = Cursor::new(Vec::new());
+        {
+            let mut writer = zip::ZipWriter::new(&mut cursor);
+            let options = zip::write::FileOptions::default()
+                .compression_method(zip::CompressionMethod::Deflated);
+            writer.start_file(name, options).unwrap();
+            writer.write_all(payload).unwrap();
+            writer.finish().unwrap();
+        }
+        cursor.into_inner()
+    }
+
+    /// 把 zip 首个条目的「声明未压缩大小」篡改为 1 字节（本地头 + 中央目录各一处），
+    /// 模拟「声明很小、实际膨胀极大」的解压炸弹。
+    fn forge_declared_size(bytes: &mut [u8]) {
+        assert_eq!(&bytes[0..4], b"PK\x03\x04");
+        // local file header：uncompressed size 在偏移 22（LE u32）
+        bytes[22..26].copy_from_slice(&1u32.to_le_bytes());
+        // central directory：uncompressed size 在签名后偏移 24
+        let pos = bytes
+            .windows(4)
+            .position(|w| w == b"PK\x01\x02")
+            .expect("central directory not found");
+        bytes[pos + 24..pos + 28].copy_from_slice(&1u32.to_le_bytes());
+    }
+
+    #[test]
+    fn read_epub_files_rejects_output_over_limit_regardless_of_declared_size() {
+        let payload = vec![0u8; (MAX_EPUB_UNPACKED_BYTES + 1024) as usize];
+        let honest = build_zip_with_entry("OEBPS/big.xhtml", &payload);
+        drop(payload);
+
+        // 对照：声明值诚实的超大条目必须被拒
+        assert!(read_epub_files(&honest).is_err());
+
+        // 关键场景：声明大小被篡改为 1 字节。旧实现按声明值累计，会放行；
+        // 按实际解压输出限流的实现必须仍然拒绝。
+        let mut forged = honest.clone();
+        forge_declared_size(&mut forged);
+        let err = read_epub_files(&forged).expect_err("forged bomb must be rejected");
+        assert!(
+            matches!(err, AppError::BadRequest(ref msg) if msg.contains("体积过大")),
+            "unexpected error: {err:?}"
+        );
+    }
+
+    #[test]
+    fn read_epub_files_accepts_small_archive() {
+        let bytes = build_zip_with_entry("OEBPS/a.xhtml", b"<html>ok</html>");
+        let files = read_epub_files(&bytes).unwrap();
+        assert_eq!(
+            files.get("OEBPS/a.xhtml").map(|v| v.as_slice()),
+            Some(&b"<html>ok</html>"[..])
+        );
+    }
 }
