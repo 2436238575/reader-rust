@@ -231,7 +231,10 @@ div.script-data@html@@a@href
 |--------|------|
 | `{key}` | 搜索关键词，自动 URL 编码 |
 | `{page}` | 页码 |
+| `<1,2,3>` | 页码选择，按当前页码取对应位置的片段（超出范围取最后一项） |
 | <code v-pre>{{...}}</code> | 执行 JS |
+| `searchKey` | 旧别名，等同 `{key}` |
+| `searchPage` | 旧别名，等同 `{page}` |
 
 示例：
 

@@ -1,3 +1,9 @@
+> **归档文档 · 历史快照**
+>
+> 本文是 2026-05-11 书源管理重构的实施计划，其中的任务清单、文件拆分方案与 `superpowers:*` 子技能引用都属于**当时的执行上下文**，重构完成后不再维护。
+>
+> 保留仅供追溯设计取舍，请勿据此开发。书源管理的当前行为见 [用户手册 · 书源管理](/guide/user-manual#书源管理) 与 [书源开发文档](/book-source/)。
+
 # Source Manager Refactor Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.

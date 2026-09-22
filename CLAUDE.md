@@ -1,102 +1,24 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+本文件是给 Claude Code 的**导入入口**，不重复维护内容。
 
-## Build and Run Commands
+**请先读 [`AGENTS.md`](./AGENTS.md)** —— 它是本仓库工程事实的唯一权威，包含：
 
-### Rust Backend
-```bash
-cargo run                    # Run in development mode
-cargo build --release        # Build for release
-cargo test                   # Run tests
-cargo test --lib <test_name> # Run a specific test
-```
+- 项目定位与仓库/文档站地址
+- 后端、前端、e2e、发布四组命令
+- 完整配置项表（含代码默认值）
+- 代码结构与请求链路
+- 书源规则引擎（五种解析方式、URL 占位符、组合规则）
+- 数据与存储、测试规模
+- 开发约定（含「文档描述但未实现的功能要标注保留，不要删除」规则）
+- 文档地图
 
-### Web Frontend (Vue 2)
-```bash
-cd web
-npm install                   # Install dependencies
-npm run serve                # Development server
-npm run build                # Production build
-npm run lint                 # Lint code
-```
+## 三条最容易踩的坑
 
-## Configuration
+1. **必须在仓库根目录运行后端。** `storage/` 与 `.env` 都按相对路径解析，换目录会导致数据写到别处。
+2. **前端目录是 `frontend/`（Vue 3 + Vite + TypeScript + Pinia）。** 仓库中没有 `web/` 目录，也没有 Vue 2 前端。可用脚本只有 `dev` / `build` / `preview` / `test`，没有 `serve` 和 `lint`。
+3. **鉴权不是 JWT。** 是服务端自生成的不透明 token（形如 `用户名:token`），持久化在 SQLite 的 `users.token` 与 `user_sessions` 表，同一账号可多端登录。
 
-Configuration is loaded from environment variables. Default values are defined in `src/app/config.rs`. Key settings:
+## 改文档时
 
-- `SERVER_HOST` / `SERVER_PORT` - Server binding (default: `0.0.0.0:8080`)
-- `DATABASE_URL` - SQLite path (default: `sqlite:storage/reader.db?mode=rwc`)
-- `WEB_ROOT` - Static web files directory (default: `../reader/web`)
-- `STORAGE_DIR` / `ASSETS_DIR` - Storage paths
-- `LOG_LEVEL` - Logging verbosity (default: `info`)
-- `REQUEST_TIMEOUT_SECS` - HTTP request timeout (default: 15)
-
-Environment variable separator is `__` (double underscore).
-
-## Architecture Overview
-
-This is a Rust implementation of "阅读3.0" (Reader 3.0) - a book reading API server. It provides book source management, search, chapter retrieval, and content parsing.
-
-### Module Structure
-
-- **`src/api/`** - HTTP handlers and routing (axum)
-  - `router.rs` - Route definitions for all `/reader3/*` endpoints
-  - `handlers/` - Request handlers by domain (book, bookmark, rss, user, etc.)
-  - `AppState` - Shared application state (config, services)
-
-- **`src/service/`** - Business logic layer
-  - `book_service.rs` - Book search, info, chapters, content
-  - `book_source_service.rs` - CRUD for book sources (stored in SQLite)
-  - `user_service.rs` - User management and authentication
-
-- **`src/parser/`** - Content extraction engine
-  - `rule_engine.rs` - Main entry point, auto-detects content type
-  - `html.rs` - CSS selector parsing (using scraper crate)
-  - `jsonpath.rs` - JSONPath queries (using jsonpath_lib)
-  - `js.rs` - JavaScript execution (rquickjs) for `js:` prefixed rules
-
-- **`src/crawler/`** - HTTP fetching
-  - `http_client.rs` - Configurable reqwest client with compression support
-  - `fetcher.rs` - Page fetching with URL resolution
-
-- **`src/model/`** - Data structures
-  - `book_source.rs` - Book source JSON schema with rule definitions
-  - `rule.rs` - SearchRule, BookInfoRule, TocRule, ContentRule types
-
-- **`src/storage/`** - Persistence
-  - `db/` - SQLite via sqlx, with `BookSourceRepo`
-  - `cache/` - File-based chapter content cache (MD5 key)
-  - `fs/` - Filesystem operations for storage/assets
-
-### Request Flow
-
-1. `api/handlers/` receives HTTP request
-2. Handler calls `service/` layer
-3. Service fetches remote content via `crawler/http_client.rs`
-4. Content is parsed using `parser/rule_engine.rs` with rules from `BookSource`
-5. Results returned as JSON
-
-### Rule Parsing
-
-Book sources define parsing rules in JSON. The `RuleEngine` auto-detects parsing mode:
-
-- **CSS selectors** - Default for HTML (`.class`, `#id`, `tag`)
-- **JSONPath** - Auto-detected for JSON content (`$.data.list`)
-- **XPath** - Lines starting with `/` or `./`
-- **JavaScript** - Rules prefixed with `js:` or `@js:`
-- **Regex** - Rules starting with `:`
-
-Rule prefixes can be explicit: `@css:`, `@json:`, `@xpath:`, `@regex:`.
-
-### Book Source Format
-
-Book sources are JSON objects containing:
-- `bookSourceUrl` / `bookSourceName` - Source identity
-- `searchUrl` / `exploreUrl` - Search/discovery URLs with `${key}` placeholders
-- `ruleSearch` / `ruleBookInfo` / `ruleToc` / `ruleContent` - Parsing rules for each stage
-- Each rule has fields like `bookList`, `name`, `author`, `bookUrl`, etc.
-
-## Web Frontend
-
-The `web/` directory contains a Vue 2 frontend (阅读3.0 web client). It connects to the Rust backend API. Build output goes to `web/dist/`, which the backend serves as static files.
+`README.md`、`AGENTS.md`、`docs/` 三者的读者不同，分工见 `AGENTS.md` 末尾的「文档地图」。改接口或配置时，请同步更新对应的 `docs/api/` 页面与 `docs/guide/configuration.md`。

@@ -120,7 +120,7 @@ replaceRegex
 
 ## 调试技巧
 
-1. 使用 `/reader3/bookSourceDebugSse` 调试搜索规则
+1. 使用 `/reader3/bookSourceDebugSSE` 调试搜索规则
 2. 检查 `log_level=debug` 的服务端日志
 3. 优先先确认站点响应是 HTML 还是 JSON，再写规则
 4. JS 规则运行在服务端 QuickJS 中，不是浏览器 DOM 环境

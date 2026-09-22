@@ -1,69 +1,24 @@
 # Release Workflow
 
-Use this workflow when publishing a new version (backend + frontend + GitHub release + Docker Hub images).
+> 本文件是**导入入口**，完整内容已统一到文档站，请勿在此重复维护。
 
-## One-Command Release
+发布流程（版本号规则、脚本逐步行为、镜像标签、失败处理、手动兜底命令）见：
 
-From repo root:
+- 文档站：<https://givenge.github.io/reader-rust/maintainers/release>
+- 仓库内： [`docs/maintainers/release.md`](./docs/maintainers/release.md)
 
-```bash
-./scripts/release.sh
-```
-
-Default behavior with no version argument:
-- Read latest git tag `vX.Y.Z`
-- Auto-bump patch to `vX.Y.(Z+1)`
-- Sync versions to:
-- `Cargo.toml` (`[package].version`)
-- `package.json` (root)
-- `frontend/package.json`
-- Build + publish everything
-
-## Optional Version Controls
+## 一句话版本
 
 ```bash
-# Exact version
-./scripts/release.sh v1.0.3
-./scripts/release.sh 1.0.3
-
-# Auto-bump modes
-./scripts/release.sh --patch   # default
-./scripts/release.sh --minor
-./scripts/release.sh --major
+./scripts/release.sh           # 自动在最新 tag 上递增 patch 并发布
+./scripts/release.sh v1.0.9    # 发布指定版本
 ```
 
-## What the Script Does
+前置条件：工作区**完全干净（含无未跟踪文件）**、`gh auth login` 完成、`podman login docker.io` 完成、两个 musl 交叉编译目标已安装。
 
-1. Validate environment (`git/cargo/npm/podman/gh`) and authentication.
-2. Require a clean working tree.
-3. Resolve target version (explicit or auto-bumped).
-4. Update versions in Rust + frontend + root package files.
-5. Build frontend (`frontend/dist`).
-6. Build backend binaries:
-- `x86_64-unknown-linux-musl`
-- `aarch64-unknown-linux-musl`
-7. Commit and tag:
-- commit message: `release: vX.Y.Z`
-- annotated tag: `vX.Y.Z`
-- If version files already match the target version, skip the release commit and tag the current commit.
-8. Push branch and tag to GitHub.
-9. Build Docker images (explicit platforms):
-- `--platform linux/amd64` -> `docker.io/givenge/reader-rust:vX.Y.Z-x86_64`
-- `--platform linux/arm64` -> `docker.io/givenge/reader-rust:vX.Y.Z-aarch64`
-10. Verify image architecture locally.
-11. Push versioned image tags.
-12. Update and push rolling tags:
-- `latest` (x86_64)
-- `latest-aarch64` (arm64)
-13. Create GitHub Release using generated notes.
+不要在文档里手工打 tag 或手工推镜像 —— 脚本是唯一入口。
 
-## Notes
+## 其它入口
 
-- Docker repository defaults to `docker.io/givenge/reader-rust`.
-- Override repository if needed:
-
-```bash
-DOCKER_REPO=docker.io/yourname/reader-rust ./scripts/release.sh
-```
-
-- If release already exists or tag exists, script exits early to avoid accidental overwrite.
+- 工程事实权威：[`AGENTS.md`](./AGENTS.md)
+- 面向使用者的部署说明：[`docs/guide/docker.md`](./docs/guide/docker.md)、[`docs/guide/manual-deploy.md`](./docs/guide/manual-deploy.md)

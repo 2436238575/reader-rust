@@ -1,0 +1,209 @@
+# 架构说明
+
+本文描述 Reader-Rust 的代码组织方式与关键设计取舍。配置项、命令等速查内容见仓库根目录的 `AGENTS.md`。
+
+## 分层结构
+
+```
+frontend/  (Vue 3 + Vite + Pinia)
+     │  HTTP /reader3/*   统一 { isSuccess, errorMsg, data } 包装
+     ▼
+src/api/          路由匹配、鉴权提取、参数解析、响应包装（axum）
+     ▼
+src/service/      业务编排：缓存命中、书源选择、请求头与 Cookie 准备、书架与用户规则、AI 资料
+     ▼
+src/parser/       按 BookSource 规则解析；需要页面内容时经 crawler 抓取
+     ▼
+src/crawler/      reqwest 抓取上游页面，URL 占位符展开、页面选择、字符集解码
+
+底座（被各层按需引用，不反向依赖上层）：
+  src/model/   数据结构        src/util/    加密 / 哈希 / 文本 / 时间
+  src/error/   统一错误类型     src/storage/ 持久化（由 service 使用）
+```
+
+依赖方向已核实为单向：`api → service → parser → crawler`，且 `parser/` 与 `crawler/` **不依赖** `service/`。
+
+::: tip 图里是「依赖方向」，不是「调用顺序」
+绝大多数流程中，**抓取由 `service` 发起**，拿到响应体后再把字符串交给 `parser` 解析 —— 例如
+
+```rust
+let res = self.fetch_with_rate(source, spec).await?;      // service 经 crawler 抓取
+let books = self.parser.search_books(source, &res.body, &res.url);  // parser 只解析
+```
+
+（见 `src/service/book_service.rs:259-265`）
+
+`parser` 之所以也依赖 `crawler`，是因为少数规则需要它自己再发请求（例如顺着「下一页」规则继续抓取）。
+所以「`parser` 依赖 `crawler`」说的是编译期依赖，不表示每次解析都走网络。
+:::
+
+## 模块职责
+
+### `src/api/`
+
+| 文件 | 职责 |
+|------|------|
+| `router.rs` | **路由真相来源**。全部业务路由挂在 `/reader3` 下，唯一例外是根路径 `GET /health` |
+| `auth.rs` | 从请求头 `Authorization` 或查询参数 `accessToken` 提取凭证 |
+| `mod.rs` | `AppState`：共享配置与各 service 实例 |
+| `handlers/` | 按领域拆分，共 12 个模块：`book`、`book_source`、`book_group`、`bookmark`、`rss`、`user`、`ai_book`、`ai_model`、`ai_proxy`、`replace_rule`、`update`、`webdav` |
+
+`handlers/book.rs` 是最大的单个文件（约 2900 行），涵盖书架、章节、缓存、上传等书籍相关接口。
+
+静态资源由同一台 axum 实例托管：
+
+- `/assets` → `WEB_ROOT/assets`，未命中则回落到 `ASSETS_DIR`
+- 其余路径 → `WEB_ROOT`（fallback，用于前端路由）
+
+请求体上限 100 MB（本地书籍与备份导入需要），并挂了 CORS、请求 ID 与 trace 中间件。
+
+### `src/service/`
+
+业务规则所在层，handler 里只做参数提取，判断逻辑都下沉到这里。
+
+| 文件 | 职责 |
+|------|------|
+| `book_service.rs` | 搜索、发现、详情、目录、正文的编排（最大的 service） |
+| `book_source_service.rs` | 书源 CRUD、导入导出、可用性检测 |
+| `user_service.rs` | 用户、会话、token、权限 |
+| `local_txt_book.rs` / `local_epub_book.rs` | 本地书籍导入与解析 |
+| `ai_book_service.rs` | AI 资料生成与增量更新 |
+| `ai_model_service.rs` | 后端模型配置与可见性控制 |
+| `json_document_service.rs` | 通用 JSON 文档存取（namespace + name） |
+| `book_group_service.rs` / `update_service.rs` | 分组、版本更新检查 |
+
+### `src/parser/`
+
+规则解析引擎，6 个文件合计约 4100 行。
+
+| 文件 | 职责 |
+|------|------|
+| `rule_engine.rs` | 核心入口（2508 行）。公开方法对应书源的六种用途：`search_books`、`explore_books`、`book_info`、`chapter_list`、`content`、`next_content_url` |
+| `rule_analyzer.rs` | 组合规则切分。按 `&&` / `\|\|` / `%%` 拆分，**会正确跳过引号与括号内的分隔符** |
+| `html.rs` | CSS 选择器（`scraper`） |
+| `jsonpath.rs` | JSONPath（`jsonpath_lib`） |
+| `js.rs` | JavaScript 求值（`rquickjs`） |
+
+`RuleEngine` 的方法都是**同步函数** —— JS 求值通过 rquickjs 同步完成，调用方在 async 上下文里自行处理阻塞。
+
+解析方式识别顺序与显式前缀见 [书源规则引擎](/book-source/rules)；完整兼容规格（含字段表与求值语义）见 [参考规格](/reference/book-source-rules)。
+
+### `src/crawler/`
+
+| 文件 | 职责 |
+|------|------|
+| `http_client.rs` | 可配置的 reqwest 客户端，支持 gzip / brotli / deflate 与 Cookie |
+| `url_analyzer.rs` | URL 占位符展开（`{key}`、`{page}`、<code v-pre>{{js}}</code>、`<1,2,3>`）、分页生成、内联 JS |
+
+### `src/storage/`
+
+| 位置 | 职责 |
+|------|------|
+| `db/mod.rs` | sqlx 连接池（5 条连接），启动时自动跑迁移 |
+| `db/migrations/` | 三个迁移：`0001_init`、`0002_add_user_ns`、`0003_users_and_account_documents` |
+| `cache/file_cache.rs` | 章节正文文件缓存，文件名用 MD5，数据库只存索引 |
+| `fs/` | `storage/` 与 `assets/` 的文件操作 |
+
+### 其他
+
+- `src/app/` —— 配置加载（`config.rs`）与启动引导
+- `src/model/` —— `BookSource` 及各 rule 结构体，与书源 JSON 字段一一对应（大量 `#[serde(rename)]`）
+- `src/error/` —— 统一错误类型
+- `src/util/` —— 零散工具
+
+## 一次搜索请求的完整链路
+
+以 `GET /reader3/searchBook?key=xxx&bookSourceUrl=yyy` 为例：
+
+1. `router.rs` 匹配到 `handlers::search_book`
+2. handler 从 `AppState` 取出 `BookService`，提取 `key` 与目标书源
+3. `book_service` 查找书源配置；`SECURE=true` 时先校验密钥
+4. 书源 `searchUrl` 经 `url_analyzer` 展开占位符 → 得到真实 URL
+5. `crawler` 发起请求（自动按响应头解码字符集）
+6. `rule_engine.search_books` 按 `ruleSearch` 逐字段解析出书籍列表
+7. 结果包装成 `{ isSuccess, errorMsg, data }` 返回
+
+多书源搜索（`searchBookMultiSSE`）把第 2–7 步并发跑在多本书源上，并用 SSE 把每个书源的结果流式推给前端 —— 因此响应不是一次性 JSON，前端需要按 SSE 协议读取。
+
+## 鉴权与身份
+
+请求里的身份信息统一由 `src/api/auth.rs` 的 `AuthContext` 提取，共三个独立字段，各自支持「请求头」与「URL 查询参数」两种传法：
+
+| 字段 | 请求头 | 查询参数 | 说明 |
+|------|--------|---------|------|
+| `access_token` | `Authorization` | `accessToken` | 用户登录凭证 |
+| `secure_key` | `X-Secure-Key` | `secureKey` | 安全模式密钥，与用户无关 |
+| `user_ns` | `X-User-NS` | `userNS` | 数据归属命名空间 |
+
+### 登录凭证不是 JWT
+
+登录成功后服务端生成**不透明 token**，以 `用户名:token` 的形式返回。`Authorization` 头既接受裸 token，也接受 `Bearer <token>` 前缀（大小写均可）—— 但这只是兼容写法，**token 本身不是 JWT，没有 payload、不能自解析**。
+
+凭证的持久化方式是：
+
+- `users.token` 保存该用户最近一次登录的 token
+- `user_sessions` 表按 `(username, token)` 存多端会话，并带 `expire_at` 过期时间
+
+因为按会话存表，同一账号可**多端同时登录**，且服务端可以逐会话失效。
+
+校验失败时返回 `errorMsg = "NEED_LOGIN"`（或直接 HTTP 401），前端据此弹出登录框。
+
+`SECURE=true` 是**另一层**独立机制，只校验 `secureKey`，与用户登录无关。两者可以叠加：安全模式挡机器访问，登录挡未授权用户。
+
+### `user_ns` 的作用
+
+`user_ns` 是**多用户数据隔离键**，不是用户表字段。`book_sources` 表用 `(user_ns, book_source_url)` 作复合主键 —— 每个命名空间持有自己的一整套书源，书架、AI 资料等也按 `user_ns` 隔离。默认命名空间是 `'default'`。
+
+它还可以由客户端直接指定（不登录也能带），这为「同一实例服务多个独立用户组」提供了可能。
+
+## 存储设计
+
+SQLite 表：
+
+| 表 | 主键 | 用途 |
+|----|------|------|
+| `book_sources` | `(user_ns, book_source_url)` | 书源配置（整份 JSON 存储） |
+| `book_cache` | — | 书籍元信息缓存 |
+| `chapter_cache` | — | 章节缓存索引，正文另存文件 |
+| `users` | `username` | 用户、token、权限开关（`is_admin`、`enable_webdav`、`enable_local_store`、`enable_ai_model`） |
+| `user_sessions` | `(username, token)` | 多端会话与过期时间 |
+| `json_documents` | `(namespace, name)` | 通用 JSON 文档存取（用户配置、书源变量等复用这张表） |
+| `ai_book_memories` | — | AI 资料 |
+
+设计取舍：
+
+- **书源存整份 JSON** 而不是打散成列 —— 书源字段会随阅读3.0 规范演进，打散后每次都要改表；整份存换来结构灵活性，代价是无法按字段建索引。
+- **章节正文存文件而不是数据库** —— 单章动辄数十 KB 且数量极多，塞进 SQLite 会让库文件迅速膨胀并拖慢备份。文件用 MD5 命名，天然去重，数据库只留索引。
+- **`json_documents` 通用化** —— 用户配置、书源变量等零散键值不再各建一张表，减少迁移次数。
+- **权限用布尔列而非角色表** —— 目前只有 `is_admin` 加三个功能开关（WebDAV / 本地存储 / AI 模型），用列更直观；若将来权限维度继续膨胀，需要再拆表。
+
+`storage/` 整个目录属于运行期数据，已被 gitignore，清理时不要误删。
+
+## 前端结构
+
+```
+frontend/src/
+  views/       8 个路由页：Home / Reader / Explore / Recent / Rss / RssArticle / RssManage / AiBook
+  components/  31 个组件，含 reader/ 与 source-manager/ 两个子目录
+  stores/      Pinia：reader / bookshelf / explore / source / rss / aiBook / app
+  api/         14 个接口模块 + http.ts（axios 实例）
+  utils/       PWA、简繁转换、TTS、加密工具
+```
+
+两个关键约定：
+
+- `api/http.ts` 里的 axios 实例 `baseURL = /reader3`，超时 120 秒。请求拦截器用 `utils/secureAccess` 的 `buildAuthHeaderValues(localStorage)` 取出凭证，分别注入 `Authorization` 与 `X-Secure-Key`。
+- 响应拦截器会自动拆掉 `{ isSuccess, errorMsg, data }` 外壳，业务代码直接拿 `data`。识别到 `errorMsg === 'NEED_LOGIN'`、`data === 'NEED_LOGIN'` 或 HTTP 401 时派发 `need-login` 事件拉起登录框（同一时间 1.5 秒内只派发一次，避免并发请求弹出多个登录框）。
+
+对返回裸数据（封面图、文件下载等没有 `isSuccess` 字段的响应）的接口，拦截器会原样放行。
+
+## 扩展点
+
+| 想做什么 | 动哪里 |
+|---------|--------|
+| 加一个接口 | `router.rs` 注册路由 + 对应 `handlers/<领域>.rs` 写 handler，业务逻辑放 `service/` |
+| 改书源解析行为 | `parser/rule_engine.rs`；组合规则切分改动在 `rule_analyzer.rs` |
+| 支持新的 URL 占位符 | `crawler/url_analyzer.rs` |
+| 加一张表 | 在 `db/migrations/` 新增迁移文件，**不要改历史迁移** |
+| 加配置项 | `app/config.rs` 的 `AppConfig` + `Default` + `set_default` 三处都要改，并同步更新 `AGENTS.md` 与 [配置](/guide/configuration) |
+| 改前端接口封装 | `frontend/src/api/http.ts` 与对应模块 |

@@ -242,7 +242,7 @@ URL 规则 MUST 按以下顺序处理：
 
 1. 初始化请求头。
 2. 执行 `@js:` 或 `<js>...</js>` URL JS。
-3. 替换 `{{...}}` 内嵌 JS。
+3. 替换 <code v-pre>{{...}}</code> 内嵌 JS。
 4. 替换 `<...>` 页码选择器。
 5. 解析 URL 主体和 URL 参数 JSON。
 6. 编码 query 或 POST form。
@@ -312,9 +312,9 @@ URL JS 绑定变量 MUST 包含：
 | `source` | 当前书源。 |
 | `result` | 上一步结果。 |
 
-### 5.5 `{{...}}` 替换
+### 5.5 <code v-pre>{{...}}</code> 替换
 
-如果 `ruleUrl` 同时包含 `{{` 和 `}}`，MUST 扫描所有 `{{...}}` 片段并执行 JS。
+如果 `ruleUrl` 同时包含 <code v-pre>{{</code> 和 `}}`，MUST 扫描所有 <code v-pre>{{...}}</code> 片段并执行 JS。
 
 替换行为：
 
@@ -483,7 +483,7 @@ get(key: String): String
 | `replacement` | 第二个 `##` 后的替换内容。 |
 | `replaceFirst` | 存在第四段 `##` 时为 true。 |
 | `putMap` | `@put:{...}` 解析出的变量保存规则。 |
-| `ruleParam` / `ruleType` | 内嵌 `@get`、`{{}}`、正则分组引用。 |
+| `ruleParam` / `ruleType` | 内嵌 `@get`、<code v-pre>{{}}</code>、正则分组引用。 |
 
 模式识别顺序 MUST 一致：
 
@@ -499,11 +499,11 @@ get(key: String): String
 然后按顺序执行：
 
 1. 分离 `@put:{...}`。
-2. 分离 `@get:{...}` 和 `{{...}}`。
+2. 分离 `@get:{...}` 和 <code v-pre>{{...}}</code>。
 3. 分离 `$1` 到 `$99` 分组引用。
 4. 每次求值前执行 `makeUpRule(result)`，生成最终 `rule` 和替换参数。
 
-### 6.5 `@put`、`@get`、`{{}}`
+### 6.5 `@put`、`@get`、<code v-pre>{{}}</code>
 
 `@put` 正则：
 
@@ -520,7 +520,7 @@ for (key, valueRule) in putMap:
   put(key, getString(valueRule))
 ```
 
-`@get` 与 `{{}}` 识别正则：
+`@get` 与 <code v-pre>{{}}</code> 识别正则：
 
 ```regex
 @get:\{[^}]+?\}|\{\{[\w\W]*?\}\}
@@ -528,7 +528,7 @@ for (key, valueRule) in putMap:
 
 若出现这些片段，并且当前不是 `Js`/`Regex` 模式，且片段前文本位于规则开头或不包含 `##`，则当前模式切到 `Regex`。这是当前项目的隐式兼容行为。
 
-`{{...}}` 中内容的处理：
+<code v-pre>{{...}}</code> 中内容的处理：
 
 - 如果内容以 `@`、`$.`、`$[`、`//` 开头，当作单条内容规则执行 `getString()`。
 - 否则作为 JS 执行，`result` 传入当前上一步结果。
@@ -690,12 +690,12 @@ elementsType = "&&"
 
 两种内嵌替换：
 
-1. `innerRule("{{", "}}")`：用于 URL `{{js}}`。
+1. <code v-pre>innerRule("{{", "}}")</code>：用于 URL <code v-pre>{{js}}</code>。
 2. `innerRule("{$.", startStep=1, endStep=1)`：用于 JsonPath 的 `{$.path}`，使用平衡花括号。
 
 若没有成功替换：
 
-- `{{...}}` 版本返回原始字符串。
+- <code v-pre>{{...}}</code> 版本返回原始字符串。
 - `{$. ...}` 版本返回空字符串。
 
 ## 8. JSoup / CSS 默认规则
@@ -1294,10 +1294,10 @@ getContentAwait(source, book, chapter, nextChapterUrl=null, needSave=true):
 - `@Header:{...}` -> URL 参数 `headers`。
 - `|charset=...` -> URL 参数 `charset`。
 - URL 中 `@body` -> 参数 `{"method":"POST","body":"body"}`。
-- `searchKey` -> `{{key}}`。
-- `searchPage` -> `{{page}}`。
+- `searchKey` -> <code v-pre>{{key}}</code>。
+- `searchPage` -> <code v-pre>{{page}}</code>。
 - `{...}` 页码选择器 -> `<...>`。
-- `<js>` 里的 `=searchKey`、`=searchPage` -> `={{key}}`、`={{page}}`。
+- `<js>` 里的 `=searchKey`、`=searchPage` -> <code v-pre>={{key}}</code>、<code v-pre>={{page}}</code>。
 
 ## 19. 兼容性测试用例建议
 
@@ -1316,7 +1316,7 @@ getContentAwait(source, book, chapter, nextChapterUrl=null, needSave=true):
 期望：
 
 - URL 主体补全到 `https://a.test/search?...`。
-- `{{key}}` 执行 JS 返回关键字。
+- <code v-pre>{{key}}</code> 执行 JS 返回关键字。
 - `<1,2,3>` 替换成 `2`。
 - headers 合并 `Referer`。
 

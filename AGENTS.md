@@ -1,95 +1,279 @@
 # AGENTS.md
 
-This file provides guidance to Codex (Codex.ai/code) when working with code in this repository.
+本文件是本仓库**工程事实的唯一权威**，面向 AI 编码代理与贡献者。任何与本文件冲突的说明（包括历史文档、`CLAUDE.md`、代码注释）以代码为准；发现不一致时，请修正文档而不是照抄文档。
 
-## Commands
+---
 
-### Rust Backend
+## 项目定位
+
+Reader-Rust 是 [阅读3.0](https://github.com/hectorqin/reader) 的 Rust 重写版：一个**书源阅读 API 服务端**，负责书源管理、内容抓取、规则解析、书架与用户数据持久化，并内置一套 Vue 3 Web 界面。
+
+- 仓库：<https://github.com/givenge/reader-rust>
+- 文档站：<https://givenge.github.io/reader-rust/>
+- 免责声明：本项目只提供书源管理、解析、阅读与缓存的技术能力，**不内置、不存储、不分发任何受版权保护的书籍内容**。使用者需自行确保所添加的书源与访问内容已获合法授权。
+
+---
+
+## 常用命令
+
+### 后端（Rust）
+
 ```bash
-cargo run                    # Dev mode
-cargo build --release        # Release build
-cargo test                   # All tests
-cargo test --lib <test_name> # Single test
+cargo run                      # 开发模式运行，默认监听 0.0.0.0:8080
+cargo build                    # 调试构建
+cargo build --release          # 发布构建
+cargo test                     # 全部测试（Rust 侧共 86 个）
+cargo test <关键字>             # 按名称过滤测试
+cargo clippy --all-targets     # 静态检查
+cargo fmt                      # 格式化
 ```
 
-### Frontend
+- 必须在**仓库根目录**运行：`storage/` 与 `.env` 都按相对路径解析。
+- 首次 `cargo build` 约需 10 分钟以上，耗时集中在 `rquickjs`（JS 引擎）、`ring`、`libsqlite3-sys` 的 C 代码编译；之后增量构建只需数秒。
+
+### 前端（Vue 3 + Vite）
+
 ```bash
-cd frontend && npm install && npm run dev    # Dev server
-cd frontend && npm run build                 # Builds to frontend/dist/
+cd frontend
+npm install
+npm run dev                    # 开发服务器，默认 http://localhost:5173
+npm run build                  # 类型检查 + 构建 → frontend/dist/
+npm run preview                # 预览构建产物
+npm test                       # vitest 单元测试
 ```
 
-### Docker
-```bash
-# Build ARM64 image (requires pre-built binary)
-cargo build --release --target aarch64-unknown-linux-musl
-podman build --platform linux/arm64 -t docker.io/givenge/reader-rust:${TAG}-aarch64 -f Dockerfile .
+- `npm run build` 会先执行 `vue-tsc -b`，**类型错误会直接导致构建失败**。
+- 开发服务器把 `/reader3` 反向代理到后端（见 `frontend/vite.config.ts`）。代理目标端口必须与后端 `SERVER_PORT` 保持一致。
+- 前端可用脚本只有 `dev` / `build` / `preview` / `test`，**没有 `lint` 或 `serve` 脚本**。
 
-# Build x86_64 image (requires pre-built binary)
-cargo build --release --target x86_64-unknown-linux-musl
-podman build --platform linux/amd64 -t docker.io/givenge/reader-rust:${TAG}-x86_64 -f Dockerfile.x86 .
+### 端到端测试（Playwright）
+
+```bash
+npm install                    # 仓库根目录，安装 @playwright/test
+npx playwright install chrome
+
+# 需要先手动启动后端
+npm run test:e2e               # 等价于 playwright test
+npm run test:e2e:headed        # 有头模式
+npm run test:e2e:ui            # UI 模式
 ```
 
-Dockerfiles do NOT compile Rust in-container. Build the binary on the host first, then copy it.
+- 用例位于 `tests/e2e/*.spec.ts`，默认访问 `http://127.0.0.1:8080`。
+- 后端换端口时用环境变量覆盖：`PLAYWRIGHT_BASE_URL=http://127.0.0.1:18080 npm run test:e2e`。
+- 配置使用系统已安装的 Chrome（`channel: 'chrome'`），机器上需要有 Chrome。
 
-### Docker Release (Podman)
-- Default release repository: `docker.io/givenge/reader-rust`
-- Default rolling tags:
-- `latest` -> x86_64
-- `latest-aarch64` -> arm64
-- Build commands must explicitly set platform:
-- x86_64: `podman build --platform linux/amd64 ... -f Dockerfile.x86 .`
-- arm64: `podman build --platform linux/arm64 ... -f Dockerfile .`
-- For any “发布版本 / 发布docker镜像 / release版本” request, run `./scripts/release.sh` by default.
-- If user does not specify version, auto-bump patch from latest tag (`vX.Y.Z -> vX.Y.(Z+1)`).
-- Full end-to-end workflow is in `/RELEASE_WORKFLOW.md`.
-- Docker-specific details remain in `/DOCKER_RELEASE.md`.
+### 发布
 
-## Configuration
+统一走仓库脚本，**不要手动打 tag 或手工推镜像**：
 
-Loaded from `.env` file (via `dotenvy`) or environment variables. Separator is `__` for nested keys. See `.env.example` for all options.
+```bash
+./scripts/release.sh           # 自动在最新 tag 上递增 patch 并发布
+./scripts/release.sh v1.0.9    # 发布指定版本
+./scripts/release.sh --minor   # 递增次版本号
+```
 
-Key settings:
-- `SERVER_HOST` / `SERVER_PORT` — default `0.0.0.0:8080`
-- `DATABASE_URL` — SQLite path, default `sqlite:storage/reader.db?mode=rwc`
-- `WEB_ROOT` — static files path, default `frontend/dist`
-- `SECURE` / `SECURE_KEY` — security mode toggle
-- `INVITE_CODE` — registration gate
-- `USER_LIMIT` / `USER_BOOK_LIMIT` — default 50 / 2000
-- `LOG_LEVEL` — default `info`
-- `REQUEST_TIMEOUT_SECS` — default 15
+完整流程见 [维护者文档 · 发布](./docs/maintainers/release.md)。
 
-## Architecture
+---
 
-Rust implementation of "阅读3.0" — a book source reading API server.
+## 配置
 
-### Module Structure
-- `src/api/` — HTTP handlers & routing (axum), routes under `/reader3/*`
-- `src/service/` — Business logic (book search, sources, users)
-- `src/parser/` — Content extraction engine with rule-based parsing
-- `src/crawler/` — HTTP fetching via reqwest
-- `src/model/` — Data structures (BookSource, rules)
-- `src/storage/` — SQLite (sqlx), file cache (MD5 key), filesystem ops
-- `src/app/` — Config, logging, server setup
-- `src/error/` — Error types
-- `src/util/` — Utilities
+配置来源优先级：**环境变量 > `.env` 文件 > `src/app/config.rs` 中的代码默认值**。
 
-### Request Flow
-`api/handlers` → `service/` → `crawler/` (fetch) → `parser/rule_engine` (parse with BookSource rules) → JSON response
+```bash
+cp .env.example .env
+```
 
-### Rule Parsing
-`RuleEngine` auto-detects parsing mode:
-- **CSS selectors** — default for HTML (`.class`, `#id`, `tag`)
-- **JSONPath** — auto-detected for JSON (`$.data.list`)
-- **XPath** — lines starting with `/` or `./`
-- **JavaScript** — `js:` or `@js:` prefix (rquickjs)
-- **Regex** — starts with `:`
-- Explicit prefixes: `@css:`, `@json:`, `@xpath:`, `@regex:`
+`.env` 已被 gitignore；后端即使没有 `.env` 也能用默认值启动。
 
-### Book Source Format
-JSON objects with `bookSourceUrl`, `bookSourceName`, `searchUrl`/`exploreUrl` (with `${key}` placeholders), and `ruleSearch`/`ruleBookInfo`/`ruleToc`/`ruleContent` parsing rules.
+| 变量 | 代码默认值 | 说明 |
+|------|-----------|------|
+| `SERVER_HOST` | `0.0.0.0` | 监听地址，本地开发建议改 `127.0.0.1` |
+| `SERVER_PORT` | `8080` | 监听端口 |
+| `DATABASE_URL` | `sqlite:storage/reader.db?mode=rwc` | SQLite 连接串，`mode=rwc` 表示不存在则创建 |
+| `STORAGE_DIR` | `storage` | 运行期数据根目录 |
+| `ASSETS_DIR` | `storage/assets` | 上传资源目录 |
+| `WEB_ROOT` | `frontend/dist` | 前端静态文件目录 |
+| `LOG_LEVEL` | `info` | `trace` / `debug` / `info` / `warn` / `error` |
+| `REQUEST_TIMEOUT_SECS` | `15` | 抓取上游站点的超时时间 |
+| `SECURE` | `false` | 安全模式开关 |
+| `SECURE_KEY` | 空 | 安全模式密钥 |
+| `INVITE_CODE` | 空 | 注册邀请码，为空表示不限制 |
+| `USER_LIMIT` | `50` | 用户数上限 |
+| `USER_BOOK_LIMIT` | `2000` | 单用户书架上限 |
+| `USER_LOCAL_BOOK_LIMIT` | `0` | 单用户本地上传上限，`0` 表示不限制 |
 
-## Important Notes
+两点需要注意：
 
-- **Frontend app**: `frontend/` is the Vue 3 + Vite frontend. Docker images use `frontend/dist/`.
-- **`/storage/` is gitignored**: Contains user data and SQLite DB.
-- **No tests currently**: `cargo test` will pass but there are no test files written yet.
+- **配置结构是扁平的**，没有嵌套层级，因此不存在「用 `__` 表示层级」这种用法。
+- 代码默认 `SECURE=false`，而 `.env.example` 模板给的是 `SECURE=true`。这是刻意为之：模板按生产安全默认提供，**不要为了让两者一致而把模板改成 `false`**。开启 `SECURE` 后，请求需带 `X-Secure-Key` 头或 URL 查询参数 `secureKey`。
+
+---
+
+## 代码结构
+
+```
+src/
+  main.rs / lib.rs        入口，各十余行
+  api/                    路由与 HTTP 处理（axum），16 文件约 7200 行
+    router.rs             全部路由定义（唯一真相来源）
+    auth.rs               从请求头 / 查询参数提取鉴权信息
+    handlers/             13 个文件，按领域拆分：book、book_source、user、rss、
+                          bookmark、book_group、ai_book、ai_model、ai_proxy、
+                          replace_rule、update、webdav
+  service/                业务编排，11 文件约 5500 行
+  parser/                 规则解析引擎，6 文件约 4100 行
+    rule_engine.rs        核心（2500 行）：六种用途的解析入口
+    rule_analyzer.rs      组合规则拆分（正确处理引号与括号嵌套）
+    html.rs / jsonpath.rs / js.rs
+  crawler/                reqwest 抓取与 URL 处理，4 文件约 970 行
+    url_analyzer.rs       占位符替换、页面选择、内联 JS
+  model/                  BookSource 等数据结构，14 文件约 1000 行
+  storage/               SQLite（sqlx）+ 文件缓存，7 文件约 240 行
+    db/migrations/        0001_init / 0002_add_user_ns / 0003_users_and_account_documents
+    cache/file_cache.rs   章节内容文件缓存，以 MD5 命名
+  app/                    配置加载与启动引导
+  error/                  错误类型
+  util/                   加密、哈希、文本、时间等工具
+frontend/                 Vue 3 + TypeScript + Vite + Pinia 前端
+docs/                     VitePress 文档站，见文末「文档地图」
+tests/                    Rust 集成测试（10 文件）+ Playwright e2e
+scripts/release.sh        发布脚本
+storage/                  运行期数据，gitignored，首次启动自动创建
+```
+
+规模参照（便于判断改动影响面）：后端 `src/` 共 70 个 `.rs`、约 19300 行，其中最大的三个文件是
+`api/handlers/book.rs`（3185 行）、`parser/rule_engine.rs`（2508 行）、`service/book_service.rs`（1717 行）；
+前端 `src/` 下 117 个文件（72 个 `.ts`，其中 20 个是测试；40 个 `.vue`；2 个 CSS + 3 个静态资源）。
+
+---
+
+## 请求链路
+
+```
+HTTP 请求
+  → api/router.rs          路由匹配
+  → api/handlers/*         提取鉴权与参数
+  → service/*              业务编排（缓存命中判断、书源选择、请求头与 Cookie 准备）
+  → parser/rule_engine.rs  按 BookSource 规则解析；需要页面内容时经 crawler 抓取
+  → crawler/*              reqwest 抓取上游页面（占位符展开、字符集解码）
+  → 统一响应包装返回 JSON
+```
+
+各层依赖方向（已核实）：`api → service → parser → crawler`。`parser/` 与 `crawler/` 都**不依赖** `service/`；
+`model/`、`util/`、`error/` 是被各层共用的底座模块；`storage/` 由 `service/` 使用。
+
+响应一律包装为：
+
+```json
+{ "isSuccess": true, "errorMsg": "", "data": {} }
+```
+
+- `isSuccess=false` 时从 `errorMsg` 读取失败原因。
+- `errorMsg` 为 `"NEED_LOGIN"`（或直接返回 HTTP 401）表示未登录，前端据此弹出登录框。
+
+鉴权说明：**不使用 JWT**。登录返回的 `accessToken` 形如 `用户名:token`，服务端把 token 持久化在 SQLite（`users.token` 与 `user_sessions` 表），因此同一账号可多端登录。请求时放在 `Authorization` 头（也支持 URL 查询参数 `accessToken`）。
+
+---
+
+## 书源规则引擎
+
+`RuleEngine` 的公开方法正好对应书源的六种用途，全部是**同步函数**（JS 求值通过 rquickjs 同步完成）：
+
+`search_books` · `explore_books` · `book_info` · `chapter_list` · `content` · `next_content_url`
+
+### 解析方式识别
+
+| 方式 | 识别规则 |
+|------|---------|
+| CSS 选择器 | 默认，用于 HTML（`.class`、`#id`、`tag`） |
+| JSONPath | 自动识别 JSON（`$.data.list`） |
+| XPath | 以 `/` 或 `./` 开头 |
+| 正则 | 直接书写正则 |
+| JavaScript | `js:` / `@js:` 前缀，或 `{{表达式}}` 内联 |
+
+也可用显式前缀强制指定：`@css:`、`@json:`、`@xpath:`、`@regex:`。
+
+### URL 占位符
+
+书源中的 `searchUrl` / `exploreUrl` 支持：
+
+- `{key}` — 搜索关键字
+- `{page}` — 页码
+- `{{表达式}}` — 内联 JavaScript
+- `<1,2,3>` — 按页码取候选值
+- 兼容旧写法的 `searchKey` / `searchPage`
+
+**是 `{key}` 而不是 `${key}`。**
+
+### 组合规则
+
+多条规则可用分隔符串联，`rule_analyzer.rs` 在切分时会跳过引号与括号内部的同名符号，因此 `div[a="x&&y"]&&span` 不会被错误切开。
+
+| 分隔符 | 语义 |
+|--------|------|
+| `&&` | 依次串联（前一步的结果作为后一步的输入） |
+| `\|\|` | 取第一个非空结果 |
+| `%%` | 并列取值 |
+
+完整的规则语法与字段清单见 [`book-source-rules.md`](./docs/reference/book-source-rules.md)；面向书源作者的分篇教程见 [书源开发文档](./docs/book-source/index.md)。
+
+---
+
+## 数据与存储
+
+- SQLite 通过 `sqlx` 访问，连接池 5 条连接，启动时自动执行 `src/storage/db/migrations/` 下的迁移。
+- 主要表：`book_sources`（书源 JSON）、`book_cache`、`chapter_cache`（章节缓存索引）、`users`、`user_sessions`、`json_documents`（通用 JSON 文档，按 namespace + name 存取）、`ai_book_memories`。
+- 章节正文以文件形式缓存于 `storage/cache/`，文件名用 MD5，数据库里只存索引。
+- `storage/` 全部属于运行期数据，**不要提交**，清理时也不要误删。
+
+---
+
+## 测试
+
+Rust 侧共 **86 个测试**（56 个 `#[test]` + 30 个 `#[tokio::test]`），分布为：
+
+- `tests/` 下 10 个集成测试文件，其中 `book_source_compat.rs` 用例最多（15 个）；
+- `src/` 内的内联单元测试模块。
+
+前端使用 vitest，共 20 个 `*.test.ts`。
+
+需要注意：
+
+- `tests/yckceo_live_sources.rs` 会**访问真实网络**抓取在线书源，在无网或受限环境中失败属预期行为。
+- `tests/e2e/` 的 Playwright 用例需要先手动启动后端。
+
+新增功能时请补充测试：集成测试放 `tests/`，纯逻辑单元测试就近放在 `src` 的内联模块里。
+
+---
+
+## 开发约定
+
+1. **改动要同步文档。** 新增或修改 `/reader3/*` 接口时，同时更新 `docs/api/` 下对应页面；改动配置项时更新本文件与 `docs/guide/configuration.md`。
+2. **文档是开发目标的一部分。** 若某功能只在文档中描述、代码尚未实现，**不要删除文档条目**，按统一格式标注保留：
+
+   ```
+   > **未实现**：<说明>（依据：<代码位置>）
+   ```
+
+3. **不要提交** `storage/`、`.env`、构建产物（`target/`、`frontend/dist/`）。
+4. **发布只走 `scripts/release.sh`**。脚本会自动同步 `Cargo.toml`、根 `package.json`、`frontend/package.json` 的版本号，并要求工作区干净（**包括没有未跟踪文件**）。
+5. 修改前端后至少跑一次 `npm run build`，确保类型检查通过。
+6. `AGENTS.md` 与 `CLAUDE.md` 保持单一来源：`CLAUDE.md` 只是导入入口，内容不要在这里重复维护。
+
+---
+
+## 文档地图
+
+面向不同读者的文档分工如下，改文档前先确认应该改哪一份：
+
+| 文档 | 读者 | 内容 |
+|------|------|------|
+| `README.md` | 访客 / 使用者 | 项目简介、特性、最快上手路径 |
+| `AGENTS.md`（本文件） | AI 编码代理 / 贡献者 | 工程事实权威：命令、配置、结构、约定 |
+| `docs/guide/` | 部署者 / 最终用户 | 安装部署、配置、功能说明、用户手册 |
+| `docs/api/` | 接口集成方 | `/reader3/*` 接口参考 |
+| `docs/book-source/` | 书源作者 | 书源规则编写教程 |
+| `docs/reference/book-source-rules.md` | 书源作者 / 实现者 | 阅读3.0 规则完整兼容规格 |
+| `docs/maintainers/` | 维护者 | 架构说明、发布流程 |
+| `docs/archive/` | 维护者 | 历史设计与计划快照，**不代表当前实现** |
