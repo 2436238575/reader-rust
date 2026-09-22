@@ -72,6 +72,12 @@ pub struct StrResponse {
 }
 
 pub async fn fetch(client: &HttpClient, req: RequestSpec) -> anyhow::Result<FetchResponse> {
+    // 出站守卫：书源 URL 由用户导入，可能指向内网/云元数据地址
+    if let Err(reason) =
+        crate::crawler::url_guard::ensure_outbound_url_str_allowed(&req.url).await
+    {
+        anyhow::bail!("请求被出站策略拒绝: {reason}");
+    }
     let mut last_err: Option<anyhow::Error> = None;
     let max_retries = req.retry;
     for attempt in 0..=max_retries {

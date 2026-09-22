@@ -1045,6 +1045,10 @@ impl BookService {
     }
 
     pub async fn get_cover(&self, user_ns: &str, url: &str) -> Result<(Vec<u8>, String), AppError> {
+        // 出站守卫：封面 URL 来自查询参数，且 `/cover` 允许匿名访问
+        crate::crawler::url_guard::ensure_outbound_url_str_allowed(url)
+            .await
+            .map_err(AppError::BadRequest)?;
         let ext = file_ext_from_url(url).unwrap_or_else(|| "png".to_string());
         let name = md5_hex(url);
         let path = self

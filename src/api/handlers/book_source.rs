@@ -1,5 +1,6 @@
 use crate::api::auth::AuthContext;
 use crate::api::AppState;
+use crate::crawler::url_guard;
 use crate::error::error::{ApiResponse, AppError};
 use crate::model::book_source::{book_source_from_value, BookSource};
 use crate::service::book_source_service::{
@@ -445,6 +446,10 @@ pub async fn book_source_proxy(
     }
 
     let target_url = resolve_proxy_target_url(&raw_target_url, &source.book_source_url)?;
+    // 出站守卫：代理目标由查询参数决定，可能指向内网/云元数据地址
+    url_guard::ensure_outbound_url_str_allowed(&target_url)
+        .await
+        .map_err(AppError::BadRequest)?;
     let upstream_referer = extract_upstream_referer(&headers);
     let response = forward_book_source_request(
         &state,
@@ -1035,15 +1040,22 @@ pub struct RemoteSourceParam {
 pub async fn read_remote_source_file(
     Json(param): Json<RemoteSourceParam>,
 ) -> Result<Json<ApiResponse<Vec<String>>>, AppError> {
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(30))
-        .user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
-        .danger_accept_invalid_certs(true)
-        .build()
-        .map_err(|e| AppError::Internal(e.into()))?;
+    // 出站守卫：url 完全由调用方提供，必须挡掉内网目标
+    let target = url_guard::ensure_outbound_url_str_allowed(&param.url)
+        .await
+        .map_err(AppError::BadRequest)?;
+    let mut builder = url_guard::guarded_client_builder(
+        std::time::Duration::from_secs(30),
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    );
+    if url_guard::private_network_allowed() {
+        // 仅单用户本地部署允许自签证书（内网书源常有自签证书）
+        builder = builder.danger_accept_invalid_certs(true);
+    }
+    let client = builder.build().map_err(|e| AppError::Internal(e.into()))?;
 
     let text = client
-        .get(&param.url)
+        .get(target)
         .send()
         .await
         .map_err(|e| {

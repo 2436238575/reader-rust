@@ -16,6 +16,9 @@ pub struct AppConfig {
     pub user_limit: u32,
     pub user_book_limit: u32,
     pub user_local_book_limit: u32,
+    /// 出站请求是否允许访问私网/环回/链路本地地址。
+    /// 未设置时跟随 `SECURE`：单用户本地部署（secure=false）放行，多用户/公网部署拦截。
+    pub allow_private_network: Option<bool>,
 }
 
 impl Default for AppConfig {
@@ -35,6 +38,7 @@ impl Default for AppConfig {
             user_limit: 50,
             user_book_limit: 2000,
             user_local_book_limit: 0,
+            allow_private_network: None,
         }
     }
 }

@@ -24,6 +24,8 @@ static JS_HTTP_CLIENT: Lazy<Client> = Lazy::new(|| {
         .gzip(true)
         .brotli(true)
         .deflate(true)
+        // 与全局一致的重定向策略：限制跳数，开启防护时拒绝跳往内网
+        .redirect(crate::crawler::url_guard::guarded_redirect_policy())
         .build()
         .expect("failed to build JS HTTP client")
 });
@@ -443,6 +445,10 @@ fn java_ajax(spec: &str) -> anyhow::Result<String> {
     if url.trim().is_empty() {
         return Ok(String::new());
     }
+    // 出站守卫：书源脚本可以任意指定 URL
+    if crate::crawler::url_guard::ensure_outbound_url_str_allowed_blocking(url).is_err() {
+        return Ok(String::new());
+    }
 
     let options_json = options
         .and_then(|raw| serde_json::from_str::<JsonValue>(raw).ok())
@@ -480,6 +486,10 @@ fn java_ajax(spec: &str) -> anyhow::Result<String> {
 }
 
 fn java_request_simple(method: &str, url: &str, body: Option<String>) -> anyhow::Result<String> {
+    // 出站守卫：书源脚本可以任意指定 URL
+    if crate::crawler::url_guard::ensure_outbound_url_str_allowed_blocking(url).is_err() {
+        return Ok(String::new());
+    }
     let method = Method::from_bytes(method.as_bytes()).unwrap_or(Method::GET);
     let mut req = JS_HTTP_CLIENT.request(method, url.trim());
     if let Some(body) = body {

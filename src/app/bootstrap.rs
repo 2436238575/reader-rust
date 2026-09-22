@@ -6,6 +6,7 @@ use tracing_subscriber::EnvFilter;
 use crate::api::{self, AppState};
 use crate::app::config;
 use crate::crawler::http_client::HttpClient;
+use crate::crawler::url_guard;
 use crate::parser::rule_engine::RuleEngine;
 use crate::service::{
     ai_book_service::AiBookService, ai_model_service::AiModelService,
@@ -27,6 +28,17 @@ pub async fn run() -> anyhow::Result<()> {
     tracing_subscriber::fmt()
         .with_env_filter(EnvFilter::new(cfg.log_level.clone()))
         .init();
+
+    // 出站守卫策略：默认跟随 SECURE（本地单用户放行私网，多用户/公网拦截）
+    let allow_private = cfg
+        .allow_private_network
+        .unwrap_or_else(|| url_guard::default_allow_private_network(cfg.secure));
+    url_guard::set_allow_private_network(allow_private);
+    tracing::info!(
+        "outbound policy: allow_private_network={} (secure={})",
+        allow_private,
+        cfg.secure
+    );
 
     let storage_fs = StorageFs::new(&cfg.storage_dir, &cfg.assets_dir);
     storage_fs.ensure().await?;

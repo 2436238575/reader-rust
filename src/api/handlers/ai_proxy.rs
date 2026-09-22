@@ -28,6 +28,10 @@ pub async fn ai_proxy(
     }
     let target = build_ai_proxy_url(&endpoint.base_url, &path, endpoint.use_full_url)
         .map_err(AppError::BadRequest)?;
+    // 出站守卫：use_server_config=false 时 base_url 完全由客户端提供
+    crate::crawler::url_guard::ensure_outbound_url_allowed(&target)
+        .await
+        .map_err(AppError::BadRequest)?;
     let client = ai_proxy_client()?;
     let mut builder = client
         .post(target)
@@ -154,6 +158,10 @@ pub async fn ai_proxy_image(
 ) -> Result<Response, AppError> {
     require_proxy_user(&state, &auth).await?;
     let target = validate_ai_proxy_image_url(&req.url).map_err(AppError::BadRequest)?;
+    // 出站守卫：url 由客户端提供
+    crate::crawler::url_guard::ensure_outbound_url_allowed(&target)
+        .await
+        .map_err(AppError::BadRequest)?;
     let client = ai_proxy_client()?;
     let upstream = client
         .get(target)
@@ -234,6 +242,7 @@ fn build_upstream_error_response(status: reqwest::StatusCode, body: &bytes::Byte
 fn ai_proxy_client() -> Result<reqwest::Client, AppError> {
     reqwest::Client::builder()
         .timeout(ai_proxy_timeout())
+        .redirect(crate::crawler::url_guard::guarded_redirect_policy())
         .build()
         .map_err(AppError::Http)
 }
