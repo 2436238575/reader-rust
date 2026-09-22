@@ -6,10 +6,11 @@ use axum::{
 };
 use serde::Deserialize;
 use serde_json::Value;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use tokio::fs;
 
 use crate::error::error::{ApiResponse, AppError};
+use crate::util::safe_path;
 
 #[derive(Debug, Deserialize)]
 pub struct LoginRequest {
@@ -332,34 +333,45 @@ pub async fn upload_file(
             )))
         }
     };
+    let raw_file_type = match q.file_type.as_deref() {
+        Some(t) if !t.trim().is_empty() => t,
+        _ => "images",
+    };
+    // 目录名只允许 [A-Za-z0-9_-]，避免 `..` 或分隔符进入路径
+    let Some(file_type) = safe_path::sanitize_dir_segment(raw_file_type) else {
+        return Ok(Json(ApiResponse::err("文件类型不合法")));
+    };
+    // 所有写入都必须落在 storage/assets 之内（user_ns 在 secure_key 路径下也可能是用户可控的）
+    let assets_root = PathBuf::from(&state.config.storage_dir).join("assets");
+
     let mut file_list = Vec::new();
-    let mut file_type = "images".to_string();
-    if let Some(t) = q.file_type.as_deref() {
-        if !t.is_empty() {
-            file_type = t.to_string();
-        }
-    }
     while let Some(field) = multipart
         .next_field()
         .await
         .map_err(|e| AppError::BadRequest(e.to_string()))?
     {
-        let name = field
+        let raw_name = field
             .file_name()
             .map(|s| s.to_string())
             .unwrap_or_else(|| "file".to_string());
+        // 只取安全的纯文件名：拒绝 `..`、路径分隔符、绝对路径与 Windows 保留字符
+        let Some(name) = safe_path::sanitize_file_name(&raw_name) else {
+            return Ok(Json(ApiResponse::err("文件名不合法")));
+        };
         let data = field
             .bytes()
             .await
             .map_err(|e| AppError::BadRequest(e.to_string()))?;
-        let dir = PathBuf::from(&state.config.storage_dir)
-            .join("assets")
-            .join(&user_ns)
-            .join(&file_type);
+        let dir = assets_root.join(&user_ns).join(&file_type);
         fs::create_dir_all(&dir)
             .await
             .map_err(|e| AppError::Internal(e.into()))?;
-        let path = dir.join(&name);
+        // 词法解析 + 越界检查：解析后必须仍在 assets/ 之内
+        let Some(path) =
+            safe_path::resolve_within(&assets_root, &Path::new(&user_ns).join(&file_type).join(&name))
+        else {
+            return Ok(Json(ApiResponse::err("文件名不合法")));
+        };
         fs::write(&path, data)
             .await
             .map_err(|e| AppError::Internal(e.into()))?;
@@ -395,7 +407,21 @@ pub async fn delete_file(
     if !url.starts_with(&prefix) {
         return Ok(Json(ApiResponse::err("文件链接错误")));
     }
-    let full_path = PathBuf::from(&state.config.storage_dir).join(url.trim_start_matches('/'));
-    let _ = fs::remove_file(full_path).await;
+    // 去掉 `/assets/` 前缀后做词法解析：相对路径必须**保留 user_ns 分量**，
+    // 且解析结果不能逃出 storage/assets/
+    let assets_root = PathBuf::from(&state.config.storage_dir).join("assets");
+    let relative = Path::new(&user_ns).join(&url[prefix.len()..]);
+    // 上传时生成的链接不含 `..`，客户端再传回来时出现回溯一律视为非法
+    if safe_path::contains_parent_dir(&relative) {
+        return Ok(Json(ApiResponse::err("文件链接错误")));
+    }
+    let Some(full_path) = safe_path::resolve_within(&assets_root, &relative) else {
+        return Ok(Json(ApiResponse::err("文件链接错误")));
+    };
+    if let Err(err) = fs::remove_file(&full_path).await {
+        if err.kind() != std::io::ErrorKind::NotFound {
+            tracing::warn!("deleteFile 删除失败 {}: {}", full_path.display(), err);
+        }
+    }
     Ok(Json(ApiResponse::ok(Value::String("".to_string()))))
 }
