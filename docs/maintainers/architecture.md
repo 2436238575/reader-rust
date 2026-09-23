@@ -194,17 +194,18 @@ SQLite 表：
 | 表 | 主键 | 用途 |
 |----|------|------|
 | `book_sources` | `(user_ns, book_source_url)` | 书源配置（整份 JSON 存储） |
-| `book_cache` | — | 书籍元信息缓存 |
-| `chapter_cache` | — | 章节缓存索引，正文另存文件 |
 | `users` | `username` | 用户、token、权限开关（`is_admin`、`enable_webdav`、`enable_local_store`、`enable_ai_model`） |
 | `user_sessions` | `(username, token)` | 多端会话与过期时间 |
 | `json_documents` | `(namespace, name)` | 通用 JSON 文档存取（用户配置、书源变量等复用这张表） |
-| `ai_book_memories` | — | AI 资料 |
+| `ai_book_memories` | `(user_ns, book_key)` | AI 资料 |
+
+> `book_cache` / `chapter_cache` 两张表曾随 0001 迁移创建，但从未被代码读写
+> （书籍元信息按需抓取、章节正文走文件缓存）——已由 0004 迁移删除。
 
 设计取舍：
 
 - **书源存整份 JSON** 而不是打散成列 —— 书源字段会随阅读3.0 规范演进，打散后每次都要改表；整份存换来结构灵活性，代价是无法按字段建索引。
-- **章节正文存文件而不是数据库** —— 单章动辄数十 KB 且数量极多，塞进 SQLite 会让库文件迅速膨胀并拖慢备份。文件用 MD5 命名，天然去重，数据库只留索引。
+- **章节正文存文件而不是数据库** —— 单章动辄数十 KB 且数量极多，塞进 SQLite 会让库文件迅速膨胀并拖慢备份。文件用 MD5 命名，天然去重。
 - **`json_documents` 通用化** —— 用户配置、书源变量等零散键值不再各建一张表，减少迁移次数。
 - **权限用布尔列而非角色表** —— 目前只有 `is_admin` 加三个功能开关（WebDAV / 本地存储 / AI 模型），用列更直观；若将来权限维度继续膨胀，需要再拆表。
 
