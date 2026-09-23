@@ -58,6 +58,7 @@ Reader-Rust 的 JS 规则运行在服务端 QuickJS 中，不是浏览器页面�
 | `java.base64Encode(text)` / `java.base64Decode(text)` | Base64 |
 | `java.encodeURIComponent(text)` / `java.decodeURIComponent(text)` | URL 编码 |
 | `java.encodeURI(text)` / `java.decodeURI(text)` | URL 编码 |
+| `java.aesBase64DecodeToString(input, key, "AES/CBC/PKCS5PADDING", iv)` | AES-CBC 解密（Base64 输入） |
 | `java.now()` | 当前毫秒时间戳 |
 | `java.uuid()` | UUID |
 
@@ -123,9 +124,19 @@ input.split('\n').filter(Boolean)
 }
 ```
 
+`jsLib` 也可以是 JSON 对象：值为 `http(s)://` 的条目会远程拉取，**其他字符串值直接当内联 JS 执行**。
+注意每次规则求值都会重建 JS 运行时——jsLib 里不要依赖跨规则的共享状态。
+
 ## 当前限制
 
 - 没有 `document`、`window`、`Element` 这类浏览器 DOM API
 - 不要依赖浏览器控制台
 - 如果需要操作 HTML 结构，优先先用 CSS / XPath / JSONPath 缩小范围，再让 JS 处理字符串
 - JS 比普通选择器慢，能不用就不用
+
+资源与出站约束（防恶意书源，超限按失败/空值处理）：
+
+- 单次求值上限：128MiB 内存 / 1MiB 栈 / 5 秒执行时间；JS 返回值最大 32MiB
+- `java.ajax`/`java.get`/`java.post`/`java.put`：30 秒超时，响应体上限 32MiB
+- 出站地址受守卫约束：SECURE 模式下内网/环回地址被拦截（此时 `java.ajax` 静默返回空串，jsLib 远程条目求值失败）；本机单用户部署默认放行
+- jsLib 的远程 URL 条目同样受出站守卫与 32MiB 上限约束

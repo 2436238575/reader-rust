@@ -30,3 +30,6 @@ playwright-report/
 test-results/
 .superpowers/
 .codegraph/
+
+# ZCode 工作区（本地审计笔记等，不入库）
+.zcode/

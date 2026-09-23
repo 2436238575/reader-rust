@@ -1,6 +1,8 @@
 # RSS 订阅 API
 
-RSS 源管理与文章获取接口。所有响应均包裹为统一结构：`{ "isSuccess": boolean, "data": any, "errorMsg": string }`。
+RSS 源管理与文章获取接口。除特别注明外，响应均包裹为统一结构：`{ "isSuccess": boolean, "data": any, "errorMsg": string }`。
+
+> 例外：`readRssSourceFile` 成功时直接返回裸 JSON 数组（RSS 源数组），不做统一包装。
 
 ## 获取 RSS 源列表
 
@@ -78,6 +80,8 @@ POST /reader3/readRemoteRssSourceFile
 
 请求体：`{ "url": "https://example.com/rss.json" }`。响应：`data` 为包含单个 JSON 字符串的数组。
 
+> 出站限制：`url` 会经过出站守卫校验——SECURE 模式下拒绝内网/环回/链路本地地址（可用 `ALLOW_PRIVATE_NETWORK` 放行），响应体上限 32MiB。
+
 ## 本地读取 RSS 源文件
 
 ```text
@@ -98,10 +102,10 @@ GET /reader3/getRssArticles
 |------|------|------|------|
 | `sourceUrl` | string | 是 | RSS 源 URL |
 | `sortName` | string | 否 | 分类名称 |
-| `sortUrl` | string | 否 | 分类链接，默认同 `sourceUrl` |
+| `sortUrl` | string | 否 | 分类链接，默认同 `sourceUrl`。经出站守卫校验（SECURE 模式下拒绝内网地址） |
 | `page` | number | 否 | 页码，默认 1 |
 
-响应：`data` 形如 `{ "first": [ ...文章 ], "second": null }`，其中 `first` 为当页文章数组（`RssArticle` 模型，camelCase，依据：`src/model/rss.rs:35`）：
+响应：`data` 形如 `{ "first": [ ...文章 ], "second": null }`，其中 `first` 为当页文章数组（`RssArticle` 模型，camelCase，依据：`src/model/rss.rs` 的 `RssArticle`）：
 
 | 字段 | 类型 | 说明 |
 |------|------|------|
@@ -133,6 +137,8 @@ GET /reader3/getRssContent
 | `link` | string | 是 | 文章链接 |
 | `origin` | string | 是 | 文章来源 |
 
-响应：`data` 为文章正文的 HTML 字符串。
+响应：`data` 为文章正文的 HTML 字符串（上限 32MiB）。
+
+> 出站限制：`link` 会经过出站守卫校验——SECURE 模式下拒绝内网/环回/链路本地地址（含重定向目标），命中返回 400。
 
 也可使用 `POST /reader3/getRssContent`。

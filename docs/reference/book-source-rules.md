@@ -122,6 +122,8 @@ data class BookInfoRule(
 data class TocRule(
   var preUpdateJs: String? = null,
   var chapterList: String? = null,
+  // reader-rust 扩展字段：目录列表的预定位规则（先于 chapterList 求值，把范围缩到列表容器）
+  var init: String? = null,
   var chapterName: String? = null,
   var chapterUrl: String? = null,
   var formatJs: String? = null,
@@ -322,6 +324,12 @@ URL JS 绑定变量 MUST 包含：
 - JS 返回整数值 Double，例如 `1.0`，格式化为无小数的 `"1"`。
 - 其他非空返回值调用 `toString()`。
 
+### 5.5.1 `{key}` / `{page}` 占位符
+
+reader-rust 扩展：除 <code v-pre>{{key}}</code>/<code v-pre>{{page}}</code>（内联 JS）外，URL 还支持单括号占位符 `{key}`、`{page}`，
+直接替换为关键字/页码（不经 JS 求值），并兼容阅读旧字段名 `searchKey`/`searchPage`。
+带 URL 编码：`{key}` 与 <code v-pre>{{key}}</code> 在 query 位段内均自动 percent-encode。
+
 ### 5.6 `<...>` 页码选择器
 
 若 `page` 非空，查找所有：
@@ -369,8 +377,8 @@ URL 主体通过 `getAbsoluteURL(baseUrl, urlNoOption)` 转成绝对 URL。规�
 | `origin` | String? | 当前请求流程未使用，保留。 |
 | `retry` | Int/String? | 请求重试次数，非法值视为 0。 |
 | `type` | String? | 非空时 `getStrResponse()` 读取 bytes 并返回十六进制 body。 |
-| `webView` | Any? | `null`、空字符串、`false`、`"false"` 为 false，其他值为 true。 |
-| `webJs` | String? | WebView 注入 JS。 |
+| `webView` | Any? | `null`、空字符串、`false`、`"false"` 为 false，其他值为 true。**reader-rust 仅解析不执行**：服务端无 WebView，依赖渲染的书源拿到的是未渲染的原始 HTML。 |
+| `webJs` | String? | WebView 注入 JS。**reader-rust 未实现**（同上）。 |
 | `js` | String? | 参数解析后执行，返回值替换最终 URL。 |
 | `serverID` | Long/String? | 保存到请求描述中。 |
 | `webViewDelayTime` | Long/String? | WebView 延迟，负数按 0。 |
@@ -920,6 +928,10 @@ JS 运行时 SHOULD 提供 `JsExtensions` 等价能力，至少包括：
 ## 12. 登录、共享 JS、变量
 
 ### 12.1 登录
+
+> **reader-rust 未实现**：`loginUi`（登录表单 UI）、登录脚本中的 `login()` 调用、AES 登录信息存取、
+> 登录头合并均不可用。`loginUrl` 仅被当作普通 URL 抓取一次（`loginBookSource` 接口），
+> 登录态依赖各书源自带的 Cookie/header 机制。本节目录描述的是阅读3.0 原版行为，仅供参考。
 
 `loginUrl` 有两种语义：
 
