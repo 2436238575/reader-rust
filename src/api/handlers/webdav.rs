@@ -1,4 +1,5 @@
 use crate::api::auth::AuthContext;
+use crate::api::handlers::multipart::read_limited_multipart_field;
 use crate::api::AppState;
 use crate::error::error::{ApiResponse, AppError};
 use crate::util::time::now_ts;
@@ -20,6 +21,11 @@ use uuid::Uuid;
 pub struct WebdavPathRequest {
     pub path: Option<String>,
 }
+
+/// WebDAV 上传单文件上限（multipart 字段不受 DefaultBodyLimit 约束，必须自行限量）。
+const MAX_WEBDAV_UPLOAD_BYTES: usize = 100 * 1024 * 1024;
+/// 目录路径字段的上限，超出即异常请求。
+const MAX_WEBDAV_PATH_FIELD_BYTES: usize = 4 * 1024;
 
 #[derive(Debug, Deserialize)]
 pub struct WebdavDeleteListRequest {
@@ -87,10 +93,13 @@ pub async fn get_webdav_file(
     if !full.exists() || full.is_dir() {
         return Ok(StatusCode::NOT_FOUND.into_response());
     }
-    let bytes = fs::read(full)
+    // 流式返回，避免大文件整读入内存
+    let file = fs::File::open(&full)
         .await
         .map_err(|e| AppError::Internal(e.into()))?;
-    Ok(Response::new(axum::body::Body::from(bytes)))
+    Ok(Response::new(axum::body::Body::from_stream(
+        tokio_util::io::ReaderStream::new(file),
+    )))
 }
 
 pub async fn upload_file_to_webdav(
@@ -110,7 +119,9 @@ pub async fn upload_file_to_webdav(
     {
         let name = field.name().unwrap_or_default().to_string();
         if name == "path" {
-            let val = field.text().await.unwrap_or_default();
+            let val =
+                read_limited_multipart_field(field, MAX_WEBDAV_PATH_FIELD_BYTES, "路径过长").await?;
+            let val = String::from_utf8_lossy(&val).to_string();
             if !val.is_empty() {
                 path = val;
             }
@@ -125,10 +136,9 @@ pub async fn upload_file_to_webdav(
         let Some(filename) = crate::util::safe_path::sanitize_file_name(&filename) else {
             return Err(AppError::BadRequest("非法文件名".to_string()));
         };
-        let data = field
-            .bytes()
-            .await
-            .map_err(|e| AppError::BadRequest(e.to_string()))?;
+        let data =
+            read_limited_multipart_field(field, MAX_WEBDAV_UPLOAD_BYTES, "文件不能超过 100MB")
+                .await?;
         let rel = normalize_rel_path(&path)?;
         let dir = join_parts(&home, &rel);
         fs::create_dir_all(&dir)
@@ -428,8 +438,11 @@ async fn webdav_get(full: &PathBuf) -> Response {
     if full.is_dir() {
         return StatusCode::METHOD_NOT_ALLOWED.into_response();
     }
-    match fs::read(full).await {
-        Ok(data) => Response::new(axum::body::Body::from(data)),
+    // 流式返回，避免大文件整读入内存
+    match fs::File::open(full).await {
+        Ok(file) => Response::new(axum::body::Body::from_stream(
+            tokio_util::io::ReaderStream::new(file),
+        )),
         Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
     }
 }

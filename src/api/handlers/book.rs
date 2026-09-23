@@ -1,4 +1,5 @@
 use crate::api::auth::AuthContext;
+use crate::api::handlers::multipart::read_limited_multipart_field;
 use crate::api::AppState;
 use crate::error::error::{ApiResponse, AppError};
 use crate::model::{book::Book, book_source::BookSource, search::SearchBook};
@@ -15,7 +16,7 @@ use axum::http::{header, StatusCode};
 use axum::response::sse::Event;
 use axum::response::{IntoResponse, Response, Sse};
 use axum::{
-    extract::{multipart::Field, Multipart, Query, State},
+    extract::{Multipart, Query, State},
     Json,
 };
 use futures::stream::FuturesUnordered;
@@ -980,25 +981,6 @@ pub async fn get_bookshelf(
     Ok(Json(ApiResponse::ok(
         serde_json::to_value(list).unwrap_or_default(),
     )))
-}
-
-async fn read_limited_multipart_field(
-    mut field: Field<'_>,
-    max_bytes: usize,
-    too_large_message: &str,
-) -> Result<Vec<u8>, AppError> {
-    let mut bytes = Vec::new();
-    while let Some(chunk) = field
-        .chunk()
-        .await
-        .map_err(|e| AppError::BadRequest(e.to_string()))?
-    {
-        if bytes.len().saturating_add(chunk.len()) > max_bytes {
-            return Err(AppError::BadRequest(too_large_message.to_string()));
-        }
-        bytes.extend_from_slice(&chunk);
-    }
-    Ok(bytes)
 }
 
 async fn ensure_user_local_book_limit(

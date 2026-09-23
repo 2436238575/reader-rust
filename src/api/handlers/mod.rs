@@ -5,6 +5,7 @@ mod book;
 mod book_group;
 mod book_source;
 mod bookmark;
+mod multipart;
 mod replace_rule;
 mod rss;
 mod update;
