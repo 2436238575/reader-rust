@@ -1,7 +1,7 @@
 use crate::app::config::AppConfig;
 use crate::error::error::AppError;
 use crate::model::user::User;
-use crate::util::crypto::{hash_password, random_string, verify_password};
+use crate::util::crypto::{hash_password, random_string, secure_compare, verify_password};
 use crate::util::time::now_ts;
 use serde_json::Value;
 use sqlx::{sqlite::SqliteRow, Row, SqlitePool};
@@ -18,6 +18,8 @@ const TOKEN_TTL_MS: i64 = 7 * 86_400 * 1000;
 const LOGIN_FAILURE_WINDOW_MS: i64 = 10 * 60 * 1000;
 const LOGIN_MAX_FAILURES: usize = 8;
 const LOGIN_LOCKOUT_MS: i64 = 5 * 60 * 1000;
+/// 登录限速表的容量上限，防止用随机用户名打登录接口导致内存无界增长。
+const MAX_LOGIN_ATTEMPT_ENTRIES: usize = 4096;
 
 /// 单个用户名的登录失败记录（进程内，单实例部署足够）。
 #[derive(Default, Clone)]
@@ -98,19 +100,30 @@ impl UserService {
     }
 
     pub fn secure_key_matches(&self, key: &str) -> bool {
-        !self.cfg.secure_key.is_empty() && self.cfg.secure_key == key
+        !self.cfg.secure_key.is_empty() && secure_compare(&self.cfg.secure_key, key)
     }
 
-    /// 登录前置检查：命中锁定期则直接拒绝，不再校验口令。
-    fn login_throttle_check(&self, username: &str) -> Result<(), AppError> {
+    /// 登录前置检查：单次取锁完成「锁定判断 + 本次尝试计数」。
+    ///
+    /// 原实现把检查与计数拆在口令校验两端，中间隔着数据库查询与 Argon2 校验的
+    /// await：并发打 N 个请求可全部通过 check 后才陆续 record，实际爆破速率不受
+    /// 「8 次即锁」约束。现在悲观地把每次尝试先计数、成功后再清除，并发爆发在
+    /// 锁内串行化，超限请求在口令校验之前就被拒绝。
+    fn login_throttle_begin(&self, username: &str) -> Result<(), AppError> {
         let mut map = self
             .login_attempts
             .lock()
             .unwrap_or_else(|e| e.into_inner());
-        let Some(attempt) = map.get_mut(username) else {
-            return Ok(());
-        };
         let now = now_ms();
+        if !map.contains_key(username) && map.len() >= MAX_LOGIN_ATTEMPT_ENTRIES {
+            evict_stale_login_attempts(&mut map, now);
+            if map.len() >= MAX_LOGIN_ATTEMPT_ENTRIES {
+                return Err(AppError::BadRequest(
+                    "登录失败次数过多，请稍后再试".to_string(),
+                ));
+            }
+        }
+        let attempt = map.entry(username.to_string()).or_default();
         attempt
             .failures
             .retain(|ts| now - *ts < LOGIN_FAILURE_WINDOW_MS);
@@ -120,25 +133,16 @@ impl UserService {
                 "登录失败次数过多，请 {remain_secs} 秒后再试"
             )));
         }
-        Ok(())
-    }
-
-    /// 记录一次登录失败；窗口内累计到上限则锁定。
-    fn login_throttle_record_failure(&self, username: &str) {
-        let mut map = self
-            .login_attempts
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
-        let now = now_ms();
-        let attempt = map.entry(username.to_string()).or_default();
-        attempt
-            .failures
-            .retain(|ts| now - *ts < LOGIN_FAILURE_WINDOW_MS);
-        attempt.failures.push(now);
-        if attempt.failures.len() >= LOGIN_MAX_FAILURES {
+        if attempt.failures.len() + 1 > LOGIN_MAX_FAILURES {
             attempt.locked_until = now + LOGIN_LOCKOUT_MS;
             attempt.failures.clear();
+            return Err(AppError::BadRequest(format!(
+                "登录失败次数过多，请 {} 秒后再试",
+                LOGIN_LOCKOUT_MS / 1000
+            )));
         }
+        attempt.failures.push(now);
+        Ok(())
     }
 
     fn login_throttle_clear(&self, username: &str) {
@@ -158,14 +162,13 @@ impl UserService {
     ) -> Result<Value, AppError> {
         self.ensure_admin_user().await?;
         if is_login {
-            self.login_throttle_check(username)?;
+            self.login_throttle_begin(username)?;
         }
         if let Some(mut user) = self.find_user(username).await? {
             if !is_login {
                 return Err(AppError::BadRequest("用户名已被占用".to_string()));
             }
             if !verify_password_async(password, &user.password).await? {
-                self.login_throttle_record_failure(username);
                 return Err(AppError::BadRequest("密码错误".to_string()));
             }
             self.login_throttle_clear(username);
@@ -174,8 +177,7 @@ impl UserService {
         }
 
         if is_login {
-            // 对不存在的用户名同样计数，避免通过错误信息差异区分账号是否存在
-            self.login_throttle_record_failure(username);
+            // 不存在的用户名同样已在 begin 中计数，不能成为无限速的探测通道
             return Err(AppError::BadRequest("用户不存在".to_string()));
         }
         self.validate_new_user(username, password, code)?;
@@ -515,6 +517,14 @@ impl UserService {
                     if let Some(ns) = user_ns {
                         let ns = ns.trim();
                         if !ns.is_empty() {
+                            // override 的 ns 直接参与 storage 路径拼接（bookshelf、
+                            // 缓存、上传目录等），必须与注册用户名同字符集，
+                            // 否则持 secureKey 时可借 `../..` 穿越数据目录
+                            if !is_valid_user_ns(ns) {
+                                return Err(AppError::BadRequest(
+                                    "非法的用户命名空间".to_string(),
+                                ));
+                            }
                             return Ok(ns.to_string());
                         }
                     }
@@ -560,9 +570,12 @@ impl UserService {
         if !user.enable_webdav {
             return Ok(None);
         }
+        // 与登录接口共享同一份限速：否则这是绕开登录锁定的平行爆破通道
+        self.login_throttle_begin(username)?;
         if !verify_password_async(password, &user.password).await? {
             return Ok(None);
         }
+        self.login_throttle_clear(username);
         Ok(Some(user))
     }
 
@@ -865,6 +878,46 @@ impl UserService {
     }
 }
 
+/// 用户命名空间的合法形式：与注册用户名同字符集（`^[a-z0-9]+$`），
+/// 另允许下划线以兼容内部命名（`__default__`、`__app__`）。
+fn is_valid_user_ns(ns: &str) -> bool {
+    !ns.is_empty()
+        && ns.len() <= 64
+        && ns
+            .chars()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_')
+}
+
+/// 淘汰登录限速表中的死条目；仍超限时按最后活动时间最旧优先淘汰一半。
+fn evict_stale_login_attempts(map: &mut HashMap<String, LoginAttempt>, now: i64) {
+    map.retain(|_, a| {
+        a.locked_until > now
+            || a.failures
+                .iter()
+                .any(|ts| now - *ts < LOGIN_FAILURE_WINDOW_MS)
+    });
+    if map.len() >= MAX_LOGIN_ATTEMPT_ENTRIES {
+        let mut by_activity: Vec<(String, i64)> = map
+            .iter()
+            .map(|(k, a)| {
+                let last = a
+                    .failures
+                    .iter()
+                    .copied()
+                    .chain(std::iter::once(a.locked_until))
+                    .max()
+                    .unwrap_or(0);
+                (k.clone(), last)
+            })
+            .collect();
+        by_activity.sort_by_key(|(_, last)| *last);
+        let remove_count = map.len() / 2;
+        for (key, _) in by_activity.into_iter().take(remove_count) {
+            map.remove(&key);
+        }
+    }
+}
+
 fn parse_access_token(access_token: &str) -> Result<(String, String), AppError> {
     let parts: Vec<&str> = access_token.splitn(2, ':').collect();
     if parts.len() != 2 {
@@ -970,6 +1023,82 @@ mod tests {
                 .unwrap(),
             "reader1"
         );
+
+        let _ = fs::remove_dir_all(temp_dir).await;
+    }
+
+    #[tokio::test]
+    async fn login_throttle_locks_after_max_failures_even_under_concurrency() {
+        let (service, temp_dir) = create_user_service().await;
+        service
+            .login("reader1", "password123", false, None)
+            .await
+            .unwrap();
+
+        // 并发 20 次错误登录：check/record 分离的旧实现可以让全部请求穿过检查；
+        // 悲观计数下恰好 8 次进入口令校验，其余必须在校验前被拒
+        let mut handles = Vec::new();
+        for _ in 0..20 {
+            let svc = service.clone();
+            handles.push(tokio::spawn(async move {
+                svc.login("reader1", "wrong-password", true, None).await
+            }));
+        }
+        let mut verified = 0;
+        let mut locked = 0;
+        for h in handles {
+            match h.await.unwrap() {
+                Err(AppError::BadRequest(msg)) if msg.contains("失败次数过多") => locked += 1,
+                Err(AppError::BadRequest(msg)) if msg.contains("密码错误") => verified += 1,
+                other => panic!("错误密码登录的返回异常: {other:?}"),
+            }
+        }
+        assert_eq!(verified, LOGIN_MAX_FAILURES, "恰好 8 次进入口令校验");
+        assert_eq!(locked, 20 - LOGIN_MAX_FAILURES, "其余请求被限速拦截");
+
+        // 锁定状态下正确密码同样被拒
+        let err = service
+            .login("reader1", "password123", true, None)
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("失败次数过多"));
+
+        let _ = fs::remove_dir_all(temp_dir).await;
+    }
+
+    #[tokio::test]
+    async fn secure_key_ns_override_rejects_path_like_values() {
+        let (mut service, temp_dir) = create_user_service().await;
+        service.cfg.secure_key = "test-secure-key".to_string();
+        let key = "test-secure-key";
+
+        // 合法 ns 放行
+        assert_eq!(
+            service
+                .resolve_user_ns_with_override(None, Some(&key), Some("reader1"))
+                .await
+                .unwrap(),
+            "reader1"
+        );
+        assert_eq!(
+            service
+                .resolve_user_ns_with_override(None, Some(&key), Some("__default__"))
+                .await
+                .unwrap(),
+            "__default__"
+        );
+        // 路径形态的一律拒绝
+        for bad in ["../data", "..\\..\\x", "a/b", "a.b", "UPPER", ""] {
+            let r = service
+                .resolve_user_ns_with_override(None, Some(&key), Some(bad))
+                .await;
+            if bad.is_empty() {
+                // 空值回退 default
+                assert_eq!(r.unwrap(), "default");
+            } else {
+                assert!(r.is_err(), "{bad:?} 应被拒绝");
+            }
+        }
 
         let _ = fs::remove_dir_all(temp_dir).await;
     }

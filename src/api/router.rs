@@ -328,7 +328,18 @@ pub fn build_router(state: AppState) -> Router {
         .merge(api)
         .merge(static_web)
         .layer(DefaultBodyLimit::max(100 * 1024 * 1024))
-        .layer(TraceLayer::new_for_http())
+        // 自定义 span：只记录 method + path，不记 query string。
+        // accessToken/secureKey 允许经查询参数传递，默认 span 记录完整 URI
+        // 等于把凭据写进访问日志。
+        .layer(TraceLayer::new_for_http().make_span_with(
+            |request: &axum::http::Request<_>| {
+                tracing::info_span!(
+                    "http_request",
+                    method = %request.method(),
+                    path = %request.uri().path(),
+                )
+            },
+        ))
         .layer(PropagateRequestIdLayer::x_request_id())
         .layer(SetRequestIdLayer::x_request_id(MakeRequestUuid::default()))
         .layer(build_cors_layer(&state.config.cors_allowed_origins))

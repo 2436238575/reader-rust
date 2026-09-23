@@ -33,6 +33,21 @@ pub fn verify_password(password: &str, stored: &str) -> bool {
         .is_ok()
 }
 
+/// 常量时间字符串比较，用于 secureKey 这类共享密钥的校验，
+/// 避免 `==` 的逐字节短路泄露前缀匹配信息。
+pub fn secure_compare(a: &str, b: &str) -> bool {
+    let (a, b) = (a.as_bytes(), b.as_bytes());
+    // 长度本身不是秘密（密钥长度由部署方决定），但内容比较必须全程无分支
+    if a.len() != b.len() {
+        return false;
+    }
+    let mut diff = 0u8;
+    for (x, y) in a.iter().zip(b.iter()) {
+        diff |= x ^ y;
+    }
+    diff == 0
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -76,5 +91,14 @@ mod tests {
             "password123",
             "9b3fd8f60f2b0f4b32b8f1f0ec27b2dd"
         ));
+    }
+
+    #[test]
+    fn secure_compare_matches_exactly() {
+        assert!(secure_compare("s3cret-key", "s3cret-key"));
+        assert!(!secure_compare("s3cret-key", "s3cret-keh"));
+        assert!(!secure_compare("s3cret-key", "s3cret"));
+        assert!(!secure_compare("", "x"));
+        assert!(secure_compare("", ""));
     }
 }
