@@ -43,6 +43,8 @@ pub struct BookService {
     storage_dir: PathBuf,
     source_cookies: Arc<RwLock<HashMap<String, String>>>,
     rate_states: Arc<RwLock<HashMap<String, RateState>>>,
+    /// 单用户书架上限（0 = 不限），来自 `USER_BOOK_LIMIT`。
+    user_book_limit: u32,
 }
 
 #[derive(Clone, Default)]
@@ -91,7 +93,14 @@ impl BookService {
             storage_dir,
             source_cookies: Arc::new(RwLock::new(HashMap::new())),
             rate_states: Arc::new(RwLock::new(HashMap::new())),
+            user_book_limit: 0,
         }
+    }
+
+    /// 设置单用户书架上限（`USER_BOOK_LIMIT`；0 = 不限）。
+    pub fn with_user_book_limit(mut self, limit: u32) -> Self {
+        self.user_book_limit = limit;
+        self
     }
 
     /// 取某个用户命名空间下的独立 HTTP 客户端（独立 Cookie jar）。
@@ -1098,6 +1107,13 @@ impl BookService {
             }
             list[i] = book.clone();
         } else {
+            // 书架上限只对「新入架」计数，已有书的更新不受限
+            let limit = self.user_book_limit as usize;
+            if limit > 0 && list.len() >= limit {
+                return Err(AppError::BadRequest(format!(
+                    "书架书籍数量不能超过 {limit} 本"
+                )));
+            }
             list.push(book.clone());
         }
 
@@ -1116,6 +1132,13 @@ impl BookService {
                 return Err(AppError::BadRequest("bookUrl required".to_string()));
             }
             normalized.push(book);
+        }
+        // save_books 是整架替换（导入场景），按替换后的总量校验上限
+        let limit = self.user_book_limit as usize;
+        if limit > 0 && normalized.len() > limit {
+            return Err(AppError::BadRequest(format!(
+                "书架书籍数量不能超过 {limit} 本"
+            )));
         }
         self.write_bookshelf(user_ns, &normalized).await?;
         Ok(normalized)
@@ -1956,5 +1979,65 @@ mod tests {
 
         let _ = tokio::fs::remove_dir_all(&storage_dir).await;
         assert!(result.is_err());
+    }
+
+    fn make_book(url: &str) -> Book {
+        Book {
+            book_url: url.to_string(),
+            origin: "local".to_string(),
+            name: format!("书 {url}"),
+            ..Default::default()
+        }
+    }
+
+    #[tokio::test]
+    async fn user_book_limit_blocks_new_books_but_not_updates() {
+        let storage_dir =
+            std::env::temp_dir().join(format!("reader-rust-book-limit-{}", std::process::id()));
+        let service = BookService::new(
+            HttpClient::new(5, None).unwrap(),
+            RuleEngine::new().unwrap(),
+            FileCache::new(storage_dir.join("cache")),
+            storage_dir.to_str().unwrap(),
+        )
+        .with_user_book_limit(2);
+
+        service.save_book("u", make_book("a")).await.unwrap();
+        service.save_book("u", make_book("b")).await.unwrap();
+        // 第三本新书被拒
+        let err = service.save_book("u", make_book("c")).await.unwrap_err();
+        assert!(err.to_string().contains("书架书籍数量不能超过"));
+        // 已有书的更新（如阅读进度）不受限
+        let mut existing = make_book("a");
+        existing.dur_chapter_index = Some(3);
+        service.save_book("u", existing).await.unwrap();
+        assert_eq!(service.get_bookshelf("u").await.unwrap().len(), 2);
+
+        // 整架替换（saveBooks）按替换后总量校验
+        service
+            .save_books("u", vec![make_book("x"), make_book("y")])
+            .await
+            .unwrap();
+        let err = service
+            .save_books("u", vec![make_book("x"), make_book("y"), make_book("z")])
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("书架书籍数量不能超过"));
+
+        // 0 = 不限
+        let unlimited = BookService::new(
+            HttpClient::new(5, None).unwrap(),
+            RuleEngine::new().unwrap(),
+            FileCache::new(storage_dir.join("cache2")),
+            storage_dir.to_str().unwrap(),
+        );
+        for i in 0..5 {
+            unlimited
+                .save_book("u", make_book(&format!("b{i}")))
+                .await
+                .unwrap();
+        }
+
+        let _ = tokio::fs::remove_dir_all(&storage_dir).await;
     }
 }
