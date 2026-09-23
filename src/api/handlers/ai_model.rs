@@ -1,19 +1,18 @@
 use axum::{extract::State, Json};
 use serde_json::Value;
 
-use crate::api::{auth::AuthContext, AppState};
+use crate::api::AppState;
+use crate::auth::CurrentUser;
 use crate::error::error::{ApiResponse, AppError};
 use crate::model::ai_model::AiModelConfig;
 
+/// 任何已登录用户都可读取；非管理员的响应会剔除各 apiKey。
 pub async fn get_ai_model_config(
     State(state): State<AppState>,
-    auth: AuthContext,
+    user: CurrentUser,
 ) -> Result<Json<ApiResponse<Value>>, AppError> {
-    let is_admin = is_ai_model_admin(&state, &auth).await?;
-    let can_use_server_model = state
-        .user_service
-        .can_use_ai_model(auth.access_token(), auth.secure_key())
-        .await?;
+    let is_admin = user.0.is_admin;
+    let can_use_server_model = user.0.can_use_ai_model();
     let config = state.ai_model_service.get().await?;
     let visible_config = if is_admin {
         config
@@ -27,31 +26,15 @@ pub async fn get_ai_model_config(
     }))))
 }
 
+/// 管理员专用：路由层已挂 `require_admin`。
 pub async fn save_ai_model_config(
     State(state): State<AppState>,
-    auth: AuthContext,
     Json(config): Json<AiModelConfig>,
 ) -> Result<Json<ApiResponse<Value>>, AppError> {
-    if !is_ai_model_admin(&state, &auth).await? {
-        return Ok(Json(ApiResponse::err_with_data(
-            "请输入管理密码",
-            Value::String("NEED_SECURE_KEY".to_string()),
-        )));
-    }
     let saved = state.ai_model_service.save(config).await?;
     Ok(Json(ApiResponse::ok(serde_json::json!({
         "config": saved,
         "canUseServerModel": true,
         "isAdmin": true,
     }))))
-}
-
-async fn is_ai_model_admin(state: &AppState, auth: &AuthContext) -> Result<bool, AppError> {
-    if !state.user_service.secure_enabled() {
-        return Ok(true);
-    }
-    state
-        .user_service
-        .is_admin(auth.access_token(), auth.secure_key())
-        .await
 }

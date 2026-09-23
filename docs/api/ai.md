@@ -78,7 +78,7 @@ POST /reader3/aiProxy
 | `kind` | string? | `text`/`image`/`speech`，用于服务端配置的默认值补全 |
 | `body` | object | 透传给上游的请求体 |
 
-响应为上游响应体原样透传（上限 32MB，非 JSON 包装）。所有目标地址经过出站守卫（SECURE 模式下拒绝内网地址，含重定向逐跳检查）。
+响应为上游响应体原样透传（上限 32MB，非 JSON 包装）。所有目标地址经过出站守卫（拒绝私网/环回/链路本地地址，含重定向逐跳检查；可用 `ALLOW_PRIVATE_NETWORK` 放行）。
 
 ### 图片代理
 

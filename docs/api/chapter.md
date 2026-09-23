@@ -116,7 +116,7 @@ GET /reader3/cover?path=<封面URL>
 - 响应 `Content-Type` 收敛为位图白名单（jpeg/png/webp/gif/avif/bmp/ico）；上游返回 `text/html`、`image/svg+xml` 等不可渲染为位图的类型时一律降级为 `application/octet-stream`（防同源脚本执行）
 - 单个封面最大 32MiB；缓存目录容量上限 256MiB，超限按最旧优先淘汰
 - 上游失败/被出站守卫拦截时统一返回 404
-- 目标 URL 经出站守卫校验（SECURE 模式下拒绝内网地址）
+- 目标 URL 经出站守卫校验（拒绝私网/环回/链路本地地址，可用 `ALLOW_PRIVATE_NETWORK` 放行）
 
 ## 获取本地 EPUB 资源
 

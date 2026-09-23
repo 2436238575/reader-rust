@@ -34,7 +34,7 @@ async fn yckceo_live_non_webview_sources_end_to_end() {
     let service = BookService::new(
         http.clone(),
         RuleEngine::new().expect("rule engine"),
-        FileCache::new(cache_root.join("cache")),
+        FileCache::new(cache_root.join("cache"), 0),
         cache_root.to_string_lossy().as_ref(),
     );
 
@@ -46,12 +46,13 @@ async fn yckceo_live_non_webview_sources_end_to_end() {
             break;
         }
 
-        let Some((source, keyword)) = fetch_candidate_source(&shared, &id)
-            .await
-            .unwrap_or_else(|err| {
-                attempted.push(format!("{id}: fetch/import failed: {err}"));
-                None
-            })
+        let Some((source, keyword)) =
+            fetch_candidate_source(&shared, &id)
+                .await
+                .unwrap_or_else(|err| {
+                    attempted.push(format!("{id}: fetch/import failed: {err}"));
+                    None
+                })
         else {
             continue;
         };

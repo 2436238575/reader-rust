@@ -64,11 +64,9 @@ pub fn build_guarded_client(
     proxy: Option<&str>,
     user_agent: &str,
 ) -> anyhow::Result<Client> {
-    let mut builder = url_guard::guarded_client_builder(
-        Duration::from_secs(timeout_secs),
-        user_agent,
-    )
-    .cookie_store(true);
+    let mut builder =
+        url_guard::guarded_client_builder(Duration::from_secs(timeout_secs), user_agent)
+            .cookie_store(true);
     if let Some(p) = proxy {
         builder = builder.proxy(Proxy::all(p)?);
     }

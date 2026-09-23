@@ -1,8 +1,8 @@
-pub mod auth;
 pub mod handlers;
 pub mod router;
 
 use crate::app::config::AppConfig;
+use crate::auth::AuthState;
 use crate::service::{
     ai_book_service::AiBookService, ai_model_service::AiModelService,
     book_group_service::BookGroupService, book_service::BookService,
@@ -15,6 +15,8 @@ use std::sync::Arc;
 #[derive(Clone)]
 pub struct AppState {
     pub config: AppConfig,
+    /// JWT 中间件所需的签名密钥与身份查询
+    pub auth: AuthState,
     pub book_service: Arc<BookService>,
     pub book_source_service: Arc<BookSourceService>,
     pub user_service: Arc<UserService>,

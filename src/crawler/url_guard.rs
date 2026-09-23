@@ -33,11 +33,6 @@ pub fn private_network_allowed() -> bool {
     ALLOW_PRIVATE_NETWORK.load(Ordering::Relaxed)
 }
 
-/// 单用户本地部署的默认策略：放行私网。
-pub fn default_allow_private_network(secure: bool) -> bool {
-    !secure
-}
-
 /// 该 IP 是否属于禁止出站访问的范围。
 pub fn is_forbidden_ip(ip: &IpAddr) -> bool {
     match ip {
@@ -67,7 +62,7 @@ fn is_forbidden_v4(ip: &Ipv4Addr) -> bool {
         || (o[0] == 198 && (o[1] & 0xFE) == 18)        // 198.18/15 基准测试
         || (o[0] == 198 && o[1] == 51 && o[2] == 100)  // 198.51.100.0/24 TEST-NET-2
         || (o[0] == 203 && o[1] == 0 && o[2] == 113)   // 203.0.113.0/24 TEST-NET-3
-        || o[0] >= 240                                 // 240/4 保留
+        || o[0] >= 240 // 240/4 保留
 }
 
 fn is_forbidden_v6(ip: &Ipv6Addr) -> bool {
@@ -77,7 +72,7 @@ fn is_forbidden_v6(ip: &Ipv6Addr) -> bool {
         || ip.is_multicast()
         || (s[0] & 0xFFC0) == 0xFE80  // fe80::/10 链路本地
         || (s[0] & 0xFE00) == 0xFC00  // fc00::/7 唯一本地地址
-        || (s[0] & 0xFFC0) == 0xFEC0  // fec0::/10 站点本地（已废弃但仍是内网语义）
+        || (s[0] & 0xFFC0) == 0xFEC0 // fec0::/10 站点本地（已废弃但仍是内网语义）
 }
 
 /// 明显指向内网的主机名（含常见的云元数据别名）。

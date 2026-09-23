@@ -68,8 +68,7 @@ ASSETS_DIR=storage/assets
 WEB_ROOT=web/dist
 LOG_LEVEL=info
 
-SECURE=true
-SECURE_KEY=<足够随机的密钥>
+JWT_SECRET=<足够随机的密钥>
 INVITE_CODE=<注册邀请码>
 ```
 

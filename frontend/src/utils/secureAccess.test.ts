@@ -1,60 +1,34 @@
 import { describe, expect, it } from 'vitest'
-import {
-  appendAuthQueryParams,
-  buildAuthHeaderValues,
-  computeNeedSecureKey,
-  SECURE_KEY_STORAGE_KEY,
-} from './secureAccess'
+import { ACCESS_TOKEN_STORAGE_KEY, appendAuthQueryParams, readAccessToken } from './secureAccess'
+
+function storageWith(entries: Record<string, string>) {
+  return {
+    getItem(key: string) {
+      return entries[key] ?? null
+    },
+  }
+}
 
 describe('secureAccess', () => {
-  it('adds stored secure key to auth headers', () => {
-    const storage = {
-      getItem(key: string) {
-        if (key === 'accessToken') return 'token-123'
-        if (key === SECURE_KEY_STORAGE_KEY) return 'secure-456'
-        return null
-      },
-    }
-
-    expect(buildAuthHeaderValues(storage)).toEqual({
-      accessToken: 'token-123',
-      secureKey: 'secure-456',
-    })
+  it('reads the stored JWT verbatim', () => {
+    const storage = storageWith({ [ACCESS_TOKEN_STORAGE_KEY]: ' header.payload.signature ' })
+    expect(readAccessToken(storage)).toBe('header.payload.signature')
   })
 
-  it('adds stored auth values to event source query params', () => {
-    const storage = {
-      getItem(key: string) {
-        if (key === 'accessToken') return 'alice-token'
-        if (key === SECURE_KEY_STORAGE_KEY) return 'admin-key'
-        return null
-      },
-    }
+  it('treats missing or blank tokens as absent', () => {
+    expect(readAccessToken(storageWith({}))).toBeUndefined()
+    expect(readAccessToken(storageWith({ [ACCESS_TOKEN_STORAGE_KEY]: '   ' }))).toBeUndefined()
+  })
+
+  it('adds the token to event source query params', () => {
     const params = new URLSearchParams()
-
-    appendAuthQueryParams(params, storage)
-
+    appendAuthQueryParams(params, storageWith({ [ACCESS_TOKEN_STORAGE_KEY]: 'alice-token' }))
     expect(params.get('accessToken')).toBe('alice-token')
-    expect(params.get('secureKey')).toBe('admin-key')
   })
 
-  it('requires secure key only when the server requires it and current request is not admin authorized', () => {
-    expect(computeNeedSecureKey({
-      secure: true,
-      secureKeyRequired: true,
-      adminAuthorized: false,
-    })).toBe(true)
-
-    expect(computeNeedSecureKey({
-      secure: true,
-      secureKeyRequired: true,
-      adminAuthorized: true,
-    })).toBe(false)
-
-    expect(computeNeedSecureKey({
-      secure: true,
-      secureKeyRequired: false,
-      adminAuthorized: false,
-    })).toBe(false)
+  it('omits the param entirely when there is no token', () => {
+    const params = new URLSearchParams()
+    appendAuthQueryParams(params, storageWith({}))
+    expect(params.has('accessToken')).toBe(false)
   })
 })

@@ -122,7 +122,8 @@ export interface BookGroup {
 export interface UserInfo {
   username: string
   lastLoginAt?: number
-  accessToken: string
+  /// 仅在登录与改密码的响应中出现；用户列表不再回吐任何凭据
+  accessToken?: string
   enableWebdav?: boolean
   enableLocalStore?: boolean
   enableAiModel?: boolean

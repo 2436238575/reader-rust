@@ -80,8 +80,7 @@ docker run -d \
   --name reader \
   -p 8080:8080 \
   -v $(pwd)/storage:/app/storage \
-  -e SECURE=true \
-  -e SECURE_KEY=your-secret-key \
+  -e JWT_SECRET=your-random-secret \
   -e INVITE_CODE=your-invite-code \
   -e LOG_LEVEL=debug \
   givenge/reader-rust:latest
@@ -103,8 +102,7 @@ services:
     volumes:
       - ./storage:/app/storage
     environment:
-      - SECURE=true
-      - SECURE_KEY=your-secret-key
+      - JWT_SECRET=your-random-secret
       - LOG_LEVEL=info
     restart: unless-stopped
 ```

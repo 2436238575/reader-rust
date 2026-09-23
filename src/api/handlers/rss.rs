@@ -1,5 +1,5 @@
-use crate::api::auth::AuthContext;
 use crate::api::AppState;
+use crate::auth::CurrentUser;
 use axum::extract::Multipart;
 use axum::{extract::State, Json};
 use serde::Deserialize;
@@ -36,15 +36,9 @@ pub struct RssContentRequest {
 
 pub async fn get_rss_sources(
     State(state): State<AppState>,
-    auth: AuthContext,
+    user: CurrentUser,
 ) -> Result<Json<ApiResponse<Value>>, AppError> {
-    let user_ns = resolve_user_ns(
-        &state,
-        auth.access_token(),
-        auth.secure_key(),
-        auth.user_ns(),
-    )
-    .await?;
+    let user_ns = user.0.ns.clone();
     let list = read_list::<RssSource>(&state, &user_ns, "rssSources.json").await?;
     Ok(Json(ApiResponse::ok(
         serde_json::to_value(list).unwrap_or_default(),
@@ -53,16 +47,10 @@ pub async fn get_rss_sources(
 
 pub async fn save_rss_source(
     State(state): State<AppState>,
-    auth: AuthContext,
+    user: CurrentUser,
     Json(source): Json<RssSource>,
 ) -> Result<Json<ApiResponse<Value>>, AppError> {
-    let user_ns = resolve_user_ns(
-        &state,
-        auth.access_token(),
-        auth.secure_key(),
-        auth.user_ns(),
-    )
-    .await?;
+    let user_ns = user.0.ns.clone();
     if source.source_url.is_empty() {
         return Err(AppError::BadRequest("RSS链接不能为空".to_string()));
     }
@@ -77,16 +65,10 @@ pub async fn save_rss_source(
 
 pub async fn save_rss_sources(
     State(state): State<AppState>,
-    auth: AuthContext,
+    user: CurrentUser,
     Json(mut sources): Json<Vec<RssSource>>,
 ) -> Result<Json<ApiResponse<Value>>, AppError> {
-    let user_ns = resolve_user_ns(
-        &state,
-        auth.access_token(),
-        auth.secure_key(),
-        auth.user_ns(),
-    )
-    .await?;
+    let user_ns = user.0.ns.clone();
     let mut list = read_list::<RssSource>(&state, &user_ns, "rssSources.json").await?;
     sources.retain(|s| !s.source_url.is_empty() && !s.source_name.is_empty());
     for s in sources {
@@ -98,16 +80,10 @@ pub async fn save_rss_sources(
 
 pub async fn delete_rss_source(
     State(state): State<AppState>,
-    auth: AuthContext,
+    user: CurrentUser,
     Json(source): Json<RssSource>,
 ) -> Result<Json<ApiResponse<Value>>, AppError> {
-    let user_ns = resolve_user_ns(
-        &state,
-        auth.access_token(),
-        auth.secure_key(),
-        auth.user_ns(),
-    )
-    .await?;
+    let user_ns = user.0.ns.clone();
     let mut list = read_list::<RssSource>(&state, &user_ns, "rssSources.json").await?;
     list.retain(|s| s.source_url != source.source_url);
     write_list(&state, &user_ns, "rssSources.json", &list).await?;
@@ -116,16 +92,10 @@ pub async fn delete_rss_source(
 
 pub async fn delete_rss_sources(
     State(state): State<AppState>,
-    auth: AuthContext,
+    user: CurrentUser,
     Json(sources): Json<Vec<RssSource>>,
 ) -> Result<Json<ApiResponse<Value>>, AppError> {
-    let user_ns = resolve_user_ns(
-        &state,
-        auth.access_token(),
-        auth.secure_key(),
-        auth.user_ns(),
-    )
-    .await?;
+    let user_ns = user.0.ns.clone();
     let mut list = read_list::<RssSource>(&state, &user_ns, "rssSources.json").await?;
     let deleted = remove_rss_sources_by_url(&mut list, &sources);
     write_list(&state, &user_ns, "rssSources.json", &list).await?;
@@ -213,16 +183,10 @@ pub async fn read_rss_source_file(
 
 pub async fn get_rss_articles(
     State(state): State<AppState>,
-    auth: AuthContext,
+    user: CurrentUser,
     body: Option<Json<RssArticlesRequest>>,
 ) -> Result<Json<ApiResponse<Value>>, AppError> {
-    let user_ns = resolve_user_ns(
-        &state,
-        auth.access_token(),
-        auth.secure_key(),
-        auth.user_ns(),
-    )
-    .await?;
+    let user_ns = user.0.ns.clone();
     let req = body.map(|b| b.0).unwrap_or(RssArticlesRequest {
         source_url: None,
         sort_name: None,
@@ -317,16 +281,10 @@ pub async fn get_rss_articles(
 
 pub async fn get_rss_content(
     State(state): State<AppState>,
-    auth: AuthContext,
+    user: CurrentUser,
     body: Option<Json<RssContentRequest>>,
 ) -> Result<Json<ApiResponse<Value>>, AppError> {
-    let user_ns = resolve_user_ns(
-        &state,
-        auth.access_token(),
-        auth.secure_key(),
-        auth.user_ns(),
-    )
-    .await?;
+    let user_ns = user.0.ns.clone();
     let req = body.map(|b| b.0).unwrap_or(RssContentRequest {
         source_url: None,
         link: None,
@@ -369,22 +327,6 @@ pub async fn get_rss_content(
     .map_err(AppError::Internal)?;
     let body = String::from_utf8_lossy(&bytes).into_owned();
     Ok(Json(ApiResponse::ok(Value::String(body))))
-}
-
-async fn resolve_user_ns(
-    state: &AppState,
-    access_token: Option<&str>,
-    secure_key: Option<&str>,
-    user_ns: Option<&str>,
-) -> Result<String, AppError> {
-    match state
-        .user_service
-        .resolve_user_ns_with_override(access_token, secure_key, user_ns)
-        .await
-    {
-        Ok(ns) => Ok(ns),
-        Err(_) => Err(AppError::BadRequest("NEED_LOGIN".to_string())),
-    }
 }
 
 async fn read_list<T: for<'de> serde::Deserialize<'de>>(

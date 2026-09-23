@@ -96,7 +96,7 @@ cp .env.example .env
 | `DATABASE_URL` | `sqlite:storage/reader.db?mode=rwc` | SQLite 连接串 |
 | `WEB_ROOT` | `frontend/dist` | 前端静态文件目录 |
 | `LOG_LEVEL` | `info` | 日志级别 |
-| `SECURE` | `false` | 安全模式，开启后需带 `X-Secure-Key` |
+| `JWT_SECRET` | 空 | JWT 签名密钥，留空时自动生成到 `storage/jwt_secret` |
 
 完整配置项与说明见 [配置文档](https://givenge.github.io/reader-rust/guide/configuration)。
 

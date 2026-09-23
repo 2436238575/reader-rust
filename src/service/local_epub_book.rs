@@ -121,7 +121,10 @@ impl LocalEpubBookService {
         let opf_base = parent_zip_dir(&rootfile);
         let package = parse_opf(&opf_text, &opf_base)?;
 
-        let hash = md5_bytes_hex(format!("{}:{}:", user_ns, safe_file_name).as_bytes(), &bytes);
+        let hash = md5_bytes_hex(
+            format!("{}:{}:", user_ns, safe_file_name).as_bytes(),
+            &bytes,
+        );
         let book_url = format!("{}:{}", LOCAL_EPUB_ORIGIN, hash);
         let book_dir = self.book_dir(user_ns, &book_url)?;
 

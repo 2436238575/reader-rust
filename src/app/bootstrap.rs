@@ -4,7 +4,8 @@ use std::sync::Arc;
 use tracing_subscriber::EnvFilter;
 
 use crate::api::{self, AppState};
-use crate::app::config;
+use crate::app::config::{self, AppConfig};
+use crate::auth::{resolve_jwt_secret, AuthState};
 use crate::crawler::http_client::HttpClient;
 use crate::crawler::url_guard;
 use crate::parser::rule_engine::RuleEngine;
@@ -33,39 +34,61 @@ pub async fn run() -> anyhow::Result<()> {
         default_panic_hook(info);
     }));
 
-    // 出站守卫策略：默认跟随 SECURE（本地单用户放行私网，多用户/公网拦截）
-    let allow_private = cfg
-        .allow_private_network
-        .unwrap_or_else(|| url_guard::default_allow_private_network(cfg.secure));
+    let state = build_state(cfg.clone()).await?;
+    let app: Router = api::router::build_router(state);
+
+    let addr = SocketAddr::new(cfg.server_host.parse()?, cfg.server_port);
+    tracing::info!("listening on {}", addr);
+    let listener = tokio::net::TcpListener::bind(addr).await?;
+    axum::serve(listener, app)
+        .with_graceful_shutdown(shutdown_signal())
+        .await?;
+    tracing::info!("server stopped gracefully");
+    Ok(())
+}
+
+/// 组装全部服务与共享状态。
+///
+/// 与 `run()` 拆开是为了让集成测试能直接起一套真实的路由，而不必复制一份
+/// 装配逻辑——复制出来的那份迟早会和这里漂移。
+pub async fn build_state(cfg: AppConfig) -> anyhow::Result<AppState> {
+    // 出站守卫策略：默认拦截私网。书源是用户导入的第三方数据，
+    // 放行私网等于把本机与内网服务暴露给任意书源。
+    let allow_private = cfg.allow_private_network;
     url_guard::set_allow_private_network(allow_private);
-    tracing::info!(
-        "outbound policy: allow_private_network={} (secure={})",
-        allow_private,
-        cfg.secure
-    );
+    tracing::info!("outbound policy: allow_private_network={allow_private}");
 
     let storage_fs = StorageFs::new(&cfg.storage_dir, &cfg.assets_dir);
     storage_fs.ensure().await?;
     tracing::info!("storage ready: dir={}", cfg.storage_dir);
+
+    let jwt_secret = resolve_jwt_secret(Some(&cfg.jwt_secret), &cfg.storage_dir).await?;
 
     let pool = db::init_pool(&cfg.database_url).await?;
     let repo = db::repo::BookSourceRepo::new(pool.clone());
 
     let http = HttpClient::new(cfg.request_timeout_secs, None)?;
     let parser = RuleEngine::new()?;
-    let cache = FileCache::new(format!("{}/cache", cfg.storage_dir));
+    let cache = FileCache::new(
+        format!("{}/cache", cfg.storage_dir),
+        cfg.cache_user_limit_bytes,
+    );
     tracing::info!("core services initialized (db/http/rule engine/cache)");
 
     let book_service = Arc::new(
         BookService::new(http, parser, cache, &cfg.storage_dir)
-            .with_user_book_limit(cfg.user_book_limit),
+            .with_user_book_limit(cfg.user_book_limit)
+            .with_cover_cache_limit(cfg.cache_cover_limit_bytes),
     );
     let book_source_service = Arc::new(BookSourceService::new(repo, &cfg.storage_dir));
     let local_txt_book_service = Arc::new(LocalTxtBookService::new(&cfg.storage_dir));
     let local_epub_book_service = Arc::new(LocalEpubBookService::new(&cfg.storage_dir));
     let json_document_service = Arc::new(JsonDocumentService::new(pool.clone(), &cfg.storage_dir));
-    let user_service = Arc::new(UserService::new(cfg.clone(), pool.clone()));
-    user_service.migrate_legacy_users_from_json().await?;
+    let user_service = Arc::new(UserService::new(
+        cfg.clone(),
+        pool.clone(),
+        jwt_secret.clone(),
+    ));
     let book_group_service = Arc::new(BookGroupService::new(json_document_service.clone()));
     let ai_book_service = Arc::new(AiBookService::new(pool.clone(), &cfg.storage_dir));
     let ai_model_service = Arc::new(AiModelService::new(
@@ -78,8 +101,9 @@ pub async fn run() -> anyhow::Result<()> {
         format!("v{}", env!("CARGO_PKG_VERSION")),
     )?);
 
-    let state = AppState {
-        config: cfg.clone(),
+    Ok(AppState {
+        config: cfg,
+        auth: AuthState::new(pool.clone(), jwt_secret),
         book_service,
         book_source_service,
         user_service,
@@ -90,18 +114,7 @@ pub async fn run() -> anyhow::Result<()> {
         ai_book_service,
         ai_model_service,
         update_service,
-    };
-
-    let app: Router = api::router::build_router(state);
-
-    let addr = SocketAddr::new(cfg.server_host.parse()?, cfg.server_port);
-    tracing::info!("listening on {}", addr);
-    let listener = tokio::net::TcpListener::bind(addr).await?;
-    axum::serve(listener, app)
-        .with_graceful_shutdown(shutdown_signal())
-        .await?;
-    tracing::info!("server stopped gracefully");
-    Ok(())
+    })
 }
 
 /// 等待优雅停机信号：SIGINT（Ctrl+C）或 SIGTERM（容器编排下发）。

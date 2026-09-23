@@ -1,5 +1,5 @@
-use crate::api::auth::AuthContext;
 use crate::api::AppState;
+use crate::auth::CurrentUser;
 use axum::{extract::State, Json};
 use serde_json::Value;
 
@@ -8,15 +8,9 @@ use crate::model::replace_rule::ReplaceRule;
 
 pub async fn get_replace_rules(
     State(state): State<AppState>,
-    auth: AuthContext,
+    user: CurrentUser,
 ) -> Result<Json<ApiResponse<Value>>, AppError> {
-    let user_ns = resolve_user_ns(
-        &state,
-        auth.access_token(),
-        auth.secure_key(),
-        auth.user_ns(),
-    )
-    .await?;
+    let user_ns = user.0.ns.clone();
     let list = read_list::<ReplaceRule>(&state, &user_ns, "replaceRule.json").await?;
     Ok(Json(ApiResponse::ok(
         serde_json::to_value(list).unwrap_or_default(),
@@ -25,16 +19,10 @@ pub async fn get_replace_rules(
 
 pub async fn save_replace_rule(
     State(state): State<AppState>,
-    auth: AuthContext,
+    user: CurrentUser,
     Json(rule): Json<ReplaceRule>,
 ) -> Result<Json<ApiResponse<Value>>, AppError> {
-    let user_ns = resolve_user_ns(
-        &state,
-        auth.access_token(),
-        auth.secure_key(),
-        auth.user_ns(),
-    )
-    .await?;
+    let user_ns = user.0.ns.clone();
     if rule.name.is_empty() {
         return Err(AppError::BadRequest("名称不能为空".to_string()));
     }
@@ -49,16 +37,10 @@ pub async fn save_replace_rule(
 
 pub async fn save_replace_rules(
     State(state): State<AppState>,
-    auth: AuthContext,
+    user: CurrentUser,
     Json(mut rules): Json<Vec<ReplaceRule>>,
 ) -> Result<Json<ApiResponse<Value>>, AppError> {
-    let user_ns = resolve_user_ns(
-        &state,
-        auth.access_token(),
-        auth.secure_key(),
-        auth.user_ns(),
-    )
-    .await?;
+    let user_ns = user.0.ns.clone();
     let mut list = read_list::<ReplaceRule>(&state, &user_ns, "replaceRule.json").await?;
     rules.retain(|r| !r.name.is_empty() && !r.pattern.is_empty());
     for r in rules {
@@ -70,16 +52,10 @@ pub async fn save_replace_rules(
 
 pub async fn delete_replace_rule(
     State(state): State<AppState>,
-    auth: AuthContext,
+    user: CurrentUser,
     Json(rule): Json<ReplaceRule>,
 ) -> Result<Json<ApiResponse<Value>>, AppError> {
-    let user_ns = resolve_user_ns(
-        &state,
-        auth.access_token(),
-        auth.secure_key(),
-        auth.user_ns(),
-    )
-    .await?;
+    let user_ns = user.0.ns.clone();
     let mut list = read_list::<ReplaceRule>(&state, &user_ns, "replaceRule.json").await?;
     list.retain(|r| r.name != rule.name);
     write_list(&state, &user_ns, "replaceRule.json", &list).await?;
@@ -88,38 +64,16 @@ pub async fn delete_replace_rule(
 
 pub async fn delete_replace_rules(
     State(state): State<AppState>,
-    auth: AuthContext,
+    user: CurrentUser,
     Json(rules): Json<Vec<ReplaceRule>>,
 ) -> Result<Json<ApiResponse<Value>>, AppError> {
-    let user_ns = resolve_user_ns(
-        &state,
-        auth.access_token(),
-        auth.secure_key(),
-        auth.user_ns(),
-    )
-    .await?;
+    let user_ns = user.0.ns.clone();
     let mut list = read_list::<ReplaceRule>(&state, &user_ns, "replaceRule.json").await?;
     for r in rules {
         list.retain(|v| v.name != r.name);
     }
     write_list(&state, &user_ns, "replaceRule.json", &list).await?;
     Ok(Json(ApiResponse::ok(Value::String("".to_string()))))
-}
-
-async fn resolve_user_ns(
-    state: &AppState,
-    access_token: Option<&str>,
-    secure_key: Option<&str>,
-    user_ns: Option<&str>,
-) -> Result<String, AppError> {
-    match state
-        .user_service
-        .resolve_user_ns_with_override(access_token, secure_key, user_ns)
-        .await
-    {
-        Ok(ns) => Ok(ns),
-        Err(_) => Err(AppError::BadRequest("NEED_LOGIN".to_string())),
-    }
 }
 
 async fn read_list<T: for<'de> serde::Deserialize<'de>>(

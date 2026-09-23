@@ -161,18 +161,15 @@ const loading = ref(false)
 const working = ref(false)
 const errorMessage = ref('')
 
-const webdavAvailable = computed(() => {
-  if (!appStore.isSecureMode) return true
-  return appStore.isLoggedIn && !!appStore.userInfo?.enableWebdav
-})
+const webdavAvailable = computed(
+  () => appStore.isLoggedIn && !!appStore.userInfo?.enableWebdav,
+)
 
-const unavailableTitle = computed(() => {
-  if (!appStore.isSecureMode) return ''
-  return appStore.isLoggedIn ? '当前账号尚未开启服务器备份' : '需要先登录后才能使用服务器备份'
-})
+const unavailableTitle = computed(() =>
+  appStore.isLoggedIn ? '当前账号尚未开启服务器备份' : '需要先登录后才能使用服务器备份',
+)
 
 const unavailableMessage = computed(() => {
-  if (!appStore.isSecureMode) return ''
   return appStore.isLoggedIn
     ? '请在用户管理中为当前账号开启服务器备份权限后再使用备份与恢复功能。'
     : '登录后如果账号具备备份权限，就可以把数据备份到服务器并执行恢复。'

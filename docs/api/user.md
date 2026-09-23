@@ -2,7 +2,7 @@
 
 用户注册/登录、配置与管理接口。所有响应均包裹为统一结构：`{ "isSuccess": boolean, "data": any, "errorMsg": string }`。
 
-登录后服务端返回不透明 `accessToken`（形如 `用户名:token`），请求时放在 `Authorization` 头，例如 `Authorization: 用户名:token字符串`。认证不是 JWT。
+登录后服务端返回一个 **JWT** 作为 `accessToken`，请求时放在 `Authorization` 头，例如 `Authorization: Bearer <jwt>`。令牌载荷与失效规则见 [API 概述 · 认证](./index#认证)。
 
 ## 用户登录
 
@@ -31,7 +31,7 @@ POST /reader3/login
 {
   "isSuccess": true,
   "data": {
-    "accessToken": "用户名:token字符串",
+    "accessToken": "<JWT>",
     "username": "用户名",
     "lastLoginAt": 0,
     "enableWebdav": false,
@@ -50,7 +50,7 @@ POST /reader3/login
 POST /reader3/logout
 ```
 
-仅安全模式可用。使当前 token 失效。未携带有效凭据时响应为 `isSuccess=false`、`errorMsg` 为提示文案、`data` 为 `"NEED_LOGIN"`。
+**总是返回成功**，且不要求有效令牌。JWT 是无状态的，服务端没有可撤销的会话记录，该接口只是给客户端一个「可以清除本地令牌」的确认；真正使令牌失效的是改密码/重置密码/删号（见下）。
 
 ## 获取用户信息
 
@@ -58,7 +58,15 @@ POST /reader3/logout
 GET /reader3/getUserInfo
 ```
 
-请求头：`Authorization: 用户名:token字符串`。响应 `data` 形如 `{ "userInfo": {...}, "secure": false, "secureKeyRequired": false, "adminAuthorized": false }`。
+可选鉴权：未登录也返回 200，此时 `userInfo` 为 `null`。
+
+响应 `data` 形如：
+
+```json
+{ "userInfo": { "username": "用户名", "isAdmin": false, "...": "..." }, "adminAuthorized": false }
+```
+
+`userInfo` 不含任何凭据字段；`adminAuthorized` 表示当前令牌是否具备管理员角色。
 
 ## 修改密码
 
@@ -66,7 +74,7 @@ GET /reader3/getUserInfo
 POST /reader3/changePassword
 ```
 
-仅安全模式可用。请求体：
+请求体：
 
 ```json
 {
@@ -105,7 +113,7 @@ POST /reader3/saveUserConfig
 GET /reader3/getUserList
 ```
 
-仅管理员可用（安全模式 + 管理密码）。响应：`data` 为用户对象数组，每个对象为 `format_user` 输出的公开字段（不含 `password`/`salt` 原始值；`accessToken` 字段内含该用户当前 token，注意脱敏使用，依据：`src/service/user_service.rs` 的 `format_user`）：
+仅管理员可用，否则 403。响应：`data` 为用户对象数组，**不含任何凭据字段**——JWT 由各设备自行持有，服务端不回吐他人令牌：
 
 ```json
 {
@@ -114,7 +122,6 @@ GET /reader3/getUserList
     {
       "username": "用户名",
       "lastLoginAt": 1699999999999,
-      "accessToken": "用户名:token",
       "enableWebdav": false,
       "enableLocalStore": false,
       "enableAiModel": false,
@@ -132,7 +139,7 @@ GET /reader3/getUserList
 POST /reader3/addUser
 ```
 
-仅管理员可用。请求体：
+仅管理员可用，否则 403。请求体：
 
 ```json
 {
@@ -147,7 +154,7 @@ POST /reader3/addUser
 POST /reader3/deleteUsers
 ```
 
-仅管理员可用。请求体为用户名数组。响应：`data` 为剩余用户列表。
+仅管理员可用，否则 403。请求体为用户名数组。响应：`data` 为剩余用户列表。
 
 ## 重置用户密码
 
@@ -155,7 +162,7 @@ POST /reader3/deleteUsers
 POST /reader3/resetPassword
 ```
 
-仅管理员可用。请求体：
+仅管理员可用，否则 403。请求体：
 
 ```json
 {
@@ -170,7 +177,7 @@ POST /reader3/resetPassword
 POST /reader3/updateUser
 ```
 
-仅管理员可用。请求参数：
+仅管理员可用，否则 403。请求参数：
 
 | 参数 | 类型 | 必填 | 说明 |
 |------|------|------|------|
@@ -185,7 +192,7 @@ POST /reader3/updateUser
 GET /reader3/getVersionUpdate
 ```
 
-查询参数：`force`（boolean，可选，是否强制刷新缓存）。仅安全模式需管理员密码。响应 `data` 为 `VersionUpdateInfo`（`src/service/update_service.rs` 的 `VersionUpdateInfo`，camelCase）：
+查询参数：`force`（boolean，可选，是否强制刷新缓存）。响应 `data` 为 `VersionUpdateInfo`（`src/service/update_service.rs` 的 `VersionUpdateInfo`，camelCase）：
 
 | 字段 | 类型 | 说明 |
 |------|------|------|
@@ -206,7 +213,7 @@ GET /reader3/getVersionUpdate
 POST /reader3/dismissVersionUpdate
 ```
 
-仅管理员可用（安全模式 + 管理密码）。请求体：
+仅管理员可用，否则 403。请求体：
 
 ```json
 { "version": "v1.0.9" }
@@ -228,7 +235,7 @@ POST /reader3/register
 POST /reader3/uploadFile?type=<目录名>
 ```
 
-`multipart/form-data`，字段名 `file`。文件落到 `storage/assets/<用户>/<type>/` 并可经 `/assets/...` 静态访问。
+`multipart/form-data`，字段名 `file`。文件落到 `ASSETS_DIR/<用户>/<type>/` 并可经 `/assets/...` 静态访问。
 
 约束：`type` 仅允许字母数字、下划线、连字符；文件名只取纯文件名部分，拒绝路径分隔符、Windows 保留字符与设备名（`CON`/`NUL` 等）、结尾点/空格；单文件上限 32MB。响应 `data` 为上传成功的 URL 字符串数组：`["/assets/<用户>/<type>/<文件名>"]`。
 

@@ -183,7 +183,7 @@ async fn saving_same_named_local_txt_books_keeps_distinct_book_urls() {
     let book_service = BookService::new(
         HttpClient::new(5, None).unwrap(),
         RuleEngine::new().unwrap(),
-        FileCache::new(storage_dir.join("cache")),
+        FileCache::new(storage_dir.join("cache"), 0),
         storage_dir.to_str().unwrap(),
     );
 

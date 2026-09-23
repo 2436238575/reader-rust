@@ -78,8 +78,7 @@ pub fn sanitize_dir_segment(raw: &str) -> Option<String> {
 /// 用于「明确拒绝」而不是「静默规范化」——例如删除文件时，客户端传回来的
 /// 链接本不该带回溯，出现 `..` 一律按非法处理，语义更清晰。
 pub fn contains_parent_dir(path: &Path) -> bool {
-    path.components()
-        .any(|c| matches!(c, Component::ParentDir))
+    path.components().any(|c| matches!(c, Component::ParentDir))
 }
 
 /// 词法规范化并把 `relative` 解析到 `base` 之下；**一旦逃出 `base` 就返回 `None`**。
@@ -146,7 +145,10 @@ mod tests {
 
     #[test]
     fn accepts_normal_file_names() {
-        assert_eq!(sanitize_file_name("cover.png").as_deref(), Some("cover.png"));
+        assert_eq!(
+            sanitize_file_name("cover.png").as_deref(),
+            Some("cover.png")
+        );
         assert_eq!(
             sanitize_file_name("  中文 图片-1.jpg  ").as_deref(),
             Some("中文 图片-1.jpg")
@@ -166,7 +168,10 @@ mod tests {
     #[test]
     fn accepts_normal_dir_segments() {
         assert_eq!(sanitize_dir_segment("images").as_deref(), Some("images"));
-        assert_eq!(sanitize_dir_segment("my_type-2").as_deref(), Some("my_type-2"));
+        assert_eq!(
+            sanitize_dir_segment("my_type-2").as_deref(),
+            Some("my_type-2")
+        );
     }
 
     #[test]

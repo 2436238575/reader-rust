@@ -1723,7 +1723,8 @@ fn xpath_select_nodes<'a>(
     // 组合规则（顶层切分）：&& 拼接 / || 首个非空 / %% 交错
     let combo = crate::parser::rule_analyzer::split_top_level(xpath, &["&&", "||", "%%"]);
     if let Some(op) = combo.delimiter.as_deref() {
-        let mut result = xpath_select_nodes(node, combo.parts.first().map(String::as_str).unwrap_or(""));
+        let mut result =
+            xpath_select_nodes(node, combo.parts.first().map(String::as_str).unwrap_or(""));
         for part in combo.parts.iter().skip(1) {
             let next = xpath_select_nodes(node, part);
             match op {

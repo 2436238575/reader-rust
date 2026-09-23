@@ -46,7 +46,7 @@ async fn chapter_list_requests_include_legacy_source_headers() {
 
     let storage_dir =
         std::env::temp_dir().join(format!("reader-rust-header-test-{}", Uuid::new_v4()));
-    let cache = FileCache::new(storage_dir.join("cache"));
+    let cache = FileCache::new(storage_dir.join("cache"), 0);
     let service = BookService::new(
         HttpClient::new(5, None).unwrap(),
         RuleEngine::new().unwrap(),

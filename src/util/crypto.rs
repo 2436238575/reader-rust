@@ -33,7 +33,7 @@ pub fn verify_password(password: &str, stored: &str) -> bool {
         .is_ok()
 }
 
-/// 常量时间字符串比较，用于 secureKey 这类共享密钥的校验，
+/// 常量时间字符串比较，用于邀请码这类共享密钥的校验，
 /// 避免 `==` 的逐字节短路泄露前缀匹配信息。
 pub fn secure_compare(a: &str, b: &str) -> bool {
     let (a, b) = (a.as_bytes(), b.as_bytes());

@@ -894,7 +894,10 @@ mod tests {
         // 必须经 html5ever 容错回退后才能用 XPath
         let messy = "<html><body><div class=\"list\"><p>第一章&nbsp;<br><img src=x.png></p>\
                      <p>第二章 & 后续</p></div></body></html>";
-        assert!(sxd_document::parser::parse(messy).is_err(), "前提：严格解析必须失败");
+        assert!(
+            sxd_document::parser::parse(messy).is_err(),
+            "前提：严格解析必须失败"
+        );
         let items = select_xpath(messy, "//div[@class=\"list\"]/p");
         assert_eq!(items.len(), 2);
         assert!(items[0].contains("第一章"), "got: {:?}", items[0]);

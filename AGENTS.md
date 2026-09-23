@@ -96,19 +96,21 @@ cp .env.example .env
 | `WEB_ROOT` | `frontend/dist` | 前端静态文件目录 |
 | `LOG_LEVEL` | `info` | `trace` / `debug` / `info` / `warn` / `error` |
 | `REQUEST_TIMEOUT_SECS` | `15` | 抓取上游站点的超时时间 |
-| `SECURE` | `false` | 安全模式开关 |
-| `SECURE_KEY` | 空 | 安全模式密钥 |
+| `JWT_SECRET` | 空 | JWT 签名密钥；留空时自动生成并持久化到 `<STORAGE_DIR>/jwt_secret` |
+| `JWT_TTL_SECS` | `604800`（7 天） | 令牌有效期 |
 | `INVITE_CODE` | 空 | 注册邀请码，为空表示不限制 |
 | `USER_LIMIT` | `50` | 用户数上限 |
 | `USER_BOOK_LIMIT` | `2000` | 单用户书架上限，`0` 表示不限制 |
 | `USER_LOCAL_BOOK_LIMIT` | `0` | 单用户本地上传上限，`0` 表示不限制 |
-| `ALLOW_PRIVATE_NETWORK` | 跟随 `SECURE` | 出站请求是否允许访问私网/内网地址；见 `docs/guide/configuration.md` |
+| `CACHE_USER_LIMIT_BYTES` | `536870912` | 单用户正文缓存上限；`0` 表示不限制 |
+| `CACHE_COVER_LIMIT_BYTES` | `268435456` | 封面缓存目录上限；`0` 表示不限制 |
+| `ALLOW_PRIVATE_NETWORK` | `false` | 出站请求是否允许访问私网/内网地址；见 `docs/guide/configuration.md` |
 | `CORS_ALLOWED_ORIGINS` | 空 | 跨域来源白名单；留空仅同源 |
 
 两点需要注意：
 
 - **配置结构是扁平的**，没有嵌套层级，因此不存在「用 `__` 表示层级」这种用法。
-- 代码默认 `SECURE=false`，而 `.env.example` 模板给的是 `SECURE=true`。这是刻意为之：模板按生产安全默认提供，**不要为了让两者一致而把模板改成 `false`**。开启 `SECURE` 后，请求需带 `X-Secure-Key` 头或 URL 查询参数 `secureKey`。
+- `JWT_SECRET` 留空时后端会在启动阶段生成随机密钥写入 `storage/jwt_secret`，开发开箱即用；**多实例部署必须显式配置同一个值**，否则各实例签发的令牌互不认可。
 
 ---
 
@@ -117,12 +119,17 @@ cp .env.example .env
 ```
 src/
   main.rs / lib.rs        入口，各十余行
-  api/                    路由与 HTTP 处理（axum），17 文件约 7400 行
-    router.rs             全部路由定义（唯一真相来源）
-    auth.rs               从请求头 / 查询参数提取鉴权信息
-    handlers/             12 个领域模块：book、book_source、user、rss、bookmark、
+  api/                    路由与 HTTP 处理（axum），17 文件约 7000 行
+    router.rs             全部路由定义 + 鉴权分组（唯一真相来源）
+    handlers/             13 个领域模块：book、book_source、user、rss、bookmark、
                           book_group、ai_book、ai_model、ai_proxy、replace_rule、
-                          update、webdav；另有共享的 multipart.rs（限量读取工具）
+                          update、webdav、cache（缓存清理与统计）；
+                          另有共享的 multipart.rs（限量读取工具）
+  auth/                   JWT 鉴权，4 文件
+    jwt.rs                Claims 定义与 HS256 编解码
+    secret.rs             JWT_SECRET 解析与持久化
+    extractor.rs          CurrentUser / MaybeUser 提取器
+    middleware.rs         require_auth / require_admin / optional_auth
   service/                业务编排，11 文件约 6000 行
   parser/                 规则解析引擎，6 文件约 4300 行
     rule_engine.rs        核心（2500 行）：六种用途的解析入口
@@ -132,22 +139,21 @@ src/
     url_analyzer.rs       占位符替换、页面选择、内联 JS
     url_guard.rs          出站请求守卫（SSRF 防护）
   model/                  BookSource 等数据结构，14 文件约 1000 行
-  storage/               SQLite（sqlx）+ 文件缓存，7 文件约 430 行
-    db/migrations/        0001_init / 0002_add_user_ns / 0003_users_and_account_documents /
-                          0004_drop_dead_cache_tables
-    cache/file_cache.rs   章节内容文件缓存，以 MD5 命名
+  storage/               SQLite（sqlx）+ 文件缓存，7 文件约 500 行
+    db/migrations/        仅 0001_init.sql（历史兼容补丁已并入）
+    cache/file_cache.rs   章节内容文件缓存，以 MD5 命名；无 TTL，按容量淘汰
   app/                    配置加载与启动引导
   error/                  错误类型
   util/                   加密、哈希、文本、时间等工具
 frontend/                 Vue 3 + TypeScript + Vite + Pinia 前端
 docs/                     VitePress 文档站，见文末「文档地图」
-tests/                    Rust 集成测试（10 文件）+ Playwright e2e
+tests/                    Rust 集成测试（11 文件）+ Playwright e2e
 scripts/release.sh        发布脚本
 storage/                  运行期数据，gitignored，首次启动自动创建
 ```
 
-规模参照（便于判断改动影响面）：后端 `src/` 共 73 个 `.rs`、约 21200 行，其中最大的三个文件是
-`api/handlers/book.rs`（约 3170 行）、`parser/rule_engine.rs`（约 2530 行）、`service/book_service.rs`（约 1960 行）；
+规模参照（便于判断改动影响面）：后端 `src/` 共 78 个 `.rs`、约 21400 行，其中最大的三个文件是
+`api/handlers/book.rs`（约 3070 行）、`parser/rule_engine.rs`（约 2540 行）、`service/book_service.rs`（约 2260 行）；
 前端 `src/` 下 117 个文件（72 个 `.ts`，其中 20 个是测试；40 个 `.vue`；2 个 CSS + 2 个静态资源 + 1 个 JS 工具）。
 
 ---
@@ -156,17 +162,20 @@ storage/                  运行期数据，gitignored，首次启动自动创�
 
 ```
 HTTP 请求
-  → api/router.rs          路由匹配
-  → api/handlers/*         提取鉴权与参数
+  → api/router.rs          路由匹配 + 鉴权分组（公开 / 可选 / 需登录 / 管理员）
+  → auth/middleware.rs     校验 JWT，把身份写入请求扩展；失败即 401 / 403
+  → api/handlers/*         从 CurrentUser 取身份与参数
   → service/*              业务编排（缓存命中判断、书源选择、请求头与 Cookie 准备）
   → parser/rule_engine.rs  按 BookSource 规则解析；需要页面内容时经 crawler 抓取
   → crawler/*              reqwest 抓取上游页面（占位符展开、字符集解码）
   → 统一响应包装返回 JSON
 ```
 
-各层依赖方向（已核实）：`api → service → parser → crawler`。`parser/` 与 `crawler/` 都**不依赖** `service/`；
+各层依赖方向（已核实）：`api → service → parser → crawler`，另有 `service → auth`（签发令牌用 `auth::jwt`）。
+`parser/` 与 `crawler/` 都**不依赖** `service/`；
 `parser` 与 `crawler` 之间是双向编译期依赖（解析经 crawler 抓取并过出站守卫；crawler 展开 URL 内联 JS 时回调 parser 的 JS 求值）；
 `model/`、`util/`、`error/` 是被各层共用的底座模块；`storage/` 由 `service/` 使用。
+`auth/` 是 HTTP 层的横向关注点：`service` 只用它的令牌编解码，中间件自己持有一条只读的身份查询，不反向依赖 service。
 
 响应一律包装为：
 
@@ -175,9 +184,25 @@ HTTP 请求
 ```
 
 - `isSuccess=false` 时从 `errorMsg` 读取失败原因。
-- `errorMsg` 为 `"NEED_LOGIN"` 表示未登录（HTTP 400；后端唯一的 HTTP 401 来自 WebDAV Basic 认证），前端据此弹出登录框。
+- 未登录/令牌无效或过期 → **HTTP 401**，`errorMsg` 为 `"NEED_LOGIN"`，前端据此弹出登录框。
+- 已登录但非管理员访问管理员接口 → **HTTP 403**，`errorMsg` 为 `"FORBIDDEN"`。
+- `/reader3` 是纯 API 命名空间：未注册路径返回 JSON 404，不落到静态文件服务。
 
-鉴权说明：**不使用 JWT**。登录返回的 `accessToken` 形如 `用户名:token`，服务端把 token 持久化在 SQLite（`users.token` 与 `user_sessions` 表），因此同一账号可多端登录。请求时放在 `Authorization` 头（也支持 URL 查询参数 `accessToken`）。
+鉴权说明：使用 **JWT（HS256）**。登录返回的 `accessToken` 是标准 JWT，载荷为 `{ sub, ns, is_admin, iat, exp, ver }`。传递方式只有两种：`Authorization: Bearer <jwt>` 头，或查询参数 `accessToken`（SSE 与 `<img>` 无法设置请求头，只能走查询串）。中间件位于 `src/auth/middleware.rs`，分 `require_auth` / `require_admin` / `optional_auth` 三档，在 `api/router.rs` 里按分组挂载；handler 通过 `CurrentUser` 提取器取身份，不再自行解析凭据。撤销靠 `users.token_version`：改密码/重置密码/删号自增版本号即作废该用户所有旧令牌。
+
+### 静态资源与 404
+
+前端使用 **hash 路由**，深链接不依赖服务端回落，因此后端**不提供 SPA fallback**：
+
+| 路径 | 行为 |
+|------|------|
+| `/` | 返回 `WEB_ROOT/index.html` |
+| `/assets/*` | 先查 `WEB_ROOT/assets`，再回落到 `ASSETS_DIR` |
+| `WEB_ROOT` 下的真实文件（`sw.js`、`site.webmanifest`、favicon、`icons/`、`svg/`） | 按文件名直接可取 |
+| `/reader3/*` 未注册 | JSON 404（不落到静态服务） |
+| 其他不存在的路径 | 404，**不会**回落 index.html |
+
+新增前端根级静态文件时无需改路由；但若引入 SPA 深链接（切到 history 路由），需要重新加回落。
 
 ---
 
@@ -228,20 +253,21 @@ HTTP 请求
 ## 数据与存储
 
 - SQLite 通过 `sqlx` 访问，连接池 5 条连接，启动时自动执行 `src/storage/db/migrations/` 下的迁移。
-- 主要表：`book_sources`（书源 JSON）、`book_cache`、`chapter_cache`（章节缓存索引）、`users`、`user_sessions`、`json_documents`（通用 JSON 文档，按 namespace + name 存取）、`ai_book_memories`。
-- 章节正文以文件形式缓存于 `storage/cache/`，文件名用 MD5，数据库里只存索引。
+- 主要表：`book_sources`（书源 JSON，按 `(user_ns, book_source_url)` 主键）、`users`、`json_documents`（通用 JSON 文档，按 namespace + name 存取）、`ai_book_memories`。迁移只有 `0001_init.sql` 一个。
+- 章节正文以文件形式缓存于 `storage/cache/<ns>/<md5(bookUrl)>/`，文件名用 MD5，数据库里不存索引。
+- 缓存**不按时间过期**，只在显式调用 `POST /reader3/purgeCache` 或超出容量上限时回收；占用可用 `GET /reader3/cacheStats` 查看。
 - `storage/` 全部属于运行期数据，**不要提交**，清理时也不要误删。
 
 ---
 
 ## 测试
 
-Rust 侧共 **124 个测试**（85 个 `#[test]` + 39 个 `#[tokio::test]`），分布为：
+Rust 侧共 **155 个测试**（106 个 `#[test]` + 49 个 `#[tokio::test]`），分布为：
 
-- `tests/` 下 10 个集成测试文件，其中 `book_source_compat.rs` 用例最多（17 个）；
+- `tests/` 下 11 个集成测试文件，其中 `book_source_compat.rs` 用例最多（17 个）；`auth_flow.rs` 起真实监听端口，覆盖 401/403、静态回落与缓存清理；
 - `src/` 内的内联单元测试模块。
 
-前端使用 vitest，共 20 个 `*.test.ts`。
+前端使用 vitest，共 20 个 `*.test.ts`（75 个用例）。
 
 需要注意：
 

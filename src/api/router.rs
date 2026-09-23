@@ -1,14 +1,16 @@
 use crate::api::{handlers, AppState};
+use crate::auth::{optional_auth, require_admin, require_auth};
 use axum::{
     extract::DefaultBodyLimit,
     http::HeaderValue,
+    middleware,
     routing::{any, get, post},
     Router,
 };
 use std::path::PathBuf;
 use tower_http::cors::{AllowOrigin, Any, CorsLayer};
 use tower_http::request_id::{MakeRequestUuid, PropagateRequestIdLayer, SetRequestIdLayer};
-use tower_http::services::ServeDir;
+use tower_http::services::{ServeDir, ServeFile};
 use tower_http::trace::TraceLayer;
 
 /// 构建 CORS 层。
@@ -33,8 +35,56 @@ fn build_cors_layer(cors_allowed_origins: &str) -> CorsLayer {
 }
 
 pub fn build_router(state: AppState) -> Router {
-    let api = Router::new()
+    // ── 公开：无需任何凭据 ──
+    let public = Router::new()
         .route("/health", get(handlers::health))
+        .route("/reader3/login", post(handlers::login))
+        .with_state(state.clone());
+
+    // ── 可选鉴权：未登录也返回成功，只是内容为空 ──
+    let optional = Router::new()
+        .route("/reader3/getUserInfo", get(handlers::get_user_info))
+        .route("/reader3/logout", post(handlers::logout))
+        .layer(middleware::from_fn_with_state(state.clone(), optional_auth))
+        .with_state(state.clone());
+
+    // ── 管理员：认证 + 角色校验，非管理员 403 ──
+    let admin = Router::new()
+        .route("/reader3/getUserList", get(handlers::get_user_list))
+        .route("/reader3/addUser", post(handlers::add_user))
+        .route("/reader3/resetPassword", post(handlers::reset_password))
+        .route("/reader3/deleteUsers", post(handlers::delete_users))
+        .route("/reader3/updateUser", post(handlers::update_user))
+        .route(
+            "/reader3/setAsDefaultBookSources",
+            post(handlers::set_as_default_book_sources),
+        )
+        .route(
+            "/reader3/getDefaultBookSourceOwner",
+            get(handlers::get_default_book_source_owner),
+        )
+        .route(
+            "/reader3/getVersionUpdate",
+            get(handlers::get_version_update),
+        )
+        .route(
+            "/reader3/dismissVersionUpdate",
+            post(handlers::dismiss_version_update),
+        )
+        .route(
+            "/reader3/saveAiModelConfig",
+            post(handlers::save_ai_model_config),
+        )
+        .layer(middleware::from_fn_with_state(state.clone(), require_admin))
+        .with_state(state.clone());
+
+    // ── WebDAV 文件接口：自带 HTTP Basic 认证，不经 JWT ──
+    let webdav = Router::new()
+        .route("/reader3/webdav/*path", any(handlers::webdav_handler))
+        .with_state(state.clone());
+
+    // ── 其余全部需要登录 ──
+    let protected = Router::new()
         .route(
             "/reader3/getBookSource",
             get(handlers::get_book_source).post(handlers::get_book_source),
@@ -42,10 +92,6 @@ pub fn build_router(state: AppState) -> Router {
         .route(
             "/reader3/getBookSources",
             get(handlers::get_book_sources).post(handlers::get_book_sources),
-        )
-        .route(
-            "/reader3/getDefaultBookSourceOwner",
-            get(handlers::get_default_book_source_owner),
         )
         .route(
             "/reader3/loginBookSource",
@@ -84,10 +130,6 @@ pub fn build_router(state: AppState) -> Router {
         .route(
             "/reader3/deleteAllBookSources",
             post(handlers::delete_all_book_sources),
-        )
-        .route(
-            "/reader3/setAsDefaultBookSources",
-            post(handlers::set_as_default_book_sources),
         )
         .route(
             "/reader3/readRemoteSourceFile",
@@ -167,6 +209,8 @@ pub fn build_router(state: AppState) -> Router {
             "/reader3/deleteBookCache",
             post(handlers::delete_book_cache),
         )
+        .route("/reader3/purgeCache", post(handlers::purge_cache))
+        .route("/reader3/cacheStats", get(handlers::cache_stats))
         .route(
             "/reader3/getInvalidBookSources",
             post(handlers::get_invalid_book_sources),
@@ -248,10 +292,6 @@ pub fn build_router(state: AppState) -> Router {
             "/reader3/getAiModelConfig",
             get(handlers::get_ai_model_config),
         )
-        .route(
-            "/reader3/saveAiModelConfig",
-            post(handlers::save_ai_model_config),
-        )
         .route("/reader3/aiProxy", post(handlers::ai_proxy))
         .route("/reader3/aiProxyImage", post(handlers::ai_proxy_image))
         .route("/reader3/getReplaceRules", get(handlers::get_replace_rules))
@@ -288,59 +328,66 @@ pub fn build_router(state: AppState) -> Router {
             "/reader3/deleteWebdavFileList",
             post(handlers::delete_webdav_file_list),
         )
-        .route("/reader3/webdav/*path", any(handlers::webdav_handler))
-        .route("/reader3/login", post(handlers::login))
-        .route("/reader3/logout", post(handlers::logout))
-        .route("/reader3/getUserInfo", get(handlers::get_user_info))
-        .route(
-            "/reader3/getVersionUpdate",
-            get(handlers::get_version_update),
-        )
-        .route(
-            "/reader3/dismissVersionUpdate",
-            post(handlers::dismiss_version_update),
-        )
+        .route("/reader3/changePassword", post(handlers::change_password))
         .route("/reader3/saveUserConfig", post(handlers::save_user_config))
         .route("/reader3/getUserConfig", get(handlers::get_user_config))
-        .route("/reader3/getUserList", get(handlers::get_user_list))
-        .route("/reader3/deleteUsers", post(handlers::delete_users))
-        .route("/reader3/addUser", post(handlers::add_user))
-        .route("/reader3/resetPassword", post(handlers::reset_password))
-        .route("/reader3/changePassword", post(handlers::change_password))
-        .route("/reader3/updateUser", post(handlers::update_user))
         .route("/reader3/uploadFile", post(handlers::upload_file))
         .route("/reader3/deleteFile", post(handlers::delete_file))
         .route("/reader3/getTxtTocRules", get(handlers::get_txt_toc_rules))
+        .layer(middleware::from_fn_with_state(state.clone(), require_auth))
         .with_state(state.clone());
+
+    // `/reader3` 是纯 API 命名空间：未匹配的路径返回 JSON 404，
+    // 而不是落到静态文件服务上得到一个空响应体的 404。
+    // 静态路由优先级高于通配路由，因此这里的通配只兜住真正未注册的路径。
+    let api = Router::new()
+        .merge(public)
+        .merge(optional)
+        .merge(admin)
+        .merge(webdav)
+        .merge(protected)
+        .route("/reader3", any(handlers::api_not_found))
+        .route("/reader3/", any(handlers::api_not_found))
+        .route("/reader3/*rest", any(handlers::api_not_found));
 
     let web_root = state.config.web_root.clone();
     let assets_root = state.config.assets_dir.clone();
     let web_assets_root = PathBuf::from(&web_root).join("assets");
 
+    // 静态资源。
+    //
+    // 前端使用 hash 路由（`createWebHashHistory`），深链接不依赖服务端回落，
+    // 因此这里**不提供 SPA fallback**：只有真实存在的文件才会被返回，
+    // 其余路径一律 404。`/` 显式指向 index.html；dist 根目录下的
+    // sw.js / site.webmanifest / favicon 等 PWA 资源仍按文件名直接可取。
     let static_web = Router::new()
+        .route_service(
+            "/",
+            ServeFile::new(PathBuf::from(&web_root).join("index.html")),
+        )
         .nest_service(
             "/assets",
             ServeDir::new(web_assets_root).not_found_service(ServeDir::new(assets_root)),
         )
-        .fallback_service(ServeDir::new(web_root));
+        .fallback_service(ServeDir::new(web_root).append_index_html_on_directories(false));
 
     Router::new()
         .merge(api)
         .merge(static_web)
         .layer(DefaultBodyLimit::max(100 * 1024 * 1024))
         // 自定义 span：只记录 method + path，不记 query string。
-        // accessToken/secureKey 允许经查询参数传递，默认 span 记录完整 URI
-        // 等于把凭据写进访问日志。
-        .layer(TraceLayer::new_for_http().make_span_with(
-            |request: &axum::http::Request<_>| {
+        // accessToken 允许经查询参数传递（SSE 无法设置请求头），
+        // 默认 span 记录完整 URI 等于把凭据写进访问日志。
+        .layer(
+            TraceLayer::new_for_http().make_span_with(|request: &axum::http::Request<_>| {
                 tracing::info_span!(
                     "http_request",
                     method = %request.method(),
                     path = %request.uri().path(),
                 )
-            },
-        ))
+            }),
+        )
         .layer(PropagateRequestIdLayer::x_request_id())
-        .layer(SetRequestIdLayer::x_request_id(MakeRequestUuid::default()))
+        .layer(SetRequestIdLayer::x_request_id(MakeRequestUuid))
         .layer(build_cors_layer(&state.config.cors_allowed_origins))
 }

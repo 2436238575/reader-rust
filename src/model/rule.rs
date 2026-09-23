@@ -2,21 +2,6 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(default, rename_all = "camelCase")]
-pub struct BookListRule {
-    pub book_list: Option<String>,
-    pub name: Option<String>,
-    pub author: Option<String>,
-    pub intro: Option<String>,
-    pub kind: Option<String>,
-    pub last_chapter: Option<String>,
-    pub update_time: Option<String>,
-    pub book_url: Option<String>,
-    pub cover_url: Option<String>,
-    pub word_count: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-#[serde(default, rename_all = "camelCase")]
 pub struct SearchRule {
     pub check_key_word: Option<String>,
     pub book_list: Option<String>,

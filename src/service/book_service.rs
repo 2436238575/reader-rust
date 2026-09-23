@@ -12,10 +12,12 @@ use crate::model::{
 };
 use crate::parser::js::{eval_js, eval_js_with_bindings, with_js_lib, with_user_ns};
 use crate::parser::rule_engine::RuleEngine;
-use crate::storage::cache::file_cache::FileCache;
+use crate::storage::cache::file_cache::{
+    remove_dir_counting_files, remove_file_counting, CacheUsage, FileCache,
+};
 use crate::util::hash::md5_hex;
 use crate::util::text::{normalize_source_url, repair_encoded_url};
-use serde_json::json;
+use serde_json::{json, Value};
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -45,6 +47,8 @@ pub struct BookService {
     rate_states: Arc<RwLock<HashMap<String, RateState>>>,
     /// 单用户书架上限（0 = 不限），来自 `USER_BOOK_LIMIT`。
     user_book_limit: u32,
+    /// 封面缓存目录的容量上限（0 = 不限），来自 `CACHE_COVER_LIMIT_BYTES`。
+    cover_cache_limit: u64,
 }
 
 #[derive(Clone, Default)]
@@ -66,6 +70,41 @@ pub struct BookSourceAvailability {
     pub explore_url: Option<String>,
     pub search_error: Option<String>,
     pub explore_error: Option<String>,
+}
+
+/// 缓存清理的粒度。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum CacheKind {
+    Content,
+    Cover,
+    ChapterList,
+    SearchResults,
+}
+
+/// 各层缓存被删除的文件数。
+#[derive(Debug, Clone, Copy, Default, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CachePurgeResult {
+    pub content: u64,
+    pub cover: u64,
+    pub chapter_list: u64,
+    pub search_results: u64,
+    pub invalid_sources: u64,
+}
+
+impl CachePurgeResult {
+    fn add(&mut self, other: Self) {
+        self.content += other.content;
+        self.cover += other.cover;
+        self.chapter_list += other.chapter_list;
+        self.search_results += other.search_results;
+        self.invalid_sources += other.invalid_sources;
+    }
+}
+
+fn internal_error(error: anyhow::Error) -> AppError {
+    AppError::Internal(error)
 }
 
 /// 把同步的规则解析放到阻塞线程池执行，避免独占 tokio worker 线程。
@@ -94,12 +133,19 @@ impl BookService {
             source_cookies: Arc::new(RwLock::new(HashMap::new())),
             rate_states: Arc::new(RwLock::new(HashMap::new())),
             user_book_limit: 0,
+            cover_cache_limit: DEFAULT_COVER_CACHE_BYTES,
         }
     }
 
     /// 设置单用户书架上限（`USER_BOOK_LIMIT`；0 = 不限）。
     pub fn with_user_book_limit(mut self, limit: u32) -> Self {
         self.user_book_limit = limit;
+        self
+    }
+
+    /// 设置封面缓存目录容量上限（0 = 不限）。
+    pub fn with_cover_cache_limit(mut self, limit: u64) -> Self {
+        self.cover_cache_limit = limit;
         self
     }
 
@@ -141,11 +187,6 @@ impl BookService {
             .insert(key, cookie.to_string());
     }
 
-    pub async fn clear_source_cookie(&self, user_ns: &str, source_url: &str) {
-        let key = self.source_cookie_key(user_ns, source_url);
-        self.source_cookies.write().await.remove(&key);
-    }
-
     /// 在阻塞线程池里执行 URL 规则分析（内部可能求值 JS）。
     ///
     /// 一并把 `user_ns` 带进阻塞线程，书源 JS 的 cache/kv 与 java.* 请求
@@ -165,7 +206,9 @@ impl BookService {
         let base_url = base_url.to_string();
         let source = source.clone();
         parse_blocking(move || {
-            with_user_ns(&user_ns, || analyze_url(&url_rule, &key, page, &base_url, &source))
+            with_user_ns(&user_ns, || {
+                analyze_url(&url_rule, &key, page, &base_url, &source)
+            })
         })
         .await?
     }
@@ -359,9 +402,7 @@ impl BookService {
         let res = self.login_check_blocking(user_ns, source, res).await?;
         tracing::debug!("fetch success, body length: {}", res.body.len());
         let books = self
-            .parse_response_blocking(user_ns, source, &res, |p, s, b, u| {
-                p.search_books(s, b, u)
-            })
+            .parse_response_blocking(user_ns, source, &res, |p, s, b, u| p.search_books(s, b, u))
             .await?;
         tracing::info!("found {} books", books.len());
         Ok(books)
@@ -393,10 +434,8 @@ impl BookService {
 
         let res = self.fetch_with_rate(user_ns, source, spec).await?;
         let res = self.login_check_blocking(user_ns, source, res).await?;
-        self.parse_response_blocking(user_ns, source, &res, |p, s, b, u| {
-            p.explore_books(s, b, u)
-        })
-        .await
+        self.parse_response_blocking(user_ns, source, &res, |p, s, b, u| p.explore_books(s, b, u))
+            .await
     }
 
     /// 解析书源的发现分类（exploreUrl）。
@@ -448,13 +487,17 @@ impl BookService {
             (false, Some("missing searchUrl or ruleSearch".to_string()))
         };
 
-        let explore_url = self.explore_kinds(user_ns, source).await.ok().and_then(|kinds| {
-            kinds
-                .into_iter()
-                .filter_map(|kind| kind.url)
-                .map(|url| url.trim().to_string())
-                .find(|url| !url.is_empty())
-        });
+        let explore_url = self
+            .explore_kinds(user_ns, source)
+            .await
+            .ok()
+            .and_then(|kinds| {
+                kinds
+                    .into_iter()
+                    .filter_map(|kind| kind.url)
+                    .map(|url| url.trim().to_string())
+                    .find(|url| !url.is_empty())
+            });
         let (explore_ok, explore_error) = if let Some(url) = explore_url.as_deref() {
             match self.explore_book(user_ns, source, url, 1).await {
                 Ok(books) => (!books.is_empty(), None),
@@ -588,9 +631,7 @@ impl BookService {
             .fetch_source_url(user_ns, source, toc_url, &source.book_source_url)
             .await?;
         let (chapters, next_urls) = self
-            .parse_response_blocking(user_ns, source, &res, |p, s, b, u| {
-                p.chapter_list(s, b, u)
-            })
+            .parse_response_blocking(user_ns, source, &res, |p, s, b, u| p.chapter_list(s, b, u))
             .await?;
 
         let mut chapter_index = 0i32;
@@ -781,9 +822,7 @@ impl BookService {
             .fetch_source_url(user_ns, source, toc_url, &source.book_source_url)
             .await?;
         let (chapters, next_urls) = self
-            .parse_response_blocking(user_ns, source, &res, |p, s, b, u| {
-                p.chapter_list(s, b, u)
-            })
+            .parse_response_blocking(user_ns, source, &res, |p, s, b, u| p.chapter_list(s, b, u))
             .await?;
 
         visited_page_urls.insert(toc_url.to_string());
@@ -971,7 +1010,186 @@ impl BookService {
         self.cache
             .remove_book(user_ns, &book_key)
             .await
-            .map_err(|e| AppError::Internal(e.into()))
+            .map_err(AppError::Internal)
+    }
+
+    /// 封面缓存目录：`<storage>/cache/<ns>/cover`。
+    ///
+    /// 封面是匿名资源，抓取时固定用 `public` 命名空间，因此实际只有
+    /// `<storage>/cache/public/cover` 一个目录在用。
+    fn cover_cache_dir(&self, user_ns: &str) -> PathBuf {
+        self.storage_dir.join("cache").join(user_ns).join("cover")
+    }
+
+    /// 章节列表缓存目录：`<storage>/data/<ns>/chapters`。
+    fn chapter_cache_dir(&self, user_ns: &str) -> PathBuf {
+        self.storage_dir.join("data").join(user_ns).join("chapters")
+    }
+
+    /// 书源搜索结果缓存目录：`<storage>/data/<ns>/book_sources`。
+    fn book_sources_cache_dir(&self, user_ns: &str) -> PathBuf {
+        self.storage_dir
+            .join("data")
+            .join(user_ns)
+            .join("book_sources")
+    }
+
+    /// 失效书源清单：`<storage>/cache/invalid_book_sources/<ns>.json`。
+    pub fn invalid_sources_path(&self, user_ns: &str) -> PathBuf {
+        self.storage_dir
+            .join("cache")
+            .join("invalid_book_sources")
+            .join(format!("{}.json", user_ns))
+    }
+
+    /// 清理某个用户的全部缓存。
+    ///
+    /// 顺序不可调换：`<cache>/<ns>/cover` 与正文的 `<cache>/<ns>/<book_key>/`
+    /// 处于同一层深，必须先删封面、最后删正文目录，各层计数才不会互相污染。
+    pub async fn purge_user_cache(&self, user_ns: &str) -> Result<CachePurgeResult, AppError> {
+        let mut result = CachePurgeResult {
+            cover: remove_dir_counting_files(&self.cover_cache_dir(user_ns))
+                .await
+                .map_err(internal_error)?,
+            chapter_list: remove_dir_counting_files(&self.chapter_cache_dir(user_ns))
+                .await
+                .map_err(internal_error)?,
+            search_results: remove_dir_counting_files(&self.book_sources_cache_dir(user_ns))
+                .await
+                .map_err(internal_error)?,
+            invalid_sources: remove_file_counting(&self.invalid_sources_path(user_ns))
+                .await
+                .map_err(internal_error)?,
+            content: 0,
+        };
+        // 此刻 `<cache>/<ns>` 下只剩正文的 book_key 目录
+        result.content = self
+            .cache
+            .remove_user(user_ns)
+            .await
+            .map_err(internal_error)?;
+        Ok(result)
+    }
+
+    /// 清理全部用户的缓存。
+    pub async fn purge_all_cache(&self) -> Result<CachePurgeResult, AppError> {
+        let mut total = CachePurgeResult::default();
+        for user_ns in self.cache.users().await {
+            total.add(self.purge_user_cache(&user_ns).await?);
+        }
+        // 收尾：删掉可能残留的空目录（含已清空的 invalid_book_sources）
+        let _ = fs::remove_dir_all(self.storage_dir.join("cache")).await;
+        Ok(total)
+    }
+
+    /// 按缓存类型清理某个用户的一层缓存。
+    pub async fn purge_user_cache_kind(
+        &self,
+        user_ns: &str,
+        kind: CacheKind,
+    ) -> Result<CachePurgeResult, AppError> {
+        let mut result = CachePurgeResult::default();
+        match kind {
+            CacheKind::Content => {
+                result.content = self
+                    .cache
+                    .remove_user(user_ns)
+                    .await
+                    .map_err(internal_error)?
+            }
+            CacheKind::Cover => {
+                result.cover = remove_dir_counting_files(&self.cover_cache_dir(user_ns))
+                    .await
+                    .map_err(internal_error)?
+            }
+            CacheKind::ChapterList => {
+                result.chapter_list = remove_dir_counting_files(&self.chapter_cache_dir(user_ns))
+                    .await
+                    .map_err(internal_error)?
+            }
+            CacheKind::SearchResults => {
+                result.search_results =
+                    remove_dir_counting_files(&self.book_sources_cache_dir(user_ns))
+                        .await
+                        .map_err(internal_error)?
+            }
+        }
+        Ok(result)
+    }
+
+    /// 清理单本书的缓存（正文 + 章节列表 + 搜索结果）。
+    ///
+    /// 封面按图片 URL 缓存、与书没有稳定对应关系，因此不在此范围内。
+    pub async fn purge_book_cache(
+        &self,
+        user_ns: &str,
+        book_url: &str,
+        toc_url: Option<&str>,
+    ) -> Result<CachePurgeResult, AppError> {
+        let mut result = CachePurgeResult::default();
+        if self
+            .cache
+            .remove_book(user_ns, &md5_hex(book_url))
+            .await
+            .map_err(internal_error)?
+        {
+            result.content = 1;
+        }
+        for url in [Some(book_url), toc_url].into_iter().flatten() {
+            if self.delete_chapter_list_cache(user_ns, url).await.is_ok() {
+                result.chapter_list += 1;
+            }
+        }
+        if self
+            .delete_book_sources_cache(user_ns, book_url)
+            .await
+            .is_ok()
+        {
+            result.search_results = 1;
+        }
+        Ok(result)
+    }
+
+    /// 各层缓存的当前占用。`user_ns` 为 `None` 时汇总全部用户。
+    pub async fn cache_stats(&self, user_ns: Option<&str>) -> Result<Value, AppError> {
+        use crate::storage::cache::file_cache::dir_usage;
+        let content = match user_ns {
+            Some(ns) => self.cache.user_usage(ns).await,
+            None => self.cache.total_usage().await,
+        };
+        let cover = match user_ns {
+            Some(ns) => dir_usage(&self.cover_cache_dir(ns), usize::MAX).await,
+            None => dir_usage(&self.cover_cache_dir("public"), usize::MAX).await,
+        };
+        let chapter_list = match user_ns {
+            Some(ns) => dir_usage(&self.chapter_cache_dir(ns), usize::MAX).await,
+            None => self.data_subdir_usage("chapters").await,
+        };
+        let search_results = match user_ns {
+            Some(ns) => dir_usage(&self.book_sources_cache_dir(ns), usize::MAX).await,
+            None => self.data_subdir_usage("book_sources").await,
+        };
+        Ok(serde_json::json!({
+            "content": content,
+            "cover": cover,
+            "chapterList": chapter_list,
+            "searchResults": search_results,
+        }))
+    }
+
+    /// 汇总 `data/*/<name>` 各用户子目录的占用。
+    async fn data_subdir_usage(&self, name: &str) -> CacheUsage {
+        use crate::storage::cache::file_cache::dir_usage;
+        let mut total = CacheUsage::default();
+        let Ok(mut entries) = fs::read_dir(self.storage_dir.join("data")).await else {
+            return total;
+        };
+        while let Ok(Some(entry)) = entries.next_entry().await {
+            let usage = dir_usage(&entry.path().join(name), usize::MAX).await;
+            total.files += usage.files;
+            total.bytes += usage.bytes;
+        }
+        total
     }
 
     /// Check if a specific chapter is cached
@@ -1258,10 +1476,7 @@ impl BookService {
 
         // 封面属于匿名资源，固定用 "public" 命名空间，绝不携带任何用户的
         // 书源会话 Cookie
-        let http = self
-            .http
-            .client_for("public")
-            .map_err(AppError::Internal)?;
+        let http = self.http.client_for("public").map_err(AppError::Internal)?;
         let mut req = http.get(url);
 
         // Add necessary headers to bypass anti-hotlinking
@@ -1294,7 +1509,7 @@ impl BookService {
         if let Some(parent) = path.parent() {
             crate::storage::cache::file_cache::enforce_flat_dir_capacity(
                 parent,
-                MAX_COVER_CACHE_BYTES,
+                self.cover_cache_limit,
             )
             .await;
         }
@@ -1882,7 +2097,7 @@ fn content_type_from_ext(ext: &str) -> String {
 }
 
 /// 封面缓存目录的容量上限。
-const MAX_COVER_CACHE_BYTES: u64 = 256 * 1024 * 1024;
+const DEFAULT_COVER_CACHE_BYTES: u64 = 256 * 1024 * 1024;
 
 /// 封面响应只允许安全的位图类型。
 ///
@@ -1959,7 +2174,7 @@ mod tests {
         let service = BookService::new(
             HttpClient::new(5, None).unwrap(),
             RuleEngine::new().unwrap(),
-            FileCache::new(storage_dir.join("cache")),
+            FileCache::new(storage_dir.join("cache"), 0),
             storage_dir.to_str().unwrap(),
         );
         let now = Instant::now();
@@ -1997,7 +2212,7 @@ mod tests {
         let service = BookService::new(
             HttpClient::new(5, None).unwrap(),
             RuleEngine::new().unwrap(),
-            FileCache::new(storage_dir.join("cache")),
+            FileCache::new(storage_dir.join("cache"), 0),
             storage_dir.to_str().unwrap(),
         )
         .with_user_book_limit(2);
@@ -2028,7 +2243,7 @@ mod tests {
         let unlimited = BookService::new(
             HttpClient::new(5, None).unwrap(),
             RuleEngine::new().unwrap(),
-            FileCache::new(storage_dir.join("cache2")),
+            FileCache::new(storage_dir.join("cache2"), 0),
             storage_dir.to_str().unwrap(),
         );
         for i in 0..5 {

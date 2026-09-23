@@ -80,7 +80,7 @@ POST /reader3/readRemoteRssSourceFile
 
 请求体：`{ "url": "https://example.com/rss.json" }`。响应：`data` 为包含单个 JSON 字符串的数组。
 
-> 出站限制：`url` 会经过出站守卫校验——SECURE 模式下拒绝内网/环回/链路本地地址（可用 `ALLOW_PRIVATE_NETWORK` 放行），响应体上限 32MiB。
+> 出站限制：`url` 会经过出站守卫校验——拒绝内网/环回/链路本地地址（可用 `ALLOW_PRIVATE_NETWORK` 放行），响应体上限 32MiB。
 
 ## 本地读取 RSS 源文件
 
@@ -102,7 +102,7 @@ GET /reader3/getRssArticles
 |------|------|------|------|
 | `sourceUrl` | string | 是 | RSS 源 URL |
 | `sortName` | string | 否 | 分类名称 |
-| `sortUrl` | string | 否 | 分类链接，默认同 `sourceUrl`。经出站守卫校验（SECURE 模式下拒绝内网地址） |
+| `sortUrl` | string | 否 | 分类链接，默认同 `sourceUrl`。经出站守卫校验（拒绝私网/环回/链路本地地址） |
 | `page` | number | 否 | 页码，默认 1 |
 
 响应：`data` 形如 `{ "first": [ ...文章 ], "second": null }`，其中 `first` 为当页文章数组（`RssArticle` 模型，camelCase，依据：`src/model/rss.rs` 的 `RssArticle`）：
@@ -139,6 +139,6 @@ GET /reader3/getRssContent
 
 响应：`data` 为文章正文的 HTML 字符串（上限 32MiB）。
 
-> 出站限制：`link` 会经过出站守卫校验——SECURE 模式下拒绝内网/环回/链路本地地址（含重定向目标），命中返回 400。
+> 出站限制：`link` 会经过出站守卫校验——拒绝内网/环回/链路本地地址（含重定向目标，可用 `ALLOW_PRIVATE_NETWORK` 放行），命中返回 400。
 
 也可使用 `POST /reader3/getRssContent`。

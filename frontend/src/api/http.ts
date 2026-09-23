@@ -1,6 +1,6 @@
 import axios from 'axios'
 import type { ApiResponse } from '../types'
-import { buildAuthHeaderValues } from '../utils/secureAccess'
+import { readAccessToken } from '../utils/secureAccess'
 
 let lastNeedLoginDispatchAt = 0
 
@@ -17,14 +17,11 @@ const http = axios.create({
   headers: { 'Content-Type': 'application/json' },
 })
 
-// ─── Request interceptor: attach token ───
+// ─── Request interceptor: attach the JWT ───
 http.interceptors.request.use((config) => {
-  const { accessToken, secureKey } = buildAuthHeaderValues(localStorage)
+  const accessToken = readAccessToken(localStorage)
   if (accessToken) {
-    config.headers.Authorization = accessToken
-  }
-  if (secureKey) {
-    config.headers['X-Secure-Key'] = secureKey
+    config.headers.Authorization = `Bearer ${accessToken}`
   }
   return config
 })
@@ -38,7 +35,7 @@ http.interceptors.response.use(
       return response
     }
     if (!data.isSuccess) {
-      if (data.errorMsg === 'NEED_LOGIN' || data.data === 'NEED_LOGIN') {
+      if (data.errorMsg === 'NEED_LOGIN') {
         dispatchNeedLogin()
       }
       return Promise.reject(new Error(data.errorMsg || '请求失败'))
@@ -49,16 +46,17 @@ http.interceptors.response.use(
   },
   (error) => {
     const data = error.response?.data as Partial<ApiResponse> | undefined
+    // 未登录/令牌失效统一为 401；服务端仍保留 NEED_LOGIN 供识别
+    if (error.response?.status === 401) {
+      dispatchNeedLogin()
+    }
     if (data && typeof data === 'object') {
-      if (data.errorMsg === 'NEED_LOGIN' || data.data === 'NEED_LOGIN') {
+      if (data.errorMsg === 'NEED_LOGIN') {
         dispatchNeedLogin()
       }
       if (typeof data.errorMsg === 'string' && data.errorMsg.trim()) {
         return Promise.reject(new Error(data.errorMsg))
       }
-    }
-    if (error.response?.status === 401) {
-      dispatchNeedLogin()
     }
     return Promise.reject(new Error(error.message || '请求失败'))
   }

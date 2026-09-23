@@ -1,6 +1,6 @@
-use crate::api::auth::AuthContext;
 use crate::api::handlers::multipart::read_limited_multipart_field;
 use crate::api::AppState;
+use crate::auth::CurrentUser;
 use crate::error::error::{ApiResponse, AppError};
 use crate::util::time::now_ts;
 use axum::http::{HeaderMap, Method, StatusCode};
@@ -34,10 +34,10 @@ pub struct WebdavDeleteListRequest {
 
 pub async fn get_webdav_file_list(
     State(state): State<AppState>,
-    auth: AuthContext,
+    user: CurrentUser,
     Query(req): Query<WebdavPathRequest>,
 ) -> Result<Json<ApiResponse<Value>>, AppError> {
-    let user_ns = require_webdav_user_ns(&state, auth.access_token()).await?;
+    let user_ns = user.0.require_webdav_ns()?.to_string();
     let home = webdav_home(&state, &user_ns).await?;
     let path = req.path.unwrap_or_else(|| "/".to_string());
     let parts = normalize_rel_path(&path)?;
@@ -79,10 +79,10 @@ pub async fn get_webdav_file_list(
 
 pub async fn get_webdav_file(
     State(state): State<AppState>,
-    auth: AuthContext,
+    user: CurrentUser,
     Query(req): Query<WebdavPathRequest>,
 ) -> Result<Response, AppError> {
-    let user_ns = require_webdav_user_ns(&state, auth.access_token()).await?;
+    let user_ns = user.0.require_webdav_ns()?.to_string();
     let home = webdav_home(&state, &user_ns).await?;
     let path = req.path.unwrap_or_default();
     if path.is_empty() {
@@ -104,10 +104,10 @@ pub async fn get_webdav_file(
 
 pub async fn upload_file_to_webdav(
     State(state): State<AppState>,
-    auth: AuthContext,
+    user: CurrentUser,
     mut multipart: Multipart,
 ) -> Result<Json<ApiResponse<Value>>, AppError> {
-    let user_ns = require_webdav_user_ns(&state, auth.access_token()).await?;
+    let user_ns = user.0.require_webdav_ns()?.to_string();
     let home = webdav_home(&state, &user_ns).await?;
     let mut file_list = Vec::new();
     let mut path = "/".to_string();
@@ -119,8 +119,8 @@ pub async fn upload_file_to_webdav(
     {
         let name = field.name().unwrap_or_default().to_string();
         if name == "path" {
-            let val =
-                read_limited_multipart_field(field, MAX_WEBDAV_PATH_FIELD_BYTES, "路径过长").await?;
+            let val = read_limited_multipart_field(field, MAX_WEBDAV_PATH_FIELD_BYTES, "路径过长")
+                .await?;
             let val = String::from_utf8_lossy(&val).to_string();
             if !val.is_empty() {
                 path = val;
@@ -164,10 +164,10 @@ pub async fn upload_file_to_webdav(
 
 pub async fn delete_webdav_file(
     State(state): State<AppState>,
-    auth: AuthContext,
+    user: CurrentUser,
     Json(req): Json<WebdavPathRequest>,
 ) -> Result<Json<ApiResponse<Value>>, AppError> {
-    let user_ns = require_webdav_user_ns(&state, auth.access_token()).await?;
+    let user_ns = user.0.require_webdav_ns()?.to_string();
     let home = webdav_home(&state, &user_ns).await?;
     let path = req.path.unwrap_or_default();
     if path.is_empty() {
@@ -192,10 +192,10 @@ pub async fn delete_webdav_file(
 
 pub async fn delete_webdav_file_list(
     State(state): State<AppState>,
-    auth: AuthContext,
+    user: CurrentUser,
     Json(req): Json<WebdavDeleteListRequest>,
 ) -> Result<Json<ApiResponse<Value>>, AppError> {
-    let user_ns = require_webdav_user_ns(&state, auth.access_token()).await?;
+    let user_ns = user.0.require_webdav_ns()?.to_string();
     let home = webdav_home(&state, &user_ns).await?;
     let paths = req.path.unwrap_or_default();
     for p in paths {
@@ -252,17 +252,7 @@ pub async fn webdav_handler(
     }
 }
 
-async fn require_webdav_user_ns(
-    state: &AppState,
-    access_token: Option<&str>,
-) -> Result<String, AppError> {
-    state.user_service.require_webdav_user(access_token).await
-}
-
 async fn resolve_webdav_user(state: &AppState, headers: &HeaderMap) -> Result<String, StatusCode> {
-    if !state.user_service.secure_enabled() {
-        return Err(StatusCode::FORBIDDEN);
-    }
     let auth = headers
         .get("Authorization")
         .and_then(|v| v.to_str().ok())

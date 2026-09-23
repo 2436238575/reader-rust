@@ -146,23 +146,6 @@ pub fn eval_js_with_bindings(
     )
 }
 
-pub fn eval_js_search_with_source(
-    script: &str,
-    key: &str,
-    page: i32,
-    source_key: &str,
-) -> anyhow::Result<String> {
-    eval_js_inner_with_source(
-        script,
-        None,
-        None,
-        Some(key),
-        Some(page),
-        Some(source_key),
-        None,
-    )
-}
-
 pub fn eval_js_url(
     script: &str,
     result: &str,
@@ -513,9 +496,7 @@ fn read_blocking_body_limited(response: reqwest::blocking::Response) -> anyhow::
         .map(|s| s.to_string());
     let limit = crate::crawler::fetcher::MAX_RESPONSE_BYTES;
     let mut buf = Vec::new();
-    response
-        .take(limit + 1)
-        .read_to_end(&mut buf)?;
+    response.take(limit + 1).read_to_end(&mut buf)?;
     if buf.len() as u64 > limit {
         anyhow::bail!("JS HTTP 响应体超过 {limit} 字节上限");
     }
@@ -654,7 +635,10 @@ mod tests {
 
     #[test]
     fn normal_js_still_works() {
-        assert_eq!(eval_js("'hello' + ' ' + 'world'", "", "").unwrap(), "hello world");
+        assert_eq!(
+            eval_js("'hello' + ' ' + 'world'", "", "").unwrap(),
+            "hello world"
+        );
         // 字符串方法 / 正则等常用能力不受资源上限影响
         assert_eq!(eval_js("'a,b,c'.split(',').length", "", "").unwrap(), "3");
     }
@@ -714,12 +698,7 @@ mod tests {
             eval_js("cache.put('token', 'from-alice')", "", "").unwrap();
         });
         let miss_for_bob = with_user_ns("bob", || {
-            eval_js(
-                "(cache.get('token') == null) ? 'MISS' : 'HIT'",
-                "",
-                "",
-            )
-            .unwrap()
+            eval_js("(cache.get('token') == null) ? 'MISS' : 'HIT'", "", "").unwrap()
         });
         assert_eq!(miss_for_bob, "MISS", "bob 不应读到 alice 写入的 cache");
         let hit_for_alice = with_user_ns("alice", || {

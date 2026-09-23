@@ -33,23 +33,25 @@ Reader-Rust 通过**环境变量**配置，支持从 `.env` 文件读取。代�
 |------|--------|------|
 | `LOG_LEVEL` | `info` | `trace` / `debug` / `info` / `warn` / `error` |
 
-### 安全
+### 鉴权
 
 | 变量 | 默认值 | 说明 |
 |------|--------|------|
-| `SECURE` | `false` | 安全模式开关 |
-| `SECURE_KEY` | 空 | 安全模式密钥 |
+| `JWT_SECRET` | 空 | JWT 签名密钥。**留空时启动阶段生成随机密钥并写入 `<STORAGE_DIR>/jwt_secret`**，重启后已签发的令牌继续有效。多实例部署必须显式配置同一个值，否则各实例签发的令牌互不认可 |
+| `JWT_TTL_SECS` | `604800`（7 天） | 令牌有效期。改密码/重置密码会立即作废该用户的所有令牌，与有效期无关 |
 | `INVITE_CODE` | 空 | 注册邀请码，为空表示注册不校验邀请码 |
-| `ALLOW_PRIVATE_NETWORK` | 跟随 `SECURE` | 是否允许服务端出站请求访问私网/环回/链路本地地址（`10.x`、`192.168.x`、`127.0.0.1`、`169.254.169.254` 等）。未设置时 `SECURE=true` 拦截、`SECURE=false` 放行；仅在确定服务不暴露给第三方时才显式设 `true` |
+| `ALLOW_PRIVATE_NETWORK` | `false` | 是否允许服务端出站请求访问私网/环回/链路本地地址（`10.x`、`192.168.x`、`127.0.0.1`、`169.254.169.254` 等）。书源是用户自行导入的第三方数据，放行私网等于把本机与内网服务暴露给任意书源；仅在确定服务不暴露给第三方、且确实需要内网书源时才设为 `true` |
 | `CORS_ALLOWED_ORIGINS` | 空 | 允许跨域访问的来源白名单（逗号分隔）。留空表示**仅同源**——不发送任何 CORS 响应头；仅在前后端分离且前端独立域名部署时配置 |
 
-开启 `SECURE` 后，请求必须携带密钥，两种传法等价：
+鉴权基于 JWT，**没有「安全模式」开关**：除 `/health`、`/reader3/login`、`/reader3/getUserInfo`、`/reader3/logout` 与 WebDAV 的 Basic 认证入口外，所有 `/reader3/*` 接口都要求有效令牌，否则返回 401；管理员接口对非管理员返回 403。
 
-- 请求头：`X-Secure-Key: <SECURE_KEY>`
-- URL 查询参数：`?secureKey=<SECURE_KEY>`
+令牌传法（详见 [API 概述 · 认证](../api/index#认证)）：
 
-::: tip 为什么 `.env.example` 里写的是 `SECURE=true`
-代码默认是 `false`，而模板给的是 `true` —— 这是刻意为之：模板按**生产安全默认**提供，代码默认按**开箱即用**提供。不要为了让两者一致而去改模板。
+- 请求头：`Authorization: Bearer <jwt>`
+- URL 查询参数：`?accessToken=<jwt>`（SSE 与 `<img>` 无法设置请求头时使用）
+
+::: tip 生产部署请显式配置 `JWT_SECRET`
+留空虽然能开箱即用，但密钥会写在 `storage/jwt_secret` 里。多实例或容器化部署（每次重建容器都换一份 storage）必须显式配置，否则重启即全体登出。
 :::
 
 ### 用户配额
@@ -57,8 +59,17 @@ Reader-Rust 通过**环境变量**配置，支持从 `.env` 文件读取。代�
 | 变量 | 默认值 | 说明 |
 |------|--------|------|
 | `USER_LIMIT` | `50` | 用户总数上限 |
-| `USER_BOOK_LIMIT` | `2000` | 单用户书架书籍数上限。**未实现**：配置项已定义但当前代码未做该校验，加入书架时不会生效 |
+| `USER_BOOK_LIMIT` | `2000` | 单用户书架书籍数上限，`0` 表示不限制 |
 | `USER_LOCAL_BOOK_LIMIT` | `0` | 单用户本地上传书籍数上限，`0` 表示不限制 |
+
+### 缓存
+
+缓存**不按时间过期**，只在显式调用 [`purgeCache`](../api/cache) 或超出容量时回收，因此容量上限是唯一的自动回收手段。`0` 表示不限制。
+
+| 变量 | 默认值 | 说明 |
+|------|--------|------|
+| `CACHE_USER_LIMIT_BYTES` | `536870912`（512 MiB） | 单用户章节正文缓存上限，超出时按修改时间最旧优先淘汰 |
+| `CACHE_COVER_LIMIT_BYTES` | `268435456`（256 MiB） | 封面缓存目录上限 |
 
 ## 配置格式
 
@@ -86,31 +97,29 @@ SERVER_PORT=8080
 DATABASE_URL=sqlite:storage/reader.db?mode=rwc
 WEB_ROOT=frontend/dist
 LOG_LEVEL=info
-SECURE=true
-SECURE_KEY=your-secret-key
+JWT_TTL_SECS=604800
 ```
 
 `.env` 已被 gitignore，不会被提交。后端即使没有 `.env` 文件也能用代码默认值正常启动。
 
 ## 典型场景
 
-**本地开发**（打开调试日志、只监听回环地址、关闭安全模式）
+**本地开发**（打开调试日志、只监听回环地址）
 
 ```ini
 SERVER_HOST=127.0.0.1
 SERVER_PORT=18080
 LOG_LEVEL=debug
-SECURE=false
+# JWT_SECRET 留空即可，密钥会自动生成到 storage/jwt_secret
 ```
 
-**生产部署**（开启安全模式与邀请码）
+**生产部署**（固定签名密钥并开启邀请码）
 
 ```ini
 SERVER_HOST=0.0.0.0
 SERVER_PORT=8080
 LOG_LEVEL=info
-SECURE=true
-SECURE_KEY=<足够随机的密钥>
+JWT_SECRET=<足够随机的密钥>
 INVITE_CODE=<注册邀请码>
 ```
 

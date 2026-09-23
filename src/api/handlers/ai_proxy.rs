@@ -6,7 +6,8 @@ use axum::{
 };
 use serde_json::Value;
 
-use crate::api::{auth::AuthContext, AppState};
+use crate::api::AppState;
+use crate::auth::CurrentUser;
 use crate::error::error::{ApiResponse, AppError};
 use crate::model::ai_model::{AiModelKind, ResolvedAiModelEndpoint};
 use crate::model::ai_proxy::{
@@ -20,11 +21,10 @@ const MAX_PROXY_RESPONSE_BYTES: u64 = 32 * 1024 * 1024;
 
 pub async fn ai_proxy(
     State(state): State<AppState>,
-    auth: AuthContext,
+    user: CurrentUser,
     Json(req): Json<AiProxyRequest>,
 ) -> Result<Response, AppError> {
-    require_proxy_user(&state, &auth).await?;
-    let (endpoint, kind, path, mut body) = resolve_ai_proxy_target(&state, &auth, req).await?;
+    let (endpoint, kind, path, mut body) = resolve_ai_proxy_target(&state, &user, req).await?;
     if let Some(kind) = kind {
         apply_server_model_body_defaults(&endpoint, kind, &mut body);
     }
@@ -53,15 +53,11 @@ pub async fn ai_proxy(
 
 async fn resolve_ai_proxy_target(
     state: &AppState,
-    auth: &AuthContext,
+    user: &CurrentUser,
     req: AiProxyRequest,
 ) -> Result<(ResolvedAiModelEndpoint, Option<AiModelKind>, String, Value), AppError> {
     if req.use_server_config {
-        let can_use = state
-            .user_service
-            .can_use_ai_model(auth.access_token(), auth.secure_key())
-            .await?;
-        if !can_use {
+        if !user.0.can_use_ai_model() {
             return Err(AppError::BadRequest(
                 "当前账号没有使用后端模型配置的权限".to_string(),
             ));
@@ -153,12 +149,7 @@ fn apply_server_model_body_defaults(
     }
 }
 
-pub async fn ai_proxy_image(
-    State(state): State<AppState>,
-    auth: AuthContext,
-    Json(req): Json<AiProxyImageRequest>,
-) -> Result<Response, AppError> {
-    require_proxy_user(&state, &auth).await?;
+pub async fn ai_proxy_image(Json(req): Json<AiProxyImageRequest>) -> Result<Response, AppError> {
     let target = validate_ai_proxy_image_url(&req.url).map_err(AppError::BadRequest)?;
     // 出站守卫：url 由客户端提供
     crate::crawler::url_guard::ensure_outbound_url_allowed(&target)
@@ -194,15 +185,6 @@ pub async fn ai_proxy_image(
         return Ok(build_upstream_error_response(status, &body));
     }
     Ok(build_response(status, content_type, body))
-}
-
-async fn require_proxy_user(state: &AppState, auth: &AuthContext) -> Result<(), AppError> {
-    state
-        .user_service
-        .resolve_user_ns_with_override(auth.access_token(), auth.secure_key(), auth.user_ns())
-        .await
-        .map(|_| ())
-        .map_err(|_| AppError::BadRequest("NEED_LOGIN".to_string()))
 }
 
 async fn response_from_upstream(upstream: reqwest::Response) -> Result<Response, AppError> {

@@ -123,7 +123,7 @@ JS 求值本身带资源上限：内存 128MiB、调用栈 1MiB、单次求值 5
 
 1. `router.rs` 匹配到 `handlers::search_book`
 2. handler 从 `AppState` 取出 `BookService`，提取 `key` 与目标书源
-3. `book_service` 查找书源配置；`SECURE=true` 时先校验密钥
+3. `book_service` 查找书源配置（请求已由 `require_auth` 中间件完成鉴权，handler 直接从请求扩展取身份）
 4. 书源 `searchUrl` 经 `url_analyzer` 展开占位符 → 得到真实 URL
 5. `crawler` 发起请求（自动按响应头解码字符集）
 6. `rule_engine.search_books` 按 `ruleSearch` 逐字段解析出书籍列表
@@ -133,34 +133,56 @@ JS 求值本身带资源上限：内存 128MiB、调用栈 1MiB、单次求值 5
 
 ## 鉴权与身份
 
-请求里的身份信息统一由 `src/api/auth.rs` 的 `AuthContext` 提取，共三个独立字段，各自支持「请求头」与「URL 查询参数」两种传法：
+鉴权统一由 **JWT 中间件**完成，不再是每个 handler 自己判定。`src/auth/` 分为四部分：
 
-| 字段 | 请求头 | 查询参数 | 说明 |
-|------|--------|---------|------|
-| `access_token` | `Authorization` | `accessToken` | 用户登录凭证 |
-| `secure_key` | `X-Secure-Key` | `secureKey` | 安全模式密钥，与用户无关 |
-| `user_ns` | `X-User-NS` | `userNS` | 数据归属命名空间 |
+| 文件 | 职责 |
+|------|------|
+| `jwt.rs` | `Claims` 定义与 HS256 编解码 |
+| `secret.rs` | 解析 `JWT_SECRET`；未配置时生成并持久化到 `<STORAGE_DIR>/jwt_secret` |
+| `extractor.rs` | `CurrentUser` / `MaybeUser` 提取器，从请求扩展取身份 |
+| `middleware.rs` | `require_auth` / `require_admin` / `optional_auth` 三个中间件 |
 
-### 登录凭证不是 JWT
+`AppState` 里持有 `AuthState`（连接池 + 签名密钥），中间件每个请求做一次主键查询读出 `token_version` 与权限位。
 
-登录成功后服务端生成**不透明 token**，以 `用户名:token` 的形式返回。`Authorization` 头既接受裸 token，也接受 `Bearer <token>` 前缀（大小写均可）—— 但这只是兼容写法，**token 本身不是 JWT，没有 payload、不能自解析**。
+### 令牌
 
-凭证的持久化方式是：
+登录成功后签发标准 JWT，载荷为 `{ sub, ns, is_admin, iat, exp, ver }`。传递方式只有两种：
 
-- `users.token` 保存该用户最近一次登录的 token
-- `user_sessions` 表按 `(username, token)` 存多端会话，并带 `expire_at` 过期时间
+| 传法 | 位置 | 用途 |
+|------|------|------|
+| 请求头 | `Authorization: Bearer <jwt>` | 常规请求 |
+| 查询参数 | `accessToken=<jwt>` | SSE 与 `<img>` 无法设置请求头时 |
 
-因为按会话存表，同一账号可**多端同时登录**，且服务端可以逐会话失效。
+查询参数不是可选的兼容分支：`EventSource` 与 `<img>` 都带不了请求头，前端只能走查询串（`frontend/src/utils/secureAccess.ts`）。
 
-校验失败时返回 HTTP 400 且 `errorMsg = "NEED_LOGIN"`（后端唯一的 HTTP 401 来自 WebDAV 的 Basic 认证，不走这套 JSON 结构），前端据此弹出登录框。
+### 路由分层
 
-`SECURE=true` 是**另一层**独立机制，只校验 `secureKey`，与用户登录无关。两者可以叠加：安全模式挡机器访问，登录挡未授权用户。
+路由按鉴权强度分成四组，各自在 `src/api/router.rs` 里挂不同的中间件后再 merge：
+
+| 分组 | 中间件 | 内容 |
+|------|--------|------|
+| 公开 | 无 | `/health`、`/reader3/login` |
+| 可选鉴权 | `optional_auth` | `getUserInfo`、`logout` |
+| 管理员 | `require_admin` | 用户管理、默认书源、版本更新、AI 模型配置 |
+| 需登录 | `require_auth` | 其余全部 `/reader3/*` |
+| WebDAV | 自带 HTTP Basic | `/reader3/webdav/*path`，不经 JWT |
+
+失败时的状态码：未登录/令牌无效或过期 → **401 + `errorMsg="NEED_LOGIN"`**；已登录但非管理员 → **403 + `errorMsg="FORBIDDEN"`**。
+
+### 撤销
+
+JWT 本身无状态，但服务端每个请求都比对 `users.token_version`：
+
+- 修改自己的密码 / 管理员重置密码 → 自增版本号，该用户所有旧令牌立即失效（改密码的响应会为当前设备换发新令牌）
+- 删除账号 → 用户行消失，`load_identity` 返回 `None`，令牌即刻无效
+
+登出没有服务端状态可清，接口总是返回成功，令牌由客户端丢弃。
 
 ### `user_ns` 的作用
 
-`user_ns` 是**多用户数据隔离键**，不是用户表字段。`book_sources` 表用 `(user_ns, book_source_url)` 作复合主键 —— 每个命名空间持有自己的一整套书源，书架、AI 资料等也按 `user_ns` 隔离。默认命名空间是 `'default'`。
+`user_ns` 是**多用户数据隔离键**，当前恒等于用户名（JWT 的 `ns` claim，由中间件校验字符集后使用，因为它直接参与 storage 路径拼接）。`book_sources` 表用 `(user_ns, book_source_url)` 作复合主键 —— 每个用户持有自己的一整套书源，书架、缓存、AI 资料等也按 `user_ns` 隔离。
 
-它还可以由客户端直接指定（不登录也能带），这为「同一实例服务多个独立用户组」提供了可能。
+`__default__` 与 `__app__` 是内部保留命名空间，分别用于默认书源模板与全局 AI 模型配置。
 
 ## 安全机制
 
@@ -168,7 +190,7 @@ JS 求值本身带资源上限：内存 128MiB、调用栈 1MiB、单次求值 5
 
 | 机制 | 位置 | 说明 |
 |------|------|------|
-| 出站守卫（SSRF 防护） | `crawler/url_guard.rs` | 所有用户可控的出站请求统一校验：仅 http/https、拒绝私网/环回/链路本地/云元数据地址（含 DNS 解析后逐 IP 检查）、重定向逐跳复检（域名目标同样做 DNS 解析）。`ALLOW_PRIVATE_NETWORK` 可放行（默认跟随 `SECURE`） |
+| 出站守卫（SSRF 防护） | `crawler/url_guard.rs` | 所有用户可控的出站请求统一校验：仅 http/https、拒绝私网/环回/链路本地/云元数据地址（含 DNS 解析后逐 IP 检查）、重定向逐跳复检（域名目标同样做 DNS 解析）。`ALLOW_PRIVATE_NETWORK` 可放行（默认 `false`） |
 | 响应体上限 | `crawler/fetcher.rs` | 单次抓取响应体上限 32MiB，边收边计数；显式 Content-Length 超限直接拒绝；JS 侧 `java.*` 请求与 jsLib 远程拉取同上限 |
 | JS 沙箱资源上限 | `parser/js.rs` | QuickJS Runtime 设内存（128MiB）/栈（1MiB）/执行时间（5s）上限；`java.*` 请求 30 秒超时、返回值 32MiB 上限 |
 | 同步解析隔离 | `service/book_service.rs` | 规则解析（含 exploreUrl 的 `@js:`）全部走 `spawn_blocking`，第三方书源的 JS 死循环拖不垮 worker |
@@ -180,10 +202,10 @@ JS 求值本身带资源上限：内存 128MiB、调用栈 1MiB、单次求值 5
 | 密码哈希 | `util/crypto.rs` | Argon2id（PHC 字符串自含盐与参数），哈希与校验在 `spawn_blocking` 中执行 |
 | 登录限速 | `service/user_service.rs` | 同用户名 10 分钟窗口失败 8 次锁定 5 分钟；悲观计数（尝试先计数、成功再清除）使并发爆发无法绕过；WebDAV Basic 认证共享同一份限速 |
 | CORS | `api/router.rs` | 默认仅同源（不下发任何 CORS 头）；跨域需 `CORS_ALLOWED_ORIGINS` 显式白名单 |
-| 会话 token | `service/user_service.rs` | CSPRNG 直出 48 位（≈285 bit 熵），SQLite 按会话存储、可逐会话失效 |
-| 封面代理 | `service/book_service.rs` | Content-Type 收敛为位图白名单（防 `text/html`/`svg` 经 `/cover` 的同源 XSS）；封面缓存目录 256MiB 容量上限、按最旧优先淘汰 |
+| 令牌 | `auth/`、`service/user_service.rs` | HS256 JWT；签名密钥来自 `JWT_SECRET` 或自动生成并持久化到 `storage/jwt_secret`；`token_version` 提供即时撤销 |
+| 封面代理 | `service/book_service.rs` | Content-Type 收敛为位图白名单（防 `text/html`/`svg` 经 `/cover` 的同源 XSS）；封面缓存目录容量上限 `CACHE_COVER_LIMIT_BYTES`、按最旧优先淘汰 |
 
-文件缓存（`storage/cache`）有 7 天 TTL 与单用户 512MiB 容量上限，超限按最旧优先淘汰。
+缓存**不按时间过期**：章节正文只在显式调用 `purgeCache` 或超出 `CACHE_USER_LIMIT_BYTES`（默认 512MiB，按用户）时被回收，超限按修改时间最旧优先淘汰。
 
 > 已知残余风险：出站守卫的 DNS 校验与 reqwest 实际连接是两次独立解析（TOCTOU），
 > 控制权威 DNS 的攻击者理论上可用 rebinding 绕过；彻底封堵需要在连接层钉扎 IP，
@@ -197,7 +219,6 @@ SQLite 表：
 |----|------|------|
 | `book_sources` | `(user_ns, book_source_url)` | 书源配置（整份 JSON 存储） |
 | `users` | `username` | 用户、token、权限开关（`is_admin`、`enable_webdav`、`enable_local_store`、`enable_ai_model`） |
-| `user_sessions` | `(username, token)` | 多端会话与过期时间 |
 | `json_documents` | `(namespace, name)` | 通用 JSON 文档存取（用户配置、书源变量等复用这张表） |
 | `ai_book_memories` | `(user_ns, book_key)` | AI 资料 |
 
@@ -226,8 +247,9 @@ frontend/src/
 
 两个关键约定：
 
-- `api/http.ts` 里的 axios 实例 `baseURL = /reader3`，超时 120 秒。请求拦截器用 `utils/secureAccess` 的 `buildAuthHeaderValues(localStorage)` 取出凭证，分别注入 `Authorization` 与 `X-Secure-Key`。
-- 响应拦截器会自动拆掉 `{ isSuccess, errorMsg, data }` 外壳，业务代码直接拿 `data`。识别到 `errorMsg === 'NEED_LOGIN'`、`data === 'NEED_LOGIN'` 或 HTTP 401 时派发 `need-login` 事件拉起登录框（同一时间 1.5 秒内只派发一次，避免并发请求弹出多个登录框）。
+- `api/http.ts` 里的 axios 实例 `baseURL = /reader3`，超时 120 秒。请求拦截器用 `utils/secureAccess` 的 `readAccessToken(localStorage)` 取出 JWT，注入 `Authorization: Bearer <jwt>`。
+- 响应拦截器会自动拆掉 `{ isSuccess, errorMsg, data }` 外壳，业务代码直接拿 `data`。识别到 `errorMsg === 'NEED_LOGIN'` 或 HTTP 401 时派发 `need-login` 事件拉起登录框（同一时间 1.5 秒内只派发一次，避免并发请求弹出多个登录框）。
+- SSE 与 `<img>` 这类带不了请求头的请求用 `appendAuthQueryParams` 把令牌放进查询串，后端中间件会回退到该参数。
 
 对返回裸数据（封面图、文件下载等没有 `isSuccess` 字段的响应）的接口，拦截器会原样放行。
 

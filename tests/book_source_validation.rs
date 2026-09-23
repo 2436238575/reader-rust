@@ -41,7 +41,7 @@ async fn source_availability_is_valid_when_search_or_explore_has_results() {
     let service = BookService::new(
         HttpClient::new(5, None).unwrap(),
         RuleEngine::new().unwrap(),
-        FileCache::new(storage_dir.join("cache")),
+        FileCache::new(storage_dir.join("cache"), 0),
         storage_dir.to_str().unwrap(),
     );
 

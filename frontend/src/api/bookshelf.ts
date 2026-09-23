@@ -112,13 +112,16 @@ export function getCoverUrl(coverUrl?: string) {
     return withAuthQuery(coverUrl)
   }
   if (coverUrl.startsWith('http') || coverUrl.startsWith('/')) {
-    return `/reader3/cover?path=${encodeURIComponent(coverUrl)}`
+    // 封面接口需要鉴权，而 <img> 带不了请求头，只能把令牌放进查询参数
+    const params = new URLSearchParams({ path: coverUrl })
+    appendAuthQueryParams(params)
+    return `/reader3/cover?${params.toString()}`
   }
   return coverUrl
 }
 
+/// 给需要鉴权的直链（本地书资源、封面等）补上令牌。
 export function withAuthQuery(url: string) {
-  if (!url.startsWith('/reader3/localEpubAsset')) return url
   const [path, rawQuery = ''] = url.split('?')
   const params = new URLSearchParams(rawQuery)
   appendAuthQueryParams(params)

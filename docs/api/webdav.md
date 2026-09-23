@@ -2,7 +2,7 @@
 
 WebDAV 远端备份/同步接口。所有 JSON 接口响应包裹为统一结构：`{ "isSuccess": boolean, "data": any, "errorMsg": string }`。
 
-使用前提：**SECURE 模式**开启，且当前用户已被管理员开启 `enableWebdav` 权限（`updateUser`）。每个用户的数据存放在独立的 `storage/webdav/<用户名>/` 目录。
+使用前提：当前用户已被管理员开启 `enableWebdav` 权限（`updateUser`）。每个用户的数据存放在独立的 `storage/webdav/<用户名>/` 目录。
 
 ## JSON 接口
 

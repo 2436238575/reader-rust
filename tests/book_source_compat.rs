@@ -340,7 +340,7 @@ async fn search_pipeline_uses_url_analyzer_final_url_and_login_check_js() {
     let service = BookService::new(
         HttpClient::new(5, None).unwrap(),
         RuleEngine::new().unwrap(),
-        FileCache::new(storage_dir.join("cache")),
+        FileCache::new(storage_dir.join("cache"), 0),
         storage_dir.to_str().unwrap(),
     );
     let source = BookSource {
@@ -412,7 +412,7 @@ async fn content_pagination_stops_before_next_chapter_url() {
     let service = BookService::new(
         HttpClient::new(5, None).unwrap(),
         RuleEngine::new().unwrap(),
-        FileCache::new(storage_dir.join("cache")),
+        FileCache::new(storage_dir.join("cache"), 0),
         storage_dir.to_str().unwrap(),
     );
     let source = BookSource {
@@ -450,7 +450,7 @@ async fn explore_kinds_support_text_and_js_rules() {
     let service = BookService::new(
         HttpClient::new(5, None).unwrap(),
         RuleEngine::new().unwrap(),
-        FileCache::new(std::env::temp_dir().join("reader-rust-explore-kinds")),
+        FileCache::new(std::env::temp_dir().join("reader-rust-explore-kinds"), 0),
         std::env::temp_dir().to_str().unwrap(),
     );
     let text_source = BookSource {
@@ -486,7 +486,10 @@ async fn explore_kinds_accept_relaxed_style_objects() {
     let service = BookService::new(
         HttpClient::new(5, None).unwrap(),
         RuleEngine::new().unwrap(),
-        FileCache::new(std::env::temp_dir().join("reader-rust-explore-kinds-relaxed")),
+        FileCache::new(
+            std::env::temp_dir().join("reader-rust-explore-kinds-relaxed"),
+            0,
+        ),
         std::env::temp_dir().to_str().unwrap(),
     );
     let source = BookSource {
@@ -520,7 +523,10 @@ async fn explore_kinds_accept_relaxed_angle_item_objects() {
     let service = BookService::new(
         HttpClient::new(5, None).unwrap(),
         RuleEngine::new().unwrap(),
-        FileCache::new(std::env::temp_dir().join("reader-rust-explore-kinds-angle-items")),
+        FileCache::new(
+            std::env::temp_dir().join("reader-rust-explore-kinds-angle-items"),
+            0,
+        ),
         std::env::temp_dir().to_str().unwrap(),
     );
     let source = BookSource {

@@ -6,7 +6,8 @@ use axum::{
 use serde::Deserialize;
 use serde_json::Value;
 
-use crate::api::{auth::AuthContext, AppState};
+use crate::api::AppState;
+use crate::auth::CurrentUser;
 use crate::error::error::{ApiResponse, AppError};
 use crate::model::ai_book::AiBookMemory;
 use crate::util::text::repair_encoded_url;
@@ -19,11 +20,11 @@ pub struct AiBookMemoryRequest {
 
 pub async fn get_ai_book_memory(
     State(state): State<AppState>,
-    auth: AuthContext,
+    user: CurrentUser,
     Query(q): Query<AiBookMemoryRequest>,
     body: Bytes,
 ) -> Result<Json<ApiResponse<Value>>, AppError> {
-    let user_ns = resolve_user_ns(&state, &auth).await?;
+    let user_ns = user.0.ns.clone();
     let req = parse_ai_book_request(q, body)?;
     let book_url = required_book_url(req.book_url)?;
     ensure_shelf_book(&state, &user_ns, &book_url).await?;
@@ -35,10 +36,10 @@ pub async fn get_ai_book_memory(
 
 pub async fn save_ai_book_memory(
     State(state): State<AppState>,
-    auth: AuthContext,
+    user: CurrentUser,
     Json(mut memory): Json<AiBookMemory>,
 ) -> Result<Json<ApiResponse<Value>>, AppError> {
-    let user_ns = resolve_user_ns(&state, &auth).await?;
+    let user_ns = user.0.ns.clone();
     let book_url = required_book_url(Some(memory.book_url.clone()))?;
     let shelf_book = ensure_shelf_book(&state, &user_ns, &book_url).await?;
     if memory.book_name.as_deref().unwrap_or("").trim().is_empty() {
@@ -58,11 +59,11 @@ pub async fn save_ai_book_memory(
 
 pub async fn delete_ai_book_memory(
     State(state): State<AppState>,
-    auth: AuthContext,
+    user: CurrentUser,
     Query(q): Query<AiBookMemoryRequest>,
     body: Bytes,
 ) -> Result<Json<ApiResponse<Value>>, AppError> {
-    let user_ns = resolve_user_ns(&state, &auth).await?;
+    let user_ns = user.0.ns.clone();
     let req = parse_ai_book_request(q, body)?;
     let book_url = required_book_url(req.book_url)?;
     ensure_shelf_book(&state, &user_ns, &book_url).await?;
@@ -70,14 +71,6 @@ pub async fn delete_ai_book_memory(
     Ok(Json(ApiResponse::ok(
         serde_json::json!({ "deleted": deleted }),
     )))
-}
-
-async fn resolve_user_ns(state: &AppState, auth: &AuthContext) -> Result<String, AppError> {
-    state
-        .user_service
-        .resolve_user_ns_with_override(auth.access_token(), auth.secure_key(), auth.user_ns())
-        .await
-        .map_err(|_| AppError::BadRequest("NEED_LOGIN".to_string()))
 }
 
 async fn ensure_shelf_book(

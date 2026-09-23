@@ -4,7 +4,7 @@ import { getUserInfo } from '../api/user'
 import { dismissVersionUpdate, getVersionUpdate } from '../api/update'
 import type { UserInfo, VersionUpdateInfo } from '../types'
 import { applySystemTheme } from '../utils/systemUi'
-import { computeNeedSecureKey, readStoredSecureKey, SECURE_KEY_STORAGE_KEY } from '../utils/secureAccess'
+import { ACCESS_TOKEN_STORAGE_KEY } from '../utils/secureAccess'
 
 export const useAppStore = defineStore('app', () => {
   const STATS_KEY = 'reader-stats'
@@ -32,31 +32,21 @@ export const useAppStore = defineStore('app', () => {
 
   // ─── User ───
   const userInfo = ref<UserInfo | null>(null)
-  const isSecureMode = ref(false)
-  const needSecureKey = ref(false)
-  const secureKeyRequired = ref(false)
+  /// 当前令牌是否具备管理员角色（由服务端按 JWT 判定）
   const adminAuthorized = ref(false)
   const isLoggedIn = ref(false)
-  const secureKey = ref(readStoredSecureKey())
   const versionUpdate = ref<VersionUpdateInfo | null>(null)
   const versionUpdateLoading = ref(false)
   const versionUpdateChecked = ref(false)
   let versionUpdateToastVersion = ''
-  const canCheckVersionUpdate = computed(() => !isSecureMode.value || adminAuthorized.value)
+  const canCheckVersionUpdate = computed(() => adminAuthorized.value)
   const hasVersionUpdateReminder = computed(() => !!versionUpdate.value?.shouldRemind)
 
   async function fetchUserInfo() {
     try {
       const data = await getUserInfo()
       userInfo.value = data.userInfo
-      isSecureMode.value = data.secure
-      secureKeyRequired.value = data.secureKeyRequired
       adminAuthorized.value = data.adminAuthorized
-      needSecureKey.value = computeNeedSecureKey({
-        secure: data.secure,
-        secureKeyRequired: data.secureKeyRequired,
-        adminAuthorized: data.adminAuthorized,
-      })
       isLoggedIn.value = !!data.userInfo?.username
       if (canCheckVersionUpdate.value) {
         void checkVersionUpdate()
@@ -69,32 +59,32 @@ export const useAppStore = defineStore('app', () => {
   function setUser(user: UserInfo) {
     userInfo.value = user
     isLoggedIn.value = true
-    adminAuthorized.value = adminAuthorized.value || !!user.isAdmin
-    needSecureKey.value = computeNeedSecureKey({
-      secure: isSecureMode.value,
-      secureKeyRequired: secureKeyRequired.value,
-      adminAuthorized: adminAuthorized.value,
-    })
-    localStorage.setItem('accessToken', user.accessToken)
+    adminAuthorized.value = !!user.isAdmin
+    if (user.accessToken) {
+      localStorage.setItem(ACCESS_TOKEN_STORAGE_KEY, user.accessToken)
+    }
     if (canCheckVersionUpdate.value) {
       void checkVersionUpdate()
+    }
+  }
+
+  /**
+   * 换发令牌后更新本地副本。
+   *
+   * 改密码会让服务端自增撤销版本号、作废其他设备上的令牌，同时为当前设备
+   * 换发新令牌；不保存它的话当前设备也会被登出。
+   */
+  function setAccessToken(token: string) {
+    if (token) {
+      localStorage.setItem(ACCESS_TOKEN_STORAGE_KEY, token)
     }
   }
 
   function clearUser() {
     userInfo.value = null
     isLoggedIn.value = false
-    localStorage.removeItem('accessToken')
-  }
-
-  function setSecureKey(value: string) {
-    const next = value.trim()
-    secureKey.value = next
-    if (next) {
-      localStorage.setItem(SECURE_KEY_STORAGE_KEY, next)
-    } else {
-      localStorage.removeItem(SECURE_KEY_STORAGE_KEY)
-    }
+    adminAuthorized.value = false
+    localStorage.removeItem(ACCESS_TOKEN_STORAGE_KEY)
   }
 
   function updateUserInfo(next: UserInfo | null) {
@@ -267,9 +257,9 @@ export const useAppStore = defineStore('app', () => {
 
   return {
     theme, setTheme, toggleTheme,
-    userInfo, isSecureMode, needSecureKey, secureKeyRequired, adminAuthorized, secureKey, isLoggedIn,
+    userInfo, adminAuthorized, isLoggedIn,
     versionUpdate, versionUpdateLoading, versionUpdateChecked, canCheckVersionUpdate, hasVersionUpdateReminder,
-    fetchUserInfo, setUser, clearUser, setSecureKey, updateUserInfo, checkVersionUpdate, dismissVersionUpdateReminder,
+    fetchUserInfo, setUser, setAccessToken, clearUser, updateUserInfo, checkVersionUpdate, dismissVersionUpdateReminder,
     showLoginModal, showSettingsDrawer, showSourceManager, showUserManager, showWebdavManager,
     isOnline, pwaReady, pwaUpdateAvailable, deferredInstallPrompt, waitingServiceWorker,
     setOnlineStatus, setPwaReady, setPwaUpdateAvailable, setDeferredInstallPrompt, setWaitingServiceWorker, installPwa, applyPwaUpdate,

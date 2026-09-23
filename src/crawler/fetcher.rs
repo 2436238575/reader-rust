@@ -107,8 +107,7 @@ pub async fn fetch(
     req: RequestSpec,
 ) -> anyhow::Result<FetchResponse> {
     // 出站守卫：书源 URL 由用户导入，可能指向内网/云元数据地址
-    if let Err(reason) =
-        crate::crawler::url_guard::ensure_outbound_url_str_allowed(&req.url).await
+    if let Err(reason) = crate::crawler::url_guard::ensure_outbound_url_str_allowed(&req.url).await
     {
         anyhow::bail!("请求被出站策略拒绝: {reason}");
     }
@@ -209,7 +208,11 @@ pub async fn fetch(
     Err(last_err.unwrap_or_else(|| anyhow::anyhow!("fetch failed")))
 }
 
-pub(crate) fn decode_body(bytes: &[u8], charset: Option<&str>, content_type: Option<&str>) -> String {
+pub(crate) fn decode_body(
+    bytes: &[u8],
+    charset: Option<&str>,
+    content_type: Option<&str>,
+) -> String {
     let label = charset
         .map(str::trim)
         .filter(|value| !value.is_empty())

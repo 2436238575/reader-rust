@@ -1,5 +1,6 @@
 pub mod api;
 pub mod app;
+pub mod auth;
 pub mod crawler;
 pub mod error;
 pub mod model;

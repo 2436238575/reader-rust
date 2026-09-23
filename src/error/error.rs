@@ -6,8 +6,19 @@ use axum::{
 use serde::Serialize;
 use thiserror::Error;
 
+/// 未登录 / 令牌无效或过期。前端据此弹出登录框。
+pub const NEED_LOGIN: &str = "NEED_LOGIN";
+/// 已登录但权限不足。
+pub const FORBIDDEN: &str = "FORBIDDEN";
+
 #[derive(Debug, Error)]
 pub enum AppError {
+    /// 401：未登录、令牌无效或已过期
+    #[error("unauthorized: {0}")]
+    Unauthorized(String),
+    /// 403：已认证但无权访问
+    #[error("forbidden: {0}")]
+    Forbidden(String),
     #[error("not found: {0}")]
     NotFound(String),
     #[error("bad request: {0}")]
@@ -44,20 +55,13 @@ impl<T> ApiResponse<T> {
             data: None,
         }
     }
-    pub fn err_with_data(message: impl Into<String>, data: T) -> Self {
-        Self {
-            is_success: false,
-            error_msg: message.into(),
-            data: Some(data),
-        }
-    }
 }
 
 impl IntoResponse for AppError {
     fn into_response(self) -> Response {
-        // 走 tracing 而非 println!：可被统一收集/过滤，也避免向 stdout 倾倒
-        tracing::error!(error = ?self, "请求处理失败");
         let (status, message) = match &self {
+            AppError::Unauthorized(msg) => (StatusCode::UNAUTHORIZED, msg.clone()),
+            AppError::Forbidden(msg) => (StatusCode::FORBIDDEN, msg.clone()),
             AppError::NotFound(msg) => (StatusCode::NOT_FOUND, msg.clone()),
             AppError::BadRequest(msg) => (StatusCode::BAD_REQUEST, msg.clone()),
             AppError::Db(_) => (
@@ -70,6 +74,14 @@ impl IntoResponse for AppError {
                 "internal error".to_string(),
             ),
         };
+        // 走 tracing 而非 println!：可被统一收集/过滤，也避免向 stdout 倾倒。
+        // 4xx 是调用方的问题，warn 即可；一律 error! 会把「未登录」这类
+        // 日常事件淹没在错误日志里，掩盖真正的服务端故障。
+        if status.is_server_error() {
+            tracing::error!(error = ?self, "请求处理失败");
+        } else {
+            tracing::warn!(error = ?self, "请求被拒绝");
+        }
         let body = Json(ApiResponse::<serde_json::Value>::err(message));
         (status, body).into_response()
     }
