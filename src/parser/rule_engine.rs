@@ -1717,7 +1717,7 @@ fn xpath_select_nodes<'a>(
     xpath: &str,
 ) -> Vec<sxd_xpath::nodeset::Node<'a>> {
     let xpath = xpath.trim();
-    if xpath.is_empty() {
+    if xpath.is_empty() || !html::xpath_within_limits(xpath) {
         return vec![];
     }
     let context = XPathContext::new();
@@ -1732,7 +1732,7 @@ fn xpath_select_nodes<'a>(
 
 fn xpath_eval_strings(node: sxd_xpath::nodeset::Node<'_>, xpath: &str) -> Vec<String> {
     let xpath = xpath.trim();
-    if xpath.is_empty() {
+    if xpath.is_empty() || !html::xpath_within_limits(xpath) {
         return vec![];
     }
     let context = XPathContext::new();

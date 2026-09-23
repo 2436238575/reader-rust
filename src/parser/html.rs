@@ -737,8 +737,48 @@ pub fn select_text_list(doc: &Html, rule: &str) -> Vec<String> {
     results
 }
 
+/// XPath 表达式的长度上限。
+pub const MAX_XPATH_EXPR_LEN: usize = 8 * 1024;
+/// XPath 表达式的括号/谓词嵌套上限。
+///
+/// sxd-xpath 的解析器按嵌套层级递归，求值也按表达式树递归；书源可控的深嵌套
+/// 表达式（如数千层 `((((...))))`) 会撑爆线程栈、直接终止整个进程（栈溢出在
+/// Rust 里不可捕获），所以必须在 build 之前拦掉。
+pub const MAX_XPATH_EXPR_NESTING: usize = 64;
+
+/// 表达式是否在安全界限内（长度 + 嵌套深度）。字符串字面量内的括号不计。
+pub fn xpath_within_limits(xpath: &str) -> bool {
+    if xpath.len() > MAX_XPATH_EXPR_LEN {
+        return false;
+    }
+    let mut depth = 0usize;
+    let mut in_string = false;
+    let mut quote = '\0';
+    for ch in xpath.chars() {
+        match ch {
+            '"' | '\'' if in_string && ch == quote => in_string = false,
+            '"' | '\'' if !in_string => {
+                in_string = true;
+                quote = ch;
+            }
+            '(' | '[' if !in_string => {
+                depth += 1;
+                if depth > MAX_XPATH_EXPR_NESTING {
+                    return false;
+                }
+            }
+            ')' | ']' if !in_string => depth = depth.saturating_sub(1),
+            _ => {}
+        }
+    }
+    true
+}
+
 /// XPath support using sxd-xpath
 pub fn select_xpath(html: &str, xpath: &str) -> Vec<String> {
+    if !xpath_within_limits(xpath) {
+        return vec![];
+    }
     let package = match sxd_document::parser::parse(html) {
         Ok(p) => p,
         Err(_) => return vec![],
@@ -764,6 +804,22 @@ pub fn select_xpath(html: &str, xpath: &str) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn xpath_limits_reject_deep_nesting_and_overlong() {
+        let deep = format!("{}{}", "(".repeat(5000), ")".repeat(5000));
+        assert!(!xpath_within_limits(&deep));
+        // 被拦在 build 之前，不会递归爆栈
+        assert!(select_xpath("<p>x</p>", &deep).is_empty());
+        assert!(!xpath_within_limits(&"a".repeat(MAX_XPATH_EXPR_LEN + 1)));
+    }
+
+    #[test]
+    fn xpath_limits_accept_normal_expressions() {
+        assert!(xpath_within_limits("//div[@class='a']/span[1]/text()"));
+        // 字符串字面量里的括号不计入嵌套
+        assert!(xpath_within_limits("//ul/li[contains(@class,'(((((')]"));
+    }
 
     #[test]
     fn test_legado_to_css() {
