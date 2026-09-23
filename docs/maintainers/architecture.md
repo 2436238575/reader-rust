@@ -166,18 +166,26 @@ JS 求值本身带资源上限：内存 128MiB、调用栈 1MiB、单次求值 5
 
 | 机制 | 位置 | 说明 |
 |------|------|------|
-| 出站守卫（SSRF 防护） | `crawler/url_guard.rs` | 所有用户可控的出站请求统一校验：仅 http/https、拒绝私网/环回/链路本地/云元数据地址（含 DNS 解析后逐 IP 检查）、重定向逐跳校验。`ALLOW_PRIVATE_NETWORK` 可放行（默认跟随 `SECURE`） |
-| 响应体上限 | `crawler/fetcher.rs` | 单次抓取响应体上限 32MiB，边收边计数；显式 Content-Length 超限直接拒绝 |
+| 出站守卫（SSRF 防护） | `crawler/url_guard.rs` | 所有用户可控的出站请求统一校验：仅 http/https、拒绝私网/环回/链路本地/云元数据地址（含 DNS 解析后逐 IP 检查）、重定向逐跳复检（域名目标同样做 DNS 解析）。`ALLOW_PRIVATE_NETWORK` 可放行（默认跟随 `SECURE`） |
+| 响应体上限 | `crawler/fetcher.rs` | 单次抓取响应体上限 32MiB，边收边计数；显式 Content-Length 超限直接拒绝；JS 侧 `java.*` 请求与 jsLib 远程拉取同上限 |
 | JS 沙箱资源上限 | `parser/js.rs` | QuickJS Runtime 设内存（128MiB）/栈（1MiB）/执行时间（5s）上限；`java.*` 请求 30 秒超时、返回值 32MiB 上限 |
-| 同步解析隔离 | `service/book_service.rs` | 规则解析全部走 `spawn_blocking`，第三方书源的 JS 死循环拖不垮 worker |
+| 同步解析隔离 | `service/book_service.rs` | 规则解析（含 exploreUrl 的 `@js:`）全部走 `spawn_blocking`，第三方书源的 JS 死循环拖不垮 worker |
 | Cookie jar 隔离 | `crawler/http_client.rs` | 按 `user_ns` 独立 Cookie jar 与连接池，避免用户间站点会话串号 |
 | JS 状态隔离 | `parser/js.rs` | 书源 JS 的 `cache`/`kv` 键按 `user_ns` 加前缀，`java.*` 的 HTTP 客户端同样按用户池化 |
-| 上传/删除路径校验 | `api/handlers/user.rs`、`util/safe_path.rs` | 文件名白名单 + 词法级路径解析，杜绝 `..` 穿越写删 `storage/` 之外的文件 |
-| 登录限速 | `service/user_service.rs` | 同用户名 10 分钟窗口失败 8 次锁定 5 分钟 |
+| XPath 表达式上限 | `parser/html.rs` | 长度 ≤8KiB、括号/谓词嵌套 ≤64 层：sxd-xpath 按嵌套递归，书源可控的深嵌套表达式会爆栈终止进程 |
+| 上传/删除路径校验 | `api/handlers/user.rs`、`util/safe_path.rs` | 文件名白名单（含 Windows 保留设备名）+ 词法级路径解析，杜绝 `..` 穿越写删 `storage/` 之外的文件 |
+| WebDAV 路径收敛 | `api/handlers/webdav.rs` | 相对路径按 `/`、`\` 双分隔符切分并拒绝 `..`/盘符/ADS/设备名；multipart 文件名经 `sanitize_file_name`；上传字段限量读取，下载流式返回 |
+| 密码哈希 | `util/crypto.rs` | Argon2id（PHC 字符串自含盐与参数），哈希与校验在 `spawn_blocking` 中执行 |
+| 登录限速 | `service/user_service.rs` | 同用户名 10 分钟窗口失败 8 次锁定 5 分钟；悲观计数（尝试先计数、成功再清除）使并发爆发无法绕过；WebDAV Basic 认证共享同一份限速 |
 | CORS | `api/router.rs` | 默认仅同源（不下发任何 CORS 头）；跨域需 `CORS_ALLOWED_ORIGINS` 显式白名单 |
-| 会话 token | `service/user_service.rs` | 随机源 32 位（≈190 bit 熵），SQLite 按会话存储、可逐会话失效 |
+| 会话 token | `service/user_service.rs` | CSPRNG 直出 48 位（≈285 bit 熵），SQLite 按会话存储、可逐会话失效 |
+| 封面代理 | `service/book_service.rs` | Content-Type 收敛为位图白名单（防 `text/html`/`svg` 经 `/cover` 的同源 XSS）；封面缓存目录 256MiB 容量上限、按最旧优先淘汰 |
 
 文件缓存（`storage/cache`）有 7 天 TTL 与单用户 512MiB 容量上限，超限按最旧优先淘汰。
+
+> 已知残余风险：出站守卫的 DNS 校验与 reqwest 实际连接是两次独立解析（TOCTOU），
+> 控制权威 DNS 的攻击者理论上可用 rebinding 绕过；彻底封堵需要在连接层钉扎 IP，
+> 当前 reqwest 未暴露该能力，暂以重定向逐跳复检缓解。
 
 ## 存储设计
 

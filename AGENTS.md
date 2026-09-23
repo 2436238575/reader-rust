@@ -233,7 +233,7 @@ HTTP 请求
 
 ## 测试
 
-Rust 侧共 **86 个测试**（56 个 `#[test]` + 30 个 `#[tokio::test]`），分布为：
+Rust 侧共 **124 个测试**（85 个 `#[test]` + 39 个 `#[tokio::test]`），分布为：
 
 - `tests/` 下 10 个集成测试文件，其中 `book_source_compat.rs` 用例最多（15 个）；
 - `src/` 内的内联单元测试模块。
