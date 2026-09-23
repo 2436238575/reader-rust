@@ -493,10 +493,37 @@ fn compile_js_lib(js_lib: &str) -> anyhow::Result<String> {
 fn resolve_js_lib_entry(entry: &str) -> anyhow::Result<String> {
     let value = entry.trim();
     if value.starts_with("http://") || value.starts_with("https://") {
+        // 出站守卫：书源 jsLib 可以任意指定 URL，不校验即是盲打内网的 SSRF 通道
+        crate::crawler::url_guard::ensure_outbound_url_str_allowed_blocking(value)
+            .map_err(|reason| anyhow::anyhow!("jsLib 远程拉取被出站策略拒绝: {reason}"))?;
         let response = js_http_client().get(value).send()?;
-        return Ok(response.text().unwrap_or_default());
+        return read_blocking_body_limited(response);
     }
     Ok(value.to_string())
+}
+
+/// JS 侧 HTTP 响应体的限量读取：JS 堆 128MB 上限管不到 Rust 侧的响应缓冲，
+/// 无界 text() 会让恶意书源用超大响应直接耗尽进程内存。
+fn read_blocking_body_limited(response: reqwest::blocking::Response) -> anyhow::Result<String> {
+    use std::io::Read;
+    let content_type = response
+        .headers()
+        .get(reqwest::header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.to_string());
+    let limit = crate::crawler::fetcher::MAX_RESPONSE_BYTES;
+    let mut buf = Vec::new();
+    response
+        .take(limit + 1)
+        .read_to_end(&mut buf)?;
+    if buf.len() as u64 > limit {
+        anyhow::bail!("JS HTTP 响应体超过 {limit} 字节上限");
+    }
+    Ok(crate::crawler::fetcher::decode_body(
+        &buf,
+        None,
+        content_type.as_deref(),
+    ))
 }
 
 fn java_time_format(timestamp: i64) -> String {
@@ -553,7 +580,7 @@ fn java_ajax(spec: &str) -> anyhow::Result<String> {
     }
 
     let response = req.send()?;
-    Ok(response.text().unwrap_or_default())
+    read_blocking_body_limited(response)
 }
 
 fn java_request_simple(method: &str, url: &str, body: Option<String>) -> anyhow::Result<String> {
@@ -567,7 +594,7 @@ fn java_request_simple(method: &str, url: &str, body: Option<String>) -> anyhow:
         req = req.body(body);
     }
     let response = req.send()?;
-    Ok(response.text().unwrap_or_default())
+    read_blocking_body_limited(response)
 }
 
 fn split_ajax_spec(spec: &str) -> (&str, Option<&str>) {

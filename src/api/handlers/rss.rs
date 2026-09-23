@@ -151,14 +151,18 @@ pub async fn read_remote_rss_source_file(
     }
     let client = builder.build().map_err(|e| AppError::Internal(e.into()))?;
 
-    let text = client
+    let res = client
         .get(target)
         .send()
         .await
-        .map_err(|e| AppError::BadRequest(format!("网络请求失败: {}", e)))?
-        .text()
-        .await
-        .map_err(|e| AppError::BadRequest(format!("读取响应失败: {}", e)))?;
+        .map_err(|e| AppError::BadRequest(format!("网络请求失败: {}", e)))?;
+    let bytes = crate::crawler::fetcher::read_body_limited(
+        res,
+        crate::crawler::fetcher::MAX_RESPONSE_BYTES,
+    )
+    .await
+    .map_err(|e| AppError::BadRequest(format!("读取响应失败: {}", e)))?;
+    let text = String::from_utf8_lossy(&bytes).into_owned();
 
     let sources: Vec<RssSource> = serde_json::from_str(&text).or_else(|_| {
         if let Ok(v) = serde_json::from_str::<serde_json::Value>(&text) {
@@ -238,11 +242,15 @@ pub async fn get_rss_articles(
         .find(|s| s.source_url == source_url)
         .ok_or_else(|| AppError::BadRequest("RSS源不存在".to_string()))?;
 
+    // 出站守卫：sort_url 由请求体提供，与保存的 source_url 无关，可指向任意内网地址
+    let sort_url_guarded = url_guard::ensure_outbound_url_str_allowed(&sort_url)
+        .await
+        .map_err(AppError::BadRequest)?;
     let res = state
         .book_service
         .http_client(&user_ns)
         .map_err(AppError::Internal)?
-        .get(&sort_url)
+        .get(sort_url_guarded)
         .send()
         .await
         .map_err(|e| AppError::Internal(e.into()))?;
@@ -340,15 +348,26 @@ pub async fn get_rss_content(
         .find(|s| s.source_url == source_url)
         .ok_or_else(|| AppError::BadRequest("RSS源不存在".to_string()))?;
 
+    // 出站守卫：link 完全由请求体提供，且响应体原样回传调用方——
+    // 不校验就是一个可读回响应内容的内网 SSRF 通道
+    let link = url_guard::ensure_outbound_url_str_allowed(&link)
+        .await
+        .map_err(AppError::BadRequest)?;
     let res = state
         .book_service
         .http_client(&user_ns)
         .map_err(AppError::Internal)?
-        .get(&link)
+        .get(link)
         .send()
         .await
         .map_err(|e| AppError::Internal(e.into()))?;
-    let body = res.text().await.map_err(|e| AppError::Internal(e.into()))?;
+    let bytes = crate::crawler::fetcher::read_body_limited(
+        res,
+        crate::crawler::fetcher::MAX_RESPONSE_BYTES,
+    )
+    .await
+    .map_err(AppError::Internal)?;
+    let body = String::from_utf8_lossy(&bytes).into_owned();
     Ok(Json(ApiResponse::ok(Value::String(body))))
 }
 

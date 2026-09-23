@@ -182,14 +182,34 @@ pub fn ensure_outbound_url_str_allowed_blocking(raw: &str) -> Result<Url, String
     Ok(url)
 }
 
+/// 校验重定向目标。不能只看字面 IP/主机名：302 目标的域名同样可能解析到内网
+/// （攻击者把自家域名 A 记录指向 127.0.0.1），域名主机必须做真实 DNS 解析。
+fn check_redirect_target(url: &Url) -> Result<(), String> {
+    if private_network_allowed() {
+        return Ok(());
+    }
+    if is_obviously_internal_url(url) {
+        return Err("重定向目标指向内网地址".to_string());
+    }
+    if let Some(Host::Domain(domain)) = url.host() {
+        use std::net::ToSocketAddrs;
+        let port = url.port_or_known_default().unwrap_or(80);
+        let addrs = (domain, port)
+            .to_socket_addrs()
+            .map_err(|e| format!("重定向目标 {domain} 解析失败: {e}"))?;
+        check_resolved_ips(addrs.map(|addr| addr.ip()))?;
+    }
+    Ok(())
+}
+
 /// 重定向策略：限制跳数；开启防护时拒绝跳往内网地址。
 pub fn guarded_redirect_policy() -> Policy {
     Policy::custom(|attempt| {
         if attempt.previous().len() >= MAX_REDIRECTS {
             return attempt.error("too many redirects");
         }
-        if !private_network_allowed() && is_obviously_internal_url(attempt.url()) {
-            return attempt.error("redirect to a private address is blocked");
+        if let Err(reason) = check_redirect_target(attempt.url()) {
+            return attempt.error(format!("redirect blocked: {reason}"));
         }
         attempt.follow()
     })
@@ -271,5 +291,17 @@ mod tests {
         assert!(!is_obviously_internal_url(
             &Url::parse("https://example.com/x").unwrap()
         ));
+    }
+
+    #[test]
+    fn redirect_target_check_blocks_literal_internal() {
+        // 默认 SECURE=false → 放行私网，先强制切到防护态再测
+        set_allow_private_network(false);
+        assert!(check_redirect_target(&Url::parse("http://127.0.0.1/").unwrap()).is_err());
+        assert!(check_redirect_target(&Url::parse("http://[::1]/").unwrap()).is_err());
+        assert!(check_redirect_target(&Url::parse("http://localhost/").unwrap()).is_err());
+        // 守护状态下 localhost 既命中主机名黑名单，也过不了 DNS 解析检查
+        set_allow_private_network(true);
+        assert!(check_redirect_target(&Url::parse("http://127.0.0.1/").unwrap()).is_ok());
     }
 }

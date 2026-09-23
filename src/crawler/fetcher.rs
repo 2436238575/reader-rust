@@ -209,7 +209,7 @@ pub async fn fetch(
     Err(last_err.unwrap_or_else(|| anyhow::anyhow!("fetch failed")))
 }
 
-fn decode_body(bytes: &[u8], charset: Option<&str>, content_type: Option<&str>) -> String {
+pub(crate) fn decode_body(bytes: &[u8], charset: Option<&str>, content_type: Option<&str>) -> String {
     let label = charset
         .map(str::trim)
         .filter(|value| !value.is_empty())
