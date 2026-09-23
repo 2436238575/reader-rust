@@ -169,6 +169,42 @@ impl FileCache {
     }
 }
 
+/// 对一个平铺目录做容量控制：总大小超上限时按修改时间最旧优先删除。
+///
+/// 用于封面缓存这类「不入 FileCache 的两级结构、但同样不能无界增长」的目录
+/// （`/cover` 允许匿名访问，换 URL 即可写盘，没有上限就是匿名磁盘耗尽）。
+pub async fn enforce_flat_dir_capacity(dir: &Path, max_bytes: u64) {
+    let Ok(mut entries) = fs::read_dir(dir).await else {
+        return;
+    };
+    let mut files: Vec<(SystemTime, u64, PathBuf)> = Vec::new();
+    let mut total: u64 = 0;
+    while let Ok(Some(entry)) = entries.next_entry().await {
+        let Ok(meta) = entry.metadata().await else {
+            continue;
+        };
+        if !meta.is_file() {
+            continue;
+        }
+        total += meta.len();
+        let modified = meta.modified().unwrap_or(SystemTime::UNIX_EPOCH);
+        files.push((modified, meta.len(), entry.path()));
+    }
+    if total <= max_bytes {
+        return;
+    }
+    files.sort_by_key(|(modified, _, _)| *modified);
+    let mut excess = total - max_bytes;
+    for (_, size, path) in files {
+        if excess == 0 {
+            break;
+        }
+        if fs::remove_file(&path).await.is_ok() {
+            excess = excess.saturating_sub(size);
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -215,5 +251,24 @@ mod tests {
             "超过容量上限的条目应被淘汰"
         );
         let _ = fs::remove_dir_all(&root).await;
+    }
+
+    #[tokio::test]
+    async fn flat_dir_capacity_evicts_oldest_files() {
+        let dir = std::env::temp_dir().join(format!(
+            "reader-flat-cap-{}",
+            uuid::Uuid::new_v4()
+        ));
+        fs::create_dir_all(&dir).await.unwrap();
+        // 写三个文件，mtime 依次递增；总量超过上限后最旧的应被淘汰
+        for (name, size) in [("a.bin", 600usize), ("b.bin", 600), ("c.bin", 600)] {
+            fs::write(dir.join(name), vec![0u8; size]).await.unwrap();
+            // 保证 mtime 可分辨
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        enforce_flat_dir_capacity(&dir, 1000).await;
+        assert!(!dir.join("a.bin").exists(), "最旧的 a.bin 应被淘汰");
+        assert!(dir.join("c.bin").exists(), "最新的 c.bin 应保留");
+        let _ = fs::remove_dir_all(&dir).await;
     }
 }

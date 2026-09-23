@@ -1206,7 +1206,7 @@ impl BookService {
             let data = fs::read(&path)
                 .await
                 .map_err(|e| AppError::Internal(e.into()))?;
-            let content_type = content_type_from_ext(&ext);
+            let content_type = safe_cover_content_type(None, &ext);
             return Ok((data, content_type));
         }
         if let Some(parent) = path.parent() {
@@ -1243,12 +1243,11 @@ impl BookService {
         if !res.status().is_success() {
             return Err(AppError::NotFound("cover not found".to_string()));
         }
-        let content_type = res
+        let upstream_content_type = res
             .headers()
             .get(reqwest::header::CONTENT_TYPE)
             .and_then(|v| v.to_str().ok())
-            .map(|s| s.to_string())
-            .unwrap_or_else(|| content_type_from_ext(&ext));
+            .map(|s| s.to_string());
         let bytes = crate::crawler::fetcher::read_body_limited(
             res,
             crate::crawler::fetcher::MAX_RESPONSE_BYTES,
@@ -1257,6 +1256,15 @@ impl BookService {
         .map_err(AppError::Internal)?
         .to_vec();
         let _ = fs::write(&path, &bytes).await;
+        // 匿名可写的缓存目录必须有容量上限，否则换 URL 即可打满磁盘
+        if let Some(parent) = path.parent() {
+            crate::storage::cache::file_cache::enforce_flat_dir_capacity(
+                parent,
+                MAX_COVER_CACHE_BYTES,
+            )
+            .await;
+        }
+        let content_type = safe_cover_content_type(upstream_content_type.as_deref(), &ext);
         Ok((bytes, content_type))
     }
 
@@ -1839,9 +1847,76 @@ fn content_type_from_ext(ext: &str) -> String {
     .to_string()
 }
 
+/// 封面缓存目录的容量上限。
+const MAX_COVER_CACHE_BYTES: u64 = 256 * 1024 * 1024;
+
+/// 封面响应只允许安全的位图类型。
+///
+/// 上游 Content-Type 原样透传时，`text/html` / `image/svg+xml` 会让直接打开
+/// `/cover` 链接的读者在站点源下执行脚本（同源 XSS，可偷 localStorage 的 token）。
+/// SVG 作为矢量图含脚本能力，同样不放行；上游类型不可信时按扩展名兜底，
+/// 扩展名也不安全就强制 application/octet-stream（浏览器仅下载不渲染）。
+fn safe_cover_content_type(upstream: Option<&str>, ext: &str) -> String {
+    const ALLOWED: &[&str] = &[
+        "image/jpeg",
+        "image/png",
+        "image/webp",
+        "image/gif",
+        "image/avif",
+        "image/bmp",
+        "image/x-icon",
+        "image/vnd.microsoft.icon",
+    ];
+    if let Some(ct) = upstream
+        .and_then(|v| v.split(';').next())
+        .map(|v| v.trim().to_ascii_lowercase())
+    {
+        if ALLOWED.contains(&ct.as_str()) {
+            return ct;
+        }
+    }
+    let by_ext = content_type_from_ext(ext);
+    if ALLOWED.contains(&by_ext.as_str()) {
+        by_ext
+    } else {
+        "application/octet-stream".to_string()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn cover_content_type_is_whitelisted() {
+        assert_eq!(
+            safe_cover_content_type(Some("image/jpeg"), "png"),
+            "image/jpeg"
+        );
+        assert_eq!(
+            safe_cover_content_type(Some("image/png; charset=binary"), "x"),
+            "image/png"
+        );
+        // html/svg 一律不放行（同源 XSS 通道）
+        assert_eq!(
+            safe_cover_content_type(Some("text/html"), "html"),
+            "application/octet-stream"
+        );
+        assert_eq!(
+            safe_cover_content_type(Some("image/svg+xml"), "svg"),
+            "application/octet-stream"
+        );
+        assert_eq!(
+            safe_cover_content_type(None, "svg"),
+            "application/octet-stream"
+        );
+        // 上游类型不可信时按扩展名兜底
+        assert_eq!(
+            safe_cover_content_type(Some("text/plain"), "jpg"),
+            "image/jpeg"
+        );
+        assert_eq!(safe_cover_content_type(None, "webp"), "image/webp");
+    }
 
     #[tokio::test]
     async fn window_rate_waits_when_existing_starts_reach_limit() {
