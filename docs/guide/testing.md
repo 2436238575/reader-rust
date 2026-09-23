@@ -6,7 +6,7 @@
 
 | 层级 | 命令 | 覆盖范围 |
 |------|------|---------|
-| Rust 单元 + 集成测试 | `cargo test` | 86 个用例（见下） |
+| Rust 单元 + 集成测试 | `cargo test` | 124 个用例（见下） |
 | 前端单元测试 | `cd frontend && npm test` | 20 个 `*.test.ts`（vitest） |
 | 端到端冒烟 | `npm run test:e2e` | Playwright，需先启动后端 |
 | 手工全量回归 | 见文末清单 | 依赖真实书源、账号、缓存的功能 |
@@ -19,9 +19,9 @@ cargo test book_source         # 按名称过滤
 cargo test --lib               # 只跑 src 内的内联单元测试
 ```
 
-Rust 侧共 **86 个用例**（56 个 `#[test]` + 30 个 `#[tokio::test]`），分两类：
+Rust 侧共 **124 个用例**（85 个 `#[test]` + 39 个 `#[tokio::test]`），分两类：
 
-- **`tests/` 下的集成测试**（10 个文件）：`book_source_compat.rs`（用例最多，覆盖书源格式兼容）、`book_source_validation.rs`、`book_source_headers.rs`、`local_txt_book.rs`、`local_epub_book.rs`、`ai_book_memory.rs`、`ai_proxy.rs`、`version_update.rs`、`js_compat.rs`、`yckceo_live_sources.rs`
+- **`tests/` 下的集成测试**（10 个文件）：`book_source_compat.rs`（用例最多，17 个，覆盖书源格式兼容）、`book_source_validation.rs`、`book_source_headers.rs`、`local_txt_book.rs`、`local_epub_book.rs`、`ai_book_memory.rs`、`ai_proxy.rs`、`version_update.rs`、`js_compat.rs`、`yckceo_live_sources.rs`
 - **`src/` 内的内联单元测试**：解析器、URL 处理等纯逻辑
 
 ::: warning 有一个用例会真的联网

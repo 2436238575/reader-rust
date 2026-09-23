@@ -14,7 +14,7 @@
 |------|------|
 | `git` | 提交与打 tag |
 | `cargo` | 交叉编译后端 |
-| `npm` | 同步版本号、构建前端 |
+| `npm` | 同步版本号、构建前端（`node` 随 npm 提供，无 tag 时的版本回退也用到它） |
 | `podman` | 构建与推送镜像 |
 | `gh` | 创建 GitHub Release |
 | `awk` | 改写 `Cargo.toml` 里的版本号 |

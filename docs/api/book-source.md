@@ -1,6 +1,8 @@
 # 书源管理 API
 
-书源相关的增删改查、调试与导入导出接口。所有响应均包裹为统一结构：`{ "isSuccess": boolean, "data": any, "errorMsg": string }`。
+书源相关的增删改查、调试与导入导出接口。除特别注明外，响应均包裹为统一结构：`{ "isSuccess": boolean, "data": any, "errorMsg": string }`。
+
+> 例外：`readSourceFile` 成功时直接返回裸 JSON 数组（书源数组），不做统一包装。
 
 ## 获取书源列表
 
@@ -214,7 +216,7 @@ ANY /reader3/bookSourceProxy
 ANY /reader3/bookSourceClientLog
 ```
 
-书源页面运行时的前端错误上报接口。查询参数：`message`、`source`、`lineno`、`colno`、`stack`。仅记录日志，无业务返回。
+书源页面运行时的前端错误上报接口。查询参数：`message`、`source`、`lineno`、`colno`、`stack`。服务端仅记录日志，响应 `data` 为 `{ "logged": true }`。
 
 ## 书源调试（流式）
 
@@ -235,7 +237,7 @@ GET /reader3/bookSourceDebugSSE
 POST /reader3/importBookSources
 ```
 
-> **未实现**：批量导入书源接口，代码中无此路由。实际导入分两步——先由 `POST /reader3/readSourceFile`（本地文件）或 `POST /reader3/readRemoteSourceFile`（远程 URL）读取并解析成书源 JSON，再调 `POST /reader3/saveBookSource` / `POST /reader3/saveBookSources` 写入（依据：`src/api/router.rs:49-74`）。
+> **未实现**：批量导入书源接口，代码中无此路由。实际导入分两步——先由 `POST /reader3/readSourceFile`（本地文件）或 `POST /reader3/readRemoteSourceFile`（远程 URL）读取并解析成书源 JSON，再调 `POST /reader3/saveBookSource` / `POST /reader3/saveBookSources` 写入（依据：`src/api/router.rs`（无 import 路由））。
 
 ## 导出书源
 
@@ -243,4 +245,4 @@ POST /reader3/importBookSources
 POST /reader3/exportBookSources
 ```
 
-> **未实现**：书源导出接口，代码中无此路由。当前没有专门的导出接口，可由 `GET/POST /reader3/getBookSource`（单条）或 `GET/POST /reader3/getBookSources`（全部）取回书源 JSON 后自行保存为文件（依据：`src/api/router.rs:16-23`）。
+> **未实现**：书源导出接口，代码中无此路由。当前没有专门的导出接口，可由 `GET/POST /reader3/getBookSource`（单条）或 `GET/POST /reader3/getBookSources`（全部）取回书源 JSON 后自行保存为文件（依据：`src/api/router.rs`（无 export 路由））。

@@ -17,17 +17,12 @@ GET /reader3/getBookContent
 | `index` | number | 否 | 章节下标（当传入书籍 URL 时定位章节） |
 | `refresh` | number | 否 | 非 0 时强制刷新缓存 |
 
-响应：
+响应：`data` 为**纯字符串**（章节正文内容），不包含标题或前后章 URL：
 
 ```json
 {
   "isSuccess": true,
-  "data": {
-    "title": "章节标题",
-    "content": "正文内容...",
-    "nextUrl": "下一章URL",
-    "prevUrl": "上一章URL"
-  },
+  "data": "正文内容...",
   "errorMsg": ""
 }
 ```
@@ -107,3 +102,26 @@ POST /reader3/saveReadProgress
 ```
 
 > **未实现**：该接口尚未在代码中实现（依据：`src/api/router.rs` 查无 `saveReadProgress` 路由；正确路径为 `POST /reader3/saveBookProgress`）。
+
+## 获取封面
+
+```text
+GET /reader3/cover?path=<封面URL>
+```
+
+抓取远程封面并缓存返回。**匿名可访问**（固定使用隔离的 `public` 命名空间，不携带任何用户书源会话 Cookie）。
+
+行为约定：
+
+- 响应 `Content-Type` 收敛为位图白名单（jpeg/png/webp/gif/avif/bmp/ico）；上游返回 `text/html`、`image/svg+xml` 等不可渲染为位图的类型时一律降级为 `application/octet-stream`（防同源脚本执行）
+- 单个封面最大 32MiB；缓存目录容量上限 256MiB，超限按最旧优先淘汰
+- 上游失败/被出站守卫拦截时统一返回 404
+- 目标 URL 经出站守卫校验（SECURE 模式下拒绝内网地址）
+
+## 获取本地 EPUB 资源
+
+```text
+GET /reader3/localEpubAsset?bookUrl=<local-epub:...>&path=<包内路径>
+```
+
+读取已导入本地 EPUB 的包内资源（封面图、样式等）。`bookUrl` 必须是 `local-epub:` 前缀的本地书；`path` 只能命中该书 manifest 中登记的资源，否则 404。响应为资源字节流（带对应 Content-Type）。

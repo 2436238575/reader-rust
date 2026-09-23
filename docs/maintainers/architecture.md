@@ -21,7 +21,9 @@ src/crawler/      reqwest 抓取上游页面，URL 占位符展开、页面选�
   src/error/   统一错误类型     src/storage/ 持久化（由 service 使用）
 ```
 
-依赖方向已核实为单向：`api → service → parser → crawler`，且 `parser/` 与 `crawler/` **不依赖** `service/`。
+依赖方向已核实：`api → service → parser → crawler`，且 `parser/` 与 `crawler/` **不依赖** `service/`。
+注意 `parser` 与 `crawler` 之间是**双向**编译期依赖：解析器发请求要走 crawler 的抓取与出站守卫，
+而 crawler 的 `url_analyzer` 展开 URL 内联 JS 时要回调 parser 的 JS 求值。
 
 ::: tip 图里是「依赖方向」，不是「调用顺序」
 绝大多数流程中，**抓取由 `service` 发起**，拿到响应体后再把字符串交给 `parser` 解析 —— 例如
@@ -31,7 +33,7 @@ let res = self.fetch_with_rate(source, spec).await?;      // service 经 crawler
 let books = self.parser.search_books(source, &res.body, &res.url);  // parser 只解析
 ```
 
-（见 `src/service/book_service.rs:259-265`）
+（见 `BookService::fetch_with_rate` 与 `parse_response_blocking`）
 
 `parser` 之所以也依赖 `crawler`，是因为少数规则需要它自己再发请求（例如顺着「下一页」规则继续抓取）。
 所以「`parser` 依赖 `crawler`」说的是编译期依赖，不表示每次解析都走网络。
@@ -46,7 +48,7 @@ let books = self.parser.search_books(source, &res.body, &res.url);  // parser �
 | `router.rs` | **路由真相来源**。全部业务路由挂在 `/reader3` 下，唯一例外是根路径 `GET /health` |
 | `auth.rs` | 从请求头 `Authorization` 或查询参数 `accessToken` 提取凭证 |
 | `mod.rs` | `AppState`：共享配置与各 service 实例 |
-| `handlers/` | 按领域拆分，共 12 个模块：`book`、`book_source`、`book_group`、`bookmark`、`rss`、`user`、`ai_book`、`ai_model`、`ai_proxy`、`replace_rule`、`update`、`webdav` |
+| `handlers/` | 按领域拆分，共 12 个领域模块：`book`、`book_source`、`book_group`、`bookmark`、`rss`、`user`、`ai_book`、`ai_model`、`ai_proxy`、`replace_rule`、`update`、`webdav`；另有共享的 `multipart`（multipart 字段限量读取） |
 
 `handlers/book.rs` 是最大的单个文件（约 3200 行），涵盖书架、章节、缓存、上传等书籍相关接口。
 
@@ -74,7 +76,7 @@ let books = self.parser.search_books(source, &res.body, &res.url);  // parser �
 
 ### `src/parser/`
 
-规则解析引擎，6 个文件合计约 4200 行。
+规则解析引擎，6 个文件合计约 4300 行。
 
 | 文件 | 职责 |
 |------|------|
@@ -216,9 +218,9 @@ SQLite 表：
 ```
 frontend/src/
   views/       8 个路由页：Home / Reader / Explore / Recent / Rss / RssArticle / RssManage / AiBook
-  components/  31 个组件，含 reader/ 与 source-manager/ 两个子目录
+  components/  31 个组件，含 bookshelf/、reader/、source-manager/ 三个子目录
   stores/      Pinia：reader / bookshelf / explore / source / rss / aiBook / app
-  api/         14 个接口模块 + http.ts（axios 实例）
+  api/         13 个接口模块 + http.ts（axios 实例）
   utils/       PWA、简繁转换、TTS、加密工具
 ```
 

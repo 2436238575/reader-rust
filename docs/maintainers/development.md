@@ -37,7 +37,7 @@ npm run test:e2e
 ## 测试要求
 
 - **新增功能请补测试。** 集成测试放 `tests/`，纯逻辑单元测试就近放在 `src` 内的内联模块里；前端测试用 vitest（`*.test.ts` 与被测模块同目录）
-- 当前规模：Rust 86 个用例（56 个 `#[test]` + 30 个 `#[tokio::test]`），前端 20 个 `*.test.ts`
+- 当前规模：Rust 124 个用例（85 个 `#[test]` + 39 个 `#[tokio::test]`），前端 20 个 `*.test.ts`
 - 改动解析器时，务必在 `tests/book_source_compat.rs` 里补上对应的书源格式用例 —— 这是兼容性的主要防线
 - 注意 `tests/yckceo_live_sources.rs` 会**真的联网**抓在线书源，无网环境下失败属预期行为，不要为了「让测试全绿」而删它
 
@@ -121,7 +121,7 @@ docs/
 | 加接口 | `api/router.rs` 注册 + `api/handlers/<领域>.rs` 写 handler，业务逻辑放 `service/` |
 | 改解析行为 | `parser/rule_engine.rs`；组合规则切分在 `parser/rule_analyzer.rs` |
 | 加 URL 占位符 | `crawler/url_analyzer.rs` |
-| 加数据库表 | 在 `storage/db/migrations/` **新增**迁移文件，不要改历史迁移 |
+| 加数据库表 | 在 `src/storage/db/migrations/` **新增**迁移文件，不要改历史迁移 |
 | 加配置项 | `app/config.rs` 三处 + 两份配置文档 |
 | 改前端接口封装 | `frontend/src/api/http.ts` 与对应模块 |
 

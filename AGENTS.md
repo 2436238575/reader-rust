@@ -22,7 +22,7 @@ Reader-Rust 是 [阅读3.0](https://github.com/hectorqin/reader) 的 Rust 重写
 cargo run                      # 开发模式运行，默认监听 0.0.0.0:8080
 cargo build                    # 调试构建
 cargo build --release          # 发布构建
-cargo test                     # 全部测试（Rust 侧共 86 个）
+cargo test                     # 全部测试（Rust 侧共 124 个）
 cargo test <关键字>             # 按名称过滤测试
 cargo clippy --all-targets     # 静态检查
 cargo fmt                      # 格式化
@@ -100,7 +100,7 @@ cp .env.example .env
 | `SECURE_KEY` | 空 | 安全模式密钥 |
 | `INVITE_CODE` | 空 | 注册邀请码，为空表示不限制 |
 | `USER_LIMIT` | `50` | 用户数上限 |
-| `USER_BOOK_LIMIT` | `2000` | 单用户书架上限。**未实现**：配置项已定义但代码未校验 |
+| `USER_BOOK_LIMIT` | `2000` | 单用户书架上限，`0` 表示不限制 |
 | `USER_LOCAL_BOOK_LIMIT` | `0` | 单用户本地上传上限，`0` 表示不限制 |
 | `ALLOW_PRIVATE_NETWORK` | 跟随 `SECURE` | 出站请求是否允许访问私网/内网地址；见 `docs/guide/configuration.md` |
 | `CORS_ALLOWED_ORIGINS` | 空 | 跨域来源白名单；留空仅同源 |
@@ -117,22 +117,24 @@ cp .env.example .env
 ```
 src/
   main.rs / lib.rs        入口，各十余行
-  api/                    路由与 HTTP 处理（axum），16 文件约 7200 行
+  api/                    路由与 HTTP 处理（axum），17 文件约 7400 行
     router.rs             全部路由定义（唯一真相来源）
     auth.rs               从请求头 / 查询参数提取鉴权信息
-    handlers/             13 个文件，按领域拆分：book、book_source、user、rss、
-                          bookmark、book_group、ai_book、ai_model、ai_proxy、
-                          replace_rule、update、webdav
-  service/                业务编排，11 文件约 5500 行
-  parser/                 规则解析引擎，6 文件约 4100 行
+    handlers/             12 个领域模块：book、book_source、user、rss、bookmark、
+                          book_group、ai_book、ai_model、ai_proxy、replace_rule、
+                          update、webdav；另有共享的 multipart.rs（限量读取工具）
+  service/                业务编排，11 文件约 6000 行
+  parser/                 规则解析引擎，6 文件约 4300 行
     rule_engine.rs        核心（2500 行）：六种用途的解析入口
     rule_analyzer.rs      组合规则拆分（正确处理引号与括号嵌套）
     html.rs / jsonpath.rs / js.rs
-  crawler/                reqwest 抓取与 URL 处理，4 文件约 970 行
+  crawler/                reqwest 抓取与 URL 处理，5 文件约 1370 行
     url_analyzer.rs       占位符替换、页面选择、内联 JS
+    url_guard.rs          出站请求守卫（SSRF 防护）
   model/                  BookSource 等数据结构，14 文件约 1000 行
-  storage/               SQLite（sqlx）+ 文件缓存，7 文件约 240 行
-    db/migrations/        0001_init / 0002_add_user_ns / 0003_users_and_account_documents
+  storage/               SQLite（sqlx）+ 文件缓存，7 文件约 430 行
+    db/migrations/        0001_init / 0002_add_user_ns / 0003_users_and_account_documents /
+                          0004_drop_dead_cache_tables
     cache/file_cache.rs   章节内容文件缓存，以 MD5 命名
   app/                    配置加载与启动引导
   error/                  错误类型
@@ -144,9 +146,9 @@ scripts/release.sh        发布脚本
 storage/                  运行期数据，gitignored，首次启动自动创建
 ```
 
-规模参照（便于判断改动影响面）：后端 `src/` 共 70 个 `.rs`、约 19300 行，其中最大的三个文件是
-`api/handlers/book.rs`（3185 行）、`parser/rule_engine.rs`（2508 行）、`service/book_service.rs`（1717 行）；
-前端 `src/` 下 117 个文件（72 个 `.ts`，其中 20 个是测试；40 个 `.vue`；2 个 CSS + 3 个静态资源）。
+规模参照（便于判断改动影响面）：后端 `src/` 共 73 个 `.rs`、约 21200 行，其中最大的三个文件是
+`api/handlers/book.rs`（约 3170 行）、`parser/rule_engine.rs`（约 2530 行）、`service/book_service.rs`（约 1960 行）；
+前端 `src/` 下 117 个文件（72 个 `.ts`，其中 20 个是测试；40 个 `.vue`；2 个 CSS + 2 个静态资源 + 1 个 JS 工具）。
 
 ---
 
@@ -163,6 +165,7 @@ HTTP 请求
 ```
 
 各层依赖方向（已核实）：`api → service → parser → crawler`。`parser/` 与 `crawler/` 都**不依赖** `service/`；
+`parser` 与 `crawler` 之间是双向编译期依赖（解析经 crawler 抓取并过出站守卫；crawler 展开 URL 内联 JS 时回调 parser 的 JS 求值）；
 `model/`、`util/`、`error/` 是被各层共用的底座模块；`storage/` 由 `service/` 使用。
 
 响应一律包装为：
@@ -191,7 +194,7 @@ HTTP 请求
 | CSS 选择器 | 默认，用于 HTML（`.class`、`#id`、`tag`） |
 | JSONPath | 自动识别 JSON（`$.data.list`） |
 | XPath | 以 `/` 或 `./` 开头 |
-| 正则 | 直接书写正则 |
+| 正则 | 以 `:` 前缀书写（或显式 `@regex:`） |
 | JavaScript | `js:` / `@js:` 前缀，或 `{{表达式}}` 内联 |
 
 也可用显式前缀强制指定：`@css:`、`@json:`、`@xpath:`、`@regex:`。
@@ -210,11 +213,11 @@ HTTP 请求
 
 ### 组合规则
 
-多条规则可用分隔符串联，`rule_analyzer.rs` 在切分时会跳过引号与括号内部的同名符号，因此 `div[a="x&&y"]&&span` 不会被错误切开。
+多条规则可用分隔符组合，`rule_analyzer.rs` 在切分时会跳过引号与括号内部的同名符号，因此 `div[a="x&&y"]&&span` 不会被错误切开。需要「上一步结果作为下一步输入」的链式二次解析用 `@@`。
 
 | 分隔符 | 语义 |
 |--------|------|
-| `&&` | 依次串联（前一步的结果作为后一步的输入） |
+| `&&` | 结果拼接（各条规则的命中结果依次合并） |
 | `\|\|` | 取第一个非空结果 |
 | `%%` | 并列取值 |
 
@@ -235,7 +238,7 @@ HTTP 请求
 
 Rust 侧共 **124 个测试**（85 个 `#[test]` + 39 个 `#[tokio::test]`），分布为：
 
-- `tests/` 下 10 个集成测试文件，其中 `book_source_compat.rs` 用例最多（15 个）；
+- `tests/` 下 10 个集成测试文件，其中 `book_source_compat.rs` 用例最多（17 个）；
 - `src/` 内的内联单元测试模块。
 
 前端使用 vitest，共 20 个 `*.test.ts`。

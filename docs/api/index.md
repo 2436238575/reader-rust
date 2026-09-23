@@ -54,6 +54,8 @@ http://localhost:8080/reader3
 
 前端对 `errorMsg === "NEED_LOGIN"`、`data === "NEED_LOGIN"` 以及 HTTP 401 三种情况都会弹出登录框。
 
+另有少数接口（`saveUserConfig`/`getUserConfig`/`uploadFile`/`deleteFile`）以 **HTTP 200 + `errorMsg` 为提示文案 + `data` 为 `"NEED_LOGIN"`** 的形态表达未登录，前端同样按 `data` 识别。
+
 （后端唯一的 HTTP 401 来自 WebDAV 处理器 `src/api/handlers/webdav.rs`，走 HTTP Basic 认证，不返回上述 JSON 结构。）
 
 **`NEED_SECURE_KEY` —— 需要管理密码**
@@ -107,7 +109,7 @@ Authorization: 用户名:token字符串
 
 认证**不是 JWT** —— 服务端自行生成不透明 token，存储于 SQLite（`users.token` 与 `user_sessions` 表），支持多设备同时登录，且服务端可逐会话失效。
 
-该头也接受 `Bearer ` 前缀（大小写均可）：`Authorization: Bearer 用户名:token字符串`。这只是兼容写法，token 本身没有 payload、不能自行解析。
+该头也接受 `Bearer ` 前缀（支持 `Bearer ` 与 `bearer ` 两种写法）：`Authorization: Bearer 用户名:token字符串`。这只是兼容写法，token 本身没有 payload、不能自行解析。
 
 ### 安全密钥
 

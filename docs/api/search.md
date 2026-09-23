@@ -14,7 +14,7 @@ GET /reader3/searchBook
 |------|------|------|------|
 | `key` | string | 是 | 搜索关键词 |
 | `page` | number | 否 | 页码，默认 1 |
-| `bookSourceUrl` | string | 否 | 指定书源 URL（别名 `origin`） |
+| `bookSourceUrl` | string | 否 | 指定书源 URL（别名 `origin`，仅 form-urlencoded POST 请求体接受别名；query 与 JSON body 请用 `bookSourceUrl`） |
 
 响应：
 
@@ -31,7 +31,7 @@ GET /reader3/searchBook
       "kind": "玄幻",
       "wordCount": "100万字",
       "lastChapter": "最新章节",
-      "sourceName": "书源名称"
+      "origin": "书源URL"
     }
   ],
   "errorMsg": ""
@@ -211,7 +211,56 @@ GET /reader3/getShelfBookWithCacheInfo
 }
 ```
 
-依据：`src/api/handlers/book.rs:1493`、`:1532`（插入 `cachedChapterCount`）。
+依据：`src/api/handlers/book.rs` 的 `get_shelf_book_with_cache_info`（插入 `cachedChapterCount`）。
+
+## 保存书籍到书架
+
+```text
+POST /reader3/saveBook
+```
+
+请求体为单个 `Book` 对象（`origin`、`bookUrl` 必填）。已存在同书（按书名/作者/URL 匹配）时更新并保留阅读进度等字段；新入架受 `USER_BOOK_LIMIT` 上限约束（默认 2000，0 为不限），超限返回 400。响应 `data` 为保存后的书籍对象。
+
+## 整架替换保存
+
+```text
+POST /reader3/saveBooks
+```
+
+请求体为 `Book` 数组，**整体替换**当前书架（导入场景）。替换后总数超过 `USER_BOOK_LIMIT` 时整批拒绝。响应 `data` 为保存后的数组。
+
+## 更换书籍的书源
+
+```text
+GET /reader3/setBookSource
+```
+
+查询参数：`bookUrl`（别名 `url`）、`newUrl`、`bookSourceUrl`。也可 `POST`（JSON 或 form-urlencoded 请求体）。响应 `data` 为更新后的书籍对象。
+
+## 删除书籍
+
+```text
+POST /reader3/deleteBook
+POST /reader3/deleteBooks
+```
+
+请求体分别为单个 `Book` 与 `Book` 数组。删除时级联清理该书的书籍缓存、AI 记忆与本地书文件。单个删除时书籍不存在返回 400；批量删除响应 `data` 为 `{ "deleted": n }`。
+
+## 上传本地 TXT 书籍
+
+```text
+POST /reader3/uploadTxtBook
+```
+
+`multipart/form-data`，字段名 `file`。文件上限 50MB，按章节正则自动切分。受 `USER_LOCAL_BOOK_LIMIT` 约束。响应 `data` 为入架后的书籍对象。
+
+## 上传本地 EPUB 书籍
+
+```text
+POST /reader3/uploadEpubBook
+```
+
+`multipart/form-data`，字段名 `file`。文件上限 80MB；EPUB 条目数上限 3000，解压后总体积上限 300MB（按实际解压输出计）。受 `USER_LOCAL_BOOK_LIMIT` 约束。响应 `data` 为入架后的书籍对象。
 
 ## 多书源搜索（流式）
 
@@ -248,7 +297,7 @@ GET /reader3/getAvailableBookSource
 | `resultLimit` | number | 否 | 单页结果上限，默认 20，上限 100 |
 | `concurrentCount` | number | 否 | 并发数，默认 8，上限 20 |
 
-响应：`data` 形如 `{ "books": [ ... ], "lastIndex": 0, "hasMore": true }`。
+响应：两种形态——带 `refresh`/`resultLimit`/`lastIndex` 任一分页参数时 `data` 为 `{ "books": [ ... ], "lastIndex": 0, "hasMore": true }`；均不带时 `data` 为裸数组 `[ ... ]`（全量结果）。
 
 也可使用 `POST /reader3/getAvailableBookSource`。
 
