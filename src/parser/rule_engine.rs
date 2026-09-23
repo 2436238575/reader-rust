@@ -761,9 +761,9 @@ impl RuleEngine {
         rule: &SearchRule,
         list_rule: &str,
     ) -> Vec<SearchBook> {
-        let package = match sxd_document::parser::parse(body) {
-            Ok(p) => p,
-            Err(_) => return vec![],
+        let package = match html::parse_xml_or_html(body) {
+            Some(p) => p,
+            None => return vec![],
         };
         let document = package.as_document();
         let items = xpath_select_nodes(
@@ -947,9 +947,9 @@ fn parse_book_info_xpath(
     book_url: &str,
     ctx: &mut HashMap<String, String>,
 ) -> Book {
-    let package = match sxd_document::parser::parse(body) {
-        Ok(p) => p,
-        Err(_) => return parse_book_info_html(source, body, base_url, rule, book_url, ctx),
+    let package = match html::parse_xml_or_html(body) {
+        Some(p) => p,
+        None => return parse_book_info_html(source, body, base_url, rule, book_url, ctx),
     };
     let document = package.as_document();
     let scope = select_xpath_scope(
@@ -1201,9 +1201,9 @@ fn parse_chapter_list_xpath(
     list_rule: &str,
     ctx: &mut HashMap<String, String>,
 ) -> (Vec<BookChapter>, Vec<String>) {
-    let package = match sxd_document::parser::parse(body) {
-        Ok(p) => p,
-        Err(_) => return parse_chapter_list_html(body, base_url, rule, list_rule, ctx),
+    let package = match html::parse_xml_or_html(body) {
+        Some(p) => p,
+        None => return parse_chapter_list_html(body, base_url, rule, list_rule, ctx),
     };
     let document = package.as_document();
     let scope = select_xpath_scope(
@@ -1720,6 +1720,37 @@ fn xpath_select_nodes<'a>(
     if xpath.is_empty() || !html::xpath_within_limits(xpath) {
         return vec![];
     }
+    // 组合规则（顶层切分）：&& 拼接 / || 首个非空 / %% 交错
+    let combo = crate::parser::rule_analyzer::split_top_level(xpath, &["&&", "||", "%%"]);
+    if let Some(op) = combo.delimiter.as_deref() {
+        let mut result = xpath_select_nodes(node, combo.parts.first().map(String::as_str).unwrap_or(""));
+        for part in combo.parts.iter().skip(1) {
+            let next = xpath_select_nodes(node, part);
+            match op {
+                "&&" => result.extend(next),
+                "||" => {
+                    if result.is_empty() {
+                        result = next;
+                    }
+                }
+                "%%" => {
+                    let mut zipped = Vec::new();
+                    let max_len = result.len().max(next.len());
+                    for idx in 0..max_len {
+                        if idx < result.len() {
+                            zipped.push(result[idx]);
+                        }
+                        if idx < next.len() {
+                            zipped.push(next[idx]);
+                        }
+                    }
+                    result = zipped;
+                }
+                _ => {}
+            }
+        }
+        return result;
+    }
     let context = XPathContext::new();
     match XPathFactory::new().build(xpath) {
         Ok(Some(expr)) => match expr.evaluate(&context, node) {
@@ -1734,6 +1765,11 @@ fn xpath_eval_strings(node: sxd_xpath::nodeset::Node<'_>, xpath: &str) -> Vec<St
     let xpath = xpath.trim();
     if xpath.is_empty() || !html::xpath_within_limits(xpath) {
         return vec![];
+    }
+    // 组合规则（顶层切分）：&& 拼接 / || 首个非空 / %% 交错
+    let combo = crate::parser::rule_analyzer::split_top_level(xpath, &["&&", "||", "%%"]);
+    if let Some(op) = combo.delimiter.as_deref() {
+        return html::combine_string_parts(op, &combo.parts, |part| xpath_eval_strings(node, part));
     }
     let context = XPathContext::new();
     match XPathFactory::new().build(xpath) {

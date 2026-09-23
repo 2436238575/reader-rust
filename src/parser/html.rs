@@ -774,14 +774,77 @@ pub fn xpath_within_limits(xpath: &str) -> bool {
     true
 }
 
+/// 把输入解析为 sxd 文档包。先试严格 XML；失败则经 html5ever 容错解析后重新
+/// 序列化为良构文档再解析——sxd_document 是严格 XML 解析器，普通 HTML（不自
+/// 闭合的 void 元素、HTML 实体、裸 `&`）会直接失败，没有这层回退时 XPath 规则
+/// 对绝大多数书源页面只会静默返回空。
+pub fn parse_xml_or_html(input: &str) -> Option<sxd_document::Package> {
+    if let Ok(package) = sxd_document::parser::parse(input) {
+        return Some(package);
+    }
+    let mut xhtml = Html::parse_document(input).html();
+    // html5ever 的序列化仍不是良构 XML，需两处修补：
+    // `&nbsp;` 是 HTML 专有实体（换成字面字符），void 元素不自闭合（补上 `/>`）
+    if xhtml.contains("&nbsp;") {
+        xhtml = xhtml.replace("&nbsp;", "\u{a0}");
+    }
+    static VOID_ELEMENTS: once_cell::sync::Lazy<regex::Regex> = once_cell::sync::Lazy::new(|| {
+        regex::Regex::new(
+            r"<(area|base|br|col|embed|hr|img|input|link|meta|param|source|track|wbr)(\s[^>]*)?>",
+        )
+        .unwrap()
+    });
+    xhtml = VOID_ELEMENTS.replace_all(&xhtml, "<$1$2/>").into_owned();
+    sxd_document::parser::parse(&xhtml).ok()
+}
+
+/// `&&` 结果拼接 / `||` 首个非空 / `%%` 交错合并，与 CSS 组合符语义一致。
+pub(crate) fn combine_string_parts<F>(op: &str, parts: &[String], eval: F) -> Vec<String>
+where
+    F: Fn(&str) -> Vec<String>,
+{
+    let mut result = eval(parts.first().map(String::as_str).unwrap_or(""));
+    for part in parts.iter().skip(1) {
+        let next = eval(part);
+        match op {
+            "&&" => result.extend(next),
+            "||" => {
+                if result.is_empty() {
+                    result = next;
+                }
+            }
+            "%%" => {
+                let mut zipped = Vec::new();
+                let max_len = result.len().max(next.len());
+                for idx in 0..max_len {
+                    if idx < result.len() {
+                        zipped.push(result[idx].clone());
+                    }
+                    if idx < next.len() {
+                        zipped.push(next[idx].clone());
+                    }
+                }
+                result = zipped;
+            }
+            _ => {}
+        }
+    }
+    result
+}
+
 /// XPath support using sxd-xpath
 pub fn select_xpath(html: &str, xpath: &str) -> Vec<String> {
     if !xpath_within_limits(xpath) {
         return vec![];
     }
-    let package = match sxd_document::parser::parse(html) {
-        Ok(p) => p,
-        Err(_) => return vec![],
+    // 组合规则：&& 拼接 / || 首个非空 / %% 交错（顶层切分，引号括号内不切）
+    let combo = crate::parser::rule_analyzer::split_top_level(xpath, &["&&", "||", "%%"]);
+    if let Some(op) = combo.delimiter.as_deref() {
+        return combine_string_parts(op, &combo.parts, |part| select_xpath(html, part));
+    }
+    let package = match parse_xml_or_html(html) {
+        Some(p) => p,
+        None => return vec![],
     };
 
     let document = package.as_document();
@@ -790,7 +853,11 @@ pub fn select_xpath(html: &str, xpath: &str) -> Vec<String> {
     match sxd_xpath::Factory::new().build(xpath) {
         Ok(Some(xpath_expr)) => match xpath_expr.evaluate(&context, document.root()) {
             Ok(value) => match value {
-                sxd_xpath::Value::Nodeset(ns) => ns.into_iter().map(|n| n.string_value()).collect(),
+                sxd_xpath::Value::Nodeset(ns) => ns
+                    .document_order()
+                    .into_iter()
+                    .map(|n| n.string_value())
+                    .collect(),
                 sxd_xpath::Value::String(s) => vec![s],
                 sxd_xpath::Value::Number(n) => vec![n.to_string()],
                 sxd_xpath::Value::Boolean(b) => vec![b.to_string()],
@@ -819,6 +886,52 @@ mod tests {
         assert!(xpath_within_limits("//div[@class='a']/span[1]/text()"));
         // 字符串字面量里的括号不计入嵌套
         assert!(xpath_within_limits("//ul/li[contains(@class,'(((((')]"));
+    }
+
+    #[test]
+    fn xpath_parses_messy_html_via_html5ever_fallback() {
+        // 普通 HTML5：未闭合 void 元素、&nbsp; 实体、裸 & —— 严格 XML 解析必失败，
+        // 必须经 html5ever 容错回退后才能用 XPath
+        let messy = "<html><body><div class=\"list\"><p>第一章&nbsp;<br><img src=x.png></p>\
+                     <p>第二章 & 后续</p></div></body></html>";
+        assert!(sxd_document::parser::parse(messy).is_err(), "前提：严格解析必须失败");
+        let items = select_xpath(messy, "//div[@class=\"list\"]/p");
+        assert_eq!(items.len(), 2);
+        assert!(items[0].contains("第一章"), "got: {:?}", items[0]);
+        assert!(items[1].contains("第二章"), "got: {:?}", items[1]);
+        // 属性取值
+        let srcs = select_xpath(messy, "//img/@src");
+        assert_eq!(srcs, vec!["x.png".to_string()]);
+    }
+
+    #[test]
+    fn xpath_combinators_concat_fallback_and_interleave() {
+        let doc = r#"<html><body><div class="a"><p>A1</p><p>A2</p></div>
+                     <div class="b"><p>B1</p></div></body></html>"#;
+        // && 结果拼接
+        assert_eq!(
+            select_xpath(doc, "//div[@class='a']/p && //div[@class='b']/p"),
+            vec!["A1", "A2", "B1"]
+        );
+        // || 首个非空
+        assert_eq!(
+            select_xpath(doc, "//div[@class='none']/p || //div[@class='b']/p"),
+            vec!["B1"]
+        );
+        // %% 交错
+        assert_eq!(
+            select_xpath(doc, "//div[@class='a']/p %% //div[@class='b']/p"),
+            vec!["A1", "B1", "A2"]
+        );
+        // 引号内的分隔符不切
+        assert_eq!(
+            select_xpath(doc, "//p[text()='A1 && x']").len(),
+            0,
+            "文本不命中但不应把 && 当组合符切开"
+        );
+        // XPath 原生 | 并集不受影响
+        let union = select_xpath(doc, "//div[@class='a']/p | //div[@class='b']/p");
+        assert_eq!(union.len(), 3);
     }
 
     #[test]
