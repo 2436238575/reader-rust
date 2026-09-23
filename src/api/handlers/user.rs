@@ -12,6 +12,9 @@ use tokio::fs;
 use crate::error::error::{ApiResponse, AppError};
 use crate::util::safe_path;
 
+/// 上传资源文件的单文件上限（multipart 字段不受 DefaultBodyLimit 约束，需自行限量）。
+const MAX_UPLOAD_FILE_BYTES: usize = 32 * 1024 * 1024;
+
 #[derive(Debug, Deserialize)]
 pub struct LoginRequest {
     pub username: Option<String>,
@@ -358,10 +361,17 @@ pub async fn upload_file(
         let Some(name) = safe_path::sanitize_file_name(&raw_name) else {
             return Ok(Json(ApiResponse::err("文件名不合法")));
         };
-        let data = field
-            .bytes()
-            .await
-            .map_err(|e| AppError::BadRequest(e.to_string()))?;
+        // multipart 字段不受 DefaultBodyLimit 约束，必须逐块计数限量
+        let data = match crate::api::handlers::multipart::read_limited_multipart_field(
+            field,
+            MAX_UPLOAD_FILE_BYTES,
+            "文件不能超过 32MB",
+        )
+        .await
+        {
+            Ok(data) => data,
+            Err(e) => return Ok(Json(ApiResponse::err(e.to_string()))),
+        };
         let dir = assets_root.join(&user_ns).join(&file_type);
         fs::create_dir_all(&dir)
             .await
