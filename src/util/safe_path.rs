@@ -8,6 +8,24 @@ use std::path::{Component, Path, PathBuf};
 /// 文件名里禁止出现的字符（路径分隔符 + Windows 保留字符 + NUL）。
 const FORBIDDEN_FILE_CHARS: &[char] = &['/', '\\', ':', '*', '?', '"', '<', '>', '|', '\0'];
 
+/// Windows 保留设备名（含 `con.txt` 这类带扩展名形式）。
+/// 在 Windows 上写入/删除这些名字会落到设备而非文件系统，行为异常且静默丢数据。
+pub fn is_windows_device_name(name: &str) -> bool {
+    let stem = name.split(['.', ' ']).next().unwrap_or("");
+    let upper = stem.to_ascii_uppercase();
+    if matches!(upper.as_str(), "CON" | "PRN" | "AUX" | "NUL" | "CLOCK$") {
+        return true;
+    }
+    // COM1-COM9 / LPT1-LPT9（COM0/LPT0 不是保留名）
+    if upper.len() == 4 {
+        if let Some(prefix) = upper.strip_suffix(|c: char| c.is_ascii_digit()) {
+            let digit = upper.chars().last().unwrap_or('0');
+            return matches!(prefix, "COM" | "LPT") && ('1'..='9').contains(&digit);
+        }
+    }
+    false
+}
+
 /// 把用户提供的名字收敛为一个安全的**纯文件名**。
 ///
 /// 拒绝：空、`.`、`..`、超过 255 字节、含控制字符、含路径分隔符或 Windows 保留字符、
@@ -32,6 +50,9 @@ pub fn sanitize_file_name(raw: &str) -> Option<String> {
     }
     // Windows 会把结尾的点和空格静默去掉，直接拒绝以免产生歧义
     if name.ends_with('.') || name.ends_with(' ') {
+        return None;
+    }
+    if is_windows_device_name(name) {
         return None;
     }
     Some(name.to_string())
@@ -107,6 +128,20 @@ mod tests {
         assert!(sanitize_file_name("C:\\evil.exe").is_none());
         assert!(sanitize_file_name("name.").is_none());
         assert!(sanitize_file_name("with\0nul").is_none());
+    }
+
+    #[test]
+    fn rejects_windows_device_names() {
+        assert!(is_windows_device_name("CON"));
+        assert!(is_windows_device_name("nul"));
+        assert!(is_windows_device_name("con.txt"));
+        assert!(is_windows_device_name("COM1"));
+        assert!(is_windows_device_name("lpt9"));
+        assert!(!is_windows_device_name("COM0"));
+        assert!(!is_windows_device_name("COM10"));
+        assert!(!is_windows_device_name("content.txt"));
+        assert!(sanitize_file_name("NUL").is_none());
+        assert!(sanitize_file_name("aux.png").is_none());
     }
 
     #[test]

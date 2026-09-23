@@ -120,6 +120,11 @@ pub async fn upload_file_to_webdav(
             .file_name()
             .map(|s| s.to_string())
             .unwrap_or_else(|| "file".to_string());
+        // multipart 文件名是客户端可控输入：绝对路径会整体替换 join 的 base，
+        // `..` 可穿越出 webdav 根目录，必须收敛为纯文件名
+        let Some(filename) = crate::util::safe_path::sanitize_file_name(&filename) else {
+            return Err(AppError::BadRequest("非法文件名".to_string()));
+        };
         let data = field
             .bytes()
             .await
@@ -286,13 +291,22 @@ async fn webdav_home(state: &AppState, user_ns: &str) -> Result<PathBuf, AppErro
     Ok(dir)
 }
 
+/// 把客户端给的相对路径拆成逐段的安全分量。
+///
+/// 必须同时按 `/` 和 `\` 切分：Windows 上 `\` 是路径分隔符，只按 `/` 切会让
+/// `..\..\x` 成为"普通段"逃过 `..` 检查，join 后直接穿越出 webdav 根目录。
+/// `:` 一并拒绝（Windows 盘符前缀与 NTFS ADS）。
 fn normalize_rel_path(path: &str) -> Result<Vec<String>, AppError> {
     let mut parts = Vec::new();
-    for p in path.split('/') {
+    for p in path.split(['/', '\\']) {
         if p.is_empty() || p == "." {
             continue;
         }
-        if p == ".." {
+        if p == ".."
+            || p.contains([':', '\0'])
+            || p.ends_with(['.', ' '])
+            || crate::util::safe_path::is_windows_device_name(p)
+        {
             return Err(AppError::BadRequest("非法路径".to_string()));
         }
         parts.push(p.to_string());
@@ -555,4 +569,36 @@ fn webdav_unlock(headers: &HeaderMap) -> Response {
         resp.headers_mut().insert("Lock-Token", v);
     }
     resp
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn normalize_rel_path_rejects_traversal_on_both_separators() {
+        assert!(normalize_rel_path("/../../etc/passwd").is_err());
+        // Windows 上反斜杠就是分隔符，必须等价拒绝
+        assert!(normalize_rel_path(r"..\..\storage\data\users.json").is_err());
+        assert!(normalize_rel_path("/a/../..").is_err());
+        assert!(normalize_rel_path(r"a\..\..\b").is_err());
+        // 盘符与 ADS
+        assert!(normalize_rel_path("C:/Windows/x").is_err());
+        assert!(normalize_rel_path("a.txt:evil").is_err());
+        // Windows 设备名与结尾点/空格
+        assert!(normalize_rel_path("/NUL").is_err());
+        assert!(normalize_rel_path("/con.txt").is_err());
+        assert!(normalize_rel_path("/a.txt.").is_err());
+        assert!(normalize_rel_path("/a.txt ").is_err());
+    }
+
+    #[test]
+    fn normalize_rel_path_accepts_normal_paths() {
+        assert_eq!(
+            normalize_rel_path("/books/中文 书/1.txt").unwrap(),
+            vec!["books", "中文 书", "1.txt"]
+        );
+        assert!(normalize_rel_path("/").unwrap().is_empty());
+        assert_eq!(normalize_rel_path("//a//./b//").unwrap(), vec!["a", "b"]);
+    }
 }
