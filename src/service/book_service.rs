@@ -390,8 +390,19 @@ impl BookService {
         .await
     }
 
-    pub fn explore_kinds(&self, source: &BookSource) -> Result<Vec<ExploreKind>, AppError> {
-        parse_explore_kinds(source)
+    /// 解析书源的发现分类（exploreUrl）。
+    ///
+    /// exploreUrl 可含 `@js:` 脚本：必须带用户命名空间进阻塞线程池执行——否则
+    /// JS 里的 cache/kv/Cookie 落进共享的 "public" 桶（跨用户串号），且同步
+    /// 求值会直接堵在 tokio worker 上。
+    pub async fn explore_kinds(
+        &self,
+        user_ns: &str,
+        source: &BookSource,
+    ) -> Result<Vec<ExploreKind>, AppError> {
+        let user_ns = user_ns.to_string();
+        let source = source.clone();
+        parse_blocking(move || with_user_ns(&user_ns, || parse_explore_kinds(&source))).await?
     }
 
     pub async fn test_book_source_availability(
@@ -428,7 +439,7 @@ impl BookService {
             (false, Some("missing searchUrl or ruleSearch".to_string()))
         };
 
-        let explore_url = self.explore_kinds(source).ok().and_then(|kinds| {
+        let explore_url = self.explore_kinds(user_ns, source).await.ok().and_then(|kinds| {
             kinds
                 .into_iter()
                 .filter_map(|kind| kind.url)

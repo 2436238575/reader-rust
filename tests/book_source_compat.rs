@@ -445,8 +445,8 @@ async fn content_pagination_stops_before_next_chapter_url() {
     assert_eq!(next_chapter_hits.load(Ordering::SeqCst), 0);
 }
 
-#[test]
-fn explore_kinds_support_text_and_js_rules() {
+#[tokio::test]
+async fn explore_kinds_support_text_and_js_rules() {
     let service = BookService::new(
         HttpClient::new(5, None).unwrap(),
         RuleEngine::new().unwrap(),
@@ -467,8 +467,8 @@ fn explore_kinds_support_text_and_js_rules() {
         ..text_source.clone()
     };
 
-    let text = service.explore_kinds(&text_source).unwrap();
-    let js = service.explore_kinds(&js_source).unwrap();
+    let text = service.explore_kinds("tester", &text_source).await.unwrap();
+    let js = service.explore_kinds("tester", &js_source).await.unwrap();
 
     assert_eq!(text.len(), 2);
     assert_eq!(text[0].title, "排行");
@@ -481,8 +481,8 @@ fn explore_kinds_support_text_and_js_rules() {
     );
 }
 
-#[test]
-fn explore_kinds_accept_relaxed_style_objects() {
+#[tokio::test]
+async fn explore_kinds_accept_relaxed_style_objects() {
     let service = BookService::new(
         HttpClient::new(5, None).unwrap(),
         RuleEngine::new().unwrap(),
@@ -499,7 +499,7 @@ fn explore_kinds_accept_relaxed_style_objects() {
         ..Default::default()
     };
 
-    let kinds = service.explore_kinds(&source).unwrap();
+    let kinds = service.explore_kinds("tester", &source).await.unwrap();
 
     assert_eq!(kinds.len(), 2);
     assert_eq!(kinds[0].title, "排行🏷榜单");
@@ -515,8 +515,8 @@ fn explore_kinds_accept_relaxed_style_objects() {
     );
 }
 
-#[test]
-fn explore_kinds_accept_relaxed_angle_item_objects() {
+#[tokio::test]
+async fn explore_kinds_accept_relaxed_angle_item_objects() {
     let service = BookService::new(
         HttpClient::new(5, None).unwrap(),
         RuleEngine::new().unwrap(),
@@ -533,7 +533,7 @@ fn explore_kinds_accept_relaxed_angle_item_objects() {
         ..Default::default()
     };
 
-    let kinds = service.explore_kinds(&source).unwrap();
+    let kinds = service.explore_kinds("tester", &source).await.unwrap();
 
     assert_eq!(kinds.len(), 3);
     assert_eq!(kinds[0].title, "书 库");

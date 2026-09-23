@@ -233,7 +233,7 @@ pub async fn get_explore_kinds(
             .ok_or_else(|| AppError::NotFound("bookSource not found".to_string()))?
     };
 
-    let kinds = state.book_service.explore_kinds(&source)?;
+    let kinds = state.book_service.explore_kinds(&user_ns, &source).await?;
     Ok(Json(ApiResponse::ok(
         serde_json::to_value(kinds).unwrap_or_default(),
     )))
