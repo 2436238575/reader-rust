@@ -1,5 +1,8 @@
 use serde_json::Value;
 
+use crate::parser::rule_analyzer::split_top_level;
+
+/// 单条 JsonPath 求值，不处理 `&&`/`||`/`%%` 组合符。
 pub fn jsonpath_query(value: &Value, rule: &str) -> Vec<Value> {
     if let Some(rendered) = render_embedded_paths(value, rule) {
         return vec![Value::String(rendered)];
@@ -43,6 +46,42 @@ pub fn value_to_string(v: &Value) -> Option<String> {
         ),
         Value::Object(_) => Some(v.to_string()),
     }
+}
+
+/// 支持组合符的列表求值：`&&` 拼接 / `||` 首个非空 / `%%` 交错（规格 §9.1 `getStringList`）。
+pub fn jsonpath_query_combined(value: &Value, rule: &str) -> Vec<Value> {
+    let split = split_top_level(rule, &["&&", "||", "%%"]);
+    let Some(operator) = split.delimiter.as_deref() else {
+        return jsonpath_query(value, rule);
+    };
+
+    let mut result = jsonpath_query(value, split.parts.first().map(String::as_str).unwrap_or(""));
+    for part in split.parts.iter().skip(1) {
+        let next = jsonpath_query(value, part);
+        match operator {
+            "&&" => result.extend(next),
+            "||" => {
+                if result.is_empty() {
+                    result = next;
+                }
+            }
+            "%%" => {
+                let mut zipped = Vec::with_capacity(result.len() + next.len());
+                let max_len = result.len().max(next.len());
+                for idx in 0..max_len {
+                    if idx < result.len() {
+                        zipped.push(result[idx].clone());
+                    }
+                    if idx < next.len() {
+                        zipped.push(next[idx].clone());
+                    }
+                }
+                result = zipped;
+            }
+            _ => {}
+        }
+    }
+    result
 }
 
 fn render_embedded_paths(value: &Value, rule: &str) -> Option<String> {

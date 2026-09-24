@@ -5,10 +5,10 @@ use crate::model::{
 };
 use crate::parser::{
     html,
-    js::{eval_js, eval_js_with_bindings, with_js_lib},
+    js::{eval_js, eval_js_with_bindings_and_globals, with_js_lib},
     jsonpath,
 };
-use crate::util::text::{apply_regex_replace, normalize_source_url};
+use crate::util::text::normalize_source_url;
 use serde_json::{json, Value};
 use std::collections::HashMap;
 use sxd_xpath::{Context as XPathContext, Factory as XPathFactory, Value as XPathValue};
@@ -89,6 +89,14 @@ impl RuleEngine {
         with_js_lib(source.js_lib.as_deref(), || {
             let rule = source.rule_search.clone().unwrap_or_default();
             let (list_rule, reverse) = normalize_list_rule(rule.book_list.as_deref().unwrap_or(""));
+
+            // 规格 §13.4 第 4 步：`bookUrlPattern` 命中当前响应 URL 时，这一页本身就是详情页
+            if book_url_pattern_matches(source, base_url) {
+                if let Some(detail_book) = self.search_detail_fallback(source, body, base_url) {
+                    return vec![detail_book];
+                }
+            }
+
             let mode = self.detect_mode(list_rule, body);
             let mut results = match mode {
                 ParseMode::JsonPath => {
@@ -118,7 +126,7 @@ impl RuleEngine {
             if reverse {
                 results.reverse();
             }
-            results
+            dedupe_books(results)
         })
     }
 
@@ -156,7 +164,7 @@ impl RuleEngine {
             if reverse {
                 results.reverse();
             }
-            results
+            dedupe_books(results)
         })
     }
 
@@ -454,10 +462,7 @@ impl RuleEngine {
                 .intro
                 .as_ref()
                 .and_then(|r| eval_field_html(r, &el, base_url));
-            let kind = rule
-                .kind
-                .as_ref()
-                .and_then(|r| eval_field_html(r, &el, base_url));
+            let kind = eval_kind_html_element(rule.kind.as_deref(), &el, base_url);
             let last_chapter = rule
                 .last_chapter
                 .as_ref()
@@ -499,27 +504,23 @@ impl RuleEngine {
             .strip_mode_prefix(list_rule)
             .trim_start_matches(':')
             .trim();
-        let re = match regex::Regex::new(pattern) {
-            Ok(re) => re,
-            Err(_) => return vec![],
-        };
 
         let mut out = Vec::new();
-        for captures in re.captures_iter(body) {
-            let name = capture_rule_value(rule.name.as_deref(), &captures).unwrap_or_default();
+        for groups in regex_list_captures(pattern, body) {
+            let name = capture_rule_value(rule.name.as_deref(), &groups).unwrap_or_default();
             if name.is_empty() {
                 continue;
             }
-            let author = capture_rule_value(rule.author.as_deref(), &captures).unwrap_or_default();
+            let author = capture_rule_value(rule.author.as_deref(), &groups).unwrap_or_default();
             let book_url =
-                capture_rule_value(rule.book_url.as_deref(), &captures).unwrap_or_default();
-            let cover_url = capture_rule_value(rule.cover_url.as_deref(), &captures)
+                capture_rule_value(rule.book_url.as_deref(), &groups).unwrap_or_default();
+            let cover_url = capture_rule_value(rule.cover_url.as_deref(), &groups)
                 .map(|u| resolve_url(base_url, &u));
-            let intro = capture_rule_value(rule.intro.as_deref(), &captures);
-            let kind = capture_rule_value(rule.kind.as_deref(), &captures);
-            let last_chapter = capture_rule_value(rule.last_chapter.as_deref(), &captures);
-            let update_time = capture_rule_value(rule.update_time.as_deref(), &captures);
-            let word_count = capture_rule_value(rule.word_count.as_deref(), &captures);
+            let intro = capture_rule_value(rule.intro.as_deref(), &groups);
+            let kind = capture_rule_value(rule.kind.as_deref(), &groups);
+            let last_chapter = capture_rule_value(rule.last_chapter.as_deref(), &groups);
+            let update_time = capture_rule_value(rule.update_time.as_deref(), &groups);
+            let word_count = capture_rule_value(rule.word_count.as_deref(), &groups);
             out.push(SearchBook {
                 name,
                 author,
@@ -637,29 +638,25 @@ impl RuleEngine {
             .strip_mode_prefix(list_rule)
             .trim_start_matches(':')
             .trim();
-        let re = match regex::Regex::new(pattern) {
-            Ok(re) => re,
-            Err(_) => return (vec![], vec![]),
-        };
 
         let mut out = Vec::new();
         let mut seen_urls = std::collections::HashSet::new();
-        for captures in re.captures_iter(body) {
+        for groups in regex_list_captures(pattern, body) {
             let title =
-                capture_rule_value(rule.chapter_name.as_deref(), &captures).unwrap_or_default();
+                capture_rule_value(rule.chapter_name.as_deref(), &groups).unwrap_or_default();
             if title.is_empty() {
                 continue;
             }
             let raw_url =
-                capture_rule_value(rule.chapter_url.as_deref(), &captures).unwrap_or_default();
-            let tag = capture_rule_value(rule.update_time.as_deref(), &captures);
-            let is_volume = capture_rule_value(rule.is_volume.as_deref(), &captures)
+                capture_rule_value(rule.chapter_url.as_deref(), &groups).unwrap_or_default();
+            let tag = capture_rule_value(rule.update_time.as_deref(), &groups);
+            let is_volume = capture_rule_value(rule.is_volume.as_deref(), &groups)
                 .map(is_truthy)
                 .unwrap_or(false);
-            let is_vip = capture_rule_value(rule.is_vip.as_deref(), &captures)
+            let is_vip = capture_rule_value(rule.is_vip.as_deref(), &groups)
                 .map(is_truthy)
                 .unwrap_or(false);
-            let is_pay = capture_rule_value(rule.is_pay.as_deref(), &captures)
+            let is_pay = capture_rule_value(rule.is_pay.as_deref(), &groups)
                 .map(is_truthy)
                 .unwrap_or(false);
             let url = finalize_chapter_url(base_url, &raw_url, &title, is_volume, out.len());
@@ -719,10 +716,7 @@ impl RuleEngine {
                 .intro
                 .as_ref()
                 .and_then(|r| eval_field_html(r, &el, base_url));
-            let kind = rule
-                .kind
-                .as_ref()
-                .and_then(|r| eval_field_html(r, &el, base_url));
+            let kind = eval_kind_html_element(rule.kind.as_deref(), &el, base_url);
             let last_chapter = rule
                 .last_chapter
                 .as_ref()
@@ -780,7 +774,7 @@ impl RuleEngine {
             let cover_url =
                 eval_field_xpath(rule.cover_url.as_deref().unwrap_or(""), item, base_url);
             let intro = eval_field_xpath(rule.intro.as_deref().unwrap_or(""), item, base_url);
-            let kind = eval_field_xpath(rule.kind.as_deref().unwrap_or(""), item, base_url);
+            let kind = eval_kind_xpath(rule.kind.as_deref(), item, base_url);
             let last_chapter =
                 eval_field_xpath(rule.last_chapter.as_deref().unwrap_or(""), item, base_url);
             let update_time =
@@ -817,7 +811,7 @@ impl RuleEngine {
             Ok(v) => v,
             Err(_) => return vec![],
         };
-        let items = jsonpath::jsonpath_query(&v, self.strip_mode_prefix(list_rule));
+        let items = jsonpath::jsonpath_query_combined(&v, self.strip_mode_prefix(list_rule));
         let mut out = Vec::with_capacity(items.len());
         for item in items {
             let name = eval_field_json(rule.name.as_deref().unwrap_or(""), &item, base_url);
@@ -826,19 +820,19 @@ impl RuleEngine {
             let cover_url =
                 eval_field_json(rule.cover_url.as_deref().unwrap_or(""), &item, base_url);
             let intro = eval_field_json(rule.intro.as_deref().unwrap_or(""), &item, base_url);
-            let kind = eval_field_json(rule.kind.as_deref().unwrap_or(""), &item, base_url);
+            let kind = eval_kind_json(rule.kind.as_deref(), &item, base_url);
             let last_chapter =
                 eval_field_json(rule.last_chapter.as_deref().unwrap_or(""), &item, base_url);
             let update_time =
                 eval_field_json(rule.update_time.as_deref().unwrap_or(""), &item, base_url);
             let word_count =
                 eval_field_json(rule.word_count.as_deref().unwrap_or(""), &item, base_url);
-            let book_url = book_url.map(|u| resolve_url(base_url, &u));
+            let book_url = resolve_url(base_url, &book_url.unwrap_or_default());
             let cover_url = cover_url.map(|u| resolve_url(base_url, &u));
             out.push(SearchBook {
                 name: name.unwrap_or_default(),
                 author: author.unwrap_or_default(),
-                book_url: book_url.unwrap_or_default(),
+                book_url,
                 origin: source.book_source_url.clone(),
                 cover_url,
                 intro,
@@ -1024,7 +1018,7 @@ impl RuleEngine {
             let mut ctx = HashMap::new();
             let count_rule = rule.index_count_rule.as_deref().unwrap_or("");
             let mut paras: Vec<ParaReviewCount> = Vec::new();
-            for node in jsonpath::jsonpath_query(&v, strip_mode_prefix(list_rule)) {
+            for node in jsonpath::jsonpath_query_combined(&v, strip_mode_prefix(list_rule)) {
                 let entries: Vec<(i32, &Value)> = match &node {
                     // 段号按定义是「正文行号，从 0 开始」；番茄的 idea_data 里
                     // 另有 -1 这种整章聚合桶，不属于任何段落，直接丢掉。
@@ -1120,7 +1114,7 @@ fn parse_review_page(fields: &ReviewFields<'_>, body: &str, base_url: &str) -> R
 fn parse_review_page_json(fields: &ReviewFields<'_>, v: &Value, base_url: &str) -> ReviewPage {
     let mut ctx = HashMap::new();
     let (list_rule, reverse) = normalize_list_rule(fields.list);
-    let nodes = jsonpath::jsonpath_query(v, strip_mode_prefix(list_rule));
+    let nodes = jsonpath::jsonpath_query_combined(v, strip_mode_prefix(list_rule));
     let mut items = Vec::with_capacity(nodes.len());
     for node in nodes.iter() {
         let content =
@@ -1133,7 +1127,7 @@ fn parse_review_page_json(fields: &ReviewFields<'_>, v: &Value, base_url: &str) 
             .reply_list
             .filter(|rule| has_rule(Some(rule)))
             .map(|rule| {
-                jsonpath::jsonpath_query(node, strip_mode_prefix(rule.trim()))
+                jsonpath::jsonpath_query_combined(node, strip_mode_prefix(rule.trim()))
                     .iter()
                     .map(|reply| ReviewReply {
                         name: eval_field_json_with_ctx(
@@ -1361,7 +1355,7 @@ fn eval_image_list_json(rule: &str, node: &Value, base_url: &str) -> Vec<String>
         })
         .unwrap_or_default()
     } else if pure.trim_start().starts_with('$') {
-        jsonpath::jsonpath_query(node, pure.trim())
+        jsonpath::jsonpath_query_combined(node, pure.trim())
     } else {
         match node.get(pure.trim()) {
             Some(Value::Array(items)) => items.clone(),
@@ -1442,10 +1436,7 @@ fn parse_book_info_html(
         .intro
         .as_ref()
         .and_then(|r| eval_field_html_doc_with_ctx(r, &doc, base_url, ctx));
-    let kind = rule
-        .kind
-        .as_ref()
-        .and_then(|r| eval_field_html_doc_with_ctx(r, &doc, base_url, ctx));
+    let kind = eval_kind_html_doc(rule.kind.as_deref(), &doc, base_url);
     let last_chapter = rule
         .last_chapter
         .as_ref()
@@ -1525,7 +1516,7 @@ fn parse_book_info_xpath(
             .unwrap_or_default();
     let intro =
         eval_field_xpath_with_ctx(rule.intro.as_deref().unwrap_or(""), scope, base_url, ctx);
-    let kind = eval_field_xpath_with_ctx(rule.kind.as_deref().unwrap_or(""), scope, base_url, ctx);
+    let kind = eval_kind_xpath(rule.kind.as_deref(), scope, base_url);
     let last_chapter = eval_field_xpath_with_ctx(
         rule.last_chapter.as_deref().unwrap_or(""),
         scope,
@@ -1604,7 +1595,7 @@ fn parse_book_info_json(
             .unwrap_or_default();
     let intro =
         eval_field_json_with_ctx(rule.intro.as_deref().unwrap_or(""), &scope, base_url, ctx);
-    let kind = eval_field_json_with_ctx(rule.kind.as_deref().unwrap_or(""), &scope, base_url, ctx);
+    let kind = eval_kind_json(rule.kind.as_deref(), &scope, base_url);
     let last_chapter = eval_field_json_with_ctx(
         rule.last_chapter.as_deref().unwrap_or(""),
         &scope,
@@ -1771,7 +1762,7 @@ fn parse_chapter_list_xpath(
         sxd_xpath::nodeset::Node::Root(document.root()),
         rule.init.as_deref(),
     );
-    let items = xpath_select_nodes(scope, list_rule);
+    let items = xpath_select_nodes(scope, strip_mode_prefix(list_rule));
 
     let mut seen_urls = std::collections::HashSet::new();
     let mut out = Vec::with_capacity(items.len());
@@ -1850,7 +1841,7 @@ fn parse_chapter_list_json(
         Err(_) => return (vec![], vec![]),
     };
     let scope = select_json_scope(&v, rule.init.as_deref(), base_url, ctx);
-    let items = jsonpath::jsonpath_query(&scope, list_rule);
+    let items = jsonpath::jsonpath_query_combined(&scope, strip_mode_prefix(list_rule));
 
     let mut seen_urls = std::collections::HashSet::new();
     let mut out = Vec::with_capacity(items.len());
@@ -1913,7 +1904,7 @@ fn parse_chapter_list_json(
     let next_urls: Vec<String> = rule
         .next_toc_url
         .as_ref()
-        .map(|r| jsonpath::jsonpath_query(&scope, r))
+        .map(|r| jsonpath::jsonpath_query_combined(&scope, r))
         .unwrap_or_default()
         .into_iter()
         .filter_map(|v| v.as_str().map(|s| s.to_string()))
@@ -2095,6 +2086,178 @@ fn extract_js(rule: &str) -> (&str, Option<&str>) {
     (rule, None)
 }
 
+/// `@regex:` 模式：不执行匹配，直接返回规则文本（规格 §6.8 的 Regex 分支）。
+///
+/// 只做模板插值、内联 JS 与 `##` 替换；`$n` 分组引用在没有上游捕获组时保持原文。
+fn eval_literal_field(
+    rule: &str,
+    input: &str,
+    base_url: &str,
+    ctx: &mut HashMap<String, String>,
+) -> Option<String> {
+    let interpolated = interpolate_common_templates(rule, input, base_url, ctx);
+    let (pure_rule, regex_part) = split_legado_regex(&interpolated);
+    let (pure, js) = extract_js(&pure_rule);
+
+    let mut text = pure.to_string();
+    if let Some(script) = js {
+        if let Ok(res) = eval_js(script, &text, base_url) {
+            text = res;
+        }
+    }
+    if let Some(reg) = regex_part {
+        text = apply_legado_regex(&text, reg);
+    }
+
+    if text.trim().is_empty() {
+        None
+    } else {
+        Some(text)
+    }
+}
+
+/// 字段级组合符求值：`&&` 拼接 / `||` 首个非空 / `%%` 交错。
+///
+/// 返回 `None` 表示规则里没有顶层组合符，调用方按单条规则继续处理。
+/// 用 `FnMut` 是因为各条分支共享同一份 `@put`/`@get` 上下文。
+fn combine_strings<F>(rule: &str, mut eval: F) -> Option<Vec<String>>
+where
+    F: FnMut(&str) -> Option<String>,
+{
+    let combo = crate::parser::rule_analyzer::split_top_level(rule, &["&&", "||", "%%"]);
+    let operator = combo.delimiter.as_deref()?;
+
+    let mut result: Vec<String> = eval(combo.parts.first().map(String::as_str).unwrap_or(""))
+        .into_iter()
+        .collect();
+    for part in combo.parts.iter().skip(1) {
+        let next: Vec<String> = eval(part).into_iter().collect();
+        match operator {
+            "&&" => result.extend(next),
+            "||" => {
+                if result.is_empty() {
+                    result = next;
+                }
+            }
+            "%%" => {
+                let mut zipped = Vec::with_capacity(result.len() + next.len());
+                let max_len = result.len().max(next.len());
+                for idx in 0..max_len {
+                    if idx < result.len() {
+                        zipped.push(result[idx].clone());
+                    }
+                    if idx < next.len() {
+                        zipped.push(next[idx].clone());
+                    }
+                }
+                result = zipped;
+            }
+            _ => {}
+        }
+    }
+    Some(result)
+}
+
+/// 多值字段（`kind`）的命中收集是否适用：规则是纯选择器/路径。
+///
+/// 含 JS、模板或 `@put`/`@get` 的规则无法用列表求值表达，交给单值求值兜底，
+/// 由书源自行拼接多值。
+fn is_plain_selector_rule(rule: &str) -> bool {
+    let rule = rule.trim();
+    !rule.is_empty()
+        && !rule.contains("{{")
+        && !rule.contains("<js>")
+        && !rule.contains("@js:")
+        && !rule.starts_with("js:")
+        && !rule.starts_with("@put:")
+        && !rule.starts_with("@get:")
+}
+
+/// 多值字段（`kind`）求值：全部命中去空后用 `,` 连接（规格 §13.4 / §14）。
+fn join_multi_values(
+    values: Vec<String>,
+    fallback: impl FnOnce() -> Option<String>,
+) -> Option<String> {
+    let values: Vec<String> = values
+        .into_iter()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .collect();
+    if values.is_empty() {
+        fallback()
+    } else {
+        Some(values.join(","))
+    }
+}
+
+/// JSON 规则的 `kind` 命中：`$.a` 走 JsonPath，裸字段名直接取值（数组展开）。
+fn json_kind_values(v: &Value, rule: &str) -> Vec<String> {
+    let rule = rule.trim();
+    if rule.starts_with('$') {
+        return jsonpath::jsonpath_query_combined(v, rule)
+            .iter()
+            .filter_map(jsonpath::value_to_string)
+            .collect();
+    }
+    v.as_object()
+        .and_then(|obj| obj.get(rule))
+        .map(|value| match value {
+            Value::Array(items) => items.iter().filter_map(jsonpath::value_to_string).collect(),
+            other => jsonpath::value_to_string(other).into_iter().collect(),
+        })
+        .unwrap_or_default()
+}
+
+fn eval_kind_json(rule: Option<&str>, v: &Value, base_url: &str) -> Option<String> {
+    let rule = rule.unwrap_or("").trim();
+    let values = if is_plain_selector_rule(rule) {
+        json_kind_values(v, strip_mode_prefix(rule))
+    } else {
+        Vec::new()
+    };
+    join_multi_values(values, || eval_field_json(rule, v, base_url))
+}
+
+fn eval_kind_xpath(
+    rule: Option<&str>,
+    node: sxd_xpath::nodeset::Node<'_>,
+    base_url: &str,
+) -> Option<String> {
+    let rule = rule.unwrap_or("").trim();
+    let values = if is_plain_selector_rule(rule) {
+        xpath_eval_strings(node, strip_mode_prefix(rule))
+    } else {
+        Vec::new()
+    };
+    join_multi_values(values, || eval_field_xpath(rule, node, base_url))
+}
+
+fn eval_kind_html_doc(rule: Option<&str>, doc: &scraper::Html, base_url: &str) -> Option<String> {
+    let rule = rule.unwrap_or("").trim();
+    let values = if is_plain_selector_rule(rule) {
+        html::select_text_list(doc, strip_mode_prefix(rule))
+    } else {
+        Vec::new()
+    };
+    join_multi_values(values, || {
+        eval_field_html_doc_with_ctx(rule, doc, base_url, &mut HashMap::new())
+    })
+}
+
+fn eval_kind_html_element(
+    rule: Option<&str>,
+    el: &scraper::ElementRef,
+    base_url: &str,
+) -> Option<String> {
+    let rule = rule.unwrap_or("").trim();
+    let values = if is_plain_selector_rule(rule) {
+        html::select_text_list_from_element(el, strip_mode_prefix(rule))
+    } else {
+        Vec::new()
+    };
+    join_multi_values(values, || eval_field_html(rule, el, base_url))
+}
+
 fn eval_field_html(rule: &str, el: &scraper::ElementRef, base_url: &str) -> Option<String> {
     eval_field_html_with_ctx(rule, el, base_url, &mut HashMap::new())
 }
@@ -2111,13 +2274,29 @@ fn eval_field_html_with_ctx(
         let pure = &rule[5..];
         return eval_field_html_with_ctx(pure, el, base_url, ctx);
     }
-    if rule.starts_with("@xpath:") {
-        // XPath from element - not directly supported, return None
-        return None;
+    if let Some(pure) = rule.strip_prefix("@xpath:") {
+        // 元素级 XPath：把当前元素序列化后求值，取首个结果。
+        return html::select_xpath(&el.html(), pure.trim())
+            .into_iter()
+            .next();
     }
-    if rule.starts_with("@json:") {
-        // JSON from element - not applicable
-        return None;
+    if let Some(pure) = rule.strip_prefix("@json:") {
+        // 元素级 JSON：规则作用在元素自身的文本上（通常是上一步 JS 产出的 JSON）。
+        let value: Value = serde_json::from_str(&el.text().collect::<Vec<_>>().join("")).ok()?;
+        return eval_field_json_with_ctx(pure, &value, base_url, ctx);
+    }
+    if let Some(pure) = rule.strip_prefix("@regex:") {
+        return eval_literal_field(pure, &el.text().collect::<Vec<_>>().join(""), base_url, ctx);
+    }
+
+    // 字段级组合符：逐条求值后合并（规格 §8.3）
+    if let Some(texts) = combine_strings(rule, |part| {
+        eval_field_html_with_ctx(part, el, base_url, ctx)
+    }) {
+        if texts.is_empty() {
+            return None;
+        }
+        return Some(texts.join("\n"));
     }
 
     // Handle @put/@get
@@ -2125,7 +2304,7 @@ fn eval_field_html_with_ctx(
         return Some(res);
     }
 
-    let input = html::extract_text(el, "textNodes").unwrap_or_default();
+    let input = html::descendant_text(el);
     let interpolated_rule = interpolate_common_templates(rule, &input, base_url, ctx);
     let had_templates = interpolated_rule != rule;
     let (pure_rule, regex_part) = split_legado_regex(&interpolated_rule);
@@ -2222,7 +2401,19 @@ fn eval_field_xpath_with_ctx(
     base_url: &str,
     ctx: &mut HashMap<String, String>,
 ) -> Option<String> {
-    if rule.trim().is_empty() {
+    let rule = rule.trim();
+    if rule.is_empty() {
+        return None;
+    }
+    if let Some(pure) = rule.strip_prefix("@xpath:") {
+        return eval_field_xpath_with_ctx(pure, node, base_url, ctx);
+    }
+    if let Some(pure) = rule.strip_prefix("@json:") {
+        let value: Value = serde_json::from_str(&node.string_value()).ok()?;
+        return eval_field_json_with_ctx(pure, &value, base_url, ctx);
+    }
+    if rule.starts_with("@css:") {
+        // XPath 上下文里没有 HTML 文档可查，显式拒绝而不是误当 XPath 求值
         return None;
     }
     if let Some(res) = try_put_get_xpath(rule, node, base_url, ctx) {
@@ -2356,6 +2547,25 @@ fn eval_field_json_with_ctx(
     base_url: &str,
     ctx: &mut HashMap<String, String>,
 ) -> Option<String> {
+    let rule = rule.trim();
+    if let Some(pure) = rule.strip_prefix("@json:") {
+        return eval_field_json_with_ctx(pure, v, base_url, ctx);
+    }
+    if rule.starts_with("@xpath:") || rule.starts_with("@css:") {
+        // JSON 上下文里没有 HTML 文档或 XML 节点可查，显式拒绝而不是误当 JsonPath 求值
+        return None;
+    }
+
+    // 字段级组合符：JSON 规则里的 `&`/`,` 会命中下面的「字面量」启发式，必须先切分
+    if let Some(texts) = combine_strings(rule, |part| {
+        eval_field_json_with_ctx(part, v, base_url, ctx)
+    }) {
+        if texts.is_empty() {
+            return None;
+        }
+        return Some(texts.join("\n"));
+    }
+
     if let Some(res) = try_put_get_json(rule, v, base_url, ctx) {
         return Some(res);
     }
@@ -2396,24 +2606,53 @@ fn eval_field_json_with_ctx(
     }
 }
 
+/// 去掉值规则两端成对的引号（只去一层，不误伤值内部或末尾的引号）。
+fn unquote_pair(value: &str) -> &str {
+    for quote in ['"', '\''] {
+        if let Some(inner) = value
+            .strip_prefix(quote)
+            .and_then(|rest| rest.strip_suffix(quote))
+        {
+            return inner;
+        }
+    }
+    value
+}
+
+/// 拆分 `@put:{key:rule, ...}` 的内容。
+///
+/// 顶层的 `,` 与 `:` 才作分隔符，引号/括号内的逗号冒号保持原样，
+/// 因此值规则里可以出现逗号（如 `@put:{k:$.a[0,1]}`）与带引号的 URL。
+fn split_put_map(inner: &str) -> Vec<(String, String)> {
+    let mut entries = Vec::new();
+    for part in crate::parser::rule_analyzer::split_top_level(inner, &[","]).parts {
+        let split = crate::parser::rule_analyzer::split_top_level(&part, &[":"]);
+        let Some(key) = split.parts.first().map(|key| key.trim()) else {
+            continue;
+        };
+        if key.is_empty() || split.parts.len() < 2 {
+            continue;
+        }
+        let joined = split.parts[1..].join(":");
+        let value = unquote_pair(joined.trim()).to_string();
+        entries.push((key.to_string(), value));
+    }
+    entries
+}
+
 fn try_put_get_html(
     rule: &str,
     el: &scraper::ElementRef,
     base_url: &str,
     ctx: &mut HashMap<String, String>,
 ) -> Option<String> {
-    if rule.starts_with("@put:") {
-        let content = &rule[5..];
+    if let Some(content) = rule.strip_prefix("@put:") {
+        let content = content.trim();
         if content.starts_with('{') && content.ends_with('}') {
-            let inner = &content[1..content.len() - 1];
-            for part in inner.split(',') {
-                if let Some(idx) = part.find(':') {
-                    let key = part[..idx].trim();
-                    let val_rule = part[idx + 1..].trim().trim_matches('"');
-                    let val =
-                        eval_field_html_with_ctx(val_rule, el, base_url, ctx).unwrap_or_default();
-                    ctx.insert(key.to_string(), val);
-                }
+            for (key, val_rule) in split_put_map(&content[1..content.len() - 1]) {
+                let val =
+                    eval_field_html_with_ctx(&val_rule, el, base_url, ctx).unwrap_or_default();
+                ctx.insert(key, val);
             }
         }
         return Some("".to_string());
@@ -2434,18 +2673,13 @@ fn try_put_get_html_doc(
     base_url: &str,
     ctx: &mut HashMap<String, String>,
 ) -> Option<String> {
-    if rule.starts_with("@put:") {
-        let content = &rule[5..];
+    if let Some(content) = rule.strip_prefix("@put:") {
+        let content = content.trim();
         if content.starts_with('{') && content.ends_with('}') {
-            let inner = &content[1..content.len() - 1];
-            for part in inner.split(',') {
-                if let Some(idx) = part.find(':') {
-                    let key = part[..idx].trim();
-                    let val_rule = part[idx + 1..].trim().trim_matches('"');
-                    let val = eval_field_html_doc_with_ctx(val_rule, doc, base_url, ctx)
-                        .unwrap_or_default();
-                    ctx.insert(key.to_string(), val);
-                }
+            for (key, val_rule) in split_put_map(&content[1..content.len() - 1]) {
+                let val =
+                    eval_field_html_doc_with_ctx(&val_rule, doc, base_url, ctx).unwrap_or_default();
+                ctx.insert(key, val);
             }
         }
         return Some("".to_string());
@@ -2466,18 +2700,12 @@ fn try_put_get_json(
     base_url: &str,
     ctx: &mut HashMap<String, String>,
 ) -> Option<String> {
-    if rule.starts_with("@put:") {
-        let content = &rule[5..];
+    if let Some(content) = rule.strip_prefix("@put:") {
+        let content = content.trim();
         if content.starts_with('{') && content.ends_with('}') {
-            let inner = &content[1..content.len() - 1];
-            for part in inner.split(',') {
-                if let Some(idx) = part.find(':') {
-                    let key = part[..idx].trim();
-                    let val_rule = part[idx + 1..].trim().trim_matches('"');
-                    let val =
-                        eval_field_json_with_ctx(val_rule, v, base_url, ctx).unwrap_or_default();
-                    ctx.insert(key.to_string(), val);
-                }
+            for (key, val_rule) in split_put_map(&content[1..content.len() - 1]) {
+                let val = eval_field_json_with_ctx(&val_rule, v, base_url, ctx).unwrap_or_default();
+                ctx.insert(key, val);
             }
         }
         return Some("".to_string());
@@ -2498,18 +2726,13 @@ fn try_put_get_xpath(
     base_url: &str,
     ctx: &mut HashMap<String, String>,
 ) -> Option<String> {
-    if rule.starts_with("@put:") {
-        let content = &rule[5..];
+    if let Some(content) = rule.strip_prefix("@put:") {
+        let content = content.trim();
         if content.starts_with('{') && content.ends_with('}') {
-            let inner = &content[1..content.len() - 1];
-            for part in inner.split(',') {
-                if let Some(idx) = part.find(':') {
-                    let key = part[..idx].trim();
-                    let val_rule = part[idx + 1..].trim().trim_matches('"');
-                    let val = eval_field_xpath_with_ctx(val_rule, node, base_url, ctx)
-                        .unwrap_or_default();
-                    ctx.insert(key.to_string(), val);
-                }
+            for (key, val_rule) in split_put_map(&content[1..content.len() - 1]) {
+                let val =
+                    eval_field_xpath_with_ctx(&val_rule, node, base_url, ctx).unwrap_or_default();
+                ctx.insert(key, val);
             }
         }
         return Some(String::new());
@@ -2532,52 +2755,41 @@ fn split_legado_regex(rule: &str) -> (String, Option<&str>) {
     (rule.to_string(), None)
 }
 
+/// `##` 替换（规格 §6.7）：形如 `##regex[##replacement[##]]`。
+///
+/// 第四段存在即 replaceFirst：取**首个匹配片段**、在该片段上替换一次并返回该片段
+/// （不是替换整串里的第一处；无匹配返回空串，正则不可编译时返回 replacement）。
+/// 缺少 replacement 时按空串处理，也就是删除匹配内容——`##regex` 这种写法很常见。
 fn apply_legado_regex(text: &str, regex_part: &str) -> String {
-    if regex_part.trim().is_empty() {
+    let trimmed = regex_part.trim();
+    let Some(rest) = trimmed.strip_prefix("##") else {
+        return text.to_string();
+    };
+
+    let parts: Vec<&str> = rest.split("##").collect();
+    let pattern = parts.first().copied().unwrap_or("").trim();
+    if pattern.is_empty() {
         return text.to_string();
     }
+    let replacement = parts.get(1).copied().unwrap_or("");
+    let replace_first = parts.len() > 2;
 
-    // Handle ### suffix for first-match-only replacement
-    let (regex_part, first_only) = if regex_part.ends_with("###") {
-        (&regex_part[..regex_part.len() - 3], true)
-    } else {
-        (regex_part, false)
+    let Some(re) = crate::util::text::compiled_regex(pattern) else {
+        // 正则不可编译：第四段时按规格返回 replacement，否则退化为普通字符串替换
+        if replace_first {
+            return replacement.to_string();
+        }
+        return text.replace(pattern, replacement);
     };
 
-    let parts: Vec<&str> = regex_part.split("##").collect();
-
-    // Support: ##regex##replace
-    let start_idx = if regex_part.starts_with("##") { 1 } else { 0 };
-
-    let mut out = text.to_string();
-    let mut i = start_idx;
-    while i + 1 < parts.len() {
-        let regex = parts[i];
-        if regex.is_empty() {
-            i += 1;
-            continue;
-        }
-
-        let replace = parts[i + 1];
-
-        if first_only && i + 2 >= parts.len() {
-            // Last replacement with ### suffix - first match only
-            out = apply_regex_replace_first(&out, regex, replace);
-        } else {
-            out = apply_regex_replace(&out, regex, replace);
-        }
-        i += 2;
+    if !replace_first {
+        return re.replace_all(text, replacement).to_string();
     }
-    out
-}
 
-/// Apply regex replacement to first match only
-fn apply_regex_replace_first(text: &str, pattern: &str, replacement: &str) -> String {
-    let re = match regex::Regex::new(pattern) {
-        Ok(r) => r,
-        Err(_) => return text.to_string(),
-    };
-    re.replace(text, replacement).to_string()
+    match re.find(text) {
+        Some(matched) => re.replace(matched.as_str(), replacement).to_string(),
+        None => String::new(),
+    }
 }
 
 fn normalize_list_rule(rule: &str) -> (&str, bool) {
@@ -2646,15 +2858,27 @@ fn apply_toc_format_js(chapters: &mut [BookChapter], format_js: Option<&str>, ba
         return;
     };
     let script = strip_js_rule(script);
+    // 规格 §15：`gInt` 初始 0，同一轮 formatJs 的多章之间复用
+    let mut g_int = 0i64;
     for (index, chapter) in chapters.iter_mut().enumerate() {
         let mut bindings = HashMap::new();
         bindings.insert("index".to_string(), json!(index + 1));
+        bindings.insert("gInt".to_string(), json!(g_int));
         bindings.insert("title".to_string(), json!(chapter.title.clone()));
         bindings.insert(
             "chapter".to_string(),
             serde_json::to_value(&*chapter).unwrap_or_else(|_| json!({})),
         );
-        if let Ok(result) = eval_js_with_bindings(script, &chapter.title, base_url, &bindings) {
+        if let Ok((result, globals)) = eval_js_with_bindings_and_globals(
+            script,
+            &chapter.title,
+            base_url,
+            &bindings,
+            &["gInt"],
+        ) {
+            if let Some(value) = globals.get("gInt").and_then(global_as_i64) {
+                g_int = value;
+            }
             if !result.trim().is_empty() {
                 chapter.title = result;
             }
@@ -2730,8 +2954,7 @@ fn build_search_book_from_json(
         base_url,
         &mut ctx,
     );
-    let kind =
-        eval_field_json_with_ctx(rule.kind.as_deref().unwrap_or(""), item, base_url, &mut ctx);
+    let kind = eval_kind_json(rule.kind.as_deref(), item, base_url);
     let last_chapter = eval_field_json_with_ctx(
         rule.last_chapter.as_deref().unwrap_or(""),
         item,
@@ -2818,7 +3041,58 @@ fn build_chapter_from_json(
     })
 }
 
-fn capture_rule_value(rule: Option<&str>, captures: &regex::Captures<'_>) -> Option<String> {
+/// 列表正则求值（规格 §9.3）：`&&` 分段逐级下钻，前一段的所有完整匹配串拼成文本喂给下一段；
+/// 最后一段的每个匹配产出一组捕获组（含 group 0），供字段规则的 `$n` 引用。
+fn regex_list_captures(pattern: &str, body: &str) -> Vec<Vec<String>> {
+    let split = crate::parser::rule_analyzer::split_top_level(pattern, &["&&"]);
+    let stages: Vec<&str> = split.parts.iter().map(|part| part.trim()).collect();
+    if stages.is_empty() || stages.iter().all(|stage| stage.is_empty()) {
+        return vec![];
+    }
+
+    let mut texts = vec![body.to_string()];
+    for (index, stage) in stages.iter().enumerate() {
+        let Some(re) = crate::util::text::compiled_regex(stage) else {
+            return vec![];
+        };
+        let last = index + 1 == stages.len();
+        let mut groups_out = Vec::new();
+        let mut next_texts = Vec::new();
+        for text in &texts {
+            for captures in re.captures_iter(text) {
+                if last {
+                    groups_out.push(
+                        (0..captures.len())
+                            .map(|i| {
+                                captures
+                                    .get(i)
+                                    .map(|m| m.as_str().to_string())
+                                    .unwrap_or_default()
+                            })
+                            .collect(),
+                    );
+                } else {
+                    next_texts.push(
+                        captures
+                            .get(0)
+                            .map(|m| m.as_str().to_string())
+                            .unwrap_or_default(),
+                    );
+                }
+            }
+        }
+        if last {
+            return groups_out;
+        }
+        if next_texts.is_empty() {
+            return vec![];
+        }
+        texts = next_texts;
+    }
+    vec![]
+}
+
+fn capture_rule_value(rule: Option<&str>, groups: &[String]) -> Option<String> {
     let rule = rule?.trim();
     if rule.is_empty() {
         return None;
@@ -2836,15 +3110,12 @@ fn capture_rule_value(rule: Option<&str>, captures: &regex::Captures<'_>) -> Opt
                 .unwrap_or_default()
                 .to_string();
         }
-        captures
-            .get(index)
-            .map(|m| m.as_str().to_string())
-            .unwrap_or_else(|| {
-                cap.get(0)
-                    .map(|m| m.as_str())
-                    .unwrap_or_default()
-                    .to_string()
-            })
+        groups.get(index).cloned().unwrap_or_else(|| {
+            cap.get(0)
+                .map(|m| m.as_str())
+                .unwrap_or_default()
+                .to_string()
+        })
     });
     let (pure, regex_part) = split_legado_regex(&replaced);
     let mut output = pure;
@@ -2874,14 +3145,48 @@ fn finalize_chapter_url(
     base_url.to_string()
 }
 
+/// JS 全局变量的数值读取：QuickJS 的自增/浮点结果表示为浮点，整数结果也要接受。
+fn global_as_i64(value: &Value) -> Option<i64> {
+    value
+        .as_i64()
+        .or_else(|| value.as_f64().map(|number| number as i64))
+}
+
+/// 搜索结果去重保序（规格 §13.4 第 10 步），键与多书源合并一致（书名|作者）。
+fn dedupe_books(books: Vec<SearchBook>) -> Vec<SearchBook> {
+    let mut seen = std::collections::HashSet::new();
+    books
+        .into_iter()
+        .filter(|book| seen.insert(book.merge_key()))
+        .collect()
+}
+
+/// 书源 `bookUrlPattern` 是否命中该 URL（规格 §13.4：命中说明当前页就是详情页）。
+///
+/// 空值与 `NONE` 都表示不参与 URL 匹配。
+fn book_url_pattern_matches(source: &BookSource, url: &str) -> bool {
+    let Some(pattern) = source
+        .book_url_pattern
+        .as_deref()
+        .map(str::trim)
+        .filter(|pattern| !pattern.is_empty() && !pattern.eq_ignore_ascii_case("none"))
+    else {
+        return false;
+    };
+    crate::util::text::compiled_regex(pattern)
+        .map(|re| re.is_match(url))
+        .unwrap_or(false)
+}
+
 fn is_truthy(value: String) -> bool {
     let value = value.trim();
     if value.is_empty() {
         return false;
     }
+    // 规格 §15 的词表是 `false|no|not|0`（外加 `"null"`）；`none`/`off` 是本项目的超集
     !matches!(
         value.to_ascii_lowercase().as_str(),
-        "0" | "false" | "null" | "none" | "no" | "off"
+        "0" | "false" | "null" | "none" | "no" | "not" | "off"
     )
 }
 
@@ -2909,13 +3214,21 @@ mod tests {
     fn test_apply_legado_regex() {
         let text = "Hello World 123 456";
 
-        // Test basic replacement (all matches)
+        // 全局替换
         let result = apply_legado_regex(text, "##\\d+##NUM");
         assert_eq!(result, "Hello World NUM NUM");
 
-        // Test first match only (###)
-        let result = apply_legado_regex(text, "##\\d+##NUM###");
-        assert_eq!(result, "Hello World NUM 456");
+        // 缺少 replacement 时删除匹配内容
+        let result = apply_legado_regex(text, "##\\d+");
+        assert_eq!(result, "Hello World  ");
+
+        // 第四段 = replaceFirst：只取首个匹配片段并在该片段上替换
+        let result = apply_legado_regex(text, "##\\d+##NUM##");
+        assert_eq!(result, "NUM");
+
+        // 正则可编译但无匹配时返回空串
+        let result = apply_legado_regex(text, "##zzz##NUM##");
+        assert_eq!(result, "");
     }
 
     #[test]
@@ -2970,6 +3283,193 @@ mod tests {
         assert_eq!(results[0].name, "One");
         assert_eq!(results[0].book_url, "https://books.example/book/1");
         assert_eq!(results[1].name, "Two");
+    }
+
+    #[test]
+    fn test_jsonpath_combinators_element_fields_and_kind_multi_value() {
+        let engine = RuleEngine::new().unwrap();
+        let source = BookSource {
+            book_source_name: "Json".to_string(),
+            book_source_url: "https://source.example".to_string(),
+            rule_search: Some(SearchRule {
+                // 列表规则用 `||`：前一条命中即止
+                book_list: Some("$.missing[*] || $.data[*]".to_string()),
+                // 元素级字段组合符 `&&`：两条结果拼接
+                name: Some("$.name && $.suffix".to_string()),
+                author: Some("@json:$.author".to_string()),
+                // 多值字段按 `,` 连接（规格 §13.4）
+                kind: Some("$.tags[*]".to_string()),
+                book_url: Some("$.url".to_string()),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let body = r#"{"data":[{"name":"Alpha","suffix":"-X","author":"Tester","tags":["玄幻","仙侠"],"url":"/a"}]}"#;
+
+        let results = engine.search_books(&source, body, "https://books.example");
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].name, "Alpha\n-X");
+        assert_eq!(results[0].author, "Tester");
+        assert_eq!(results[0].kind.as_deref(), Some("玄幻,仙侠"));
+        assert_eq!(results[0].book_url, "https://books.example/a");
+    }
+
+    #[test]
+    fn test_search_dedupes_and_falls_back_to_base_url() {
+        let engine = RuleEngine::new().unwrap();
+        let source = BookSource {
+            book_source_name: "Json".to_string(),
+            book_source_url: "https://source.example".to_string(),
+            rule_search: Some(SearchRule {
+                book_list: Some("$.data[*]".to_string()),
+                name: Some("$.name".to_string()),
+                author: Some("$.author".to_string()),
+                // 命不中时应回退到 baseUrl，而不是留空
+                book_url: Some("$.missing".to_string()),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let body = r#"{"data":[
+            {"name":"Same","author":"A"},
+            {"name":"Same","author":"A"},
+            {"name":"Other","author":"B"}
+        ]}"#;
+
+        let results = engine.search_books(&source, body, "https://books.example/list");
+        assert_eq!(results.len(), 2);
+        assert_eq!(results[0].name, "Same");
+        assert_eq!(results[0].book_url, "https://books.example/list");
+        assert_eq!(results[1].name, "Other");
+    }
+
+    #[test]
+    fn test_book_url_pattern_switches_page_to_detail_parsing() {
+        let engine = RuleEngine::new().unwrap();
+        let source = BookSource {
+            book_source_name: "Detail".to_string(),
+            book_source_url: "https://source.example".to_string(),
+            book_url_pattern: Some(r"https?://[^/]+/info\?book_id=\d+".to_string()),
+            rule_search: Some(SearchRule {
+                book_list: Some("$.items[*]".to_string()),
+                name: Some("$.name".to_string()),
+                ..Default::default()
+            }),
+            rule_book_info: Some(BookInfoRule {
+                name: Some("$.title".to_string()),
+                author: Some("$.author".to_string()),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let body = r#"{"title":"Detail Book","author":"Tester"}"#;
+
+        // 命中 bookUrlPattern：整页按详情页解析成单本书
+        let results = engine.search_books(&source, body, "https://site.example/info?book_id=42");
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].name, "Detail Book");
+        assert_eq!(results[0].author, "Tester");
+
+        // 未命中且列表为空：`bookUrlPattern` 非空时不做详情页回落
+        let results = engine.search_books(&source, body, "https://site.example/search?key=x");
+        assert!(results.is_empty());
+    }
+
+    #[test]
+    fn test_regex_list_drills_down_through_ampersand_stages() {
+        let engine = RuleEngine::new().unwrap();
+        let source = BookSource {
+            book_source_name: "Regex".to_string(),
+            book_source_url: "https://source.example".to_string(),
+            rule_search: Some(SearchRule {
+                book_list: Some(
+                    r#":(?is)<li>(.*?)</li>&&<a href="([^"]+)">([^<]+)</a>"#.to_string(),
+                ),
+                name: Some("$2".to_string()),
+                book_url: Some("$1".to_string()),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let body = r#"<ul><li><a href="/1">One</a></li><li><a href="/2">Two</a></li></ul>"#;
+
+        let results = engine.search_books(&source, body, "https://books.example");
+        assert_eq!(results.len(), 2);
+        assert_eq!(results[0].name, "One");
+        assert_eq!(results[0].book_url, "https://books.example/1");
+        assert_eq!(results[1].name, "Two");
+    }
+
+    #[test]
+    fn test_split_put_map_keeps_commas_and_colons() {
+        let entries = split_put_map(r#"a:$.x[0,1], b:"http://example.com/p", c:js:return 'x,y'"#);
+
+        assert_eq!(entries.len(), 3);
+        assert_eq!(entries[0], ("a".to_string(), "$.x[0,1]".to_string()));
+        assert_eq!(
+            entries[1],
+            ("b".to_string(), "http://example.com/p".to_string())
+        );
+        assert_eq!(entries[2], ("c".to_string(), "js:return 'x,y'".to_string()));
+    }
+
+    #[test]
+    fn test_is_truthy_follows_spec_word_list() {
+        for falsy in [
+            "", "   ", "0", "false", "FALSE", "no", "not", "null", "none", "off",
+        ] {
+            assert!(!is_truthy(falsy.to_string()), "{falsy:?} 应为假");
+        }
+        for truthy in ["1", "true", "yes", "是"] {
+            assert!(is_truthy(truthy.to_string()), "{truthy:?} 应为真");
+        }
+    }
+
+    #[test]
+    fn test_format_js_gint_is_shared_across_chapters() {
+        let engine = RuleEngine::new().unwrap();
+        let source = BookSource {
+            book_source_name: "TOC".to_string(),
+            book_source_url: "https://source.example".to_string(),
+            rule_toc: Some(TocRule {
+                chapter_list: Some(
+                    "js:JSON.stringify([{chapterName:'A',chapterUrl:'/1'},{chapterName:'B',chapterUrl:'/2'},{chapterName:'C',chapterUrl:'/3'}])"
+                        .to_string(),
+                ),
+                chapter_name: Some("chapterName".to_string()),
+                chapter_url: Some("chapterUrl".to_string()),
+                // gInt 从 0 开始，并在同一轮 formatJs 的章节之间累加
+                format_js: Some("`${gInt++}-${title}`".to_string()),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+
+        let (chapters, _) = engine.chapter_list(&source, "{}", "https://books.example");
+        let titles: Vec<&str> = chapters.iter().map(|c| c.title.as_str()).collect();
+        assert_eq!(titles, vec!["0-A", "1-B", "2-C"]);
+    }
+
+    #[test]
+    fn test_java_log_and_toast_do_not_break_rules() {
+        let engine = RuleEngine::new().unwrap();
+        let source = BookSource {
+            book_source_name: "JS".to_string(),
+            book_source_url: "https://source.example".to_string(),
+            rule_search: Some(SearchRule {
+                book_list: Some("js:JSON.stringify([{name:'Alpha'}])".to_string()),
+                name: Some(
+                    "@js:(java.log('debug'), java.toast('hi'), java.openUrl('x'), 'Alpha')"
+                        .to_string(),
+                ),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+
+        let results = engine.search_books(&source, "{}", "https://books.example");
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].name, "Alpha");
     }
 
     #[test]

@@ -205,17 +205,37 @@ fn parse_legacy_index_spec(selector: &str) -> Option<(&str, IndexMode, Vec<Index
             continue;
         }
 
+        // 旧写法用 `:` 分隔，且 `:` 支持区间与步长（规格 §8.5）：`!0:2`、`.1:5:2`
         let mut items = Vec::new();
-        for part in tail.split(':') {
+        for part in tail.split(',') {
             let part = part.trim();
             if part.is_empty() {
                 return None;
             }
-            items.push(IndexItem::Single(part.parse().ok()?));
+            items.push(parse_legacy_index_item(part)?);
         }
         return Some((base, index_mode, items));
     }
     None
+}
+
+/// 旧式索引项：单个下标，或 `start:end[:step]` 区间（省略端点表示首/末项）。
+fn parse_legacy_index_item(part: &str) -> Option<IndexItem> {
+    if !part.contains(':') {
+        return Some(IndexItem::Single(part.parse().ok()?));
+    }
+
+    let segments: Vec<&str> = part.split(':').collect();
+    if segments.len() < 2 || segments.len() > 3 {
+        return None;
+    }
+    let start = parse_optional_i32(segments[0])?;
+    let end = parse_optional_i32(segments[1])?;
+    let step = match segments.get(2) {
+        Some(value) => parse_optional_i32(value)?.unwrap_or(1),
+        None => 1,
+    };
+    Some(IndexItem::Range { start, end, step })
 }
 
 fn collect_matches<'a>(doc: &'a Html, selector: &ParsedSelector) -> Vec<ElementRef<'a>> {
@@ -491,7 +511,8 @@ pub fn extract_text(el: &ElementRef, extractor: &str) -> Option<String> {
             }
         }
         "textNodes" | "@textNodes" => {
-            let text = get_text_nodes(el);
+            // 规格 §8.4：只取**直接**文本节点，trim 后按 `\n` 连接
+            let text = direct_text_nodes(el);
             if text.is_empty() {
                 None
             } else {
@@ -513,8 +534,8 @@ pub fn extract_text(el: &ElementRef, extractor: &str) -> Option<String> {
                 Some(text)
             }
         }
-        "html" | "@html" => Some(el.html()),
-        "all" | "@all" => Some(el.html()),
+        // 规格 §8.4：`html`/`all` 先移除结果元素里的 script/style，再返回 outerHtml
+        "html" | "@html" | "all" | "@all" => Some(strip_script_style(&el.html())),
         _ => {
             if let Some(attr_name) = parse_attr_extractor(extractor) {
                 return el.value().attr(attr_name).map(|v| v.to_string());
@@ -538,11 +559,36 @@ fn parse_attr_extractor(extractor: &str) -> Option<&str> {
         .filter(|s| !s.is_empty())
 }
 
-/// Get all text nodes from an element, preserving structure
-fn get_text_nodes(el: &ElementRef) -> String {
+/// 递归后代文本（保留元素内部结构，按 `\n` 连接）。
+///
+/// 供规则引擎作为内联 JS 的输入、以及无取值后缀时的默认取值使用；
+/// 与规格里只取直接文本节点的 `textNodes` 取值后缀不是一回事。
+pub(crate) fn descendant_text(el: &ElementRef) -> String {
     let mut texts = Vec::new();
     collect_text_nodes(*el, &mut texts);
     texts.join("\n")
+}
+
+/// 直接文本节点（规格 §8.4 的 `textNodes`）：只取元素的直接子文本节点。
+fn direct_text_nodes(el: &ElementRef) -> String {
+    let mut texts = Vec::new();
+    for node in el.children() {
+        if let Some(text_node) = node.value().as_text() {
+            let text = text_node.text.trim();
+            if !text.is_empty() {
+                texts.push(text.to_string());
+            }
+        }
+    }
+    texts.join("\n")
+}
+
+/// 移除 HTML 片段里的 `script`/`style` 元素（规格 §8.4 的 `html`/`all` 取值）。
+fn strip_script_style(html: &str) -> String {
+    static SCRIPT_STYLE: once_cell::sync::Lazy<regex::Regex> = once_cell::sync::Lazy::new(|| {
+        regex::Regex::new(r"(?is)<script\b[^>]*>.*?</script>|<style\b[^>]*>.*?</style>").unwrap()
+    });
+    SCRIPT_STYLE.replace_all(html, "").into_owned()
 }
 
 fn collect_text_nodes(el: ElementRef, texts: &mut Vec<String>) {
@@ -592,6 +638,33 @@ pub fn select_text_from_element(el: &ElementRef, rule: &str) -> Option<String> {
         .find_map(|current| extract_text(&current, "text"))
 }
 
+/// 元素级列表取值（规格 §8.3 `getStringList`）：返回规则在当前元素下命中的全部文本。
+pub fn select_text_list_from_element(el: &ElementRef, rule: &str) -> Vec<String> {
+    let combo = split_top_level(rule, &["&&", "||", "%%"]);
+    if let Some(operator) = combo.delimiter.as_deref() {
+        return combine_string_parts(operator, &combo.parts, |part| {
+            select_text_list_from_element(el, part)
+        });
+    }
+
+    let parts = split_top_level(rule, &["@"]).parts;
+    if parts.is_empty() {
+        return vec![];
+    }
+
+    let matches = collect_matches_from_element(*el, &parse_selector_with_index(parts[0].trim()));
+    let extractor = if parts.len() > 1 {
+        parts[1..].join("@")
+    } else {
+        "text".to_string()
+    };
+
+    matches
+        .into_iter()
+        .filter_map(|matched| extract_text(&matched, &extractor))
+        .collect()
+}
+
 /// Select all matching elements and collect their text, joined by newlines
 pub fn select_all_text(doc: &Html, rule: &str) -> Option<String> {
     let parts = split_top_level(rule, &["@"]).parts;
@@ -636,10 +709,9 @@ pub fn select_all_text(doc: &Html, rule: &str) -> Option<String> {
 
     let mut texts = Vec::new();
     for root in roots {
-        if let Some(text) = extract_text(&root, "textNodes") {
-            if !text.is_empty() {
-                texts.push(text);
-            }
+        let text = descendant_text(&root);
+        if !text.is_empty() {
+            texts.push(text);
         }
     }
     if texts.is_empty() {
@@ -974,6 +1046,64 @@ mod tests {
                     step: 1,
                 },
             ]
+        );
+    }
+
+    #[test]
+    fn test_legacy_index_range_syntax() {
+        let doc = parse_document(
+            r#"<div><a href="/1">A</a><a href="/2">B</a><a href="/3">C</a><a href="/4">D</a></div>"#,
+        );
+
+        // 旧写法 `!0:2` 是区间排除（规格 §8.5）
+        assert_eq!(select_text_list(&doc, "a!0:2@text"), vec!["D".to_string()]);
+        // `.1:2` 是区间选择
+        assert_eq!(
+            select_text_list(&doc, "a.1:2@text"),
+            vec!["B".to_string(), "C".to_string()]
+        );
+        // `.0:3:2` 带步长
+        assert_eq!(
+            select_text_list(&doc, "a.0:3:2@text"),
+            vec!["A".to_string(), "C".to_string()]
+        );
+    }
+
+    #[test]
+    fn test_text_nodes_takes_only_direct_children() {
+        let doc = parse_document(r#"<div>直接<span>嵌套</span></div>"#);
+
+        assert_eq!(select_text(&doc, "div@textNodes"), Some("直接".to_string()));
+        // 无取值后缀时的默认取值仍是递归后代文本
+        assert_eq!(select_text(&doc, "div"), Some("直接 嵌套".to_string()));
+    }
+
+    #[test]
+    fn test_html_extractor_strips_script_and_style() {
+        let doc = parse_document(
+            r#"<div class="intro">正文<script>var a = 1;</script><style>.x{}</style><b>粗</b></div>"#,
+        );
+
+        let html = select_text(&doc, "div@html").unwrap();
+        assert!(html.contains("<b>粗</b>"), "应保留普通标签：{html}");
+        assert!(!html.contains("<script"), "应移除 script：{html}");
+        assert!(!html.contains("<style"), "应移除 style：{html}");
+        assert!(html.starts_with("<div"), "应返回 outer HTML：{html}");
+    }
+
+    #[test]
+    fn test_select_text_list_from_element_collects_every_match() {
+        let doc = parse_document(
+            r#"<div class="book"><span class="tag">玄幻</span><span class="tag">仙侠</span></div>"#,
+        );
+        let element = doc
+            .select(&Selector::parse("div.book").unwrap())
+            .next()
+            .unwrap();
+
+        assert_eq!(
+            select_text_list_from_element(&element, "span.tag@text"),
+            vec!["玄幻".to_string(), "仙侠".to_string()]
         );
     }
 
