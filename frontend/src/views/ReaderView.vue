@@ -101,6 +101,19 @@
       @timer-change="setSpeechTimer"
     />
 
+    <CommentPanel
+      :show="showCommentPanel"
+      :theme="chromeTheme"
+      :mode="commentMode"
+      :book-url="store.book?.bookUrl || ''"
+      :chapter-url="store.currentChapter?.url || ''"
+      :book-source-url="store.book?.origin"
+      :para-index="commentParaIndex"
+      :para-text="commentParaText"
+      :initial-page="store.chapterComments"
+      @close="closeCommentPanel"
+    />
+
     <!-- Main Content Area -->
     <div
       class="reader-scroll-container"
@@ -152,6 +165,7 @@
                     '--p-spacing': config.paragraphSpacing + 'em',
                   }"
                   v-html="page"
+                  @click="handleChapterTextClick"
                 ></div>
               </section>
             </div>
@@ -169,7 +183,22 @@
               '--p-spacing': config.paragraphSpacing + 'em',
             }"
             v-html="formattedContent"
+            @click="handleChapterTextClick"
           ></div>
+
+          <button
+            v-if="store.reviewEnabled"
+            class="chapter-comments-bar"
+            @click="openChapterComments"
+          >
+            <span class="chapter-comments-label">本章评论</span>
+            <span v-if="store.chapterCommentTotal > 0" class="chapter-comments-count">
+              · {{ store.chapterCommentTotal }}
+            </span>
+            <svg class="chapter-comments-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="m9 18 6-6-6-6" />
+            </svg>
+          </button>
 
           <div class="chapter-footer">
             <button class="next-btn" :disabled="!store.hasNext" @click="nextChapter">
@@ -284,6 +313,7 @@ import { applySystemTheme } from '../utils/systemUi'
 import { countBrowserBookCache } from '../utils/browserCache'
 import { APP_VIEWPORT_CHANGE_EVENT, syncViewportSize } from '../utils/viewport'
 import { isReaderInteractiveClickTarget } from '../utils/readerClick'
+import type { ParaReviewCount } from '../types'
 import { createReaderProgressAutoSaveScheduler, createReaderProgressExitSaver } from '../utils/readerProgressAutoSave'
 import type { Book } from '../types'
 
@@ -305,6 +335,7 @@ const CacheManager = defineAsyncComponent(() => import('../components/reader/Cac
 const BookDetailModal = defineAsyncComponent(() => import('../components/BookDetailModal.vue'))
 const ReaderTtsPanel = defineAsyncComponent(() => import('../components/reader/ReaderTtsPanel.vue'))
 const ReaderSearchPanel = defineAsyncComponent(() => import('../components/reader/ReaderSearchPanel.vue'))
+const CommentPanel = defineAsyncComponent(() => import('../components/reader/CommentPanel.vue'))
 
 const router = useRouter()
 const store = useReaderStore()
@@ -483,11 +514,13 @@ const currentFontFamily = computed(() => {
   return preset ? preset.family : ''
 })
 
-function formatChapterHtml(rawText: string) {
+function formatChapterHtml(rawText: string, withParaComments = false) {
   if (!rawText) return ''
   const text = rawText
   const stripLeadingIndent = (line: string) => line.replace(/^[\u3000\u00A0 \t]+/, '')
   const wrapper = document.createElement('div')
+  const bubbleMap = withParaComments ? paraBubbleMap.value : null
+  let paragraphPosition = 0
 
   if (/<[a-z][\s\S]*>/i.test(text)) {
     wrapper.innerHTML = text
@@ -504,6 +537,9 @@ function formatChapterHtml(rawText: string) {
         paragraph.style.marginTop = '0'
         paragraph.style.marginBottom = `${config.value.paragraphSpacing}em`
         paragraph.classList.toggle('reader-indent', config.value.firstLineIndent)
+        const bubble = bubbleMap?.get(paragraphPosition)
+        paragraphPosition += 1
+        if (bubble) paragraph.insertAdjacentHTML('beforeend', renderParaCommentBubble(bubble))
       })
     }
   } else {
@@ -513,7 +549,10 @@ function formatChapterHtml(rawText: string) {
       .map((line: string) => {
         const shouldIndent = config.value.firstLineIndent
         const content = escapeHtmlText(stripLeadingIndent(line.trimEnd()))
-        return `<p${shouldIndent ? ' class="reader-indent"' : ''} style="margin-top: 0; margin-bottom: ${config.value.paragraphSpacing}em;">${content}</p>`
+        const bubble = bubbleMap?.get(paragraphPosition)
+        paragraphPosition += 1
+        const bubbleHtml = bubble ? renderParaCommentBubble(bubble) : ''
+        return `<p${shouldIndent ? ' class="reader-indent"' : ''} style="margin-top: 0; margin-bottom: ${config.value.paragraphSpacing}em;">${content}${bubbleHtml}</p>`
       })
       .join('')
   }
@@ -521,6 +560,99 @@ function formatChapterHtml(rawText: string) {
   appendLocalEpubAssetAuth(wrapper)
   highlightSearchText(wrapper)
   return wrapper.innerHTML
+}
+
+/**
+ * 段评气泡定位。
+ *
+ * 后端给的段号是「正文按 `\n` 切分后的下标」，而渲染用的正文已经过书源替换
+ * 规则与繁简转换，空行也被丢掉，段号可能对不上。这里以「非空行位置对齐」
+ * 为主、段落原文匹配为辅，算出每个渲染段落对应正文里的哪一段。
+ */
+const paraBubbleMap = computed(() => {
+  const map = new Map<number, ParaReviewCount>()
+  const counts = store.paraReviewCountByIndex
+  if (!counts.size) return map
+  const rawLines = splitParagraphLines(store.content)
+  const displayLines = splitParagraphLines(store.displayContent)
+  if (!displayLines.length) return map
+
+  if (rawLines.length === displayLines.length) {
+    displayLines.forEach((_line, position) => {
+      const item = counts.get(rawLines[position].index)
+      if (item) map.set(position, item)
+    })
+    return map
+  }
+
+  // 行数对不上（替换规则增删了行）：退化成按段落原文匹配
+  const used = new Set<number>()
+  displayLines.forEach((line, position) => {
+    const head = line.text.slice(0, 30)
+    if (!head) return
+    const hit = rawLines.find((raw) => !used.has(raw.index) && raw.text.startsWith(head))
+    if (!hit) return
+    used.add(hit.index)
+    const item = counts.get(hit.index)
+    if (item) map.set(position, item)
+  })
+  return map
+})
+
+/** 按 `\n` 切分正文，返回非空行的「原始行号 + 文本」。 */
+function splitParagraphLines(text: string) {
+  const lines: { index: number; text: string }[] = []
+  if (!text) return lines
+  text.split(/\n/).forEach((line, index) => {
+    const trimmed = line.replace(/^[\u3000\u00A0 \t]+/, '').trim()
+    if (trimmed) lines.push({ index, text: trimmed })
+  })
+  return lines
+}
+
+function renderParaCommentBubble(item: ParaReviewCount) {
+  const count = item.count > 999 ? '999+' : String(item.count)
+  return (
+    `<span class="para-comment-bubble" role="button" tabindex="0" data-para-index="${item.paraIndex}">` +
+    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">' +
+    '<path d="M21 11.5a8.5 8.5 0 0 1-12.3 7.6L3 21l1.9-5.6A8.5 8.5 0 1 1 21 11.5z" />' +
+    '</svg>' +
+    `<span class="para-comment-count">${count}</span>` +
+    '</span>'
+  )
+}
+
+function handleChapterTextClick(event: MouseEvent) {
+  const target = event.target as HTMLElement | null
+  const bubble = target?.closest('.para-comment-bubble') as HTMLElement | null
+  if (!bubble) return
+  event.stopPropagation()
+  const paraIndex = Number(bubble.dataset.paraIndex)
+  if (!Number.isFinite(paraIndex)) return
+  openParaComments(paraIndex)
+}
+
+/* ─── 评论面板 ─── */
+const showCommentPanel = ref(false)
+const commentMode = ref<'chapter' | 'para'>('chapter')
+const commentParaIndex = ref(0)
+const commentParaText = computed(
+  () => store.paraReviewCountByIndex.get(commentParaIndex.value)?.text || '',
+)
+
+function openChapterComments() {
+  commentMode.value = 'chapter'
+  showCommentPanel.value = true
+}
+
+function openParaComments(paraIndex: number) {
+  commentMode.value = 'para'
+  commentParaIndex.value = paraIndex
+  showCommentPanel.value = true
+}
+
+function closeCommentPanel() {
+  showCommentPanel.value = false
 }
 
 function appendLocalEpubAssetAuth(root: HTMLElement) {
@@ -588,7 +720,7 @@ function renderChapterHtml(rawText: string) {
   return formatChapterHtml(store.processContentForDisplay(rawText || ''))
 }
 
-const formattedContent = computed(() => formatChapterHtml(store.displayContent || ''))
+const formattedContent = computed(() => formatChapterHtml(store.displayContent || '', true))
 
 const {
   horizontalPageIndex,
@@ -2028,6 +2160,86 @@ watch(
   user-select: text;
   -webkit-user-select: text;
   -webkit-touch-callout: default;
+}
+
+/* ─── 段评气泡：贴着段落末尾的小气泡，点开看这一段下面的评论 ─── */
+:deep(.para-comment-bubble) {
+  display: inline-flex;
+  align-items: center;
+  gap: 1px;
+  /* 段落带 text-indent，而气泡内部的 span 是块容器会继承它，
+     把首行缩进算进宽度里（29px 的字被撑到 65px）。这里必须清掉。 */
+  text-indent: 0;
+  text-align: left;
+  /* 内容最长就是「999+」四个字符，别把气泡撑得比字还宽 */
+  margin-left: 4px;
+  padding: 0 4px 0 2px;
+  border-radius: 999px;
+  background: rgba(128, 128, 128, 0.14);
+  color: var(--color-text-tertiary);
+  font-size: 0.68em;
+  line-height: 1.7;
+  vertical-align: middle;
+  white-space: nowrap;
+  cursor: pointer;
+  user-select: none;
+  -webkit-user-select: none;
+  transition: background 0.15s ease;
+}
+
+:deep(.para-comment-bubble:hover),
+:deep(.para-comment-bubble:active) {
+  background: rgba(212, 129, 42, 0.22);
+  color: var(--color-primary-dark);
+}
+
+:deep(.para-comment-bubble svg) {
+  width: 0.95em;
+  height: 0.95em;
+  flex: none;
+  opacity: 0.75;
+}
+
+:deep(.para-comment-count) {
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.02em;
+}
+
+/* ─── 本章评论入口 ─── */
+.chapter-comments-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  margin-top: 28px;
+  padding: 12px 16px;
+  background: rgba(128, 128, 128, 0.1);
+  border: none;
+  border-radius: 12px;
+  color: var(--color-text-secondary);
+  font-size: var(--text-sm);
+  text-align: left;
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+
+.chapter-comments-bar:hover {
+  background: rgba(128, 128, 128, 0.16);
+}
+
+.chapter-comments-label {
+  font-weight: 600;
+}
+
+.chapter-comments-count {
+  color: var(--color-text-tertiary);
+}
+
+.chapter-comments-arrow {
+  width: 15px;
+  height: 15px;
+  margin-left: auto;
+  opacity: 0.5;
 }
 
 .horizontal-page-content {

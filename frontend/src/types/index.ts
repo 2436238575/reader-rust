@@ -64,6 +64,53 @@ export interface BookChapter {
   index: number
 }
 
+// ─── 评论（章评 / 段评） ───
+export interface ReviewReply {
+  name: string
+  content: string
+  time: string
+  /** 被回复者；为空表示直接回复评论本身 */
+  replyTo: string
+}
+
+export interface ReviewItem {
+  id: string
+  name: string
+  avatar: string
+  content: string
+  time: string
+  digg: number
+  replyCount: number
+  replies: ReviewReply[]
+  /** 评论配图。站点常给同一张图的多个变体（HEIC + JPEG），由前端挑可渲染的 */
+  images: string[]
+}
+
+export interface ReviewPage {
+  total: number
+  hasMore: boolean
+  page: number
+  items: ReviewItem[]
+}
+
+/** 段评概览里的一段：段号 + 该段评论条数 */
+export interface ParaReviewCount {
+  paraIndex: number
+  count: number
+  /** 段落原文（截断）。段号会因替换规则/繁简转换漂移，用它兜底定位 */
+  text: string
+}
+
+export interface ParaReviewIndex {
+  paras: ParaReviewCount[]
+}
+
+/** 书源支不支持评论由后端判定，前端据此决定是否渲染入口 */
+export interface ReviewResponse<T> {
+  enabled: boolean
+  data: T
+}
+
 // ─── 书源 ───
 export interface BookSource {
   bookSourceName: string
@@ -87,6 +134,8 @@ export interface BookSource {
   ruleBookInfo?: Record<string, unknown>
   ruleToc?: Record<string, unknown>
   ruleContent?: Record<string, unknown>
+  ruleReview?: Record<string, unknown>
+  ruleParaReview?: Record<string, unknown>
 }
 
 export interface BookSourceTestResult {

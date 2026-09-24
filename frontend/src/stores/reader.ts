@@ -15,8 +15,9 @@ import {
   deleteBookmark as apiDeleteBookmark,
   deleteBookmarks as apiDeleteBookmarks,
 } from '../api/bookmark'
+import { getChapterComments, getParaCommentIndex } from '../api/review'
 import { getReplaceRules } from '../api/replaceRule'
-import type { Book, BookChapter, Bookmark, ReplaceRule } from '../types'
+import type { Book, BookChapter, Bookmark, ParaReviewCount, ReplaceRule, ReviewPage } from '../types'
 import { getBrowserCachedChapter, setBrowserCachedChapter } from '../utils/browserCache'
 import { isLocalBook } from '../utils/localBook'
 import { saveRecentReadBook } from '../utils/recentBooks'
@@ -199,6 +200,13 @@ export const useReaderStore = defineStore('reader', () => {
   const loadError = ref('')
   const bookmarks = ref<Bookmark[]>([])
   const replaceRules = ref<ReplaceRule[]>([])
+  /* 评论（章评 / 段评）：由书源规则决定是否可用 */
+  const reviewEnabled = ref(false)
+  const paraReviewEnabled = ref(false)
+  const paraReviewIndex = ref<ParaReviewCount[]>([])
+  const chapterCommentTotal = ref(0)
+  const chapterComments = ref<ReviewPage | null>(null)
+  const reviewsLoading = ref(false)
   const preloadedContent = ref<Map<number, string>>(new Map()) // index -> content
   const isAutoScrolling = ref(false)
   const chapterScrollProgress = ref(0)
@@ -423,6 +431,8 @@ export const useReaderStore = defineStore('reader', () => {
       if (chapterContent == null) return false
       setActiveChapterState(nextIndex, chapterContent, session.chapterScrollProgress || 0)
       markChapterAsRead(nextIndex)
+      // 恢复会话不经过 loadChapter，评论要在这里单独补一次
+      void loadChapterReviews(nextIndex)
       return true
     } catch {
       return false
@@ -1184,6 +1194,7 @@ export const useReaderStore = defineStore('reader', () => {
     book.value = b
     chapters.value = []
     content.value = ''
+    resetReviews()
     appStore.markBookOpened(b.bookUrl)
     currentIndex.value = b.durChapterIndex || 0
     chapterScrollProgress.value = 0
@@ -1351,6 +1362,9 @@ export const useReaderStore = defineStore('reader', () => {
         await persistProgress(index, 0)
       }
 
+      // 正文先渲染，评论随后补上：拉不到评论不该拖慢或打断阅读
+      void loadChapterReviews(index)
+
       if (config.enablePreload) {
         setTimeout(() => preloadAroundChapter(index), forceRefresh ? 1500 : 1000)
       }
@@ -1358,6 +1372,62 @@ export const useReaderStore = defineStore('reader', () => {
       loading.value = false
     }
   }
+
+  /* ─── 评论（章评 / 段评） ─── */
+
+  /**
+   * 拉取当前章节的段评概览与章评第一页。
+   *
+   * 书源没声明评论规则时后端返回 `enabled: false`，此时前端不渲染任何入口；
+   * 网络或解析失败同样静默降级——评论是附加内容，不能让它影响正文阅读。
+   */
+  async function loadChapterReviews(index = currentIndex.value) {
+    const currentBook = book.value
+    const chapter = chapters.value[index]
+    if (!currentBook || !chapter || isLocalBook(currentBook)) {
+      resetReviews()
+      return
+    }
+    // 只认自己那次请求的结果，避免快速翻章时旧响应覆盖新章节
+    const requestedChapterUrl = chapter.url
+    reviewsLoading.value = true
+    try {
+      const params = {
+        bookUrl: currentBook.bookUrl,
+        chapterUrl: requestedChapterUrl,
+        bookSourceUrl: currentBook.origin,
+      }
+      // 顺序请求：第二个请求能复用第一个已经取回的章节正文响应
+      const indexResp = await getParaCommentIndex(params)
+      const chapterResp = await getChapterComments({ ...params, page: 1 })
+      if (chapters.value[currentIndex.value]?.url !== requestedChapterUrl) return
+      paraReviewEnabled.value = indexResp.enabled
+      paraReviewIndex.value = indexResp.data?.paras || []
+      reviewEnabled.value = chapterResp.enabled
+      chapterCommentTotal.value = chapterResp.data?.total || 0
+      chapterComments.value = chapterResp.data || null
+    } catch {
+      if (chapters.value[currentIndex.value]?.url === requestedChapterUrl) resetReviews()
+    } finally {
+      reviewsLoading.value = false
+    }
+  }
+
+  function resetReviews() {
+    reviewEnabled.value = false
+    paraReviewEnabled.value = false
+    paraReviewIndex.value = []
+    chapterCommentTotal.value = 0
+    chapterComments.value = null
+  }
+
+  /** 段号 → 该段评论条数，供正文渲染气泡时查表。 */
+  const paraReviewCountByIndex = computed(() => {
+    const map = new Map<number, ParaReviewCount>()
+    if (!paraReviewEnabled.value) return map
+    for (const item of paraReviewIndex.value) map.set(item.paraIndex, item)
+    return map
+  })
 
   async function preloadAroundChapter(index: number) {
     if (!book.value || !config.enablePreload) return
@@ -1556,6 +1626,7 @@ export const useReaderStore = defineStore('reader', () => {
     currentIndex.value = 0
     chapterScrollProgress.value = 0
     readChapterKeys.value = new Set()
+    resetReviews()
     stopAutoReading()
   }
 
@@ -1613,5 +1684,8 @@ export const useReaderStore = defineStore('reader', () => {
     setOpenAISpeechSource, setOpenAISpeechBaseUrl, setOpenAISpeechApiKey, setOpenAISpeechModel, setOpenAISpeechVoice, setOpenAISpeechFormat, setOpenAISpeechRequestMode, preloadOpenAITTS,
     displayContent, processContentForDisplay,
     isAutoScrolling,
+    reviewEnabled, paraReviewEnabled, paraReviewIndex, paraReviewCountByIndex,
+    chapterCommentTotal, chapterComments, reviewsLoading,
+    loadChapterReviews, resetReviews,
   }
 })

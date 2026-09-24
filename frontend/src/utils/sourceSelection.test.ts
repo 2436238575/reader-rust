@@ -62,7 +62,14 @@ describe('sourceSelection', () => {
 
   it('summarizes source counts and selected source metadata', () => {
     const list: BookSource[] = [
-      { bookSourceName: 'Enabled', bookSourceUrl: 'enabled', enabled: true, ruleSearch: {}, ruleToc: {} },
+      {
+        bookSourceName: 'Enabled',
+        bookSourceUrl: 'enabled',
+        enabled: true,
+        ruleSearch: {},
+        ruleToc: {},
+        ruleReview: {},
+      },
       { bookSourceName: 'Disabled', bookSourceUrl: 'disabled', enabled: false },
     ]
 
@@ -76,6 +83,16 @@ describe('sourceSelection', () => {
       statusText: '启用',
       hasSearch: true,
       hasToc: true,
+      hasReview: true,
     })
+    // 段评规则单独存在时也算「有评论」
+    expect(
+      getBookSourceOverview({
+        bookSourceName: 'ParaOnly',
+        bookSourceUrl: 'para',
+        ruleParaReview: {},
+      }),
+    ).toMatchObject({ hasReview: true })
+    expect(getBookSourceOverview(list[1])).toMatchObject({ hasReview: false })
   })
 })

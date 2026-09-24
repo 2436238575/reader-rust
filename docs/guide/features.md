@@ -117,6 +117,17 @@
 - 清除书籍缓存
 - 缓存整本书（SSE 实时进度）
 
+### 评论（章评 / 段评）
+
+书源声明了评论规则时，阅读页会显示段落旁的段评气泡与正文末尾的「本章评论」入口。
+
+- 段评概览（`getParaCommentIndex`）：哪些段落有评论、各多少条
+- 单段段评（`getParaComments`）
+- 章评（`getChapterComments`）
+- 评论缓存保留 7 天 TTL（`REVIEW_CACHE_TTL_SECS`），并可按 `kind: review` 清理
+
+规则写法见 [书源规则参考 · 评论规则](../reference/book-source-rules#评论规则)，接口见 [评论 API](../api/review)。
+
 ### 书签
 
 - 获取书签列表，新增书签，批量操作，单条 / 批量删除

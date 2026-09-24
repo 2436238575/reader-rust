@@ -67,6 +67,7 @@ export function getBookSourceOverview(source: BookSource | null) {
     hasBookInfo: Boolean(source.ruleBookInfo),
     hasToc: Boolean(source.ruleToc),
     hasContent: Boolean(source.ruleContent),
+    hasReview: Boolean(source.ruleReview || source.ruleParaReview),
     hasLogin: Boolean(source.loginUrl?.trim()),
   }
 }

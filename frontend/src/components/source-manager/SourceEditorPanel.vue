@@ -53,6 +53,7 @@
             <span :class="{ active: overview.hasBookInfo }">详情</span>
             <span :class="{ active: overview.hasToc }">目录</span>
             <span :class="{ active: overview.hasContent }">正文</span>
+            <span :class="{ active: overview.hasReview }">评论</span>
             <span :class="{ active: overview.hasLogin }">登录</span>
           </div>
         </div>
