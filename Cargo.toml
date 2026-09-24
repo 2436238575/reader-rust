@@ -45,5 +45,5 @@ uuid = { version = "1", features = ["v4"] }
 url = "2"
 sxd-xpath = "0.4"
 sxd-document = "0.3"
-quick-xml = "0.31"
+quick-xml = "0.41"
 zip = { version = "0.6", default-features = false, features = ["deflate"] }
