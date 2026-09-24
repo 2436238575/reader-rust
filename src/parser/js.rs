@@ -1,3 +1,4 @@
+use crate::model::book_source::BookSource;
 use crate::util::hash::md5_hex;
 use crate::util::text::{apply_regex_replace, strip_whitespace};
 use aes::Aes128;
@@ -55,6 +56,8 @@ thread_local! {
     static ACTIVE_JS_LIB: RefCell<Option<String>> = const { RefCell::new(None) };
     /// 当前求值所属的用户命名空间。
     static ACTIVE_USER_NS: RefCell<Option<String>> = const { RefCell::new(None) };
+    /// 当前书源的 JSON 文本；JS 里的 `source` 就是它（规格 §10）。
+    static ACTIVE_SOURCE: RefCell<Option<String>> = const { RefCell::new(None) };
 }
 
 pub fn with_js_lib<T>(js_lib: Option<&str>, f: impl FnOnce() -> T) -> T {
@@ -64,6 +67,26 @@ pub fn with_js_lib<T>(js_lib: Option<&str>, f: impl FnOnce() -> T) -> T {
         cell.replace(previous);
         result
     })
+}
+
+/// 在「书源上下文」里执行闭包：顺带挂上 jsLib，并让 JS 里的 `source` 拿到这个
+/// 书源的真实字段（`bookSourceUrl`、`bookSourceName`、`header`…）。
+///
+/// 书源规则经常写 `{{source.bookSourceUrl}}` 拼 URL，只给一个空壳会让这类规则
+/// 静默取到空串。注意必须在**执行求值的那个线程**上调用（解析跑在阻塞线程池里，
+/// 在 async 侧设置是无效的）。
+pub fn with_book_source<T>(source: &BookSource, f: impl FnOnce() -> T) -> T {
+    let json = serde_json::to_string(source).ok();
+    ACTIVE_SOURCE.with(|cell| {
+        let previous = cell.replace(json);
+        let result = with_js_lib(source.js_lib.as_deref(), f);
+        cell.replace(previous);
+        result
+    })
+}
+
+fn active_source_json() -> Option<String> {
+    ACTIVE_SOURCE.with(|cell| cell.borrow().clone())
 }
 
 /// 在指定用户命名空间下执行闭包。
@@ -252,12 +275,24 @@ fn eval_js_inner_with_source(
         globals.set("url", base_url_value)?;
 
         // Stubs for Legado compatibility
-        let source_key_val = source_key.unwrap_or("").to_string();
-        let source_obj = Object::new(ctx.clone())?;
+        // 书源对象：有 `with_book_source` 上下文时是真实书源，否则退化成只带 key 的空壳。
+        match active_source_json().and_then(|json| ctx.json_parse(json).ok()) {
+            Some(value) => globals.set("source", value)?,
+            None => globals.set("source", Object::new(ctx.clone())?)?,
+        }
+        let source_obj: Object = globals.get("source")?;
+        // `key`/`getKey()` 是既有的兼容绑定：优先用调用方给的（URL 规则会传书源 URL），
+        // 否则回退到书源自己的 `bookSourceUrl`。
+        let source_key_val = match source_key {
+            Some(key) => key.to_string(),
+            None => source_obj
+                .get::<_, Option<String>>("bookSourceUrl")
+                .unwrap_or_default()
+                .unwrap_or_default(),
+        };
         let sk_clone = source_key_val.clone();
         source_obj.set("key", source_key_val)?;
         source_obj.set("getKey", Func::new(move || sk_clone.clone()))?;
-        globals.set("source", source_obj)?;
 
         let cookie_obj = Object::new(ctx.clone())?;
         cookie_obj.set(
@@ -488,14 +523,30 @@ fn java_aes_base64_decode_to_string(input: &str, key: &str, algorithm: &str, iv:
 }
 
 fn eval_script<'js>(ctx: rquickjs::Ctx<'js>, script: &str) -> anyhow::Result<Value<'js>> {
-    match ctx.eval(script) {
-        Ok(v) => Ok(v),
-        Err(e) => {
-            if let Some(exception) = ctx.catch().into_exception() {
-                return Err(anyhow::anyhow!("JS Exception: {:?}", exception));
-            }
-            Err(e.into())
+    let first = match ctx.eval(script) {
+        Ok(value) => return Ok(value),
+        Err(error) => error,
+    };
+
+    let exception = ctx.catch().into_exception();
+    let message = exception
+        .as_ref()
+        .map(|exception| format!("{exception:?}"))
+        .unwrap_or_else(|| first.to_string());
+
+    // 书源常写 `@js:return ...`，而脚本语义下顶层 `return` 是语法错误
+    // （`return not in a function`）。只对这一种错误兜底：把规则包成 IIFE 再求值，
+    // 表达式风格的规则不受影响。
+    if message.contains("return not in a function") {
+        let wrapped = format!("(function(){{{script}\n}})()");
+        if let Ok(value) = ctx.eval(wrapped) {
+            return Ok(value);
         }
+    }
+
+    match exception {
+        Some(exception) => Err(anyhow::anyhow!("JS Exception: {:?}", exception)),
+        None => Err(first.into()),
     }
 }
 
@@ -718,7 +769,6 @@ mod tests {
 
     #[test]
     fn notification_helpers_are_registered_as_noops() {
-        // 书源规则是表达式风格（顶层 return 在 eval 下是语法错误），这里用逗号表达式
         assert_eq!(
             eval_js(
                 "java.log('a'), java.toast('b'), java.openUrl('c'), 'ok'",
@@ -727,6 +777,49 @@ mod tests {
             )
             .unwrap(),
             "ok"
+        );
+    }
+
+    #[test]
+    fn top_level_return_is_wrapped_into_a_function() {
+        // 书源常用 `@js:return ...`，脚本语义下顶层 return 是语法错误，这里兜底包成 IIFE
+        assert_eq!(eval_js("return 'ok'", "", "").unwrap(), "ok");
+        assert_eq!(
+            eval_js("var n = 2; return `${n}-ok`", "", "").unwrap(),
+            "2-ok"
+        );
+        // 表达式风格不受影响
+        assert_eq!(eval_js("'ok'", "", "").unwrap(), "ok");
+        // 其它语法错误仍然报错
+        assert!(eval_js("return )", "", "").is_err());
+    }
+
+    #[test]
+    fn source_object_exposes_real_book_source_fields() {
+        let source = BookSource {
+            book_source_name: "测试源".to_string(),
+            book_source_url: "https://source.example".to_string(),
+            ..Default::default()
+        };
+
+        let value = with_book_source(&source, || {
+            eval_js(
+                "source.bookSourceUrl + '|' + source.bookSourceName + '|' + source.getKey()",
+                "",
+                "",
+            )
+        })
+        .unwrap();
+
+        assert_eq!(
+            value,
+            "https://source.example|测试源|https://source.example"
+        );
+
+        // 没有书源上下文时仍是空壳，不会 panic
+        assert_eq!(
+            eval_js("source.bookSourceUrl || 'empty'", "", "").unwrap(),
+            "empty"
         );
     }
 

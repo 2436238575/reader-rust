@@ -11,7 +11,7 @@ use crate::model::{
     review::{ParaReviewCount, ParaReviewIndex, ReviewPage, ReviewResponse},
     search::SearchBook,
 };
-use crate::parser::js::{eval_js, eval_js_with_bindings, with_js_lib, with_user_ns};
+use crate::parser::js::{eval_js, eval_js_with_bindings, with_book_source, with_user_ns};
 use crate::parser::rule_engine::RuleEngine;
 use crate::storage::cache::file_cache::{
     remove_dir_counting_files, remove_file_counting, CacheUsage, FileCache,
@@ -598,13 +598,13 @@ impl BookService {
         {
             let user_ns_owned = user_ns.to_string();
             let js = login_check_js.to_string();
-            let js_lib = source.js_lib.clone();
+            let source_owned = source.clone();
             let body = res.body.clone();
             let url = res.url.clone();
             Some(
                 parse_blocking(move || {
                     with_user_ns(&user_ns_owned, || {
-                        with_js_lib(js_lib.as_deref(), || eval_js(&js, &body, &url))
+                        with_book_source(&source_owned, || eval_js(&js, &body, &url))
                     })
                     .unwrap_or_default()
                 })
@@ -2105,7 +2105,7 @@ fn apply_login_check_js(source: &BookSource, res: FetchResponse) -> FetchRespons
         return res;
     };
 
-    with_js_lib(source.js_lib.as_deref(), || {
+    with_book_source(source, || {
         let str_response = StrResponse::from(res.clone());
         let mut bindings = HashMap::new();
         bindings.insert(
@@ -2181,7 +2181,7 @@ fn parse_explore_kinds(source: &BookSource) -> Result<Vec<ExploreKind>, AppError
         return Ok(Vec::new());
     };
 
-    let text = with_js_lib(source.js_lib.as_deref(), || {
+    let text = with_book_source(source, || {
         if let Some(script) = raw.strip_prefix("@js:") {
             cached_explore_script(source, raw, || eval_js(script, "", &source.book_source_url))
         } else if let Some(script) = raw

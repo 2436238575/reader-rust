@@ -5,7 +5,7 @@ use crate::model::{
 };
 use crate::parser::{
     html,
-    js::{eval_js, eval_js_with_bindings_and_globals, with_js_lib},
+    js::{eval_js, eval_js_with_bindings_and_globals, with_book_source},
     jsonpath,
 };
 use crate::util::text::normalize_source_url;
@@ -86,7 +86,7 @@ impl RuleEngine {
     }
 
     pub fn search_books(&self, source: &BookSource, body: &str, base_url: &str) -> Vec<SearchBook> {
-        with_js_lib(source.js_lib.as_deref(), || {
+        with_book_source(source, || {
             let rule = source.rule_search.clone().unwrap_or_default();
             let (list_rule, reverse) = normalize_list_rule(rule.book_list.as_deref().unwrap_or(""));
 
@@ -136,7 +136,7 @@ impl RuleEngine {
         body: &str,
         base_url: &str,
     ) -> Vec<SearchBook> {
-        with_js_lib(source.js_lib.as_deref(), || {
+        with_book_source(source, || {
             let rule = source
                 .rule_explore
                 .clone()
@@ -175,7 +175,7 @@ impl RuleEngine {
         base_url: &str,
         book_url: &str,
     ) -> Book {
-        with_js_lib(source.js_lib.as_deref(), || {
+        with_book_source(source, || {
             let rule = source.rule_book_info.clone().unwrap_or_default();
             let mut context = HashMap::new();
 
@@ -215,7 +215,7 @@ impl RuleEngine {
         body: &str,
         base_url: &str,
     ) -> (Vec<BookChapter>, Vec<String>) {
-        with_js_lib(source.js_lib.as_deref(), || {
+        with_book_source(source, || {
             let rule = source.rule_toc.clone().unwrap_or_default();
             let mut context = HashMap::new();
             let (list_rule, reverse) =
@@ -267,7 +267,7 @@ impl RuleEngine {
     }
 
     pub fn content(&self, source: &BookSource, body: &str, base_url: &str) -> String {
-        with_js_lib(source.js_lib.as_deref(), || {
+        with_book_source(source, || {
             let rule = source.rule_content.clone().unwrap_or_default();
             let mut content_body = body.to_string();
 
@@ -961,9 +961,7 @@ impl RuleEngine {
             reply_to: rule.reply_to_rule.as_deref(),
             image: rule.image_rule.as_deref(),
         };
-        with_js_lib(source.js_lib.as_deref(), || {
-            parse_review_page(&fields, body, base_url)
-        })
+        with_book_source(source, || parse_review_page(&fields, body, base_url))
     }
 
     /// 解析某一段的段评列表。
@@ -989,9 +987,7 @@ impl RuleEngine {
             reply_to: rule.reply_to_rule.as_deref(),
             image: rule.image_rule.as_deref(),
         };
-        with_js_lib(source.js_lib.as_deref(), || {
-            parse_review_page(&fields, body, base_url)
-        })
+        with_book_source(source, || parse_review_page(&fields, body, base_url))
     }
 
     /// 解析段评概览：哪些段落有评论、各有多少条。
@@ -1011,7 +1007,7 @@ impl RuleEngine {
         if list_rule.is_empty() {
             return Vec::new();
         }
-        with_js_lib(source.js_lib.as_deref(), || {
+        with_book_source(source, || {
             let Ok(v) = serde_json::from_str::<Value>(body) else {
                 return Vec::new();
             };
@@ -1334,7 +1330,7 @@ fn eval_image_list_json(rule: &str, node: &Value, base_url: &str) -> Vec<String>
         return Vec::new();
     }
     let (pure_rule, _) = split_legado_regex(rule);
-    let (pure, js) = extract_js(&pure_rule);
+    let (pure, js, _) = extract_js(&pure_rule);
     // 与 `content` 等入口保持一致：裸 `js:` 前缀同样算 JS 规则
     let (pure, js) = match js {
         Some(script) => (pure, Some(script)),
@@ -1932,7 +1928,7 @@ fn select_json_scope(
 
     let interpolated = interpolate_json_templates(init_rule, v, base_url, ctx);
     let (pure_rule, _) = split_legado_regex(&interpolated);
-    let (pure, _) = extract_js(&pure_rule);
+    let (pure, _, _) = extract_js(&pure_rule);
     if pure.is_empty() {
         return v.clone();
     }
@@ -2068,22 +2064,47 @@ fn strip_url_config(url: &str) -> &str {
     }
 }
 
-fn extract_js(rule: &str) -> (&str, Option<&str>) {
+/// 拆出规则里的 JS 片段：`(前缀, JS, 后缀)`。
+///
+/// `@js:` 会吞掉后续整段规则（后缀为空）；`<js>...</js>` 允许前后拼接普通片段，
+/// 后缀继续对 JS 结果求值——这是规格 §20 说的「链式规则必须用 `<js>...</js>`」。
+fn extract_js(rule: &str) -> (&str, Option<&str>, Option<&str>) {
     if let Some(idx) = rule.find("<js>") {
         if let Some(end_idx) = rule.rfind("</js>") {
             if end_idx > idx {
                 let pure = rule[..idx].trim();
                 let js = &rule[idx + 4..end_idx];
-                return (pure, Some(js));
+                let tail = rule[end_idx + 5..].trim();
+                let tail = if tail.is_empty() { None } else { Some(tail) };
+                return (pure, Some(js), tail);
             }
         }
     }
     if let Some(idx) = rule.find("@js:") {
         let pure = rule[..idx].trim();
         let js = &rule[idx + 4..];
-        return (pure, Some(js));
+        return (pure, Some(js), None);
     }
-    (rule, None)
+    (rule, None, None)
+}
+
+/// 把 `<js>` 之后的片段继续作用在 JS 结果上：结果是 JSON 就按 JSON 规则求值，
+/// 否则按 HTML 文档规则求值（与列表/字段的自动识别一致）。
+fn eval_rule_on_text(
+    rule: &str,
+    text: &str,
+    base_url: &str,
+    ctx: &mut HashMap<String, String>,
+) -> Option<String> {
+    let rule = rule.trim();
+    if rule.is_empty() || text.trim().is_empty() {
+        return None;
+    }
+    if let Ok(value) = serde_json::from_str::<Value>(text) {
+        return eval_field_json_with_ctx(rule, &value, base_url, ctx);
+    }
+    let doc = html::parse_document(text);
+    eval_field_html_doc_with_ctx(rule, &doc, base_url, ctx)
 }
 
 /// `@regex:` 模式：不执行匹配，直接返回规则文本（规格 §6.8 的 Regex 分支）。
@@ -2097,11 +2118,16 @@ fn eval_literal_field(
 ) -> Option<String> {
     let interpolated = interpolate_common_templates(rule, input, base_url, ctx);
     let (pure_rule, regex_part) = split_legado_regex(&interpolated);
-    let (pure, js) = extract_js(&pure_rule);
+    let (pure, js, tail) = extract_js(&pure_rule);
 
     let mut text = pure.to_string();
     if let Some(script) = js {
         if let Ok(res) = eval_js(script, &text, base_url) {
+            text = res;
+        }
+    }
+    if let Some(tail) = tail {
+        if let Some(res) = eval_rule_on_text(tail, &text, base_url, ctx) {
             text = res;
         }
     }
@@ -2308,7 +2334,7 @@ fn eval_field_html_with_ctx(
     let interpolated_rule = interpolate_common_templates(rule, &input, base_url, ctx);
     let had_templates = interpolated_rule != rule;
     let (pure_rule, regex_part) = split_legado_regex(&interpolated_rule);
-    let (pure, js) = extract_js(&pure_rule);
+    let (pure, js, tail) = extract_js(&pure_rule);
 
     let mut text = if pure.is_empty() {
         "".to_string()
@@ -2321,6 +2347,11 @@ fn eval_field_html_with_ctx(
 
     if let Some(script) = js {
         if let Ok(res) = eval_js(script, &text, base_url) {
+            text = res;
+        }
+    }
+    if let Some(tail) = tail {
+        if let Some(res) = eval_rule_on_text(tail, &text, base_url, ctx) {
             text = res;
         }
     }
@@ -2359,7 +2390,7 @@ fn eval_field_html_doc_with_ctx(
 
     let interpolated_rule = interpolate_common_templates(rule, &doc.html(), base_url, ctx);
     let had_templates = interpolated_rule != rule;
-    let (pure, js) = extract_js(&interpolated_rule);
+    let (pure, js, tail) = extract_js(&interpolated_rule);
     let mut text = if pure.is_empty() {
         "".to_string()
     } else {
@@ -2371,9 +2402,13 @@ fn eval_field_html_doc_with_ctx(
 
     if let Some(script) = js {
         if let Ok(res) = eval_js(script, &text, base_url) {
-            return Some(res);
+            text = res;
         }
-        return Some(text);
+    }
+    if let Some(tail) = tail {
+        if let Some(res) = eval_rule_on_text(tail, &text, base_url, ctx) {
+            text = res;
+        }
     }
 
     if text.is_empty() {
@@ -2423,7 +2458,7 @@ fn eval_field_xpath_with_ctx(
     let interpolated_rule = interpolate_common_templates(rule, &node.string_value(), base_url, ctx);
     let had_templates = interpolated_rule != rule;
     let (pure_rule, regex_part) = split_legado_regex(&interpolated_rule);
-    let (pure, js) = extract_js(&pure_rule);
+    let (pure, js, tail) = extract_js(&pure_rule);
     let mut text = if pure.trim().is_empty() {
         node.string_value()
     } else {
@@ -2438,6 +2473,11 @@ fn eval_field_xpath_with_ctx(
 
     if let Some(script) = js {
         if let Ok(res) = eval_js(script, &text, base_url) {
+            text = res;
+        }
+    }
+    if let Some(tail) = tail {
+        if let Some(res) = eval_rule_on_text(tail, &text, base_url, ctx) {
             text = res;
         }
     }
@@ -2572,7 +2612,7 @@ fn eval_field_json_with_ctx(
 
     let interpolated_rule = interpolate_json_templates(rule, v, base_url, ctx);
     let (pure_rule, regex_part) = split_legado_regex(&interpolated_rule);
-    let (pure, js) = extract_js(&pure_rule);
+    let (pure, js, tail) = extract_js(&pure_rule);
 
     let mut text = if pure.is_empty() {
         "".to_string()
@@ -2591,6 +2631,11 @@ fn eval_field_json_with_ctx(
 
     if let Some(script) = js {
         if let Ok(res) = eval_js(script, &text, base_url) {
+            text = res;
+        }
+    }
+    if let Some(tail) = tail {
+        if let Some(res) = eval_rule_on_text(tail, &text, base_url, ctx) {
             text = res;
         }
     }
@@ -3470,6 +3515,100 @@ mod tests {
         let results = engine.search_books(&source, "{}", "https://books.example");
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].name, "Alpha");
+    }
+
+    #[test]
+    fn js_rules_may_use_top_level_return() {
+        let engine = RuleEngine::new().unwrap();
+        let source = BookSource {
+            book_source_name: "JS".to_string(),
+            book_source_url: "https://source.example".to_string(),
+            rule_search: Some(SearchRule {
+                book_list: Some("js:JSON.stringify([{name:'Alpha'}])".to_string()),
+                name: Some("@js:return 'Renamed' + input.length".to_string()),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+
+        let results = engine.search_books(&source, "{}", "https://books.example");
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].name, "Renamed0");
+    }
+
+    #[test]
+    fn js_tag_chains_into_the_remaining_rule() {
+        let engine = RuleEngine::new().unwrap();
+        let source = BookSource {
+            book_source_name: "Chain".to_string(),
+            book_source_url: "https://source.example".to_string(),
+            rule_book_info: Some(BookInfoRule {
+                // <js> 之后继续解析 JS 结果（规格 §20：链式规则必须用 <js>...</js>）
+                name: Some(r#"<js>'{"data":{"title":"Chained"}}'</js>$.data.title"#.to_string()),
+                // `@js:` 会吞掉后续整段规则，因此这里取不到值
+                author: Some(r#"@js:'{"data":{"author":"X"}}'$.data.author"#.to_string()),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+
+        let book = engine.book_info(
+            &source,
+            r#"{"x":1}"#,
+            "https://site.example/info",
+            "https://site.example/info",
+        );
+
+        assert_eq!(book.name, "Chained");
+        assert!(book.author.is_empty(), "@js: 应吞掉后续规则");
+    }
+
+    #[test]
+    fn js_tag_chains_in_html_mode() {
+        let engine = RuleEngine::new().unwrap();
+        let source = BookSource {
+            book_source_name: "Chain".to_string(),
+            book_source_url: "https://source.example".to_string(),
+            rule_book_info: Some(BookInfoRule {
+                name: Some(r#"<js>'{"a":"Html"}'</js>$.a"#.to_string()),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+
+        let book = engine.book_info(
+            &source,
+            "<html><body><p>x</p></body></html>",
+            "https://site.example/info",
+            "https://site.example/info",
+        );
+
+        assert_eq!(book.name, "Html");
+    }
+
+    #[test]
+    fn source_templates_resolve_to_the_book_source() {
+        let engine = RuleEngine::new().unwrap();
+        let source = BookSource {
+            book_source_name: "Detail".to_string(),
+            book_source_url: "https://source.example".to_string(),
+            rule_book_info: Some(BookInfoRule {
+                name: Some("{{source.bookSourceUrl}}/book".to_string()),
+                author: Some("@js:source.getKey()".to_string()),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+
+        let book = engine.book_info(
+            &source,
+            r#"{"x":1}"#,
+            "https://site.example/info",
+            "https://site.example/info",
+        );
+
+        assert_eq!(book.name, "https://source.example/book");
+        assert_eq!(book.author, "https://source.example");
     }
 
     #[test]
