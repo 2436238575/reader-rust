@@ -25,6 +25,13 @@ pub struct AppConfig {
     pub cache_user_limit_bytes: u64,
     /// 封面缓存目录的容量上限（字节）；`0` 表示不限制。
     pub cache_cover_limit_bytes: u64,
+    /// 评论缓存的有效期（秒），默认 7 天；`0` 表示不过期。
+    ///
+    /// 评论是**会变的第三方数据**（新评论、点赞数、热度排序都在动），
+    /// 因此这里保留时间过期，与正文缓存的「只靠容量回收」不同。
+    pub review_cache_ttl_secs: u64,
+    /// 单个用户评论缓存的容量上限（字节）；`0` 表示不限制。
+    pub review_cache_user_limit_bytes: u64,
     /// 出站请求是否允许访问私网/环回/链路本地地址。
     ///
     /// 默认 `true`：本项目按自托管单用户场景使用，局域网书源、本地书源服务
@@ -60,6 +67,8 @@ impl Default for AppConfig {
             user_local_book_limit: 0,
             cache_user_limit_bytes: 512 * 1024 * 1024,
             cache_cover_limit_bytes: 256 * 1024 * 1024,
+            review_cache_ttl_secs: 7 * 24 * 3600,
+            review_cache_user_limit_bytes: 64 * 1024 * 1024,
             allow_private_network: true,
             cors_allowed_origins: String::new(),
         }
@@ -94,6 +103,14 @@ pub fn load() -> anyhow::Result<AppConfig> {
         .set_default(
             "cache_cover_limit_bytes",
             defaults.cache_cover_limit_bytes as i64,
+        )?
+        .set_default(
+            "review_cache_ttl_secs",
+            defaults.review_cache_ttl_secs as i64,
+        )?
+        .set_default(
+            "review_cache_user_limit_bytes",
+            defaults.review_cache_user_limit_bytes as i64,
         )?
         .set_default("allow_private_network", defaults.allow_private_network)?
         .set_default("cors_allowed_origins", defaults.cors_allowed_origins)?

@@ -78,7 +78,8 @@ pub async fn build_state(cfg: AppConfig) -> anyhow::Result<AppState> {
     let book_service = Arc::new(
         BookService::new(http, parser, cache, &cfg.storage_dir)
             .with_user_book_limit(cfg.user_book_limit)
-            .with_cover_cache_limit(cfg.cache_cover_limit_bytes),
+            .with_cover_cache_limit(cfg.cache_cover_limit_bytes)
+            .with_review_cache(cfg.review_cache_ttl_secs, cfg.review_cache_user_limit_bytes),
     );
     let book_source_service = Arc::new(BookSourceService::new(repo, &cfg.storage_dir));
     let local_txt_book_service = Arc::new(LocalTxtBookService::new(&cfg.storage_dir));

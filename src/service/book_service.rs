@@ -8,6 +8,7 @@ use crate::model::{
     book::Book,
     book_chapter::BookChapter,
     book_source::{BookSource, ExploreKind},
+    review::{ParaReviewCount, ParaReviewIndex, ReviewPage, ReviewResponse},
     search::SearchBook,
 };
 use crate::parser::js::{eval_js, eval_js_with_bindings, with_js_lib, with_user_ns};
@@ -15,6 +16,7 @@ use crate::parser::rule_engine::RuleEngine;
 use crate::storage::cache::file_cache::{
     remove_dir_counting_files, remove_file_counting, CacheUsage, FileCache,
 };
+use crate::storage::cache::review_cache::ReviewCache;
 use crate::util::hash::md5_hex;
 use crate::util::text::{normalize_source_url, repair_encoded_url};
 use serde_json::{json, Value};
@@ -42,13 +44,46 @@ pub struct BookService {
     http: HttpClient,
     parser: RuleEngine,
     cache: FileCache,
+    review_cache: ReviewCache,
     storage_dir: PathBuf,
     source_cookies: Arc<RwLock<HashMap<String, String>>>,
     rate_states: Arc<RwLock<HashMap<String, RateState>>>,
+    /// 最近抓到的章节正文响应体，用于求值评论 URL（见 `chapter_source_body`）。
+    recent_bodies: Arc<RwLock<HashMap<String, RecentBody>>>,
     /// 单用户书架上限（0 = 不限），来自 `USER_BOOK_LIMIT`。
     user_book_limit: u32,
     /// 封面缓存目录的容量上限（0 = 不限），来自 `CACHE_COVER_LIMIT_BYTES`。
     cover_cache_limit: u64,
+}
+
+/// 内存里暂存的章节正文响应体。
+struct RecentBody {
+    body: String,
+    url: String,
+    stored_at: Instant,
+}
+
+/// 评论缓存的默认有效期（7 天）与单用户容量上限（64 MiB）。
+const DEFAULT_REVIEW_CACHE_TTL_SECS: u64 = 7 * 24 * 60 * 60;
+const DEFAULT_REVIEW_CACHE_BYTES: u64 = 64 * 1024 * 1024;
+/// 评论缓存在 `<storage>/cache` 下的子树名。
+///
+/// 它与 `<cache>/<ns>/<book_key>/` 是两棵独立的树，所以 `FileCache::users()`
+/// 会把 `reviews` 当成一个用户命名空间列出来——`purge_all_cache` 因此要跳过它。
+const REVIEW_CACHE_DIR: &str = "reviews";
+/// 评论每页条数；站点通常另有上限（番茄是 50）。
+pub const REVIEW_PAGE_SIZE: i32 = 20;
+/// 正文响应体内存暂存的条数、单条上限与存活时间。
+const RECENT_BODY_LIMIT: usize = 32;
+const RECENT_BODY_MAX_BYTES: usize = 1024 * 1024;
+const RECENT_BODY_TTL: Duration = Duration::from_secs(600);
+
+/// 按字符截断，用于段落定位锚点。
+fn truncate_chars(text: &str, limit: usize) -> String {
+    if text.chars().count() <= limit {
+        return text.to_string();
+    }
+    text.chars().take(limit).collect()
 }
 
 #[derive(Clone, Default)]
@@ -80,6 +115,7 @@ pub enum CacheKind {
     Cover,
     ChapterList,
     SearchResults,
+    Review,
 }
 
 /// 各层缓存被删除的文件数。
@@ -90,6 +126,7 @@ pub struct CachePurgeResult {
     pub cover: u64,
     pub chapter_list: u64,
     pub search_results: u64,
+    pub review: u64,
     pub invalid_sources: u64,
 }
 
@@ -99,6 +136,7 @@ impl CachePurgeResult {
         self.cover += other.cover;
         self.chapter_list += other.chapter_list;
         self.search_results += other.search_results;
+        self.review += other.review;
         self.invalid_sources += other.invalid_sources;
     }
 }
@@ -125,16 +163,33 @@ where
 impl BookService {
     pub fn new(http: HttpClient, parser: RuleEngine, cache: FileCache, storage_dir: &str) -> Self {
         let storage_dir = PathBuf::from(storage_dir);
+        let review_cache = ReviewCache::new(
+            storage_dir.join("cache").join("reviews"),
+            DEFAULT_REVIEW_CACHE_TTL_SECS,
+            DEFAULT_REVIEW_CACHE_BYTES,
+        );
         Self {
             http,
             parser,
             cache,
+            review_cache,
             storage_dir,
             source_cookies: Arc::new(RwLock::new(HashMap::new())),
             rate_states: Arc::new(RwLock::new(HashMap::new())),
+            recent_bodies: Arc::new(RwLock::new(HashMap::new())),
             user_book_limit: 0,
             cover_cache_limit: DEFAULT_COVER_CACHE_BYTES,
         }
+    }
+
+    /// 设置评论缓存的有效期与单用户容量上限（0 = 不过期 / 不限制）。
+    pub fn with_review_cache(mut self, ttl_secs: u64, max_user_bytes: u64) -> Self {
+        self.review_cache = ReviewCache::new(
+            self.storage_dir.join("cache").join("reviews"),
+            ttl_secs,
+            max_user_bytes,
+        );
+        self
     }
 
     /// 设置单用户书架上限（`USER_BOOK_LIMIT`；0 = 不限）。
@@ -962,6 +1017,12 @@ impl BookService {
                 .fetch_source_url(user_ns, source, &current_url, &source.book_source_url)
                 .await?;
             tracing::debug!("get_content fetch done, body len={}", res.body.len());
+            // 评论地址要先拿到正文响应才能求值（见 `chapter_source_body`），
+            // 这里顺手把首屏响应体留在内存里，省掉打开评论时的第二次抓取。
+            if all_content.is_empty() {
+                self.remember_body(user_ns, chapter_url, &res.body, &res.url)
+                    .await;
+            }
             let content = self
                 .parse_response_blocking(user_ns, source, &res, |p, s, b, u| p.content(s, b, u))
                 .await?;
@@ -1013,6 +1074,282 @@ impl BookService {
             .map_err(AppError::Internal)
     }
 
+    // ── 评论（章评 / 段评） ─────────────────────────────────────────────
+
+    /// 取章节正文响应体，用于求值评论 URL。
+    ///
+    /// 评论地址藏在正文响应里（见 `RuleEngine::review_url`），所以拉评论前
+    /// 必须先有正文响应。正文刚被抓过时直接命中内存暂存，不重复抓取。
+    async fn chapter_source_body(
+        &self,
+        user_ns: &str,
+        source: &BookSource,
+        chapter_url: &str,
+    ) -> Result<(String, String), AppError> {
+        if let Some((body, url)) = self.take_recent_body(user_ns, chapter_url).await {
+            return Ok((body, url));
+        }
+        let res = self
+            .fetch_source_url(user_ns, source, chapter_url, &source.book_source_url)
+            .await?;
+        self.remember_body(user_ns, chapter_url, &res.body, &res.url)
+            .await;
+        Ok((res.body, res.url))
+    }
+
+    /// 把章节正文响应体暂存在内存里（有数量与时间上限，丢了就重抓）。
+    async fn remember_body(&self, user_ns: &str, chapter_url: &str, body: &str, url: &str) {
+        // 大页面不进内存：评论规则本来就用在小接口上，没必要为整页 HTML 占几十 MB
+        if body.is_empty() || body.len() > RECENT_BODY_MAX_BYTES {
+            return;
+        }
+        let key = format!("{user_ns}|{chapter_url}");
+        let mut bodies = self.recent_bodies.write().await;
+        if !bodies.contains_key(&key) && bodies.len() >= RECENT_BODY_LIMIT {
+            let now = Instant::now();
+            bodies.retain(|_, entry| now.duration_since(entry.stored_at) < RECENT_BODY_TTL);
+            if bodies.len() >= RECENT_BODY_LIMIT {
+                bodies.clear();
+            }
+        }
+        bodies.insert(
+            key,
+            RecentBody {
+                body: body.to_string(),
+                url: url.to_string(),
+                stored_at: Instant::now(),
+            },
+        );
+    }
+
+    async fn take_recent_body(&self, user_ns: &str, chapter_url: &str) -> Option<(String, String)> {
+        let key = format!("{user_ns}|{chapter_url}");
+        let bodies = self.recent_bodies.read().await;
+        let entry = bodies.get(&key)?;
+        if entry.stored_at.elapsed() >= RECENT_BODY_TTL {
+            return None;
+        }
+        Some((entry.body.clone(), entry.url.clone()))
+    }
+
+    /// 评论 URL 模板可用的占位符。
+    fn review_ctx(
+        &self,
+        book_url: &str,
+        chapter_url: &str,
+        page: i32,
+        count: i32,
+        para_index: Option<i32>,
+    ) -> HashMap<String, String> {
+        let mut ctx = HashMap::new();
+        ctx.insert("page".to_string(), page.max(1).to_string());
+        ctx.insert("count".to_string(), count.to_string());
+        ctx.insert("bookUrl".to_string(), book_url.to_string());
+        ctx.insert("chapterUrl".to_string(), chapter_url.to_string());
+        if let Some(index) = para_index {
+            ctx.insert("paraIndex".to_string(), index.to_string());
+        }
+        ctx
+    }
+
+    /// 章评：某一章的评论列表。
+    #[allow(clippy::too_many_arguments)]
+    pub async fn get_chapter_reviews(
+        &self,
+        user_ns: &str,
+        source: &BookSource,
+        book_url: &str,
+        chapter_url: &str,
+        page: i32,
+        count: i32,
+        refresh: bool,
+    ) -> Result<ReviewResponse<ReviewPage>, AppError> {
+        if !self.parser.has_chapter_review_rule(source) {
+            return Ok(ReviewResponse::new(false, ReviewPage::empty(page)));
+        }
+        let book_key = md5_hex(book_url);
+        let cache_key = format!("chapter|{chapter_url}|{page}|{count}");
+        if !refresh {
+            if let Some(cached) = self.load_review_cache(user_ns, &book_key, &cache_key).await {
+                return Ok(ReviewResponse::new(true, cached));
+            }
+        }
+        let (body, base) = self
+            .chapter_source_body(user_ns, source, chapter_url)
+            .await?;
+        let ctx = self.review_ctx(book_url, chapter_url, page, count, None);
+        let url = self
+            .parser
+            .chapter_review_url(source, &body, &base, &ctx)
+            .ok_or_else(|| AppError::BadRequest("书源的章评地址解析失败".to_string()))?;
+        let result = self
+            .fetch_review_page(user_ns, source, &url, page, |p, s, b, u| {
+                p.chapter_reviews(s, b, u)
+            })
+            .await?;
+        self.store_review_cache(user_ns, &book_key, &cache_key, &result)
+            .await;
+        Ok(ReviewResponse::new(true, result))
+    }
+
+    /// 段评概览：本章哪些段落有段评、各有多少条。
+    pub async fn get_para_review_index(
+        &self,
+        user_ns: &str,
+        source: &BookSource,
+        book_url: &str,
+        chapter_url: &str,
+        refresh: bool,
+    ) -> Result<ReviewResponse<ParaReviewIndex>, AppError> {
+        if !self.parser.has_para_review_rule(source) {
+            return Ok(ReviewResponse::new(false, ParaReviewIndex::default()));
+        }
+        let book_key = md5_hex(book_url);
+        let cache_key = format!("para-index|{chapter_url}");
+        if !refresh {
+            if let Some(cached) = self.load_review_cache(user_ns, &book_key, &cache_key).await {
+                return Ok(ReviewResponse::new(true, cached));
+            }
+        }
+        let (body, base) = self
+            .chapter_source_body(user_ns, source, chapter_url)
+            .await?;
+        let ctx = self.review_ctx(book_url, chapter_url, 1, REVIEW_PAGE_SIZE, None);
+        let url = self
+            .parser
+            .para_review_index_url(source, &body, &base, &ctx)
+            .ok_or_else(|| AppError::BadRequest("书源的段评概览地址解析失败".to_string()))?;
+        let res = self
+            .fetch_source_url(user_ns, source, &url, &source.book_source_url)
+            .await?;
+        let mut index = self
+            .parse_response_blocking(user_ns, source, &res, |p, s, b, u| ParaReviewIndex {
+                paras: p.para_review_index(s, b, u),
+            })
+            .await?;
+        // 段号会因用户的书源替换规则、繁简转换而漂移，补上段落原文做兜底定位。
+        self.fill_para_texts(source, &body, &base, &mut index.paras);
+        self.store_review_cache(user_ns, &book_key, &cache_key, &index)
+            .await;
+        Ok(ReviewResponse::new(true, index))
+    }
+
+    /// 段评：某一段的评论列表。
+    #[allow(clippy::too_many_arguments)]
+    pub async fn get_para_reviews(
+        &self,
+        user_ns: &str,
+        source: &BookSource,
+        book_url: &str,
+        chapter_url: &str,
+        para_index: i32,
+        page: i32,
+        count: i32,
+        refresh: bool,
+    ) -> Result<ReviewResponse<ReviewPage>, AppError> {
+        if !self.parser.has_para_review_rule(source) {
+            return Ok(ReviewResponse::new(false, ReviewPage::empty(page)));
+        }
+        let book_key = md5_hex(book_url);
+        let cache_key = format!("para|{chapter_url}|{para_index}|{page}|{count}");
+        if !refresh {
+            if let Some(cached) = self.load_review_cache(user_ns, &book_key, &cache_key).await {
+                return Ok(ReviewResponse::new(true, cached));
+            }
+        }
+        let (body, base) = self
+            .chapter_source_body(user_ns, source, chapter_url)
+            .await?;
+        let ctx = self.review_ctx(book_url, chapter_url, page, count, Some(para_index));
+        let url = self
+            .parser
+            .para_review_url(source, &body, &base, &ctx)
+            .ok_or_else(|| AppError::BadRequest("书源的段评地址解析失败".to_string()))?;
+        let result = self
+            .fetch_review_page(user_ns, source, &url, page, |p, s, b, u| {
+                p.para_reviews(s, b, u)
+            })
+            .await?;
+        self.store_review_cache(user_ns, &book_key, &cache_key, &result)
+            .await;
+        Ok(ReviewResponse::new(true, result))
+    }
+
+    async fn fetch_review_page<F>(
+        &self,
+        user_ns: &str,
+        source: &BookSource,
+        url: &str,
+        page: i32,
+        parse: F,
+    ) -> Result<ReviewPage, AppError>
+    where
+        F: FnOnce(&RuleEngine, &BookSource, &str, &str) -> ReviewPage + Send + 'static,
+    {
+        let res = self
+            .fetch_source_url(user_ns, source, url, &source.book_source_url)
+            .await?;
+        let mut parsed = self
+            .parse_response_blocking(user_ns, source, &res, parse)
+            .await?;
+        parsed.page = page;
+        Ok(parsed)
+    }
+
+    /// 用正文规则取出正文并按行切分，给段评补上「这一段是什么」。
+    fn fill_para_texts(
+        &self,
+        source: &BookSource,
+        body: &str,
+        base_url: &str,
+        paras: &mut [ParaReviewCount],
+    ) {
+        if paras.is_empty() {
+            return;
+        }
+        let text = self.parser.content(source, body, base_url);
+        if text.is_empty() {
+            return;
+        }
+        let lines: Vec<&str> = text.split('\n').collect();
+        for para in paras.iter_mut() {
+            let Ok(index) = usize::try_from(para.para_index) else {
+                continue;
+            };
+            if let Some(line) = lines.get(index) {
+                para.text = truncate_chars(line.trim(), 60);
+            }
+        }
+    }
+
+    async fn load_review_cache<T: serde::de::DeserializeOwned>(
+        &self,
+        user_ns: &str,
+        book_key: &str,
+        key: &str,
+    ) -> Option<T> {
+        let raw = self
+            .review_cache
+            .get(user_ns, book_key, key)
+            .await
+            .ok()
+            .flatten()?;
+        serde_json::from_str(&raw).ok()
+    }
+
+    async fn store_review_cache<T: serde::Serialize>(
+        &self,
+        user_ns: &str,
+        book_key: &str,
+        key: &str,
+        value: &T,
+    ) {
+        let Ok(raw) = serde_json::to_string(value) else {
+            return;
+        };
+        let _ = self.review_cache.put(user_ns, book_key, key, &raw).await;
+    }
+
     /// 封面缓存目录：`<storage>/cache/<ns>/cover`。
     ///
     /// 封面是匿名资源，抓取时固定用 `public` 命名空间，因此实际只有
@@ -1060,6 +1397,11 @@ impl BookService {
             invalid_sources: remove_file_counting(&self.invalid_sources_path(user_ns))
                 .await
                 .map_err(internal_error)?,
+            review: self
+                .review_cache
+                .remove_user(user_ns)
+                .await
+                .map_err(internal_error)?,
             content: 0,
         };
         // 此刻 `<cache>/<ns>` 下只剩正文的 book_key 目录
@@ -1075,8 +1417,18 @@ impl BookService {
     pub async fn purge_all_cache(&self) -> Result<CachePurgeResult, AppError> {
         let mut total = CachePurgeResult::default();
         for user_ns in self.cache.users().await {
+            // `<cache>/reviews` 是评论缓存的独立子树，不是用户命名空间，
+            // 它的用户清单由 review_cache 自己维护（见下面的 remove_all）。
+            if user_ns == REVIEW_CACHE_DIR {
+                continue;
+            }
             total.add(self.purge_user_cache(&user_ns).await?);
         }
+        total.review = self
+            .review_cache
+            .remove_all()
+            .await
+            .map_err(internal_error)?;
         // 收尾：删掉可能残留的空目录（含已清空的 invalid_book_sources）
         let _ = fs::remove_dir_all(self.storage_dir.join("cache")).await;
         Ok(total)
@@ -1113,6 +1465,13 @@ impl BookService {
                         .await
                         .map_err(internal_error)?
             }
+            CacheKind::Review => {
+                result.review = self
+                    .review_cache
+                    .remove_user(user_ns)
+                    .await
+                    .map_err(internal_error)?
+            }
         }
         Ok(result)
     }
@@ -1147,6 +1506,11 @@ impl BookService {
         {
             result.search_results = 1;
         }
+        result.review = self
+            .review_cache
+            .remove_book(user_ns, &md5_hex(book_url))
+            .await
+            .map_err(internal_error)?;
         Ok(result)
     }
 
@@ -1169,11 +1533,16 @@ impl BookService {
             Some(ns) => dir_usage(&self.book_sources_cache_dir(ns), usize::MAX).await,
             None => self.data_subdir_usage("book_sources").await,
         };
+        let review = match user_ns {
+            Some(ns) => self.review_cache.user_usage(ns).await,
+            None => self.review_cache.total_usage().await,
+        };
         Ok(serde_json::json!({
             "content": content,
             "cover": cover,
             "chapterList": chapter_list,
             "searchResults": search_results,
+            "review": review,
         }))
     }
 

@@ -70,6 +70,8 @@ Reader-Rust 通过**环境变量**配置，支持从 `.env` 文件读取。代�
 |------|--------|------|
 | `CACHE_USER_LIMIT_BYTES` | `536870912`（512 MiB） | 单用户章节正文缓存上限，超出时按修改时间最旧优先淘汰 |
 | `CACHE_COVER_LIMIT_BYTES` | `268435456`（256 MiB） | 封面缓存目录上限 |
+| `REVIEW_CACHE_TTL_SECS` | `604800`（7 天） | 章评 / 段评缓存有效期，`0` 表示不过期 |
+| `REVIEW_CACHE_USER_LIMIT_BYTES` | `67108864`（64 MiB） | 单用户评论缓存上限 |
 
 ## 配置格式
 

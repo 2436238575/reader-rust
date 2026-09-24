@@ -1,3 +1,4 @@
+use crate::model::review::{ParaReviewCount, ReviewItem, ReviewPage, ReviewReply};
 use crate::model::rule::{BookInfoRule, SearchRule, TocRule};
 use crate::model::{
     book::Book, book_chapter::BookChapter, book_source::BookSource, search::SearchBook,
@@ -850,6 +851,566 @@ impl RuleEngine {
         }
         out
     }
+
+    // ── 评论（章评 / 段评） ─────────────────────────────────────────────
+    //
+    // 与 `nextContentUrl` 同理：评论地址要先拿到**章节正文响应**才知道
+    // （番茄接口的书籍 ID / 章节 ID / 版本号都在正文响应里），所以评论的
+    // URL 规则一律对正文响应求值。
+
+    /// 书源是否声明了章评规则。
+    pub fn has_chapter_review_rule(&self, source: &BookSource) -> bool {
+        let Some(rule) = source.rule_review.as_ref() else {
+            return false;
+        };
+        has_rule(rule.review_url.as_deref()) && has_rule(rule.list_rule.as_deref())
+    }
+
+    /// 书源是否声明了段评规则。
+    pub fn has_para_review_rule(&self, source: &BookSource) -> bool {
+        let Some(rule) = source.rule_para_review.as_ref() else {
+            return false;
+        };
+        has_rule(rule.index_url.as_deref()) && has_rule(rule.index_list_rule.as_deref())
+    }
+
+    /// 求值章评列表地址。
+    pub fn chapter_review_url(
+        &self,
+        source: &BookSource,
+        body: &str,
+        base_url: &str,
+        ctx: &HashMap<String, String>,
+    ) -> Option<String> {
+        let rule = source.rule_review.as_ref()?.review_url.clone()?;
+        self.review_url(&rule, body, base_url, ctx)
+    }
+
+    /// 求值段评概览地址。
+    pub fn para_review_index_url(
+        &self,
+        source: &BookSource,
+        body: &str,
+        base_url: &str,
+        ctx: &HashMap<String, String>,
+    ) -> Option<String> {
+        let rule = source.rule_para_review.as_ref()?.index_url.clone()?;
+        self.review_url(&rule, body, base_url, ctx)
+    }
+
+    /// 求值某一段的段评列表地址（模板里可用 `{{paraIndex}}`）。
+    pub fn para_review_url(
+        &self,
+        source: &BookSource,
+        body: &str,
+        base_url: &str,
+        ctx: &HashMap<String, String>,
+    ) -> Option<String> {
+        let rule = source.rule_para_review.as_ref()?.review_url.clone()?;
+        self.review_url(&rule, body, base_url, ctx)
+    }
+
+    /// 求值一条评论 URL 规则。
+    ///
+    /// 规则按模板处理：`{{$.a.b}}` 取 JSONPath、`{{表达式}}` 走 JS，
+    /// `ctx` 里的键（`page` / `count` / `paraIndex` 等）可直接用
+    /// `{{page}}` 引用。规则本身也可以写成纯 JSONPath。
+    pub fn review_url(
+        &self,
+        rule: &str,
+        body: &str,
+        base_url: &str,
+        ctx: &HashMap<String, String>,
+    ) -> Option<String> {
+        let rule = rule.trim();
+        if rule.is_empty() {
+            return None;
+        }
+        let text = if let Ok(v) = serde_json::from_str::<Value>(body) {
+            let interpolated = interpolate_json_templates(rule, &v, base_url, ctx);
+            let pure = interpolated.trim();
+            if pure.starts_with('$') {
+                pick_json_field(&v, Some(pure)).unwrap_or_default()
+            } else {
+                interpolated
+            }
+        } else {
+            interpolate_common_templates(rule, body, base_url, ctx)
+        };
+        let text = text.trim();
+        if text.is_empty() {
+            return None;
+        }
+        Some(resolve_url(base_url, text))
+    }
+
+    /// 解析章评列表。
+    pub fn chapter_reviews(&self, source: &BookSource, body: &str, base_url: &str) -> ReviewPage {
+        let Some(rule) = source.rule_review.as_ref() else {
+            return ReviewPage::default();
+        };
+        let fields = ReviewFields {
+            list: rule.list_rule.as_deref().unwrap_or(""),
+            id: rule.id_rule.as_deref(),
+            name: rule.name_rule.as_deref(),
+            avatar: rule.avatar_rule.as_deref(),
+            content: rule.content_rule.as_deref(),
+            time: rule.post_time_rule.as_deref(),
+            digg: rule.digg_rule.as_deref(),
+            reply_count: rule.reply_count_rule.as_deref(),
+            total: rule.total_rule.as_deref(),
+            has_more: rule.has_more_rule.as_deref(),
+            reply_list: rule.reply_list_rule.as_deref(),
+            reply_name: rule.reply_name_rule.as_deref(),
+            reply_content: rule.reply_content_rule.as_deref(),
+            reply_time: rule.reply_post_time_rule.as_deref(),
+            reply_to: rule.reply_to_rule.as_deref(),
+            image: rule.image_rule.as_deref(),
+        };
+        with_js_lib(source.js_lib.as_deref(), || {
+            parse_review_page(&fields, body, base_url)
+        })
+    }
+
+    /// 解析某一段的段评列表。
+    pub fn para_reviews(&self, source: &BookSource, body: &str, base_url: &str) -> ReviewPage {
+        let Some(rule) = source.rule_para_review.as_ref() else {
+            return ReviewPage::default();
+        };
+        let fields = ReviewFields {
+            list: rule.list_rule.as_deref().unwrap_or(""),
+            id: rule.id_rule.as_deref(),
+            name: rule.name_rule.as_deref(),
+            avatar: rule.avatar_rule.as_deref(),
+            content: rule.content_rule.as_deref(),
+            time: rule.post_time_rule.as_deref(),
+            digg: rule.digg_rule.as_deref(),
+            reply_count: rule.reply_count_rule.as_deref(),
+            total: rule.total_rule.as_deref(),
+            has_more: rule.has_more_rule.as_deref(),
+            reply_list: rule.reply_list_rule.as_deref(),
+            reply_name: rule.reply_name_rule.as_deref(),
+            reply_content: rule.reply_content_rule.as_deref(),
+            reply_time: rule.reply_post_time_rule.as_deref(),
+            reply_to: rule.reply_to_rule.as_deref(),
+            image: rule.image_rule.as_deref(),
+        };
+        with_js_lib(source.js_lib.as_deref(), || {
+            parse_review_page(&fields, body, base_url)
+        })
+    }
+
+    /// 解析段评概览：哪些段落有评论、各有多少条。
+    ///
+    /// 概览在多数实现里是「段号 → 该段数据」的对象（番茄的 `idea_data`
+    /// 就是），因此按对象键取段号；规则若直接选成数组则按顺序编号。
+    pub fn para_review_index(
+        &self,
+        source: &BookSource,
+        body: &str,
+        base_url: &str,
+    ) -> Vec<ParaReviewCount> {
+        let Some(rule) = source.rule_para_review.as_ref() else {
+            return Vec::new();
+        };
+        let list_rule = rule.index_list_rule.as_deref().unwrap_or("").trim();
+        if list_rule.is_empty() {
+            return Vec::new();
+        }
+        with_js_lib(source.js_lib.as_deref(), || {
+            let Ok(v) = serde_json::from_str::<Value>(body) else {
+                return Vec::new();
+            };
+            let mut ctx = HashMap::new();
+            let count_rule = rule.index_count_rule.as_deref().unwrap_or("");
+            let mut paras: Vec<ParaReviewCount> = Vec::new();
+            for node in jsonpath::jsonpath_query(&v, strip_mode_prefix(list_rule)) {
+                let entries: Vec<(i32, &Value)> = match &node {
+                    // 段号按定义是「正文行号，从 0 开始」；番茄的 idea_data 里
+                    // 另有 -1 这种整章聚合桶，不属于任何段落，直接丢掉。
+                    Value::Object(map) => map
+                        .iter()
+                        .filter_map(|(key, value)| {
+                            let index = key.trim().parse::<i32>().ok()?;
+                            (index >= 0).then_some((index, value))
+                        })
+                        .collect(),
+                    Value::Array(items) => items
+                        .iter()
+                        .enumerate()
+                        .map(|(index, value)| (index as i32, value))
+                        .collect(),
+                    _ => Vec::new(),
+                };
+                for (para_index, value) in entries {
+                    let count = eval_field_json_with_ctx(count_rule, value, base_url, &mut ctx)
+                        .map(|text| parse_count_text(&text))
+                        .unwrap_or(0);
+                    if count <= 0 {
+                        continue;
+                    }
+                    paras.push(ParaReviewCount {
+                        para_index,
+                        count,
+                        text: String::new(),
+                    });
+                }
+            }
+            paras.sort_by_key(|p| p.para_index);
+            paras
+        })
+    }
+}
+
+/// 评论解析所需的一组字段规则。
+struct ReviewFields<'a> {
+    list: &'a str,
+    id: Option<&'a str>,
+    name: Option<&'a str>,
+    avatar: Option<&'a str>,
+    content: Option<&'a str>,
+    time: Option<&'a str>,
+    digg: Option<&'a str>,
+    reply_count: Option<&'a str>,
+    total: Option<&'a str>,
+    has_more: Option<&'a str>,
+    reply_list: Option<&'a str>,
+    reply_name: Option<&'a str>,
+    reply_content: Option<&'a str>,
+    reply_time: Option<&'a str>,
+    reply_to: Option<&'a str>,
+    image: Option<&'a str>,
+}
+
+fn has_rule(rule: Option<&str>) -> bool {
+    rule.map(|s| !s.trim().is_empty()).unwrap_or(false)
+}
+
+/// 从「216」「216 赞」「1.2万」这类文本里取出数字。
+fn parse_count_text(text: &str) -> i64 {
+    let trimmed = text.trim();
+    if trimmed.is_empty() {
+        return 0;
+    }
+    let digits: String = trimmed
+        .chars()
+        .take_while(|c| c.is_ascii_digit() || *c == '.')
+        .collect();
+    let Ok(base) = digits.parse::<f64>() else {
+        return 0;
+    };
+    let value = if trimmed.contains('万') {
+        base * 10_000.0
+    } else {
+        base
+    };
+    value as i64
+}
+
+fn parse_review_page(fields: &ReviewFields<'_>, body: &str, base_url: &str) -> ReviewPage {
+    if fields.list.trim().is_empty() {
+        return ReviewPage::default();
+    }
+    match serde_json::from_str::<Value>(body) {
+        Ok(v) => parse_review_page_json(fields, &v, base_url),
+        Err(_) => parse_review_page_html(fields, body, base_url),
+    }
+}
+
+fn parse_review_page_json(fields: &ReviewFields<'_>, v: &Value, base_url: &str) -> ReviewPage {
+    let mut ctx = HashMap::new();
+    let (list_rule, reverse) = normalize_list_rule(fields.list);
+    let nodes = jsonpath::jsonpath_query(v, strip_mode_prefix(list_rule));
+    let mut items = Vec::with_capacity(nodes.len());
+    for node in nodes.iter() {
+        let content =
+            eval_field_json_with_ctx(fields.content.unwrap_or(""), node, base_url, &mut ctx)
+                .unwrap_or_default();
+        if content.trim().is_empty() {
+            continue;
+        }
+        let replies = fields
+            .reply_list
+            .filter(|rule| has_rule(Some(rule)))
+            .map(|rule| {
+                jsonpath::jsonpath_query(node, strip_mode_prefix(rule.trim()))
+                    .iter()
+                    .map(|reply| ReviewReply {
+                        name: eval_field_json_with_ctx(
+                            fields.reply_name.unwrap_or(""),
+                            reply,
+                            base_url,
+                            &mut ctx,
+                        )
+                        .unwrap_or_default(),
+                        content: eval_field_json_with_ctx(
+                            fields.reply_content.unwrap_or(""),
+                            reply,
+                            base_url,
+                            &mut ctx,
+                        )
+                        .unwrap_or_default(),
+                        time: eval_field_json_with_ctx(
+                            fields.reply_time.unwrap_or(""),
+                            reply,
+                            base_url,
+                            &mut ctx,
+                        )
+                        .unwrap_or_default(),
+                        reply_to: eval_field_json_with_ctx(
+                            fields.reply_to.unwrap_or(""),
+                            reply,
+                            base_url,
+                            &mut ctx,
+                        )
+                        .unwrap_or_default(),
+                    })
+                    .filter(|reply| !reply.content.trim().is_empty())
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+        items.push(ReviewItem {
+            id: eval_field_json_with_ctx(fields.id.unwrap_or(""), node, base_url, &mut ctx)
+                .unwrap_or_default(),
+            name: eval_field_json_with_ctx(fields.name.unwrap_or(""), node, base_url, &mut ctx)
+                .unwrap_or_default(),
+            avatar: eval_field_json_with_ctx(fields.avatar.unwrap_or(""), node, base_url, &mut ctx)
+                .map(|url| resolve_url(base_url, &url))
+                .unwrap_or_default(),
+            content,
+            time: eval_field_json_with_ctx(fields.time.unwrap_or(""), node, base_url, &mut ctx)
+                .unwrap_or_default(),
+            digg: eval_field_json_with_ctx(fields.digg.unwrap_or(""), node, base_url, &mut ctx)
+                .map(|text| parse_count_text(&text))
+                .unwrap_or(0),
+            reply_count: eval_field_json_with_ctx(
+                fields.reply_count.unwrap_or(""),
+                node,
+                base_url,
+                &mut ctx,
+            )
+            .map(|text| parse_count_text(&text))
+            .unwrap_or(0),
+            replies,
+            images: eval_image_list_json(fields.image.unwrap_or(""), node, base_url),
+        });
+    }
+    if reverse {
+        items.reverse();
+    }
+    // 总数与「还有下一页」取自整个响应，不是单条评论。
+    let total = eval_field_json_with_ctx(fields.total.unwrap_or(""), v, base_url, &mut ctx)
+        .map(|text| parse_count_text(&text))
+        .unwrap_or(items.len() as i64);
+    let has_more = eval_field_json_with_ctx(fields.has_more.unwrap_or(""), v, base_url, &mut ctx)
+        .map(is_truthy)
+        .unwrap_or(false);
+    ReviewPage {
+        total,
+        has_more,
+        page: 0,
+        items,
+    }
+}
+
+fn parse_review_page_html(fields: &ReviewFields<'_>, body: &str, base_url: &str) -> ReviewPage {
+    let doc = html::parse_document(body);
+    let (list_rule, reverse) = normalize_list_rule(fields.list);
+    let nodes = html::select_list(&doc, strip_mode_prefix(list_rule));
+    let mut ctx = HashMap::new();
+    let mut items = Vec::with_capacity(nodes.len());
+    for node in nodes.iter() {
+        let content =
+            eval_field_html_with_ctx(fields.content.unwrap_or(""), node, base_url, &mut ctx)
+                .unwrap_or_default();
+        if content.trim().is_empty() {
+            continue;
+        }
+        let replies = fields
+            .reply_list
+            .filter(|rule| has_rule(Some(rule)))
+            .map(|rule| {
+                select_child_elements(node, strip_mode_prefix(rule.trim()))
+                    .iter()
+                    .map(|reply| ReviewReply {
+                        name: eval_field_html_with_ctx(
+                            fields.reply_name.unwrap_or(""),
+                            reply,
+                            base_url,
+                            &mut ctx,
+                        )
+                        .unwrap_or_default(),
+                        content: eval_field_html_with_ctx(
+                            fields.reply_content.unwrap_or(""),
+                            reply,
+                            base_url,
+                            &mut ctx,
+                        )
+                        .unwrap_or_default(),
+                        time: eval_field_html_with_ctx(
+                            fields.reply_time.unwrap_or(""),
+                            reply,
+                            base_url,
+                            &mut ctx,
+                        )
+                        .unwrap_or_default(),
+                        reply_to: eval_field_html_with_ctx(
+                            fields.reply_to.unwrap_or(""),
+                            reply,
+                            base_url,
+                            &mut ctx,
+                        )
+                        .unwrap_or_default(),
+                    })
+                    .filter(|reply| !reply.content.trim().is_empty())
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+        items.push(ReviewItem {
+            id: eval_field_html_with_ctx(fields.id.unwrap_or(""), node, base_url, &mut ctx)
+                .unwrap_or_default(),
+            name: eval_field_html_with_ctx(fields.name.unwrap_or(""), node, base_url, &mut ctx)
+                .unwrap_or_default(),
+            avatar: eval_field_html_with_ctx(fields.avatar.unwrap_or(""), node, base_url, &mut ctx)
+                .map(|url| resolve_url(base_url, &url))
+                .unwrap_or_default(),
+            content,
+            time: eval_field_html_with_ctx(fields.time.unwrap_or(""), node, base_url, &mut ctx)
+                .unwrap_or_default(),
+            digg: eval_field_html_with_ctx(fields.digg.unwrap_or(""), node, base_url, &mut ctx)
+                .map(|text| parse_count_text(&text))
+                .unwrap_or(0),
+            reply_count: eval_field_html_with_ctx(
+                fields.reply_count.unwrap_or(""),
+                node,
+                base_url,
+                &mut ctx,
+            )
+            .map(|text| parse_count_text(&text))
+            .unwrap_or(0),
+            replies,
+            images: eval_image_list_html(fields.image.unwrap_or(""), node, base_url),
+        });
+    }
+    if reverse {
+        items.reverse();
+    }
+    let total = eval_field_html_doc_with_ctx(fields.total.unwrap_or(""), &doc, base_url, &mut ctx)
+        .map(|text| parse_count_text(&text))
+        .unwrap_or(items.len() as i64);
+    let has_more =
+        eval_field_html_doc_with_ctx(fields.has_more.unwrap_or(""), &doc, base_url, &mut ctx)
+            .map(is_truthy)
+            .unwrap_or(false);
+    ReviewPage {
+        total,
+        has_more,
+        page: 0,
+        items,
+    }
+}
+
+/// 在元素内部按 CSS 选择器取子元素。
+///
+/// 文档级的列表规则支持 `&&` 等组合符，元素级这里只认单条 CSS 选择器——
+/// 内联回复的规则实际都很简单。
+fn select_child_elements<'a>(
+    el: &scraper::ElementRef<'a>,
+    selector: &str,
+) -> Vec<scraper::ElementRef<'a>> {
+    let selector = selector.split("@@").next().unwrap_or(selector).trim();
+    let Ok(parsed) = scraper::Selector::parse(selector) else {
+        return Vec::new();
+    };
+    el.select(&parsed).collect()
+}
+
+/// 求值「图片列表」规则。
+///
+/// 与普通字段规则不同，图片天然是多个值：站点常给同一张图的多个变体
+/// （番茄同时给 HEIC 和 JPEG），所以这里返回列表而不是单个字符串。
+/// 支持三种写法：
+///
+/// - JSONPath 列表：`$.image_url[*]`
+/// - JS：返回多行文本，逐行当作一个地址
+/// - 普通字段名：该字段是数组就展开，是字符串就取一个
+fn eval_image_list_json(rule: &str, node: &Value, base_url: &str) -> Vec<String> {
+    let rule = rule.trim();
+    if rule.is_empty() {
+        return Vec::new();
+    }
+    let (pure_rule, _) = split_legado_regex(rule);
+    let (pure, js) = extract_js(&pure_rule);
+    // 与 `content` 等入口保持一致：裸 `js:` 前缀同样算 JS 规则
+    let (pure, js) = match js {
+        Some(script) => (pure, Some(script)),
+        None if pure.trim_start().starts_with("js:") => ("", Some(strip_mode_prefix(pure))),
+        None => (pure, None),
+    };
+
+    let values: Vec<Value> = if let Some(script) = js {
+        eval_js(
+            script,
+            &serde_json::to_string(node).unwrap_or_default(),
+            base_url,
+        )
+        .map(|out| {
+            out.lines()
+                .map(|line| Value::String(line.trim().to_string()))
+                .collect()
+        })
+        .unwrap_or_default()
+    } else if pure.trim_start().starts_with('$') {
+        jsonpath::jsonpath_query(node, pure.trim())
+    } else {
+        match node.get(pure.trim()) {
+            Some(Value::Array(items)) => items.clone(),
+            Some(other) => vec![other.clone()],
+            None => Vec::new(),
+        }
+    };
+
+    values
+        .iter()
+        .filter_map(jsonpath::value_to_string)
+        .map(|url| url.trim().to_string())
+        .filter(|url| !url.is_empty())
+        .map(|url| resolve_url(base_url, &url))
+        .collect()
+}
+
+/// 求值「图片列表」规则（HTML 分支）。
+///
+/// 规则写成 `选择器@属性`（如 `img@src`、`.cover img@data-src`），
+/// 省略 `@属性` 时默认取 `src`。
+fn eval_image_list_html(rule: &str, el: &scraper::ElementRef, base_url: &str) -> Vec<String> {
+    let rule = rule.trim();
+    if rule.is_empty() {
+        return Vec::new();
+    }
+    let (selector, attr) = match rule.split_once('@') {
+        Some((selector, attr)) if !attr.trim().is_empty() => (selector.trim(), attr.trim()),
+        _ => (rule, "src"),
+    };
+    let attr = attr.strip_prefix("img@").unwrap_or(attr).trim();
+    select_child_elements(el, selector)
+        .iter()
+        .filter_map(|node| {
+            node.value()
+                .attr(attr)
+                .map(str::to_string)
+                // 选中的是容器时，退一步找它内部的 img
+                .or_else(|| {
+                    select_child_elements(node, "img")
+                        .first()
+                        .and_then(|img| img.value().attr(attr))
+                        .map(str::to_string)
+                })
+        })
+        .map(|url| url.trim().to_string())
+        .filter(|url| !url.is_empty())
+        .map(|url| resolve_url(base_url, &url))
+        .collect()
 }
 
 fn parse_book_info_html(
@@ -2329,7 +2890,7 @@ fn is_truthy(value: String) -> bool {
 mod tests {
     use super::*;
     use crate::model::book_source::BookSource;
-    use crate::model::rule::{BookInfoRule, SearchRule, TocRule};
+    use crate::model::rule::{BookInfoRule, ParaReviewRule, ReviewRule, SearchRule, TocRule};
 
     #[test]
     fn test_detect_mode() {
@@ -2541,5 +3102,343 @@ mod tests {
         );
         assert_eq!(book.name, "Book-Alias");
         assert_eq!(book.author, "Tester");
+    }
+
+    /// 一份按番茄接口（FQWeb）写的评论规则，用作解析回归的样本。
+    fn fqweb_source() -> BookSource {
+        BookSource {
+            book_source_name: "番茄Web".to_string(),
+            book_source_url: "http://192.168.100.99:9999/".to_string(),
+            rule_review: Some(ReviewRule {
+                review_url: Some(
+                    "comment/item?item_id={{$.data.data.novel_data.item_id}}\
+                     &book_id={{$.data.data.novel_data.book_id}}&page={{page}}&count={{count}}"
+                        .to_string(),
+                ),
+                list_rule: Some("$.data.data.comment[*]".to_string()),
+                total_rule: Some("$.data.data.comment_cnt".to_string()),
+                has_more_rule: Some("$.data.data.has_more".to_string()),
+                id_rule: Some("$.comment_id".to_string()),
+                name_rule: Some("$.user_info.user_name".to_string()),
+                avatar_rule: Some("$.user_info.user_avatar".to_string()),
+                content_rule: Some("$.text".to_string()),
+                post_time_rule: Some("$.create_timestamp".to_string()),
+                digg_rule: Some("$.digg_count".to_string()),
+                reply_count_rule: Some("$.reply_count".to_string()),
+                reply_list_rule: Some("$.reply_list[*]".to_string()),
+                reply_name_rule: Some("$.user_info.user_name".to_string()),
+                reply_content_rule: Some("$.text".to_string()),
+                reply_post_time_rule: Some("$.create_timestamp".to_string()),
+                image_rule: Some("$.image_url[*]".to_string()),
+                ..Default::default()
+            }),
+            rule_para_review: Some(ParaReviewRule {
+                index_url: Some(
+                    "comment/para/list?book_id={{$.data.data.novel_data.book_id}}\
+                     &item_id={{$.data.data.novel_data.item_id}}\
+                     &item_version={{$.data.data.novel_data.version}}"
+                        .to_string(),
+                ),
+                index_list_rule: Some("$.data.data.idea_data".to_string()),
+                index_count_rule: Some("$.idea_count".to_string()),
+                review_url: Some(
+                    "comment/para?book_id={{$.data.data.novel_data.book_id}}\
+                     &item_id={{$.data.data.novel_data.item_id}}\
+                     &para_index={{paraIndex}}\
+                     &item_version={{$.data.data.novel_data.version}}\
+                     &page={{page}}&count={{count}}"
+                        .to_string(),
+                ),
+                list_rule: Some("$.data.data.comments[*]".to_string()),
+                total_rule: Some("$.data.data.count".to_string()),
+                has_more_rule: Some("$.data.data.has_more".to_string()),
+                name_rule: Some("$.user_info.user_name".to_string()),
+                content_rule: Some("$.text".to_string()),
+                digg_rule: Some("$.digg_count".to_string()),
+                reply_count_rule: Some("$.reply_count".to_string()),
+                reply_list_rule: Some("$.reply_list[*]".to_string()),
+                reply_name_rule: Some("$.user_info.user_name".to_string()),
+                reply_content_rule: Some("$.text".to_string()),
+                image_rule: Some("$.image_url[*]".to_string()),
+                ..Default::default()
+            }),
+            ..Default::default()
+        }
+    }
+
+    fn content_body() -> String {
+        json!({
+            "data": {
+                "data": {
+                    "content": "第一段\n第二段",
+                    "novel_data": {
+                        "book_id": "7143038691944959011",
+                        "item_id": "7173615518858150414",
+                        "version": "52754e01aa26a8dbd8c15cbcf7f4f64b_1_v5"
+                    }
+                }
+            }
+        })
+        .to_string()
+    }
+
+    #[test]
+    fn review_url_reads_ids_from_the_content_response() {
+        let engine = RuleEngine::new().unwrap();
+        let source = fqweb_source();
+        let body = content_body();
+        let mut ctx = HashMap::new();
+        ctx.insert("page".to_string(), "2".to_string());
+        ctx.insert("count".to_string(), "20".to_string());
+
+        let url = engine
+            .chapter_review_url(
+                &source,
+                &body,
+                "http://192.168.100.99:9999/content?item_id=1",
+                &ctx,
+            )
+            .unwrap();
+        assert_eq!(
+            url,
+            "http://192.168.100.99:9999/comment/item?item_id=7173615518858150414\
+             &book_id=7143038691944959011&page=2&count=20"
+        );
+
+        ctx.insert("paraIndex".to_string(), "7".to_string());
+        let url = engine
+            .para_review_url(
+                &source,
+                &body,
+                "http://192.168.100.99:9999/content?item_id=1",
+                &ctx,
+            )
+            .unwrap();
+        assert!(url.contains("para_index=7"), "段评 URL 应带上段号: {url}");
+        assert!(url.contains("item_version=52754e01aa26a8dbd8c15cbcf7f4f64b_1_v5"));
+
+        let url = engine
+            .para_review_index_url(
+                &source,
+                &body,
+                "http://192.168.100.99:9999/content?item_id=1",
+                &ctx,
+            )
+            .unwrap();
+        assert!(url.starts_with("http://192.168.100.99:9999/comment/para/list?"));
+    }
+
+    #[test]
+    fn chapter_reviews_parse_a_page_with_inline_replies() {
+        let engine = RuleEngine::new().unwrap();
+        let source = fqweb_source();
+        let body = json!({
+            "data": {
+                "data": {
+                    "comment_cnt": 67,
+                    "has_more": true,
+                    "comment": [
+                        {
+                            "comment_id": "7468555045690393369",
+                            "text": "不是说谎者也可以说谎",
+                            "create_timestamp": 1717597455,
+                            "digg_count": 68,
+                            "reply_count": 13,
+                            "user_info": {
+                                "user_name": "读者甲",
+                                "user_avatar": "https://img.example/a.jpg"
+                            },
+                            "reply_list": [
+                                {"text": "同感", "user_info": {"user_name": "读者乙"}}
+                            ]
+                        },
+                        {
+                            "comment_id": "2",
+                            "text": "   ",
+                            "user_info": {"user_name": "空评论"}
+                        }
+                    ]
+                }
+            }
+        })
+        .to_string();
+
+        let page = engine.chapter_reviews(&source, &body, "http://host/");
+        assert_eq!(page.total, 67);
+        assert!(page.has_more);
+        // 内容为空的条目直接丢弃
+        assert_eq!(page.items.len(), 1);
+        let item = &page.items[0];
+        assert_eq!(item.id, "7468555045690393369");
+        assert_eq!(item.name, "读者甲");
+        assert_eq!(item.content, "不是说谎者也可以说谎");
+        assert_eq!(item.time, "1717597455");
+        assert_eq!(item.digg, 68);
+        assert_eq!(item.reply_count, 13);
+        assert_eq!(item.avatar, "https://img.example/a.jpg");
+        assert_eq!(item.replies.len(), 1);
+        assert_eq!(item.replies[0].name, "读者乙");
+        assert_eq!(item.replies[0].content, "同感");
+    }
+
+    #[test]
+    fn para_review_index_maps_paragraph_numbers_to_counts() {
+        let engine = RuleEngine::new().unwrap();
+        let source = fqweb_source();
+        let body = json!({
+            "data": {
+                "data": {
+                    "idea_data": {
+                        "32": {"idea_count": 641},
+                        "5": {"idea_count": 192},
+                        "7": {"idea_count": 0},
+                        "-1": {"idea_count": 31},
+                        "not-a-number": {"idea_count": 9}
+                    }
+                }
+            }
+        })
+        .to_string();
+
+        let paras = engine.para_review_index(&source, &body, "http://host/");
+        // 段号非数字、条数为 0、以及负段号（整章聚合桶）都跳过，其余按段号升序
+        assert_eq!(
+            paras
+                .iter()
+                .map(|p| (p.para_index, p.count))
+                .collect::<Vec<_>>(),
+            vec![(5, 192), (32, 641)]
+        );
+    }
+
+    #[test]
+    fn missing_rules_disable_the_feature_instead_of_erroring() {
+        let engine = RuleEngine::new().unwrap();
+        let bare = BookSource {
+            book_source_name: "无评论规则".to_string(),
+            book_source_url: "https://source.example".to_string(),
+            ..Default::default()
+        };
+        assert!(!engine.has_chapter_review_rule(&bare));
+        assert!(!engine.has_para_review_rule(&bare));
+        assert!(engine
+            .chapter_review_url(&bare, "{}", "https://source.example", &HashMap::new())
+            .is_none());
+        assert!(engine
+            .chapter_reviews(&bare, "{}", "https://source.example")
+            .items
+            .is_empty());
+        assert!(engine
+            .para_review_index(&bare, "{}", "https://source.example")
+            .is_empty());
+
+        // 只填 URL 不填列表规则等于没接：没有列表就渲染不出任何东西
+        let half = BookSource {
+            rule_review: Some(ReviewRule {
+                review_url: Some("comment?page={{page}}".to_string()),
+                ..Default::default()
+            }),
+            ..bare
+        };
+        assert!(!engine.has_chapter_review_rule(&half));
+    }
+
+    #[test]
+    fn para_reviews_keep_replies_and_images() {
+        let engine = RuleEngine::new().unwrap();
+        let source = fqweb_source();
+        let body = json!({
+            "data": {
+                "data": {
+                    "count": 192,
+                    "has_more": false,
+                    "comments": [{
+                        "comment_id": "p1",
+                        "text": "这一段写得真好",
+                        "digg_count": 216,
+                        "reply_count": 2,
+                        // 番茄同一张图给两个格式：HEIC 在前、JPEG 在后。
+                        // 后端只负责按原序返回，挑哪个格式渲染是客户端的事。
+                        "image_url": [
+                            "https://img.example/a.heic?sign=1",
+                            "https://img.example/a.jpeg?sign=2"
+                        ],
+                        "user_info": { "user_name": "读者丙" },
+                        "reply_list": [
+                            { "text": "同感", "user_info": { "user_name": "读者丁" } }
+                        ]
+                    }]
+                }
+            }
+        })
+        .to_string();
+
+        let page = engine.para_reviews(&source, &body, "http://host/");
+        assert_eq!(page.total, 192);
+        assert_eq!(page.items.len(), 1);
+        let item = &page.items[0];
+        assert_eq!(item.reply_count, 2);
+        assert_eq!(item.replies.len(), 1);
+        assert_eq!(item.replies[0].name, "读者丁");
+        assert_eq!(item.replies[0].content, "同感");
+        assert_eq!(
+            item.images,
+            vec![
+                "https://img.example/a.heic?sign=1".to_string(),
+                "https://img.example/a.jpeg?sign=2".to_string()
+            ]
+        );
+    }
+
+    #[test]
+    fn image_rule_accepts_field_js_and_html_forms() {
+        let node = json!({
+            "cover": "https://img.example/c.png",
+            "shots": ["https://img.example/1.jpg", "", "https://img.example/2.webp"]
+        });
+        let base = "https://source.example/dir/";
+        assert_eq!(
+            eval_image_list_json("$.shots[*]", &node, base),
+            vec![
+                "https://img.example/1.jpg".to_string(),
+                "https://img.example/2.webp".to_string()
+            ]
+        );
+        // 字段名写法：数组展开，空值丢掉
+        assert_eq!(
+            eval_image_list_json("shots", &node, base),
+            vec![
+                "https://img.example/1.jpg".to_string(),
+                "https://img.example/2.webp".to_string()
+            ]
+        );
+        // 单值字段
+        assert_eq!(
+            eval_image_list_json("cover", &node, base),
+            vec!["https://img.example/c.png".to_string()]
+        );
+        // JS 规则按行切分；相对地址按 base 解析
+        assert_eq!(
+            eval_image_list_json(
+                "js:result = '1.jpg\\nhttps://img.example/2.jpg'",
+                &node,
+                base
+            ),
+            vec![
+                "https://source.example/dir/1.jpg".to_string(),
+                "https://img.example/2.jpg".to_string()
+            ]
+        );
+        // 没写规则就是没图，不该报错
+        assert!(eval_image_list_json("", &node, base).is_empty());
+    }
+
+    #[test]
+    fn review_count_text_handles_chinese_units() {
+        assert_eq!(parse_count_text("216"), 216);
+        assert_eq!(parse_count_text("216 赞"), 216);
+        assert_eq!(parse_count_text("1.2万"), 12000);
+        assert_eq!(parse_count_text(""), 0);
+        assert_eq!(parse_count_text("暂无"), 0);
     }
 }

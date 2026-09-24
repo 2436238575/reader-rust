@@ -206,6 +206,18 @@ pub fn build_router(state: AppState) -> Router {
             get(handlers::get_book_content).post(handlers::get_book_content),
         )
         .route(
+            "/reader3/getChapterComments",
+            get(handlers::get_chapter_comments).post(handlers::get_chapter_comments),
+        )
+        .route(
+            "/reader3/getParaCommentIndex",
+            get(handlers::get_para_comment_index).post(handlers::get_para_comment_index),
+        )
+        .route(
+            "/reader3/getParaComments",
+            get(handlers::get_para_comments).post(handlers::get_para_comments),
+        )
+        .route(
             "/reader3/deleteBookCache",
             post(handlers::delete_book_cache),
         )

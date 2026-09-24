@@ -54,6 +54,7 @@ export default defineConfig({
             { text: '书源管理', link: '/api/book-source' },
             { text: '书籍搜索', link: '/api/search' },
             { text: '章节内容', link: '/api/chapter' },
+            { text: '评论（章评/段评）', link: '/api/review' },
             { text: '缓存管理', link: '/api/cache' },
             { text: '书架分组', link: '/api/book-group' },
             { text: '书签', link: '/api/bookmark' },

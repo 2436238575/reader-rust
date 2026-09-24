@@ -178,7 +178,7 @@ pub async fn dir_usage(dir: &Path, depth: usize) -> CacheUsage {
 }
 
 /// 按修改时间最旧优先删除，直到释放出 `excess` 字节。
-async fn evict_oldest(dir: &Path, excess: u64) {
+pub(crate) async fn evict_oldest(dir: &Path, excess: u64) {
     let mut files = collect_files(dir, 2).await;
     files.sort_by_key(|(modified, _, _)| *modified);
     let mut remaining = excess;

@@ -36,11 +36,11 @@ POST /reader3/purgeCache
 | `scope` | 语义 | 需要的字段 |
 |---------|------|-----------|
 | `user` | 清理该用户的全部缓存 | `username` 可选，缺省为自己 |
-| `book` | 清理单本书的正文、章节列表与搜索结果 | `bookUrl` 必填 |
+| `book` | 清理单本书的正文、章节列表、搜索结果与评论 | `bookUrl` 必填 |
 | `kind` | 只清理该用户的某一层 | `kind` 必填 |
 | `all` | 清理所有用户的全部缓存 | 无（**仅管理员**） |
 
-`kind` 取值：`content`、`cover`、`chapterList`、`searchResults`。
+`kind` 取值：`content`、`cover`、`chapterList`、`searchResults`、`review`。
 
 权限：
 
@@ -58,6 +58,7 @@ POST /reader3/purgeCache
       "cover": 0,
       "chapterList": 2,
       "searchResults": 1,
+      "review": 0,
       "invalidSources": 0
     }
   },

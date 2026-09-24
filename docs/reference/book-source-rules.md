@@ -4,7 +4,7 @@
 
 当前规格以项目代码为准，覆盖范围如下：
 
-- 书源数据模型：`BookSource`、`BaseSource`、`SearchRule`、`ExploreRule`、`BookInfoRule`、`TocRule`、`ContentRule`、`ReviewRule`。
+- 书源数据模型：`BookSource`、`BaseSource`、`SearchRule`、`ExploreRule`、`BookInfoRule`、`TocRule`、`ContentRule`、`ReviewRule`、`ParaReviewRule`。
 - URL 规则：`AnalyzeUrl` 的 URL 生成、参数解析、请求配置、编码、Cookie 和 WebView 入口。
 - 内容规则：`AnalyzeRule`、`RuleAnalyzer`、`AnalyzeByJSoup`、`AnalyzeByXPath`、`AnalyzeByJSonPath`、`AnalyzeByRegex`。
 - 书籍流水线：搜索、发现、详情、目录、正文。
@@ -71,7 +71,8 @@
 | `ruleBookInfo` | BookInfoRule? | `null` | 详情页规则。 |
 | `ruleToc` | TocRule? | `null` | 目录页规则。 |
 | `ruleContent` | ContentRule? | `null` | 正文页规则。 |
-| `ruleReview` | ReviewRule? | `null` | 预留。当前项目持久化时固定转成 `null`。 |
+| `ruleReview` | ReviewRule? | `null` | 章评规则，见 17.2。阅读3.0 中为预留字段，本项目接上了。 |
+| `ruleParaReview` | ParaReviewRule? | `null` | 段评规则（本项目扩展，阅读3.0 无此字段），见 17.3。 |
 
 实现 MUST 对空规则对象提供默认空对象。例如 `getSearchRule()` 在字段为空时返回新的 `SearchRule()`。
 
@@ -151,10 +152,12 @@ data class ContentRule(
 )
 ```
 
-`ReviewRule` 当前仅为预留字段：
+`ReviewRule`（章评）：阅读3.0 只定义了前 10 个字段且从不执行，本项目补齐了后面的解析字段
+（语义见 17.2）：
 
 ```kotlin
 data class ReviewRule(
+  // 阅读3.0 既有字段（本项目只执行 reviewUrl / avatarRule / contentRule / postTimeRule）
   var reviewUrl: String? = null,
   var avatarRule: String? = null,
   var contentRule: String? = null,
@@ -164,7 +167,48 @@ data class ReviewRule(
   var voteDownUrl: String? = null,
   var postReviewUrl: String? = null,
   var postQuoteUrl: String? = null,
-  var deleteUrl: String? = null
+  var deleteUrl: String? = null,
+  // 本项目扩展
+  var listRule: String? = null,
+  var idRule: String? = null,
+  var nameRule: String? = null,
+  var diggRule: String? = null,
+  var replyCountRule: String? = null,
+  var totalRule: String? = null,
+  var hasMoreRule: String? = null,
+  var replyListRule: String? = null,
+  var replyNameRule: String? = null,
+  var replyContentRule: String? = null,
+  var replyPostTimeRule: String? = null,
+  var replyToRule: String? = null,
+  var imageRule: String? = null
+)
+```
+
+`ParaReviewRule`（段评）是**本项目扩展**，阅读3.0 没有这个规则对象：
+
+```kotlin
+data class ParaReviewRule(
+  var indexUrl: String? = null,
+  var indexListRule: String? = null,
+  var indexCountRule: String? = null,
+  var reviewUrl: String? = null,
+  var listRule: String? = null,
+  var idRule: String? = null,
+  var nameRule: String? = null,
+  var avatarRule: String? = null,
+  var contentRule: String? = null,
+  var postTimeRule: String? = null,
+  var diggRule: String? = null,
+  var totalRule: String? = null,
+  var hasMoreRule: String? = null,
+  var replyCountRule: String? = null,
+  var replyListRule: String? = null,
+  var replyNameRule: String? = null,
+  var replyContentRule: String? = null,
+  var replyPostTimeRule: String? = null,
+  var replyToRule: String? = null,
+  var imageRule: String? = null
 )
 ```
 
@@ -1267,15 +1311,141 @@ getContentAwait(source, book, chapter, nextChapterUrl=null, needSave=true):
 - 返回绝对 URL：打开 WebView。
 - 返回 true-like 字符串：删除本章正文缓存并刷新目录。
 
-## 17. 段评规则状态
+## 17. 评论规则（章评 / 段评）
 
-当前项目不可用：
+阅读3.0 里 `ruleReview` 是**预留字段**：`Converters.stringToReviewRule()` 固定返回 `null`，
+`reviewRuleToString()` 固定返回 `"null"`，Android 编辑器保存它的代码被注释——即官方实现
+从不执行评论规则。
 
-- `BookSource.Converters.stringToReviewRule()` 固定返回 `null`。
-- `BookSource.Converters.reviewRuleToString()` 固定返回 `"null"`。
-- Android 编辑器保存 `ruleReview` 的代码被注释。
+本项目把它接上了（这是「明确实现扩展能力」，符合上一版规格里 SHOULD/MUST 的约定），
+并新增了阅读3.0 没有的段评规则 `ruleParaReview`。两者都是**可选**的：没写就不抓评论，
+接口返回 `enabled: false`，阅读页不渲染任何入口。
 
-兼容实现 SHOULD 保留 `ReviewRule` 字段用于导入导出，但 MUST 默认不执行段评规则，除非明确实现扩展能力。
+### 17.1 求值上下文
+
+评论 URL 规则对**章节正文响应**求值——与 `nextContentUrl` 同理：评论地址要先拿到正文
+响应才知道（番茄系接口的书籍 ID、章节 ID、版本号都在正文响应里）。
+
+模板里可用的占位符：
+
+| 占位符 | 来源 |
+| --- | --- |
+| `{{$.a.b}}` | 正文响应的 JSONPath |
+| `{{表达式}}` | JS，`result` 为正文响应体、`baseUrl` 为章节 URL |
+| `@get:{key}` | 上游步骤存入的上下文 |
+| `{{page}}` / `{{count}}` | 页码 / 每页条数 |
+| `{{paraIndex}}` | 段号（仅段评列表 URL） |
+| `{{bookUrl}}` / `{{chapterUrl}}` | 当前书籍 / 章节 URL |
+
+规则本身也可以写成纯 JSONPath（`$.data.comment_url`）。相对地址按**章节 URL**解析，
+与 `nextContentUrl` 一致。
+
+### 17.2 `ruleReview`（章评）
+
+在阅读3.0 的 `ReviewRule` 之上补齐解析字段（前四个字段沿用原命名）：
+
+| 字段 | 说明 |
+| --- | --- |
+| `reviewUrl` | 章评列表 URL 模板 |
+| `listRule` | 列表项选择规则（JSONPath / CSS / XPath / 正则） |
+| `idRule` | 评论 ID |
+| `nameRule` | 用户名 |
+| `avatarRule` | 头像 |
+| `contentRule` | 评论正文 |
+| `postTimeRule` | 发布时间（原样返回，不归一化） |
+| `diggRule` | 点赞数 |
+| `replyCountRule` | 回复数 |
+| `totalRule` | 评论总数（对**整个响应**求值，不是单条） |
+| `hasMoreRule` | 是否还有下一页（对**整个响应**求值） |
+| `replyListRule` | 内联回复列表 |
+| `replyNameRule` / `replyContentRule` / `replyPostTimeRule` / `replyToRule` | 单条回复的字段 |
+| `imageRule` | 评论配图，**列表规则**（见 17.5） |
+
+`voteUpUrl` / `voteDownUrl` / `postReviewUrl` / `postQuoteUrl` / `deleteUrl` /
+`reviewQuoteUrl` 保留字段，本项目不执行（不提供点赞、发评论、删评论）。
+
+### 17.3 `ruleParaReview`（段评）
+
+本项目扩展，阅读3.0 无此字段。段评分两步：先取概览（哪些段落有评论、各多少条），
+再按段取评论列表。
+
+| 字段 | 说明 |
+| --- | --- |
+| `indexUrl` | 概览 URL 模板 |
+| `indexListRule` | 概览里「段号 → 该段数据」的映射；通常是一个对象，也可以是数组 |
+| `indexCountRule` | 从单段数据里取条数 |
+| `reviewUrl` | 段评列表 URL 模板（可用 `{{paraIndex}}`） |
+| `listRule` / `idRule` / `nameRule` / `avatarRule` / `contentRule` / `postTimeRule` / `diggRule` / `totalRule` / `hasMoreRule` | 同章评 |
+| `replyCountRule` / `replyListRule` / `replyNameRule` / `replyContentRule` / `replyPostTimeRule` / `replyToRule` | 同章评（段评同样可能有内联回复） |
+| `imageRule` | 同章评 |
+
+段号按定义是**正文按 `
+` 切分后的下标，从 0 开始**。概览里的负段号（部分站点的整章
+聚合桶）会被过滤掉。
+
+### 17.4 段号漂移与段落锚点
+
+用户自己的书源替换规则、繁简转换会改变正文行结构，使段号对不上。为此概览接口额外返回
+每段的**原文锚点** `text`（截断到 60 字），前端以「非空行位置对齐」为主、原文匹配为辅
+定位气泡。
+
+### 17.5 图片规则
+
+`imageRule` 与普通字段规则不同：图片天然是多个值，因此按**列表规则**求值，返回数组。
+
+| 写法 | 含义 |
+| --- | --- |
+| `$.image_url[*]` | JSONPath 列表 |
+| `image_url` | 字段名；是数组就展开，是字符串就取一个 |
+| `js:...` / `@js:...` | JS 规则，返回多行文本，逐行当作一个地址 |
+| `img@src` / `.cover img@data-src` | HTML 分支：选择器 `@` 属性，省略属性时取 `src` |
+
+返回的地址按规则给出的顺序原样保留，**后端不做格式过滤**：站点常为同一张图给出多个
+变体（番茄同时给 HEIC 和 JPEG，浏览器渲染不了 HEIC），挑哪个由客户端决定。
+
+### 17.6 示例（番茄系接口 / FQWeb）
+
+```json
+{
+  "ruleReview": {
+    "reviewUrl": "comment/item?item_id={{$.data.data.novel_data.item_id}}&book_id={{$.data.data.novel_data.book_id}}&page={{page}}&count={{count}}",
+    "listRule": "$.data.data.comment[*]",
+    "totalRule": "$.data.data.comment_cnt",
+    "hasMoreRule": "$.data.data.has_more",
+    "idRule": "$.comment_id",
+    "nameRule": "$.user_info.user_name",
+    "avatarRule": "$.user_info.user_avatar",
+    "contentRule": "$.text",
+    "postTimeRule": "$.create_timestamp",
+    "diggRule": "$.digg_count",
+    "replyCountRule": "$.reply_count",
+    "replyListRule": "$.reply_list[*]",
+    "replyNameRule": "$.user_info.user_name",
+    "replyContentRule": "$.text",
+    "imageRule": "$.image_url[*]"
+  },
+  "ruleParaReview": {
+    "indexUrl": "comment/para/list?book_id={{$.data.data.novel_data.book_id}}&item_id={{$.data.data.novel_data.item_id}}&item_version={{$.data.data.novel_data.version}}",
+    "indexListRule": "$.data.data.idea_data",
+    "indexCountRule": "$.idea_count",
+    "reviewUrl": "comment/para?book_id={{$.data.data.novel_data.book_id}}&item_id={{$.data.data.novel_data.item_id}}&para_index={{paraIndex}}&item_version={{$.data.data.novel_data.version}}&page={{page}}&count={{count}}",
+    "listRule": "$.data.data.comments[*]",
+    "totalRule": "$.data.data.count",
+    "hasMoreRule": "$.data.data.has_more",
+    "nameRule": "$.user_info.user_name",
+    "contentRule": "$.text",
+    "postTimeRule": "$.create_timestamp",
+    "diggRule": "$.digg_count",
+    "replyCountRule": "$.reply_count",
+    "replyListRule": "$.reply_list[*]",
+    "replyNameRule": "$.user_info.user_name",
+    "replyContentRule": "$.text",
+    "imageRule": "$.image_url[*]"
+  }
+}
+```
+
+接口与缓存见 [评论 API](/api/review)。
 
 ## 18. 老书源导入兼容
 
@@ -1430,7 +1600,7 @@ $.data.name -> 书名
 - `canReName` 只判断非空，不解析真假。
 - `SearchRule.updateTime`、`ExploreRule.updateTime`、`BookInfoRule.updateTime` 当前存在但不执行。
 - `exploreScreen` 存在但当前不执行。
-- `ruleReview` 会持久化成 `null`。
+- 阅读3.0 的 `ruleReview` 会持久化成 `null`（本项目已实现，不再转 null）。
 - `ruleContent.webJs` 和 `sourceRegex` 只有 URL 参数 `webView=true` 时进入 WebView。
 - `@put` 的 JSON 提取不支持嵌套对象。
 - URL 参数 JSON 分隔符只识别逗号后紧跟 `{` 的位置。

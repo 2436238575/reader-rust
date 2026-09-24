@@ -8,6 +8,7 @@ mod bookmark;
 mod cache;
 mod multipart;
 mod replace_rule;
+mod review;
 mod rss;
 mod update;
 mod user;
@@ -28,6 +29,7 @@ pub use replace_rule::{
     delete_replace_rule, delete_replace_rules, get_replace_rules, save_replace_rule,
     save_replace_rules,
 };
+pub use review::{get_chapter_comments, get_para_comment_index, get_para_comments};
 pub use rss::{
     delete_rss_source, delete_rss_sources, get_rss_articles, get_rss_content, get_rss_sources,
     read_remote_rss_source_file, read_rss_source_file, save_rss_source, save_rss_sources,

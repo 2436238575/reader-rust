@@ -22,7 +22,7 @@ Reader-Rust 是 [阅读3.0](https://github.com/hectorqin/reader) 的 Rust 重写
 cargo run                      # 开发模式运行，默认监听 0.0.0.0:8080
 cargo build                    # 调试构建
 cargo build --release          # 发布构建
-cargo test                     # 全部测试（Rust 侧共 124 个）
+cargo test                     # 全部测试（Rust 侧共 173 个）
 cargo test <关键字>             # 按名称过滤测试
 cargo clippy --all-targets     # 静态检查
 cargo fmt                      # 格式化
@@ -104,6 +104,8 @@ cp .env.example .env
 | `USER_LOCAL_BOOK_LIMIT` | `0` | 单用户本地上传上限，`0` 表示不限制 |
 | `CACHE_USER_LIMIT_BYTES` | `536870912` | 单用户正文缓存上限；`0` 表示不限制 |
 | `CACHE_COVER_LIMIT_BYTES` | `268435456` | 封面缓存目录上限；`0` 表示不限制 |
+| `REVIEW_CACHE_TTL_SECS` | `604800`（7 天） | 章评/段评缓存有效期；`0` 表示不过期 |
+| `REVIEW_CACHE_USER_LIMIT_BYTES` | `67108864` | 单用户评论缓存上限；`0` 表示不限制 |
 | `ALLOW_PRIVATE_NETWORK` | `true` | 出站请求是否允许访问私网/内网地址；自托管单用户默认放行（局域网书源是正常用法），多用户/公网部署应设为 `false` |
 | `CORS_ALLOWED_ORIGINS` | 空 | 跨域来源白名单；留空仅同源 |
 
@@ -132,16 +134,17 @@ src/
     middleware.rs         require_auth / require_admin / optional_auth
   service/                业务编排，11 文件约 6000 行
   parser/                 规则解析引擎，6 文件约 4300 行
-    rule_engine.rs        核心（2500 行）：六种用途的解析入口
+    rule_engine.rs        核心（3000 行）：六种用途的解析入口 + 评论解析
     rule_analyzer.rs      组合规则拆分（正确处理引号与括号嵌套）
     html.rs / jsonpath.rs / js.rs
   crawler/                reqwest 抓取与 URL 处理，5 文件约 1370 行
     url_analyzer.rs       占位符替换、页面选择、内联 JS
     url_guard.rs          出站请求守卫（SSRF 防护）
   model/                  BookSource 等数据结构，14 文件约 1000 行
-  storage/               SQLite（sqlx）+ 文件缓存，7 文件约 500 行
+  storage/               SQLite（sqlx）+ 文件缓存，8 文件约 800 行
     db/migrations/        仅 0001_init.sql（历史兼容补丁已并入）
     cache/file_cache.rs   章节内容文件缓存，以 MD5 命名；无 TTL，按容量淘汰
+    cache/review_cache.rs 评论缓存；**有 TTL**（默认 7 天），按容量淘汰
   app/                    配置加载与启动引导
   error/                  错误类型
   util/                   加密、哈希、文本、时间等工具
@@ -208,9 +211,17 @@ HTTP 请求
 
 ## 书源规则引擎
 
-`RuleEngine` 的公开方法正好对应书源的六种用途，全部是**同步函数**（JS 求值通过 rquickjs 同步完成）：
+`RuleEngine` 的公开方法对应书源的六种用途，全部是**同步函数**（JS 求值通过 rquickjs 同步完成）：
 
 `search_books` · `explore_books` · `book_info` · `chapter_list` · `content` · `next_content_url`
+
+评论（章评 / 段评）另有一组方法：`chapter_reviews` · `para_review_index` · `para_reviews`，
+外加 `chapter_review_url` / `para_review_index_url` / `para_review_url` 三个 URL 求值入口。
+评论 URL 对**章节正文响应**求值（与 `nextContentUrl` 同理：书籍 ID / 章节 ID / 版本号都在正文响应里），
+模板里额外可用 `{{page}}`、`{{count}}`、`{{paraIndex}}`、`{{bookUrl}}`、`{{chapterUrl}}`。
+书源没声明 `ruleReview` / `ruleParaReview` 时接口返回 `enabled: false`，前端不渲染任何入口。
+评论配图走 `imageRule`，按**列表规则**求值（`$.image_url[*]` / 多行 JS / `img@src`）；
+地址按站点顺序原样返回，挑哪个格式渲染是客户端的事（番茄会同时给 HEIC 与 JPEG）。
 
 ### 解析方式识别
 
@@ -256,16 +267,20 @@ HTTP 请求
 - 主要表：`book_sources`（书源 JSON，按 `(user_ns, book_source_url)` 主键）、`users`、`json_documents`（通用 JSON 文档，按 namespace + name 存取）、`ai_book_memories`。迁移只有 `0001_init.sql` 一个。
 - 章节正文以文件形式缓存于 `storage/cache/<ns>/<md5(bookUrl)>/`，文件名用 MD5，数据库里不存索引。
 - 缓存**不按时间过期**，只在显式调用 `POST /reader3/purgeCache` 或超出容量上限时回收；占用可用 `GET /reader3/cacheStats` 查看。
+- 唯一例外是**评论缓存**（`storage/cache/reviews/<ns>/<md5(bookUrl)>/`）：评论是会变的第三方数据，
+  因此保留 7 天 TTL（`REVIEW_CACHE_TTL_SECS`），同时也受容量上限约束。
 - `storage/` 全部属于运行期数据，**不要提交**，清理时也不要误删。
 
 ---
 
 ## 测试
 
-Rust 侧共 **158 个测试**（109 个 `#[test]` + 49 个 `#[tokio::test]`），分布为：
+Rust 侧共 **173 个测试**（115 个 `#[test]` + 58 个 `#[tokio::test]`），分布为：
 
-- `tests/` 下 11 个集成测试文件，其中 `book_source_compat.rs` 用例最多（17 个）；`auth_flow.rs` 起真实监听端口，覆盖 401/403、静态回落与缓存清理；
-- `src/` 内的内联单元测试模块。
+- `tests/` 下 12 个集成测试文件（58 个用例），其中 `book_source_compat.rs` 用例最多（17 个）；
+  `auth_flow.rs` 与 `review_flow.rs` 起真实监听端口，前者覆盖 401/403、静态回落与缓存清理，
+  后者用一个假上游覆盖评论规则、7 天缓存与按类型清理；
+- `src/` 内的内联单元测试模块（115 个）。
 
 前端使用 vitest，共 20 个 `*.test.ts`（75 个用例）。
 

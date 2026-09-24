@@ -2,7 +2,9 @@ use serde::de::DeserializeOwned;
 use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::{json, Map, Value};
 
-use crate::model::rule::{BookInfoRule, ContentRule, ExploreRule, ReviewRule, SearchRule, TocRule};
+use crate::model::rule::{
+    BookInfoRule, ContentRule, ExploreRule, ParaReviewRule, ReviewRule, SearchRule, TocRule,
+};
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(default, rename_all = "camelCase")]
@@ -41,6 +43,9 @@ pub struct BookSource {
     pub rule_content: Option<ContentRule>,
     #[serde(deserialize_with = "deserialize_rule_option")]
     pub rule_review: Option<ReviewRule>,
+    /// 段评规则（本项目扩展，阅读3.0 无此字段）。
+    #[serde(deserialize_with = "deserialize_rule_option")]
+    pub rule_para_review: Option<ParaReviewRule>,
     pub book_source_comment: Option<String>,
     pub variable_comment: Option<String>,
     #[serde(deserialize_with = "deserialize_i64_option")]
