@@ -2136,6 +2136,41 @@ fn apply_login_check_js(source: &BookSource, res: FetchResponse) -> FetchRespons
     })
 }
 
+/// exploreUrl 里 `@js:`/`<js>` 的求值结果缓存。
+///
+/// 规格 §13 要求按 `MD5(bookSourceUrl + exploreUrl)` 缓存：这类脚本经常要发网络
+/// 请求取分类列表，而书海页每次进入都会问一次。键与规格一致，另加 1 小时上限——
+/// 进程长跑时不能永久陈旧的分类列表。
+static EXPLORE_URL_CACHE: once_cell::sync::Lazy<
+    std::sync::Mutex<HashMap<String, (String, Instant)>>,
+> = once_cell::sync::Lazy::new(|| std::sync::Mutex::new(HashMap::new()));
+const EXPLORE_URL_CACHE_TTL: Duration = Duration::from_secs(3600);
+const EXPLORE_URL_CACHE_MAX_ENTRIES: usize = 256;
+
+fn cached_explore_script(
+    source: &BookSource,
+    raw: &str,
+    evaluate: impl FnOnce() -> anyhow::Result<String>,
+) -> Result<String, AppError> {
+    let key = md5_hex(&format!("{}{}", source.book_source_url, raw));
+    {
+        let cache = EXPLORE_URL_CACHE.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some((value, stored_at)) = cache.get(&key) {
+            if stored_at.elapsed() < EXPLORE_URL_CACHE_TTL {
+                return Ok(value.clone());
+            }
+        }
+    }
+
+    let value = evaluate().map_err(AppError::Internal)?;
+    let mut cache = EXPLORE_URL_CACHE.lock().unwrap_or_else(|e| e.into_inner());
+    if cache.len() >= EXPLORE_URL_CACHE_MAX_ENTRIES && !cache.contains_key(&key) {
+        cache.clear();
+    }
+    cache.insert(key, (value.clone(), Instant::now()));
+    Ok(value)
+}
+
 fn parse_explore_kinds(source: &BookSource) -> Result<Vec<ExploreKind>, AppError> {
     let Some(raw) = source
         .explore_url
@@ -2148,12 +2183,12 @@ fn parse_explore_kinds(source: &BookSource) -> Result<Vec<ExploreKind>, AppError
 
     let text = with_js_lib(source.js_lib.as_deref(), || {
         if let Some(script) = raw.strip_prefix("@js:") {
-            eval_js(script, "", &source.book_source_url).map_err(AppError::Internal)
+            cached_explore_script(source, raw, || eval_js(script, "", &source.book_source_url))
         } else if let Some(script) = raw
             .strip_prefix("<js>")
             .and_then(|value| value.strip_suffix("</js>"))
         {
-            eval_js(script, "", &source.book_source_url).map_err(AppError::Internal)
+            cached_explore_script(source, raw, || eval_js(script, "", &source.book_source_url))
         } else {
             Ok(raw.to_string())
         }

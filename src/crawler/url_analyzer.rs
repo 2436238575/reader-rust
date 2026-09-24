@@ -68,7 +68,8 @@ pub fn analyze_url(
                 });
             }
             if let Some(value) = options.get("retry") {
-                retry = parse_usize(value).unwrap_or(0);
+                // 显式写成 0 才是「不重试」；解析不出来的值保留默认次数
+                retry = parse_usize(value).unwrap_or(retry);
             }
             if let Some(value) = options.get("type").and_then(Value::as_str) {
                 if !value.trim().is_empty() {
