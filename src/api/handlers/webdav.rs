@@ -452,24 +452,28 @@ async fn webdav_delete(full: &PathBuf) -> Response {
     }
 }
 
-async fn webdav_move(home: &PathBuf, full: &PathBuf, headers: &HeaderMap) -> Response {
+/// 解析 MOVE/COPY 的 `Destination` 头为 home 下的目标路径。
+///
+/// Destination 必须带 `/reader3/webdav/` 前缀：缺前缀时若按空相对路径解析，
+/// 目标会塌缩成家目录本身，配合 `Overwrite` 头等于把整个家目录清空。
+fn resolve_destination(home: &PathBuf, headers: &HeaderMap) -> Result<PathBuf, StatusCode> {
     let destination = headers
         .get("Destination")
         .and_then(|v| v.to_str().ok())
         .unwrap_or("");
-    if destination.is_empty() {
-        return StatusCode::BAD_REQUEST.into_response();
-    }
-    let dest_path = destination
-        .split("/reader3/webdav/")
-        .nth(1)
-        .unwrap_or("")
-        .to_string();
-    let rel = match normalize_rel_path(&format!("/{}", dest_path)) {
-        Ok(p) => p,
-        Err(_) => return StatusCode::BAD_REQUEST.into_response(),
+    let Some(dest_path) = destination.split("/reader3/webdav/").nth(1) else {
+        return Err(StatusCode::BAD_REQUEST);
     };
-    let dest = join_parts(home, &rel);
+    let rel =
+        normalize_rel_path(&format!("/{}", dest_path)).map_err(|_| StatusCode::BAD_REQUEST)?;
+    Ok(join_parts(home, &rel))
+}
+
+async fn webdav_move(home: &PathBuf, full: &PathBuf, headers: &HeaderMap) -> Response {
+    let dest = match resolve_destination(home, headers) {
+        Ok(p) => p,
+        Err(status) => return status.into_response(),
+    };
     if dest.exists() {
         let overwrite = headers
             .get("Overwrite")
@@ -491,23 +495,10 @@ async fn webdav_move(home: &PathBuf, full: &PathBuf, headers: &HeaderMap) -> Res
 }
 
 async fn webdav_copy(home: &PathBuf, full: &PathBuf, headers: &HeaderMap) -> Response {
-    let destination = headers
-        .get("Destination")
-        .and_then(|v| v.to_str().ok())
-        .unwrap_or("");
-    if destination.is_empty() {
-        return StatusCode::BAD_REQUEST.into_response();
-    }
-    let dest_path = destination
-        .split("/reader3/webdav/")
-        .nth(1)
-        .unwrap_or("")
-        .to_string();
-    let rel = match normalize_rel_path(&format!("/{}", dest_path)) {
+    let dest = match resolve_destination(home, headers) {
         Ok(p) => p,
-        Err(_) => return StatusCode::BAD_REQUEST.into_response(),
+        Err(status) => return status.into_response(),
     };
-    let dest = join_parts(home, &rel);
     if dest.exists() {
         let overwrite = headers
             .get("Overwrite")

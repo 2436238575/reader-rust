@@ -48,6 +48,22 @@ async fn verify_password_async(password: &str, stored: &str) -> Result<bool, App
         .map_err(|e| AppError::Internal(anyhow::anyhow!("密码校验任务中断: {e}")))
 }
 
+/// 「用户不存在」分支的等时校验：对固定串做一次真实的 Argon2 验证，
+/// 让该分支与「密码错误」分支的耗时对齐，堵住用响应时间枚举用户名的侧信道。
+const DUMMY_HASH_INPUT: &str = "reader-rust-timing-equalizer";
+static DUMMY_HASH: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+
+async fn equalize_login_timing(password: &str) {
+    let password = password.to_owned();
+    let _ = tokio::task::spawn_blocking(move || {
+        let stored = DUMMY_HASH.get_or_init(|| hash_password(DUMMY_HASH_INPUT).unwrap_or_default());
+        if !stored.is_empty() {
+            verify_password(&password, stored);
+        }
+    })
+    .await;
+}
+
 #[derive(Clone)]
 pub struct UserService {
     cfg: AppConfig,
@@ -138,15 +154,17 @@ impl UserService {
                 return Err(AppError::BadRequest("用户名已被占用".to_string()));
             }
             if !verify_password_async(password, &user.password).await? {
-                return Err(AppError::BadRequest("密码错误".to_string()));
+                return Err(AppError::BadRequest("用户名或密码错误".to_string()));
             }
             self.login_throttle_clear(username);
             return self.issue_login_response(&mut user).await;
         }
 
         if is_login {
-            // 不存在的用户名同样已在 begin 中计数，不能成为无限速的探测通道
-            return Err(AppError::BadRequest("用户不存在".to_string()));
+            // 不存在的用户名同样已在 begin 中计数，不能成为无限速的探测通道；
+            // 文案与「密码错误」统一，并补一次等时校验，防时序侧信道枚举
+            equalize_login_timing(password).await;
+            return Err(AppError::BadRequest("用户名或密码错误".to_string()));
         }
         self.validate_new_user(username, password, code)?;
         let user_count = self.user_count().await?;

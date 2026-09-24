@@ -63,9 +63,10 @@ async fn authenticate(state: &AuthState, token: String) -> Result<AuthUser, AppE
     if identity.token_version != claims.ver {
         return Err(unauthorized());
     }
+    let ns = resolve_ns(&claims.ns, &claims.sub);
     Ok(AuthUser {
         username: claims.sub,
-        ns: resolve_ns(&claims.ns),
+        ns,
         token,
         is_admin: identity.is_admin,
         enable_webdav: identity.enable_webdav,
@@ -119,13 +120,14 @@ fn parse_bearer(raw: &str) -> Option<String> {
 /// 命名空间参与 storage 路径拼接，异常值一律退回用户名。
 ///
 /// 令牌已验签，正常情况下 `ns` 就是用户名；这里只是兜底，防止将来
-/// 有别的签发路径写入非法值。
-fn resolve_ns(ns: &str) -> String {
+/// 有别的签发路径写入非法值。退回用户名而不是空串：空串会塌缩到
+/// data 根目录（跨用户共享区）。
+fn resolve_ns(ns: &str, username: &str) -> String {
     let ns = ns.trim();
     if is_valid_user_ns(ns) {
         ns.to_string()
     } else {
-        String::new()
+        username.trim().to_string()
     }
 }
 
@@ -212,9 +214,10 @@ mod tests {
     }
 
     #[test]
-    fn resolve_ns_falls_back_to_empty_for_invalid_claim() {
-        assert_eq!(resolve_ns("reader1"), "reader1");
-        assert_eq!(resolve_ns(""), "");
-        assert_eq!(resolve_ns("../etc"), "");
+    fn resolve_ns_falls_back_to_username_for_invalid_claim() {
+        assert_eq!(resolve_ns("reader1", "reader1"), "reader1");
+        // 非法 ns 退回用户名而不是空串，保住用户隔离
+        assert_eq!(resolve_ns("", "reader1"), "reader1");
+        assert_eq!(resolve_ns("../etc", "reader1"), "reader1");
     }
 }

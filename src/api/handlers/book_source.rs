@@ -428,16 +428,27 @@ pub struct BookSourceClientLogParam {
     stack: Option<String>,
 }
 
+/// 客户端日志单字段的截断长度。
+const LOG_FIELD_MAX_CHARS: usize = 500;
+
 pub async fn book_source_client_log(
     Query(q): Query<BookSourceClientLogParam>,
 ) -> Json<ApiResponse<serde_json::Value>> {
+    // 上报内容完全不可信：截断后再落日志，防止刷量把日志文件撑爆
+    let clip = |value: Option<&str>| {
+        value
+            .unwrap_or_default()
+            .chars()
+            .take(LOG_FIELD_MAX_CHARS)
+            .collect::<String>()
+    };
     tracing::warn!(
         "bookSourceProxy client error: source={} line={} col={} message={} stack={}",
-        q.source.as_deref().unwrap_or_default(),
+        clip(q.source.as_deref()),
         q.lineno.unwrap_or_default(),
         q.colno.unwrap_or_default(),
-        q.message.as_deref().unwrap_or_default(),
-        q.stack.as_deref().unwrap_or_default()
+        clip(q.message.as_deref()),
+        clip(q.stack.as_deref())
     );
     Json(ApiResponse::ok(serde_json::json!({ "logged": true })))
 }
@@ -1004,17 +1015,18 @@ pub async fn read_remote_source_file(
     }
     let client = builder.build().map_err(|e| AppError::Internal(e.into()))?;
 
-    let text = client
-        .get(target)
-        .send()
-        .await
-        .map_err(|e| {
-            tracing::error!("Failed to fetch remote source from {}: {:?}", param.url, e);
-            AppError::BadRequest(format!("网络请求失败: {}", e))
-        })?
-        .text()
-        .await
-        .map_err(|e| AppError::BadRequest(format!("读取响应失败: {}", e)))?;
+    let response = client.get(target).send().await.map_err(|e| {
+        tracing::error!("Failed to fetch remote source from {}: {:?}", param.url, e);
+        AppError::BadRequest(format!("网络请求失败: {}", e))
+    })?;
+    // 响应体限量：上游可返回超大响应把进程内存打爆（与 RSS 抓取同规格）
+    let bytes = crate::crawler::fetcher::read_body_limited(
+        response,
+        crate::crawler::fetcher::MAX_RESPONSE_BYTES,
+    )
+    .await
+    .map_err(|e| AppError::BadRequest(format!("读取响应失败: {}", e)))?;
+    let text = String::from_utf8_lossy(&bytes).into_owned();
 
     tracing::debug!(length = text.len(), "remote source file fetched");
     tracing::trace!(

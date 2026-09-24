@@ -877,7 +877,7 @@ impl RuleEngine {
         ctx: &HashMap<String, String>,
     ) -> Option<String> {
         let rule = source.rule_review.as_ref()?.review_url.clone()?;
-        self.review_url(&rule, body, base_url, ctx)
+        with_book_source(source, || self.review_url(&rule, body, base_url, ctx))
     }
 
     /// 求值段评概览地址。
@@ -889,7 +889,7 @@ impl RuleEngine {
         ctx: &HashMap<String, String>,
     ) -> Option<String> {
         let rule = source.rule_para_review.as_ref()?.index_url.clone()?;
-        self.review_url(&rule, body, base_url, ctx)
+        with_book_source(source, || self.review_url(&rule, body, base_url, ctx))
     }
 
     /// 求值某一段的段评列表地址（模板里可用 `{{paraIndex}}`）。
@@ -901,7 +901,7 @@ impl RuleEngine {
         ctx: &HashMap<String, String>,
     ) -> Option<String> {
         let rule = source.rule_para_review.as_ref()?.review_url.clone()?;
-        self.review_url(&rule, body, base_url, ctx)
+        with_book_source(source, || self.review_url(&rule, body, base_url, ctx))
     }
 
     /// 求值一条评论 URL 规则。

@@ -414,7 +414,7 @@ fn read_epub_files(bytes: &[u8]) -> Result<HashMap<String, Vec<u8>>, AppError> {
 
 fn parse_container_rootfile(xml: &str) -> Result<String, AppError> {
     let mut reader = Reader::from_str(xml);
-    reader.trim_text(true);
+    reader.config_mut().trim_text(true);
     let mut buf = Vec::new();
     loop {
         match reader.read_event_into(&mut buf) {
@@ -438,7 +438,7 @@ fn parse_container_rootfile(xml: &str) -> Result<String, AppError> {
 fn parse_opf(xml: &str, opf_base: &str) -> Result<EpubPackage, AppError> {
     let mut package = EpubPackage::default();
     let mut reader = Reader::from_str(xml);
-    reader.trim_text(true);
+    reader.config_mut().trim_text(true);
     let mut buf = Vec::new();
     let mut current_meta: Option<String> = None;
 
@@ -457,7 +457,7 @@ fn parse_opf(xml: &str, opf_base: &str) -> Result<EpubPackage, AppError> {
             }
             Ok(Event::Text(e)) => {
                 if let Some(kind) = current_meta.as_deref() {
-                    let text = e.unescape().unwrap_or_default().trim().to_string();
+                    let text = e.html_content().unwrap_or_default().trim().to_string();
                     if !text.is_empty() {
                         match kind {
                             "title" if package.title.is_none() => package.title = Some(text),
@@ -563,7 +563,7 @@ fn load_title_map(
 
 fn parse_ncx_titles(xml: &str, base: &str) -> HashMap<String, String> {
     let mut reader = Reader::from_str(xml);
-    reader.trim_text(true);
+    reader.config_mut().trim_text(true);
     let mut buf = Vec::new();
     let mut stack: Vec<NavPointState> = Vec::new();
     let mut capture_text = false;
@@ -600,7 +600,7 @@ fn parse_ncx_titles(xml: &str, base: &str) -> HashMap<String, String> {
                 if let Some(state) = stack.last_mut() {
                     state
                         .label
-                        .push_str(e.unescape().unwrap_or_default().as_ref());
+                        .push_str(e.html_content().unwrap_or_default().as_ref());
                 }
             }
             Ok(Event::End(e)) => match local_name(e.name().as_ref()).as_str() {
@@ -621,7 +621,7 @@ fn parse_ncx_titles(xml: &str, base: &str) -> HashMap<String, String> {
 
 fn parse_nav_titles(xml: &str, base: &str) -> HashMap<String, String> {
     let mut reader = Reader::from_str(xml);
-    reader.trim_text(true);
+    reader.config_mut().trim_text(true);
     let mut buf = Vec::new();
     let mut current_href: Option<String> = None;
     let mut current_text = String::new();
@@ -634,7 +634,7 @@ fn parse_nav_titles(xml: &str, base: &str) -> HashMap<String, String> {
                 current_text.clear();
             }
             Ok(Event::Text(e)) if current_href.is_some() => {
-                current_text.push_str(e.unescape().unwrap_or_default().as_ref());
+                current_text.push_str(e.html_content().unwrap_or_default().as_ref());
             }
             Ok(Event::End(e)) if local_name(e.name().as_ref()) == "a" => {
                 if let Some(href) = current_href.take() {
@@ -658,7 +658,7 @@ fn parse_nav_titles(xml: &str, base: &str) -> HashMap<String, String> {
 
 fn extract_html_title(html: &str) -> Option<String> {
     let mut reader = Reader::from_str(html);
-    reader.trim_text(true);
+    reader.config_mut().trim_text(true);
     let mut buf = Vec::new();
     let mut capture: Option<String> = None;
     let mut captured_text = String::new();
@@ -673,7 +673,7 @@ fn extract_html_title(html: &str) -> Option<String> {
                 }
             }
             Ok(Event::Text(e)) if capture.is_some() => {
-                captured_text.push_str(e.unescape().unwrap_or_default().as_ref());
+                captured_text.push_str(e.html_content().unwrap_or_default().as_ref());
             }
             Ok(Event::End(e)) => {
                 let tag = local_name(e.name().as_ref());
@@ -716,7 +716,7 @@ fn sanitize_chapter_html_inner(
     body_only: bool,
 ) -> String {
     let mut reader = Reader::from_str(html);
-    reader.trim_text(false);
+    reader.config_mut().trim_text(false);
     let mut buf = Vec::new();
     let mut out = String::new();
     let mut in_body = !body_only;
@@ -776,7 +776,7 @@ fn sanitize_chapter_html_inner(
                 }
             }
             Ok(Event::Text(e)) if in_body && skip_depth == 0 => {
-                out.push_str(&escape_html(e.unescape().unwrap_or_default().as_ref()));
+                out.push_str(&escape_html(e.html_content().unwrap_or_default().as_ref()));
             }
             Ok(Event::CData(e)) if in_body && skip_depth == 0 => {
                 out.push_str(&escape_html(&decode_utf8_lossy(e.as_ref())));

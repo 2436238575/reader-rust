@@ -150,8 +150,14 @@ fn check_resolved_ips(ips: impl Iterator<Item = IpAddr>) -> Result<(), String> {
 
 /// 校验一个用户可控的出站 URL：协议 + 主机名 + 解析出的全部 IP。
 ///
-/// `ALLOW_PRIVATE_NETWORK` 打开时直接放行（本地单用户模式，零额外开销）。
+/// `ALLOW_PRIVATE_NETWORK` 打开时跳过 DNS/内网判定直接放行（本地单用户模式，
+/// 零额外开销），仅协议白名单仍然生效。
 pub async fn ensure_outbound_url_allowed(url: &Url) -> Result<(), String> {
+    // 协议检查放在放行早退之前：即使放行私网，file:/ftp: 之类也不该交给
+    // 下游（reqwest 会兜底拒绝，但守卫自身保持同一语义，且报错更可读）
+    if !matches!(url.scheme(), "http" | "https") {
+        return Err(format!("不支持的协议: {}", url.scheme()));
+    }
     if private_network_allowed() {
         return Ok(());
     }

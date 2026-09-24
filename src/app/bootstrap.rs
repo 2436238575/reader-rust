@@ -52,8 +52,8 @@ pub async fn run() -> anyhow::Result<()> {
 /// 与 `run()` 拆开是为了让集成测试能直接起一套真实的路由，而不必复制一份
 /// 装配逻辑——复制出来的那份迟早会和这里漂移。
 pub async fn build_state(cfg: AppConfig) -> anyhow::Result<AppState> {
-    // 出站守卫策略：默认拦截私网。书源是用户导入的第三方数据，
-    // 放行私网等于把本机与内网服务暴露给任意书源。
+    // 出站守卫策略：默认放行私网——自托管单用户下局域网书源、本地模型服务
+    // 是正常用法；多用户或公网暴露的部署应显式设 ALLOW_PRIVATE_NETWORK=false。
     let allow_private = cfg.allow_private_network;
     url_guard::set_allow_private_network(allow_private);
     tracing::info!("outbound policy: allow_private_network={allow_private}");
@@ -78,6 +78,7 @@ pub async fn build_state(cfg: AppConfig) -> anyhow::Result<AppState> {
     let book_service = Arc::new(
         BookService::new(http, parser, cache, &cfg.storage_dir)
             .with_user_book_limit(cfg.user_book_limit)
+            .with_user_local_book_limit(cfg.user_local_book_limit)
             .with_cover_cache_limit(cfg.cache_cover_limit_bytes)
             .with_review_cache(cfg.review_cache_ttl_secs, cfg.review_cache_user_limit_bytes),
     );

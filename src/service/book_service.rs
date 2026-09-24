@@ -52,6 +52,8 @@ pub struct BookService {
     recent_bodies: Arc<RwLock<HashMap<String, RecentBody>>>,
     /// 单用户书架上限（0 = 不限），来自 `USER_BOOK_LIMIT`。
     user_book_limit: u32,
+    /// 单用户本地书上限（0 = 不限），来自 `USER_LOCAL_BOOK_LIMIT`。
+    user_local_book_limit: u32,
     /// 封面缓存目录的容量上限（0 = 不限），来自 `CACHE_COVER_LIMIT_BYTES`。
     cover_cache_limit: u64,
 }
@@ -188,6 +190,7 @@ impl BookService {
             rate_states: Arc::new(RwLock::new(HashMap::new())),
             recent_bodies: Arc::new(RwLock::new(HashMap::new())),
             user_book_limit: 0,
+            user_local_book_limit: 0,
             cover_cache_limit: DEFAULT_COVER_CACHE_BYTES,
         }
     }
@@ -205,6 +208,12 @@ impl BookService {
     /// 设置单用户书架上限（`USER_BOOK_LIMIT`；0 = 不限）。
     pub fn with_user_book_limit(mut self, limit: u32) -> Self {
         self.user_book_limit = limit;
+        self
+    }
+
+    /// 设置单用户本地书上限（`USER_LOCAL_BOOK_LIMIT`；0 = 不限）。
+    pub fn with_user_local_book_limit(mut self, limit: u32) -> Self {
+        self.user_local_book_limit = limit;
         self
     }
 
@@ -308,6 +317,38 @@ impl BookService {
         let body = res.body.clone();
         let url = res.url.clone();
         parse_blocking(move || with_user_ns(&user_ns, || f(&parser, &source, &body, &url))).await
+    }
+
+    /// 在阻塞线程池里对 (source, body, base_url) 求值一段可能跑 JS 的规则。
+    ///
+    /// 评论 URL 模板（`{{表达式}}`）与段评补段文本（`content`）都走这里。
+    /// 必须带 `user_ns`：不带时书源 JS 的 cache/kv 会落进共享的 "public"
+    /// 桶（跨用户串号），且同步求值会直接堵在 tokio worker 上。
+    async fn parse_body_blocking<T, F>(
+        &self,
+        user_ns: &str,
+        source: &BookSource,
+        body: &str,
+        base_url: &str,
+        ctx: &HashMap<String, String>,
+        f: F,
+    ) -> Result<T, AppError>
+    where
+        F: FnOnce(&RuleEngine, &BookSource, &str, &str, &HashMap<String, String>) -> T
+            + Send
+            + 'static,
+        T: Send + 'static,
+    {
+        let user_ns = user_ns.to_string();
+        let parser = self.parser.clone();
+        let source = source.clone();
+        let body = body.to_string();
+        let base_url = base_url.to_string();
+        let ctx = ctx.clone();
+        parse_blocking(move || {
+            with_user_ns(&user_ns, || f(&parser, &source, &body, &base_url, &ctx))
+        })
+        .await
     }
 
     async fn fetch_source_url(
@@ -515,7 +556,8 @@ impl BookService {
     ) -> Result<Vec<ExploreKind>, AppError> {
         let user_ns = user_ns.to_string();
         let source = source.clone();
-        parse_blocking(move || with_user_ns(&user_ns, || parse_explore_kinds(&source))).await?
+        parse_blocking(move || with_user_ns(&user_ns, || parse_explore_kinds(&source, &user_ns)))
+            .await?
     }
 
     pub async fn test_book_source_availability(
@@ -1203,8 +1245,10 @@ impl BookService {
             .await?;
         let ctx = self.review_ctx(book_url, chapter_url, page, count, sort, None);
         let url = self
-            .parser
-            .chapter_review_url(source, &body, &base, &ctx)
+            .parse_body_blocking(user_ns, source, &body, &base, &ctx, |p, s, b, u, ctx| {
+                p.chapter_review_url(s, b, u, ctx)
+            })
+            .await?
             .ok_or_else(|| AppError::BadRequest("书源的章评地址解析失败".to_string()))?;
         let result = self
             .fetch_review_page(user_ns, source, &url, page, |p, s, b, u| {
@@ -1251,8 +1295,10 @@ impl BookService {
             None,
         );
         let url = self
-            .parser
-            .para_review_index_url(source, &body, &base, &ctx)
+            .parse_body_blocking(user_ns, source, &body, &base, &ctx, |p, s, b, u, ctx| {
+                p.para_review_index_url(s, b, u, ctx)
+            })
+            .await?
             .ok_or_else(|| AppError::BadRequest("书源的段评概览地址解析失败".to_string()))?;
         let res = self
             .fetch_source_url(user_ns, source, &url, &source.book_source_url)
@@ -1263,7 +1309,8 @@ impl BookService {
             })
             .await?;
         // 段号会因用户的书源替换规则、繁简转换而漂移，补上段落原文做兜底定位。
-        self.fill_para_texts(source, &body, &base, &mut index.paras);
+        self.fill_para_texts(user_ns, source, &body, &base, &mut index.paras)
+            .await;
         if !index.paras.is_empty() {
             self.store_review_cache(user_ns, &book_key, &cache_key, &index)
                 .await;
@@ -1309,8 +1356,10 @@ impl BookService {
             .await?;
         let ctx = self.review_ctx(book_url, chapter_url, page, count, sort, Some(para_index));
         let url = self
-            .parser
-            .para_review_url(source, &body, &base, &ctx)
+            .parse_body_blocking(user_ns, source, &body, &base, &ctx, |p, s, b, u, ctx| {
+                p.para_review_url(s, b, u, ctx)
+            })
+            .await?
             .ok_or_else(|| AppError::BadRequest("书源的段评地址解析失败".to_string()))?;
         let result = self
             .fetch_review_page(user_ns, source, &url, page, |p, s, b, u| {
@@ -1355,8 +1404,12 @@ impl BookService {
     }
 
     /// 用正文规则取出正文并按行切分，给段评补上「这一段是什么」。
-    fn fill_para_texts(
+    ///
+    /// `content` 内部可能跑 JS，与其它解析入口一样必须进阻塞线程池并带
+    /// `user_ns`，否则 cache/kv 落进共享桶且堵住 tokio worker。
+    async fn fill_para_texts(
         &self,
+        user_ns: &str,
         source: &BookSource,
         body: &str,
         base_url: &str,
@@ -1365,7 +1418,17 @@ impl BookService {
         if paras.is_empty() {
             return;
         }
-        let text = self.parser.content(source, body, base_url);
+        let text = self
+            .parse_body_blocking(
+                user_ns,
+                source,
+                body,
+                base_url,
+                &HashMap::new(),
+                |p, s, b, u, _| p.content(s, b, u),
+            )
+            .await
+            .unwrap_or_default();
         if text.is_empty() {
             return;
         }
@@ -1759,6 +1822,20 @@ impl BookService {
                     "书架书籍数量不能超过 {limit} 本"
                 )));
             }
+            // 本地书限额同样对「新入架」生效：saveBook 直构 local-* 书
+            // 可绕过上传 handler 里的检查
+            let local_limit = self.user_local_book_limit as usize;
+            if local_limit > 0 && is_local_book_url(&book.book_url) {
+                let local_count = list
+                    .iter()
+                    .filter(|b| is_local_book_url(&b.book_url) && b.book_url != book.book_url)
+                    .count();
+                if local_count >= local_limit {
+                    return Err(AppError::BadRequest(format!(
+                        "本地书籍数量不能超过 {local_limit} 本"
+                    )));
+                }
+            }
             list.push(book.clone());
         }
 
@@ -1784,6 +1861,19 @@ impl BookService {
             return Err(AppError::BadRequest(format!(
                 "书架书籍数量不能超过 {limit} 本"
             )));
+        }
+        // 本地书限额在整架替换后同样成立
+        let local_limit = self.user_local_book_limit as usize;
+        if local_limit > 0 {
+            let local_count = normalized
+                .iter()
+                .filter(|b| is_local_book_url(&b.book_url))
+                .count();
+            if local_count > local_limit {
+                return Err(AppError::BadRequest(format!(
+                    "本地书籍数量不能超过 {local_limit} 本"
+                )));
+            }
         }
         self.write_bookshelf(user_ns, &normalized).await?;
         Ok(normalized)
@@ -2047,9 +2137,17 @@ impl BookService {
                 .map_err(|e| AppError::Internal(e.into()))?;
         }
         let data = serde_json::to_string(list).map_err(|e| AppError::BadRequest(e.to_string()))?;
-        fs::write(&path, data)
+        // 临时文件 + 同盘 rename 保证原子性：进程中途死掉不会留下截断的 JSON，
+        // 读书架的一方也见不到半个文件（并发写仍是 last-writer-wins，
+        // 但至少不会损坏文件本身）
+        let tmp = path.with_extension("json.tmp");
+        fs::write(&tmp, data)
             .await
             .map_err(|e| AppError::Internal(e.into()))?;
+        if let Err(e) = fs::rename(&tmp, &path).await {
+            let _ = fs::remove_file(&tmp).await;
+            return Err(AppError::Internal(e.into()));
+        }
         Ok(())
     }
 
@@ -2197,8 +2295,9 @@ fn apply_login_check_js(source: &BookSource, res: FetchResponse) -> FetchRespons
 /// exploreUrl 里 `@js:`/`<js>` 的求值结果缓存。
 ///
 /// 规格 §13 要求按 `MD5(bookSourceUrl + exploreUrl)` 缓存：这类脚本经常要发网络
-/// 请求取分类列表，而书海页每次进入都会问一次。键与规格一致，另加 1 小时上限——
-/// 进程长跑时不能永久陈旧的分类列表。
+/// 请求取分类列表，而书海页每次进入都会问一次。键在规格基础上**另加用户命名
+/// 空间**——脚本的求值结果可能含用户相关值（`java.androidId`、cache/kv），
+/// 不能跨用户共享。另加 1 小时上限——进程长跑时不能永久陈旧的分类列表。
 static EXPLORE_URL_CACHE: once_cell::sync::Lazy<
     std::sync::Mutex<HashMap<String, (String, Instant)>>,
 > = once_cell::sync::Lazy::new(|| std::sync::Mutex::new(HashMap::new()));
@@ -2207,10 +2306,11 @@ const EXPLORE_URL_CACHE_MAX_ENTRIES: usize = 256;
 
 fn cached_explore_script(
     source: &BookSource,
+    user_ns: &str,
     raw: &str,
     evaluate: impl FnOnce() -> anyhow::Result<String>,
 ) -> Result<String, AppError> {
-    let key = md5_hex(&format!("{}{}", source.book_source_url, raw));
+    let key = md5_hex(&format!("{user_ns}|{}|{}", source.book_source_url, raw));
     {
         let cache = EXPLORE_URL_CACHE.lock().unwrap_or_else(|e| e.into_inner());
         if let Some((value, stored_at)) = cache.get(&key) {
@@ -2229,7 +2329,13 @@ fn cached_explore_script(
     Ok(value)
 }
 
-fn parse_explore_kinds(source: &BookSource) -> Result<Vec<ExploreKind>, AppError> {
+/// 本地书（TXT/EPUB 上传）的 bookUrl 形态，限额与清理按它识别。
+fn is_local_book_url(url: &str) -> bool {
+    crate::service::local_txt_book::is_local_txt_url(url)
+        || crate::service::local_epub_book::is_local_epub_url(url)
+}
+
+fn parse_explore_kinds(source: &BookSource, user_ns: &str) -> Result<Vec<ExploreKind>, AppError> {
     let Some(raw) = source
         .explore_url
         .as_deref()
@@ -2241,12 +2347,16 @@ fn parse_explore_kinds(source: &BookSource) -> Result<Vec<ExploreKind>, AppError
 
     let text = with_book_source(source, || {
         if let Some(script) = raw.strip_prefix("@js:") {
-            cached_explore_script(source, raw, || eval_js(script, "", &source.book_source_url))
+            cached_explore_script(source, user_ns, raw, || {
+                eval_js(script, "", &source.book_source_url)
+            })
         } else if let Some(script) = raw
             .strip_prefix("<js>")
             .and_then(|value| value.strip_suffix("</js>"))
         {
-            cached_explore_script(source, raw, || eval_js(script, "", &source.book_source_url))
+            cached_explore_script(source, user_ns, raw, || {
+                eval_js(script, "", &source.book_source_url)
+            })
         } else {
             Ok(raw.to_string())
         }
@@ -2714,6 +2824,55 @@ mod tests {
                 .await
                 .unwrap();
         }
+
+        let _ = tokio::fs::remove_dir_all(&storage_dir).await;
+    }
+
+    #[tokio::test]
+    async fn user_local_book_limit_blocks_local_books_saved_directly() {
+        let storage_dir =
+            std::env::temp_dir().join(format!("reader-rust-local-limit-{}", std::process::id()));
+        let service = BookService::new(
+            HttpClient::new(5, None).unwrap(),
+            RuleEngine::new().unwrap(),
+            FileCache::new(storage_dir.join("cache"), 0),
+            storage_dir.to_str().unwrap(),
+        )
+        .with_user_local_book_limit(1);
+
+        // 直构 local-txt 书入架（不经上传 handler）同样受本地书限额约束
+        service
+            .save_book("u", make_book("local-txt:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"))
+            .await
+            .unwrap();
+        let err = service
+            .save_book("u", make_book("local-txt:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"))
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("本地书籍数量不能超过"));
+        // 已在架上的同一本书更新不受限
+        service
+            .save_book("u", make_book("local-txt:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"))
+            .await
+            .unwrap();
+        // 普通书不受本地书限额影响
+        service
+            .save_book("u", make_book("https://example.com/book"))
+            .await
+            .unwrap();
+
+        // 整架替换按替换后的本地书总量校验
+        let err = service
+            .save_books(
+                "u",
+                vec![
+                    make_book("local-txt:cccccccccccccccccccccccccccccccc"),
+                    make_book("local-txt:dddddddddddddddddddddddddddddddd"),
+                ],
+            )
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("本地书籍数量不能超过"));
 
         let _ = tokio::fs::remove_dir_all(&storage_dir).await;
     }
