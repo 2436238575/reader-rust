@@ -110,6 +110,10 @@ async fn start_upstream() -> (String, HitCounter) {
                     if params.get("sort").map(String::as_str) == Some("time") {
                         body["data"]["data"]["comment"][0]["text"] = json!("最新序第一条");
                     }
+                    // page=99 返回空列表，用于验证「空页不缓存」
+                    if params.get("page").map(String::as_str) == Some("99") {
+                        body["data"]["data"]["comment"] = json!([]);
+                    }
                     async move { Json(body) }
                 }
             }),
@@ -128,9 +132,12 @@ async fn start_upstream() -> (String, HitCounter) {
             "/comment/para",
             get({
                 let para_comments = para_comments.clone();
-                move || {
-                    let para_comments = para_comments.clone();
-                    async move { Json(para_comments) }
+                move |Query(params): Query<HashMap<String, String>>| {
+                    let mut body = para_comments.clone();
+                    if params.get("sort").map(String::as_str) == Some("time_desc") {
+                        body["data"]["data"]["comments"][0]["text"] = json!("最新序段评");
+                    }
+                    async move { Json(body) }
                 }
             }),
         )
@@ -202,7 +209,7 @@ fn book_source(upstream_url: &str) -> Value {
             "indexUrl": "comment/para/list?book_id={{$.data.data.novel_data.book_id}}&item_id={{$.data.data.novel_data.item_id}}&item_version={{$.data.data.novel_data.version}}",
             "indexListRule": "$.data.data.idea_data",
             "indexCountRule": "$.idea_count",
-            "reviewUrl": "comment/para?book_id={{$.data.data.novel_data.book_id}}&item_id={{$.data.data.novel_data.item_id}}&para_index={{paraIndex}}&item_version={{$.data.data.novel_data.version}}&page={{page}}&count={{count}}",
+            "reviewUrl": "comment/para?book_id={{$.data.data.novel_data.book_id}}&item_id={{$.data.data.novel_data.item_id}}&para_index={{paraIndex}}&item_version={{$.data.data.novel_data.version}}&page={{page}}&count={{count}}&sort={{sort === 'hot' ? 'hot' : 'time_desc'}}",
             "listRule": "$.data.data.comments[*]",
             "totalRule": "$.data.data.count",
             "hasMoreRule": "$.data.data.has_more",
@@ -375,8 +382,23 @@ async fn chapter_and_para_comments_are_parsed_from_the_source_rules() {
         )
         .await;
     assert_eq!(para["data"]["total"], json!(192));
+    // 模板里的 JS 映射把 hot/time 翻译成站点要的 hot/time_desc，
+    // 所以下面这个请求（默认 hot）不该触发换序分支
     let item = &para["data"]["items"][0];
     assert_eq!(item["content"], json!("这一段写得真好"));
+    assert_eq!(para["serverSort"], json!(true));
+
+    let time_para = server
+        .post(
+            "getParaComments",
+            server.review_body(json!({ "paraIndex": 2, "sort": "time" })),
+        )
+        .await;
+    assert_eq!(
+        time_para["data"]["items"][0]["content"],
+        json!("最新序段评"),
+        "sort 应经 JS 映射成 time_desc 传给上游"
+    );
     // 段评的内联回复与章评一样要解析出来
     assert_eq!(item["replyCount"], json!(1));
     assert_eq!(item["replies"][0]["name"], json!("读者丁"));
@@ -547,6 +569,23 @@ async fn sources_without_sort_in_the_rule_report_client_side_sorting() {
         .post("getChapterComments", server.review_body(json!({})))
         .await;
     assert_eq!(page["serverSort"], json!(false));
+}
+
+#[tokio::test]
+async fn empty_comment_pages_are_not_cached() {
+    let server = TestServer::start().await;
+    let body = server.review_body(json!({ "page": 99 }));
+
+    let first = server.post("getChapterComments", body.clone()).await;
+    assert_eq!(first["data"]["items"].as_array().unwrap().len(), 0);
+    let hits_after_first = server.hits_for("/comment/item");
+
+    server.post("getChapterComments", body).await;
+    assert_eq!(
+        server.hits_for("/comment/item"),
+        hits_after_first + 1,
+        "空页不该进缓存，第二次必须重新打上游——否则上游一次抖动就会让评论空白七天"
+    );
 }
 
 #[tokio::test]

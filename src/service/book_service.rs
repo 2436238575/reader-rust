@@ -82,7 +82,9 @@ const RECENT_BODY_TTL: Duration = Duration::from_secs(600);
 ///
 /// 用了说明排序由站点自己做；没用的话「最新」只能由客户端对已加载的条目重排。
 fn rule_consumes_sort(rule: Option<&str>) -> bool {
-    rule.map(|rule| rule.contains("{{sort}}") || rule.contains("@get:{sort}"))
+    // `{{sort}}` 与带映射的 `{{sort === ...}}` 都算；前缀匹配而非全文比对，
+    // 是因为站点取值往往不是 hot/time 本身（番茄的段评枚举叫 Hot/TimeDesc）
+    rule.map(|rule| rule.contains("{{sort") || rule.contains("@get:{sort}"))
         .unwrap_or(false)
 }
 
@@ -1209,8 +1211,12 @@ impl BookService {
                 p.chapter_reviews(s, b, u)
             })
             .await?;
-        self.store_review_cache(user_ns, &book_key, &cache_key, &result)
-            .await;
+        // 空页不进缓存：上游偶发失败（限流、超时）也长这样，缓存 7 天等于
+        // 把一次抖动放大成一整周「没有评论」
+        if !result.items.is_empty() {
+            self.store_review_cache(user_ns, &book_key, &cache_key, &result)
+                .await;
+        }
         Ok(ReviewResponse::new(true, result).with_server_sort(server_sort))
     }
 
@@ -1258,8 +1264,10 @@ impl BookService {
             .await?;
         // 段号会因用户的书源替换规则、繁简转换而漂移，补上段落原文做兜底定位。
         self.fill_para_texts(source, &body, &base, &mut index.paras);
-        self.store_review_cache(user_ns, &book_key, &cache_key, &index)
-            .await;
+        if !index.paras.is_empty() {
+            self.store_review_cache(user_ns, &book_key, &cache_key, &index)
+                .await;
+        }
         Ok(ReviewResponse::new(true, index))
     }
 
@@ -1309,8 +1317,11 @@ impl BookService {
                 p.para_reviews(s, b, u)
             })
             .await?;
-        self.store_review_cache(user_ns, &book_key, &cache_key, &result)
-            .await;
+        // 空页不进缓存，理由同章评
+        if !result.items.is_empty() {
+            self.store_review_cache(user_ns, &book_key, &cache_key, &result)
+                .await;
+        }
         Ok(ReviewResponse::new(true, result).with_server_sort(server_sort))
     }
 
@@ -1331,6 +1342,14 @@ impl BookService {
         let mut parsed = self
             .parse_response_blocking(user_ns, source, &res, parse)
             .await?;
+        // 排查评论数据问题时需要能看到实际请求的地址与上游响应形态
+        if parsed.items.is_empty() {
+            tracing::debug!(
+                "评论页为空: url={} 响应前 200 字节={:?}",
+                url,
+                res.body.chars().take(200).collect::<String>()
+            );
+        }
         parsed.page = page;
         Ok(parsed)
     }
