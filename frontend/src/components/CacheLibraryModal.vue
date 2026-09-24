@@ -287,7 +287,7 @@ async function clearBrowser(book: Book) {
 }
 
 .scope-label {
-  font-size: 13px;
+  font-size: var(--text-sm);
   color: var(--color-text-secondary);
 }
 
@@ -315,7 +315,7 @@ async function clearBrowser(book: Book) {
   display: flex;
   gap: 14px;
   flex-wrap: wrap;
-  font-size: 13px;
+  font-size: var(--text-sm);
   color: var(--color-text-secondary);
 }
 
@@ -341,7 +341,7 @@ async function clearBrowser(book: Book) {
   display: flex;
   gap: 12px;
   flex-wrap: wrap;
-  font-size: 13px;
+  font-size: var(--text-sm);
 }
 
 .cache-actions {

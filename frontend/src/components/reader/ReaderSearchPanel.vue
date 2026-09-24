@@ -106,7 +106,7 @@ watch(() => props.show, (visible) => {
 }
 
 .reader-search-title {
-  font-size: 15px;
+  font-size: var(--text-base);
   font-weight: 700;
 }
 
@@ -121,7 +121,7 @@ watch(() => props.show, (visible) => {
   border: 1px solid rgba(0, 0, 0, 0.06);
   outline: none;
   color: inherit;
-  font-size: 14px;
+  font-size: var(--text-base);
   padding: 11px 12px;
   border-radius: 12px;
 }
@@ -131,7 +131,7 @@ watch(() => props.show, (visible) => {
   border-radius: 12px;
   background: var(--color-primary);
   color: #fff;
-  font-size: 13px;
+  font-size: var(--text-sm);
   padding: 11px 14px;
   cursor: pointer;
 }
@@ -165,13 +165,13 @@ watch(() => props.show, (visible) => {
 }
 
 .search-result-title {
-  font-size: 13px;
+  font-size: var(--text-sm);
   font-weight: 700;
   margin-bottom: 4px;
 }
 
 .search-result-snippet {
-  font-size: 12px;
+  font-size: var(--text-xs);
   line-height: 1.55;
   opacity: 0.78;
   word-break: break-all;
@@ -181,14 +181,14 @@ watch(() => props.show, (visible) => {
   text-align: center;
   opacity: 0.55;
   padding: 28px 12px;
-  font-size: 13px;
+  font-size: var(--text-sm);
 }
 
 .search-actions {
   display: flex;
   align-items: center;
   gap: 8px;
-  font-size: 12px;
+  font-size: var(--text-xs);
   opacity: 0.8;
 }
 
@@ -206,7 +206,7 @@ watch(() => props.show, (visible) => {
   border: none;
   background: transparent;
   color: inherit;
-  font-size: 20px;
+  font-size: var(--text-xl);
   line-height: 1;
   opacity: 0.65;
   cursor: pointer;

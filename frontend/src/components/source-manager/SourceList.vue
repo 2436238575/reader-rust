@@ -138,7 +138,7 @@ defineEmits<{
 
 .source-url {
   max-width: 100%;
-  font-size: 12px;
+  font-size: var(--text-xs);
   color: var(--color-text-tertiary);
   overflow-wrap: anywhere;
 }
@@ -149,7 +149,7 @@ defineEmits<{
   border-radius: var(--radius-full);
   background: var(--color-bg-hover);
   color: var(--color-text-secondary);
-  font-size: 11px;
+  font-size: var(--text-xs);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;

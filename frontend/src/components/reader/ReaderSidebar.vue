@@ -112,7 +112,7 @@ defineEmits<{
 }
 
 .sidebar-item span {
-  font-size: 10px;
+  font-size: var(--text-xs);
   font-weight: 500;
   white-space: nowrap;
 }

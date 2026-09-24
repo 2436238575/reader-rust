@@ -45,7 +45,7 @@
                     <span class="banner-label">当前默认书源</span>
                     <strong>{{ defaultBookSourceOwner || '未设置' }}</strong>
                   </div>
-                  <button class="mini-btn" @click="summaryCollapsed = !summaryCollapsed">
+                  <button class="btn btn-sm" @click="summaryCollapsed = !summaryCollapsed">
                     {{ summaryCollapsed ? '展开总览' : '收起总览' }}
                   </button>
                 </div>
@@ -84,7 +84,7 @@
                     <span>初始密码</span>
                     <input v-model="createForm.password" type="password" placeholder="至少 8 位" autocomplete="new-password" />
                   </label>
-                  <button class="action-btn primary" type="submit" :disabled="working">
+                  <button class="btn btn-primary" type="submit" :disabled="working">
                     {{ working ? '处理中...' : '创建用户' }}
                   </button>
                 </form>
@@ -130,7 +130,7 @@
                     </div>
                     <div class="action-row">
                       <button
-                        class="mini-btn"
+                        class="btn btn-sm"
                         :class="{ active: !!user.enableWebdav }"
                         :disabled="working"
                         @click="handleTogglePermission(user, 'enableWebdav', !user.enableWebdav)"
@@ -138,7 +138,7 @@
                         服务器备份
                       </button>
                       <button
-                        class="mini-btn"
+                        class="btn btn-sm"
                         :class="{ active: !!user.enableLocalStore }"
                         :disabled="working"
                         @click="handleTogglePermission(user, 'enableLocalStore', !user.enableLocalStore)"
@@ -146,7 +146,7 @@
                         本地存储
                       </button>
                       <button
-                        class="mini-btn"
+                        class="btn btn-sm"
                         :class="{ active: !!user.enableAiModel }"
                         :disabled="working"
                         @click="handleTogglePermission(user, 'enableAiModel', !user.enableAiModel)"
@@ -154,7 +154,7 @@
                         AI模型
                       </button>
                       <button
-                        class="mini-btn"
+                        class="btn btn-sm"
                         :class="{ active: user.username === defaultBookSourceOwner }"
                         :disabled="working"
                         @click="handleSetDefaultBookSources(user)"
@@ -162,14 +162,14 @@
                         默认书源
                       </button>
                       <button
-                        class="mini-btn"
+                        class="btn btn-sm"
                         :class="{ active: resetTarget === user.username }"
                         @click="toggleResetTarget(user.username)"
                       >
                         {{ resetTarget === user.username ? '收起重置密码' : '重置密码' }}
                       </button>
                       <button
-                        class="mini-btn danger"
+                        class="btn btn-sm btn-danger"
                         :disabled="working || user.username === currentUsername"
                         @click="handleDeleteUser(user)"
                       >
@@ -186,7 +186,7 @@
                         placeholder="输入新密码"
                         autocomplete="new-password"
                       />
-                      <button class="mini-btn primary" :disabled="working" @click="handleResetPassword(user.username)">
+                      <button class="btn btn-sm btn-primary" :disabled="working" @click="handleResetPassword(user.username)">
                         保存新密码
                       </button>
                     </div>
@@ -471,9 +471,7 @@ async function handleSetDefaultBookSources(user: UserInfo) {
   gap: var(--space-2);
 }
 
-.icon-btn,
-.action-btn,
-.mini-btn {
+.icon-btn {
   border: none;
   font: inherit;
 }
@@ -546,7 +544,7 @@ async function handleSetDefaultBookSources(user: UserInfo) {
 
 .banner-label {
   color: var(--color-text-secondary);
-  font-size: 13px;
+  font-size: var(--text-sm);
 }
 
 .top-tools {
@@ -603,13 +601,13 @@ async function handleSetDefaultBookSources(user: UserInfo) {
 }
 
 .summary-card span {
-  font-size: 24px;
+  font-size: var(--text-xl);
   font-weight: 700;
   line-height: 1.1;
 }
 
 .summary-card small {
-  font-size: 13px;
+  font-size: var(--text-sm);
 }
 
 .summary-card small,
@@ -687,54 +685,10 @@ async function handleSetDefaultBookSources(user: UserInfo) {
   color: inherit;
 }
 
-.action-btn,
-.mini-btn {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: var(--radius-md);
-  border: 1px solid var(--color-border-light);
-  background: var(--color-bg-sunken);
-  color: var(--color-text);
-  transition: all var(--duration-fast);
-}
-
-.action-btn {
-  min-height: 40px;
-  padding: 0 var(--space-4);
-  font-size: var(--text-sm);
-  font-weight: 600;
-  white-space: nowrap;
-}
-
-.mini-btn {
-  min-height: 32px;
-  padding: 0 var(--space-3);
-  font-size: var(--text-xs);
-  font-weight: 600;
-}
-
-.action-btn.primary,
-.mini-btn.primary {
-  background: var(--color-primary);
-  border-color: var(--color-primary);
-  color: #fff;
-}
-
-.mini-btn.danger {
-  color: var(--color-danger);
-}
-
-.mini-btn.active {
-  background: rgba(201, 127, 58, 0.12);
-  color: var(--color-primary-dark);
-  border-color: rgba(201, 127, 58, 0.18);
-}
-
-.action-btn:disabled,
-.mini-btn:disabled {
-  opacity: 0.45;
-  cursor: not-allowed;
+.btn-sm.active {
+  background: var(--color-primary-bg);
+  color: var(--color-primary);
+  border-color: var(--color-primary-border);
 }
 
 .list-panel {
@@ -798,7 +752,7 @@ async function handleSetDefaultBookSources(user: UserInfo) {
   border-radius: 999px;
   background: var(--color-bg-sunken);
   color: var(--color-text-secondary);
-  font-size: 11px;
+  font-size: var(--text-xs);
   font-weight: 600;
 }
 

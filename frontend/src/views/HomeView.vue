@@ -16,14 +16,14 @@
         </h1>
         <div class="shelf-actions">
           <template v-if="shelfStore.editMode">
-            <button class="shelf-btn" type="button" title="全选" aria-label="全选" @click="shelfStore.selectAll()">
+            <button class="btn shelf-btn" type="button" title="全选" aria-label="全选" @click="shelfStore.selectAll()">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                 <path d="M9 11l3 3L22 4" />
                 <path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11" />
               </svg>
               <span class="shelf-btn-label">全选</span>
             </button>
-            <button class="shelf-btn" type="button" title="取消全选" aria-label="取消全选" @click="shelfStore.clearSelection()">
+            <button class="btn shelf-btn" type="button" title="取消全选" aria-label="取消全选" @click="shelfStore.clearSelection()">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                 <rect x="3" y="3" width="18" height="18" rx="2" />
                 <path d="M8 12h8" />
@@ -31,7 +31,7 @@
               <span class="shelf-btn-label">取消全选</span>
             </button>
           </template>
-          <button class="shelf-btn" type="button" title="导入本地书" aria-label="导入本地书" @click="triggerLocalBookUpload" :disabled="localBookUploading">
+          <button class="btn shelf-btn" type="button" title="导入本地书" aria-label="导入本地书" @click="triggerLocalBookUpload" :disabled="localBookUploading">
             <svg v-if="!localBookUploading" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
               <path d="M12 3v12" />
               <path d="m7 8 5-5 5 5" />
@@ -43,7 +43,7 @@
             </svg>
             <span class="shelf-btn-label">{{ localBookUploading ? '导入中' : '导入本地书' }}</span>
           </button>
-          <button class="shelf-btn" type="button" title="刷新书架" aria-label="刷新书架" @click="handleRefreshBooks" :disabled="shelfStore.refreshing">
+          <button class="btn shelf-btn" type="button" title="刷新书架" aria-label="刷新书架" @click="handleRefreshBooks" :disabled="shelfStore.refreshing">
             <svg :class="{ spinning: shelfStore.refreshing }" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
               <path d="M21 12a9 9 0 0 0-15.55-6.2L3 8" />
               <path d="M3 3v5h5" />
@@ -52,14 +52,14 @@
             </svg>
             <span class="shelf-btn-label">{{ shelfStore.refreshing ? '刷新中' : '刷新书架' }}</span>
           </button>
-          <button class="shelf-btn" type="button" title="分组管理" aria-label="分组管理" @click="showGroupManager = true">
+          <button class="btn shelf-btn" type="button" title="分组管理" aria-label="分组管理" @click="showGroupManager = true">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
               <path d="M4 7h6l2 2h8v8a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V9a2 2 0 0 1 2-2Z" />
               <path d="M8 13h8" />
             </svg>
             <span class="shelf-btn-label">分组管理</span>
           </button>
-          <button class="shelf-btn" type="button" title="缓存管理" aria-label="缓存管理" @click="showCacheManager = true">
+          <button class="btn shelf-btn" type="button" title="缓存管理" aria-label="缓存管理" @click="showCacheManager = true">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
               <ellipse cx="12" cy="5" rx="8" ry="3" />
               <path d="M4 5v6c0 1.66 3.58 3 8 3s8-1.34 8-3V5" />
@@ -68,9 +68,9 @@
             <span class="shelf-btn-label">缓存管理</span>
           </button>
           <button
-            class="shelf-btn"
+            class="btn shelf-btn"
             type="button"
-            :class="{ active: shelfStore.editMode }"
+            :class="{ 'btn-primary': shelfStore.editMode }"
             :title="shelfStore.editMode ? '完成' : '编辑'"
             :aria-label="shelfStore.editMode ? '完成' : '编辑'"
             @click="toggleEditMode"
@@ -135,11 +135,11 @@
             已选中 <span>{{ shelfStore.selectedBookUrls.size }}</span> 本书
           </div>
           <div class="batch-actions">
-            <button class="batch-btn" @click="handleBulkMove">
+            <button class="btn" @click="handleBulkMove">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14" /></svg>
               移动分组
             </button>
-            <button class="batch-btn danger" @click="handleBulkDelete">
+            <button class="btn btn-danger" @click="handleBulkDelete">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M19 6v14a3 3 0 0 1-3-3H7c-1 0-2-1-2-2V6M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2" /></svg>
               批量删除
             </button>
@@ -367,7 +367,7 @@ async function handleRefreshBooks() {
 }
 
 .shelf-title {
-  font-size: var(--text-2xl);
+  font-size: var(--text-xl);
   font-weight: 700;
   letter-spacing: -0.02em;
 }
@@ -382,44 +382,6 @@ async function handleRefreshBooks() {
   display: flex;
   gap: var(--space-2);
   align-items: center;
-}
-
-.shelf-btn {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: var(--space-2);
-  padding: var(--space-2) var(--space-4);
-  border-radius: var(--radius-md);
-  font-size: var(--text-sm);
-  font-weight: 500;
-  color: var(--color-text-secondary);
-  border: 1px solid var(--color-border);
-  transition: all var(--duration-fast);
-  min-height: 38px;
-  white-space: nowrap;
-}
-
-.shelf-btn:disabled {
-  opacity: 0.55;
-  cursor: wait;
-}
-
-.shelf-btn svg {
-  width: 17px;
-  height: 17px;
-  flex-shrink: 0;
-}
-
-.shelf-btn:hover {
-  background: var(--color-bg-hover);
-  color: var(--color-text);
-}
-
-.shelf-btn.active {
-  background: var(--color-primary);
-  color: white;
-  border-color: var(--color-primary);
 }
 
 .shelf-btn .spinning {
@@ -473,7 +435,7 @@ async function handleRefreshBooks() {
   flex: 1;
   min-height: 0;
   overflow: auto;
-  padding-bottom: calc(104px + var(--space-6));
+  padding-bottom: calc(var(--bottom-nav-clearance) + var(--space-6));
   scrollbar-width: none;
   -ms-overflow-style: none;
 }
@@ -484,7 +446,7 @@ async function handleRefreshBooks() {
 
 .batch-toolbar {
   position: fixed;
-  bottom: calc(104px + var(--space-4));
+  bottom: calc(var(--bottom-nav-clearance) + var(--space-4));
   left: 50%;
   transform: translateX(-50%);
   background: var(--color-bg-elevated);
@@ -515,33 +477,6 @@ async function handleRefreshBooks() {
   gap: var(--space-2);
 }
 
-.batch-btn {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  padding: var(--space-2) var(--space-4);
-  border-radius: var(--radius-lg);
-  font-size: var(--text-sm);
-  font-weight: 600;
-  background: var(--color-bg-hover);
-  color: var(--color-text-secondary);
-  transition: all var(--duration-fast);
-}
-
-.batch-btn:hover {
-  background: var(--color-bg-sunken);
-  color: var(--color-text);
-}
-
-.batch-btn.danger {
-  color: var(--color-danger);
-}
-
-.batch-btn svg {
-  width: 16px;
-  height: 16px;
-}
-
 /* slide-up transition */
 .slide-up-enter-active,
 .slide-up-leave-active {
@@ -566,7 +501,7 @@ async function handleRefreshBooks() {
 
   .shelf-title {
     flex: 0 0 auto;
-    font-size: var(--text-2xl);
+    font-size: var(--text-xl);
   }
 
   .shelf-actions {
@@ -610,7 +545,7 @@ async function handleRefreshBooks() {
 
   .batch-toolbar {
     width: calc(100% - var(--space-8));
-    bottom: calc(104px + var(--space-3));
+    bottom: calc(var(--bottom-nav-clearance) + var(--space-3));
     gap: var(--space-4);
     justify-content: space-between;
   }

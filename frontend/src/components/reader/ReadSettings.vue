@@ -476,7 +476,7 @@ onMounted(async () => {
 }
 
 .settings-title {
-  font-size: 20px;
+  font-size: var(--text-xl);
   font-weight: 700;
 }
 
@@ -500,7 +500,7 @@ onMounted(async () => {
   border-radius: 20px;
   border: 1px solid var(--color-primary, #c97f3a);
   color: var(--color-primary, #c97f3a);
-  font-size: 13px;
+  font-size: var(--text-sm);
   font-weight: 500;
   transition: all 0.2s;
   background: transparent;
@@ -529,7 +529,7 @@ onMounted(async () => {
 
 .setting-row label {
   min-width: 70px;
-  font-size: 14px;
+  font-size: var(--text-base);
   font-weight: 500;
   opacity: 0.7;
   flex-shrink: 0;
@@ -548,7 +548,7 @@ onMounted(async () => {
 .setting-hint {
   margin-top: -8px;
   padding-left: 90px;
-  font-size: 12px;
+  font-size: var(--text-xs);
   line-height: 1.5;
   opacity: 0.65;
 }
@@ -559,7 +559,7 @@ onMounted(async () => {
   border-radius: 12px;
   border: 1px solid rgba(201, 127, 58, 0.18);
   background: rgba(201, 127, 58, 0.08);
-  font-size: 12px;
+  font-size: var(--text-xs);
   line-height: 1.6;
   color: inherit;
 }
@@ -608,7 +608,7 @@ onMounted(async () => {
 .opt-btn {
   padding: 6px 16px;
   border-radius: 20px;
-  font-size: 13px;
+  font-size: var(--text-sm);
   font-weight: 500;
   border: 1px solid rgba(0,0,0,0.12);
   background: transparent;
@@ -644,7 +644,7 @@ onMounted(async () => {
 
 .step-btn {
   padding: 6px 14px;
-  font-size: 13px;
+  font-size: var(--text-sm);
   font-weight: 600;
   color: inherit;
   background: transparent;
@@ -665,7 +665,7 @@ onMounted(async () => {
 .step-val {
   min-width: 50px;
   text-align: center;
-  font-size: 14px;
+  font-size: var(--text-base);
   font-variant-numeric: tabular-nums;
   border-left: 1px solid rgba(0,0,0,0.08);
   border-right: 1px solid rgba(0,0,0,0.08);
@@ -683,12 +683,12 @@ onMounted(async () => {
   }
 
   .settings-title {
-    font-size: 18px;
+    font-size: var(--text-lg);
   }
 
   .reset-btn {
     padding: 6px 12px;
-    font-size: 12px;
+    font-size: var(--text-xs);
   }
 
   .setting-row {
@@ -698,7 +698,7 @@ onMounted(async () => {
 
   .setting-row label {
     min-width: 60px;
-    font-size: 13px;
+    font-size: var(--text-sm);
   }
 
   .btn-group {
@@ -721,7 +721,7 @@ onMounted(async () => {
 
   .opt-btn {
     padding: 6px 12px;
-    font-size: 12px;
+    font-size: var(--text-xs);
   }
 
   .step-btn {
@@ -731,7 +731,7 @@ onMounted(async () => {
 
   .step-val {
     min-width: 42px;
-    font-size: 13px;
+    font-size: var(--text-sm);
   }
 
   .voice-select {

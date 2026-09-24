@@ -211,7 +211,7 @@ async function handleClearRecent() {
 }
 
 .recent-title {
-  font-size: var(--text-2xl);
+  font-size: var(--text-xl);
   font-weight: 700;
   letter-spacing: -0.02em;
 }

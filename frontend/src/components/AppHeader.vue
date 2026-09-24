@@ -417,7 +417,7 @@ function openSettings() {
   .user-avatar {
     width: 28px;
     height: 28px;
-    font-size: 12px;
+    font-size: var(--text-xs);
   }
 }
 </style>

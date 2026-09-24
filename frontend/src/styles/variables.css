@@ -19,6 +19,7 @@
   --color-primary-dark: #b96c1e;
   --color-primary-bg: rgba(212, 129, 42, 0.08);
   --color-primary-border: rgba(212, 129, 42, 0.25);
+  --color-primary-rgb: 212, 129, 42;
 
   /* Accent */
   --color-accent: #4a90d9;
@@ -68,29 +69,30 @@
   --radius-md: 10px;
   --radius-lg: 14px;
   --radius-xl: 20px;
+  --radius-2xl: 24px;
   --radius-full: 9999px;
 
-  /* Typography */
-  --font-body: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-  --font-display: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  /* Typography（全站统一 MiSans，共 5 档字号） */
+  --font-body: 'MiSans VF', 'MiSans', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+  --font-display: 'MiSans VF', 'MiSans', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif;
 
   --text-xs: 0.75rem;
   --text-sm: 0.8125rem;
-  --text-base: 0.9375rem;
-  --text-lg: 1.0625rem;
+  --text-base: 0.875rem;
+  --text-lg: 1rem;
   --text-xl: 1.25rem;
-  --text-2xl: 1.5rem;
-  --text-3xl: 1.875rem;
 
   --leading-tight: 1.3;
   --leading-normal: 1.5;
   --leading-relaxed: 1.75;
 
   /* Layout */
-  --header-height: 60px;
+  --header-height: 64px;
   --tabs-height: 44px;
   --sidebar-width: 360px;
   --content-max-width: 1400px;
+  /* 底部导航占位：桌面端使用顶部 Tab，底部导航仅移动端显示 */
+  --bottom-nav-clearance: 0px;
 
   /* Transitions */
   --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
@@ -114,6 +116,7 @@
   --color-primary-dark: #d4812a;
   --color-primary-bg: rgba(230, 163, 92, 0.1);
   --color-primary-border: rgba(230, 163, 92, 0.3);
+  --color-primary-rgb: 230, 163, 92;
 
   --color-bg: #141414;
   --color-bg-elevated: #1e1e1e;
@@ -134,4 +137,11 @@
   --shadow-md: 0 4px 16px rgba(0, 0, 0, 0.3);
   --shadow-lg: 0 8px 32px rgba(0, 0, 0, 0.35);
   --shadow-xl: 0 16px 48px rgba(0, 0, 0, 0.45);
+}
+
+/* 底部导航只在移动端出现，桌面端无需为其预留空间 */
+@media (max-width: 767px) {
+  :root {
+    --bottom-nav-clearance: 104px;
+  }
 }

@@ -71,7 +71,7 @@ async function openBook(book: Book) {
 }
 
 .shelf-header h3 {
-  font-size: 16px;
+  font-size: var(--text-lg);
   font-weight: 600;
   margin: 0;
 }
@@ -138,7 +138,7 @@ async function openBook(book: Book) {
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 11px;
+  font-size: var(--text-xs);
   color: rgba(0,0,0,0.4);
 }
 
@@ -152,7 +152,7 @@ async function openBook(book: Book) {
 }
 
 .book-title {
-  font-size: 15px;
+  font-size: var(--text-base);
   font-weight: 600;
   white-space: nowrap;
   overflow: hidden;
@@ -160,12 +160,12 @@ async function openBook(book: Book) {
 }
 
 .book-author {
-  font-size: 12px;
+  font-size: var(--text-xs);
   opacity: 0.6;
 }
 
 .book-progress {
-  font-size: 11px;
+  font-size: var(--text-xs);
   opacity: 0.8;
   white-space: nowrap;
   overflow: hidden;

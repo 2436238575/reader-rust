@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test'
-import { gotoApp, loginFromModal, triggerGlobalSearch, waitForToast } from './support/app'
+import { gotoApp, loginViaPage, triggerGlobalSearch, waitForToast } from './support/app'
 import { hasLogin, hasSearchFixture, readE2EConfig } from './support/env'
 
 const config = readE2EConfig()
@@ -9,7 +9,7 @@ test.describe('Standard E2E: optional full workflows', () => {
     test.skip(!hasLogin(config), 'Set E2E_USERNAME and E2E_PASSWORD to enable auth regression.')
 
     await gotoApp(page, '/')
-    await loginFromModal(page, config.username!, config.password!)
+    await loginViaPage(page, config.username!, config.password!)
     await waitForToast(page, '登录成功')
   })
 

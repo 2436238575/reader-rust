@@ -158,7 +158,7 @@ defineEmits<{
 }
 
 .progress-text {
-  font-size: 10px;
+  font-size: var(--text-xs);
   opacity: 0.5;
   padding: 4px 0;
   font-variant-numeric: tabular-nums;

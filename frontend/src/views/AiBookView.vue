@@ -1057,7 +1057,7 @@ function cloneServerModelConfig(config: AiServerModelConfig): AiServerModelConfi
 .ai-header h1 {
   margin: 0;
   min-width: 0;
-  font-size: 24px;
+  font-size: var(--text-xl);
   line-height: 1.2;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1068,7 +1068,7 @@ function cloneServerModelConfig(config: AiServerModelConfig): AiServerModelConfi
 .map-toolbar p {
   margin: 4px 0 0;
   color: var(--color-text-tertiary);
-  font-size: 13px;
+  font-size: var(--text-sm);
 }
 
 .back-btn,
@@ -1127,7 +1127,7 @@ function cloneServerModelConfig(config: AiServerModelConfig): AiServerModelConfi
   display: inline-flex;
   align-items: center;
   gap: 8px;
-  font-size: 13px;
+  font-size: var(--text-sm);
   color: var(--color-text-secondary);
   cursor: pointer;
 }
@@ -1171,7 +1171,7 @@ function cloneServerModelConfig(config: AiServerModelConfig): AiServerModelConfi
   border-radius: 8px;
   background: rgba(201, 127, 58, 0.12);
   color: var(--color-text-secondary);
-  font-size: 13px;
+  font-size: var(--text-sm);
   flex: 0 0 auto;
   max-height: 240px;
   overflow: hidden;
@@ -1226,7 +1226,7 @@ function cloneServerModelConfig(config: AiServerModelConfig): AiServerModelConfi
   white-space: pre-wrap;
   word-break: break-word;
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  font-size: 12px;
+  font-size: var(--text-xs);
   line-height: 1.5;
 }
 
@@ -1265,7 +1265,7 @@ function cloneServerModelConfig(config: AiServerModelConfig): AiServerModelConfi
 
 .overview-main h2 {
   margin: 0 0 14px;
-  font-size: 18px;
+  font-size: var(--text-lg);
 }
 
 .overview-section + .overview-section {
@@ -1274,7 +1274,7 @@ function cloneServerModelConfig(config: AiServerModelConfig): AiServerModelConfi
 
 .overview-section > h3 {
   margin: 0 0 10px;
-  font-size: 15px;
+  font-size: var(--text-base);
 }
 
 .summary {
@@ -1330,19 +1330,19 @@ function cloneServerModelConfig(config: AiServerModelConfig): AiServerModelConfi
   border-radius: 6px;
   background: var(--color-bg-elevated);
   color: var(--color-text-secondary);
-  font-size: 13px;
+  font-size: var(--text-sm);
   line-height: 1;
 }
 
 .group-head h3 {
   margin: 0;
-  font-size: 14px;
+  font-size: var(--text-base);
 }
 
 .group-head span,
 .result-count {
   color: var(--color-text-tertiary);
-  font-size: 12px;
+  font-size: var(--text-xs);
   font-weight: 600;
 }
 
@@ -1367,17 +1367,17 @@ function cloneServerModelConfig(config: AiServerModelConfig): AiServerModelConfi
 
 .item-title h3 {
   margin: 0;
-  font-size: 15px;
+  font-size: var(--text-base);
 }
 
 .item-title h4 {
   margin: 0;
-  font-size: 14px;
+  font-size: var(--text-base);
 }
 
 .item-title span,
 .relation-head span {
-  font-size: 12px;
+  font-size: var(--text-xs);
   color: var(--color-primary);
 }
 
@@ -1406,11 +1406,11 @@ function cloneServerModelConfig(config: AiServerModelConfig): AiServerModelConfi
 .metric span,
 .meta-line {
   color: var(--color-text-tertiary);
-  font-size: 12px;
+  font-size: var(--text-xs);
 }
 
 .metric strong {
-  font-size: 28px;
+  font-size: var(--text-xl);
 }
 
 .meta-line {
@@ -1460,7 +1460,7 @@ function cloneServerModelConfig(config: AiServerModelConfig): AiServerModelConfi
   outline: 0;
   background: transparent;
   color: var(--color-text);
-  font-size: 14px;
+  font-size: var(--text-base);
 }
 
 .relation-grid {
@@ -1487,7 +1487,7 @@ function cloneServerModelConfig(config: AiServerModelConfig): AiServerModelConfi
 
 .map-title h2 {
   margin: 0;
-  font-size: 18px;
+  font-size: var(--text-lg);
   white-space: nowrap;
 }
 
@@ -1606,7 +1606,7 @@ function cloneServerModelConfig(config: AiServerModelConfig): AiServerModelConfi
   padding: 0 10px;
   border-radius: 999px;
   color: var(--color-text-secondary);
-  font-size: 12px;
+  font-size: var(--text-xs);
   font-weight: 700;
 }
 
@@ -1659,7 +1659,7 @@ marker#graph-arrow path {
 
 .graph-link text {
   fill: var(--color-text-secondary);
-  font-size: 11px;
+  font-size: var(--text-xs);
   font-weight: 700;
   text-anchor: middle;
 }
@@ -1704,7 +1704,7 @@ marker#graph-arrow path {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 13px;
+  font-size: var(--text-sm);
   line-height: 1.2;
 }
 
@@ -1765,11 +1765,11 @@ marker#graph-arrow path {
 .graph-detail span,
 .graph-detail small {
   color: var(--color-text-tertiary);
-  font-size: 12px;
+  font-size: var(--text-xs);
 }
 
 .graph-detail strong {
-  font-size: 18px;
+  font-size: var(--text-lg);
   line-height: 1.35;
 }
 
@@ -1786,7 +1786,7 @@ marker#graph-arrow path {
 
 .graph-connection-list > span {
   color: var(--color-text-tertiary);
-  font-size: 12px;
+  font-size: var(--text-xs);
 }
 
 .graph-connection-list button {
@@ -1813,7 +1813,7 @@ marker#graph-arrow path {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 13px;
+  font-size: var(--text-sm);
 }
 
 .graph-connection-list button small {
@@ -1865,7 +1865,7 @@ marker#graph-arrow path {
 
 .server-status {
   color: var(--color-text-tertiary);
-  font-size: 12px;
+  font-size: var(--text-xs);
   font-weight: 700;
 }
 
@@ -1876,7 +1876,7 @@ marker#graph-arrow path {
 .settings-hint {
   margin: 10px 0 0;
   color: var(--color-text-tertiary);
-  font-size: 12px;
+  font-size: var(--text-xs);
   line-height: 1.6;
 }
 
@@ -1897,7 +1897,7 @@ marker#graph-arrow path {
 
 .admin-model-head h2 {
   margin: 0;
-  font-size: 16px;
+  font-size: var(--text-lg);
 }
 
 .settings-cards {
@@ -1930,7 +1930,7 @@ marker#graph-arrow path {
 
 .settings-card h2 {
   margin: 0;
-  font-size: 15px;
+  font-size: var(--text-base);
   letter-spacing: 0;
 }
 
@@ -1944,7 +1944,7 @@ marker#graph-arrow path {
   display: grid;
   gap: 7px;
   color: var(--color-text-secondary);
-  font-size: 12px;
+  font-size: var(--text-xs);
   font-weight: 600;
 }
 
@@ -1981,13 +1981,13 @@ marker#graph-arrow path {
   align-items: center;
   gap: 8px;
   color: var(--color-text-secondary);
-  font-size: 13px;
+  font-size: var(--text-sm);
   font-weight: 600;
   cursor: pointer;
 }
 
 .switch-line.compact {
-  font-size: 12px;
+  font-size: var(--text-xs);
 }
 
 .switch-line input {

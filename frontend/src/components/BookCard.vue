@@ -285,7 +285,7 @@ const showAiEntry = computed(() => {
 }
 
 .cover-author {
-  font-size: 10px;
+  font-size: var(--text-xs);
   color: var(--color-text-tertiary);
 }
 
@@ -295,8 +295,8 @@ const showAiEntry = computed(() => {
   right: 8px;
   background: linear-gradient(135deg, var(--color-primary), var(--color-primary-dark));
   color: white;
-  font-size: 10px;
-  font-weight: 800;
+  font-size: var(--text-xs);
+  font-weight: 700;
   padding: 2px 7px;
   border-radius: var(--radius-full);
   min-width: 18px;
@@ -440,8 +440,8 @@ const showAiEntry = computed(() => {
 
 .book-name {
   margin: 0;
-  font-size: 16px;
-  font-weight: 800;
+  font-size: var(--text-lg);
+  font-weight: 700;
   color: var(--color-text);
   display: -webkit-box;
   -webkit-line-clamp: 2;
@@ -455,7 +455,7 @@ const showAiEntry = computed(() => {
   align-items: center;
   gap: var(--space-1);
   min-height: 18px;
-  font-size: 12px;
+  font-size: var(--text-xs);
   color: var(--color-text-tertiary);
   white-space: nowrap;
   overflow: hidden;
@@ -470,13 +470,13 @@ const showAiEntry = computed(() => {
 }
 
 .meta-dot {
-  font-size: 10px;
+  font-size: var(--text-xs);
 }
 
 .book-progress,
 .book-latest {
   margin: 0;
-  font-size: 12px;
+  font-size: var(--text-xs);
   color: var(--color-text-secondary);
   display: -webkit-box;
   -webkit-line-clamp: 1;
@@ -508,7 +508,7 @@ const showAiEntry = computed(() => {
   max-width: 100%;
   padding: 2px 8px;
   border-radius: 999px;
-  font-size: 11px;
+  font-size: var(--text-xs);
   line-height: 1.4;
   white-space: nowrap;
   overflow: hidden;
@@ -541,7 +541,7 @@ const showAiEntry = computed(() => {
   border-radius: 999px;
   background: rgba(0, 0, 0, 0.04);
   color: var(--color-text-secondary);
-  font-size: 11.5px;
+  font-size: var(--text-xs);
   line-height: 1;
   white-space: nowrap;
 }
@@ -563,8 +563,8 @@ const showAiEntry = computed(() => {
   color: var(--color-primary);
   border: 1px solid rgba(212, 129, 42, 0.24);
   border-radius: 7px;
-  font-size: 12px;
-  font-weight: 800;
+  font-size: var(--text-xs);
+  font-weight: 700;
   transition: all var(--duration-fast);
   white-space: nowrap;
 }
@@ -585,7 +585,7 @@ const showAiEntry = computed(() => {
   background: var(--color-primary);
   color: white;
   border-radius: 999px;
-  font-size: 12px;
+  font-size: var(--text-xs);
   font-weight: 700;
   transition: all var(--duration-fast);
   align-self: flex-start;
@@ -613,7 +613,7 @@ const showAiEntry = computed(() => {
   }
 
   .book-name {
-    font-size: 15px;
+    font-size: var(--text-base);
   }
 
   .card-footer {
@@ -623,7 +623,7 @@ const showAiEntry = computed(() => {
   .ai-entry-btn {
     min-height: 30px;
     padding: 0 11px;
-    font-size: 12px;
+    font-size: var(--text-xs);
   }
 }
 </style>

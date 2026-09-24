@@ -25,9 +25,8 @@ export async function triggerGlobalSearch(page: Page, keyword: string) {
   await expect(page.getByText(`搜索 "${keyword}"`)).toBeVisible()
 }
 
-export async function loginFromModal(page: Page, username: string, password: string) {
-  await openSettings(page)
-  await page.getByRole('button', { name: '登录 / 注册' }).click()
+export async function loginViaPage(page: Page, username: string, password: string) {
+  await gotoApp(page, '/login')
   await expect(page.getByRole('heading', { name: '登录' })).toBeVisible()
   await page.locator('#username').fill(username)
   await page.locator('#password').fill(password)

@@ -75,14 +75,14 @@
 
           <!-- Actions -->
           <div class="modal-actions">
-            <button class="action-btn primary" @click="startReading">
+            <button class="btn btn-primary detail-btn" @click="startReading">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18">
                 <path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z" />
                 <path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z" />
               </svg>
               {{ (book as Book).durChapterIndex ? '继续阅读' : '开始阅读' }}
             </button>
-            <button class="action-btn" @click="openAiBook">
+            <button class="btn detail-btn" @click="openAiBook">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18">
                 <path d="M12 2v4" />
                 <path d="M12 18v4" />
@@ -92,7 +92,7 @@
               </svg>
               AI资料
             </button>
-            <button class="action-btn" @click="close">关闭</button>
+            <button class="btn detail-btn" @click="close">关闭</button>
           </div>
         </div>
       </div>
@@ -456,32 +456,8 @@ function openAiBook() {
   border-top: 1px solid var(--color-divider);
 }
 
-.action-btn {
+.detail-btn {
   flex: 1;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: var(--space-2);
-  padding: var(--space-3);
-  border-radius: var(--radius-md);
-  font-size: var(--text-sm);
-  font-weight: 600;
-  border: 1px solid var(--color-border);
-  background: var(--color-bg);
-  transition: all var(--duration-fast);
-}
-
-.action-btn:hover {
-  background: var(--color-bg-hover);
-}
-
-.action-btn.primary {
-  background: var(--color-primary);
-  color: white;
-  border-color: var(--color-primary);
-}
-
-.action-btn.primary:hover {
-  background: var(--color-primary-dark);
+  min-height: 42px;
 }
 </style>

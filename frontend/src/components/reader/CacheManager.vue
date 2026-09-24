@@ -295,8 +295,8 @@ function stopWorking() {
   border-bottom: 1px solid rgba(0,0,0,0.06);
 }
 
-.cache-header h3 { margin: 0; font-size: 16px; }
-.cache-subtitle { margin: 4px 0 0; font-size: 12px; opacity: 0.55; }
+.cache-header h3 { margin: 0; font-size: var(--text-lg); }
+.cache-subtitle { margin: 4px 0 0; font-size: var(--text-xs); opacity: 0.55; }
 
 .close-btn {
   width: 32px; height: 32px;
@@ -329,9 +329,9 @@ function stopWorking() {
   gap: 6px;
 }
 
-.summary-label { font-size: 12px; opacity: 0.65; }
-.summary-card strong { font-size: 28px; line-height: 1; }
-.summary-card small { font-size: 12px; opacity: 0.5; }
+.summary-label { font-size: var(--text-xs); opacity: 0.65; }
+.summary-card strong { font-size: var(--text-xl); line-height: 1; }
+.summary-card small { font-size: var(--text-xs); opacity: 0.5; }
 
 .cache-sections {
   display: flex;
@@ -353,7 +353,7 @@ function stopWorking() {
 
 .section-head h4 {
   margin: 0;
-  font-size: 15px;
+  font-size: var(--text-base);
 }
 
 .link-btn {
@@ -370,7 +370,7 @@ function stopWorking() {
   border-left: 4px solid var(--color-primary, #c97f3a);
 }
 
-.info-card p { margin: 0; font-size: 13px; line-height: 1.6; opacity: 0.8; }
+.info-card p { margin: 0; font-size: var(--text-sm); line-height: 1.6; opacity: 0.8; }
 
 .option-list { display: flex; flex-direction: column; gap: 12px; }
 
@@ -404,8 +404,8 @@ function stopWorking() {
   color: #dc2626;
 }
 
-.cache-opt .label { font-weight: 600; font-size: 15px; margin-bottom: 4px; }
-.cache-opt .sub { font-size: 11px; opacity: 0.6; }
+.cache-opt .label { font-weight: 600; font-size: var(--text-base); margin-bottom: 4px; }
+.cache-opt .sub { font-size: var(--text-xs); opacity: 0.6; }
 
 .caching-status {
   min-height: 360px;
@@ -431,12 +431,12 @@ function stopWorking() {
   position: absolute;
   top: 50%; left: 50%;
   transform: translate(-50%, -50%);
-  font-size: 24px; font-weight: 700;
+  font-size: var(--text-xl); font-weight: 700;
 }
 
 .status-text { text-align: center; margin-bottom: 32px; }
-.main-status { font-weight: 600; font-size: 16px; margin: 0 0 8px 0; }
-.sub-status { font-size: 13px; opacity: 0.5; margin: 0; }
+.main-status { font-weight: 600; font-size: var(--text-lg); margin: 0 0 8px 0; }
+.sub-status { font-size: var(--text-sm); opacity: 0.5; margin: 0; }
 
 .stop-btn {
   padding: 8px 24px;
@@ -445,6 +445,6 @@ function stopWorking() {
   color: #ef4444;
   border: 1px solid rgba(239, 68, 68, 0.2);
   cursor: pointer;
-  font-size: 14px;
+  font-size: var(--text-base);
 }
 </style>

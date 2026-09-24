@@ -6,7 +6,6 @@
     </main>
     <AppBottomNav v-if="showBottomNav" />
     <SettingsDrawer v-model="appStore.showSettingsDrawer" />
-    <LoginModal v-model="appStore.showLoginModal" />
     <SourceManager v-model="appStore.showSourceManager" />
     <UserManager v-model="appStore.showUserManager" />
     <WebdavManager v-model="appStore.showWebdavManager" />
@@ -29,21 +28,21 @@
 
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted } from 'vue'
-import { useRoute } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { useAppStore } from './stores/app'
 import AppTopBar from './components/AppTopBar.vue'
 import AppBottomNav from './components/AppBottomNav.vue'
 import SettingsDrawer from './components/SettingsDrawer.vue'
-import LoginModal from './components/LoginModal.vue'
 import SourceManager from './components/SourceManager.vue'
 import UserManager from './components/UserManager.vue'
 import WebdavManager from './components/WebdavManager.vue'
 
 const route = useRoute()
+const router = useRouter()
 const appStore = useAppStore()
 
 const showHeader = computed(() => route.name !== 'reader')
-const showBottomNav = computed(() => route.name !== 'reader')
+const showBottomNav = computed(() => route.name !== 'reader' && route.name !== 'login')
 
 onMounted(() => {
   appStore.fetchUserInfo()
@@ -51,9 +50,9 @@ onMounted(() => {
 
 async function handleNeedLogin() {
   await appStore.fetchUserInfo()
-  if (!appStore.isLoggedIn) {
-    appStore.showLoginModal = true
-  }
+  if (appStore.isLoggedIn || route.name === 'login') return
+  const redirect = route.fullPath && route.fullPath !== '/' ? route.fullPath : undefined
+  router.push({ name: 'login', query: redirect ? { redirect } : {} })
 }
 
 onMounted(() => {
@@ -88,7 +87,7 @@ body {
 }
 
 .app-main.with-bottom-nav {
-  padding-bottom: calc(104px + var(--safe-area-bottom));
+  padding-bottom: calc(var(--bottom-nav-clearance) + var(--safe-area-bottom));
   height: calc(var(--app-height, 100dvh) - var(--header-height) - var(--safe-area-top));
 }
 </style>

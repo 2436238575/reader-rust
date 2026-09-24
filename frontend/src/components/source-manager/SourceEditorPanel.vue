@@ -6,8 +6,8 @@
         <p>{{ source ? source.bookSourceUrl : '选择一个书源查看详情，或新建书源' }}</p>
       </div>
       <div class="editor-actions">
-        <button class="mini-btn" type="button" @click="$emit('format')">格式化</button>
-        <button class="mini-btn primary" type="button" @click="$emit('save')">保存</button>
+        <button class="btn btn-sm" type="button" @click="$emit('format')">格式化</button>
+        <button class="btn btn-sm btn-primary" type="button" @click="$emit('save')">保存</button>
       </div>
     </header>
 
@@ -66,8 +66,8 @@
         <strong>还没有选中书源</strong>
         <span>可以从左侧列表选择，也可以新建或导入书源。</span>
         <div class="empty-actions">
-          <button class="mini-btn primary" type="button" @click="$emit('create')">新增书源</button>
-          <button class="mini-btn" type="button" @click="$emit('import-local')">本地导入</button>
+          <button class="btn btn-sm btn-primary" type="button" @click="$emit('create')">新增书源</button>
+          <button class="btn btn-sm" type="button" @click="$emit('import-local')">本地导入</button>
         </div>
       </div>
     </div>
@@ -86,7 +86,7 @@
         <h4>书源登录调试</h4>
         <p v-if="canLogin">当前 JSON 包含 `bookSourceUrl` 和 `loginUrl`，可以打开代理登录预览。</p>
         <p v-else>当前书源未配置 `loginUrl`，或 JSON 暂时无法解析。</p>
-        <button class="mini-btn primary" type="button" :disabled="!canLogin || loginLoading" @click="$emit('login')">
+        <button class="btn btn-sm btn-primary" type="button" :disabled="!canLogin || loginLoading" @click="$emit('login')">
           {{ loginLoading ? '登录中...' : '打开登录页' }}
         </button>
       </div>
@@ -153,7 +153,7 @@ const overview = computed(() => getBookSourceOverview(props.source))
 
 .editor-title h3 {
   margin: 0;
-  font-size: 15px;
+  font-size: var(--text-base);
   font-weight: 700;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -163,7 +163,7 @@ const overview = computed(() => getBookSourceOverview(props.source))
 .editor-title p {
   margin-top: 4px;
   color: var(--color-text-tertiary);
-  font-size: 12px;
+  font-size: var(--text-xs);
   overflow-wrap: anywhere;
 }
 
@@ -187,7 +187,7 @@ const overview = computed(() => getBookSourceOverview(props.source))
   padding: 0 12px;
   border-radius: var(--radius-full);
   color: var(--color-text-secondary);
-  font-size: 13px;
+  font-size: var(--text-sm);
 }
 
 .tab-btn.active {
@@ -229,13 +229,13 @@ const overview = computed(() => getBookSourceOverview(props.source))
 .overview-card span,
 .source-url-block span {
   color: var(--color-text-tertiary);
-  font-size: 12px;
+  font-size: var(--text-xs);
 }
 
 .overview-card strong {
   display: block;
   margin-top: 6px;
-  font-size: 15px;
+  font-size: var(--text-base);
 }
 
 .rule-section {
@@ -245,7 +245,7 @@ const overview = computed(() => getBookSourceOverview(props.source))
 .rule-section h4,
 .login-card h4 {
   margin: 0 0 10px;
-  font-size: 14px;
+  font-size: var(--text-base);
 }
 
 .rule-chips {
@@ -259,7 +259,7 @@ const overview = computed(() => getBookSourceOverview(props.source))
   border-radius: var(--radius-full);
   background: var(--color-bg-hover);
   color: var(--color-text-tertiary);
-  font-size: 12px;
+  font-size: var(--text-xs);
 }
 
 .rule-chips span.active {
@@ -275,7 +275,7 @@ const overview = computed(() => getBookSourceOverview(props.source))
 .source-url-block p {
   margin-top: 6px;
   color: var(--color-text-secondary);
-  font-size: 12px;
+  font-size: var(--text-xs);
   overflow-wrap: anywhere;
 }
 
@@ -289,7 +289,7 @@ const overview = computed(() => getBookSourceOverview(props.source))
   background: #181614;
   color: #f4ede4;
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  font-size: 12px;
+  font-size: var(--text-xs);
   line-height: 1.55;
 }
 
@@ -315,37 +315,7 @@ const overview = computed(() => getBookSourceOverview(props.source))
 .login-card p {
   margin-bottom: 14px;
   color: var(--color-text-secondary);
-  font-size: 13px;
-}
-
-.mini-btn {
-  min-height: 32px;
-  padding: 0 10px;
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-md);
-  background: transparent;
-  font-size: 12px;
-  white-space: nowrap;
-  transition: all var(--duration-fast);
-}
-
-.mini-btn.primary {
-  background: var(--color-primary);
-  border-color: var(--color-primary);
-  color: #fff;
-}
-
-.mini-btn:disabled {
-  cursor: not-allowed;
-  opacity: 0.48;
-}
-
-.mini-btn:hover:not(:disabled) {
-  background: var(--color-bg-hover);
-}
-
-.mini-btn.primary:hover:not(:disabled) {
-  background: var(--color-primary-dark);
+  font-size: var(--text-sm);
 }
 
 @media (max-width: 560px) {

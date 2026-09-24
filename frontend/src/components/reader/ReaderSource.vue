@@ -387,8 +387,8 @@ async function handleSwitch(res: SearchBook) {
 }
 
 .header-left { display: flex; align-items: baseline; gap: 8px; }
-.source-header h3 { font-size: 16px; margin: 0; }
-.source-count { font-size: 11px; opacity: 0.5; }
+.source-header h3 { font-size: var(--text-lg); margin: 0; }
+.source-count { font-size: var(--text-xs); opacity: 0.5; }
 
 .close-btn {
   width: 32px; height: 32px;
@@ -436,7 +436,7 @@ async function handleSwitch(res: SearchBook) {
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 20px;
+  font-size: var(--text-xl);
   font-weight: 700;
 }
 
@@ -448,18 +448,18 @@ async function handleSwitch(res: SearchBook) {
 }
 
 .book-brief-title {
-  font-size: 15px;
+  font-size: var(--text-base);
   font-weight: 700;
 }
 
 .book-brief-meta {
-  font-size: 12px;
+  font-size: var(--text-xs);
   opacity: 0.68;
   line-height: 1.4;
 }
 
 .book-brief-intro {
-  font-size: 12px;
+  font-size: var(--text-xs);
   line-height: 1.45;
   opacity: 0.76;
   display: -webkit-box;
@@ -470,7 +470,7 @@ async function handleSwitch(res: SearchBook) {
 
 .section-label {
   padding: 12px 20px 4px;
-  font-size: 11px;
+  font-size: var(--text-xs);
   text-transform: uppercase;
   letter-spacing: 0.05em;
   opacity: 0.4;
@@ -496,10 +496,10 @@ async function handleSwitch(res: SearchBook) {
 
 .source-main { flex: 1; min-width: 0; }
 .source-name-row { display: flex; align-items: center; gap: 8px; margin-bottom: 2px; }
-.source-name { font-weight: 600; font-size: 14px; }
-.source-tag { font-size: 10px; opacity: 0.5; border: 1px solid currentColor; padding: 0 3px; border-radius: 3px; }
+.source-name { font-weight: 600; font-size: var(--text-base); }
+.source-tag { font-size: var(--text-xs); opacity: 0.5; border: 1px solid currentColor; padding: 0 3px; border-radius: 3px; }
 .compare-badge {
-  font-size: 10px;
+  font-size: var(--text-xs);
   padding: 1px 6px;
   border-radius: 999px;
   background: rgba(0, 0, 0, 0.06);
@@ -513,14 +513,14 @@ async function handleSwitch(res: SearchBook) {
 }
 
 .source-book-name {
-  font-size: 13px;
+  font-size: var(--text-sm);
   margin-bottom: 2px;
   opacity: 0.86;
 }
 
-.source-author { font-size: 11px; opacity: 0.5; margin-bottom: 4px; }
-.source-chapter { font-size: 11px; opacity: 0.7; color: var(--color-primary, #c97f3a); }
-.source-update { font-size: 11px; opacity: 0.48; margin-top: 2px; }
+.source-author { font-size: var(--text-xs); opacity: 0.5; margin-bottom: 4px; }
+.source-chapter { font-size: var(--text-xs); opacity: 0.7; color: var(--color-primary, #c97f3a); }
+.source-update { font-size: var(--text-xs); opacity: 0.48; margin-top: 2px; }
 .source-compare-line {
   display: flex;
   flex-wrap: wrap;
@@ -529,7 +529,7 @@ async function handleSwitch(res: SearchBook) {
 }
 
 .compare-text {
-  font-size: 11px;
+  font-size: var(--text-xs);
   opacity: 0.62;
 }
 
@@ -539,7 +539,7 @@ async function handleSwitch(res: SearchBook) {
 }
 
 .source-intro {
-  font-size: 12px;
+  font-size: var(--text-xs);
   opacity: 0.68;
   line-height: 1.45;
   margin-bottom: 4px;
@@ -549,11 +549,11 @@ async function handleSwitch(res: SearchBook) {
   overflow: hidden;
 }
 
-.source-url { font-size: 11px; opacity: 0.3; }
+.source-url { font-size: var(--text-xs); opacity: 0.3; }
 
 .switch-btn {
   padding: 4px 12px;
-  font-size: 11px;
+  font-size: var(--text-xs);
   border-radius: 12px;
   border: 1px solid var(--color-border);
   background: transparent;
@@ -587,7 +587,7 @@ async function handleSwitch(res: SearchBook) {
 
 .compare-header h4 {
   margin: 0;
-  font-size: 14px;
+  font-size: var(--text-base);
   font-weight: 700;
 }
 
@@ -623,7 +623,7 @@ async function handleSwitch(res: SearchBook) {
 
 .compare-title {
   margin-bottom: 8px;
-  font-size: 11px;
+  font-size: var(--text-xs);
   font-weight: 700;
   letter-spacing: 0.05em;
   text-transform: uppercase;
@@ -631,20 +631,20 @@ async function handleSwitch(res: SearchBook) {
 }
 
 .compare-name {
-  font-size: 14px;
+  font-size: var(--text-base);
   font-weight: 700;
   line-height: 1.4;
   margin-bottom: 4px;
 }
 
 .compare-meta {
-  font-size: 12px;
+  font-size: var(--text-xs);
   opacity: 0.68;
   margin-bottom: 10px;
 }
 
 .compare-line {
-  font-size: 12px;
+  font-size: var(--text-xs);
   line-height: 1.5;
   opacity: 0.78;
   margin-top: 4px;
@@ -661,7 +661,7 @@ async function handleSwitch(res: SearchBook) {
   padding: 40px 20px;
   text-align: center;
   opacity: 0.5;
-  font-size: 14px;
+  font-size: var(--text-base);
 }
 
 .inline-loading {
@@ -670,7 +670,7 @@ async function handleSwitch(res: SearchBook) {
   justify-content: center;
   gap: 8px;
   padding: 12px 20px;
-  font-size: 12px;
+  font-size: var(--text-xs);
   opacity: 0.55;
 }
 
@@ -729,7 +729,7 @@ async function handleSwitch(res: SearchBook) {
   z-index: 20;
 }
 
-.switch-overlay p { margin-top: 16px; font-size: 14px; opacity: 0.8; }
+.switch-overlay p { margin-top: 16px; font-size: var(--text-base); opacity: 0.8; }
 
 @media (max-width: 640px) {
   .source-item {

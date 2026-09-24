@@ -166,7 +166,7 @@ async function handleAddToShelf(book: Book | SearchBook) {
 }
 
 .header-left h2 {
-  font-size: 20px;
+  font-size: var(--text-xl);
   font-weight: 700;
   margin: 0 0 8px 0;
   color: var(--color-text);
@@ -178,13 +178,13 @@ async function handleAddToShelf(book: Book | SearchBook) {
   border: 1px solid var(--color-border);
   background: var(--color-bg);
   color: var(--color-text);
-  font-size: 14px;
+  font-size: var(--text-base);
   outline: none;
   cursor: pointer;
 }
 
 .no-sources-text {
-  font-size: 13px;
+  font-size: var(--text-sm);
   color: var(--color-text-tertiary);
 }
 
@@ -214,7 +214,7 @@ async function handleAddToShelf(book: Book | SearchBook) {
   padding: 10px 16px;
   border-radius: 8px;
   cursor: pointer;
-  font-size: 14px;
+  font-size: var(--text-base);
   color: var(--color-text-secondary);
   transition: all 0.2s;
 }
@@ -250,7 +250,7 @@ async function handleAddToShelf(book: Book | SearchBook) {
   text-align: center;
   padding: 20px 0;
   color: var(--color-text-tertiary);
-  font-size: 14px;
+  font-size: var(--text-base);
   display: flex;
   justify-content: center;
   align-items: center;

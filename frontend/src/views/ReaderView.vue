@@ -1919,7 +1919,7 @@ watch(
   background: rgba(201, 127, 58, 0.12);
   color: var(--color-primary);
   border-bottom: 1px solid rgba(201, 127, 58, 0.18);
-  font-size: 13px;
+  font-size: var(--text-sm);
   line-height: 1.5;
   text-align: center;
   backdrop-filter: blur(6px);
@@ -2096,7 +2096,7 @@ watch(
   text-align: center;
   padding: 18px 24px;
   opacity: 0.6;
-  font-size: 13px;
+  font-size: var(--text-sm);
 }
 
 .next-btn {
@@ -2105,7 +2105,7 @@ watch(
   background: transparent;
   border: 1px solid currentColor;
   color: inherit;
-  font-size: 14px;
+  font-size: var(--text-base);
   opacity: 0.6;
   cursor: pointer;
   transition: all 0.2s;
@@ -2155,7 +2155,7 @@ watch(
 
 .selection-menu-text {
   padding: 12px 14px 8px;
-  font-size: 13px;
+  font-size: var(--text-sm);
   line-height: 1.5;
   opacity: 0.72;
   word-break: break-all;
@@ -2174,7 +2174,7 @@ watch(
   padding: 10px 12px;
   background: var(--color-primary);
   color: #fff;
-  font-size: 13px;
+  font-size: var(--text-sm);
   cursor: pointer;
 }
 

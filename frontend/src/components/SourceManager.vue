@@ -658,28 +658,8 @@ watch(() => props.modelValue, (v) => {
 }
 
 .count-info {
-  font-size: 12px;
+  font-size: var(--text-xs);
   color: var(--color-text-tertiary);
-}
-
-.mini-btn,
-.icon-btn {
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-md);
-  background: transparent;
-  transition: all var(--duration-fast);
-}
-
-.mini-btn {
-  min-height: 32px;
-  padding: 0 10px;
-  font-size: 12px;
-  white-space: nowrap;
-}
-
-.mini-btn.danger {
-  color: var(--color-danger);
-  border-color: rgba(245, 34, 45, 0.2);
 }
 
 .icon-btn {
@@ -696,7 +676,6 @@ watch(() => props.modelValue, (v) => {
   height: 18px;
 }
 
-.mini-btn:hover,
 .icon-btn:hover {
   background: var(--color-bg-hover);
 }
@@ -734,13 +713,13 @@ watch(() => props.modelValue, (v) => {
 
 .login-preview-header h3 {
   margin: 0;
-  font-size: 16px;
+  font-size: var(--text-lg);
   font-weight: 700;
 }
 
 .login-preview-header p {
   margin-top: 6px;
-  font-size: 12px;
+  font-size: var(--text-xs);
   color: var(--color-text-tertiary);
   word-break: break-all;
 }

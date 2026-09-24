@@ -26,13 +26,13 @@
           <template v-else>
             <div class="toolbar">
               <div class="toolbar-left">
-                <button class="action-btn primary" :disabled="working" @click="createBackup">
+                <button class="btn btn-primary" :disabled="working" @click="createBackup">
                   备份当前数据
                 </button>
-                <button class="action-btn" :disabled="working || loading" @click="loadFiles(currentPath)">
+                <button class="btn" :disabled="working || loading" @click="loadFiles(currentPath)">
                   刷新列表
                 </button>
-                <button class="action-btn" :disabled="working" @click="triggerUpload">
+                <button class="btn" :disabled="working" @click="triggerUpload">
                   上传文件
                 </button>
                 <input
@@ -44,7 +44,7 @@
                 />
               </div>
               <button
-                class="action-btn danger"
+                class="btn btn-danger"
                 :disabled="working || selectedPaths.length === 0"
                 @click="removeSelected"
               >
@@ -90,7 +90,7 @@
                 <div class="file-actions">
                   <button
                     v-if="!entry.isDirectory && isBackupFile(entry.name)"
-                    class="mini-btn"
+                    class="btn btn-sm"
                     :disabled="working"
                     @click="restoreBackup(entry)"
                   >
@@ -98,7 +98,7 @@
                   </button>
                   <button
                     v-if="!entry.isDirectory"
-                    class="mini-btn"
+                    class="btn btn-sm"
                     :disabled="working"
                     @click="downloadEntry(entry)"
                   >
@@ -106,7 +106,7 @@
                   </button>
                   <button
                     v-if="!entry.toParent"
-                    class="mini-btn danger"
+                    class="btn btn-sm btn-danger"
                     :disabled="working"
                     @click="removeEntry(entry)"
                   >
@@ -433,8 +433,6 @@ async function restoreBackup(entry: EntryRow) {
 }
 
 .icon-btn,
-.action-btn,
-.mini-btn,
 .file-main {
   border: none;
   background: none;
@@ -473,49 +471,6 @@ async function restoreBackup(entry: EntryRow) {
   display: flex;
   flex-wrap: wrap;
   gap: var(--space-2);
-}
-
-.action-btn,
-.mini-btn {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: var(--radius-md);
-  border: 1px solid var(--color-border-light);
-  background: var(--color-bg-sunken);
-  color: var(--color-text);
-  transition: all var(--duration-fast);
-}
-
-.action-btn {
-  min-height: 38px;
-  padding: 0 var(--space-4);
-  font-size: var(--text-sm);
-  font-weight: 600;
-}
-
-.mini-btn {
-  min-height: 30px;
-  padding: 0 var(--space-3);
-  font-size: var(--text-xs);
-  font-weight: 600;
-}
-
-.action-btn.primary {
-  background: var(--color-primary);
-  border-color: var(--color-primary);
-  color: #fff;
-}
-
-.action-btn.danger,
-.mini-btn.danger {
-  color: var(--color-danger);
-}
-
-.action-btn:disabled,
-.mini-btn:disabled {
-  opacity: 0.45;
-  cursor: not-allowed;
 }
 
 .path-bar,
@@ -601,7 +556,7 @@ async function restoreBackup(entry: EntryRow) {
 }
 
 .file-icon {
-  font-size: 18px;
+  font-size: var(--text-lg);
 }
 
 .file-name {

@@ -226,8 +226,8 @@ async function handleOpenArticle(article: RssArticle & { variable?: string }) {
 
 <style scoped>
 .rss-view {
-  height: calc(var(--app-height, 100dvh) - var(--header-height) - 104px - var(--safe-area-top) - var(--safe-area-bottom));
-  min-height: calc(var(--app-height, 100dvh) - var(--header-height) - 104px - var(--safe-area-top) - var(--safe-area-bottom));
+  height: calc(var(--app-height, 100dvh) - var(--header-height) - var(--bottom-nav-clearance) - var(--safe-area-top) - var(--safe-area-bottom));
+  min-height: calc(var(--app-height, 100dvh) - var(--header-height) - var(--bottom-nav-clearance) - var(--safe-area-top) - var(--safe-area-bottom));
   box-sizing: border-box;
   display: flex;
   flex-direction: column;
@@ -282,7 +282,7 @@ async function handleOpenArticle(article: RssArticle & { variable?: string }) {
 }
 
 .btn-icon {
-  font-size: 14px;
+  font-size: var(--text-base);
   line-height: 1;
 }
 
@@ -297,7 +297,7 @@ async function handleOpenArticle(article: RssArticle & { variable?: string }) {
   font-weight: 600;
   flex: 0 0 auto;
   min-width: 0;
-  font-size: 13px;
+  font-size: var(--text-sm);
 }
 
 .source-select select {
@@ -315,12 +315,12 @@ async function handleOpenArticle(article: RssArticle & { variable?: string }) {
   border-radius: 999px;
   background: rgba(201, 127, 58, 0.12);
   color: var(--color-primary);
-  font-size: 10px;
+  font-size: var(--text-xs);
 }
 
 .meta-text {
   color: var(--color-text-tertiary);
-  font-size: 11px;
+  font-size: var(--text-xs);
 }
 
 .rss-scope-bar {
@@ -341,7 +341,7 @@ async function handleOpenArticle(article: RssArticle & { variable?: string }) {
   background: var(--color-bg);
   transition: all var(--duration-fast) var(--ease-out);
   white-space: nowrap;
-  font-size: 12px;
+  font-size: var(--text-xs);
 }
 
 .scope-chip.active {
@@ -394,12 +394,12 @@ async function handleOpenArticle(article: RssArticle & { variable?: string }) {
 
 .panel-head h2 {
   margin: 0;
-  font-size: 16px;
+  font-size: var(--text-lg);
 }
 
 .panel-head span {
   color: var(--color-text-tertiary);
-  font-size: 13px;
+  font-size: var(--text-sm);
 }
 
 .panel-scroll {
@@ -439,7 +439,7 @@ async function handleOpenArticle(article: RssArticle & { variable?: string }) {
 
 .content-head-time,
 .content-head-origin {
-  font-size: 12px;
+  font-size: var(--text-xs);
   color: var(--color-text-tertiary);
 }
 
@@ -456,13 +456,13 @@ async function handleOpenArticle(article: RssArticle & { variable?: string }) {
 }
 
 .content-placeholder-title {
-  font-size: 20px;
+  font-size: var(--text-xl);
   font-weight: 700;
   color: var(--color-text-primary);
 }
 
 .content-placeholder-text {
-  font-size: 14px;
+  font-size: var(--text-base);
 }
 
 .article-item {
@@ -494,7 +494,7 @@ async function handleOpenArticle(article: RssArticle & { variable?: string }) {
 
 .article-meta-line {
   margin-top: 6px;
-  font-size: 12px;
+  font-size: var(--text-xs);
   color: var(--color-text-tertiary);
   display: flex;
   align-items: center;
@@ -508,7 +508,7 @@ async function handleOpenArticle(article: RssArticle & { variable?: string }) {
 
 .article-desc {
   margin-top: 8px;
-  font-size: 13px;
+  font-size: var(--text-sm);
   color: var(--color-text-secondary);
   display: -webkit-box;
   -webkit-line-clamp: 2;
@@ -558,8 +558,8 @@ async function handleOpenArticle(article: RssArticle & { variable?: string }) {
 
 @media (max-width: 960px) {
   .rss-view {
-    height: calc(var(--app-height, 100dvh) - var(--header-height) - 104px - var(--safe-area-top) - var(--safe-area-bottom));
-    min-height: calc(var(--app-height, 100dvh) - var(--header-height) - 104px - var(--safe-area-top) - var(--safe-area-bottom));
+    height: calc(var(--app-height, 100dvh) - var(--header-height) - var(--bottom-nav-clearance) - var(--safe-area-top) - var(--safe-area-bottom));
+    min-height: calc(var(--app-height, 100dvh) - var(--header-height) - var(--bottom-nav-clearance) - var(--safe-area-top) - var(--safe-area-bottom));
     padding: 6px;
     gap: 4px;
     overflow: hidden;
@@ -657,7 +657,7 @@ async function handleOpenArticle(article: RssArticle & { variable?: string }) {
   }
 
   .article-title {
-    font-size: 15px;
+    font-size: var(--text-base);
   }
 
   .article-desc {

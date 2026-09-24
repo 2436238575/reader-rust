@@ -207,7 +207,7 @@ async function handleDelete(rule: ReplaceRule) {
   flex-shrink: 0;
 }
 
-.rule-header h3 { margin: 0; font-size: 16px; }
+.rule-header h3 { margin: 0; font-size: var(--text-lg); }
 
 .header-actions { display: flex; gap: 12px; align-items: center; }
 
@@ -217,7 +217,7 @@ async function handleDelete(rule: ReplaceRule) {
   border: none;
   padding: 6px 12px;
   border-radius: 6px;
-  font-size: 13px;
+  font-size: var(--text-sm);
   cursor: pointer;
 }
 
@@ -250,7 +250,7 @@ async function handleDelete(rule: ReplaceRule) {
   padding: 40px;
   text-align: center;
   opacity: 0.5;
-  font-size: 14px;
+  font-size: var(--text-base);
 }
 
 .rule-item {
@@ -269,12 +269,12 @@ async function handleDelete(rule: ReplaceRule) {
 .rule-info { flex: 1; min-width: 0; }
 
 .rule-name-row { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; }
-.rule-name { font-weight: 600; font-size: 14px; }
-.rule-badge { font-size: 10px; background: var(--color-primary); color: white; padding: 1px 4px; border-radius: 3px; }
-.rule-scope { font-size: 12px; color: var(--color-primary); opacity: 0.9; margin-bottom: 4px; }
+.rule-name { font-weight: 600; font-size: var(--text-base); }
+.rule-badge { font-size: var(--text-xs); background: var(--color-primary); color: white; padding: 1px 4px; border-radius: 3px; }
+.rule-scope { font-size: var(--text-xs); color: var(--color-primary); opacity: 0.9; margin-bottom: 4px; }
 
 .rule-pattern, .rule-replace {
-  font-size: 12px;
+  font-size: var(--text-xs);
   opacity: 0.6;
   white-space: nowrap;
   overflow: hidden;
@@ -285,7 +285,7 @@ async function handleDelete(rule: ReplaceRule) {
 .rule-ops { display: flex; flex-direction: column; align-items: flex-end; gap: 8px; }
 
 .op-btn {
-  font-size: 12px;
+  font-size: var(--text-xs);
   background: transparent;
   border: 1px solid var(--color-border);
   padding: 2px 8px;
@@ -324,7 +324,7 @@ input:checked + .slider:before { transform: translateX(16px); }
 .edit-body { flex: 1; display: flex; flex-direction: column; gap: 16px; }
 
 .form-item { display: flex; flex-direction: column; gap: 6px; }
-.form-item label { font-size: 12px; opacity: 0.7; }
+.form-item label { font-size: var(--text-xs); opacity: 0.7; }
 .form-item input, .form-item textarea {
   background: rgba(0,0,0,0.05);
   border: 1px solid rgba(0,0,0,0.05);
@@ -332,7 +332,7 @@ input:checked + .slider:before { transform: translateX(16px); }
   border-radius: 8px;
   color: inherit;
   outline: none;
-  font-size: 14px;
+  font-size: var(--text-base);
 }
 .form-item textarea { height: 80px; resize: none; }
 
@@ -349,7 +349,7 @@ input:checked + .slider:before { transform: translateX(16px); }
   padding: 8px 12px;
   border-radius: 999px;
   cursor: pointer;
-  font-size: 12px;
+  font-size: var(--text-xs);
 }
 
 .scope-btn.active {
@@ -359,11 +359,11 @@ input:checked + .slider:before { transform: translateX(16px); }
 }
 
 .scope-preview {
-  font-size: 12px;
+  font-size: var(--text-xs);
   opacity: 0.65;
 }
 
-.form-row { display: flex; align-items: center; gap: 20px; font-size: 13px; }
+.form-row { display: flex; align-items: center; gap: 20px; font-size: var(--text-sm); }
 
 .edit-footer { display: flex; justify-content: flex-end; gap: 12px; margin-top: 20px; }
 .edit-footer button { padding: 8px 20px; border-radius: 8px; border: 1px solid var(--color-border); background: transparent; color: inherit; cursor: pointer; }

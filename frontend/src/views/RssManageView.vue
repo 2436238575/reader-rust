@@ -528,8 +528,8 @@ watch(() => store.sources, pruneSelection)
 
 <style scoped>
 .rss-manage-view {
-  height: calc(var(--app-height, 100dvh) - var(--header-height) - 104px - var(--safe-area-top) - var(--safe-area-bottom));
-  min-height: calc(var(--app-height, 100dvh) - var(--header-height) - 104px - var(--safe-area-top) - var(--safe-area-bottom));
+  height: calc(var(--app-height, 100dvh) - var(--header-height) - var(--bottom-nav-clearance) - var(--safe-area-top) - var(--safe-area-bottom));
+  min-height: calc(var(--app-height, 100dvh) - var(--header-height) - var(--bottom-nav-clearance) - var(--safe-area-top) - var(--safe-area-bottom));
   box-sizing: border-box;
   padding: 24px;
   display: flex;
@@ -603,7 +603,7 @@ watch(() => store.sources, pruneSelection)
   align-items: center;
   gap: 8px;
   color: var(--color-text-secondary);
-  font-size: 13px;
+  font-size: var(--text-sm);
 }
 
 .bulk-check {
@@ -659,7 +659,7 @@ watch(() => store.sources, pruneSelection)
 }
 
 .visual-form label > span {
-  font-size: 13px;
+  font-size: var(--text-sm);
   font-weight: 600;
   color: var(--color-text-secondary);
 }
@@ -712,7 +712,7 @@ watch(() => store.sources, pruneSelection)
 }
 
 .panel-title {
-  font-size: 14px;
+  font-size: var(--text-base);
   font-weight: 700;
   margin-bottom: 12px;
 }
@@ -731,7 +731,7 @@ watch(() => store.sources, pruneSelection)
 
 .panel-title-row.compact .mini-btn {
   padding: 6px 10px;
-  font-size: 12px;
+  font-size: var(--text-xs);
 }
 
 .filter-row,
@@ -747,7 +747,7 @@ watch(() => store.sources, pruneSelection)
 }
 
 .visual-form span {
-  font-size: 13px;
+  font-size: var(--text-sm);
   color: var(--color-text-tertiary);
 }
 
@@ -837,12 +837,12 @@ watch(() => store.sources, pruneSelection)
   border-radius: 999px;
   background: rgba(201, 127, 58, 0.12);
   color: var(--color-primary);
-  font-size: 12px;
+  font-size: var(--text-xs);
 }
 
 .source-url {
   color: var(--color-text-tertiary);
-  font-size: 12px;
+  font-size: var(--text-xs);
   line-height: 1.5;
   word-break: break-all;
 }
@@ -873,7 +873,7 @@ watch(() => store.sources, pruneSelection)
   background: color-mix(in srgb, var(--color-bg-elevated) 90%, var(--color-primary) 10%);
   box-shadow: var(--shadow-sm);
   color: var(--color-text-secondary);
-  font-size: 13px;
+  font-size: var(--text-sm);
 }
 
 @media (max-width: 960px) {

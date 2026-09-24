@@ -100,8 +100,8 @@ function formatRelativeTime(value?: string) {
 
 <style scoped>
 .rss-article-view {
-  height: calc(var(--app-height, 100dvh) - var(--header-height) - 104px - var(--safe-area-top) - var(--safe-area-bottom));
-  min-height: calc(var(--app-height, 100dvh) - var(--header-height) - 104px - var(--safe-area-top) - var(--safe-area-bottom));
+  height: calc(var(--app-height, 100dvh) - var(--header-height) - var(--bottom-nav-clearance) - var(--safe-area-top) - var(--safe-area-bottom));
+  min-height: calc(var(--app-height, 100dvh) - var(--header-height) - var(--bottom-nav-clearance) - var(--safe-area-top) - var(--safe-area-bottom));
   box-sizing: border-box;
   display: flex;
   flex-direction: column;
@@ -137,7 +137,7 @@ function formatRelativeTime(value?: string) {
 
 .article-page-head h1 {
   margin: 0;
-  font-size: 30px;
+  font-size: var(--text-xl);
   line-height: 1.25;
 }
 
@@ -147,7 +147,7 @@ function formatRelativeTime(value?: string) {
   gap: 6px;
   flex-wrap: wrap;
   color: var(--color-text-tertiary);
-  font-size: 13px;
+  font-size: var(--text-sm);
 }
 
 .article-page-scroll {
@@ -226,7 +226,7 @@ function formatRelativeTime(value?: string) {
   }
 
   .article-page-head h1 {
-    font-size: 22px;
+    font-size: var(--text-xl);
   }
 }
 </style>

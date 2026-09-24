@@ -11,7 +11,7 @@
         </div>
 
         <form
-          v-if="showGlobalSearch"
+          v-if="showGlobalSearch && !isLoginPage"
           class="search-box"
           :class="{ focused: searchFocused }"
           role="search"
@@ -45,6 +45,18 @@
       </div>
 
       <div class="topbar-right">
+        <nav v-if="showNavTabs" class="topbar-nav" aria-label="主导航">
+          <router-link
+            v-for="item in navItems"
+            :key="item.key"
+            :to="item.path"
+            class="nav-tab"
+            :class="{ active: activeNavKey === item.key }"
+          >
+            {{ item.label }}
+          </router-link>
+          <span class="nav-divider" aria-hidden="true"></span>
+        </nav>
         <a class="topbar-btn" href="https://givenge.github.io/reader-rust/" target="_blank" title="文档" rel="noopener noreferrer">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
       <path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H20v20H6.5a2.5 2.5 0 0 1 0-5H20" />
@@ -65,7 +77,7 @@
           </svg>
         </button>
 
-        <button v-if="!isLoggedIn" class="topbar-btn" @click="openSettings" title="设置">
+        <button v-if="!isLoggedIn && !isLoginPage" class="topbar-btn" @click="openSettings" title="设置">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z" />
             <circle cx="12" cy="12" r="3" />
@@ -73,7 +85,7 @@
           <span v-if="hasVersionUpdateReminder" class="update-indicator" aria-hidden="true"></span>
         </button>
 
-        <button v-else class="topbar-btn user-btn" @click="openSettings" title="用户">
+        <button v-else-if="!isLoginPage" class="topbar-btn user-btn" @click="openSettings" title="用户">
           <div class="user-avatar">{{ userInfo?.username?.charAt(0)?.toUpperCase() || 'U' }}</div>
           <span v-if="hasVersionUpdateReminder" class="update-indicator" aria-hidden="true"></span>
         </button>
@@ -97,6 +109,24 @@ const exploreStore = useExploreStore()
 
 const searchFocused = ref(false)
 const searchValue = ref('')
+
+type NavKey = 'home' | 'explore' | 'recent' | 'rss'
+
+const navItems: Array<{ key: NavKey; label: string; path: string }> = [
+  { key: 'home', label: '书架', path: '/' },
+  { key: 'explore', label: '书海', path: '/explore' },
+  { key: 'recent', label: '最近', path: '/recent' },
+  { key: 'rss', label: 'RSS', path: '/rss' },
+]
+
+const activeNavKey = computed<NavKey>(() => {
+  if (route.path.startsWith('/explore')) return 'explore'
+  if (route.path.startsWith('/recent')) return 'recent'
+  if (route.path.startsWith('/rss')) return 'rss'
+  return 'home'
+})
+const showNavTabs = computed(() => route.name !== 'login')
+const isLoginPage = computed(() => route.name === 'login')
 
 const theme = computed(() => appStore.theme)
 const isLoggedIn = computed(() => appStore.isLoggedIn)
@@ -143,7 +173,7 @@ function openSettings() {
   position: sticky;
   top: 0;
   z-index: var(--z-sticky);
-  min-height: calc(var(--header-height) + var(--safe-area-top) + 10px);
+  min-height: calc(var(--header-height) + var(--safe-area-top));
   padding-top: var(--safe-area-top);
   background: var(--color-bg-elevated);
   border-bottom: 1px solid var(--color-border-light);
@@ -155,7 +185,7 @@ function openSettings() {
 .topbar-inner {
   max-width: var(--content-max-width);
   margin: 0 auto;
-  min-height: calc(var(--header-height) + 10px);
+  min-height: var(--header-height);
   display: flex;
   align-items: center;
   gap: var(--space-5);
@@ -198,17 +228,21 @@ function openSettings() {
   display: flex;
   align-items: center;
   gap: var(--space-2);
+  height: 36px;
   background: var(--color-bg-sunken);
-  border: 1.5px solid transparent;
+  border: 1px solid var(--color-border-light);
   border-radius: var(--radius-full);
-  padding: var(--space-2) var(--space-4);
-  max-width: 460px;
-  flex: 1 1 420px;
-  min-width: 220px;
-  transition: all var(--duration-normal) var(--ease-out);
+  padding: 0 6px 0 var(--space-4);
+  width: 220px;
+  flex: 0 0 auto;
+  transition: width var(--duration-normal) var(--ease-out),
+              border-color var(--duration-normal) var(--ease-out),
+              background var(--duration-normal) var(--ease-out),
+              box-shadow var(--duration-normal) var(--ease-out);
 }
 
 .search-box.focused {
+  width: min(420px, 42vw);
   border-color: var(--color-primary);
   background: var(--color-bg-elevated);
   box-shadow: 0 0 0 3px var(--color-primary-bg);
@@ -252,8 +286,8 @@ function openSettings() {
 }
 
 .search-submit {
-  width: 30px;
-  height: 30px;
+  width: 26px;
+  height: 26px;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -291,6 +325,46 @@ function openSettings() {
   gap: 8px;
   flex: 0 0 auto;
   margin-left: auto;
+}
+
+.topbar-nav {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  margin-right: var(--space-2);
+}
+
+.nav-tab {
+  padding: var(--space-2) var(--space-4);
+  font-size: var(--text-base);
+  font-weight: 500;
+  color: var(--color-text-secondary);
+  border-radius: var(--radius-md);
+  white-space: nowrap;
+  transition: color var(--duration-fast) var(--ease-out);
+}
+
+.nav-tab:hover {
+  color: var(--color-text);
+}
+
+.nav-tab.active {
+  color: var(--color-primary);
+  font-weight: 600;
+}
+
+.nav-divider {
+  width: 1px;
+  height: 20px;
+  background: var(--color-border);
+  margin-left: var(--space-3);
+  flex-shrink: 0;
+}
+
+@media (max-width: 767px) {
+  .topbar-nav {
+    display: none;
+  }
 }
 
 .topbar-btn {
@@ -359,10 +433,14 @@ function openSettings() {
   }
 
   .search-box {
-    max-width: none;
-    min-width: 0;
+    width: auto;
+    flex: 1 1 auto;
     gap: 6px;
-    padding: 7px 8px 7px var(--space-3);
+    padding: 0 6px 0 var(--space-3);
+  }
+
+  .search-box.focused {
+    width: auto;
   }
 
   .search-submit {
@@ -388,7 +466,7 @@ function openSettings() {
   .user-avatar {
     width: 28px;
     height: 28px;
-    font-size: 12px;
+    font-size: var(--text-xs);
   }
 }
 </style>

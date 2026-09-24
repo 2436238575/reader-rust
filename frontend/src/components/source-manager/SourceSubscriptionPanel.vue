@@ -21,8 +21,8 @@
             placeholder="输入远程书源合集链接"
             @input="$emit('update:remoteUrl', ($event.target as HTMLInputElement).value)"
           />
-          <button class="action-btn primary" type="button" @click="$emit('sync')">立即同步</button>
-          <button class="action-btn" type="button" @click="$emit('save')">保存订阅</button>
+          <button class="btn btn-primary" type="button" @click="$emit('sync')">立即同步</button>
+          <button class="btn" type="button" @click="$emit('save')">保存订阅</button>
         </div>
 
         <div v-if="subscriptions.length" class="subscription-list">
@@ -32,8 +32,8 @@
               <span v-if="item.lastSyncedAt" class="subscription-time">上次同步 {{ formatTime(item.lastSyncedAt) }}</span>
             </div>
             <div class="subscription-actions">
-              <button class="mini-btn" type="button" @click="$emit('sync-subscription', item.url)">同步</button>
-              <button class="mini-btn danger" type="button" @click="$emit('remove-subscription', item.url)">删除</button>
+              <button class="btn btn-sm" type="button" @click="$emit('sync-subscription', item.url)">同步</button>
+              <button class="btn btn-sm btn-danger" type="button" @click="$emit('remove-subscription', item.url)">删除</button>
             </div>
           </article>
         </div>
@@ -104,13 +104,13 @@ function formatTime(ts: number) {
 
 .subscription-header h3 {
   margin: 0;
-  font-size: 17px;
+  font-size: var(--text-lg);
 }
 
 .subscription-header p {
   margin-top: 6px;
   color: var(--color-text-tertiary);
-  font-size: 13px;
+  font-size: var(--text-sm);
 }
 
 .remote-form {
@@ -152,7 +152,7 @@ function formatTime(ts: number) {
 }
 
 .subscription-url {
-  font-size: 13px;
+  font-size: var(--text-sm);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -162,7 +162,7 @@ function formatTime(ts: number) {
 .subscription-empty {
   margin-top: 4px;
   color: var(--color-text-tertiary);
-  font-size: 12px;
+  font-size: var(--text-xs);
 }
 
 .subscription-actions {
@@ -170,37 +170,11 @@ function formatTime(ts: number) {
   gap: 8px;
 }
 
-.action-btn,
-.mini-btn,
 .icon-btn {
   border: 1px solid var(--color-border);
   border-radius: var(--radius-md);
   background: transparent;
   transition: all var(--duration-fast);
-}
-
-.action-btn {
-  min-height: 40px;
-  padding: 0 12px;
-  font-size: 13px;
-  white-space: nowrap;
-}
-
-.action-btn.primary {
-  background: var(--color-primary);
-  border-color: var(--color-primary);
-  color: #fff;
-}
-
-.mini-btn {
-  min-height: 32px;
-  padding: 0 10px;
-  font-size: 12px;
-}
-
-.mini-btn.danger {
-  color: var(--color-danger);
-  border-color: rgba(245, 34, 45, 0.2);
 }
 
 .icon-btn {
@@ -216,8 +190,6 @@ function formatTime(ts: number) {
   height: 16px;
 }
 
-.action-btn:hover,
-.mini-btn:hover,
 .icon-btn:hover {
   background: var(--color-bg-hover);
 }

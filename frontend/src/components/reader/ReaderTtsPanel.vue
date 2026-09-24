@@ -134,7 +134,7 @@ defineEmits<{
 .tts-info {
   flex: 1;
   min-width: 0;
-  font-size: 14px;
+  font-size: var(--text-base);
   line-height: 1.5;
   opacity: 0.7;
   word-break: break-word;
@@ -142,7 +142,7 @@ defineEmits<{
 
 .tts-mode {
   margin-top: 4px;
-  font-size: 12px;
+  font-size: var(--text-xs);
   opacity: 0.6;
 }
 
@@ -199,7 +199,7 @@ defineEmits<{
   border-radius: 12px;
   background: rgba(0, 0, 0, 0.04);
   color: inherit;
-  font-size: 13px;
+  font-size: var(--text-sm);
   opacity: 0.75;
   box-sizing: border-box;
 }
@@ -221,7 +221,7 @@ defineEmits<{
   padding: 10px 12px;
   border-radius: 12px;
   background: rgba(0, 0, 0, 0.04);
-  font-size: 14px;
+  font-size: var(--text-base);
 }
 
 .tts-stepper button {
@@ -257,7 +257,7 @@ defineEmits<{
   background: rgba(0, 0, 0, 0.04);
   color: inherit;
   padding: 8px 12px;
-  font-size: 13px;
+  font-size: var(--text-sm);
   cursor: pointer;
 }
 
@@ -268,7 +268,7 @@ defineEmits<{
 }
 
 .tts-timer-text {
-  font-size: 12px;
+  font-size: var(--text-xs);
   opacity: 0.65;
 }
 
@@ -292,7 +292,7 @@ defineEmits<{
     padding: 9px 0;
     min-height: 40px;
     border-radius: 10px;
-    font-size: 14px;
+    font-size: var(--text-base);
     white-space: nowrap;
   }
 
@@ -305,14 +305,14 @@ defineEmits<{
   .tts-stepper {
     padding: 8px 10px;
     gap: 6px;
-    font-size: 13px;
+    font-size: var(--text-sm);
   }
 
   .tts-stepper button {
     width: 32px;
     height: 32px;
     border-radius: 9px;
-    font-size: 18px;
+    font-size: var(--text-lg);
   }
 
   .tts-stepper:only-child {
@@ -320,7 +320,7 @@ defineEmits<{
   }
 
   .tts-label {
-    font-size: 13px;
+    font-size: var(--text-sm);
   }
 }
 </style>

@@ -323,7 +323,7 @@ function formatDate(ts?: number) {
   height: 100%;
   display: flex;
   align-items: center;
-  font-size: 15px;
+  font-size: var(--text-base);
   font-weight: 500;
   cursor: pointer;
   opacity: 0.6;
@@ -393,7 +393,7 @@ function formatDate(ts?: number) {
   border-radius: 8px;
   background: rgba(0,0,0,0.03);
   color: inherit;
-  font-size: 14px;
+  font-size: var(--text-base);
   outline: none;
   transition: all 0.2s;
 }
@@ -483,7 +483,7 @@ function formatDate(ts?: number) {
   background: transparent;
   color: inherit;
   padding: 8px 12px;
-  font-size: 12px;
+  font-size: var(--text-xs);
   cursor: pointer;
 }
 
@@ -501,7 +501,7 @@ function formatDate(ts?: number) {
   padding: 40px;
   text-align: center;
   opacity: 0.5;
-  font-size: 14px;
+  font-size: var(--text-base);
 }
 
 .list-item {
@@ -528,14 +528,14 @@ function formatDate(ts?: number) {
 }
 
 .item-index {
-  font-size: 11px;
+  font-size: var(--text-xs);
   opacity: 0.4;
   width: 24px;
   flex-shrink: 0;
 }
 
 .item-title {
-  font-size: 14px;
+  font-size: var(--text-base);
   line-height: 1.4;
   flex: 1;
   min-width: 0;
@@ -558,7 +558,7 @@ function formatDate(ts?: number) {
   justify-content: center;
   padding: 2px 8px;
   border-radius: 999px;
-  font-size: 11px;
+  font-size: var(--text-xs);
   line-height: 1.4;
   white-space: nowrap;
   border: 1px solid transparent;
@@ -620,18 +620,18 @@ function formatDate(ts?: number) {
 }
 
 .bm-chapter {
-  font-size: 13px;
+  font-size: var(--text-sm);
   font-weight: 600;
   opacity: 0.9;
 }
 
 .bm-time {
-  font-size: 11px;
+  font-size: var(--text-xs);
   opacity: 0.4;
 }
 
 .bm-snippet {
-  font-size: 12px;
+  font-size: var(--text-xs);
   opacity: 0.6;
   display: -webkit-box;
   -webkit-line-clamp: 2;

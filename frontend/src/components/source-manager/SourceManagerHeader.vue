@@ -16,21 +16,21 @@
           <path d="M16 16h5v5" />
         </svg>
       </button>
-      <button class="action-btn" type="button" @click="$emit('import-local')">本地导入</button>
-      <button class="action-btn" type="button" @click="$emit('open-subscriptions')">远程同步</button>
-      <button class="action-btn" type="button" @click="$emit('export')">导出</button>
-      <button class="action-btn" :disabled="testing || total === 0" type="button" @click="$emit('test-sources')">
+      <button class="btn" type="button" @click="$emit('import-local')">本地导入</button>
+      <button class="btn" type="button" @click="$emit('open-subscriptions')">远程同步</button>
+      <button class="btn" type="button" @click="$emit('export')">导出</button>
+      <button class="btn" :disabled="testing || total === 0" type="button" @click="$emit('test-sources')">
         {{ testing ? '测试中...' : '测试书源' }}
       </button>
       <button
-        class="action-btn danger"
+        class="btn btn-danger"
         :disabled="testing || invalidCount === 0"
         type="button"
         @click="$emit('delete-invalid')"
       >
         删除失效<span v-if="invalidCount"> {{ invalidCount }}</span>
       </button>
-      <button class="action-btn primary" type="button" @click="$emit('create')">新增</button>
+      <button class="btn btn-primary" type="button" @click="$emit('create')">新增</button>
       <button class="icon-btn close-btn" type="button" title="关闭" @click="$emit('close')">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
           <path d="M18 6 6 18M6 6l12 12" />
@@ -86,7 +86,7 @@ defineEmits<{
 
 .title-block p {
   margin-top: 6px;
-  font-size: 13px;
+  font-size: var(--text-sm);
   color: var(--color-text-tertiary);
 }
 
@@ -97,39 +97,12 @@ defineEmits<{
   gap: var(--space-2);
 }
 
-.action-btn,
 .icon-btn {
   border-radius: var(--radius-md);
   border: 1px solid var(--color-border);
   background: transparent;
   cursor: pointer;
   transition: all var(--duration-fast);
-}
-
-.action-btn {
-  min-height: 36px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  padding: 8px 12px;
-  font-size: 13px;
-  white-space: nowrap;
-}
-
-.action-btn.primary {
-  background: var(--color-primary);
-  border-color: var(--color-primary);
-  color: #fff;
-}
-
-.action-btn.danger {
-  color: var(--color-danger);
-  border-color: rgba(245, 34, 45, 0.26);
-}
-
-.action-btn:disabled {
-  cursor: not-allowed;
-  opacity: 0.52;
 }
 
 .icon-btn {
@@ -146,7 +119,7 @@ defineEmits<{
   height: 18px;
 }
 
-.action-btn:hover,
+
 .icon-btn:hover {
   background: var(--color-bg-hover);
 }

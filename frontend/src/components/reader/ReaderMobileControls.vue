@@ -185,7 +185,7 @@ defineEmits<{
   display: flex;
   align-items: center;
   gap: 4px;
-  font-size: 13px;
+  font-size: var(--text-sm);
   opacity: 0.7;
   cursor: pointer;
   min-width: 0;
@@ -253,7 +253,7 @@ defineEmits<{
 }
 
 .page-text {
-  font-size: 12px;
+  font-size: var(--text-xs);
   opacity: 0.6;
 }
 
@@ -268,14 +268,14 @@ defineEmits<{
   display: flex;
   align-items: center;
   gap: 4px;
-  font-size: 14px;
+  font-size: var(--text-base);
   cursor: pointer;
 }
 .nav-btn svg { width: 16px; height: 16px; }
 .nav-btn.disabled { opacity: 0.3; cursor: not-allowed; }
 
 .progress-percent {
-  font-size: 12px;
+  font-size: var(--text-xs);
   opacity: 0.6;
   white-space: nowrap;
   text-align: center;
@@ -341,7 +341,7 @@ defineEmits<{
   }
 
   .m-top-item {
-    font-size: 12px;
+    font-size: var(--text-xs);
     flex: 0 0 auto;
   }
 
@@ -354,7 +354,7 @@ defineEmits<{
   }
 
   .page-text {
-    font-size: 11px;
+    font-size: var(--text-xs);
   }
 
   .nav-row {
@@ -363,7 +363,7 @@ defineEmits<{
   }
 
   .nav-btn {
-    font-size: 13px;
+    font-size: var(--text-sm);
   }
 
   .progress-percent {

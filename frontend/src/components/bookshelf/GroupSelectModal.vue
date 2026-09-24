@@ -143,7 +143,7 @@ async function handleCreate() {
 }
 
 .group-icon { opacity: 0.4; font-weight: 700; }
-.group-name { font-weight: 500; font-size: 15px; }
+.group-name { font-weight: 500; font-size: var(--text-base); }
 
 .new-group {
   margin-top: var(--space-2);

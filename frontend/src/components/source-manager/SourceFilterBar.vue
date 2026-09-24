@@ -32,8 +32,8 @@
     </select>
     <div v-if="selectedCount > 0" class="selection-tools">
       <span>已选 {{ selectedCount }}</span>
-      <button class="mini-btn" type="button" @click="$emit('clear-selection')">清空</button>
-      <button class="mini-btn danger" type="button" @click="$emit('delete-selection')">删除选中</button>
+      <button class="btn btn-sm" type="button" @click="$emit('clear-selection')">清空</button>
+      <button class="btn btn-sm btn-danger" type="button" @click="$emit('delete-selection')">删除选中</button>
     </div>
   </section>
 </template>
@@ -76,7 +76,7 @@ defineEmits<{
   border-radius: var(--radius-md);
   background: var(--color-bg);
   color: var(--color-text-secondary);
-  font-size: 13px;
+  font-size: var(--text-sm);
   white-space: nowrap;
 }
 
@@ -131,35 +131,12 @@ defineEmits<{
   border-radius: var(--radius-md);
   background: rgba(201, 127, 58, 0.08);
   color: var(--color-text-secondary);
-  font-size: 12px;
+  font-size: var(--text-xs);
   white-space: nowrap;
 }
 
 .selection-tools span {
   color: var(--color-text-secondary);
-}
-
-.mini-btn {
-  min-height: 36px;
-  padding: 7px 10px;
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-md);
-  background: transparent;
-  font-size: 12px;
-  white-space: nowrap;
-}
-
-.mini-btn:hover {
-  background: var(--color-bg-hover);
-}
-
-.mini-btn.danger {
-  color: var(--color-danger);
-  border-color: rgba(245, 34, 45, 0.22);
-}
-
-.mini-btn.danger:hover {
-  background: rgba(245, 34, 45, 0.08);
 }
 
 @media (max-width: 760px) {
@@ -181,7 +158,7 @@ defineEmits<{
     grid-column: 1 / -1;
   }
 
-  .selection-tools .mini-btn {
+  .selection-tools .btn-sm {
     min-height: 42px;
   }
 }

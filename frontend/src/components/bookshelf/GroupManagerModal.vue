@@ -16,15 +16,15 @@
           <div class="modal-body">
             <div class="create-row">
               <input v-model.trim="newGroupName" class="group-input" placeholder="新建分组名称" @keyup.enter="createGroup" />
-              <button class="primary-btn" :disabled="!newGroupName" @click="createGroup">新建</button>
+              <button class="btn btn-primary" :disabled="!newGroupName" @click="createGroup">新建</button>
             </div>
 
             <div class="group-list">
               <div v-for="group in shelfStore.groups" :key="group.groupId" class="group-item">
                 <input v-model.trim="editingNames[group.groupId]" class="group-input" />
                 <div class="group-actions">
-                  <button class="mini-btn" @click="renameGroup(group.groupId)">保存</button>
-                  <button class="mini-btn danger" @click="deleteGroup(group.groupId, group.groupName)">删除</button>
+                  <button class="btn btn-sm" @click="renameGroup(group.groupId)">保存</button>
+                  <button class="btn btn-sm btn-danger" @click="deleteGroup(group.groupId, group.groupName)">删除</button>
                 </div>
               </div>
             </div>
@@ -136,7 +136,7 @@ async function deleteGroup(groupId: number, groupName: string) {
 
 .modal-header h3 {
   margin: 0;
-  font-size: 18px;
+  font-size: var(--text-lg);
 }
 
 .close-btn {
@@ -187,22 +187,4 @@ async function deleteGroup(groupId: number, groupName: string) {
   gap: 8px;
 }
 
-.primary-btn,
-.mini-btn {
-  border-radius: 12px;
-  border: 1px solid var(--color-border);
-  padding: 10px 14px;
-  cursor: pointer;
-}
-
-.primary-btn {
-  background: var(--color-primary);
-  border-color: var(--color-primary);
-  color: #fff;
-}
-
-.mini-btn.danger {
-  color: var(--color-danger);
-  border-color: rgba(245, 34, 45, 0.2);
-}
 </style>

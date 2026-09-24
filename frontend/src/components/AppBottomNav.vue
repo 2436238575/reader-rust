@@ -355,6 +355,13 @@ onBeforeUnmount(() => {
   transform: scale(0.98);
 }
 
+@media (min-width: 768px) {
+  /* 桌面端使用顶栏 Tab 导航，底部胶囊导航仅作为移动端兜底 */
+  .bottom-nav-shell {
+    display: none;
+  }
+}
+
 @media (max-width: 640px) {
   .bottom-nav-shell {
     width: calc(100vw - 18px);
@@ -369,7 +376,7 @@ onBeforeUnmount(() => {
   .nav-item {
     min-height: 52px;
     gap: 6px;
-    font-size: 13px;
+    font-size: var(--text-sm);
   }
 }
 </style>
