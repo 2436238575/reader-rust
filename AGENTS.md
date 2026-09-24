@@ -257,6 +257,12 @@ HTTP 请求
 | `\|\|` | 取第一个非空结果 |
 | `%%` | 并列取值 |
 
+组合符在 CSS、XPath、**JsonPath**、**元素级字段**（列表项里的 `name`/`author` 等）与**列表正则**上都生效；
+列表正则的 `&&` 是逐级下钻（前一段的完整匹配串喂给下一段，见规格 §9.3）。
+
+字段级可用显式前缀强制指定解析方式：`@css:`、`@json:`、`@xpath:`、`@regex:`、`@js:`/`<js>`。
+其中 `@regex:` 表示「不做匹配、直接用规则文本」（配合上游 `$n` 分组引用）。
+
 完整的规则语法与字段清单见 [`book-source-rules.md`](./docs/reference/book-source-rules.md)；面向书源作者的分篇教程见 [书源开发文档](./docs/book-source/index.md)。
 
 ---
@@ -269,18 +275,21 @@ HTTP 请求
 - 缓存**不按时间过期**，只在显式调用 `POST /reader3/purgeCache` 或超出容量上限时回收；占用可用 `GET /reader3/cacheStats` 查看。
 - 唯一例外是**评论缓存**（`storage/cache/reviews/<ns>/<md5(bookUrl)>/`）：评论是会变的第三方数据，
   因此保留 7 天 TTL（`REVIEW_CACHE_TTL_SECS`），同时也受容量上限约束。
+- 另有若干**进程内**小缓存，重启即失效：书源正则编译缓存、JS `cache`/`kv` 与 jsLib 编译缓存、
+  `exploreUrl` 的 JS 求值结果（按 `MD5(bookSourceUrl + exploreUrl)` 缓存 1 小时）。
+  它们的键都由书源内容决定，因此都设了条目上限，超出即整表清空。
 - `storage/` 全部属于运行期数据，**不要提交**，清理时也不要误删。
 
 ---
 
 ## 测试
 
-Rust 侧共 **173 个测试**（115 个 `#[test]` + 58 个 `#[tokio::test]`），分布为：
+Rust 侧共 **189 个测试**（131 个 `#[test]` + 58 个 `#[tokio::test]`），分布为：
 
 - `tests/` 下 12 个集成测试文件（58 个用例），其中 `book_source_compat.rs` 用例最多（17 个）；
   `auth_flow.rs` 与 `review_flow.rs` 起真实监听端口，前者覆盖 401/403、静态回落与缓存清理，
   后者用一个假上游覆盖评论规则、7 天缓存与按类型清理；
-- `src/` 内的内联单元测试模块（115 个）。
+- `src/` 内的内联单元测试模块（131 个）。
 
 前端使用 vitest，共 20 个 `*.test.ts`（75 个用例）。
 

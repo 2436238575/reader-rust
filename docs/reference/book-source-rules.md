@@ -720,6 +720,9 @@ splitRule("&&", "||")
 4. JSON/JS 代码模式下，额外处理反斜杠转义。
 5. 一旦确定第一个有效分隔符，后续只按同一种分隔符继续切分。
 6. `elementsType` 保存实际使用的分隔符。
+> **reader-rust 实现差异**：切分器把 `{}` 也当作平衡组（`{{内联 JS}}` 里的 `&&` 因此不会被切开），
+> 且引号内的 `\` 视为转义——都比规格更宽容。改回规格会破坏 `{{...}}` 模板与带反斜杠的 JS 正则，
+> 因此这里接受分叉。
 
 示例：
 
@@ -922,6 +925,19 @@ JS 运行时 SHOULD 提供 `JsExtensions` 等价能力，至少包括：
 - `toast`、`log`、`randomUUID`、`androidId`、`openUrl`。
 
 如果实现目标不包含 Android UI，可把 UI 类函数实现为空操作或返回明确错误，但需要文档声明。
+**reader-rust 实现情况**：
+
+- 已实现：`ajax` / `get` / `post` / `put`、`md5Encode`、`timeFormat`、base64、AES-CBC 解密、
+  `encodeURI` 系列、`now`、`uuid`、`androidId` / `deviceID`，以及 `cache.get/put`、`kv_get/kv_put`、
+  `regex_replace`、`strip_ws`、`cookie.removeCookie`。
+- 空操作：`log` / `toast` / `openUrl`（服务端没有对应动作，注册成空操作以免整条规则抛错）。
+- **未实现**：`ajaxAll`、`connect`、`importScript`、`cacheFile`、`getCookie`、`downloadFile`、`hex`、
+  `htmlFormat`、简繁转换、`queryTTF`、`toNumChapter`、`toURL`、`reGetBook`、`refreshTocUrl`、WebView 相关。
+  调用未实现的 `java.*` 会抛 `TypeError`，整条规则失效（依据：`src/parser/js.rs` 的注册表）。
+- 规则脚本按**表达式**求值：顶层 `return` 是语法错误（QuickJS 的 eval 语义），
+  书源应写成表达式或逗号表达式（依据：`eval_script`）。
+- `book` / `chapter` 只在 `formatJs` 里是真实对象，其余规则上下文是空对象占位
+  （依据：`src/parser/js.rs` 的全局注入）。
 
 ## 11. 通用运行时服务
 
@@ -968,6 +984,7 @@ JS 运行时 SHOULD 提供 `JsExtensions` 等价能力，至少包括：
 - 当前项目判断为 `frequency > limit` 时等待，因此边界上可能允许 `limit + 1` 次；完全兼容实现需复刻此行为。
 
 解析异常时视为不限制。
+> **reader-rust 实现差异**：窗口内严格限制为 `limit` 次（不复刻 `limit + 1` 的边界行为）。
 
 ## 12. 登录、共享 JS、变量
 
@@ -1133,6 +1150,10 @@ title::url
 | `author` | `formatBookAuthor(getString(authorRule))`。 |
 | `kind` | `getStringList(kindRule)?.joinToString(",")`。 |
 | `wordCount` | `wordCountFormat(getString(wordCountRule))`。 |
+> **reader-rust 实现差异**：`formatBookName` / `formatBookAuthor` / `wordCountFormat` **未实现**——
+> 本项目 `BookSource` 里没有这三个字段（依据：`src/model/book_source.rs`）。
+> `kind` 按规格取全部命中并用 `,` 连接；规则里含 JS、`{{}}` 或 `@put`/`@get` 时退回单值求值
+> （依据：`eval_kind_*`）。
 | `lastChapter` | 写入 `latestChapterTitle`。 |
 | `intro` | HTML 格式化后写入。 |
 | `coverUrl` | `getString(coverUrlRule)` 后按当前 `baseUrl` 补绝对 URL。 |
@@ -1182,6 +1203,8 @@ getBookInfoAwait(source, book, canReName=true):
 
 - 只有调用方传 `runPerJs=true` 时执行。
 - JS 中允许调用 `java.reGetBook()` 和 `java.refreshTocUrl()`；其他上下文调用这两个方法必须抛错。
+> **reader-rust 实现差异**：`preUpdateJs` 总是执行（不看 `runPerJs`，本项目也没有该字段），
+> 语义是「目录解析前的 body 预处理」；`java.reGetBook()` / `java.refreshTocUrl()` 未实现。
 
 请求目录：
 
@@ -1211,6 +1234,8 @@ else:
 7. 若 `reverse == false`，先反转 `chapterList`。
 8. 用 `LinkedHashSet` 去重保序。
 9. 若 `book.getReverseToc() == false`，再次反转。
+> **reader-rust 实现差异**：去重在**逐页解析时**进行并保留首个重复项，不实现按书反转的 `reverseToc`
+> （依据：`parse_chapter_list_*`、`normalize_list_rule`）。
 10. 重新写入每章 `index`。
 11. 若 `formatJs` 非空，遍历章节执行 JS，返回值替换标题。
 
@@ -1232,6 +1257,8 @@ else:
 - 空、blank 或 `"null"`：false。
 - 忽略大小写匹配 `false|no|not|0`：false。
 - 其他非空字符串：true。
+> **reader-rust 实现差异**：词表是规格的超集——`not` 已按规格计入假值，另额外把 `none` / `off`
+> 也当假值（依据：`is_truthy`）。
 
 章节 URL 为空：
 
@@ -1272,6 +1299,8 @@ getContentAwait(source, book, chapter, nextChapterUrl=null, needSave=true):
 4. `nextContentUrl`：
    - 1 个 URL：顺序循环请求，直到空、重复、或等于下一章 URL。
    - 多个 URL：并发请求，不再递归获取下一页。
+> **reader-rust 实现差异**：`nextContentUrl` 只取第一条 URL 顺序跟随（单链），不做多 URL 并发；
+> 跟随过程有环检测与跨站/下一章启发式拦截（依据：`RuleEngine::next_content_url`、`should_follow_content_page`）。
 5. 多页正文用 `\n` 连接。
 6. 若 `replaceRegex` 非空：
    - 对正文按换行拆行，每行 trim，再用 `\n` 连接。
