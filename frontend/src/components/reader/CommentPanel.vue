@@ -38,7 +38,12 @@
             <div v-else-if="error" class="comment-hint comment-error">{{ error }}</div>
             <div v-else-if="!items.length" class="comment-hint">还没有评论</div>
 
-            <article v-for="(item, index) in visibleItems" :key="item.id || `c-${index}`" class="comment-item">
+            <article
+              v-for="(item, index) in visibleItems"
+              :key="item.id || `c-${index}`"
+              :data-review-key="item.id || `c-${index}`"
+              class="comment-item"
+            >
               <div class="comment-meta">
                 <span class="comment-name">{{ item.name || '匿名读者' }}</span>
                 <span class="comment-time">{{ formatReviewTime(item.time) }}</span>
@@ -148,6 +153,8 @@ const serverSort = ref(false)
  */
 const visibleItems = computed(() => {
   if (sort.value === 'hot') return items.value
+  // 站点已按最新排好（书源模板用了 {{sort}}），不需要也不能再排一次
+  if (serverSort.value) return items.value
   const keyed = items.value.map((item) => ({ item, key: timeKey(item.time) }))
   if (keyed.some((entry) => entry.key === null)) return items.value
   return [...keyed].sort((a, b) => (b.key as number) - (a.key as number)).map((entry) => entry.item)
@@ -216,19 +223,66 @@ async function fetchPage(target: number) {
 async function changeSort(next: ReviewSort) {
   if (sort.value === next) return
   sort.value = next
-  // 排序变了，已加载的分页作废，从头拉
+  // 排序变了，已加载的分页作废，从头拉；顺序整体换过，回到顶部
   items.value = []
   total.value = 0
   page.value = 1
   hasMore.value = false
   await fetchPage(1)
+  await nextTick()
+  listRef.value?.scrollTo({ top: 0 })
 }
 
 async function loadMore() {
   if (loading.value) return
+  // 「加载更多」按钮在列表末尾，追加后浏览器本来就会保持 scrollTop，
+  // 新条目正好接在原来的位置下方。这里额外记一个锚点，是为了「最新」排序：
+  // 新一页要按时间重新插入，不锚定的话视口里的条目会整体错位。
+  const anchor = captureScrollAnchor()
   await fetchPage(page.value + 1)
   await nextTick()
-  listRef.value?.scrollTo({ top: listRef.value.scrollHeight, behavior: 'smooth' })
+  restoreScrollAnchor(anchor)
+}
+
+interface ScrollAnchor {
+  key: string
+  /** 锚点条目顶边相对列表顶边的偏移 */
+  offset: number
+  scrollTop: number
+}
+
+/** 记住当前视口顶部那一条评论。 */
+function captureScrollAnchor(): ScrollAnchor | null {
+  const list = listRef.value
+  if (!list) return null
+  const listTop = list.getBoundingClientRect().top
+  const anchor = Array.from(list.querySelectorAll<HTMLElement>('.comment-item')).find(
+    (item) => item.getBoundingClientRect().bottom > listTop + 1,
+  )
+  if (!anchor) return { key: '', offset: 0, scrollTop: list.scrollTop }
+  return {
+    key: anchor.dataset.reviewKey || '',
+    offset: anchor.getBoundingClientRect().top - listTop,
+    scrollTop: list.scrollTop,
+  }
+}
+
+/** 把同一条评论放回原来的位置；找不到就退回原来的 scrollTop。 */
+function restoreScrollAnchor(anchor: ScrollAnchor | null) {
+  const list = listRef.value
+  if (!list || !anchor) return
+  const target = anchor.key
+    ? Array.from(list.querySelectorAll<HTMLElement>('.comment-item')).find(
+        (item) => item.dataset.reviewKey === anchor.key,
+      )
+    : undefined
+  if (!target) {
+    list.scrollTop = anchor.scrollTop
+    return
+  }
+  const listTop = list.getBoundingClientRect().top
+  const delta = target.getBoundingClientRect().top - listTop - anchor.offset
+  list.scrollTop += delta
 }
 
 /**
