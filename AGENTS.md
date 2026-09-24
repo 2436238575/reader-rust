@@ -293,8 +293,9 @@ HTTP 请求
 - 唯一例外是**评论缓存**（`storage/cache/reviews/<ns>/<md5(bookUrl)>/`）：评论是会变的第三方数据，
   因此保留 7 天 TTL（`REVIEW_CACHE_TTL_SECS`），同时也受容量上限约束。
 - 另有若干**进程内**小缓存，重启即失效：书源正则编译缓存、JS `cache`/`kv` 与 jsLib 编译缓存、
-  `exploreUrl` 的 JS 求值结果（按 `MD5(bookSourceUrl + exploreUrl)` 缓存 1 小时）。
-  它们的键都由书源内容决定，因此都设了条目上限，超出即整表清空。
+  `exploreUrl` 的 JS 求值结果（按 `MD5(用户命名空间 | bookSourceUrl + exploreUrl)` 缓存 1 小时，
+  键含用户维度——脚本输出可能含 `java.androidId` 等用户相关值）。
+  它们都设了条目上限，超出即整表清空。
 - `storage/` 全部属于运行期数据，**不要提交**，清理时也不要误删。
 
 ---

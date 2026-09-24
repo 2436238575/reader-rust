@@ -78,6 +78,8 @@ POST /reader3/aiProxy
 | `kind` | string? | `text`/`image`/`speech`，用于服务端配置的默认值补全 |
 | `body` | object | 透传给上游的请求体 |
 
+> **权限**：`useServerConfig=false`（客户端自带端点，含 `fullUrl=true` 任意路径）仅**管理员**可用，普通账号返回 403——该分支等价于向任意地址发 POST 的通用代理。服务端配置的端点仍按 `enableAiModel` 判定。
+
 响应为上游响应体原样透传（上限 32MB，非 JSON 包装）。所有目标地址经过出站守卫（`ALLOW_PRIVATE_NETWORK=false` 时拒绝私网/环回/链路本地地址，含重定向逐跳检查）。
 
 ### 图片代理

@@ -40,7 +40,7 @@
 | `formatJs` 的 `gInt` | 补齐：初值 0，同一轮格式化的章节之间复用 | `eval_js_with_bindings_and_globals`、`apply_toc_format_js` |
 | `@put` 值切分 | 补齐：顶层 `,`/`:` 才切分，引号括号内的保留 | `split_put_map` |
 | `java.*` 缺口 | 补齐：`log`/`toast`/`openUrl` 注册为空操作，避免整条规则抛错 | `src/parser/js.rs` 注册表 |
-| `exploreUrl` JS 缓存 | 补齐：按 `MD5(bookSourceUrl + exploreUrl)` 缓存 1 小时 | `cached_explore_script` |
+| `exploreUrl` JS 缓存 | 补齐：按 `MD5(bookSourceUrl + exploreUrl)` 缓存 1 小时；2026-09-25 起键另加用户命名空间（求值结果可能含用户相关值，不能跨用户共享） | `cached_explore_script` |
 | 书源正则编译缓存 | 补齐：编译结果（含失败）缓存，带条目上限 | `compiled_regex` |
 | JS KV / jsLib 缓存上限 | 补齐：超上限整表清空，避免无界增长 | `kv_put_scoped`、`js_lib_script` |
 | `retry` 非法值 | 补齐：解析失败时保留默认次数，不再退化成 0 | `src/crawler/url_analyzer.rs` |
@@ -79,11 +79,24 @@
 
 ## 已知残余风险（安全）
 
+> 2026-09-25 第四轮全仓审查后更新，详见 `.zcode/audit/full-audit-2026-09-25.md`（本轮修复 13 项 + 依赖升级）。
+
+**待拍板**：
+- `bookSourceProxy` 把用户真实 JWT 注入第三方书源页面，前端又同源渲染进 iframe（登录预览功能）；缓解方向见审计报告（短期 scoped token / sandbox / 接受）
+- 注册无限速，登录限速按用户名 key 可被用来锁死受害者用户名（DoS 而非绕过）；公网多用户部署需 IP 维度限速
+
+**接受 / 部署卫生**：
 - 出站守卫 DNS 校验与实际连接分离（TOCTOU），理论可 DNS rebinding；需连接层 IP 钉扎，reqwest 未暴露
 - 登录限速为进程内状态（多实例部署需共享存储）
+- token 进 URL 查询串（SSE/`<img>` 的结构约束；访问日志已只记 path 不记 query）
+- bookshelf.json 原子写已修，并发写仍 last-writer-wins（需文件锁或 SQLite 化才彻底）
+- `getBookContent` 以 `/read/`、`/chapter/` 子串启发式判 URL 类型，可被书源 URL 结构误触发
 - 进程内小缓存（正则/JS KV/jsLib/exploreUrl）都有条目上限，但清空是整表操作，极端情况下会退化为反复重算
-- 公网部署要点：`ALLOW_PRIVATE_NETWORK=false`，并按需配置 `INVITE_CODE` 与 `USER_LIMIT`
-  （旧的 `SECURE` 开关已随 JWT 重构删除）
+- ServeDir 跟随符号链接、WEB_ROOT fallback 暴露全部文件、Windows 下 `jwt_secret` 无 ACL：部署目录不要混入敏感内容
+- 依赖遗留：sqlx 0.7.4 待升级 0.8（`rustls-webpki` 0.101 的三条 advisory 随之解决）；`rsa`（经 jsonwebtoken 拉入，HS256-only 不可达）无修复版本
+
+**公网部署要点**：`ALLOW_PRIVATE_NETWORK=false`，并按需配置 `INVITE_CODE` 与 `USER_LIMIT`
+（旧的 `SECURE` 开关已随 JWT 重构删除）
 
 ## 配额默认值
 
@@ -91,4 +104,4 @@
 |------|------|------|
 | `USER_LIMIT` | 50 | 已实现 |
 | `USER_BOOK_LIMIT` | 2000 | 已实现（2026-09-23 接入 saveBook/saveBooks） |
-| `USER_LOCAL_BOOK_LIMIT` | 0（不限） | 已实现 |
+| `USER_LOCAL_BOOK_LIMIT` | 0（不限） | 已实现（2026-09-25 起覆盖 saveBook/saveBooks 直构路径） |

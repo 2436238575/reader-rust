@@ -193,7 +193,7 @@ JWT 本身无状态，但服务端每个请求都比对 `users.token_version`：
 | 出站守卫（SSRF 防护） | `crawler/url_guard.rs` | 所有用户可控的出站请求统一校验：仅 http/https、拒绝私网/环回/链路本地/云元数据地址（含 DNS 解析后逐 IP 检查）、重定向逐跳复检（域名目标同样做 DNS 解析）。`ALLOW_PRIVATE_NETWORK` 控制开关，默认放行（自托管单用户；局域网书源是正常用法） |
 | 响应体上限 | `crawler/fetcher.rs` | 单次抓取响应体上限 32MiB，边收边计数；显式 Content-Length 超限直接拒绝；JS 侧 `java.*` 请求与 jsLib 远程拉取同上限 |
 | JS 沙箱资源上限 | `parser/js.rs` | QuickJS Runtime 设内存（128MiB）/栈（1MiB）/执行时间（5s）上限；`java.*` 请求 30 秒超时、返回值 32MiB 上限 |
-| 同步解析隔离 | `service/book_service.rs` | 规则解析（含 exploreUrl 的 `@js:`）全部走 `spawn_blocking`，第三方书源的 JS 死循环拖不垮 worker |
+| 同步解析隔离 | `service/book_service.rs` | 规则解析（含 exploreUrl 与评论 URL 的 `@js:`、`{{表达式}}`）全部走 `spawn_blocking` 并带 `user_ns`，第三方书源的 JS 死循环拖不垮 worker，JS 状态也不会落进共享桶 |
 | Cookie jar 隔离 | `crawler/http_client.rs` | 按 `user_ns` 独立 Cookie jar 与连接池，避免用户间站点会话串号 |
 | JS 状态隔离 | `parser/js.rs` | 书源 JS 的 `cache`/`kv` 键按 `user_ns` 加前缀，`java.*` 的 HTTP 客户端同样按用户池化 |
 | XPath 表达式上限 | `parser/html.rs` | 长度 ≤8KiB、括号/谓词嵌套 ≤64 层：sxd-xpath 按嵌套递归，书源可控的深嵌套表达式会爆栈终止进程 |
@@ -201,6 +201,10 @@ JWT 本身无状态，但服务端每个请求都比对 `users.token_version`：
 | WebDAV 路径收敛 | `api/handlers/webdav.rs` | 相对路径按 `/`、`\` 双分隔符切分并拒绝 `..`/盘符/ADS/设备名；multipart 文件名经 `sanitize_file_name`；上传字段限量读取，下载流式返回 |
 | 密码哈希 | `util/crypto.rs` | Argon2id（PHC 字符串自含盐与参数），哈希与校验在 `spawn_blocking` 中执行 |
 | 登录限速 | `service/user_service.rs` | 同用户名 10 分钟窗口失败 8 次锁定 5 分钟；悲观计数（尝试先计数、成功再清除）使并发爆发无法绕过；WebDAV Basic 认证共享同一份限速 |
+| 登录防枚举 | `service/user_service.rs` | 失败文案统一「用户名或密码错误」，用户不存在时补一次 dummy Argon2 校验对齐响应时序 |
+| WebDAV Destination 校验 | `api/handlers/webdav.rs` | MOVE/COPY 的 `Destination` 必须带 `/reader3/webdav/` 前缀，缺前缀直接 400（否则目标塌缩成家目录，配合 `Overwrite` 可整目录清空） |
+| AI 代理权限收敛 | `api/handlers/ai_proxy.rs` | 客户端自带端点（`useServerConfig=false`，含 `fullUrl=true`）仅管理员可用；服务端配置端点按 `enableAiModel` 判定 |
+| 前端 HTML 消毒 | `frontend/src/utils/sanitize.ts` | 书源正文与 RSS 文章经 DOMPurify 白名单消毒后才进 `v-html`（保留排版标签，剥脚本/事件属性/iframe） |
 | CORS | `api/router.rs` | 默认仅同源（不下发任何 CORS 头）；跨域需 `CORS_ALLOWED_ORIGINS` 显式白名单 |
 | 令牌 | `auth/`、`service/user_service.rs` | HS256 JWT；签名密钥来自 `JWT_SECRET` 或自动生成并持久化到 `storage/jwt_secret`；`token_version` 提供即时撤销 |
 | 封面代理 | `service/book_service.rs` | Content-Type 收敛为位图白名单（防 `text/html`/`svg` 经 `/cover` 的同源 XSS）；封面缓存目录容量上限 `CACHE_COVER_LIMIT_BYTES`、按最旧优先淘汰 |
