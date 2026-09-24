@@ -27,8 +27,12 @@ pub struct AppConfig {
     pub cache_cover_limit_bytes: u64,
     /// 出站请求是否允许访问私网/环回/链路本地地址。
     ///
-    /// 默认 `false`：书源是用户自行导入的第三方数据，允许它访问内网
-    /// 等于把本机与内网服务暴露给任意书源。确有内网书源需求时显式开启。
+    /// 默认 `true`：本项目按自托管单用户场景使用，局域网书源、本地书源服务
+    /// （如 `http://192.168.x.x:9999`）、本地模型服务都属正常用法，参考实现
+    /// （阅读/Legado）同样不做限制。
+    ///
+    /// **多用户或公网暴露的部署应设为 `false`**，否则任意用户都能把服务端
+    /// 当成内网探测代理（读取云元数据、扫内网端口）。
     pub allow_private_network: bool,
     /// 允许跨域访问的来源列表（逗号分隔，如 `https://a.example,https://b.example`）。
     ///
@@ -56,7 +60,7 @@ impl Default for AppConfig {
             user_local_book_limit: 0,
             cache_user_limit_bytes: 512 * 1024 * 1024,
             cache_cover_limit_bytes: 256 * 1024 * 1024,
-            allow_private_network: false,
+            allow_private_network: true,
             cors_allowed_origins: String::new(),
         }
     }

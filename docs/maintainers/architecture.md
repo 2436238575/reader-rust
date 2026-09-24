@@ -190,7 +190,7 @@ JWT 本身无状态，但服务端每个请求都比对 `users.token_version`：
 
 | 机制 | 位置 | 说明 |
 |------|------|------|
-| 出站守卫（SSRF 防护） | `crawler/url_guard.rs` | 所有用户可控的出站请求统一校验：仅 http/https、拒绝私网/环回/链路本地/云元数据地址（含 DNS 解析后逐 IP 检查）、重定向逐跳复检（域名目标同样做 DNS 解析）。`ALLOW_PRIVATE_NETWORK` 可放行（默认 `false`） |
+| 出站守卫（SSRF 防护） | `crawler/url_guard.rs` | 所有用户可控的出站请求统一校验：仅 http/https、拒绝私网/环回/链路本地/云元数据地址（含 DNS 解析后逐 IP 检查）、重定向逐跳复检（域名目标同样做 DNS 解析）。`ALLOW_PRIVATE_NETWORK` 控制开关，默认放行（自托管单用户；局域网书源是正常用法） |
 | 响应体上限 | `crawler/fetcher.rs` | 单次抓取响应体上限 32MiB，边收边计数；显式 Content-Length 超限直接拒绝；JS 侧 `java.*` 请求与 jsLib 远程拉取同上限 |
 | JS 沙箱资源上限 | `parser/js.rs` | QuickJS Runtime 设内存（128MiB）/栈（1MiB）/执行时间（5s）上限；`java.*` 请求 30 秒超时、返回值 32MiB 上限 |
 | 同步解析隔离 | `service/book_service.rs` | 规则解析（含 exploreUrl 的 `@js:`）全部走 `spawn_blocking`，第三方书源的 JS 死循环拖不垮 worker |

@@ -23,12 +23,32 @@ pub enum AppError {
     NotFound(String),
     #[error("bad request: {0}")]
     BadRequest(String),
+    /// 400：出站请求被 `ALLOW_PRIVATE_NETWORK` 策略拦下。
+    ///
+    /// 与 `Internal` 分开是因为这是**配置/输入**问题：调用方需要看到
+    /// 「哪个地址被拦了、为什么」，否则书源指向内网时只会收到一句
+    /// 看不出所以然的 "internal error"。
+    #[error("blocked: {0}")]
+    Blocked(String),
     #[error("internal error")]
-    Internal(#[from] anyhow::Error),
+    Internal(anyhow::Error),
     #[error("db error")]
     Db(#[from] sqlx::Error),
     #[error("http error")]
     Http(#[from] reqwest::Error),
+}
+
+/// `anyhow::Error` → `AppError`，并把出站策略拒绝挑出来单独归类。
+///
+/// 抓取链路上错误一路以 `anyhow` 传播（`fetch` 返回 `anyhow::Result`），
+/// 在这里统一做一次类型判别，比在每个调用点手写 `map_err` 更不容易漏。
+impl From<anyhow::Error> for AppError {
+    fn from(error: anyhow::Error) -> Self {
+        match error.downcast::<crate::crawler::url_guard::OutboundBlocked>() {
+            Ok(blocked) => AppError::Blocked(blocked.0),
+            Err(error) => AppError::Internal(error),
+        }
+    }
 }
 
 #[derive(Debug, Serialize)]
@@ -64,6 +84,7 @@ impl IntoResponse for AppError {
             AppError::Forbidden(msg) => (StatusCode::FORBIDDEN, msg.clone()),
             AppError::NotFound(msg) => (StatusCode::NOT_FOUND, msg.clone()),
             AppError::BadRequest(msg) => (StatusCode::BAD_REQUEST, msg.clone()),
+            AppError::Blocked(msg) => (StatusCode::BAD_REQUEST, msg.clone()),
             AppError::Db(_) => (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "database error".to_string(),
@@ -84,5 +105,42 @@ impl IntoResponse for AppError {
         }
         let body = Json(ApiResponse::<serde_json::Value>::err(message));
         (status, body).into_response()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::crawler::url_guard::OutboundBlocked;
+
+    #[test]
+    fn outbound_block_is_reported_with_its_reason() {
+        // 策略拒绝必须是可读的 400，而不是被兜底成 "internal error"
+        let error: AppError = anyhow::Error::new(OutboundBlocked(
+            "禁止访问内网地址: 192.168.1.10".to_string(),
+        ))
+        .into();
+        match &error {
+            AppError::Blocked(message) => assert!(message.contains("192.168.1.10")),
+            other => panic!("应归类为 Blocked，实际是 {other:?}"),
+        }
+        assert_eq!(error.into_response().status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[test]
+    fn other_anyhow_errors_stay_internal() {
+        let error: AppError = anyhow::anyhow!("磁盘炸了").into();
+        assert!(matches!(error, AppError::Internal(_)));
+        assert_eq!(
+            error.into_response().status(),
+            StatusCode::INTERNAL_SERVER_ERROR
+        );
+    }
+
+    #[test]
+    fn blocked_error_is_not_leaked_for_other_variants() {
+        // 内部错误仍然只对外暴露笼统文案
+        let response = AppError::Internal(anyhow::anyhow!("secret detail")).into_response();
+        assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
     }
 }

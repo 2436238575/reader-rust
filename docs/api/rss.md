@@ -80,7 +80,7 @@ POST /reader3/readRemoteRssSourceFile
 
 请求体：`{ "url": "https://example.com/rss.json" }`。响应：`data` 为包含单个 JSON 字符串的数组。
 
-> 出站限制：`url` 会经过出站守卫校验——拒绝内网/环回/链路本地地址（可用 `ALLOW_PRIVATE_NETWORK` 放行），响应体上限 32MiB。
+> 出站限制：`url` 会经过出站守卫校验——`ALLOW_PRIVATE_NETWORK=false` 时拒绝内网/环回/链路本地地址，响应体上限 32MiB。
 
 ## 本地读取 RSS 源文件
 
@@ -139,6 +139,6 @@ GET /reader3/getRssContent
 
 响应：`data` 为文章正文的 HTML 字符串（上限 32MiB）。
 
-> 出站限制：`link` 会经过出站守卫校验——拒绝内网/环回/链路本地地址（含重定向目标，可用 `ALLOW_PRIVATE_NETWORK` 放行），命中返回 400。
+> 出站限制：`link` 会经过出站守卫校验——`ALLOW_PRIVATE_NETWORK=false` 时拒绝内网/环回/链路本地地址（含重定向目标），命中返回 400。
 
 也可使用 `POST /reader3/getRssContent`。

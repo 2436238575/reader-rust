@@ -195,6 +195,8 @@ export const useReaderStore = defineStore('reader', () => {
   const content = ref('')
   const loading = ref(false)
   const chaptersLoading = ref(false)
+  /// 打开书籍失败的原因。有值时阅读页显示错误而不是「加载中...」占位符
+  const loadError = ref('')
   const bookmarks = ref<Bookmark[]>([])
   const replaceRules = ref<ReplaceRule[]>([])
   const preloadedContent = ref<Map<number, string>>(new Map()) // index -> content
@@ -1178,6 +1180,7 @@ export const useReaderStore = defineStore('reader', () => {
   /* ─── Book / chapter ops ─── */
   async function loadBook(b: Book) {
     loading.value = true
+    loadError.value = ''
     book.value = b
     chapters.value = []
     content.value = ''
@@ -1196,7 +1199,13 @@ export const useReaderStore = defineStore('reader', () => {
       })
       saveReaderSession()
     } catch (error) {
+      // 目录都拿不到就等于这本书打不开。清掉半开状态并记下原因：否则阅读页
+      // 会一直停在「加载中...」的占位符上，用户完全看不出发生了什么。
       loading.value = false
+      chapters.value = []
+      content.value = ''
+      loadError.value = (error as Error)?.message || '打开书籍失败'
+      appStore.showToast(loadError.value, 'error')
       throw error
     } finally {
       chaptersLoading.value = false
@@ -1582,7 +1591,7 @@ export const useReaderStore = defineStore('reader', () => {
   }
 
   return {
-    book, chapters, currentIndex, content, loading, chaptersLoading,
+    book, chapters, currentIndex, content, loading, chaptersLoading, loadError,
     currentChapter, hasNext, hasPrev, readingProgress,
       loadBook, loadChapter, fetchChapterContent, setActiveChapterState, refreshContent, nextChapter, prevChapter, clear,
       chapterScrollProgress, setChapterScrollProgress,

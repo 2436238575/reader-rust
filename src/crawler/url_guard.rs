@@ -4,13 +4,16 @@
 //! 远程书源导入、`bookSourceProxy`、`aiProxy` 等。如果没有约束，它们就是一个
 //! 可以被用来探测/读取内网（云元数据 `169.254.169.254`、本地管理端口等）的代理。
 //!
-//! 策略（默认跟随 `SECURE`）：
-//! - `SECURE=false`（本机单用户部署）→ 放行私网地址。局域网书源、本地模型服务
-//!   （如 `http://localhost:8825`）都属正常用法，此时不存在第三方攻击者。
-//! - `SECURE=true`（多用户 / 公网部署）→ 拦截私网、环回、链路本地、ULA、CGNAT 等地址，
-//!   并禁止 302 跳转到这些地址。
+//! 默认**放行**私网地址（`ALLOW_PRIVATE_NETWORK=true`）：本项目默认按自托管单用户
+//! 场景使用，局域网书源、本地书源服务（如 `http://192.168.x.x:9999`）、本地模型服务
+//! 都属正常用法，参考实现（阅读/Legado）同样不做限制。
 //!
-//! 可用环境变量 `ALLOW_PRIVATE_NETWORK` 显式覆盖上述默认行为。
+//! 多用户或公网暴露的部署应显式设为 `ALLOW_PRIVATE_NETWORK=false`，此时会拦截私网、
+//! 环回、链路本地、ULA、CGNAT 等地址，并禁止 302 跳转到这些地址——否则任意用户都能
+//! 把服务端当成内网探测代理。
+//!
+//! 命中策略时抛出 [`OutboundBlocked`]，上层据此回一个带原因的 4xx，而不是
+//! 被兜底成看不出所以然的 "internal error"。
 
 use reqwest::redirect::Policy;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
@@ -21,7 +24,7 @@ use url::{Host, Url};
 /// 一次请求最多跟随的重定向跳数。
 const MAX_REDIRECTS: usize = 5;
 
-/// 默认值与 `SECURE=false` 一致（单用户本地部署放行私网）。
+/// 与 `AppConfig::allow_private_network` 的默认值保持一致（自托管单用户放行私网）。
 static ALLOW_PRIVATE_NETWORK: AtomicBool = AtomicBool::new(true);
 
 /// 由 bootstrap 按配置初始化。
@@ -32,6 +35,15 @@ pub fn set_allow_private_network(allow: bool) {
 pub fn private_network_allowed() -> bool {
     ALLOW_PRIVATE_NETWORK.load(Ordering::Relaxed)
 }
+
+/// 出站策略拒绝。
+///
+/// 单独一个类型而不是裸字符串：上层必须把「策略拒绝」与真正的内部故障区分开——
+/// 前者是配置或输入问题，原因要原样回给调用方；被兜底成 "internal error" 的话
+/// 用户完全无从判断（书源指向内网时尤其容易踩到）。
+#[derive(Debug, Clone, thiserror::Error)]
+#[error("{0}")]
+pub struct OutboundBlocked(pub String);
 
 /// 该 IP 是否属于禁止出站访问的范围。
 pub fn is_forbidden_ip(ip: &IpAddr) -> bool {

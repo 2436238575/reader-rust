@@ -106,10 +106,14 @@ pub async fn fetch(
     user_ns: &str,
     req: RequestSpec,
 ) -> anyhow::Result<FetchResponse> {
-    // 出站守卫：书源 URL 由用户导入，可能指向内网/云元数据地址
+    // 出站守卫：书源 URL 由用户导入，可能指向内网/云元数据地址。
+    // 用带类型的错误而不是裸字符串，上层才能把它回成带原因的 4xx。
     if let Err(reason) = crate::crawler::url_guard::ensure_outbound_url_str_allowed(&req.url).await
     {
-        anyhow::bail!("请求被出站策略拒绝: {reason}");
+        return Err(crate::crawler::url_guard::OutboundBlocked(format!(
+            "请求被出站策略拒绝: {reason}"
+        ))
+        .into());
     }
     let http = client.client_for(user_ns)?;
     let mut last_err: Option<anyhow::Error> = None;

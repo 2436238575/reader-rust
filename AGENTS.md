@@ -104,7 +104,7 @@ cp .env.example .env
 | `USER_LOCAL_BOOK_LIMIT` | `0` | 单用户本地上传上限，`0` 表示不限制 |
 | `CACHE_USER_LIMIT_BYTES` | `536870912` | 单用户正文缓存上限；`0` 表示不限制 |
 | `CACHE_COVER_LIMIT_BYTES` | `268435456` | 封面缓存目录上限；`0` 表示不限制 |
-| `ALLOW_PRIVATE_NETWORK` | `false` | 出站请求是否允许访问私网/内网地址；见 `docs/guide/configuration.md` |
+| `ALLOW_PRIVATE_NETWORK` | `true` | 出站请求是否允许访问私网/内网地址；自托管单用户默认放行（局域网书源是正常用法），多用户/公网部署应设为 `false` |
 | `CORS_ALLOWED_ORIGINS` | 空 | 跨域来源白名单；留空仅同源 |
 
 两点需要注意：
@@ -262,7 +262,7 @@ HTTP 请求
 
 ## 测试
 
-Rust 侧共 **155 个测试**（106 个 `#[test]` + 49 个 `#[tokio::test]`），分布为：
+Rust 侧共 **158 个测试**（109 个 `#[test]` + 49 个 `#[tokio::test]`），分布为：
 
 - `tests/` 下 11 个集成测试文件，其中 `book_source_compat.rs` 用例最多（17 个）；`auth_flow.rs` 起真实监听端口，覆盖 401/403、静态回落与缓存清理；
 - `src/` 内的内联单元测试模块。

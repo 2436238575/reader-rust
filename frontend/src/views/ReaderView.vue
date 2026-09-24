@@ -159,7 +159,8 @@
         </div>
 
         <div v-else>
-          <div class="chapter-title">{{ store.currentChapter?.title || '加载中...' }}</div>
+          <div v-if="store.loadError" class="load-error">{{ store.loadError }}</div>
+          <div v-else class="chapter-title">{{ store.currentChapter?.title || '加载中...' }}</div>
 
           <div
             ref="chapterTextRef"
@@ -2001,6 +2002,15 @@ watch(
   min-height: auto;
   padding-top: 48px;
   padding-bottom: 24px;
+}
+
+.load-error {
+  padding: 48px 24px;
+  text-align: center;
+  color: var(--color-danger, #c0392b);
+  font-size: var(--text-base);
+  line-height: 1.6;
+  word-break: break-all;
 }
 
 .chapter-title {
