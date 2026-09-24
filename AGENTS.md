@@ -263,6 +263,15 @@ HTTP 请求
 字段级可用显式前缀强制指定解析方式：`@css:`、`@json:`、`@xpath:`、`@regex:`、`@js:`/`<js>`。
 其中 `@regex:` 表示「不做匹配、直接用规则文本」（配合上游 `$n` 分组引用）。
 
+### JS 规则
+
+书源规则里的 `js:` / `@js:` / `<js>` 与 `{{表达式}}` 都在 rquickjs 沙箱里同步求值（内存/栈/超时都有上限）。
+
+- `source` 是**真实书源对象**（`bookSourceUrl`、`bookSourceName`、`header` 等），`book`/`chapter` 目前只在 `formatJs` 里有真实对象。
+- 规则脚本可以用顶层 `return`：首次求值报 `return not in a function` 时自动包成 IIFE 重试一次。
+- `java.log` / `java.toast` / `java.openUrl` 是空操作；其余未实现的 `java.*`（`ajaxAll`、`connect`、`getCookie`、`webView` 等）会让整条规则抛错，清单见规格 §10。
+- `<js>...</js>` 支持链式：`</js>` 之后的片段继续对 JS 结果求值（`@js:` 则吞掉后续整段）。
+
 完整的规则语法与字段清单见 [`book-source-rules.md`](./docs/reference/book-source-rules.md)；面向书源作者的分篇教程见 [书源开发文档](./docs/book-source/index.md)。
 
 ---
@@ -284,12 +293,12 @@ HTTP 请求
 
 ## 测试
 
-Rust 侧共 **189 个测试**（131 个 `#[test]` + 58 个 `#[tokio::test]`），分布为：
+Rust 侧共 **195 个测试**（137 个 `#[test]` + 58 个 `#[tokio::test]`），分布为：
 
 - `tests/` 下 12 个集成测试文件（58 个用例），其中 `book_source_compat.rs` 用例最多（17 个）；
   `auth_flow.rs` 与 `review_flow.rs` 起真实监听端口，前者覆盖 401/403、静态回落与缓存清理，
   后者用一个假上游覆盖评论规则、7 天缓存与按类型清理；
-- `src/` 内的内联单元测试模块（131 个）。
+- `src/` 内的内联单元测试模块（137 个）。
 
 前端使用 vitest，共 20 个 `*.test.ts`（75 个用例）。
 

@@ -44,6 +44,9 @@
 | 书源正则编译缓存 | 补齐：编译结果（含失败）缓存，带条目上限 | `compiled_regex` |
 | JS KV / jsLib 缓存上限 | 补齐：超上限整表清空，避免无界增长 | `kv_put_scoped`、`js_lib_script` |
 | `retry` 非法值 | 补齐：解析失败时保留默认次数，不再退化成 0 | `src/crawler/url_analyzer.rs` |
+| JS 顶层 `return` | 补齐：首次求值报 `return not in a function` 时包成 IIFE 重试，表达式风格不受影响 | `eval_script` |
+| `source` 绑定 | 补齐：`source` 是真实书源对象（`bookSourceUrl`/`bookSourceName`/`header`…），`{{source.bookSourceUrl}}` 可正常拼 URL | `with_book_source`、`src/parser/js.rs` |
+| `<js>` 链式求值 | 补齐：`</js>` 之后的片段继续对 JS 结果求值（JSON 按 JSON 规则、否则按 HTML 文档规则）；`@js:` 仍吞掉后续 | `extract_js`、`eval_rule_on_text` |
 
 ## 接受分叉（已在规格 `docs/reference/book-source-rules.md` 标注）
 
@@ -56,7 +59,7 @@
 | 目录排序去重 | 逐页解析时去重并保留首个，不实现按书反转的 `reverseToc` |
 | `nextContentUrl` | 单链顺序跟随（取第一条），不做多 URL 并发；有环检测与跨站/下一章拦截 |
 | `java.*` 方法面 | 缺 `ajaxAll`/`connect`/`importScript`/`cacheFile`/`getCookie`/`downloadFile`/`hex`/`htmlFormat`/简繁/`queryTTF`/`toNumChapter`/`toURL` 等，调用会抛错 |
-| `book` / `chapter` 绑定 | 仅 `formatJs` 提供真实对象，其余规则上下文是空对象占位 |
+| `book` / `chapter` 绑定 | 仅 `formatJs` 提供真实对象，其余规则上下文是空对象占位（`source` 已是真实书源） |
 | `webJs` | 无 WebView，直接在抓取到的 body 上执行 |
 
 ## 未实现（文档已按约定标注「未实现」）
@@ -72,8 +75,6 @@
 
 ## 新发现（本轮之外，待决策）
 
-- **JS 规则按表达式求值**：QuickJS 的 eval 语义下顶层 `return` 是语法错误，而真实书源常写
-  `@js:return ...`。本轮未改（包一层 IIFE 会改变求值语义，需要单独决策），已在规格 §10 标注现状。
 - 搜索结果去重键用「书名|作者」（与多书源合并一致）；规格用的是对象 `equals`，两者在多版本同书场景下略有差异。
 
 ## 已知残余风险（安全）

@@ -934,9 +934,15 @@ JS 运行时 SHOULD 提供 `JsExtensions` 等价能力，至少包括：
 - **未实现**：`ajaxAll`、`connect`、`importScript`、`cacheFile`、`getCookie`、`downloadFile`、`hex`、
   `htmlFormat`、简繁转换、`queryTTF`、`toNumChapter`、`toURL`、`reGetBook`、`refreshTocUrl`、WebView 相关。
   调用未实现的 `java.*` 会抛 `TypeError`，整条规则失效（依据：`src/parser/js.rs` 的注册表）。
-- 规则脚本按**表达式**求值：顶层 `return` 是语法错误（QuickJS 的 eval 语义），
-  书源应写成表达式或逗号表达式（依据：`eval_script`）。
-- `book` / `chapter` 只在 `formatJs` 里是真实对象，其余规则上下文是空对象占位
+- `source` 是**真实书源对象**（`bookSourceUrl`、`bookSourceName`、`header` 等全部字段），
+  因此 `{{source.bookSourceUrl}}` 这类模板能正常拼 URL；`key` / `getKey()` 仍可用
+  （依据：`with_book_source` 与 `src/parser/js.rs` 的全局注入）。
+- 规则脚本可以用**顶层 `return`**（书源常见写法）：首次求值报 `return not in a function`
+  时自动包成 IIFE 重试一次，表达式风格的规则行为不变（依据：`eval_script`）。
+- `<js>...</js>` **支持链式**：`</js>` 之后的片段继续对 JS 结果求值（结果是 JSON 就按
+  JSON 规则、否则按 HTML 文档规则），例如 `{{source.bookSourceUrl}}info?book_id={{$.id}}<js>java.ajax(result)</js>$.data.title`。
+  `@js:` 仍然吞掉后续整段规则（依据：`extract_js`、`eval_rule_on_text`）。
+- `book` / `chapter` 只在 `formatJs` 里是真实对象，其余规则上下文仍是空对象占位
   （依据：`src/parser/js.rs` 的全局注入）。
 
 ## 11. 通用运行时服务
