@@ -8,7 +8,7 @@ use once_cell::sync::Lazy;
 use reqwest::blocking::Client;
 use reqwest::Method;
 use rquickjs::function::Func;
-use rquickjs::{Context, Object, Runtime, Value};
+use rquickjs::{Context, Ctx, Object, Runtime, Value};
 use serde_json::Value as JsonValue;
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -23,6 +23,13 @@ use uuid::Uuid;
 static JS_KV: Lazy<Mutex<HashMap<String, String>>> = Lazy::new(|| Mutex::new(HashMap::new()));
 static JS_LIB_CACHE: Lazy<Mutex<HashMap<String, String>>> =
     Lazy::new(|| Mutex::new(HashMap::new()));
+/// 全局 KV / jsLib 缓存的条目上限。
+///
+/// 这两张表都没有淘汰机制，而键由书源（第三方内容）决定：一个不断写入新键的
+/// 书源可以把进程内存吃光。超出上限时整表清空——书源 KV 只用于跨请求缓存，
+/// 清空只影响性能，不会破坏正确性。
+const JS_KV_MAX_ENTRIES: usize = 4096;
+const JS_LIB_CACHE_MAX_ENTRIES: usize = 256;
 /// 书源 JS 的运行时资源上限。
 ///
 /// 书源内容完全由第三方提供，而 QuickJS 求值是同步的；不设边界时一条
@@ -90,6 +97,9 @@ fn kv_get_scoped(key: &str) -> Option<String> {
 
 fn kv_put_scoped(key: &str, value: &str) {
     let mut map = JS_KV.lock().unwrap_or_else(|e| e.into_inner());
+    if map.len() >= JS_KV_MAX_ENTRIES && !map.contains_key(&scoped_key(key)) {
+        map.clear();
+    }
     map.insert(scoped_key(key), value.to_string());
 }
 
@@ -127,7 +137,7 @@ fn js_http_client() -> Client {
 }
 
 pub fn eval_js(script: &str, input: &str, base_url: &str) -> anyhow::Result<String> {
-    eval_js_inner(script, Some(input), Some(base_url), None, None, None)
+    Ok(eval_js_inner(script, Some(input), Some(base_url), None, None, None)?.0)
 }
 
 pub fn eval_js_with_bindings(
@@ -136,13 +146,37 @@ pub fn eval_js_with_bindings(
     base_url: &str,
     bindings: &HashMap<String, JsonValue>,
 ) -> anyhow::Result<String> {
-    eval_js_inner(
+    Ok(eval_js_inner(
         script,
         Some(input),
         Some(base_url),
         None,
         None,
         Some(bindings),
+    )?
+    .0)
+}
+
+/// 与 [`eval_js_with_bindings`] 相同，但额外回读脚本执行后的全局变量。
+///
+/// `formatJs` 的 `gInt` 需要在同一轮格式化的多章之间传递，而每次求值都是全新的
+/// Runtime，只能由调用方把值带回来。
+pub fn eval_js_with_bindings_and_globals(
+    script: &str,
+    input: &str,
+    base_url: &str,
+    bindings: &HashMap<String, JsonValue>,
+    read_globals: &[&str],
+) -> anyhow::Result<(String, HashMap<String, JsonValue>)> {
+    eval_js_inner_with_source(
+        script,
+        Some(input),
+        Some(base_url),
+        None,
+        None,
+        None,
+        Some(bindings),
+        Some(read_globals),
     )
 }
 
@@ -154,7 +188,7 @@ pub fn eval_js_url(
     source_key: &str,
     base_url: &str,
 ) -> anyhow::Result<String> {
-    eval_js_inner_with_source(
+    Ok(eval_js_inner_with_source(
         script,
         Some(result),
         Some(base_url),
@@ -162,7 +196,9 @@ pub fn eval_js_url(
         Some(page),
         Some(source_key),
         None,
-    )
+        None,
+    )?
+    .0)
 }
 
 fn eval_js_inner(
@@ -172,10 +208,11 @@ fn eval_js_inner(
     key: Option<&str>,
     page: Option<i32>,
     bindings: Option<&HashMap<String, JsonValue>>,
-) -> anyhow::Result<String> {
-    eval_js_inner_with_source(script, input, base_url, key, page, None, bindings)
+) -> anyhow::Result<(String, HashMap<String, JsonValue>)> {
+    eval_js_inner_with_source(script, input, base_url, key, page, None, bindings, None)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn eval_js_inner_with_source(
     script: &str,
     input: Option<&str>,
@@ -184,7 +221,8 @@ fn eval_js_inner_with_source(
     page: Option<i32>,
     source_key: Option<&str>,
     bindings: Option<&HashMap<String, JsonValue>>,
-) -> anyhow::Result<String> {
+    read_globals: Option<&[&str]>,
+) -> anyhow::Result<(String, HashMap<String, JsonValue>)> {
     let rt = Runtime::new()?;
     // 资源上限：内存 / 调用栈 / 执行时间（超时由中断处理器打断）
     rt.set_memory_limit(JS_MEMORY_LIMIT_BYTES);
@@ -331,6 +369,12 @@ fn eval_js_inner_with_source(
             "uuid",
             Func::new(|| -> String { Uuid::new_v4().to_string() }),
         )?;
+        // 通知/UI 类方法在服务端没有对应动作。注册成空操作而不是留空，
+        // 否则书源里一句 `java.log(...)` 就会抛 TypeError、让整条规则失效
+        // （规格 §10 允许 UI 类函数实现为空操作，但要求文档声明）。
+        java_obj.set("log", Func::new(|_message: String| {}))?;
+        java_obj.set("toast", Func::new(|_message: String| {}))?;
+        java_obj.set("openUrl", Func::new(|_url: String| {}))?;
         globals.set("java", java_obj)?;
 
         globals.set(
@@ -392,8 +436,34 @@ fn eval_js_inner_with_source(
         if result.len() > JS_MAX_RESULT_BYTES {
             anyhow::bail!("JS 返回结果过大: {} 字节", result.len());
         }
-        Ok(result)
+
+        let mut globals_out = HashMap::new();
+        if let Some(names) = read_globals {
+            for name in names {
+                if let Some(value) = global_to_json(&ctx, name) {
+                    globals_out.insert((*name).to_string(), value);
+                }
+            }
+        }
+
+        Ok((result, globals_out))
     })
+}
+
+/// 把脚本执行后的 JS 全局变量读成 JSON 值；不支持的类型（对象/函数等）返回 `None`。
+fn global_to_json(ctx: &Ctx<'_>, name: &str) -> Option<JsonValue> {
+    let value: Value = ctx.globals().get(name).ok()?;
+    if let Some(int) = value.as_int() {
+        return Some(JsonValue::from(int));
+    }
+    if let Some(float) = value.as_float() {
+        return Some(JsonValue::from(float));
+    }
+    if let Some(flag) = value.as_bool() {
+        return Some(JsonValue::from(flag));
+    }
+    let text = value.into_string()?.to_string().ok()?;
+    Some(JsonValue::from(text))
 }
 
 fn java_aes_base64_decode_to_string(input: &str, key: &str, algorithm: &str, iv: &str) -> String {
@@ -445,10 +515,13 @@ fn active_js_lib_script() -> anyhow::Result<String> {
     }
 
     let compiled = compile_js_lib(&js_lib)?;
-    JS_LIB_CACHE
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .insert(cache_key, compiled.clone());
+    {
+        let mut cache = JS_LIB_CACHE.lock().unwrap_or_else(|e| e.into_inner());
+        if cache.len() >= JS_LIB_CACHE_MAX_ENTRIES && !cache.contains_key(&cache_key) {
+            cache.clear();
+        }
+        cache.insert(cache_key, compiled.clone());
+    }
     Ok(compiled)
 }
 
@@ -641,6 +714,34 @@ mod tests {
         );
         // 字符串方法 / 正则等常用能力不受资源上限影响
         assert_eq!(eval_js("'a,b,c'.split(',').length", "", "").unwrap(), "3");
+    }
+
+    #[test]
+    fn notification_helpers_are_registered_as_noops() {
+        // 书源规则是表达式风格（顶层 return 在 eval 下是语法错误），这里用逗号表达式
+        assert_eq!(
+            eval_js(
+                "java.log('a'), java.toast('b'), java.openUrl('c'), 'ok'",
+                "",
+                ""
+            )
+            .unwrap(),
+            "ok"
+        );
+    }
+
+    #[test]
+    fn globals_can_be_read_back_after_eval() {
+        let mut bindings = HashMap::new();
+        bindings.insert("gInt".to_string(), JsonValue::from(0));
+
+        let (result, globals) =
+            eval_js_with_bindings_and_globals("`${gInt++}-x`", "", "", &bindings, &["gInt"])
+                .unwrap();
+
+        assert_eq!(result, "0-x");
+        // QuickJS 把自增结果表示为浮点，读取方要同时接受整数与浮点
+        assert_eq!(globals.get("gInt"), Some(&JsonValue::from(1.0)));
     }
 
     #[test]
