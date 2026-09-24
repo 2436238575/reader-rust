@@ -108,6 +108,11 @@ export interface ParaReviewIndex {
 /** 书源支不支持评论由后端判定，前端据此决定是否渲染入口 */
 export interface ReviewResponse<T> {
   enabled: boolean
+  /**
+   * 书源的评论 URL 模板用到了 `{{sort}}`，即排序由站点自己做。
+   * 为 false 时「最新」只能对已加载的条目重排。
+   */
+  serverSort: boolean
   data: T
 }
 

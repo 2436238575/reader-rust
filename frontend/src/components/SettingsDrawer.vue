@@ -460,7 +460,7 @@ async function handleCheckVersionUpdate() {
   top: 0;
   right: 0;
   bottom: 0;
-  width: min(380px, 90vw);
+  width: var(--sidebar-width);
   background: var(--color-bg-elevated);
   z-index: var(--z-modal);
   display: flex;

@@ -10,6 +10,7 @@ use crate::api::AppState;
 use crate::auth::CurrentUser;
 use crate::error::error::{ApiResponse, AppError};
 use crate::model::book_source::BookSource;
+use crate::model::review::ReviewSort;
 use crate::service::book_service::REVIEW_PAGE_SIZE;
 
 /// 站点普遍限制单页评论条数（番茄是 50），统一在此收口。
@@ -29,6 +30,8 @@ pub struct ReviewRequest {
     pub page: Option<i32>,
     pub count: Option<i32>,
     pub para_index: Option<i32>,
+    /// `hot`（默认，站点热度序）或 `time`（按时间倒序）
+    pub sort: Option<String>,
     pub refresh: Option<i32>,
 }
 
@@ -39,6 +42,7 @@ struct ReviewContext {
     chapter_url: String,
     page: i32,
     count: i32,
+    sort: ReviewSort,
     refresh: bool,
 }
 
@@ -69,6 +73,9 @@ fn merge_body(mut req: ReviewRequest, body: &axum::body::Bytes) -> ReviewRequest
         if req.para_index.is_none() {
             req.para_index = v.para_index;
         }
+        if req.sort.is_none() {
+            req.sort = v.sort;
+        }
         if req.refresh.is_none() {
             req.refresh = v.refresh;
         }
@@ -85,6 +92,7 @@ fn merge_body(mut req: ReviewRequest, body: &axum::body::Bytes) -> ReviewRequest
             "page" => req.page = value.parse().ok(),
             "count" => req.count = value.parse().ok(),
             "paraIndex" => req.para_index = value.parse().ok(),
+            "sort" => req.sort = Some(value.into_owned()),
             "refresh" => req.refresh = value.parse().ok(),
             _ => {}
         }
@@ -121,6 +129,11 @@ async fn resolve_context(
             .count
             .unwrap_or(REVIEW_PAGE_SIZE)
             .clamp(1, MAX_REVIEW_COUNT),
+        // 认不出来的取值一律按默认的「最热」，不报错
+        sort: match req.sort.as_deref().map(str::trim) {
+            Some("time") => ReviewSort::Time,
+            _ => ReviewSort::Hot,
+        },
         refresh: req.refresh.unwrap_or(0) > 0,
     })
 }
@@ -159,6 +172,7 @@ pub async fn get_chapter_comments(
             &ctx.chapter_url,
             ctx.page,
             ctx.count,
+            ctx.sort,
             ctx.refresh,
         )
         .await?;
@@ -212,6 +226,7 @@ pub async fn get_para_comments(
             para_index,
             ctx.page,
             ctx.count,
+            ctx.sort,
             ctx.refresh,
         )
         .await?;

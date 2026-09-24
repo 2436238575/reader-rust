@@ -2348,7 +2348,7 @@ watch(
   top: var(--safe-area-top);
   bottom: var(--safe-area-bottom);
   left: 0;
-  width: min(340px, 85vw);
+  width: var(--sidebar-width);
   z-index: 50;
   box-shadow: 4px 0 24px rgba(0,0,0,0.15);
   transition: background 0.3s;

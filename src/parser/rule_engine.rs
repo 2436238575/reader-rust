@@ -5,7 +5,7 @@ use crate::model::{
 };
 use crate::parser::{
     html,
-    js::{eval_js, eval_js_with_bindings_and_globals, with_book_source},
+    js::{eval_js, eval_js_with_bindings, eval_js_with_bindings_and_globals, with_book_source},
     jsonpath,
 };
 use crate::util::text::normalize_source_url;
@@ -1076,6 +1076,39 @@ fn has_rule(rule: Option<&str>) -> bool {
     rule.map(|s| !s.trim().is_empty()).unwrap_or(false)
 }
 
+/// 把内联回复按时间升序排（早在上、晚在下）。
+///
+/// 回复串的阅读顺序就是对话顺序，站点给的顺序不一定对。时间字段是站点原样
+/// 返回的字符串，这里只认 Unix 秒/毫秒时间戳；只要有一条认不出来就整体保持
+/// 站点顺序——宁可不排，也不要把不可比的时间混着排。
+fn sort_replies_chronologically(replies: &mut Vec<ReviewReply>) {
+    if replies.len() < 2 {
+        return;
+    }
+    let keys: Vec<Option<i64>> = replies
+        .iter()
+        .map(|reply| reply_time_key(&reply.time))
+        .collect();
+    if keys.iter().any(Option::is_none) {
+        return;
+    }
+    let mut keyed: Vec<(i64, ReviewReply)> = std::mem::take(replies)
+        .into_iter()
+        .zip(keys.into_iter().flatten())
+        .map(|(reply, key)| (key, reply))
+        .collect();
+    keyed.sort_by_key(|(key, _)| *key);
+    *replies = keyed.into_iter().map(|(_, reply)| reply).collect();
+}
+
+fn reply_time_key(text: &str) -> Option<i64> {
+    let trimmed = text.trim();
+    if trimmed.is_empty() || trimmed.len() > 13 || !trimmed.chars().all(|c| c.is_ascii_digit()) {
+        return None;
+    }
+    trimmed.parse::<i64>().ok()
+}
+
 /// 从「216」「216 赞」「1.2万」这类文本里取出数字。
 fn parse_count_text(text: &str) -> i64 {
     let trimmed = text.trim();
@@ -1159,6 +1192,8 @@ fn parse_review_page_json(fields: &ReviewFields<'_>, v: &Value, base_url: &str) 
                     .collect::<Vec<_>>()
             })
             .unwrap_or_default();
+        let mut replies = replies;
+        sort_replies_chronologically(&mut replies);
         items.push(ReviewItem {
             id: eval_field_json_with_ctx(fields.id.unwrap_or(""), node, base_url, &mut ctx)
                 .unwrap_or_default(),
@@ -1256,6 +1291,8 @@ fn parse_review_page_html(fields: &ReviewFields<'_>, body: &str, base_url: &str)
                     .collect::<Vec<_>>()
             })
             .unwrap_or_default();
+        let mut replies = replies;
+        sort_replies_chronologically(&mut replies);
         items.push(ReviewItem {
             id: eval_field_html_with_ctx(fields.id.unwrap_or(""), node, base_url, &mut ctx)
                 .unwrap_or_default(),
@@ -2013,10 +2050,17 @@ fn interpolate_json_templates(
             return val;
         }
 
-        match eval_js(
+        // 上下文里的键（`page` / `sort` 等）也作为 JS 变量暴露，
+        // 这样模板里可以做映射，例如 `{{sort === 'hot' ? 'Hot' : 'TimeDesc'}}`。
+        let bindings: HashMap<String, Value> = ctx
+            .iter()
+            .map(|(key, value)| (key.clone(), Value::String(value.clone())))
+            .collect();
+        match eval_js_with_bindings(
             expr,
             &serde_json::to_string(v).unwrap_or_default(),
             base_url,
+            &bindings,
         ) {
             Ok(res) => res,
             Err(_) => String::new(),
@@ -4027,6 +4071,78 @@ mod tests {
                 "https://img.example/a.jpeg?sign=2".to_string()
             ]
         );
+    }
+
+    #[test]
+    fn replies_are_sorted_by_time_ascending() {
+        let engine = RuleEngine::new().unwrap();
+        let source = fqweb_source();
+        let body = json!({
+            "data": { "data": {
+                "comment_cnt": 1,
+                "has_more": false,
+                "comment": [{
+                    "comment_id": "c1",
+                    "text": "主评论",
+                    "user_info": { "user_name": "楼主" },
+                    "reply_list": [
+                        { "text": "晚", "create_timestamp": 1700000300,
+                          "user_info": { "user_name": "丙" } },
+                        { "text": "早", "create_timestamp": 1700000100,
+                          "user_info": { "user_name": "甲" } },
+                        { "text": "中", "create_timestamp": 1700000200,
+                          "user_info": { "user_name": "乙" } }
+                    ]
+                }]
+            }}
+        })
+        .to_string();
+
+        let page = engine.chapter_reviews(&source, &body, "http://host/");
+        let names: Vec<&str> = page.items[0]
+            .replies
+            .iter()
+            .map(|reply| reply.name.as_str())
+            .collect();
+        assert_eq!(
+            names,
+            vec!["甲", "乙", "丙"],
+            "回复要按时间升序：早在上、晚在下"
+        );
+    }
+
+    #[test]
+    fn replies_keep_the_source_order_when_times_are_not_comparable() {
+        let engine = RuleEngine::new().unwrap();
+        let source = fqweb_source();
+        let body = json!({
+            "data": { "data": {
+                "comment_cnt": 1,
+                "has_more": false,
+                "comment": [{
+                    "comment_id": "c1",
+                    "text": "主评论",
+                    "user_info": { "user_name": "楼主" },
+                    // 时间不是时间戳（站点常见的 `2024-06-05 12:00` 形态）：
+                    // 排不了就保持站点顺序，不做半吊子排序
+                    "reply_list": [
+                        { "text": "一", "create_timestamp": "2024-06-05 12:00",
+                          "user_info": { "user_name": "甲" } },
+                        { "text": "二", "create_timestamp": "2024-06-04 09:00",
+                          "user_info": { "user_name": "乙" } }
+                    ]
+                }]
+            }}
+        })
+        .to_string();
+
+        let page = engine.chapter_reviews(&source, &body, "http://host/");
+        let names: Vec<&str> = page.items[0]
+            .replies
+            .iter()
+            .map(|reply| reply.name.as_str())
+            .collect();
+        assert_eq!(names, vec!["甲", "乙"]);
     }
 
     #[test]

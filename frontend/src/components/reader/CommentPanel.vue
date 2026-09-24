@@ -8,11 +8,25 @@
               <span>{{ mode === 'para' ? '段评' : '本章评论' }}</span>
               <span v-if="total > 0" class="comment-total">· {{ total }}</span>
             </div>
-            <button class="comment-close" aria-label="关闭" @click="$emit('close')">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <path d="M18 6 6 18M6 6l12 12" />
-              </svg>
-            </button>
+            <div class="comment-head-actions">
+              <div class="comment-sort" role="group" aria-label="评论排序">
+                <button
+                  type="button"
+                  :class="{ active: sort === 'hot' }"
+                  @click="changeSort('hot')"
+                >最热</button>
+                <button
+                  type="button"
+                  :class="{ active: sort === 'time' }"
+                  @click="changeSort('time')"
+                >最新</button>
+              </div>
+              <button class="comment-close" aria-label="关闭" @click="$emit('close')">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M18 6 6 18M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
           </div>
 
           <blockquote v-if="mode === 'para' && paraText" class="comment-quote">
@@ -24,7 +38,7 @@
             <div v-else-if="error" class="comment-hint comment-error">{{ error }}</div>
             <div v-else-if="!items.length" class="comment-hint">还没有评论</div>
 
-            <article v-for="(item, index) in items" :key="item.id || `c-${index}`" class="comment-item">
+            <article v-for="(item, index) in visibleItems" :key="item.id || `c-${index}`" class="comment-item">
               <div class="comment-meta">
                 <span class="comment-name">{{ item.name || '匿名读者' }}</span>
                 <span class="comment-time">{{ formatReviewTime(item.time) }}</span>
@@ -61,6 +75,10 @@
               </div>
             </article>
 
+            <p v-if="clientSideSortOnly" class="comment-sort-hint">
+              该书的评论排序由站点决定，这里只重排了已加载的 {{ items.length }} 条
+            </p>
+
             <button v-if="hasMore" class="comment-more" :disabled="loading" @click="loadMore">
               {{ loading ? '加载中...' : '加载更多' }}
             </button>
@@ -76,10 +94,10 @@
 </template>
 
 <script setup lang="ts">
-import { nextTick, ref, watch } from 'vue'
+import { computed, nextTick, ref, watch } from 'vue'
 import type { ReviewItem, ReviewPage } from '../../types'
 import type { ThemePreset } from '../../stores/reader'
-import { getChapterComments, getParaComments } from '../../api/review'
+import { getChapterComments, getParaComments, type ReviewSort } from '../../api/review'
 
 /** 浏览器能直接渲染的图片后缀；HEIC/HEIF 只有 Safari 认，排到最后。 */
 const RENDERABLE_IMAGE_EXTENSIONS = [
@@ -117,6 +135,26 @@ const loading = ref(false)
 const error = ref('')
 const listRef = ref<HTMLElement>()
 const preview = ref('')
+/** 默认「最热」：站点自己的热度序（章评接口本身就按点赞递减返回） */
+const sort = ref<ReviewSort>('hot')
+const serverSort = ref(false)
+
+/**
+ * 展示顺序。
+ *
+ * 「最热」直接用站点顺序，不做二次加工；「最新」按时间倒序。
+ * 时间字段是站点原样返回的字符串，只在能解析成时间戳时才排——
+ * 排不了就保持站点顺序，宁可不动也不要把不可比的时间混着排。
+ */
+const visibleItems = computed(() => {
+  if (sort.value === 'hot') return items.value
+  const keyed = items.value.map((item) => ({ item, key: timeKey(item.time) }))
+  if (keyed.some((entry) => entry.key === null)) return items.value
+  return [...keyed].sort((a, b) => (b.key as number) - (a.key as number)).map((entry) => entry.item)
+})
+
+/** 站点不支持服务端排序时，「最新」只对已加载的条目生效 */
+const clientSideSortOnly = computed(() => sort.value === 'time' && !serverSort.value)
 
 /** 每次打开都重新装载：评论会变，缓存里的旧数据不该拦住刷新 */
 watch(
@@ -130,6 +168,7 @@ watch(
 
 async function reload() {
   error.value = ''
+  sort.value = 'hot'
   const initial = props.mode === 'chapter' ? props.initialPage : null
   if (initial && initial.items?.length) {
     items.value = initial.items
@@ -154,12 +193,14 @@ async function fetchPage(target: number) {
       chapterUrl: props.chapterUrl,
       bookSourceUrl: props.bookSourceUrl,
       page: target,
+      sort: sort.value,
     }
     const resp =
       props.mode === 'para'
         ? await getParaComments({ ...params, paraIndex: props.paraIndex ?? 0 })
         : await getChapterComments(params)
     const data = resp.data
+    serverSort.value = resp.serverSort
     const incoming = (data.items || []).map(normalizeItem)
     items.value = target <= 1 ? incoming : [...items.value, ...incoming]
     total.value = data.total
@@ -170,6 +211,17 @@ async function fetchPage(target: number) {
   } finally {
     loading.value = false
   }
+}
+
+async function changeSort(next: ReviewSort) {
+  if (sort.value === next) return
+  sort.value = next
+  // 排序变了，已加载的分页作废，从头拉
+  items.value = []
+  total.value = 0
+  page.value = 1
+  hasMore.value = false
+  await fetchPage(1)
 }
 
 async function loadMore() {
@@ -190,6 +242,14 @@ function normalizeItem(item: ReviewItem): ReviewItem {
   if (!urls.length) return { ...item, images: [] }
   const renderable = urls.find((url) => RENDERABLE_IMAGE_EXTENSIONS.includes(extensionOf(url)))
   return { ...item, images: [renderable || urls[0]] }
+}
+
+/** Unix 秒/毫秒时间戳；认不出来返回 null（排序时保持站点顺序）。 */
+function timeKey(raw: string): number | null {
+  const text = (raw || '').trim()
+  if (!/^\d{9,13}$/.test(text)) return null
+  const value = Number(text)
+  return text.length <= 10 ? value * 1000 : value
 }
 
 function extensionOf(url: string) {
@@ -248,7 +308,7 @@ function formatReviewTime(raw: string) {
   }
 
   .comment-panel {
-    width: min(400px, 42vw);
+    width: var(--sidebar-width);
     max-height: none;
     height: 100%;
     padding-bottom: 0;
@@ -274,6 +334,45 @@ function formatReviewTime(raw: string) {
   margin-left: 4px;
   color: var(--color-text-tertiary);
   font-weight: 400;
+}
+
+.comment-head-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.comment-sort {
+  display: inline-flex;
+  padding: 2px;
+  border-radius: 999px;
+  background: rgba(128, 128, 128, 0.12);
+}
+
+.comment-sort button {
+  padding: 3px 10px;
+  border: none;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--color-text-secondary);
+  font-size: 12px;
+  line-height: 1.5;
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+
+.comment-sort button.active {
+  background: var(--color-bg-elevated);
+  color: var(--color-primary);
+  font-weight: 600;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.12);
+}
+
+.comment-sort-hint {
+  margin: 10px 0 0;
+  color: var(--color-text-tertiary);
+  font-size: 12px;
+  text-align: center;
 }
 
 .comment-close {

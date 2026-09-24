@@ -8,7 +8,7 @@ use crate::model::{
     book::Book,
     book_chapter::BookChapter,
     book_source::{BookSource, ExploreKind},
-    review::{ParaReviewCount, ParaReviewIndex, ReviewPage, ReviewResponse},
+    review::{ParaReviewCount, ParaReviewIndex, ReviewPage, ReviewResponse, ReviewSort},
     search::SearchBook,
 };
 use crate::parser::js::{eval_js, eval_js_with_bindings, with_book_source, with_user_ns};
@@ -77,6 +77,14 @@ pub const REVIEW_PAGE_SIZE: i32 = 20;
 const RECENT_BODY_LIMIT: usize = 32;
 const RECENT_BODY_MAX_BYTES: usize = 1024 * 1024;
 const RECENT_BODY_TTL: Duration = Duration::from_secs(600);
+
+/// 书源的评论 URL 模板是否用到了 `{{sort}}`。
+///
+/// 用了说明排序由站点自己做；没用的话「最新」只能由客户端对已加载的条目重排。
+fn rule_consumes_sort(rule: Option<&str>) -> bool {
+    rule.map(|rule| rule.contains("{{sort}}") || rule.contains("@get:{sort}"))
+        .unwrap_or(false)
+}
 
 /// 按字符截断，用于段落定位锚点。
 fn truncate_chars(text: &str, limit: usize) -> String {
@@ -1139,6 +1147,7 @@ impl BookService {
         chapter_url: &str,
         page: i32,
         count: i32,
+        sort: ReviewSort,
         para_index: Option<i32>,
     ) -> HashMap<String, String> {
         let mut ctx = HashMap::new();
@@ -1146,6 +1155,9 @@ impl BookService {
         ctx.insert("count".to_string(), count.to_string());
         ctx.insert("bookUrl".to_string(), book_url.to_string());
         ctx.insert("chapterUrl".to_string(), chapter_url.to_string());
+        // 站点取值各不相同（番茄的段评排序是 `Hot`/`TimeDesc` 枚举），
+        // 规则里可以用 JS 映射：`&sort={{sort === 'hot' ? 'Hot' : 'TimeDesc'}}`
+        ctx.insert("sort".to_string(), sort.as_ctx_value().to_string());
         if let Some(index) = para_index {
             ctx.insert("paraIndex".to_string(), index.to_string());
         }
@@ -1162,22 +1174,32 @@ impl BookService {
         chapter_url: &str,
         page: i32,
         count: i32,
+        sort: ReviewSort,
         refresh: bool,
     ) -> Result<ReviewResponse<ReviewPage>, AppError> {
         if !self.parser.has_chapter_review_rule(source) {
             return Ok(ReviewResponse::new(false, ReviewPage::empty(page)));
         }
+        let server_sort = rule_consumes_sort(
+            source
+                .rule_review
+                .as_ref()
+                .and_then(|rule| rule.review_url.as_deref()),
+        );
         let book_key = md5_hex(book_url);
-        let cache_key = format!("chapter|{chapter_url}|{page}|{count}");
+        let cache_key = format!(
+            "chapter|{chapter_url}|{page}|{count}|{}",
+            sort.as_ctx_value()
+        );
         if !refresh {
             if let Some(cached) = self.load_review_cache(user_ns, &book_key, &cache_key).await {
-                return Ok(ReviewResponse::new(true, cached));
+                return Ok(ReviewResponse::new(true, cached).with_server_sort(server_sort));
             }
         }
         let (body, base) = self
             .chapter_source_body(user_ns, source, chapter_url)
             .await?;
-        let ctx = self.review_ctx(book_url, chapter_url, page, count, None);
+        let ctx = self.review_ctx(book_url, chapter_url, page, count, sort, None);
         let url = self
             .parser
             .chapter_review_url(source, &body, &base, &ctx)
@@ -1189,7 +1211,7 @@ impl BookService {
             .await?;
         self.store_review_cache(user_ns, &book_key, &cache_key, &result)
             .await;
-        Ok(ReviewResponse::new(true, result))
+        Ok(ReviewResponse::new(true, result).with_server_sort(server_sort))
     }
 
     /// 段评概览：本章哪些段落有段评、各有多少条。
@@ -1214,7 +1236,14 @@ impl BookService {
         let (body, base) = self
             .chapter_source_body(user_ns, source, chapter_url)
             .await?;
-        let ctx = self.review_ctx(book_url, chapter_url, 1, REVIEW_PAGE_SIZE, None);
+        let ctx = self.review_ctx(
+            book_url,
+            chapter_url,
+            1,
+            REVIEW_PAGE_SIZE,
+            ReviewSort::Hot,
+            None,
+        );
         let url = self
             .parser
             .para_review_index_url(source, &body, &base, &ctx)
@@ -1245,22 +1274,32 @@ impl BookService {
         para_index: i32,
         page: i32,
         count: i32,
+        sort: ReviewSort,
         refresh: bool,
     ) -> Result<ReviewResponse<ReviewPage>, AppError> {
         if !self.parser.has_para_review_rule(source) {
             return Ok(ReviewResponse::new(false, ReviewPage::empty(page)));
         }
+        let server_sort = rule_consumes_sort(
+            source
+                .rule_para_review
+                .as_ref()
+                .and_then(|rule| rule.review_url.as_deref()),
+        );
         let book_key = md5_hex(book_url);
-        let cache_key = format!("para|{chapter_url}|{para_index}|{page}|{count}");
+        let cache_key = format!(
+            "para|{chapter_url}|{para_index}|{page}|{count}|{}",
+            sort.as_ctx_value()
+        );
         if !refresh {
             if let Some(cached) = self.load_review_cache(user_ns, &book_key, &cache_key).await {
-                return Ok(ReviewResponse::new(true, cached));
+                return Ok(ReviewResponse::new(true, cached).with_server_sort(server_sort));
             }
         }
         let (body, base) = self
             .chapter_source_body(user_ns, source, chapter_url)
             .await?;
-        let ctx = self.review_ctx(book_url, chapter_url, page, count, Some(para_index));
+        let ctx = self.review_ctx(book_url, chapter_url, page, count, sort, Some(para_index));
         let url = self
             .parser
             .para_review_url(source, &body, &base, &ctx)
@@ -1272,7 +1311,7 @@ impl BookService {
             .await?;
         self.store_review_cache(user_ns, &book_key, &cache_key, &result)
             .await;
-        Ok(ReviewResponse::new(true, result))
+        Ok(ReviewResponse::new(true, result).with_server_sort(server_sort))
     }
 
     async fn fetch_review_page<F>(

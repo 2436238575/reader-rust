@@ -1366,10 +1366,11 @@ getContentAwait(source, book, chapter, nextChapterUrl=null, needSave=true):
 | 占位符 | 来源 |
 | --- | --- |
 | `{{$.a.b}}` | 正文响应的 JSONPath |
-| `{{表达式}}` | JS，`result` 为正文响应体、`baseUrl` 为章节 URL |
+| `{{表达式}}` | JS，`result` 为正文响应体、`baseUrl` 为章节 URL；上表其余键也作为同名 JS 变量可用 |
 | `@get:{key}` | 上游步骤存入的上下文 |
 | `{{page}}` / `{{count}}` | 页码 / 每页条数 |
 | `{{paraIndex}}` | 段号（仅段评列表 URL） |
+| `{{sort}}` | 排序方式：`hot` / `time`。站点取值不同时可用 JS 映射，如 `{{sort === 'hot' ? 'Hot' : 'TimeDesc'}}` |
 | `{{bookUrl}}` / `{{chapterUrl}}` | 当前书籍 / 章节 URL |
 
 规则本身也可以写成纯 JSONPath（`$.data.comment_url`）。相对地址按**章节 URL**解析，

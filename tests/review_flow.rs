@@ -4,7 +4,12 @@
 //! 手机），响应结构与真实接口一致，因此书源规则、URL 求值、解析与缓存
 //! 走的都是生产路径。
 
-use axum::{extract::State, http::StatusCode, routing::get, Json, Router};
+use axum::{
+    extract::{Query, State},
+    http::StatusCode,
+    routing::get,
+    Json, Router,
+};
 use reader_rust::api::router::build_router;
 use reader_rust::app::bootstrap::build_state;
 use reader_rust::app::config::AppConfig;
@@ -98,9 +103,14 @@ async fn start_upstream() -> (String, HitCounter) {
             "/comment/item",
             get({
                 let chapter_comments = chapter_comments.clone();
-                move || {
-                    let chapter_comments = chapter_comments.clone();
-                    async move { Json(chapter_comments) }
+                move |Query(params): Query<HashMap<String, String>>| {
+                    let mut body = chapter_comments.clone();
+                    // 只在 sort=time 时换一份内容：既能证明参数真的进了上游 URL，
+                    // 又不影响其余用例对默认内容的断言
+                    if params.get("sort").map(String::as_str) == Some("time") {
+                        body["data"]["data"]["comment"][0]["text"] = json!("最新序第一条");
+                    }
+                    async move { Json(body) }
                 }
             }),
         )
@@ -172,7 +182,7 @@ fn book_source(upstream_url: &str) -> Value {
         "enabled": true,
         "ruleContent": { "content": "$.data.data.content" },
         "ruleReview": {
-            "reviewUrl": "comment/item?item_id={{$.data.data.novel_data.item_id}}&book_id={{$.data.data.novel_data.book_id}}&page={{page}}&count={{count}}",
+            "reviewUrl": "comment/item?item_id={{$.data.data.novel_data.item_id}}&book_id={{$.data.data.novel_data.book_id}}&page={{page}}&count={{count}}&sort={{sort}}",
             "listRule": "$.data.data.comment[*]",
             "totalRule": "$.data.data.comment_cnt",
             "hasMoreRule": "$.data.data.has_more",
@@ -469,6 +479,74 @@ async fn purge_kind_review_clears_the_comment_cache() {
         .await
         .unwrap();
     assert!(stats["data"]["review"]["files"].as_u64().unwrap() >= 1);
+}
+
+#[tokio::test]
+async fn sort_reaches_the_source_and_has_its_own_cache_entry() {
+    let server = TestServer::start().await;
+
+    // 默认（最热）：模板里用了 {{sort}}，但站点按自己的热度序返回
+    let hot = server
+        .post("getChapterComments", server.review_body(json!({})))
+        .await;
+    assert_eq!(hot["serverSort"], json!(true));
+    assert_eq!(hot["data"]["items"][0]["content"], json!("第一条章评"));
+
+    // 最新：{{sort}} 求值成 time 并传给了上游
+    let time = server
+        .post(
+            "getChapterComments",
+            server.review_body(json!({ "sort": "time" })),
+        )
+        .await;
+    assert_eq!(time["data"]["items"][0]["content"], json!("最新序第一条"));
+    assert_eq!(server.hits_for("/comment/item"), 2, "两种排序各打一次上游");
+
+    // 再各来一次：命中各自的缓存，不该再多打上游
+    server
+        .post("getChapterComments", server.review_body(json!({})))
+        .await;
+    server
+        .post(
+            "getChapterComments",
+            server.review_body(json!({ "sort": "time" })),
+        )
+        .await;
+    assert_eq!(server.hits_for("/comment/item"), 2, "排序不同即缓存键不同");
+
+    // 认不出来的取值按默认的「最热」处理，不报错
+    let unknown = server
+        .post(
+            "getChapterComments",
+            server.review_body(json!({ "sort": "whatever" })),
+        )
+        .await;
+    assert_eq!(unknown["data"]["items"][0]["content"], json!("第一条章评"));
+}
+
+#[tokio::test]
+async fn sources_without_sort_in_the_rule_report_client_side_sorting() {
+    let server = TestServer::start().await;
+
+    let mut source = book_source(&server.upstream_url);
+    // 去掉模板里的 {{sort}}：站点不做排序，前端只能重排已加载的条目
+    source["ruleReview"]["reviewUrl"] = json!(
+        "comment/item?item_id={{$.data.data.novel_data.item_id}}         &book_id={{$.data.data.novel_data.book_id}}&page={{page}}&count={{count}}"
+    );
+    let resp = server
+        .client
+        .post(format!("{}/reader3/saveBookSource", server.base_url))
+        .bearer_auth(&server.token)
+        .json(&source)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    let page = server
+        .post("getChapterComments", server.review_body(json!({})))
+        .await;
+    assert_eq!(page["serverSort"], json!(false));
 }
 
 #[tokio::test]

@@ -222,6 +222,9 @@ HTTP 请求
 书源没声明 `ruleReview` / `ruleParaReview` 时接口返回 `enabled: false`，前端不渲染任何入口。
 评论配图走 `imageRule`，按**列表规则**求值（`$.image_url[*]` / 多行 JS / `img@src`）；
 地址按站点顺序原样返回，挑哪个格式渲染是客户端的事（番茄会同时给 HEIC 与 JPEG）。
+排序参数 `sort`（`hot` 默认 / `time`）通过 `{{sort}}` 传给书源模板，并计入缓存键；
+书源模板没用 `{{sort}}` 时响应里的 `serverSort` 为 false，前端据此说明「最新」只重排已加载的条目。
+内联回复一律按时间升序返回（时间不是时间戳时保持站点顺序）。
 
 ### 解析方式识别
 

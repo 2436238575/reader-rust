@@ -13,9 +13,13 @@ export interface ReviewParams {
   bookSourceUrl?: string
   page?: number
   count?: number
+  /** `hot`（默认，站点热度序）或 `time`（按时间倒序） */
+  sort?: ReviewSort
   /** 1 表示忽略 7 天缓存重新抓取 */
   refresh?: number
 }
+
+export type ReviewSort = 'hot' | 'time'
 
 export function getChapterComments(params: ReviewParams) {
   return http

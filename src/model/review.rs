@@ -78,12 +78,48 @@ pub struct ParaReviewIndex {
 pub struct ReviewResponse<T> {
     /// 当前书源是否声明了对应的评论规则。
     pub enabled: bool,
+    /// 书源的评论 URL 模板是否用到了 `{{sort}}`（即排序由站点自己做）。
+    /// 为 `false` 时「最新」只能对已加载的条目重排，前端据此给出提示。
+    pub server_sort: bool,
     pub data: T,
 }
 
 impl<T> ReviewResponse<T> {
     pub fn new(enabled: bool, data: T) -> Self {
-        Self { enabled, data }
+        Self {
+            enabled,
+            server_sort: false,
+            data,
+        }
+    }
+
+    /// 书源的评论 URL 模板用到了 `{{sort}}`，即排序由站点自己做。
+    pub fn with_server_sort(mut self, server_sort: bool) -> Self {
+        self.server_sort = server_sort;
+        self
+    }
+}
+
+/// 评论排序方式。
+///
+/// 「最热」是默认：章评接口本身就按点赞数递减返回，段评是站点自己的热度序，
+/// 都直接沿用站点顺序，不做二次加工。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum ReviewSort {
+    #[default]
+    Hot,
+    /// 按时间倒序（新的在前）
+    Time,
+}
+
+impl ReviewSort {
+    /// 传给书源模板的取值（`{{sort}}`）。
+    pub fn as_ctx_value(self) -> &'static str {
+        match self {
+            Self::Hot => "hot",
+            Self::Time => "time",
+        }
     }
 }
 
@@ -98,5 +134,16 @@ mod tests {
         assert_eq!(page.total, 0);
         assert!(!page.has_more);
         assert!(page.items.is_empty());
+    }
+
+    #[test]
+    fn sort_defaults_to_hot_and_maps_to_source_values() {
+        assert_eq!(ReviewSort::default(), ReviewSort::Hot);
+        assert_eq!(ReviewSort::Hot.as_ctx_value(), "hot");
+        assert_eq!(ReviewSort::Time.as_ctx_value(), "time");
+        assert_eq!(
+            serde_json::to_string(&ReviewSort::Time).unwrap(),
+            "\"time\""
+        );
     }
 }

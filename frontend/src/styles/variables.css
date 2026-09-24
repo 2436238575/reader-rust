@@ -89,7 +89,9 @@
   /* Layout */
   --header-height: 64px;
   --tabs-height: 44px;
-  --sidebar-width: 360px;
+  /* 桌面端侧栏宽度：设置抽屉、阅读器设置、评论侧栏共用。
+     随窗口宽度自适应，窄屏给下限、超宽屏封顶，避免宽屏下侧栏显得空旷。 */
+  --sidebar-width: clamp(380px, 34vw, 560px);
   --content-max-width: 1400px;
   /* 底部导航占位：桌面端使用顶部 Tab，底部导航仅移动端显示 */
   --bottom-nav-clearance: 0px;
