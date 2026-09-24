@@ -313,6 +313,7 @@ import { applySystemTheme } from '../utils/systemUi'
 import { countBrowserBookCache } from '../utils/browserCache'
 import { APP_VIEWPORT_CHANGE_EVENT, syncViewportSize } from '../utils/viewport'
 import { isReaderInteractiveClickTarget } from '../utils/readerClick'
+import { sanitizeUntrustedHtml } from '../utils/sanitize'
 import type { ParaReviewCount } from '../types'
 import { createReaderProgressAutoSaveScheduler, createReaderProgressExitSaver } from '../utils/readerProgressAutoSave'
 import type { Book } from '../types'
@@ -523,7 +524,8 @@ function formatChapterHtml(rawText: string, withParaComments = false) {
   let paragraphPosition = 0
 
   if (/<[a-z][\s\S]*>/i.test(text)) {
-    wrapper.innerHTML = text
+    // 书源返回的正文 HTML 完全不可信：先白名单消毒再进 DOM
+    wrapper.innerHTML = sanitizeUntrustedHtml(text)
     const paragraphs = Array.from(wrapper.querySelectorAll('p')) as HTMLParagraphElement[]
     if (paragraphs.length) {
       paragraphs.forEach((paragraph) => {
