@@ -189,7 +189,7 @@ fn book_source(upstream_url: &str) -> Value {
         "enabled": true,
         "ruleContent": { "content": "$.data.data.content" },
         "ruleReview": {
-            "reviewUrl": "comment/item?item_id={{$.data.data.novel_data.item_id}}&book_id={{$.data.data.novel_data.book_id}}&page={{page}}&count={{count}}&sort={{sort}}",
+            "reviewUrl": "comment/item?item_id={{$.data.data.novel_data.item_id}}&book_id={{$.data.data.novel_data.book_id}}&page={{page}}&count={{count}}&sort={{sort === 'hot' ? 'smart_hot' : 'time'}}",
             "listRule": "$.data.data.comment[*]",
             "totalRule": "$.data.data.comment_cnt",
             "hasMoreRule": "$.data.data.has_more",

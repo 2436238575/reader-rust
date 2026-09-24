@@ -153,8 +153,9 @@ const serverSort = ref(false)
  */
 const visibleItems = computed(() => {
   if (sort.value === 'hot') return items.value
-  // 站点已按最新排好（书源模板用了 {{sort}}），不需要也不能再排一次
-  if (serverSort.value) return items.value
+  // 「最新」始终在客户端再排一次：站点排对了这是稳定的 no-op，
+  // 排错了（实测番茄对部分章节会忽略 sort）就当兜底纠偏。
+  // 时间认不出来时保持站点顺序，宁可不动也不把不可比的时间混着排。
   const keyed = items.value.map((item) => ({ item, key: timeKey(item.time) }))
   if (keyed.some((entry) => entry.key === null)) return items.value
   return [...keyed].sort((a, b) => (b.key as number) - (a.key as number)).map((entry) => entry.item)

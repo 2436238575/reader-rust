@@ -935,7 +935,7 @@ impl RuleEngine {
         if text.is_empty() {
             return None;
         }
-        Some(resolve_url(base_url, text))
+        Some(resolve_url(base_url, &drop_empty_sort_param(text)))
     }
 
     /// 解析章评列表。
@@ -1050,6 +1050,29 @@ impl RuleEngine {
             paras
         })
     }
+}
+
+/// 删掉取值为空的 `sort=` 查询参数。
+///
+/// 站点对空值的处理不可预期：FQWeb 实测 `&sort=`（空串）会直接返回
+/// 参数错误，而「完全不传」才走默认的最热排序。空值从来不是有意义的
+/// 输入，删掉等于让站点用缺省值。模板里的 `{{sort}}` 由后端填充、
+/// 一般不会为空，这里防的是书源作者手写的映射 JS 求值失败的情况。
+fn drop_empty_sort_param(url: &str) -> String {
+    let Some((base, query)) = url.split_once('?') else {
+        return url.to_string();
+    };
+    let kept: Vec<&str> = query
+        .split('&')
+        .filter(|pair| {
+            let (key, value) = pair.split_once('=').unwrap_or((pair, ""));
+            !(key == "sort" && value.is_empty())
+        })
+        .collect();
+    if kept.is_empty() {
+        return base.to_string();
+    }
+    format!("{}?{}", base, kept.join("&"))
 }
 
 /// 评论解析所需的一组字段规则。
@@ -4186,6 +4209,41 @@ mod tests {
         );
         // 没写规则就是没图，不该报错
         assert!(eval_image_list_json("", &node, base).is_empty());
+    }
+
+    #[test]
+    fn review_url_drops_empty_sort_param() {
+        let engine = RuleEngine::new().unwrap();
+        let base = "https://host/content?item_id=1";
+        // 空值从来不是有意义的输入：站点要么报错、要么当成缺省，
+        // 删掉让站点走默认的「最热」最稳
+        let empty_sort: HashMap<String, String> = HashMap::new();
+        assert_eq!(
+            engine
+                .review_url(
+                    "comment/list?page={{page}}&sort=&count=20",
+                    "{}",
+                    base,
+                    &empty_sort
+                )
+                .unwrap(),
+            "https://host/comment/list?page=&count=20"
+        );
+        assert_eq!(
+            engine
+                .review_url("comment/list?sort=&page=1", "{}", base, &empty_sort)
+                .unwrap(),
+            "https://host/comment/list?page=1"
+        );
+        // 有值的 sort 原样保留
+        let mut with_sort = HashMap::new();
+        with_sort.insert("sort".to_string(), "time".to_string());
+        assert_eq!(
+            engine
+                .review_url("comment/list?sort={{sort}}&page=1", "{}", base, &with_sort)
+                .unwrap(),
+            "https://host/comment/list?sort=time&page=1"
+        );
     }
 
     #[test]

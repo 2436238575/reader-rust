@@ -1371,6 +1371,10 @@ getContentAwait(source, book, chapter, nextChapterUrl=null, needSave=true):
 | `{{page}}` / `{{count}}` | 页码 / 每页条数 |
 | `{{paraIndex}}` | 段号（仅段评列表 URL） |
 | `{{sort}}` | 排序方式：`hot` / `time`。站点取值不同时可用 JS 映射，如 `{{sort === 'hot' ? 'Hot' : 'TimeDesc'}}` |
+
+番茄书源（FQWeb）的实际取值：章评 `smart_hot` / `time`，段评 `hot` / `time_desc`。
+注意 `sort=`（空串）会被 FQWeb 直接拒绝，省略整个参数才是默认值；后端会自动剔除
+求值后为空的 `sort=` 参数。
 | `{{bookUrl}}` / `{{chapterUrl}}` | 当前书籍 / 章节 URL |
 
 规则本身也可以写成纯 JSONPath（`$.data.comment_url`）。相对地址按**章节 URL**解析，
