@@ -4,9 +4,18 @@ use crate::model::book_source::BookSource;
 use crate::parser::js::{eval_js, eval_js_url, with_book_source};
 use crate::util::text::normalize_source_url;
 use encoding_rs::Encoding;
-use regex::Regex;
+use once_cell::sync::Lazy;
 use serde_json::Value;
 use std::collections::HashMap;
+
+/// URL 求值热路径上的固定正则：每次展开 searchUrl/exploreUrl 都会命中，
+/// 改静态编译一次。
+static INLINE_JS_TAG_RE: Lazy<regex::Regex> =
+    Lazy::new(|| regex::Regex::new(r"(?is)<js>(.*?)</js>|@js:([\w\W]*)").unwrap());
+static INLINE_TEMPLATE_RE: Lazy<regex::Regex> =
+    Lazy::new(|| regex::Regex::new(r"\{\{([\w\W]*?)\}\}").unwrap());
+static INLINE_ANGLE_RE: Lazy<regex::Regex> =
+    Lazy::new(|| regex::Regex::new(r"<(.*?)>").unwrap());
 
 pub const DEFAULT_USER_AGENT: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
 
@@ -303,7 +312,7 @@ fn eval_url_js_segments(
     source_key: &str,
     base_url: &str,
 ) -> Result<String, AppError> {
-    let re = Regex::new(r"(?is)<js>(.*?)</js>|@js:([\w\W]*)").unwrap();
+    let re = &*INLINE_JS_TAG_RE;
     if !re.is_match(rule) {
         return Ok(rule.to_string());
     }
@@ -348,7 +357,7 @@ fn replace_inline_js(
     source_key: &str,
     base_url: &str,
 ) -> Result<String, AppError> {
-    let re = Regex::new(r"\{\{([\w\W]*?)\}\}").unwrap();
+    let re = &*INLINE_TEMPLATE_RE;
     let mut output = String::with_capacity(rule.len());
     let mut last = 0usize;
     for captures in re.captures_iter(rule) {
@@ -374,7 +383,7 @@ fn replace_legacy_placeholders(rule: &str, key: &str, page: i32) -> String {
 }
 
 fn replace_page_choices(rule: &str, page: i32) -> String {
-    let re = Regex::new(r"<(.*?)>").unwrap();
+    let re = &*INLINE_ANGLE_RE;
     re.replace_all(rule, |captures: &regex::Captures| {
         let pages = captures
             .get(1)

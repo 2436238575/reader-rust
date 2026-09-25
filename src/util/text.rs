@@ -38,10 +38,10 @@ pub fn strip_whitespace(s: &str) -> String {
 }
 
 pub fn apply_regex_replace(input: &str, pattern: &str, replace: &str) -> String {
-    if let Ok(re) = Regex::new(pattern) {
-        re.replace_all(input, replace).to_string()
-    } else {
-        input.to_string()
+    // 走编译缓存：该函数对同一书源规则的每次调用模式都相同
+    match compiled_regex(pattern) {
+        Some(re) => re.replace_all(input, replace).to_string(),
+        None => input.to_string(),
     }
 }
 
