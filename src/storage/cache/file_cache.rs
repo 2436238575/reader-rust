@@ -64,7 +64,8 @@ impl FileCache {
             fs::create_dir_all(parent).await?;
         }
         fs::write(&path, value).await?;
-        self.enforce_user_capacity(user_ns, value.len() as u64).await;
+        self.enforce_user_capacity(user_ns, value.len() as u64)
+            .await;
         Ok(())
     }
 
@@ -331,7 +332,10 @@ pub async fn enforce_flat_dir_capacity(dir: &Path, max_bytes: u64, written: u64)
     }
     let usage = dir_usage(dir, 1).await;
     if usage.bytes <= max_bytes {
-        FLAT_DIR_USAGE.lock().unwrap().insert(dir.to_path_buf(), usage.bytes);
+        FLAT_DIR_USAGE
+            .lock()
+            .unwrap()
+            .insert(dir.to_path_buf(), usage.bytes);
         return;
     }
     let freed = evict_oldest(dir, usage.bytes - max_bytes).await;

@@ -1639,7 +1639,11 @@ impl BookService {
                     .await
                     .map_err(internal_error)?
                     + remove_dir_counting_files(
-                        &self.storage_dir.join("cache").join(BOOK_INFO_CACHE_DIR).join(user_ns),
+                        &self
+                            .storage_dir
+                            .join("cache")
+                            .join(BOOK_INFO_CACHE_DIR)
+                            .join(user_ns),
                     )
                     .await
                     .map_err(internal_error)?;
@@ -2892,7 +2896,10 @@ mod tests {
 
         // 进行中守卫
         assert!(service.try_begin_toc_fill(ns, toc));
-        assert!(!service.try_begin_toc_fill(ns, toc), "同一本书不允许并发补全");
+        assert!(
+            !service.try_begin_toc_fill(ns, toc),
+            "同一本书不允许并发补全"
+        );
         service.end_toc_fill(ns, toc);
         assert!(service.try_begin_toc_fill(ns, toc), "结束后可再次开始");
         service.end_toc_fill(ns, toc);

@@ -71,7 +71,8 @@ impl ReviewCache {
             fs::create_dir_all(parent).await?;
         }
         fs::write(&path, value).await?;
-        self.enforce_user_capacity(user_ns, value.len() as u64).await;
+        self.enforce_user_capacity(user_ns, value.len() as u64)
+            .await;
         Ok(())
     }
 

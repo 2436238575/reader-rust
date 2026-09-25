@@ -623,9 +623,7 @@ pub async fn get_chapter_list(
     // 同一本书的补全任务并发去重：双击/刷新在首屏落盘前竞态时，
     // 两个任务会各自抓全部分页并互相覆盖，缓存里出现重复章节。
     if !pagination.pending_urls.is_empty()
-        && state
-            .book_service
-            .try_begin_toc_fill(&user_ns, &toc_url)
+        && state.book_service.try_begin_toc_fill(&user_ns, &toc_url)
     {
         let state_clone = state.clone();
         let user_ns_clone = user_ns.clone();
@@ -658,10 +656,7 @@ pub async fn get_chapter_list(
                         );
                     }
                     Err(e) => {
-                        tracing::warn!(
-                            "failed to append background chapters to cache: {:?}",
-                            e
-                        );
+                        tracing::warn!("failed to append background chapters to cache: {:?}", e);
                     }
                 }
             }
@@ -1339,7 +1334,8 @@ pub async fn save_book_progress(
                 total_chapter_num = Some(chapters.len() as i32);
                 latest_chapter_title = chapters.last().map(|c| c.title.clone());
             }
-        } else if is_local_epub_origin(&shelf_book.origin) || is_local_epub_url(&shelf_book.book_url)
+        } else if is_local_epub_origin(&shelf_book.origin)
+            || is_local_epub_url(&shelf_book.book_url)
         {
             if let Ok(chapters) = state
                 .local_epub_book_service
