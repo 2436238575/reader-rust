@@ -1,10 +1,11 @@
 import { defineStore } from 'pinia'
-import { ref } from 'vue'
+import { ref, shallowRef } from 'vue'
 import { getBookSources } from '../api/source'
 import type { BookSource } from '../types'
 
 export const useSourceStore = defineStore('source', () => {
-  const sources = ref<BookSource[]>([])
+  // 书源规则 JSON 可达 MB 级且按整体替换更新：浅响应式避免深代理几百个源
+  const sources = shallowRef<BookSource[]>([])
   const loading = ref(false)
   let loadingTask: Promise<void> | null = null
 
