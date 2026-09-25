@@ -22,7 +22,7 @@ Reader-Rust 是 [阅读3.0](https://github.com/hectorqin/reader) 的 Rust 重写
 cargo run                      # 开发模式运行，默认监听 0.0.0.0:8080
 cargo build                    # 调试构建
 cargo build --release          # 发布构建
-cargo test                     # 全部测试（Rust 侧共 173 个）
+cargo test                     # 全部测试（Rust 侧共 226 个，另有 2 个真实网络用例默认忽略）
 cargo test <关键字>             # 按名称过滤测试
 cargo clippy --all-targets     # 静态检查
 cargo fmt                      # 格式化
@@ -123,11 +123,11 @@ cp .env.example .env
 ```
 src/
   main.rs / lib.rs        入口，各十余行
-  api/                    路由与 HTTP 处理（axum），17 文件约 7000 行
+  api/                    路由与 HTTP 处理（axum），19 文件约 7500 行
     router.rs             全部路由定义 + 鉴权分组（唯一真相来源）
-    handlers/             13 个领域模块：book、book_source、user、rss、bookmark、
+    handlers/             14 个领域模块：book、book_source、user、rss、bookmark、
                           book_group、ai_book、ai_model、ai_proxy、replace_rule、
-                          update、webdav、cache（缓存清理与统计）；
+                          update、webdav、cache（缓存清理与统计）、chapter_image；
                           另有共享的 multipart.rs（限量读取工具）
   auth/                   JWT 鉴权，4 文件
     jwt.rs                Claims 定义与 HS256 编解码
@@ -142,7 +142,7 @@ src/
   crawler/                reqwest 抓取与 URL 处理，5 文件约 1370 行
     url_analyzer.rs       占位符替换、页面选择、内联 JS
     url_guard.rs          出站请求守卫（SSRF 防护）
-  model/                  BookSource 等数据结构，14 文件约 1000 行
+  model/                  BookSource 等数据结构，15 文件约 1000 行
   storage/               SQLite（sqlx）+ 文件缓存，8 文件约 800 行
     db/migrations/        仅 0001_init.sql（历史兼容补丁已并入）
     cache/file_cache.rs   章节内容文件缓存，以 MD5 命名；无 TTL，按容量淘汰
@@ -157,9 +157,9 @@ scripts/release.sh        发布脚本
 storage/                  运行期数据，gitignored，首次启动自动创建
 ```
 
-规模参照（便于判断改动影响面）：后端 `src/` 共 78 个 `.rs`、约 21400 行，其中最大的三个文件是
-`api/handlers/book.rs`（约 3070 行）、`parser/rule_engine.rs`（约 2540 行）、`service/book_service.rs`（约 2260 行）；
-前端 `src/` 下 117 个文件（72 个 `.ts`，其中 20 个是测试；40 个 `.vue`；2 个 CSS + 2 个静态资源 + 1 个 JS 工具）。
+规模参照（便于判断改动影响面）：后端 `src/` 共 84 个 `.rs`、约 26900 行，其中最大的三个文件是
+`parser/rule_engine.rs`（约 4700 行）、`api/handlers/book.rs`（约 3100 行）、`service/book_service.rs`（约 3100 行）；
+前端 `src/` 下 123 个文件（75 个 `.ts`，其中 21 个是测试；42 个 `.vue`；2 个 CSS + 2 个静态资源 + 1 个 JS 工具）。
 
 ---
 
@@ -233,6 +233,17 @@ HTTP 请求
 **空页不进缓存**：上游偶发失败（限流、超时）与「真的没有评论」在响应上难以区分，
 缓存空页等于把一次抖动放大成一整周「没有评论」。
 
+章节配图有两条来源，完整规格见 [§17.7](./docs/reference/book-source-rules.md)：
+
+- **正文 HTML 内嵌 `<img>`**（不需要规则）：书源的正文规则吐出 HTML 时图片原样保留，
+  前端消毒后直接渲染。漫画/图集源、出版书插图、富文本正文（FQWeb 的 `/content/rich`）都走这条。
+- **独立配图接口**（`ruleContentImage`）：`content_image_url` 对章节正文响应求值出配图接口地址，
+  `content_images` 解析列表；字段规则都有默认值（`url` / `caption` / `para_index` / `width` / `height`），
+  书源通常只写 `imageUrl` + `listRule`。`paraIndex` 是**正文行号**（插在该行之前），取不到位置的图排章末。
+  书源没声明规则时接口返回 `enabled: false`；「这一章没有配图」是 `enabled: true` + 空列表。
+  **配图不进缓存**：图片地址带时效签名（番茄的 `x-expires`），存下来过一阵就是死链。
+  阅读器设置里的「章节配图」开关可整体隐藏（`ReadConfig.showChapterImages`）。
+
 ### 解析方式识别
 
 | 方式 | 识别规则 |
@@ -304,14 +315,15 @@ HTTP 请求
 
 ## 测试
 
-Rust 侧共 **195 个测试**（137 个 `#[test]` + 58 个 `#[tokio::test]`），分布为：
+Rust 侧共 **226 个测试**（161 个内联单元测试 + 65 个集成用例，另有 2 个 `#[ignore]` 的真实网络用例），分布为：
 
-- `tests/` 下 12 个集成测试文件（58 个用例），其中 `book_source_compat.rs` 用例最多（17 个）；
-  `auth_flow.rs` 与 `review_flow.rs` 起真实监听端口，前者覆盖 401/403、静态回落与缓存清理，
-  后者用一个假上游覆盖评论规则、7 天缓存与按类型清理；
-- `src/` 内的内联单元测试模块（137 个）。
+- `tests/` 下 13 个集成测试文件（65 个用例），其中 `book_source_compat.rs` 用例最多（17 个）；
+  `auth_flow.rs`、`review_flow.rs` 与 `chapter_image_flow.rs` 起真实监听端口，前者覆盖 401/403、
+  静态回落与缓存清理，后两者各用一个假上游覆盖评论规则（7 天缓存、按类型清理）与章节配图
+  （配图规则、无图不报错、正文 HTML 内嵌图片透传）；
+- `src/` 内的内联单元测试模块（161 个）。
 
-前端使用 vitest，共 20 个 `*.test.ts`（75 个用例）。
+前端使用 vitest，共 21 个 `*.test.ts`（83 个用例）。
 
 需要注意：
 

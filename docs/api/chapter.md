@@ -29,6 +29,56 @@ GET /reader3/getBookContent
 
 也可使用 `POST /reader3/getBookContent`。
 
+正文可能是纯文本，也可能是 HTML（书源的正文规则吐出 HTML 时原样返回）。HTML 正文里的
+`<img>` 由前端直接渲染——漫画/图集源、出版书插图、富文本正文都走这条路，不需要任何额外规则。
+
+## 获取章节配图
+
+```text
+GET /reader3/getChapterImages
+```
+
+书源声明了配图规则（`ruleContentImage`）时，返回本章的配图列表；没声明时 `enabled: false`。
+配图规则见[书源规则规格 · 章节配图](/reference/book-source-rules#_17-7-章节配图规则-rulecontentimage)。
+
+查询参数与 `getBookContent` 同族（也支持 `POST`）：
+
+| 参数 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| `bookUrl` | string | 是 | 书籍 URL（别名 `url`） |
+| `chapterUrl` | string | 是 | 章节 URL（别名 `href`） |
+| `bookSourceUrl` | string | 否 | 书源 URL（别名 `origin`） |
+| `bookSource` | object | 否 | 直接内联书源对象，优先于 `bookSourceUrl` |
+
+响应：
+
+```json
+{
+  "isSuccess": true,
+  "errorMsg": "",
+  "data": {
+    "enabled": true,
+    "images": [
+      {
+        "url": "https://p3-reading-sign.fqnovelpic.com/novel-pic-r/857a72fe.jpeg?x-expires=1884944022&x-signature=...",
+        "caption": "配图（画师：奈月Oo）",
+        "paraIndex": 100,
+        "width": 1400,
+        "height": 933
+      }
+    ]
+  }
+}
+```
+
+- `paraIndex`：插入位置，等于**正文按 `\n` 切分后的行号**（从 0 开始，插在该行之前）；
+  为 `null` 时排在章末。
+- `caption`：图片说明；正文里已有同一句话时前端不重复显示。
+- `width` / `height`：原始尺寸，站点没给就是 `0`。
+- **无配图不是错误**：`enabled: true` + `images: []` 表示「这一章没有配图」；
+  `enabled: false` 才表示「书源不支持配图」，前端据此决定是否渲染配图区。
+- **不缓存**：图片地址普遍带时效签名（`x-expires`），缓存下来过一阵就是死链，因此每次开章现取。
+
 ## 缓存章节（流式）
 
 ```text

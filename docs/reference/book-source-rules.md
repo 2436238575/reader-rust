@@ -1487,6 +1487,49 @@ getContentAwait(source, book, chapter, nextChapterUrl=null, needSave=true):
 
 接口与缓存见 [评论 API](/api/review)。
 
+## 17.7 章节配图规则（`ruleContentImage`）
+
+阅读3.0 没有「章节配图」概念，这是本项目新增的扩展规则。配图有两条来源：
+
+| 来源 | 需要规则吗 | 说明 |
+| --- | --- | --- |
+| 正文 HTML 内嵌 `<img>` | 不需要 | 书源的正文规则吐出 HTML 时 `<img>` 原样保留，渲染端直接显示（漫画/图集源、出版书插图、富文本正文都属于这一类） |
+| 独立配图接口 | 需要 `ruleContentImage` | 站点把配图放在另一个接口里（番茄系 FQWeb 的 `/content/image`），位置与说明都由该接口给出 |
+
+`ruleContentImage` 字段：
+
+| 字段 | 必填 | 默认 | 说明 |
+| --- | --- | --- | --- |
+| `imageUrl` | 是 | — | 配图接口 URL 模板，对**章节正文响应**求值（与 `reviewUrl` 同理），模板里可引用正文响应里的字段 |
+| `listRule` | 是 | — | 配图列表规则（JSON 站点写 JSONPath，HTML 站点写 CSS 选择器） |
+| `urlRule` | 否 | `url`（HTML 分支取 `img` 的 `src`） | 单张图的地址 |
+| `captionRule` | 否 | `caption`（HTML 分支 `figcaption@text`） | 图片说明文字 |
+| `paraIndexRule` | 否 | `para_index` | 插入位置：正文按 `\n` 切分后的行号（从 0 开始，插在该行之前）。取不到位置的图排在章末 |
+| `widthRule` / `heightRule` | 否 | `width` / `height` | 原始宽高，用于给图片占位，避免加载时正文跳动 |
+
+约定与行为：
+
+- 位置 `paraIndex` 指向**正文行号**，所以配图接口给的 `para_index` 必须与正文响应里
+  `content` 字段按 `\n` 切分的下标一致（FQWeb 的 `/content/image` 就是这样）。
+- 说明文字只在正文里没有同一句话时才显示——番茄把说明也写进了正文，再显示一遍就是重复。
+- 书源没声明 `ruleContentImage` 时配图接口返回 `enabled: false`，前端不渲染配图区；
+  「这一章没有配图」是 `enabled: true` + 空列表，不是错误。
+- 配图**不进缓存**：图片地址普遍带时效签名（番茄的 `x-expires`），缓存下来过一阵就是死链。
+- 图片列表按 `paraIndex` 升序返回，没给位置的一律排在最后。
+
+示例（FQWeb）：
+
+```json
+{
+  "ruleContentImage": {
+    "imageUrl": "content/image?item_id={{$.data.data.novel_data.item_id}}",
+    "listRule": "$.data.images[*]"
+  }
+}
+```
+
+接口见 [章节 API](/api/chapter) 的 `getChapterImages`。
+
 ## 18. 老书源导入兼容
 
 当前项目在 `ImportOldData` 中支持旧格式迁移。若目标支持旧书源导入，需实现：
