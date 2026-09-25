@@ -10,7 +10,9 @@ use axum::{
 use std::path::PathBuf;
 use tower_http::cors::{AllowOrigin, Any, CorsLayer};
 use tower_http::request_id::{MakeRequestUuid, PropagateRequestIdLayer, SetRequestIdLayer};
+use tower_http::compression::CompressionLayer;
 use tower_http::services::{ServeDir, ServeFile};
+use tower_http::set_header::SetResponseHeaderLayer;
 use tower_http::trace::TraceLayer;
 
 /// 构建 CORS 层。
@@ -372,16 +374,36 @@ pub fn build_router(state: AppState) -> Router {
     // 因此这里**不提供 SPA fallback**：只有真实存在的文件才会被返回，
     // 其余路径一律 404。`/` 显式指向 index.html；dist 根目录下的
     // sw.js / site.webmanifest / favicon 等 PWA 资源仍按文件名直接可取。
+    // 缓存策略：assets 带 hash 文件名 → 一年 immutable；index.html / sw.js
+    // 等无 hash 文件 → no-cache（每次重验证拿 304）。此前完全不发
+    // Cache-Control，浏览器每次回源拉全部资源。
+    let immutable_cache = SetResponseHeaderLayer::overriding(
+        axum::http::header::CACHE_CONTROL,
+        axum::http::HeaderValue::from_static("public, max-age=31536000, immutable"),
+    );
+    let no_cache = SetResponseHeaderLayer::if_not_present(
+        axum::http::header::CACHE_CONTROL,
+        axum::http::HeaderValue::from_static("no-cache"),
+    );
+
+    let assets_web = Router::new()
+        .nest_service(
+            "/assets",
+            ServeDir::new(web_assets_root).not_found_service(ServeDir::new(assets_root)),
+        )
+        .layer(immutable_cache);
+
     let static_web = Router::new()
         .route_service(
             "/",
             ServeFile::new(PathBuf::from(&web_root).join("index.html")),
         )
-        .nest_service(
-            "/assets",
-            ServeDir::new(web_assets_root).not_found_service(ServeDir::new(assets_root)),
-        )
-        .fallback_service(ServeDir::new(web_root).append_index_html_on_directories(false));
+        .merge(assets_web)
+        .fallback_service(ServeDir::new(web_root).append_index_html_on_directories(false))
+        .layer(no_cache)
+        // 压缩只加在静态层：/reader3 的 SSE 流式响应不能被压缩层缓冲。
+        // tower-http 0.5 由 compression-gzip feature 直接启用 gzip，无需再逐算法开启
+        .layer(CompressionLayer::new());
 
     Router::new()
         .merge(api)

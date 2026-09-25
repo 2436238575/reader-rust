@@ -30,7 +30,7 @@ scraper = "0.20"
 jsonpath_lib = "0.3"
 regex = "1"
 rquickjs = { version = "0.7", features = ["futures"] }
-tower-http = { version = "0.5", features = ["trace", "cors", "request-id", "fs"] }
+tower-http = { version = "0.5", features = ["trace", "cors", "request-id", "fs", "set-header", "compression-gzip"] }
 http = "1"
 http-body-util = "0.1"
 urlencoding = "2"
