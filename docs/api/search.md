@@ -83,6 +83,9 @@ GET /reader3/getBookInfo
 |------|------|------|------|
 | `url` | string | 是 | 书籍详情页 URL |
 | `bookSourceUrl` | string | 否 | 书源 URL（别名 `origin`） |
+| `refresh` | number | 否 | 非 0 时绕过详情缓存强制抓取上游 |
+
+详情结果按用户命名空间缓存 10 分钟（`refresh=1` 强刷；saveBook 与换源路径始终直抓上游），命中缓存时不产生上游请求。
 
 响应：
 

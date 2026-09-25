@@ -13,6 +13,7 @@
 | `chapterList` | `storage/data/<ns>/chapters/<md5(tocUrl)>.json` | 章节列表 |
 | `searchResults` | `storage/data/<ns>/book_sources/<md5(bookUrl)>.json` | 某本书在各书源中的搜索结果 |
 | `invalidSources` | `storage/cache/invalid_book_sources/<ns>.json` | 失效书源清单 |
+| `bookInfo` | `storage/cache/bookinfo/<ns>/<md5(bookUrl)>.json` | 书籍详情，10 分钟 TTL（唯一例外，`refresh=1` 强刷） |
 
 容量上限由 `CACHE_USER_LIMIT_BYTES`（默认 512MiB，按用户）与 `CACHE_COVER_LIMIT_BYTES`（默认 256MiB，封面目录）控制，超出时按修改时间最旧优先淘汰；设为 `0` 表示不限制。
 
@@ -40,7 +41,7 @@ POST /reader3/purgeCache
 | `kind` | 只清理该用户的某一层 | `kind` 必填 |
 | `all` | 清理所有用户的全部缓存 | 无（**仅管理员**） |
 
-`kind` 取值：`content`、`cover`、`chapterList`、`searchResults`、`review`。
+`kind` 取值：`content`、`cover`、`chapterList`、`searchResults`、`review`（`chapterList` 同时清书籍详情缓存）。
 
 权限：
 

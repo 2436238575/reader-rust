@@ -288,10 +288,10 @@ HTTP 请求
 
 ## 数据与存储
 
-- SQLite 通过 `sqlx` 访问，连接池 5 条连接，启动时自动执行 `src/storage/db/migrations/` 下的迁移。
+- SQLite 通过 `sqlx` 访问，连接池 10 条连接，开启 WAL（`synchronous=NORMAL`），启动时自动执行 `src/storage/db/migrations/` 下的迁移。
 - 主要表：`book_sources`（书源 JSON，按 `(user_ns, book_source_url)` 主键）、`users`、`json_documents`（通用 JSON 文档，按 namespace + name 存取）、`ai_book_memories`。迁移只有 `0001_init.sql` 一个。
 - 章节正文以文件形式缓存于 `storage/cache/<ns>/<md5(bookUrl)>/`，文件名用 MD5，数据库里不存索引。
-- 缓存**不按时间过期**，只在显式调用 `POST /reader3/purgeCache` 或超出容量上限时回收；占用可用 `GET /reader3/cacheStats` 查看。
+- 缓存**不按时间过期**，只在显式调用 `POST /reader3/purgeCache` 或超出容量上限时回收；占用可用 `GET /reader3/cacheStats` 查看。例外有二：评论缓存（见下）与书籍详情缓存（`storage/cache/bookinfo/`，10 分钟 TTL，`refresh=1` 强刷）。
 - 唯一例外是**评论缓存**（`storage/cache/reviews/<ns>/<md5(bookUrl)>/`）：评论是会变的第三方数据，
   因此保留 7 天 TTL（`REVIEW_CACHE_TTL_SECS`），同时也受容量上限约束。
 - 另有若干**进程内**小缓存，重启即失效：书源正则编译缓存、JS `cache`/`kv` 与 jsLib 编译缓存、
