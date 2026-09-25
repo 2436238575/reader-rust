@@ -517,6 +517,10 @@ const ghostStyle = computed(() => {
   width: 100%;
   max-width: 420px;
   height: 100%;
+  /* 大列表（书架 2000 本/搜索结果上千）：视口外的卡片跳过布局与绘制，
+     intrinsic-size 带 auto，浏览器记住实际尺寸后估算更准 */
+  content-visibility: auto;
+  contain-intrinsic-size: auto 240px;
   transition:
     transform 820ms cubic-bezier(0.16, 0.84, 0.2, 1),
     filter 700ms ease,

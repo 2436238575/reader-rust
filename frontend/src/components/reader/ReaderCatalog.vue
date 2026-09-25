@@ -164,11 +164,16 @@ const chapterSearch = ref('')
 
 // Filtered chapters based on search
 const filteredChapters = computed(() => {
-  if (!chapterSearch.value.trim()) {
-    return store.chapters.map((chapter, index) => ({ ...chapter, index }))
-  }
+  const chapters = store.chapters
   const searchTerm = chapterSearch.value.toLowerCase().trim()
-  return store.chapters
+  if (!searchTerm) {
+    // 无搜索词时直接复用原数组：此前每次重算都把整目录复制成新对象
+    //（千章 = 数千个新对象，触发全列表重新 diff）
+    return chapters.every((chapter, index) => chapter.index === index)
+      ? chapters
+      : chapters.map((chapter, index) => ({ ...chapter, index }))
+  }
+  return chapters
     .map((chapter, index) => ({ ...chapter, index }))
     .filter(chapter => chapter.title.toLowerCase().includes(searchTerm))
 })
@@ -197,7 +202,7 @@ watch(() => store.book?.bookUrl, () => {
 
 watch(() => store.chapters, () => {
   void refreshCachedChapterState()
-}, { deep: true })
+})
 
 function scrollToCurrent() {
   nextTick(() => {
@@ -510,6 +515,9 @@ function formatDate(ts?: number) {
   gap: 12px;
   padding: 12px 20px;
   cursor: pointer;
+  /* 千章目录：视口外的行跳过布局与绘制 */
+  content-visibility: auto;
+  contain-intrinsic-size: auto 46px;
   transition: all 0.2s;
   border-bottom: 1px solid rgba(0,0,0,0.02);
 }

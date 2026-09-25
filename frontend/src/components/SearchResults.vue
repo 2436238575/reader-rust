@@ -110,6 +110,8 @@ const {
 } = storeToRefs(shelfStore)
 
 let eventSource: EventSource | null = null
+// 跨 SSE 消息维护的去重集合；每次发起新搜索时重建
+let searchSeen: Set<string> | null = null
 const showBookDetail = ref(false)
 const selectedBook = ref<Book | SearchBook | null>(null)
 
@@ -142,7 +144,10 @@ const sourceOptions = computed(() => {
 })
 
 const displayResults = computed<SearchBook[]>(() => {
+  // SSE 插入时已补齐源信息（见 onmessage），这里直接复用原对象，
+  // 保证同一结果跨批次对象身份稳定，BookGrid 的 keyed diff 才能跳过
   return results.value.map((book) => {
+    if (book.originName) return book
     const source = sourceByUrl.value.get(book.origin)
     return {
       ...book,
@@ -176,6 +181,7 @@ function ensureSearchSelection() {
 
 function doSearch(key: string) {
   closeEventSource()
+  searchSeen = new Set()
 
   if (searchScope.value === 'group' && !selectedGroup.value) {
     shelfStore.searchResults = []
@@ -203,9 +209,26 @@ function doSearch(key: string) {
     try {
       const data = JSON.parse(event.data)
       if (data.data && Array.isArray(data.data)) {
-        const existing = new Set(shelfStore.searchResults.map((r) => `${r.origin}::${r.bookUrl}`))
-        const newBooks = data.data.filter((b: SearchBook) => !existing.has(`${b.origin}::${b.bookUrl}`))
-        shelfStore.searchResults = [...shelfStore.searchResults, ...newBooks]
+        // 去重集合跨消息维护：此前每条 SSE 消息都重建一次全量 Set（O(已到条数)）
+        if (!searchSeen) searchSeen = new Set()
+        const annotate = (b: SearchBook) => {
+          const source = sourceByUrl.value.get(b.origin)
+          return {
+            ...b,
+            originName: b.originName || source?.bookSourceName || b.origin,
+            originGroup: b.originGroup || source?.bookSourceGroup,
+          }
+        }
+        const newBooks: SearchBook[] = []
+        for (const b of data.data as SearchBook[]) {
+          const dedupeKey = `${b.origin}::${b.bookUrl}`
+          if (searchSeen.has(dedupeKey)) continue
+          searchSeen.add(dedupeKey)
+          newBooks.push(annotate(b))
+        }
+        if (newBooks.length) {
+          shelfStore.searchResults = shelfStore.searchResults.concat(newBooks)
+        }
       }
     } catch { /* skip */ }
   }
