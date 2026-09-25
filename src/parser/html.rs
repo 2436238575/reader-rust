@@ -1,7 +1,34 @@
+use once_cell::sync::Lazy;
 use scraper::{ElementRef, Html, Selector};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
+use std::sync::Mutex;
 
 use crate::parser::rule_analyzer::split_top_level;
+
+/// CSS 选择器编译缓存：同一条规则对每个元素每个字段都会命中，
+/// `Selector::parse` 不便宜（千章目录页此前要重复编译数万次）。
+/// 键为选择器文本，解析失败也缓存（`None`）；满 1024 条整表清空，
+/// 与 `util::text` 的 REGEX_CACHE 同策略。
+static CSS_SELECTOR_CACHE: Lazy<Mutex<HashMap<String, Option<Selector>>>> =
+    Lazy::new(|| Mutex::new(HashMap::new()));
+
+const CSS_SELECTOR_CACHE_MAX: usize = 1024;
+
+fn cached_selector(css: &str) -> Option<Selector> {
+    let mut cache = CSS_SELECTOR_CACHE.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(parsed) = cache.get(css) {
+        return parsed.clone();
+    }
+    let parsed = Selector::parse(css).ok();
+    if cache.len() >= CSS_SELECTOR_CACHE_MAX {
+        cache.clear();
+    }
+    cache.insert(css.to_string(), parsed.clone());
+    parsed
+}
+
+/// `*` 全选器：按文本筛选的兜底路径用，固定编译一次。
+static ALL_ELEMENTS: Lazy<Selector> = Lazy::new(|| Selector::parse("*").unwrap());
 
 #[derive(Clone, Debug, PartialEq)]
 enum SelectorBase {
@@ -260,17 +287,17 @@ fn collect_matches_from_element<'a>(
 }
 
 fn select_css<'a>(doc: &'a Html, css_selector: &str) -> Vec<ElementRef<'a>> {
-    let sel = match Selector::parse(css_selector) {
-        Ok(s) => s,
-        Err(_) => return vec![],
+    let sel = match cached_selector(css_selector) {
+        Some(s) => s,
+        None => return vec![],
     };
     doc.select(&sel).collect()
 }
 
 fn select_css_from_element<'a>(el: ElementRef<'a>, css_selector: &str) -> Vec<ElementRef<'a>> {
-    let sel = match Selector::parse(css_selector) {
-        Ok(s) => s,
-        Err(_) => return vec![],
+    let sel = match cached_selector(css_selector) {
+        Some(s) => s,
+        None => return vec![],
     };
     el.select(&sel).collect()
 }
@@ -280,8 +307,7 @@ fn child_elements<'a>(el: ElementRef<'a>) -> Vec<ElementRef<'a>> {
 }
 
 fn select_by_text_doc<'a>(doc: &'a Html, needle: &str) -> Vec<ElementRef<'a>> {
-    let sel = Selector::parse("*").unwrap();
-    doc.select(&sel)
+    doc.select(&ALL_ELEMENTS)
         .filter(|el| own_text(el).contains(needle))
         .collect()
 }
@@ -291,12 +317,10 @@ fn select_by_text_from_element<'a>(el: ElementRef<'a>, needle: &str) -> Vec<Elem
     if own_text(&el).contains(needle) {
         matches.push(el);
     }
-    if let Ok(sel) = Selector::parse("*") {
-        matches.extend(
-            el.select(&sel)
-                .filter(|candidate| own_text(candidate).contains(needle)),
-        );
-    }
+    matches.extend(
+        el.select(&ALL_ELEMENTS)
+            .filter(|candidate| own_text(candidate).contains(needle)),
+    );
     matches
 }
 

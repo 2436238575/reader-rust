@@ -9,9 +9,42 @@ use crate::parser::{
     jsonpath,
 };
 use crate::util::text::normalize_source_url;
+use once_cell::sync::Lazy;
 use serde_json::{json, Value};
 use std::collections::HashMap;
 use sxd_xpath::{Context as XPathContext, Factory as XPathFactory, Value as XPathValue};
+
+/// 规则模板/占位符的固定正则：热路径上对每个元素每个字段都会用到，
+/// 每次调用重新编译是纯浪费（2000 章目录页此前要编译数万次）。
+static TEMPLATE_JS_RE: Lazy<regex::Regex> = Lazy::new(|| regex::Regex::new(r"\{\{(.*?)\}\}").unwrap());
+static INLINE_JS_RE: Lazy<regex::Regex> = Lazy::new(|| regex::Regex::new(r"\{\{([^}]+)\}\}").unwrap());
+static TEMPLATE_GET_RE: Lazy<regex::Regex> = Lazy::new(|| regex::Regex::new(r"@get:\{([^}]+)\}").unwrap());
+static REGEX_PLACEHOLDER_RE: Lazy<regex::Regex> = Lazy::new(|| regex::Regex::new(r"\$(\d{1,2})").unwrap());
+
+/// 文档级字段求值的共享视图：把整份 DOM 序列化成 HTML 字符串是
+/// O(文档大小) 的工作，book_info 一次要对同一份文档求值十余个字段，
+/// 用 `OnceCell` 让多个字段复用同一次序列化结果。
+struct DocView<'a> {
+    doc: &'a scraper::Html,
+    serialized: std::cell::OnceCell<String>,
+}
+
+impl<'a> DocView<'a> {
+    fn new(doc: &'a scraper::Html) -> Self {
+        Self {
+            doc,
+            serialized: std::cell::OnceCell::new(),
+        }
+    }
+
+    fn html(&self) -> &str {
+        self.serialized.get_or_init(|| self.doc.html())
+    }
+
+    fn doc(&self) -> &'a scraper::Html {
+        self.doc
+    }
+}
 
 #[derive(Clone, Default)]
 pub struct RuleEngine;
@@ -344,7 +377,7 @@ impl RuleEngine {
         let mut result = rule.to_string();
 
         // Find all {{...}} blocks and evaluate them
-        let re = regex::Regex::new(r"\{\{([^}]+)\}\}").unwrap();
+        let re = &*INLINE_JS_RE;
         for cap in re.captures_iter(rule) {
             if let Some(js_code) = cap.get(1) {
                 if let Ok(js_result) = eval_js(js_code.as_str(), body, base_url) {
@@ -1263,6 +1296,7 @@ fn parse_review_page_json(fields: &ReviewFields<'_>, v: &Value, base_url: &str) 
 
 fn parse_review_page_html(fields: &ReviewFields<'_>, body: &str, base_url: &str) -> ReviewPage {
     let doc = html::parse_document(body);
+    let doc_view = DocView::new(&doc);
     let (list_rule, reverse) = normalize_list_rule(fields.list);
     let nodes = html::select_list(&doc, strip_mode_prefix(list_rule));
     let mut ctx = HashMap::new();
@@ -1345,11 +1379,11 @@ fn parse_review_page_html(fields: &ReviewFields<'_>, body: &str, base_url: &str)
     if reverse {
         items.reverse();
     }
-    let total = eval_field_html_doc_with_ctx(fields.total.unwrap_or(""), &doc, base_url, &mut ctx)
+    let total = eval_field_html_doc_with_ctx(fields.total.unwrap_or(""), &doc_view, base_url, &mut ctx)
         .map(|text| parse_count_text(&text))
         .unwrap_or(items.len() as i64);
     let has_more =
-        eval_field_html_doc_with_ctx(fields.has_more.unwrap_or(""), &doc, base_url, &mut ctx)
+        eval_field_html_doc_with_ctx(fields.has_more.unwrap_or(""), &doc_view, base_url, &mut ctx)
             .map(is_truthy)
             .unwrap_or(false);
     ReviewPage {
@@ -1472,57 +1506,58 @@ fn parse_book_info_html(
     ctx: &mut HashMap<String, String>,
 ) -> Book {
     let doc = html::parse_document(body);
+    let doc_view = DocView::new(&doc);
 
     // Execute init rule if present
     if let Some(init) = &rule.init {
-        let _ = eval_field_html_doc_with_ctx(init, &doc, base_url, ctx);
+        let _ = eval_field_html_doc_with_ctx(init, &doc_view, base_url, ctx);
     }
 
     let name = rule
         .name
         .as_ref()
-        .and_then(|r| eval_field_html_doc_with_ctx(r, &doc, base_url, ctx))
+        .and_then(|r| eval_field_html_doc_with_ctx(r, &doc_view, base_url, ctx))
         .unwrap_or_default();
     let author = rule
         .author
         .as_ref()
-        .and_then(|r| eval_field_html_doc_with_ctx(r, &doc, base_url, ctx))
+        .and_then(|r| eval_field_html_doc_with_ctx(r, &doc_view, base_url, ctx))
         .unwrap_or_default();
     let intro = rule
         .intro
         .as_ref()
-        .and_then(|r| eval_field_html_doc_with_ctx(r, &doc, base_url, ctx));
+        .and_then(|r| eval_field_html_doc_with_ctx(r, &doc_view, base_url, ctx));
     let kind = eval_kind_html_doc(rule.kind.as_deref(), &doc, base_url);
     let last_chapter = rule
         .last_chapter
         .as_ref()
-        .and_then(|r| eval_field_html_doc_with_ctx(r, &doc, base_url, ctx));
+        .and_then(|r| eval_field_html_doc_with_ctx(r, &doc_view, base_url, ctx));
     let update_time = rule
         .update_time
         .as_ref()
-        .and_then(|r| eval_field_html_doc_with_ctx(r, &doc, base_url, ctx));
+        .and_then(|r| eval_field_html_doc_with_ctx(r, &doc_view, base_url, ctx));
     let cover_url = rule
         .cover_url
         .as_ref()
-        .and_then(|r| eval_field_html_doc_with_ctx(r, &doc, base_url, ctx))
+        .and_then(|r| eval_field_html_doc_with_ctx(r, &doc_view, base_url, ctx))
         .map(|u| resolve_url(base_url, &u));
     let word_count = rule
         .word_count
         .as_ref()
-        .and_then(|r| eval_field_html_doc_with_ctx(r, &doc, base_url, ctx));
+        .and_then(|r| eval_field_html_doc_with_ctx(r, &doc_view, base_url, ctx));
     let toc_url = rule
         .toc_url
         .as_ref()
-        .and_then(|r| eval_field_html_doc_with_ctx(r, &doc, base_url, ctx))
+        .and_then(|r| eval_field_html_doc_with_ctx(r, &doc_view, base_url, ctx))
         .map(|u| resolve_url(base_url, &u));
     let can_re_name = rule
         .can_re_name
         .as_ref()
-        .and_then(|r| eval_field_html_doc_with_ctx(r, &doc, base_url, ctx));
+        .and_then(|r| eval_field_html_doc_with_ctx(r, &doc_view, base_url, ctx));
     let download_urls = rule
         .download_urls
         .as_ref()
-        .and_then(|r| eval_field_html_doc_with_ctx(r, &doc, base_url, ctx));
+        .and_then(|r| eval_field_html_doc_with_ctx(r, &doc_view, base_url, ctx));
 
     let final_toc_url = toc_url.or_else(|| Some(book_url.to_string()));
 
@@ -1724,10 +1759,11 @@ fn parse_chapter_list_html(
         return (vec![], vec![]);
     }
     let doc = html::parse_document(body);
+    let doc_view = DocView::new(&doc);
 
     // Execute init rule if present
     if let Some(init) = &rule.init {
-        let _ = eval_field_html_doc_with_ctx(init, &doc, base_url, ctx);
+        let _ = eval_field_html_doc_with_ctx(init, &doc_view, base_url, ctx);
     }
 
     let items = html::select_list(&doc, strip_mode_prefix(list_sel));
@@ -2047,7 +2083,7 @@ fn interpolate_json_templates(
     base_url: &str,
     ctx: &HashMap<String, String>,
 ) -> String {
-    let re = regex::Regex::new(r"\{\{(.*?)\}\}").unwrap();
+    let re = &*TEMPLATE_JS_RE;
     re.replace_all(rule, |caps: &regex::Captures| {
         let expr = caps.get(1).map(|m| m.as_str().trim()).unwrap_or_default();
         if expr.is_empty() {
@@ -2098,13 +2134,13 @@ fn interpolate_common_templates(
     base_url: &str,
     ctx: &HashMap<String, String>,
 ) -> String {
-    let get_re = regex::Regex::new(r"@get:\{([^}]+)\}").unwrap();
+    let get_re = &*TEMPLATE_GET_RE;
     let with_get = get_re.replace_all(rule, |caps: &regex::Captures| {
         let key = caps.get(1).map(|m| m.as_str().trim()).unwrap_or_default();
         ctx.get(key).cloned().unwrap_or_default()
     });
 
-    let js_re = regex::Regex::new(r"\{\{(.*?)\}\}").unwrap();
+    let js_re = &*TEMPLATE_JS_RE;
     js_re
         .replace_all(&with_get, |caps: &regex::Captures| {
             let expr = caps.get(1).map(|m| m.as_str().trim()).unwrap_or_default();
@@ -2171,7 +2207,8 @@ fn eval_rule_on_text(
         return eval_field_json_with_ctx(rule, &value, base_url, ctx);
     }
     let doc = html::parse_document(text);
-    eval_field_html_doc_with_ctx(rule, &doc, base_url, ctx)
+    let doc_view = DocView::new(&doc);
+    eval_field_html_doc_with_ctx(rule, &doc_view, base_url, ctx)
 }
 
 /// `@regex:` 模式：不执行匹配，直接返回规则文本（规格 §6.8 的 Regex 分支）。
@@ -2332,8 +2369,9 @@ fn eval_kind_html_doc(rule: Option<&str>, doc: &scraper::Html, base_url: &str) -
     } else {
         Vec::new()
     };
+    let doc_view = DocView::new(doc);
     join_multi_values(values, || {
-        eval_field_html_doc_with_ctx(rule, doc, base_url, &mut HashMap::new())
+        eval_field_html_doc_with_ctx(rule, &doc_view, base_url, &mut HashMap::new())
     })
 }
 
@@ -2436,7 +2474,7 @@ fn eval_field_html_with_ctx(
 
 fn eval_field_html_doc_with_ctx(
     rule: &str,
-    doc: &scraper::Html,
+    doc_view: &DocView<'_>,
     base_url: &str,
     ctx: &mut HashMap<String, String>,
 ) -> Option<String> {
@@ -2444,24 +2482,24 @@ fn eval_field_html_doc_with_ctx(
     let rule = rule.trim();
     if rule.starts_with("@css:") {
         let pure = &rule[5..];
-        return eval_field_html_doc_with_ctx(pure, doc, base_url, ctx);
+        return eval_field_html_doc_with_ctx(pure, doc_view, base_url, ctx);
     }
     if rule.starts_with("@xpath:") {
         let pure = &rule[7..];
-        return html::select_xpath(&doc.html(), pure).first().cloned();
+        return html::select_xpath(doc_view.html(), pure).first().cloned();
     }
 
-    if let Some(res) = try_put_get_html_doc(rule, doc, base_url, ctx) {
+    if let Some(res) = try_put_get_html_doc(rule, doc_view, base_url, ctx) {
         return Some(res);
     }
 
-    let interpolated_rule = interpolate_common_templates(rule, &doc.html(), base_url, ctx);
+    let interpolated_rule = interpolate_common_templates(rule, doc_view.html(), base_url, ctx);
     let had_templates = interpolated_rule != rule;
     let (pure, js, tail) = extract_js(&interpolated_rule);
     let mut text = if pure.is_empty() {
         "".to_string()
     } else {
-        html::select_text(doc, pure).unwrap_or_default()
+        html::select_text(doc_view.doc(), pure).unwrap_or_default()
     };
     if text.is_empty() && had_templates && !pure.is_empty() {
         text = pure.to_string();
@@ -2781,7 +2819,7 @@ fn try_put_get_html(
 
 fn try_put_get_html_doc(
     rule: &str,
-    doc: &scraper::Html,
+    doc_view: &DocView<'_>,
     base_url: &str,
     ctx: &mut HashMap<String, String>,
 ) -> Option<String> {
@@ -2790,7 +2828,7 @@ fn try_put_get_html_doc(
         if content.starts_with('{') && content.ends_with('}') {
             for (key, val_rule) in split_put_map(&content[1..content.len() - 1]) {
                 let val =
-                    eval_field_html_doc_with_ctx(&val_rule, doc, base_url, ctx).unwrap_or_default();
+                    eval_field_html_doc_with_ctx(&val_rule, doc_view, base_url, ctx).unwrap_or_default();
                 ctx.insert(key, val);
             }
         }
@@ -3209,7 +3247,7 @@ fn capture_rule_value(rule: Option<&str>, groups: &[String]) -> Option<String> {
     if rule.is_empty() {
         return None;
     }
-    let placeholder = regex::Regex::new(r"\$(\d{1,2})").unwrap();
+    let placeholder = &*REGEX_PLACEHOLDER_RE;
     let replaced = placeholder.replace_all(rule, |cap: &regex::Captures| {
         let index = cap
             .get(1)

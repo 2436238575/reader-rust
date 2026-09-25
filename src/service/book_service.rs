@@ -1134,8 +1134,14 @@ impl BookService {
                 self.remember_body(user_ns, chapter_url, &res.body, &res.url)
                     .await;
             }
-            let content = self
-                .parse_response_blocking(user_ns, source, &res, |p, s, b, u| p.content(s, b, u))
+            let (content, next_url) = self
+                .parse_response_blocking(user_ns, source, &res, |p, s, b, u| {
+                    // content 与 next_content_url 针对同一份响应体，
+                    // 一次解析成 DOM 同时求值，省掉第二次 html5ever 全量建树
+                    let content = p.content(s, b, u);
+                    let next_url = p.next_content_url(s, b, u);
+                    (content, next_url)
+                })
                 .await?;
             tracing::debug!("get_content parsed content len={}", content.len());
 
@@ -1146,12 +1152,6 @@ impl BookService {
                 all_content.push_str(&content);
             }
 
-            // Check for next page
-            let next_url = self
-                .parse_response_blocking(user_ns, source, &res, |p, s, b, u| {
-                    p.next_content_url(s, b, u)
-                })
-                .await?;
             if let Some(next_url) = next_url {
                 tracing::debug!("get_content found next_url: {}", next_url);
                 if should_follow_content_page(chapter_url, &current_url, &next_url) {
