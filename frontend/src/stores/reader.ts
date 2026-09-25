@@ -1364,13 +1364,18 @@ export const useReaderStore = defineStore('reader', () => {
     return chapterContent
   }
 
+  let chapterLoadSeq = 0
+
   async function loadChapter(index: number, forceRefresh = false) {
     if (!book.value || !chapters.value[index]) return
 
+    // 快速连点下一章时旧响应可能后到：只认最新一次请求的结果
+    const loadSeq = ++chapterLoadSeq
     loading.value = true
     try {
       const chapterContent = await fetchChapterContent(index, forceRefresh)
       if (chapterContent == null) return
+      if (loadSeq !== chapterLoadSeq) return
 
       const previousSavedIndex = book.value.durChapterIndex ?? 0
       const previousSavedProgress = decodeServerProgress(book.value.durChapterPos)
