@@ -22,7 +22,7 @@ Reader-Rust 是 [阅读3.0](https://github.com/hectorqin/reader) 的 Rust 重写
 cargo run                      # 开发模式运行，默认监听 0.0.0.0:8080
 cargo build                    # 调试构建
 cargo build --release          # 发布构建
-cargo test                     # 全部测试（Rust 侧共 226 个，另有 2 个真实网络用例默认忽略）
+cargo test                     # 全部测试（Rust 侧共 225 个，另有 2 个真实网络用例默认忽略）
 cargo test <关键字>             # 按名称过滤测试
 cargo clippy --all-targets     # 静态检查
 cargo fmt                      # 格式化
@@ -123,11 +123,12 @@ cp .env.example .env
 ```
 src/
   main.rs / lib.rs        入口，各十余行
-  api/                    路由与 HTTP 处理（axum），19 文件约 7500 行
+  api/                    路由与 HTTP 处理（axum），18 文件约 7000 行
     router.rs             全部路由定义 + 鉴权分组（唯一真相来源）
-    handlers/             14 个领域模块：book、book_source、user、rss、bookmark、
+    handlers/             14 个领域模块：book、book_source、user、bookmark、
                           book_group、ai_book、ai_model、ai_proxy、replace_rule、
-                          update、webdav、cache（缓存清理与统计）、chapter_image；
+                          update、webdav、cache（缓存清理与统计）、chapter_image、
+                          review（章评/段评）；
                           另有共享的 multipart.rs（限量读取工具）
   auth/                   JWT 鉴权，4 文件
     jwt.rs                Claims 定义与 HS256 编解码
@@ -157,9 +158,9 @@ scripts/release.sh        发布脚本
 storage/                  运行期数据，gitignored，首次启动自动创建
 ```
 
-规模参照（便于判断改动影响面）：后端 `src/` 共 84 个 `.rs`、约 26900 行，其中最大的三个文件是
+规模参照（便于判断改动影响面）：后端 `src/` 共 82 个 `.rs`、约 26400 行，其中最大的三个文件是
 `parser/rule_engine.rs`（约 4700 行）、`api/handlers/book.rs`（约 3100 行）、`service/book_service.rs`（约 3100 行）；
-前端 `src/` 下 123 个文件（75 个 `.ts`，其中 21 个是测试；42 个 `.vue`；2 个 CSS + 2 个静态资源 + 1 个 JS 工具）。
+前端 `src/` 下 118 个文件（73 个 `.ts`，其中 21 个是测试；39 个 `.vue`；3 个 CSS + 2 个静态资源 + 1 个 JS 工具）。
 
 ---
 
@@ -315,13 +316,13 @@ HTTP 请求
 
 ## 测试
 
-Rust 侧共 **226 个测试**（161 个内联单元测试 + 65 个集成用例，另有 2 个 `#[ignore]` 的真实网络用例），分布为：
+Rust 侧共 **225 个测试**（160 个内联单元测试 + 65 个集成用例，另有 2 个 `#[ignore]` 的真实网络用例），分布为：
 
 - `tests/` 下 13 个集成测试文件（65 个用例），其中 `book_source_compat.rs` 用例最多（17 个）；
   `auth_flow.rs`、`review_flow.rs` 与 `chapter_image_flow.rs` 起真实监听端口，前者覆盖 401/403、
   静态回落与缓存清理，后两者各用一个假上游覆盖评论规则（7 天缓存、按类型清理）与章节配图
   （配图规则、无图不报错、正文 HTML 内嵌图片透传）；
-- `src/` 内的内联单元测试模块（161 个）。
+- `src/` 内的内联单元测试模块（160 个）。
 
 前端使用 vitest，共 21 个 `*.test.ts`（83 个用例）。
 

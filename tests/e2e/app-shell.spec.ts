@@ -13,10 +13,6 @@ test.describe('Standard E2E: app shell', () => {
     await page.getByTitle('最近', { exact: true }).click()
     await expect(page).toHaveURL(/#\/recent$/)
 
-    await page.getByTitle('RSS', { exact: true }).click()
-    await expect(page).toHaveURL(/#\/rss$/)
-    await expect(page.getByRole('heading', { name: '文章列表' })).toBeVisible()
-
     await page.getByTitle('书架', { exact: true }).click()
     await expect(page).toHaveURL(/#\/?$/)
     await expect(page.getByRole('heading', { name: /书架/ })).toBeVisible()
@@ -52,11 +48,5 @@ test.describe('Standard E2E: app shell', () => {
 
     await page.getByRole('button', { name: '缓存管理' }).click()
     await expect(page.getByRole('heading', { name: '缓存管理' })).toBeVisible()
-  })
-
-  test('opens RSS source management page', async ({ page }) => {
-    await gotoApp(page, '/rss')
-    await page.getByRole('button', { name: '管理订阅源', exact: true }).click()
-    await expect(page).toHaveURL(/#\/rss\/manage$/)
   })
 })

@@ -10,7 +10,6 @@ mod chapter_image;
 mod multipart;
 mod replace_rule;
 mod review;
-mod rss;
 mod update;
 mod user;
 mod webdav;
@@ -32,10 +31,6 @@ pub use replace_rule::{
     save_replace_rules,
 };
 pub use review::{get_chapter_comments, get_para_comment_index, get_para_comments};
-pub use rss::{
-    delete_rss_source, delete_rss_sources, get_rss_articles, get_rss_content, get_rss_sources,
-    read_remote_rss_source_file, read_rss_source_file, save_rss_source, save_rss_sources,
-};
 pub use update::{dismiss_version_update, get_version_update};
 pub use user::{
     add_user, change_password, delete_file, delete_users, get_user_config, get_user_info,

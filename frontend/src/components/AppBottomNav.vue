@@ -37,7 +37,7 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useAppStore } from '../stores/app'
 
-type NavKey = 'home' | 'explore' | 'recent' | 'rss'
+type NavKey = 'home' | 'explore' | 'recent'
 
 const router = useRouter()
 const route = useRoute()
@@ -62,12 +62,6 @@ const items: Array<{ key: NavKey; label: string; path: string; paths: string[] }
     path: '/recent',
     paths: ['M12 7v5l3 2', 'M12 3a9 9 0 1 0 9 9'],
   },
-  {
-    key: 'rss',
-    label: 'RSS',
-    path: '/rss',
-    paths: ['M4 11a9 9 0 0 1 9 9', 'M4 4a16 16 0 0 1 16 16', 'M5 19h.01'],
-  },
 ]
 
 const navRef = ref<HTMLElement | null>(null)
@@ -75,7 +69,6 @@ const itemRefs = ref<Record<NavKey, HTMLElement | null>>({
   home: null,
   explore: null,
   recent: null,
-  rss: null,
 })
 const dragging = ref(false)
 const dragX = ref(0)
@@ -85,7 +78,6 @@ const indicatorRect = ref({ left: 0, width: 0 })
 const activeKey = computed<NavKey>(() => {
   if (route.path.startsWith('/explore')) return 'explore'
   if (route.path.startsWith('/recent')) return 'recent'
-  if (route.path.startsWith('/rss')) return 'rss'
   return 'home'
 })
 const theme = computed(() => appStore.theme)

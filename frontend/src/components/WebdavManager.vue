@@ -9,7 +9,7 @@
           <header class="modal-header">
             <div>
               <h2>服务器备份与文件管理</h2>
-              <p class="subtitle">将书架、书源、RSS、书签、净化规则和本地阅读配置备份到服务器</p>
+              <p class="subtitle">将书架、书源、书签、净化规则和本地阅读配置备份到服务器</p>
             </div>
             <button class="icon-btn" @click="close" aria-label="关闭">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -361,7 +361,7 @@ async function removeSelected() {
 }
 
 async function restoreBackup(entry: EntryRow) {
-  if (!confirm(`确定从 ${entry.name} 恢复数据吗？这会覆盖当前书架、书源、RSS、书签和相关本地配置。`)) {
+  if (!confirm(`确定从 ${entry.name} 恢复数据吗？这会覆盖当前书架、书源、书签和相关本地配置。`)) {
     return
   }
 

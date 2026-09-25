@@ -65,15 +65,6 @@
           <span class="btn-label">最近</span>
         </button>
 
-        <button class="header-btn" :class="{ active: currentSection === 'rss' }" @click="handleRss" title="RSS">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <path d="M4 11a9 9 0 0 1 9 9" />
-            <path d="M4 4a16 16 0 0 1 16 16" />
-            <circle cx="5" cy="19" r="1" fill="currentColor" stroke="none" />
-          </svg>
-          <span class="btn-label">RSS</span>
-        </button>
-
         <button class="header-btn" @click="toggleTheme" title="切换主题">
           <svg v-if="theme === 'light'" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" />
@@ -126,14 +117,12 @@ const currentSection = computed(() => {
   if (route.path === '/' || route.path === '') return 'home'
   if (route.path.startsWith('/explore')) return 'explore'
   if (route.path.startsWith('/recent')) return 'recent'
-  if (route.path.startsWith('/rss')) return 'rss'
   return ''
 })
 
 const emit = defineEmits<{
   explore: []
   recent: []
-  rss: []
 }>()
 
 function goHome() {
@@ -154,10 +143,6 @@ function clearSearch() {
 
 function handleExplore() {
   emit('explore')
-}
-
-function handleRss() {
-  emit('rss')
 }
 
 function handleRecent() {

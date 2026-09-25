@@ -8,13 +8,12 @@ import {
   saveBookGroup,
 } from '../api/bookshelf'
 import { getReplaceRules, deleteReplaceRules, saveReplaceRules } from '../api/replaceRule'
-import { getRssSources, deleteRssSource, saveRssSources } from '../api/rss'
 import {
   deleteAllBookSources,
   getBookSources,
   saveBookSources,
 } from '../api/source'
-import type { Book, BookGroup, Bookmark, BookSource, ReplaceRule, RssSource } from '../types'
+import type { Book, BookGroup, Bookmark, BookSource, ReplaceRule } from '../types'
 
 const BACKUP_VERSION = 1
 const LOCAL_STORAGE_KEYS = [
@@ -38,7 +37,6 @@ export interface WebdavBackupPayload {
     groups: BookGroup[]
   }
   bookSources: BookSource[]
-  rssSources: RssSource[]
   bookmarks: Bookmark[]
   replaceRules: ReplaceRule[]
   localState: Record<string, string>
@@ -66,11 +64,10 @@ function applyLocalState(localState: Record<string, string> = {}) {
 }
 
 export async function createWebdavBackupPayload(): Promise<WebdavBackupPayload> {
-  const [books, groups, bookSources, rssSources, bookmarks, replaceRules] = await Promise.all([
+  const [books, groups, bookSources, bookmarks, replaceRules] = await Promise.all([
     getBookshelf(),
     getBookGroups(),
     getBookSources(),
-    getRssSources(),
     getBookmarks(),
     getReplaceRules(),
   ])
@@ -84,7 +81,6 @@ export async function createWebdavBackupPayload(): Promise<WebdavBackupPayload> 
       groups,
     },
     bookSources,
-    rssSources,
     bookmarks,
     replaceRules,
     localState: captureLocalState(),
@@ -112,7 +108,6 @@ export function parseWebdavBackup(raw: string) {
       groups: payload.bookshelf.groups || [],
     },
     bookSources: payload.bookSources || [],
-    rssSources: payload.rssSources || [],
     bookmarks: payload.bookmarks || [],
     replaceRules: payload.replaceRules || [],
     localState: payload.localState || {},
@@ -124,7 +119,6 @@ export async function restoreWebdavBackup(payload: WebdavBackupPayload) {
   const currentBooks = await getBookshelf().catch(() => [])
   const currentBookmarks = await getBookmarks().catch(() => [])
   const currentReplaceRules = await getReplaceRules().catch(() => [])
-  const currentRssSources = await getRssSources().catch(() => [])
 
   await Promise.all([
     currentGroups.length
@@ -135,20 +129,11 @@ export async function restoreWebdavBackup(payload: WebdavBackupPayload) {
       : Promise.resolve(),
     currentBookmarks.length ? deleteBookmarks(currentBookmarks) : Promise.resolve(),
     currentReplaceRules.length ? deleteReplaceRules(currentReplaceRules) : Promise.resolve(),
-    currentRssSources.length
-      ? Promise.all(currentRssSources.map((source) => deleteRssSource({
-          sourceUrl: source.sourceUrl,
-          sourceName: source.sourceName,
-        })))
-      : Promise.resolve(),
     deleteAllBookSources().catch(() => undefined),
   ])
 
   if (payload.bookSources.length) {
     await saveBookSources(payload.bookSources)
-  }
-  if (payload.rssSources.length) {
-    await saveRssSources(payload.rssSources)
   }
   for (const group of payload.bookshelf.groups) {
     await saveBookGroup(group)

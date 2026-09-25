@@ -7,11 +7,6 @@
           <span class="recent-count">({{ filteredRecentBooks.length }})</span>
         </h1>
         <div class="recent-actions">
-          <div class="recent-filters">
-            <button class="filter-chip" :class="{ active: activeFilter === 'all' }" @click="activeFilter = 'all'">全部</button>
-            <button class="filter-chip" :class="{ active: activeFilter === 'book' }" @click="activeFilter = 'book'">书籍</button>
-            <button class="filter-chip" :class="{ active: activeFilter === 'rss' }" @click="activeFilter = 'rss'">RSS</button>
-          </div>
           <button
             class="recent-clear-btn"
             :disabled="!shelfStore.recentBooks.length"
@@ -65,16 +60,10 @@ const readerStore = useReaderStore()
 const showDetail = ref(false)
 const selectedBook = ref<Book | SearchBook | null>(null)
 const openingBookUrl = ref('')
-const activeFilter = ref<'all' | 'book' | 'rss'>('all')
 const searchText = ref('')
 
 const filteredRecentBooks = computed(() => {
-  let list = shelfStore.recentBooks
-  if (activeFilter.value === 'book') {
-    list = list.filter((book) => book.recentKind !== 'rss')
-  } else if (activeFilter.value === 'rss') {
-    list = list.filter((book) => book.recentKind === 'rss')
-  }
+  const list = shelfStore.recentBooks
 
   const keyword = searchText.value.trim().toLowerCase()
   if (!keyword) return list
@@ -101,19 +90,6 @@ onMounted(async () => {
 
 async function handleBookClick(book: Book | SearchBook) {
   const currentBook = book as Book
-  if (currentBook.recentKind === 'rss' && currentBook.rssSourceUrl && (currentBook.rssLink || currentBook.bookUrl)) {
-    await router.push({
-      name: 'rss-article',
-      query: {
-        source: currentBook.rssSourceUrl,
-        link: currentBook.rssLink || currentBook.bookUrl,
-        title: currentBook.name || '',
-        pubDate: currentBook.rssPubDate || '',
-        origin: currentBook.author || '',
-      },
-    })
-    return
-  }
   if (!currentBook.origin || !currentBook.bookUrl) return
   if (openingBookUrl.value === currentBook.bookUrl) return
 
@@ -132,11 +108,6 @@ async function handleBookClick(book: Book | SearchBook) {
 }
 
 function handleBookInfo(book: Book | SearchBook) {
-  const currentBook = book as Book
-  if (currentBook.recentKind === 'rss') {
-    handleBookClick(book)
-    return
-  }
   selectedBook.value = book
   showDetail.value = true
 }
@@ -146,11 +117,9 @@ async function handleRecentDelete(book: Book | SearchBook) {
 }
 
 function handleBookAi(book: Book | SearchBook) {
-  const currentBook = book as Book
-  if (currentBook.recentKind === 'rss') return
   router.push({
     name: 'ai-book',
-    query: { bookUrl: currentBook.bookUrl },
+    query: { bookUrl: book.bookUrl },
   })
 }
 
@@ -228,29 +197,6 @@ async function handleClearRecent() {
   gap: 12px;
   flex-wrap: wrap;
   justify-content: flex-end;
-}
-
-.recent-filters {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-wrap: wrap;
-}
-
-.filter-chip {
-  padding: 8px 14px;
-  border-radius: 999px;
-  border: 1px solid var(--color-border-light);
-  background: var(--color-bg-elevated);
-  color: var(--color-text-secondary);
-  font-size: var(--text-sm);
-  transition: all var(--duration-fast) var(--ease-out);
-}
-
-.filter-chip.active {
-  border-color: rgba(201, 127, 58, 0.26);
-  background: rgba(201, 127, 58, 0.1);
-  color: var(--color-primary);
 }
 
 .recent-clear-btn {

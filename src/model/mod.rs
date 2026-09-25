@@ -9,7 +9,6 @@ pub mod bookmark;
 pub mod chapter_image;
 pub mod replace_rule;
 pub mod review;
-pub mod rss;
 pub mod rule;
 pub mod search;
 pub mod user;

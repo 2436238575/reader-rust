@@ -262,33 +262,6 @@ pub fn build_router(state: AppState) -> Router {
             "/reader3/localEpubAsset",
             get(handlers::get_local_epub_asset),
         )
-        .route("/reader3/getRssSources", get(handlers::get_rss_sources))
-        .route("/reader3/saveRssSource", post(handlers::save_rss_source))
-        .route("/reader3/saveRssSources", post(handlers::save_rss_sources))
-        .route(
-            "/reader3/deleteRssSource",
-            post(handlers::delete_rss_source),
-        )
-        .route(
-            "/reader3/deleteRssSources",
-            post(handlers::delete_rss_sources),
-        )
-        .route(
-            "/reader3/readRemoteRssSourceFile",
-            post(handlers::read_remote_rss_source_file),
-        )
-        .route(
-            "/reader3/readRssSourceFile",
-            post(handlers::read_rss_source_file),
-        )
-        .route(
-            "/reader3/getRssArticles",
-            get(handlers::get_rss_articles).post(handlers::get_rss_articles),
-        )
-        .route(
-            "/reader3/getRssContent",
-            get(handlers::get_rss_content).post(handlers::get_rss_content),
-        )
         .route("/reader3/getBookmarks", get(handlers::get_bookmarks))
         .route("/reader3/saveBookmark", post(handlers::save_bookmark))
         .route("/reader3/saveBookmarks", post(handlers::save_bookmarks))

@@ -1,6 +1,6 @@
 import DOMPurify from 'dompurify'
 
-// 书源正文与 RSS 文章是完全不可信的第三方 HTML。白名单保留排版相关标签
+// 书源正文是完全不可信的第三方 HTML。白名单保留排版相关标签
 // （段落/标题/表格/注音/图片/基础内联样式），剥掉脚本、事件属性、iframe
 // 等可执行内容；href/src 的 javascript: 协议由 DOMPurify 默认移除，
 // img 的 data: URI 默认放行（书源内嵌图常用）。
@@ -22,7 +22,7 @@ const ALLOWED_ATTR = [
 ]
 
 /**
- * 清洗不可信的第三方 HTML（书源正文、RSS 文章）。
+ * 清洗不可信的第三方 HTML（书源正文）。
  *
  * 返回值可以安全地交给 `v-html`：脚本与事件属性已剥除，标签集合收敛到
  * 排版所需的最小集。校验用例见 `sanitize.test.ts`。

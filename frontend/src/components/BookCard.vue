@@ -175,8 +175,7 @@ const sourceGroup = computed(() => {
 })
 const showAiEntry = computed(() => {
   if (props.isSearch || props.editMode) return false
-  const currentBook = props.book as Book
-  return currentBook.recentKind !== 'rss'
+  return true
 })
 </script>
 

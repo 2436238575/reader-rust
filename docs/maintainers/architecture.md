@@ -48,7 +48,7 @@ let books = self.parser.search_books(source, &res.body, &res.url);  // parser �
 | `router.rs` | **路由真相来源**。全部业务路由挂在 `/reader3` 下，唯一例外是根路径 `GET /health` |
 | `auth.rs` | 从请求头 `Authorization` 或查询参数 `accessToken` 提取凭证 |
 | `mod.rs` | `AppState`：共享配置与各 service 实例 |
-| `handlers/` | 按领域拆分，共 12 个领域模块：`book`、`book_source`、`book_group`、`bookmark`、`rss`、`user`、`ai_book`、`ai_model`、`ai_proxy`、`replace_rule`、`update`、`webdav`；另有共享的 `multipart`（multipart 字段限量读取） |
+| `handlers/` | 按领域拆分，共 14 个领域模块：`book`、`book_source`、`book_group`、`bookmark`、`cache`、`chapter_image`、`review`、`user`、`ai_book`、`ai_model`、`ai_proxy`、`replace_rule`、`update`、`webdav`；另有共享的 `multipart`（multipart 字段限量读取） |
 
 `handlers/book.rs` 是最大的单个文件（约 3200 行），涵盖书架、章节、缓存、上传等书籍相关接口。
 
@@ -205,7 +205,7 @@ JWT 本身无状态，但服务端每个请求都比对 `users.token_version`：
 | 登录防枚举 | `service/user_service.rs` | 失败文案统一「用户名或密码错误」，用户不存在时补一次 dummy Argon2 校验对齐响应时序 |
 | WebDAV Destination 校验 | `api/handlers/webdav.rs` | MOVE/COPY 的 `Destination` 必须带 `/reader3/webdav/` 前缀，缺前缀直接 400（否则目标塌缩成家目录，配合 `Overwrite` 可整目录清空） |
 | AI 代理权限收敛 | `api/handlers/ai_proxy.rs` | 客户端自带端点（`useServerConfig=false`，含 `fullUrl=true`）仅管理员可用；服务端配置端点按 `enableAiModel` 判定 |
-| 前端 HTML 消毒 | `frontend/src/utils/sanitize.ts` | 书源正文与 RSS 文章经 DOMPurify 白名单消毒后才进 `v-html`（保留排版标签，剥脚本/事件属性/iframe） |
+| 前端 HTML 消毒 | `frontend/src/utils/sanitize.ts` | 书源正文经 DOMPurify 白名单消毒后才进 `v-html`（保留排版标签，剥脚本/事件属性/iframe） |
 | CORS | `api/router.rs` | 默认仅同源（不下发任何 CORS 头）；跨域需 `CORS_ALLOWED_ORIGINS` 显式白名单 |
 | 令牌 | `auth/`、`service/user_service.rs` | HS256 JWT；签名密钥来自 `JWT_SECRET` 或自动生成并持久化到 `storage/jwt_secret`；`token_version` 提供即时撤销 |
 | 封面代理 | `service/book_service.rs` | Content-Type 收敛为位图白名单（防 `text/html`/`svg` 经 `/cover` 的同源 XSS）；封面缓存目录容量上限 `CACHE_COVER_LIMIT_BYTES`、按最旧优先淘汰 |
@@ -243,9 +243,9 @@ SQLite 表：
 
 ```
 frontend/src/
-  views/       8 个路由页：Home / Reader / Explore / Recent / Rss / RssArticle / RssManage / AiBook
-  components/  31 个组件，含 bookshelf/、reader/、source-manager/ 三个子目录
-  stores/      Pinia：reader / bookshelf / explore / source / rss / aiBook / app
+  views/       6 个路由页：Home / Reader / Explore / Recent / Login / AiBook
+  components/  32 个组件，含 bookshelf/、reader/、source-manager/ 三个子目录
+  stores/      Pinia：reader / bookshelf / explore / source / aiBook / app
   api/         13 个接口模块 + http.ts（axios 实例）
   utils/       PWA、简繁转换、TTS、加密工具
 ```

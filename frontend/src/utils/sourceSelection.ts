@@ -1,4 +1,4 @@
-import type { BookSource, RssSource } from '../types'
+import type { BookSource } from '../types'
 
 export function getVisibleSelection<T>(
   visibleItems: T[],
@@ -10,13 +10,6 @@ export function getVisibleSelection<T>(
 
 export function toBookSourceDeletePayload(sources: Pick<BookSource, 'bookSourceUrl'>[]) {
   return sources.map((source) => ({ bookSourceUrl: source.bookSourceUrl }))
-}
-
-export function toRssSourceDeletePayload(sources: Pick<RssSource, 'sourceName' | 'sourceUrl'>[]) {
-  return sources.map((source) => ({
-    sourceName: source.sourceName,
-    sourceUrl: source.sourceUrl,
-  }))
 }
 
 export function getBookSourceGroups(sources: Pick<BookSource, 'bookSourceGroup'>[]) {

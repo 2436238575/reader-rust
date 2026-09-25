@@ -60,7 +60,6 @@ export default defineConfig({
             { text: '书签', link: '/api/bookmark' },
             { text: '替换规则', link: '/api/replace-rule' },
             { text: '用户管理', link: '/api/user' },
-            { text: 'RSS 订阅', link: '/api/rss' },
             { text: 'WebDAV', link: '/api/webdav' },
             { text: 'AI', link: '/api/ai' }
           ]

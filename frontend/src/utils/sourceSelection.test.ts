@@ -6,19 +6,13 @@ import {
   getBookSourceStats,
   getVisibleSelection,
   toBookSourceDeletePayload,
-  toRssSourceDeletePayload,
 } from './sourceSelection'
-import type { BookSource, RssSource } from '../types'
+import type { BookSource } from '../types'
 
 describe('sourceSelection', () => {
   const bookSources: BookSource[] = [
     { bookSourceName: 'Alpha', bookSourceUrl: 'https://alpha.example', enabled: true },
     { bookSourceName: 'Beta', bookSourceUrl: 'https://beta.example', enabled: true },
-  ]
-
-  const rssSources: RssSource[] = [
-    { sourceName: 'News', sourceUrl: 'https://news.example', enabled: true },
-    { sourceName: 'Tech', sourceUrl: 'https://tech.example', enabled: true },
   ]
 
   it('keeps bulk selection scoped to currently visible source urls', () => {
@@ -33,10 +27,6 @@ describe('sourceSelection', () => {
     expect(toBookSourceDeletePayload(bookSources)).toEqual([
       { bookSourceUrl: 'https://alpha.example' },
       { bookSourceUrl: 'https://beta.example' },
-    ])
-    expect(toRssSourceDeletePayload(rssSources)).toEqual([
-      { sourceName: 'News', sourceUrl: 'https://news.example' },
-      { sourceName: 'Tech', sourceUrl: 'https://tech.example' },
     ])
   })
 

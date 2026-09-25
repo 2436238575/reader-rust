@@ -10,32 +10,16 @@
           <span class="logo-text">阅读</span>
         </div>
 
-        <form
-          v-if="showGlobalSearch && !isLoginPage"
-          class="search-box"
-          :class="{ focused: searchFocused }"
-          role="search"
-          @submit.prevent="handleSearch"
-        >
-          <input
-            v-model="searchValue"
-            type="text"
-            placeholder="搜索书籍..."
-            @focus="searchFocused = true"
-            @blur="searchFocused = false"
-          />
+        <form v-if="showGlobalSearch && !isLoginPage" class="search-box" :class="{ focused: searchFocused }"
+          role="search" @submit.prevent="handleSearch">
+          <input v-model="searchValue" type="text" placeholder="搜索书籍..." @focus="searchFocused = true"
+            @blur="searchFocused = false" />
           <button v-if="searchValue" class="search-clear" type="button" @click="clearSearch">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
               <path d="M18 6 6 18M6 6l12 12" />
             </svg>
           </button>
-          <button
-            class="search-submit"
-            type="submit"
-            title="搜索"
-            aria-label="搜索"
-            :disabled="!canSearch"
-          >
+          <button class="search-submit" type="submit" title="搜索" aria-label="搜索" :disabled="!canSearch">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
               <circle cx="11" cy="11" r="8" />
               <path d="m21 21-4.3-4.3" />
@@ -46,40 +30,27 @@
 
       <div class="topbar-right">
         <nav v-if="showNavTabs" class="topbar-nav" aria-label="主导航">
-          <router-link
-            v-for="item in navItems"
-            :key="item.key"
-            :to="item.path"
-            class="nav-tab"
-            :class="{ active: activeNavKey === item.key }"
-          >
+          <router-link v-for="item in navItems" :key="item.key" :to="item.path" class="nav-tab"
+            :class="{ active: activeNavKey === item.key }">
             {{ item.label }}
           </router-link>
           <span class="nav-divider" aria-hidden="true"></span>
         </nav>
-        <a class="topbar-btn" href="https://givenge.github.io/reader-rust/" target="_blank" title="文档" rel="noopener noreferrer">
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-      <path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H20v20H6.5a2.5 2.5 0 0 1 0-5H20" />
-    </svg>
-  </a>
-  <a class="topbar-btn" href="https://github.com/givenge/reader-rust" target="_blank" title="GitHub" rel="noopener noreferrer">
-    <svg viewBox="0 0 24 24" fill="currentColor">
-      <path d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z" />
-    </svg>
-  </a>
-  <button class="topbar-btn" @click="toggleTheme" title="切换主题">
+        <button class="topbar-btn" @click="toggleTheme" title="切换主题">
           <svg v-if="theme === 'light'" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" />
           </svg>
           <svg v-else viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <circle cx="12" cy="12" r="4" />
-            <path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41" />
+            <path
+              d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41" />
           </svg>
         </button>
 
         <button v-if="!isLoggedIn && !isLoginPage" class="topbar-btn" @click="openSettings" title="设置">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z" />
+            <path
+              d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z" />
             <circle cx="12" cy="12" r="3" />
           </svg>
           <span v-if="hasVersionUpdateReminder" class="update-indicator" aria-hidden="true"></span>
@@ -110,19 +81,17 @@ const exploreStore = useExploreStore()
 const searchFocused = ref(false)
 const searchValue = ref('')
 
-type NavKey = 'home' | 'explore' | 'recent' | 'rss'
+type NavKey = 'home' | 'explore' | 'recent'
 
 const navItems: Array<{ key: NavKey; label: string; path: string }> = [
   { key: 'home', label: '书架', path: '/' },
   { key: 'explore', label: '书海', path: '/explore' },
   { key: 'recent', label: '最近', path: '/recent' },
-  { key: 'rss', label: 'RSS', path: '/rss' },
 ]
 
 const activeNavKey = computed<NavKey>(() => {
   if (route.path.startsWith('/explore')) return 'explore'
   if (route.path.startsWith('/recent')) return 'recent'
-  if (route.path.startsWith('/rss')) return 'rss'
   return 'home'
 })
 const showNavTabs = computed(() => route.name !== 'login')
@@ -132,7 +101,7 @@ const theme = computed(() => appStore.theme)
 const isLoggedIn = computed(() => appStore.isLoggedIn)
 const userInfo = computed(() => appStore.userInfo)
 const hasVersionUpdateReminder = computed(() => appStore.hasVersionUpdateReminder)
-const showGlobalSearch = computed(() => !route.path.startsWith('/rss') && route.path !== '/recent')
+const showGlobalSearch = computed(() => route.path !== '/recent')
 const canSearch = computed(() => searchValue.value.trim().length > 0)
 
 function goHome() {
@@ -236,9 +205,9 @@ function openSettings() {
   width: 220px;
   flex: 0 0 auto;
   transition: width var(--duration-normal) var(--ease-out),
-              border-color var(--duration-normal) var(--ease-out),
-              background var(--duration-normal) var(--ease-out),
-              box-shadow var(--duration-normal) var(--ease-out);
+    border-color var(--duration-normal) var(--ease-out),
+    background var(--duration-normal) var(--ease-out),
+    box-shadow var(--duration-normal) var(--ease-out);
 }
 
 .search-box.focused {

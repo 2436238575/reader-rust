@@ -34,10 +34,6 @@ export interface Book {
   updateTime?: string
   cachedChapterCount?: number
   browserCachedChapterCount?: number
-  recentKind?: 'book' | 'rss'
-  rssSourceUrl?: string
-  rssLink?: string
-  rssPubDate?: string
 }
 
 // ─── 搜索结果 ───
@@ -222,51 +218,6 @@ export interface ReplaceRule {
   isEnabled: boolean
   isRegex: boolean
   order: number
-}
-
-// ─── RSS ───
-export interface RssSource {
-  sourceUrl: string
-  sourceName: string
-  sourceIcon?: string
-  sourceGroup?: string
-  sourceComment?: string
-  enabled?: boolean
-  enabledCookieJar?: boolean
-  concurrentRate?: string
-  header?: string
-  loginUrl?: string
-  loginCheckJs?: string
-  sortUrl?: string
-  singleUrl?: boolean
-  articleStyle?: number
-  ruleArticles?: string
-  ruleNextPage?: string
-  ruleTitle?: string
-  rulePubDate?: string
-  ruleDescription?: string
-  ruleImage?: string
-  ruleLink?: string
-  ruleContent?: string
-  style?: string
-  enableJs?: boolean
-  loadWithBaseUrl?: boolean
-  customOrder?: number
-  lastUpdateTime?: number
-}
-
-export interface RssArticle {
-  origin: string
-  sort: string
-  title: string
-  order: number
-  link: string
-  pubDate?: string
-  description?: string
-  content?: string
-  image?: string
-  read?: boolean
-  variable?: string
 }
 
 // ─── AI 设定集 ───
