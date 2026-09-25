@@ -184,10 +184,17 @@ export const useAppStore = defineStore('app', () => {
     }
   }
 
+  // readChapters 的保留条数上限（只作累计统计用，裁掉最旧的）
+  const MAX_READ_CHAPTER_ENTRIES = 5000
+
   function markChapterRead(bookUrl: string, index: number, totalChapters: number) {
     const key = `${bookUrl}#${index}`
     if (!readingStats.value.readChapters.includes(key)) {
       readingStats.value.readChapters.push(key)
+      // 无上限会随使用年限膨胀到数万条且每章全量 stringify；只统计总数，裁掉最旧的
+      if (readingStats.value.readChapters.length > MAX_READ_CHAPTER_ENTRIES) {
+        readingStats.value.readChapters.splice(0, readingStats.value.readChapters.length - MAX_READ_CHAPTER_ENTRIES)
+      }
     }
     if (totalChapters > 0 && index >= totalChapters - 1 && !readingStats.value.completedBooks.includes(bookUrl)) {
       readingStats.value.completedBooks.push(bookUrl)
