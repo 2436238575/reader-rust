@@ -4,7 +4,10 @@ use crate::util::hash::md5_hex;
 use encoding_rs::GB18030;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
+use std::time::{Instant, SystemTime};
 use tokio::fs;
 
 pub const LOCAL_TXT_ORIGIN: &str = "local-txt";
@@ -12,6 +15,23 @@ pub const LOCAL_TXT_ORIGIN_NAME: &str = "本地 TXT";
 pub const MAX_TXT_UPLOAD_BYTES: usize = 50 * 1024 * 1024;
 const LOCAL_BOOK_DIR: &str = "local_books";
 const LOCAL_TXT_HASH_LEN: usize = 32;
+/// 内存缓存的书籍数上限：book.txt 上传上限 50MB，8 本最坏 400MB；
+/// 超限按最旧插入逐出。缓存以 mtime 校验，重新上传自动失效。
+const TXT_CACHE_MAX_ENTRIES: usize = 8;
+
+/// 暂存的整本 TXT 文本，`mtime` 用于失效校验。
+struct CachedTxt {
+    mtime: SystemTime,
+    stored_at: Instant,
+    text: Arc<String>,
+}
+
+/// 暂存的章节索引。
+struct CachedTxtIndex {
+    mtime: SystemTime,
+    stored_at: Instant,
+    index: Arc<StoredTxtIndex>,
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -184,12 +204,18 @@ pub fn validate_txt_upload(file_name: &str, byte_len: usize) -> Result<(), AppEr
 #[derive(Clone)]
 pub struct LocalTxtBookService {
     storage_dir: PathBuf,
+    /// 整本 TXT 文本缓存：此前每次取正文都全量读 book.txt（上限 50MB）。
+    txt_content: Arc<Mutex<HashMap<(String, String), CachedTxt>>>,
+    /// 章节索引缓存：chapters.json 每次翻章都要重读重解析。
+    txt_index: Arc<Mutex<HashMap<(String, String), CachedTxtIndex>>>,
 }
 
 impl LocalTxtBookService {
     pub fn new(storage_dir: impl AsRef<Path>) -> Self {
         Self {
             storage_dir: storage_dir.as_ref().to_path_buf(),
+            txt_content: Arc::new(Mutex::new(HashMap::new())),
+            txt_index: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 
@@ -266,7 +292,7 @@ impl LocalTxtBookService {
     pub async fn get_book_info(&self, user_ns: &str, book_url: &str) -> Result<Book, AppError> {
         let index = self.read_index(user_ns, book_url).await?;
         Ok(Book {
-            name: index.name,
+            name: index.name.clone(),
             author: "本地导入".to_string(),
             book_url: index.book_url.clone(),
             origin: LOCAL_TXT_ORIGIN.to_string(),
@@ -289,10 +315,10 @@ impl LocalTxtBookService {
         let index = self.read_index(user_ns, book_url).await?;
         Ok(index
             .chapters
-            .into_iter()
+            .iter()
             .map(|chapter| BookChapter {
-                title: chapter.title,
-                url: chapter.url,
+                title: chapter.title.clone(),
+                url: chapter.url.clone(),
                 index: chapter.index,
                 ..BookChapter::default()
             })
@@ -307,9 +333,7 @@ impl LocalTxtBookService {
             .iter()
             .find(|chapter| chapter.index == requested_index)
             .ok_or_else(|| AppError::BadRequest("章节不存在".to_string()))?;
-        let text = fs::read_to_string(self.book_dir(user_ns, &book_url)?.join("book.txt"))
-            .await
-            .map_err(map_local_txt_read_error)?;
+        let text = self.cached_txt_text(user_ns, &book_url).await?;
         if chapter.start > chapter.end || chapter.end > text.len() {
             return Err(AppError::BadRequest("章节索引无效".to_string()));
         }
@@ -337,12 +361,102 @@ impl LocalTxtBookService {
         Ok(self.local_root(user_ns).join(hash))
     }
 
-    async fn read_index(&self, user_ns: &str, book_url: &str) -> Result<StoredTxtIndex, AppError> {
+    async fn read_index(
+        &self,
+        user_ns: &str,
+        book_url: &str,
+    ) -> Result<Arc<StoredTxtIndex>, AppError> {
         let path = self.book_dir(user_ns, book_url)?.join("chapters.json");
-        let data = fs::read_to_string(path)
+        let meta = fs::metadata(&path)
             .await
             .map_err(map_local_txt_read_error)?;
-        serde_json::from_str(&data).map_err(|e| AppError::BadRequest(e.to_string()))
+        let mtime = meta.modified().map_err(|e| AppError::Internal(e.into()))?;
+        let key = (user_ns.to_string(), book_url.to_string());
+        {
+            let map = self.txt_index.lock().unwrap();
+            if let Some(cached) = map.get(&key) {
+                if cached.mtime == mtime {
+                    return Ok(cached.index.clone());
+                }
+            }
+        }
+        let data = fs::read_to_string(&path)
+            .await
+            .map_err(map_local_txt_read_error)?;
+        let index = Arc::new(
+            serde_json::from_str::<StoredTxtIndex>(&data)
+                .map_err(|e| AppError::BadRequest(e.to_string()))?,
+        );
+        {
+            let mut map = self.txt_index.lock().unwrap();
+            if map.len() >= TXT_CACHE_MAX_ENTRIES {
+                if let Some(oldest) = map
+                    .iter()
+                    .min_by_key(|(_, v)| v.stored_at)
+                    .map(|(k, _)| k.clone())
+                {
+                    map.remove(&oldest);
+                }
+            }
+            map.insert(
+                key,
+                CachedTxtIndex {
+                    mtime,
+                    stored_at: Instant::now(),
+                    index: index.clone(),
+                },
+            );
+        }
+        Ok(index)
+    }
+
+    /// 整本 TXT 全文（按 mtime 失效的内存缓存）：每次翻章都要按字节切片，
+    /// 50MB 的重复读 + UTF-8 校验不能每章来一遍。
+    async fn cached_txt_text(
+        &self,
+        user_ns: &str,
+        book_url: &str,
+    ) -> Result<Arc<String>, AppError> {
+        let path = self.book_dir(user_ns, book_url)?.join("book.txt");
+        let meta = fs::metadata(&path)
+            .await
+            .map_err(map_local_txt_read_error)?;
+        let mtime = meta.modified().map_err(|e| AppError::Internal(e.into()))?;
+        let key = (user_ns.to_string(), book_url.to_string());
+        {
+            let map = self.txt_content.lock().unwrap();
+            if let Some(cached) = map.get(&key) {
+                if cached.mtime == mtime {
+                    return Ok(cached.text.clone());
+                }
+            }
+        }
+        let text = Arc::new(
+            fs::read_to_string(&path)
+                .await
+                .map_err(map_local_txt_read_error)?,
+        );
+        {
+            let mut map = self.txt_content.lock().unwrap();
+            if map.len() >= TXT_CACHE_MAX_ENTRIES {
+                if let Some(oldest) = map
+                    .iter()
+                    .min_by_key(|(_, v)| v.stored_at)
+                    .map(|(k, _)| k.clone())
+                {
+                    map.remove(&oldest);
+                }
+            }
+            map.insert(
+                key,
+                CachedTxt {
+                    mtime,
+                    stored_at: Instant::now(),
+                    text: text.clone(),
+                },
+            );
+        }
+        Ok(text)
     }
 }
 
