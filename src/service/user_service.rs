@@ -12,22 +12,57 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use tokio::fs;
 
-/// 登录失败限速：在窗口内失败达到上限即锁定一段时间。
+/// 登录/注册限速：用户名与 IP 双维度，进程内实现（单实例部署足够）。
 ///
-/// 此前登录接口完全没有尝试次数限制，可对已知用户名做无限次口令爆破。
-const LOGIN_FAILURE_WINDOW_MS: i64 = 10 * 60 * 1000;
-const LOGIN_MAX_FAILURES: usize = 8;
-const LOGIN_LOCKOUT_MS: i64 = 5 * 60 * 1000;
-/// 登录限速表的容量上限，防止用随机用户名打登录接口导致内存无界增长。
-const MAX_LOGIN_ATTEMPT_ENTRIES: usize = 4096;
+/// - 用户名维度：登录失败 `USER_LOGIN_MAX_FAILURES` 次封禁该用户名登录 6 小时；
+/// - IP 维度：登录失败 `IP_LOGIN_MAX_FAILURES` 次封禁该地址登录 6 小时；
+/// - IP 维度：48 小时内最多注册成功 1 次；
+/// - IP 维度：邀请码错误 3 次封禁该地址注册 168 小时。
+///
+/// `RATE_LIMIT_DISABLED=true` 时全部豁免（开发/测试环境）。
+const USER_LOGIN_MAX_FAILURES: usize = 10;
+const USER_LOGIN_BAN_MS: i64 = 6 * 60 * 60 * 1000;
+const IP_LOGIN_MAX_FAILURES: usize = 5;
+const IP_LOGIN_BAN_MS: i64 = 6 * 60 * 60 * 1000;
+const REGISTER_COOLDOWN_MS: i64 = 48 * 60 * 60 * 1000;
+const INVITE_MAX_WRONG: usize = 3;
+const INVITE_BAN_MS: i64 = 168 * 60 * 60 * 1000;
+/// 限速表容量上限，防止用随机用户名/IP 打接口导致内存无界增长。
+const MAX_THROTTLE_ENTRIES: usize = 4096;
+/// 无封禁且超过该时长未活动的条目可被淘汰。
+const THROTTLE_RETENTION_MS: i64 = 7 * 24 * 60 * 60 * 1000;
 
 /// 单个用户名的登录失败记录（进程内，单实例部署足够）。
 #[derive(Default, Clone)]
-struct LoginAttempt {
-    /// 窗口内的失败时间戳（毫秒）。
-    failures: Vec<i64>,
-    /// 锁定期截止时间；0 表示未锁定。
-    locked_until: i64,
+struct UserAttempt {
+    /// 自上次成功以来的失败次数（悲观计数：先计数、成功后清除）。
+    failures: usize,
+    /// 封禁截止时间（毫秒）；0 表示未封禁。
+    banned_until: i64,
+    /// 最后活动时间（毫秒），供淘汰。
+    last_active: i64,
+}
+
+/// 单个 IP 的注册/登录记录。
+#[derive(Default, Clone)]
+struct IpAttempt {
+    login_failures: usize,
+    login_banned_until: i64,
+    /// 最近一次注册成功的时间（毫秒）；0 表示从未。
+    register_success_at: i64,
+    invite_wrong: usize,
+    register_banned_until: i64,
+    last_active: i64,
+}
+
+#[derive(Default)]
+struct AuthThrottle {
+    users: HashMap<String, UserAttempt>,
+    ips: HashMap<String, IpAttempt>,
+}
+
+fn remaining_secs(banned_until: i64, now: i64) -> i64 {
+    (banned_until - now) / 1000 + 1
 }
 
 /// Argon2 是刻意的慢哈希（默认参数数十毫秒），统一放进 blocking 线程池，
@@ -71,7 +106,7 @@ pub struct UserService {
     cache_root: PathBuf,
     pool: SqlitePool,
     jwt_secret: Arc<Vec<u8>>,
-    login_attempts: Arc<Mutex<HashMap<String, LoginAttempt>>>,
+    auth_throttle: Arc<Mutex<AuthThrottle>>,
 }
 
 impl UserService {
@@ -83,71 +118,178 @@ impl UserService {
             cfg,
             pool,
             jwt_secret,
-            login_attempts: Arc::new(Mutex::new(HashMap::new())),
+            auth_throttle: Arc::new(Mutex::new(AuthThrottle::default())),
         }
     }
 
-    /// 登录前置检查：单次取锁完成「锁定判断 + 本次尝试计数」。
+    /// 登录前置检查：单次取锁完成「封禁判断 + 本次尝试计数」。
     ///
-    /// 原实现把检查与计数拆在口令校验两端，中间隔着数据库查询与 Argon2 校验的
-    /// await：并发打 N 个请求可全部通过 check 后才陆续 record，实际爆破速率不受
-    /// 「8 次即锁」约束。现在悲观地把每次尝试先计数、成功后再清除，并发爆发在
-    /// 锁内串行化，超限请求在口令校验之前就被拒绝。
-    fn login_throttle_begin(&self, username: &str) -> Result<(), AppError> {
-        let mut map = self
-            .login_attempts
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
+    /// 悲观地把每次尝试先计数、成功后再清除：并发打 N 个请求在锁内串行化，
+    /// 超限请求在口令校验之前就被拒绝。用户名与 IP 两个维度独立记账；
+    /// `client_ip` 为 `None`（集成测试直调）时只走用户名维度。
+    fn login_throttle_begin(
+        &self,
+        username: &str,
+        client_ip: Option<&str>,
+    ) -> Result<(), AppError> {
+        if self.cfg.rate_limit_disabled {
+            return Ok(());
+        }
         let now = now_ms();
-        if !map.contains_key(username) && map.len() >= MAX_LOGIN_ATTEMPT_ENTRIES {
-            evict_stale_login_attempts(&mut map, now);
-            if map.len() >= MAX_LOGIN_ATTEMPT_ENTRIES {
-                return Err(AppError::BadRequest(
-                    "登录失败次数过多，请稍后再试".to_string(),
-                ));
-            }
+        let mut throttle = self.auth_throttle.lock().unwrap_or_else(|e| e.into_inner());
+        evict_stale_throttle_entries(&mut throttle, now);
+
+        // 用户名维度：失败 10 次封 6 小时
+        if throttle.users.len() >= MAX_THROTTLE_ENTRIES && !throttle.users.contains_key(username) {
+            return Err(AppError::BadRequest(
+                "登录失败次数过多，请稍后再试".to_string(),
+            ));
         }
-        let attempt = map.entry(username.to_string()).or_default();
-        attempt
-            .failures
-            .retain(|ts| now - *ts < LOGIN_FAILURE_WINDOW_MS);
-        if attempt.locked_until > now {
-            let remain_secs = (attempt.locked_until - now) / 1000 + 1;
-            return Err(AppError::BadRequest(format!(
-                "登录失败次数过多，请 {remain_secs} 秒后再试"
-            )));
-        }
-        if attempt.failures.len() + 1 > LOGIN_MAX_FAILURES {
-            attempt.locked_until = now + LOGIN_LOCKOUT_MS;
-            attempt.failures.clear();
+        let user = throttle.users.entry(username.to_string()).or_default();
+        if user.banned_until > now {
             return Err(AppError::BadRequest(format!(
                 "登录失败次数过多，请 {} 秒后再试",
-                LOGIN_LOCKOUT_MS / 1000
+                remaining_secs(user.banned_until, now)
             )));
         }
-        attempt.failures.push(now);
+        if user.failures + 1 > USER_LOGIN_MAX_FAILURES {
+            user.banned_until = now + USER_LOGIN_BAN_MS;
+            user.failures = 0;
+            user.last_active = now;
+            return Err(AppError::BadRequest(format!(
+                "登录失败次数过多，请 {} 秒后再试",
+                USER_LOGIN_BAN_MS / 1000
+            )));
+        }
+        user.failures += 1;
+        user.last_active = now;
+
+        // IP 维度：失败 5 次封该地址 6 小时
+        let Some(ip) = client_ip else {
+            return Ok(());
+        };
+        if let Some(entry) = throttle.ips.get_mut(ip) {
+            if entry.login_banned_until > now {
+                return Err(AppError::BadRequest(format!(
+                    "该地址登录失败次数过多，请 {} 秒后再试",
+                    remaining_secs(entry.login_banned_until, now)
+                )));
+            }
+        } else if throttle.ips.len() >= MAX_THROTTLE_ENTRIES {
+            // IP 表满：放行用户维度的判定，不再新增条目
+            return Ok(());
+        }
+        let ip_entry = throttle.ips.entry(ip.to_string()).or_default();
+        if ip_entry.login_failures + 1 > IP_LOGIN_MAX_FAILURES {
+            ip_entry.login_banned_until = now + IP_LOGIN_BAN_MS;
+            ip_entry.login_failures = 0;
+            ip_entry.last_active = now;
+            return Err(AppError::BadRequest(format!(
+                "该地址登录失败次数过多，请 {} 秒后再试",
+                IP_LOGIN_BAN_MS / 1000
+            )));
+        }
+        ip_entry.login_failures += 1;
+        ip_entry.last_active = now;
         Ok(())
     }
 
-    fn login_throttle_clear(&self, username: &str) {
-        let mut map = self
-            .login_attempts
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
-        map.remove(username);
+    /// 登录成功后的清账：移除用户名条目、清零该 IP 的登录失败计数。
+    fn login_throttle_clear(&self, username: &str, client_ip: Option<&str>) {
+        if self.cfg.rate_limit_disabled {
+            return;
+        }
+        let now = now_ms();
+        let mut throttle = self.auth_throttle.lock().unwrap_or_else(|e| e.into_inner());
+        throttle.users.remove(username);
+        if let Some(ip) = client_ip {
+            if let Some(entry) = throttle.ips.get_mut(ip) {
+                entry.login_failures = 0;
+                entry.last_active = now;
+            }
+        }
+    }
+
+    /// 注册前置检查：IP 的 48 小时注册冷却与邀请码错误封禁。
+    ///
+    /// 放在邀请码判定之前执行——已被限制的地址不该继续试探邀请码。
+    fn register_throttle_begin(&self, client_ip: Option<&str>) -> Result<(), AppError> {
+        if self.cfg.rate_limit_disabled {
+            return Ok(());
+        }
+        let Some(ip) = client_ip else {
+            return Ok(());
+        };
+        let now = now_ms();
+        let mut throttle = self.auth_throttle.lock().unwrap_or_else(|e| e.into_inner());
+        evict_stale_throttle_entries(&mut throttle, now);
+        if let Some(entry) = throttle.ips.get(ip) {
+            if entry.register_banned_until > now {
+                return Err(AppError::BadRequest(format!(
+                    "该地址已被限制注册，请 {} 秒后再试",
+                    remaining_secs(entry.register_banned_until, now)
+                )));
+            }
+            if entry.register_success_at > 0
+                && now - entry.register_success_at < REGISTER_COOLDOWN_MS
+            {
+                return Err(AppError::BadRequest(
+                    "该地址 48 小时内已注册过账号，请稍后再试".to_string(),
+                ));
+            }
+        } else if throttle.ips.len() >= MAX_THROTTLE_ENTRIES {
+            return Err(AppError::BadRequest(
+                "注册请求过于频繁，请稍后再试".to_string(),
+            ));
+        }
+        throttle.ips.entry(ip.to_string()).or_default().last_active = now;
+        Ok(())
+    }
+
+    /// 记录注册的邀请码判定 / 注册成功，驱动 IP 维度的封禁与冷却。
+    ///
+    /// 邀请码错误达到 3 次即封禁该地址注册 168 小时并清零计数（解封后
+    /// 重新累计，避免一次误触导致永久循环封禁）；注册成功设置 48 小时
+    /// 冷却起点。
+    fn register_invitation_result(&self, client_ip: Option<&str>, ok: bool) {
+        if self.cfg.rate_limit_disabled {
+            return;
+        }
+        let Some(ip) = client_ip else {
+            return;
+        };
+        let now = now_ms();
+        let mut throttle = self.auth_throttle.lock().unwrap_or_else(|e| e.into_inner());
+        let entry = throttle.ips.entry(ip.to_string()).or_default();
+        entry.last_active = now;
+        if ok {
+            entry.invite_wrong = 0;
+            entry.register_success_at = now;
+        } else {
+            entry.invite_wrong += 1;
+            if entry.invite_wrong >= INVITE_MAX_WRONG {
+                entry.register_banned_until = now + INVITE_BAN_MS;
+                entry.invite_wrong = 0;
+            }
+        }
     }
 
     /// 登录或注册，成功返回含 `accessToken`（JWT）的用户信息。
+    ///
+    /// `client_ip` 来自 `ConnectInfo`：注册的 48 小时冷却、邀请码错误封禁与
+    /// IP 维度的登录封禁都按它记账；集成测试等拿不到对端地址的场景传
+    /// `None`，此时只走用户名维度的限速。
     pub async fn login(
         &self,
         username: &str,
         password: &str,
         is_login: bool,
         code: Option<&str>,
+        client_ip: Option<&str>,
     ) -> Result<Value, AppError> {
         self.ensure_admin_user().await?;
         if is_login {
-            self.login_throttle_begin(username)?;
+            self.login_throttle_begin(username, client_ip)?;
         }
         if let Some(mut user) = self.find_user(username).await? {
             if !is_login {
@@ -156,7 +298,7 @@ impl UserService {
             if !verify_password_async(password, &user.password).await? {
                 return Err(AppError::BadRequest("用户名或密码错误".to_string()));
             }
-            self.login_throttle_clear(username);
+            self.login_throttle_clear(username, client_ip);
             return self.issue_login_response(&mut user).await;
         }
 
@@ -166,7 +308,19 @@ impl UserService {
             equalize_login_timing(password).await;
             return Err(AppError::BadRequest("用户名或密码错误".to_string()));
         }
-        self.validate_new_user(username, password, code)?;
+        self.validate_new_user(username, password)?;
+        self.register_throttle_begin(client_ip)?;
+        if !self.cfg.invite_code.is_empty() {
+            let c = code.unwrap_or("");
+            if c.is_empty() {
+                return Err(AppError::BadRequest("请输入邀请码".to_string()));
+            }
+            // 常量时间比较：`==` 的逐字节短路会泄露前缀匹配长度
+            if !secure_compare(c, &self.cfg.invite_code) {
+                self.register_invitation_result(client_ip, false);
+                return Err(AppError::BadRequest("邀请码错误".to_string()));
+            }
+        }
         let user_count = self.user_count().await?;
         if user_count as u32 >= self.cfg.user_limit {
             return Err(AppError::BadRequest("超过用户数上限".to_string()));
@@ -184,6 +338,7 @@ impl UserService {
             ..Default::default()
         };
         self.upsert_user_row(&user).await?;
+        self.register_invitation_result(client_ip, true);
         self.issue_login_response(&mut user).await
     }
 
@@ -280,7 +435,7 @@ impl UserService {
     }
 
     pub async fn add_user(&self, username: &str, password: &str) -> Result<Vec<Value>, AppError> {
-        self.validate_new_user(username, password, None)?;
+        self.validate_new_user(username, password)?;
         if self.find_user(username).await?.is_some() {
             return Err(AppError::BadRequest("用户已存在".to_string()));
         }
@@ -401,6 +556,7 @@ impl UserService {
         &self,
         username: &str,
         password: &str,
+        client_ip: Option<&str>,
     ) -> Result<Option<User>, AppError> {
         let user = match self.find_user(username).await? {
             Some(u) => u,
@@ -410,11 +566,11 @@ impl UserService {
             return Ok(None);
         }
         // 与登录接口共享同一份限速：否则这是绕开登录锁定的平行爆破通道
-        self.login_throttle_begin(username)?;
+        self.login_throttle_begin(username, client_ip)?;
         if !verify_password_async(password, &user.password).await? {
             return Ok(None);
         }
-        self.login_throttle_clear(username);
+        self.login_throttle_clear(username, client_ip);
         Ok(Some(user))
     }
 
@@ -521,12 +677,7 @@ impl UserService {
         Ok(())
     }
 
-    fn validate_new_user(
-        &self,
-        username: &str,
-        password: &str,
-        code: Option<&str>,
-    ) -> Result<(), AppError> {
+    fn validate_new_user(&self, username: &str, password: &str) -> Result<(), AppError> {
         if username.is_empty() {
             return Err(AppError::BadRequest("请输入用户名".to_string()));
         }
@@ -548,48 +699,28 @@ impl UserService {
                 "用户名只能由字母和数字组成".to_string(),
             ));
         }
-        if !self.cfg.invite_code.is_empty() {
-            let c = code.unwrap_or("");
-            if c.is_empty() {
-                return Err(AppError::BadRequest("请输入邀请码".to_string()));
-            }
-            // 常量时间比较：`==` 的逐字节短路会泄露前缀匹配长度
-            if !secure_compare(c, &self.cfg.invite_code) {
-                return Err(AppError::BadRequest("邀请码错误".to_string()));
-            }
-        }
         Ok(())
     }
 }
 
 /// 淘汰登录限速表中的死条目；仍超限时按最后活动时间最旧优先淘汰一半。
-fn evict_stale_login_attempts(map: &mut HashMap<String, LoginAttempt>, now: i64) {
-    map.retain(|_, a| {
-        a.locked_until > now
-            || a.failures
-                .iter()
-                .any(|ts| now - *ts < LOGIN_FAILURE_WINDOW_MS)
-    });
-    if map.len() >= MAX_LOGIN_ATTEMPT_ENTRIES {
-        let mut by_activity: Vec<(String, i64)> = map
-            .iter()
-            .map(|(k, a)| {
-                let last = a
-                    .failures
-                    .iter()
-                    .copied()
-                    .chain(std::iter::once(a.locked_until))
-                    .max()
-                    .unwrap_or(0);
-                (k.clone(), last)
-            })
-            .collect();
-        by_activity.sort_by_key(|(_, last)| *last);
-        let remove_count = map.len() / 2;
-        for (key, _) in by_activity.into_iter().take(remove_count) {
-            map.remove(&key);
-        }
+/// 淘汰限速表中的死条目：无活动封禁且超过保留时长未活动的才清。
+///
+/// 仅在表达到容量上限时调用（`login_throttle_begin` 等入口的 len 预检），
+/// 平时零开销。IP 条目另保留仍在 48 小时注册冷却期内的记录。
+fn evict_stale_throttle_entries(throttle: &mut AuthThrottle, now: i64) {
+    if throttle.users.len() < MAX_THROTTLE_ENTRIES && throttle.ips.len() < MAX_THROTTLE_ENTRIES {
+        return;
     }
+    throttle
+        .users
+        .retain(|_, a| a.banned_until > now || now - a.last_active < THROTTLE_RETENTION_MS);
+    throttle.ips.retain(|_, a| {
+        a.login_banned_until > now
+            || a.register_banned_until > now
+            || (a.register_success_at > 0 && now - a.register_success_at < REGISTER_COOLDOWN_MS)
+            || now - a.last_active < THROTTLE_RETENTION_MS
+    });
 }
 
 fn now_ms() -> i64 {
@@ -643,7 +774,7 @@ mod tests {
         let (service, temp_dir) = create_user_service().await;
 
         let login = service
-            .login("reader1", "password123", false, None)
+            .login("reader1", "password123", false, None, None)
             .await
             .unwrap();
         let claims = claims_of(&login);
@@ -667,7 +798,7 @@ mod tests {
     async fn token_is_rejected_after_password_change_but_new_one_works() {
         let (service, temp_dir) = create_user_service().await;
         let login = service
-            .login("reader1", "password123", false, None)
+            .login("reader1", "password123", false, None, None)
             .await
             .unwrap();
         let old_claims = claims_of(&login);
@@ -683,7 +814,7 @@ mod tests {
         assert_ne!(old_claims.ver, new_claims.ver);
         // 改密码后旧口令失效
         assert!(service
-            .login("reader1", "password123", true, None)
+            .login("reader1", "password123", true, None, None)
             .await
             .is_err());
 
@@ -694,7 +825,7 @@ mod tests {
     async fn reset_password_bumps_token_version() {
         let (service, temp_dir) = create_user_service().await;
         service
-            .login("reader1", "password123", false, None)
+            .login("reader1", "password123", false, None, None)
             .await
             .unwrap();
         let before = service.find_user("reader1").await.unwrap().unwrap();
@@ -715,17 +846,18 @@ mod tests {
     async fn login_throttle_locks_after_max_failures_even_under_concurrency() {
         let (service, temp_dir) = create_user_service().await;
         service
-            .login("reader1", "password123", false, None)
+            .login("reader1", "password123", false, None, None)
             .await
             .unwrap();
 
         // 并发 20 次错误登录：check/record 分离的旧实现可以让全部请求穿过检查；
-        // 悲观计数下恰好 8 次进入口令校验，其余必须在校验前被拒
+        // 悲观计数下恰好 10 次进入口令校验，其余必须在校验前被拒
         let mut handles = Vec::new();
         for _ in 0..20 {
             let svc = service.clone();
             handles.push(tokio::spawn(async move {
-                svc.login("reader1", "wrong-password", true, None).await
+                svc.login("reader1", "wrong-password", true, None, None)
+                    .await
             }));
         }
         let mut verified = 0;
@@ -737,12 +869,12 @@ mod tests {
                 other => panic!("错误密码登录的返回异常: {other:?}"),
             }
         }
-        assert_eq!(verified, LOGIN_MAX_FAILURES, "恰好 8 次进入口令校验");
-        assert_eq!(locked, 20 - LOGIN_MAX_FAILURES, "其余请求被限速拦截");
+        assert_eq!(verified, USER_LOGIN_MAX_FAILURES, "恰好 10 次进入口令校验");
+        assert_eq!(locked, 20 - USER_LOGIN_MAX_FAILURES, "其余请求被限速拦截");
 
         // 锁定状态下正确密码同样被拒
         let err = service
-            .login("reader1", "password123", true, None)
+            .login("reader1", "password123", true, None, None)
             .await
             .unwrap_err();
         assert!(err.to_string().contains("失败次数过多"));
@@ -751,16 +883,191 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn ip_login_failures_ban_the_address_for_six_hours() {
+        let (service, temp_dir) = create_user_service().await;
+        service
+            .login("reader1", "password123", false, None, None)
+            .await
+            .unwrap();
+
+        // 同一地址错 5 次（用户名维度上限 10 尚未触达）
+        for _ in 0..5 {
+            let err = service
+                .login("reader1", "wrong-password", true, None, Some("203.0.113.9"))
+                .await
+                .unwrap_err();
+            assert!(err.to_string().contains("用户名或密码错误"));
+        }
+        // 第 6 次起封该地址：连正确密码也拒
+        let err = service
+            .login("reader1", "password123", true, None, Some("203.0.113.9"))
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("该地址登录失败次数过多"));
+        // 其他地址不受影响
+        service
+            .login("reader1", "password123", true, None, Some("198.51.100.7"))
+            .await
+            .unwrap();
+
+        let _ = fs::remove_dir_all(temp_dir).await;
+    }
+
+    #[tokio::test]
+    async fn user_login_failures_ban_the_username_for_six_hours() {
+        let (service, temp_dir) = create_user_service().await;
+        service
+            .login("reader1", "password123", false, None, None)
+            .await
+            .unwrap();
+
+        // client_ip=None：只走用户名维度，错满 10 次
+        for _ in 0..USER_LOGIN_MAX_FAILURES {
+            let err = service
+                .login("reader1", "wrong-password", true, None, None)
+                .await
+                .unwrap_err();
+            assert!(err.to_string().contains("用户名或密码错误"));
+        }
+        // 封禁后正确密码也拒
+        let err = service
+            .login("reader1", "password123", true, None, None)
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("登录失败次数过多"));
+        // 其他用户名不受该封禁影响
+        service
+            .login("reader2", "password123", false, None, None)
+            .await
+            .unwrap();
+
+        let _ = fs::remove_dir_all(temp_dir).await;
+    }
+
+    #[tokio::test]
+    async fn register_is_limited_to_one_success_per_ip_per_48h() {
+        let (service, temp_dir) = create_user_service().await;
+        service
+            .login("reader1", "password123", false, None, Some("203.0.113.9"))
+            .await
+            .unwrap();
+
+        // 同一地址 48 小时内的第二次注册被拒
+        let err = service
+            .login("reader2", "password123", false, None, Some("203.0.113.9"))
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("48 小时内已注册过账号"));
+        // 其他地址不受影响
+        service
+            .login("reader2", "password123", false, None, Some("198.51.100.7"))
+            .await
+            .unwrap();
+
+        let _ = fs::remove_dir_all(temp_dir).await;
+    }
+
+    #[tokio::test]
+    async fn three_wrong_invite_codes_ban_registration_for_the_ip() {
+        let temp_dir = std::env::temp_dir().join(format!("reader-rust-invite-{}", random_suffix()));
+        std::fs::create_dir_all(&temp_dir).unwrap();
+        let cfg = AppConfig {
+            invite_code: "let-me-in".to_string(),
+            storage_dir: temp_dir.to_string_lossy().to_string(),
+            ..AppConfig::default()
+        };
+        let database_url = format!("sqlite:{}?mode=rwc", temp_dir.join("reader.db").display());
+        let pool = db::init_pool(&database_url).await.unwrap();
+        let service = UserService::new(cfg, pool, Arc::new(TEST_SECRET.to_vec()));
+
+        // 错 3 次：前两次只报邀请码错误，第 3 次同时封禁该地址
+        for _ in 0..3 {
+            let err = service
+                .login(
+                    "reader1",
+                    "password123",
+                    false,
+                    Some("wrong"),
+                    Some("203.0.113.9"),
+                )
+                .await
+                .unwrap_err();
+            assert!(err.to_string().contains("邀请码错误"));
+        }
+        // 之后即使邀请码正确也被拒（封禁检查先于邀请码判定）
+        let err = service
+            .login(
+                "reader1",
+                "password123",
+                false,
+                Some("let-me-in"),
+                Some("203.0.113.9"),
+            )
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("该地址已被限制注册"));
+        // 其他地址用正确邀请码可以正常注册
+        service
+            .login(
+                "reader1",
+                "password123",
+                false,
+                Some("let-me-in"),
+                Some("198.51.100.7"),
+            )
+            .await
+            .unwrap();
+
+        let _ = fs::remove_dir_all(temp_dir).await;
+    }
+
+    #[tokio::test]
+    async fn rate_limit_disabled_skips_login_and_register_throttles() {
+        let temp_dir =
+            std::env::temp_dir().join(format!("reader-rust-nolimit-{}", random_suffix()));
+        std::fs::create_dir_all(&temp_dir).unwrap();
+        let cfg = AppConfig {
+            rate_limit_disabled: true,
+            storage_dir: temp_dir.to_string_lossy().to_string(),
+            ..AppConfig::default()
+        };
+        let database_url = format!("sqlite:{}?mode=rwc", temp_dir.join("reader.db").display());
+        let pool = db::init_pool(&database_url).await.unwrap();
+        let service = UserService::new(cfg, pool, Arc::new(TEST_SECRET.to_vec()));
+
+        service
+            .login("reader1", "password123", false, None, Some("203.0.113.9"))
+            .await
+            .unwrap();
+
+        // 超过用户与 IP 两维度的失败上限，均不触发封禁
+        for _ in 0..15 {
+            let err = service
+                .login("reader1", "wrong-password", true, None, Some("203.0.113.9"))
+                .await
+                .unwrap_err();
+            assert!(err.to_string().contains("用户名或密码错误"));
+        }
+        // 同一地址的第二次注册同样放行
+        service
+            .login("reader2", "password123", false, None, Some("203.0.113.9"))
+            .await
+            .unwrap();
+
+        let _ = fs::remove_dir_all(temp_dir).await;
+    }
+
+    #[tokio::test]
     async fn webdav_basic_auth_requires_the_per_user_switch() {
         let (service, temp_dir) = create_user_service().await;
         service
-            .login("reader1", "password123", false, None)
+            .login("reader1", "password123", false, None, None)
             .await
             .unwrap();
 
         // 默认关闭
         assert!(service
-            .verify_basic_webdav("reader1", "password123")
+            .verify_basic_webdav("reader1", "password123", None)
             .await
             .unwrap()
             .is_none());
@@ -770,17 +1077,17 @@ mod tests {
             .await
             .unwrap();
         assert!(service
-            .verify_basic_webdav("reader1", "password123")
+            .verify_basic_webdav("reader1", "password123", None)
             .await
             .unwrap()
             .is_some());
         assert!(service
-            .verify_basic_webdav("reader1", "wrong-password")
+            .verify_basic_webdav("reader1", "wrong-password", None)
             .await
             .unwrap()
             .is_none());
         assert!(service
-            .verify_basic_webdav("nobody", "password123")
+            .verify_basic_webdav("nobody", "password123", None)
             .await
             .unwrap()
             .is_none());
@@ -792,7 +1099,7 @@ mod tests {
     async fn get_user_info_reports_admin_and_hides_credentials() {
         let (service, temp_dir) = create_user_service().await;
         service
-            .login("reader1", "password123", false, None)
+            .login("reader1", "password123", false, None, None)
             .await
             .unwrap();
 
@@ -821,7 +1128,7 @@ mod tests {
     async fn delete_user_removes_rows_and_cached_files() {
         let (service, temp_dir) = create_user_service().await;
         service
-            .login("reader1", "password123", false, None)
+            .login("reader1", "password123", false, None, None)
             .await
             .unwrap();
 
@@ -873,12 +1180,12 @@ mod tests {
     async fn permission_change_is_visible_to_the_next_request() {
         let (service, temp_dir) = create_user_service().await;
         service
-            .login("reader1", "password123", false, None)
+            .login("reader1", "password123", false, None, None)
             .await
             .unwrap();
         // 第二个用户默认非管理员
         let second = service
-            .login("reader2", "password123", false, None)
+            .login("reader2", "password123", false, None, None)
             .await
             .unwrap();
         assert!(!claims_of(&second).is_admin);
@@ -902,16 +1209,16 @@ mod tests {
         service.cfg.invite_code = "let-me-in".to_string();
 
         assert!(service
-            .login("reader1", "password123", false, Some("wrong"))
+            .login("reader1", "password123", false, Some("wrong"), None)
             .await
             .is_err());
         assert!(service
-            .login("reader1", "password123", false, None)
+            .login("reader1", "password123", false, None, None)
             .await
             .is_err());
         // 邀请码正确时注册成功
         assert!(service
-            .login("reader1", "password123", false, Some("let-me-in"))
+            .login("reader1", "password123", false, Some("let-me-in"), None)
             .await
             .is_ok());
         // 用户名过短、非小写字母数字、密码过短一律拒绝
@@ -922,7 +1229,7 @@ mod tests {
         ] {
             assert!(
                 service
-                    .login(username, password, false, Some("let-me-in"))
+                    .login(username, password, false, Some("let-me-in"), None)
                     .await
                     .is_err(),
                 "{username} 应被拒绝"
@@ -932,7 +1239,7 @@ mod tests {
         service.cfg.invite_code = String::new();
         service.cfg.user_limit = 1;
         assert!(service
-            .login("reader9", "password123", false, None)
+            .login("reader9", "password123", false, None, None)
             .await
             .is_err());
 

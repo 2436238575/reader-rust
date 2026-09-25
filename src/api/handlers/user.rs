@@ -1,7 +1,7 @@
 use crate::api::AppState;
 use crate::auth::{CurrentUser, MaybeUser};
 use axum::{
-    extract::{Multipart, Query, State},
+    extract::{ConnectInfo, Multipart, Query, State},
     Json,
 };
 use serde::Deserialize;
@@ -69,15 +69,24 @@ pub struct DeleteFileRequest {
 /// 公开端点：登录与注册。成功时返回含 JWT 的用户信息。
 pub async fn login(
     State(state): State<AppState>,
+    ConnectInfo(addr): ConnectInfo<std::net::SocketAddr>,
     Json(req): Json<LoginRequest>,
 ) -> Result<Json<ApiResponse<Value>>, AppError> {
     let username = req.username.unwrap_or_default();
     let password = req.password.unwrap_or_default();
     let is_login = req.is_login.unwrap_or(false);
     let is_new_user = !is_login && !username.is_empty(); // registration attempt
+                                                         // 限速按对端 IP 记账（ConnectInfo 由 into_make_service_with_connect_info 注入）
+    let client_ip = addr.ip().to_string();
     let data = state
         .user_service
-        .login(&username, &password, is_login, req.code.as_deref())
+        .login(
+            &username,
+            &password,
+            is_login,
+            req.code.as_deref(),
+            Some(&client_ip),
+        )
         .await?;
     // If this was a new user registration, copy default book sources
     if is_new_user {

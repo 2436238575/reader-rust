@@ -60,6 +60,7 @@ npm run test:e2e:ui            # UI 模式
 
 - 用例位于 `tests/e2e/*.spec.ts`，默认访问 `http://127.0.0.1:8080`。
 - 后端换端口时用环境变量覆盖：`PLAYWRIGHT_BASE_URL=http://127.0.0.1:18080 npm run test:e2e`。
+- 被测后端建议以 `RATE_LIMIT_DISABLED=true` 启动，否则 IP 限速（48h 注册冷却等）会拦住重复跑的用例。
 - 配置使用系统已安装的 Chrome（`channel: 'chrome'`），机器上需要有 Chrome。
 
 ### 发布
@@ -98,7 +99,7 @@ cp .env.example .env
 | `REQUEST_TIMEOUT_SECS` | `15` | 抓取上游站点的超时时间 |
 | `JWT_SECRET` | 空 | JWT 签名密钥；留空时自动生成并持久化到 `<STORAGE_DIR>/jwt_secret` |
 | `JWT_TTL_SECS` | `604800`（7 天） | 令牌有效期 |
-| `INVITE_CODE` | 空 | 注册邀请码，为空表示不限制 |
+| `INVITE_CODE` | 空 | 注册邀请码，为空表示不限制；同一 IP 邀请码错误 3 次封禁注册 168h |
 | `USER_LIMIT` | `50` | 用户数上限 |
 | `USER_BOOK_LIMIT` | `2000` | 单用户书架上限，`0` 表示不限制 |
 | `USER_LOCAL_BOOK_LIMIT` | `0` | 单用户本地上传上限，`0` 表示不限制 |
@@ -108,6 +109,7 @@ cp .env.example .env
 | `REVIEW_CACHE_USER_LIMIT_BYTES` | `67108864` | 单用户评论缓存上限；`0` 表示不限制 |
 | `ALLOW_PRIVATE_NETWORK` | `true` | 出站请求是否允许访问私网/内网地址；自托管单用户默认放行（局域网书源是正常用法），多用户/公网部署应设为 `false` |
 | `CORS_ALLOWED_ORIGINS` | 空 | 跨域来源白名单；留空仅同源 |
+| `RATE_LIMIT_DISABLED` | `false` | 豁免登录/注册限速（开发/测试用）。默认：IP 48h 注册成功 1 次、邀请码错 3 次封该 IP 注册 168h、IP 登录败 5 次封该 IP 登录 6h、用户名败 10 次封 6h。e2e 跑测试时建议后端开此项 |
 
 两点需要注意：
 

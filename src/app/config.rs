@@ -46,6 +46,11 @@ pub struct AppConfig {
     /// 留空表示**仅同源**：不发送任何 CORS 响应头，浏览器同源策略自然生效。
     /// 前端与后端同域部署（`WEB_ROOT` 静态托管）时无需配置。
     pub cors_allowed_origins: String,
+    /// 豁免登录/注册的全部限速（开发与测试环境用）。
+    ///
+    /// 设为 `true` 时跳过：用户名维度的登录失败封禁、IP 维度的登录失败封禁、
+    /// IP 的 48 小时注册冷却与邀请码错误封禁。生产部署**不应**开启。
+    pub rate_limit_disabled: bool,
 }
 
 impl Default for AppConfig {
@@ -71,6 +76,7 @@ impl Default for AppConfig {
             review_cache_user_limit_bytes: 64 * 1024 * 1024,
             allow_private_network: true,
             cors_allowed_origins: String::new(),
+            rate_limit_disabled: false,
         }
     }
 }
@@ -114,6 +120,7 @@ pub fn load() -> anyhow::Result<AppConfig> {
         )?
         .set_default("allow_private_network", defaults.allow_private_network)?
         .set_default("cors_allowed_origins", defaults.cors_allowed_origins)?
+        .set_default("rate_limit_disabled", defaults.rate_limit_disabled)?
         .add_source(config::Environment::default().try_parsing(true))
         .build()?;
     Ok(cfg.try_deserialize()?)

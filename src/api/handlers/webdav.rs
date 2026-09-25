@@ -7,7 +7,7 @@ use axum::http::{HeaderMap, Method, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::{
     body::Bytes,
-    extract::{Multipart, Path, Query, State},
+    extract::{ConnectInfo, Multipart, Path, Query, State},
     Json,
 };
 use base64::Engine;
@@ -217,12 +217,15 @@ pub async fn delete_webdav_file_list(
 
 pub async fn webdav_handler(
     State(state): State<AppState>,
+    ConnectInfo(addr): ConnectInfo<std::net::SocketAddr>,
     headers: HeaderMap,
     method: Method,
     Path(path): Path<String>,
     body: Bytes,
 ) -> Response {
-    let user_ns = match resolve_webdav_user(&state, &headers).await {
+    // Basic 认证与登录接口共享限速，按对端 IP 记账
+    let client_ip = addr.ip().to_string();
+    let user_ns = match resolve_webdav_user(&state, &headers, Some(&client_ip)).await {
         Ok(ns) => ns,
         Err(status) => return status.into_response(),
     };
@@ -252,7 +255,11 @@ pub async fn webdav_handler(
     }
 }
 
-async fn resolve_webdav_user(state: &AppState, headers: &HeaderMap) -> Result<String, StatusCode> {
+async fn resolve_webdav_user(
+    state: &AppState,
+    headers: &HeaderMap,
+    client_ip: Option<&str>,
+) -> Result<String, StatusCode> {
     let auth = headers
         .get("Authorization")
         .and_then(|v| v.to_str().ok())
@@ -273,7 +280,7 @@ async fn resolve_webdav_user(state: &AppState, headers: &HeaderMap) -> Result<St
     let password = parts[1];
     match state
         .user_service
-        .verify_basic_webdav(username, password)
+        .verify_basic_webdav(username, password, client_ip)
         .await
     {
         Ok(Some(_)) => Ok(username.to_string()),

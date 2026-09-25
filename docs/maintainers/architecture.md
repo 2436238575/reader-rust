@@ -200,7 +200,8 @@ JWT 本身无状态，但服务端每个请求都比对 `users.token_version`：
 | 上传/删除路径校验 | `api/handlers/user.rs`、`util/safe_path.rs` | 文件名白名单（含 Windows 保留设备名）+ 词法级路径解析，杜绝 `..` 穿越写删 `storage/` 之外的文件 |
 | WebDAV 路径收敛 | `api/handlers/webdav.rs` | 相对路径按 `/`、`\` 双分隔符切分并拒绝 `..`/盘符/ADS/设备名；multipart 文件名经 `sanitize_file_name`；上传字段限量读取，下载流式返回 |
 | 密码哈希 | `util/crypto.rs` | Argon2id（PHC 字符串自含盐与参数），哈希与校验在 `spawn_blocking` 中执行 |
-| 登录限速 | `service/user_service.rs` | 同用户名 10 分钟窗口失败 8 次锁定 5 分钟；悲观计数（尝试先计数、成功再清除）使并发爆发无法绕过；WebDAV Basic 认证共享同一份限速 |
+| 登录限速 | `service/user_service.rs` | 用户名与 IP 双维度：用户名失败 10 次封该用户名登录 6 小时；IP 失败 5 次封该地址登录 6 小时。悲观计数（尝试先计数、成功再清除）使并发爆发无法绕过；WebDAV Basic 认证共享同一份限速。`RATE_LIMIT_DISABLED=true` 全部豁免（开发/测试） |
+| 注册限速 | `service/user_service.rs` | IP 维度：48 小时内最多注册成功 1 次；邀请码错误 3 次封禁该地址注册 168 小时（封禁检查先于邀请码判定，被禁地址无法继续试探） |
 | 登录防枚举 | `service/user_service.rs` | 失败文案统一「用户名或密码错误」，用户不存在时补一次 dummy Argon2 校验对齐响应时序 |
 | WebDAV Destination 校验 | `api/handlers/webdav.rs` | MOVE/COPY 的 `Destination` 必须带 `/reader3/webdav/` 前缀，缺前缀直接 400（否则目标塌缩成家目录，配合 `Overwrite` 可整目录清空） |
 | AI 代理权限收敛 | `api/handlers/ai_proxy.rs` | 客户端自带端点（`useServerConfig=false`，含 `fullUrl=true`）仅管理员可用；服务端配置端点按 `enableAiModel` 判定 |
