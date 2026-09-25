@@ -71,6 +71,8 @@ pub struct BookInfoRequest {
     pub book_source_url: Option<String>,
     #[serde(rename = "bookSource")]
     pub book_source: Option<BookSource>,
+    /// `>0` 时绕过书籍详情 TTL 缓存强制抓取上游
+    pub refresh: Option<i32>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -484,7 +486,7 @@ pub async fn get_book_info(
     .await?;
     let book = state
         .book_service
-        .get_book_info(&user_ns, &source, &url)
+        .get_book_info(&user_ns, &source, &url, req.refresh.unwrap_or(0) > 0)
         .await?;
     Ok(Json(ApiResponse::ok(
         serde_json::to_value(book).unwrap_or_default(),
@@ -574,7 +576,7 @@ pub async fn get_chapter_list(
         let book_url = repair_encoded_url(&book_url);
         let book = state
             .book_service
-            .get_book_info(&user_ns, &source, &book_url)
+            .get_book_info(&user_ns, &source, &book_url, false)
             .await?;
         repair_encoded_url(book.toc_url.as_deref().unwrap_or(&book_url))
     } else {
@@ -785,7 +787,7 @@ pub async fn get_book_content(
             .await?;
             let book_info = state
                 .book_service
-                .get_book_info(&user_ns, &source, url)
+                .get_book_info(&user_ns, &source, url, false)
                 .await?;
             let toc_url = book_info.toc_url.as_deref().unwrap_or(url);
 
@@ -1107,7 +1109,7 @@ pub async fn save_book(
         {
             if let Ok(info) = state
                 .book_service
-                .get_book_info(&user_ns, &source, &book.book_url)
+                .get_book_info(&user_ns, &source, &book.book_url, true)
                 .await
             {
                 merge_book(&mut book, info);
@@ -1227,7 +1229,7 @@ pub async fn set_book_source(
 
     match state
         .book_service
-        .get_book_info(&user_ns, &new_source, &new_book_url)
+        .get_book_info(&user_ns, &new_source, &new_book_url, true)
         .await
     {
         Ok(info) => merge_book(&mut updated, info),
@@ -1491,7 +1493,7 @@ pub async fn get_shelf_book_with_cache_info(
                     if toc_url.is_none() {
                         if let Ok(info) = state_clone
                             .book_service
-                            .get_book_info(&user_ns_clone, &source, &book.book_url)
+                            .get_book_info(&user_ns_clone, &source, &book.book_url, false)
                             .await
                         {
                             toc_url = info.toc_url.or(Some(book.book_url.clone()));

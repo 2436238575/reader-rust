@@ -83,6 +83,15 @@ const RECENT_BODY_LIMIT: usize = 32;
 const RECENT_BODY_MAX_BYTES: usize = 1024 * 1024;
 const RECENT_BODY_TTL: Duration = Duration::from_secs(600);
 
+/// 书籍详情缓存的存活时间（10 分钟）与目录名。
+///
+/// 详情页、仅传 bookUrl 拉目录、翻章按 index 换算 chapterUrl 都会走
+/// `get_book_info`，此前每次都打上游。详情不常变，短 TTL 足够新；
+/// `refresh=1` 与 saveBook/换源路径走旁路强刷。文件随 `CacheKind::ChapterList`
+/// 清理（详情与目录同属书籍元数据）。
+const BOOK_INFO_CACHE_TTL: Duration = Duration::from_secs(600);
+const BOOK_INFO_CACHE_DIR: &str = "bookinfo";
+
 /// 书源的评论 URL 模板是否用到了 `{{sort}}`。
 ///
 /// 用了说明排序由站点自己做；没用的话「最新」只能由客户端对已加载的条目重排。
@@ -685,15 +694,61 @@ impl BookService {
         user_ns: &str,
         source: &BookSource,
         book_url: &str,
+        force_refresh: bool,
     ) -> Result<Book, AppError> {
+        if !force_refresh {
+            if let Some(cached) = self.load_book_info_cache(user_ns, book_url).await {
+                return Ok(cached);
+            }
+        }
         let res = self
             .fetch_source_url(user_ns, source, book_url, &source.book_source_url)
             .await?;
         let book_url_owned = book_url.to_string();
-        self.parse_response_blocking(user_ns, source, &res, move |p, s, b, u| {
-            p.book_info(s, b, u, &book_url_owned)
-        })
-        .await
+        let book = self
+            .parse_response_blocking(user_ns, source, &res, move |p, s, b, u| {
+                p.book_info(s, b, u, &book_url_owned)
+            })
+            .await?;
+        let _ = self.save_book_info_cache(user_ns, book_url, &book).await;
+        Ok(book)
+    }
+
+    fn book_info_cache_path(&self, user_ns: &str, book_url: &str) -> PathBuf {
+        self.storage_dir
+            .join("cache")
+            .join(BOOK_INFO_CACHE_DIR)
+            .join(user_ns)
+            .join(format!("{}.json", md5_hex(book_url)))
+    }
+
+    async fn load_book_info_cache(&self, user_ns: &str, book_url: &str) -> Option<Book> {
+        let path = self.book_info_cache_path(user_ns, book_url);
+        let Ok(meta) = fs::metadata(&path).await else {
+            return None;
+        };
+        let expired = meta
+            .modified()
+            .ok()
+            .and_then(|m| m.elapsed().ok())
+            .map(|age| age > BOOK_INFO_CACHE_TTL)
+            .unwrap_or(true);
+        if expired {
+            let _ = fs::remove_file(&path).await;
+            return None;
+        }
+        let raw = fs::read_to_string(&path).await.ok()?;
+        serde_json::from_str(&raw).ok()
+    }
+
+    async fn save_book_info_cache(&self, user_ns: &str, book_url: &str, book: &Book) {
+        let path = self.book_info_cache_path(user_ns, book_url);
+        if let Some(parent) = path.parent() {
+            let _ = fs::create_dir_all(parent).await;
+        }
+        if let Ok(data) = serde_json::to_string(book) {
+            let _ = fs::write(&path, data).await;
+        }
     }
 
     pub async fn get_chapter_list(
@@ -1583,6 +1638,11 @@ impl BookService {
                 result.chapter_list = remove_dir_counting_files(&self.chapter_cache_dir(user_ns))
                     .await
                     .map_err(internal_error)?
+                    + remove_dir_counting_files(
+                        &self.storage_dir.join("cache").join(BOOK_INFO_CACHE_DIR).join(user_ns),
+                    )
+                    .await
+                    .map_err(internal_error)?;
             }
             CacheKind::SearchResults => {
                 result.search_results =
@@ -1624,6 +1684,7 @@ impl BookService {
                 result.chapter_list += 1;
             }
         }
+        let _ = fs::remove_file(self.book_info_cache_path(user_ns, book_url)).await;
         if self
             .delete_book_sources_cache(user_ns, book_url)
             .await
