@@ -89,6 +89,28 @@ impl FileCache {
         self.chapter_path(user_ns, book_key, chapter_key).exists()
     }
 
+    /// 某本书缓存目录下的文件数（目录不存在返回 0）。
+    ///
+    /// 书架页「已缓存章节数」用：一次 `read_dir` 计数，替代逐章 stat。
+    pub async fn book_file_count(&self, user_ns: &str, book_key: &str) -> u64 {
+        let dir = self.book_path(user_ns, book_key);
+        let Ok(mut entries) = fs::read_dir(&dir).await else {
+            return 0;
+        };
+        let mut count = 0u64;
+        while let Ok(Some(entry)) = entries.next_entry().await {
+            if entry
+                .file_type()
+                .await
+                .map(|t| t.is_file())
+                .unwrap_or(false)
+            {
+                count += 1;
+            }
+        }
+        count
+    }
+
     /// 删除整本书的缓存目录。
     pub async fn remove_book(&self, user_ns: &str, book_key: &str) -> anyhow::Result<bool> {
         let path = self.book_path(user_ns, book_key);

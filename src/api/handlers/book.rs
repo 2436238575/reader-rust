@@ -1445,15 +1445,16 @@ pub async fn get_shelf_book_with_cache_info(
 
         let mut found_cached_chapters = false;
         for toc_url in candidate_toc_urls {
-            if let Ok(Some(chapters)) = state
+            // 只探存在性 + 数缓存目录文件，不整份解析目录 JSON：
+            // 逐本解析目录在书多时是每本书一次完整反序列化
+            if state
                 .book_service
-                .load_chapter_list_cache(&user_ns, &toc_url)
+                .chapter_list_cache_exists(&user_ns, &toc_url)
                 .await
             {
-                let urls: Vec<String> = chapters.into_iter().map(|c| c.url).collect();
                 cached_count = state
                     .book_service
-                    .cached_chapter_count(&user_ns, &book.book_url, &urls)
+                    .cached_chapter_count(&user_ns, &book.book_url)
                     .await
                     .unwrap_or(0);
                 found_cached_chapters = true;

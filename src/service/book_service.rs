@@ -2014,20 +2014,12 @@ impl BookService {
         Ok(deleted)
     }
 
-    pub async fn cached_chapter_count(
-        &self,
-        user_ns: &str,
-        book_url: &str,
-        chapter_urls: &[String],
-    ) -> Result<usize, AppError> {
-        let book_key = md5_hex(book_url);
-        let mut count = 0usize;
-        for url in chapter_urls {
-            if self.cache.exists(user_ns, &book_key, url).await {
-                count += 1;
-            }
-        }
-        Ok(count)
+    /// 某本书已缓存的章节数：数缓存目录里的文件即可。
+    ///
+    /// 此前实现按章节 URL 列表逐个做同步 `exists()`，书架页对每本书执行，
+    /// 千章书在书多的场景下是数万次 stat；一次 `read_dir` 计数就够了。
+    pub async fn cached_chapter_count(&self, user_ns: &str, book_url: &str) -> Result<usize, AppError> {
+        Ok(self.cache.book_file_count(user_ns, &md5_hex(book_url)).await as usize)
     }
 
     pub async fn cache_chapter(
