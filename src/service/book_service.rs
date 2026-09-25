@@ -22,7 +22,7 @@ use crate::util::text::{normalize_source_url, repair_encoded_url};
 use serde_json::{json, Value};
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use tokio::fs;
 use tokio::sync::RwLock;
 use tokio::time::{sleep, Duration, Instant};
@@ -56,6 +56,9 @@ pub struct BookService {
     user_local_book_limit: u32,
     /// 封面缓存目录的容量上限（0 = 不限），来自 `CACHE_COVER_LIMIT_BYTES`。
     cover_cache_limit: u64,
+    /// 正在后台补全目录的 `(user_ns, toc_url)` 集合：防止同一本书并发触发
+    /// 两个补全任务（竞态下各自抓全部分页并各 append 一次，缓存里出现重复章节）。
+    pending_toc_fills: Arc<Mutex<HashSet<(String, String)>>>,
 }
 
 /// 内存里暂存的章节正文响应体。
@@ -192,6 +195,7 @@ impl BookService {
             user_book_limit: 0,
             user_local_book_limit: 0,
             cover_cache_limit: DEFAULT_COVER_CACHE_BYTES,
+            pending_toc_fills: Arc::new(Mutex::new(HashSet::new())),
         }
     }
 
@@ -2199,6 +2203,22 @@ impl BookService {
         Ok(())
     }
 
+    /// 标记某本书的目录后台补全开始；已在进行中时返回 `false`（调用方跳过 spawn）。
+    pub fn try_begin_toc_fill(&self, user_ns: &str, toc_url: &str) -> bool {
+        self.pending_toc_fills
+            .lock()
+            .unwrap()
+            .insert((user_ns.to_string(), toc_url.to_string()))
+    }
+
+    /// 标记目录后台补全结束（无论成败都必须调用）。
+    pub fn end_toc_fill(&self, user_ns: &str, toc_url: &str) {
+        self.pending_toc_fills
+            .lock()
+            .unwrap()
+            .remove(&(user_ns.to_string(), toc_url.to_string()));
+    }
+
     pub async fn append_chapter_list_cache(
         &self,
         user_ns: &str,
@@ -2209,14 +2229,23 @@ impl BookService {
             .load_chapter_list_cache(user_ns, toc_url)
             .await?
             .unwrap_or_default();
-        let start_index = existing.len() as i32;
-        for (i, ch) in new_chapters.iter().enumerate() {
-            let mut ch = ch.clone();
-            ch.index = start_index + i as i32;
-            existing.push(ch);
+        // 按 URL 去重：并发/重试场景下补全任务可能与缓存中已有章节重叠，
+        // 重复追加会让 index 漂移、目录出现重复项。空 URL 不参与去重
+        //（个别书源的章节确实没有独立 URL）。
+        let mut seen: HashSet<String> = existing.iter().map(|c| c.url.clone()).collect();
+        let mut added = false;
+        for ch in new_chapters {
+            if ch.url.is_empty() || seen.insert(ch.url.clone()) {
+                let mut ch = ch.clone();
+                ch.index = existing.len() as i32;
+                existing.push(ch);
+                added = true;
+            }
         }
-        self.save_chapter_list_cache(user_ns, toc_url, &existing)
-            .await?;
+        if added {
+            self.save_chapter_list_cache(user_ns, toc_url, &existing)
+                .await?;
+        }
         Ok(existing)
     }
 
@@ -2738,6 +2767,54 @@ mod tests {
             "image/jpeg"
         );
         assert_eq!(safe_cover_content_type(None, "webp"), "image/webp");
+    }
+
+    #[tokio::test]
+    async fn append_chapter_list_cache_dedups_by_url_and_keeps_index_sequential() {
+        let storage_dir =
+            std::env::temp_dir().join(format!("reader-rust-toc-dedup-{}", std::process::id()));
+        let service = BookService::new(
+            HttpClient::new(5, None).unwrap(),
+            RuleEngine::new().unwrap(),
+            FileCache::new(storage_dir.join("cache"), 0),
+            storage_dir.to_str().unwrap(),
+        );
+        let ns = "test-dedup";
+        let toc = "https://example.com/toc";
+
+        let mk = |index: i32, url: &str| BookChapter {
+            url: url.to_string(),
+            title: url.to_string(),
+            index,
+            ..Default::default()
+        };
+        service
+            .save_chapter_list_cache(ns, toc, &vec![mk(0, "a"), mk(1, "b")])
+            .await
+            .unwrap();
+        // 补全结果与缓存尾部重叠（竞态重放），另含一个空 URL 章节
+        let all = service
+            .append_chapter_list_cache(ns, toc, &vec![mk(9, "b"), mk(9, "c"), mk(9, "")])
+            .await
+            .unwrap();
+        let urls: Vec<&str> = all.iter().map(|c| c.url.as_str()).collect();
+        assert_eq!(urls, vec!["a", "b", "c", ""]);
+        let indexes: Vec<i32> = all.iter().map(|c| c.index).collect();
+        assert_eq!(indexes, vec![0, 1, 2, 3]);
+        // 再次追加完全重叠的结果：无新增时不重写缓存
+        let again = service
+            .append_chapter_list_cache(ns, toc, &vec![mk(9, "c")])
+            .await
+            .unwrap();
+        assert_eq!(again.len(), 4);
+
+        // 进行中守卫
+        assert!(service.try_begin_toc_fill(ns, toc));
+        assert!(!service.try_begin_toc_fill(ns, toc), "同一本书不允许并发补全");
+        service.end_toc_fill(ns, toc);
+        assert!(service.try_begin_toc_fill(ns, toc), "结束后可再次开始");
+        service.end_toc_fill(ns, toc);
+        let _ = std::fs::remove_dir_all(&storage_dir);
     }
 
     #[tokio::test]

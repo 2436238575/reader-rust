@@ -617,46 +617,55 @@ pub async fn get_chapter_list(
         .save_chapter_list_cache(&user_ns, &toc_url, &chapters)
         .await;
 
-    // If there are more pages to fetch, do it in background
-    if !pagination.pending_urls.is_empty() {
+    // If there are more pages to fetch, do it in background.
+    // 同一本书的补全任务并发去重：双击/刷新在首屏落盘前竞态时，
+    // 两个任务会各自抓全部分页并互相覆盖，缓存里出现重复章节。
+    if !pagination.pending_urls.is_empty()
+        && state
+            .book_service
+            .try_begin_toc_fill(&user_ns, &toc_url)
+    {
         let state_clone = state.clone();
         let user_ns_clone = user_ns.clone();
         let toc_url_clone = toc_url.clone();
 
         tokio::spawn(async move {
             tracing::debug!("starting background chapter fetch");
-            match state_clone
+            let remaining = match state_clone
                 .book_service
                 .fetch_remaining_chapters(pagination)
                 .await
             {
-                Ok(remaining) => {
-                    if !remaining.is_empty() {
-                        // Append to cache
-                        match state_clone
-                            .book_service
-                            .append_chapter_list_cache(&user_ns_clone, &toc_url_clone, &remaining)
-                            .await
-                        {
-                            Ok(all_chapters) => {
-                                tracing::debug!(
-                                    "background chapter fetch complete: {}",
-                                    all_chapters.len()
-                                );
-                            }
-                            Err(e) => {
-                                tracing::warn!(
-                                    "failed to append background chapters to cache: {:?}",
-                                    e
-                                );
-                            }
-                        }
-                    }
-                }
+                Ok(remaining) if !remaining.is_empty() => Some(remaining),
+                Ok(_) => None,
                 Err(e) => {
                     tracing::warn!("background chapter fetch failed: {:?}", e);
+                    None
+                }
+            };
+            if let Some(remaining) = remaining {
+                match state_clone
+                    .book_service
+                    .append_chapter_list_cache(&user_ns_clone, &toc_url_clone, &remaining)
+                    .await
+                {
+                    Ok(all_chapters) => {
+                        tracing::debug!(
+                            "background chapter fetch complete: {}",
+                            all_chapters.len()
+                        );
+                    }
+                    Err(e) => {
+                        tracing::warn!(
+                            "failed to append background chapters to cache: {:?}",
+                            e
+                        );
+                    }
                 }
             }
+            state_clone
+                .book_service
+                .end_toc_fill(&user_ns_clone, &toc_url_clone);
         });
     }
 
@@ -1467,10 +1476,20 @@ pub async fn get_shelf_book_with_cache_info(
                         }
                     }
                     if let Some(toc_url) = toc_url.or(Some(book.book_url.clone())) {
-                        let _ = state_clone
+                        // 与 getChapterList 的后台补全共享同一把进行中守卫，
+                        // 避免两条路径同时抓同一本书的目录并互相覆盖
+                        if state_clone
                             .book_service
-                            .get_chapter_list(&user_ns_clone, &source, &toc_url)
-                            .await;
+                            .try_begin_toc_fill(&user_ns_clone, &toc_url)
+                        {
+                            let _ = state_clone
+                                .book_service
+                                .get_chapter_list(&user_ns_clone, &source, &toc_url)
+                                .await;
+                            state_clone
+                                .book_service
+                                .end_toc_fill(&user_ns_clone, &toc_url);
+                        }
                     }
                 }
             }
