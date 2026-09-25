@@ -4,6 +4,7 @@ use crate::auth::jwt::{encode_token, Claims};
 use crate::error::error::AppError;
 use crate::model::user::User;
 use crate::util::crypto::{hash_password, secure_compare, verify_password};
+use crate::util::hash::md5_hex;
 use crate::util::time::now_ts;
 use serde_json::Value;
 use sqlx::{sqlite::SqliteRow, Row, SqlitePool};
@@ -107,7 +108,18 @@ pub struct UserService {
     pool: SqlitePool,
     jwt_secret: Arc<Vec<u8>>,
     auth_throttle: Arc<Mutex<AuthThrottle>>,
+    /// WebDAV Basic 凭据验证缓存：`(username, md5(password))` → 校验时间。
+    ///
+    /// Basic auth 每个请求都带全凭据，逐请求跑 Argon2（几十毫秒）在
+    /// PROPFIND 目录遍历这类高频请求下开销显著。命中缓存即 5 分钟内免
+    /// Argon2；用户的存续与 enable_webdav 仍实时查库，改密/重置/删号
+    /// 会立即清除对应条目。键里不存明文密码。
+    webdav_credential_cache: Arc<Mutex<HashMap<(String, String), std::time::Instant>>>,
 }
+
+/// WebDAV 凭据缓存的存活时间（秒）与条目上限。
+const WEBDAV_CREDENTIAL_TTL_SECS: u64 = 300;
+const WEBDAV_CREDENTIAL_MAX_ENTRIES: usize = 256;
 
 impl UserService {
     pub fn new(cfg: AppConfig, pool: SqlitePool, jwt_secret: Arc<Vec<u8>>) -> Self {
@@ -119,6 +131,7 @@ impl UserService {
             pool,
             jwt_secret,
             auth_throttle: Arc::new(Mutex::new(AuthThrottle::default())),
+            webdav_credential_cache: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 
@@ -470,6 +483,7 @@ impl UserService {
         user.password = hash_password_async(password).await?;
         user.token_version += 1;
         self.upsert_user_row(&user).await?;
+        self.invalidate_webdav_credentials(username);
         Ok(())
     }
 
@@ -498,12 +512,14 @@ impl UserService {
         user.token_version += 1;
         user.last_login_at = now_ms();
         self.upsert_user_row(&user).await?;
+        self.invalidate_webdav_credentials(username);
         let token = self.issue_token(&user)?;
         Ok(self.format_login(&user, &token))
     }
 
     pub async fn delete_users(&self, usernames: &[String]) -> Result<Vec<Value>, AppError> {
         for username in usernames {
+            self.invalidate_webdav_credentials(username);
             // 行删除后中间件的 load_identity 立即返回 None，无需再动版本号
             for sql in [
                 "DELETE FROM users WHERE username=?1",
@@ -565,13 +581,58 @@ impl UserService {
         if !user.enable_webdav {
             return Ok(None);
         }
+        let credential_key = (username.to_string(), md5_hex(password));
+        if self.webdav_credential_cached(&credential_key) {
+            return Ok(Some(user));
+        }
         // 与登录接口共享同一份限速：否则这是绕开登录锁定的平行爆破通道
         self.login_throttle_begin(username, client_ip)?;
         if !verify_password_async(password, &user.password).await? {
             return Ok(None);
         }
         self.login_throttle_clear(username, client_ip);
+        self.remember_webdav_credential(credential_key);
         Ok(Some(user))
+    }
+
+    fn webdav_credential_cached(&self, key: &(String, String)) -> bool {
+        let mut cache = self
+            .webdav_credential_cache
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let Some(&verified_at) = cache.get(key) else {
+            return false;
+        };
+        if verified_at.elapsed().as_secs() > WEBDAV_CREDENTIAL_TTL_SECS {
+            cache.remove(key);
+            return false;
+        }
+        true
+    }
+
+    fn remember_webdav_credential(&self, key: (String, String)) {
+        let mut cache = self
+            .webdav_credential_cache
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        if cache.len() >= WEBDAV_CREDENTIAL_MAX_ENTRIES {
+            // 先清过期，仍满则整表清空（与 auth_throttle 同策略）
+            cache.retain(|_, verified_at| {
+                verified_at.elapsed().as_secs() <= WEBDAV_CREDENTIAL_TTL_SECS
+            });
+            if cache.len() >= WEBDAV_CREDENTIAL_MAX_ENTRIES {
+                cache.clear();
+            }
+        }
+        cache.insert(key, std::time::Instant::now());
+    }
+
+    /// 清除某用户的 WebDAV 凭据缓存（改密/重置/删号后旧凭据必须重新验证）。
+    fn invalidate_webdav_credentials(&self, username: &str) {
+        self.webdav_credential_cache
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .retain(|(user, _), _| user != username);
     }
 
     pub async fn find_user(&self, username: &str) -> Result<Option<User>, AppError> {
