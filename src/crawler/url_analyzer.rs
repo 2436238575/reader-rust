@@ -14,8 +14,7 @@ static INLINE_JS_TAG_RE: Lazy<regex::Regex> =
     Lazy::new(|| regex::Regex::new(r"(?is)<js>(.*?)</js>|@js:([\w\W]*)").unwrap());
 static INLINE_TEMPLATE_RE: Lazy<regex::Regex> =
     Lazy::new(|| regex::Regex::new(r"\{\{([\w\W]*?)\}\}").unwrap());
-static INLINE_ANGLE_RE: Lazy<regex::Regex> =
-    Lazy::new(|| regex::Regex::new(r"<(.*?)>").unwrap());
+static INLINE_ANGLE_RE: Lazy<regex::Regex> = Lazy::new(|| regex::Regex::new(r"<(.*?)>").unwrap());
 
 pub const DEFAULT_USER_AGENT: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
 
