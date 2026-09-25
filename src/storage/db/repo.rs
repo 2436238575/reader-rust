@@ -19,6 +19,19 @@ impl BookSourceRepo {
         source: &BookSource,
         json: &str,
     ) -> Result<(), AppError> {
+        Self::upsert_on(&self.pool, user_ns, source, json).await
+    }
+
+    /// 在给定 executor（连接池或事务）上执行 upsert。
+    pub async fn upsert_on<'e, E>(
+        executor: E,
+        user_ns: &str,
+        source: &BookSource,
+        json: &str,
+    ) -> Result<(), AppError>
+    where
+        E: sqlx::Executor<'e, Database = sqlx::Sqlite>,
+    {
         sqlx::query(
             "INSERT INTO book_sources (user_ns, book_source_url, book_source_name, json, updated_at) VALUES (?1, ?2, ?3, ?4, ?5) \
              ON CONFLICT(user_ns, book_source_url) DO UPDATE SET book_source_name=excluded.book_source_name, json=excluded.json, updated_at=excluded.updated_at"
@@ -28,8 +41,23 @@ impl BookSourceRepo {
         .bind(&source.book_source_name)
         .bind(json)
         .bind(now_ts())
-        .execute(&self.pool)
+        .execute(executor)
         .await?;
+        Ok(())
+    }
+
+    /// 批量 upsert：单个事务提交。逐条独立事务时，导入上千书源 = 上千次
+    /// fsync（非 WAL 下写还阻塞读），整批导入也失去原子性。
+    pub async fn upsert_many(
+        &self,
+        user_ns: &str,
+        entries: &[(BookSource, String)],
+    ) -> Result<(), AppError> {
+        let mut tx = self.pool.begin().await?;
+        for (source, json) in entries {
+            Self::upsert_on(&mut *tx, user_ns, source, json).await?;
+        }
+        tx.commit().await?;
         Ok(())
     }
 
@@ -82,6 +110,7 @@ impl BookSourceRepo {
             .fetch_all(&self.pool)
             .await?;
         let count = rows.len() as i64;
+        let mut tx = self.pool.begin().await?;
         for row in rows {
             let url: String = row.get("book_source_url");
             let name: String = row.get("book_source_name");
@@ -96,9 +125,10 @@ impl BookSourceRepo {
             .bind(&name)
             .bind(&json)
             .bind(updated_at)
-            .execute(&self.pool)
+            .execute(&mut *tx)
             .await?;
         }
+        tx.commit().await?;
         Ok(count)
     }
 }

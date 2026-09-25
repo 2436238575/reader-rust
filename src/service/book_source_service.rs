@@ -138,9 +138,16 @@ impl BookSourceService {
     }
 
     pub async fn save_many(&self, user_ns: &str, sources: Vec<BookSource>) -> Result<(), AppError> {
-        for s in sources {
-            self.save(user_ns, s).await?;
-        }
+        let entries = sources
+            .iter()
+            .map(|s| {
+                serde_json::to_string(s)
+                    .map(|json| (s.clone(), json))
+                    .map_err(|e| AppError::BadRequest(e.to_string()))
+            })
+            .collect::<Result<Vec<_>, AppError>>()?;
+        self.repo.upsert_many(user_ns, &entries).await?;
+        self.invalidate_resolution(user_ns);
         Ok(())
     }
 
