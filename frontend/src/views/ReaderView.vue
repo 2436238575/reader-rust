@@ -534,13 +534,14 @@ const currentFontFamily = computed(() => {
   return preset ? preset.family : ''
 })
 
-function formatChapterHtml(rawText: string, withParaComments = false) {
+// 基础渲染（消毒 + 段落样式，不含段评气泡）：按正文与排版配置缓存。
+// 此前段评索引异步到达、开关搜索等任一变化都会让整章重新走
+// sanitize + 逐段 DOM 重建；现在这些只触发便宜的装饰层。
+function buildBaseChapterHtml(rawText: string) {
   if (!rawText) return ''
   const text = rawText
   const stripLeadingIndent = (line: string) => line.replace(/^[\u3000\u00A0 \t]+/, '')
   const wrapper = document.createElement('div')
-  const bubbleMap = withParaComments ? paraBubbleMap.value : null
-  let paragraphPosition = 0
 
   if (/<[a-z][\s\S]*>/i.test(text)) {
     // 书源返回的正文 HTML 完全不可信：先白名单消毒再进 DOM
@@ -558,9 +559,6 @@ function formatChapterHtml(rawText: string, withParaComments = false) {
         paragraph.style.marginTop = '0'
         paragraph.style.marginBottom = `${config.value.paragraphSpacing}em`
         paragraph.classList.toggle('reader-indent', config.value.firstLineIndent)
-        const bubble = bubbleMap?.get(paragraphPosition)
-        paragraphPosition += 1
-        if (bubble) paragraph.insertAdjacentHTML('beforeend', renderParaCommentBubble(bubble))
       })
     }
   } else {
@@ -570,17 +568,40 @@ function formatChapterHtml(rawText: string, withParaComments = false) {
       .map((line: string) => {
         const shouldIndent = config.value.firstLineIndent
         const content = escapeHtmlText(stripLeadingIndent(line.trimEnd()))
-        const bubble = bubbleMap?.get(paragraphPosition)
-        paragraphPosition += 1
-        const bubbleHtml = bubble ? renderParaCommentBubble(bubble) : ''
-        return `<p${shouldIndent ? ' class="reader-indent"' : ''} style="margin-top: 0; margin-bottom: ${config.value.paragraphSpacing}em;">${content}${bubbleHtml}</p>`
+        return `<p${shouldIndent ? ' class="reader-indent"' : ''} style="margin-top: 0; margin-bottom: ${config.value.paragraphSpacing}em;">${content}</p>`
       })
       .join('')
   }
+  return wrapper.innerHTML
+}
 
+const baseChapterHtml = computed(() => buildBaseChapterHtml(store.displayContent || ''))
+
+// 装饰层：段评气泡 + 本地 EPUB 资源改写 + 搜索高亮，作用在基础 HTML 之上
+function decorateChapterHtml(baseHtml: string, withBubbles: boolean) {
+  const wrapper = document.createElement('div')
+  wrapper.innerHTML = baseHtml
+  if (withBubbles) {
+    const bubbleMap = paraBubbleMap.value
+    if (bubbleMap.size) {
+      // base 渲染时空段已被移除，剩余 <p> 的顺序即段落位置
+      let paragraphPosition = 0
+      wrapper.querySelectorAll('p').forEach((paragraph) => {
+        const bubble = bubbleMap.get(paragraphPosition)
+        paragraphPosition += 1
+        if (bubble) paragraph.insertAdjacentHTML('beforeend', renderParaCommentBubble(bubble))
+      })
+    }
+  }
   appendLocalEpubAssetAuth(wrapper)
   highlightSearchText(wrapper)
   return wrapper.innerHTML
+}
+
+function formatChapterHtml(rawText: string, withParaComments = false) {
+  const base = withParaComments ? baseChapterHtml.value : buildBaseChapterHtml(rawText)
+  if (!base) return ''
+  return decorateChapterHtml(base, withParaComments)
 }
 
 /**
@@ -606,15 +627,28 @@ const paraBubbleMap = computed(() => {
     return map
   }
 
-  // 行数对不上（替换规则增删了行）：退化成按段落原文匹配
+  // 行数对不上（替换规则增删了行）：退化成按段落原文匹配。
+  // 给原始行建「前缀 → 行号」索引（每行最多 30 个前缀条目），把逐行
+  // find 的 O(n²) 降为 O(n·30)；候选仍按原始行顺序取首个未命中项，
+  // 匹配语义与原先完全一致
+  const prefixIndex = new Map<string, number[]>()
+  rawLines.forEach((raw) => {
+    const limit = Math.min(30, raw.text.length)
+    for (let i = 1; i <= limit; i += 1) {
+      const prefix = raw.text.slice(0, i)
+      const bucket = prefixIndex.get(prefix)
+      if (bucket) bucket.push(raw.index)
+      else prefixIndex.set(prefix, [raw.index])
+    }
+  })
   const used = new Set<number>()
   displayLines.forEach((line, position) => {
     const head = line.text.slice(0, 30)
     if (!head) return
-    const hit = rawLines.find((raw) => !used.has(raw.index) && raw.text.startsWith(head))
-    if (!hit) return
-    used.add(hit.index)
-    const item = counts.get(hit.index)
+    const hit = prefixIndex.get(head)?.find((idx) => !used.has(idx))
+    if (hit === undefined) return
+    used.add(hit)
+    const item = counts.get(hit)
     if (item) map.set(position, item)
   })
   return map
