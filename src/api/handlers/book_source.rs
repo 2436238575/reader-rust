@@ -20,6 +20,8 @@ use axum::{
 use regex::{Captures, Regex};
 use serde::{Deserialize, Serialize};
 use std::{collections::HashSet, sync::Arc};
+
+use once_cell::sync::Lazy;
 use tokio::{sync::Semaphore, task::JoinSet};
 use url::Url;
 
@@ -430,27 +432,51 @@ pub struct BookSourceClientLogParam {
 
 /// 客户端日志单字段的截断长度。
 const LOG_FIELD_MAX_CHARS: usize = 500;
+/// 客户端日志限频：同一 source 每分钟最多入库的条数。
+const CLIENT_LOG_MAX_PER_MINUTE: usize = 30;
+
+static CLIENT_LOG_BUCKETS: Lazy<
+    std::sync::Mutex<
+        std::collections::HashMap<String, std::collections::VecDeque<std::time::Instant>>,
+    >,
+> = Lazy::new(|| std::sync::Mutex::new(std::collections::HashMap::new()));
+
+fn allow_client_log(source: &str) -> bool {
+    let mut map = CLIENT_LOG_BUCKETS.lock().unwrap_or_else(|e| e.into_inner());
+    let now = std::time::Instant::now();
+    let bucket = map.entry(source.to_string()).or_default();
+    bucket.retain(|t| now.duration_since(*t) < std::time::Duration::from_secs(60));
+    if bucket.len() >= CLIENT_LOG_MAX_PER_MINUTE {
+        return false;
+    }
+    bucket.push_back(now);
+    true
+}
 
 pub async fn book_source_client_log(
     Query(q): Query<BookSourceClientLogParam>,
 ) -> Json<ApiResponse<serde_json::Value>> {
-    // 上报内容完全不可信：截断后再落日志，防止刷量把日志文件撑爆
-    let clip = |value: Option<&str>| {
-        value
-            .unwrap_or_default()
-            .chars()
-            .take(LOG_FIELD_MAX_CHARS)
-            .collect::<String>()
-    };
-    tracing::warn!(
-        "bookSourceProxy client error: source={} line={} col={} message={} stack={}",
-        clip(q.source.as_deref()),
-        q.lineno.unwrap_or_default(),
-        q.colno.unwrap_or_default(),
-        clip(q.message.as_deref()),
-        clip(q.stack.as_deref())
-    );
-    Json(ApiResponse::ok(serde_json::json!({ "logged": true })))
+    // 上报内容完全不可信：截断后再落日志；同一 source 超频的整条丢弃，
+    // 防止登录用户刷 warn 日志把日志文件撑爆
+    let allow = allow_client_log(q.source.as_deref().unwrap_or_default());
+    if allow {
+        let clip = |value: Option<&str>| {
+            value
+                .unwrap_or_default()
+                .chars()
+                .take(LOG_FIELD_MAX_CHARS)
+                .collect::<String>()
+        };
+        tracing::warn!(
+            "bookSourceProxy client error: source={} line={} col={} message={} stack={}",
+            clip(q.source.as_deref()),
+            q.lineno.unwrap_or_default(),
+            q.colno.unwrap_or_default(),
+            clip(q.message.as_deref()),
+            clip(q.stack.as_deref())
+        );
+    }
+    Json(ApiResponse::ok(serde_json::json!({ "logged": allow })))
 }
 
 pub async fn delete_book_source(
