@@ -13,7 +13,7 @@ use crate::util::text::{normalize_source_url, repair_encoded_url};
 use axum::body::Body;
 use axum::body::Bytes;
 use axum::http::{header, StatusCode};
-use axum::response::sse::Event;
+use axum::response::sse::{Event, KeepAlive};
 use axum::response::{IntoResponse, Response, Sse};
 use axum::{
     extract::{Multipart, Query, State},
@@ -1761,7 +1761,7 @@ pub async fn cache_book_sse(
             .await;
     });
 
-    Ok(Sse::new(ReceiverStream::new(rx).map(Ok::<_, Infallible>)))
+    Ok(Sse::new(ReceiverStream::new(rx).map(Ok::<_, Infallible>)).keep_alive(KeepAlive::default()))
 }
 
 pub async fn search_book_multi_sse(
@@ -1887,7 +1887,13 @@ pub async fn search_book_multi_sse(
                         if !batch.is_empty() {
                             total += batch.len();
                             let payload = serde_json::json!({"lastIndex": cur_idx, "data": batch});
-                            let _ = tx.send(Event::default().data(payload.to_string())).await;
+                            if tx.send(Event::default().data(payload.to_string()))
+                                .await
+                                .is_err()
+                            {
+                                // 客户端已断开：停止剩余抓取，别白白消耗出站带宽
+                                break;
+                            }
                         }
                         // Stop adding new tasks when search_size is reached
                         if total >= search_size {
@@ -1912,7 +1918,7 @@ pub async fn search_book_multi_sse(
             .await;
     });
 
-    Ok(Sse::new(ReceiverStream::new(rx).map(Ok)))
+    Ok(Sse::new(ReceiverStream::new(rx).map(Ok)).keep_alive(KeepAlive::default()))
 }
 
 pub async fn search_book_source_sse(
@@ -2037,7 +2043,10 @@ pub async fn search_book_source_sse(
                         total += batch.len();
                         all_results.extend(batch.clone());
                         let payload = serde_json::json!({"lastIndex": cur_idx, "data": batch});
-                        let _ = tx.send(Event::default().data(payload.to_string())).await;
+                        if tx.send(Event::default().data(payload.to_string())).await.is_err() {
+                            // 客户端已断开：停止剩余抓取，别白白消耗出站带宽
+                            break;
+                        }
                     }
                     if total >= search_size {
                         break;
@@ -2059,7 +2068,7 @@ pub async fn search_book_source_sse(
             .await;
     });
 
-    Ok(Sse::new(ReceiverStream::new(rx).map(Ok)))
+    Ok(Sse::new(ReceiverStream::new(rx).map(Ok)).keep_alive(KeepAlive::default()))
 }
 
 pub async fn get_available_book_source(
@@ -2292,7 +2301,7 @@ pub async fn get_available_book_source_sse(
                             )
                             .await;
                     });
-                    return Ok(Sse::new(ReceiverStream::new(rx).map(Ok)));
+                    return Ok(Sse::new(ReceiverStream::new(rx).map(Ok)).keep_alive(KeepAlive::default()));
                 }
             }
         }
@@ -2418,7 +2427,7 @@ pub async fn get_available_book_source_sse(
             .await;
     });
 
-    Ok(Sse::new(ReceiverStream::new(rx).map(Ok)))
+    Ok(Sse::new(ReceiverStream::new(rx).map(Ok)).keep_alive(KeepAlive::default()))
 }
 
 pub async fn book_source_debug_sse(
@@ -2510,7 +2519,7 @@ pub async fn book_source_debug_sse(
             .await;
     });
 
-    Ok(Sse::new(ReceiverStream::new(rx).map(Ok)))
+    Ok(Sse::new(ReceiverStream::new(rx).map(Ok)).keep_alive(KeepAlive::default()))
 }
 
 fn json_err(msg: &str) -> String {

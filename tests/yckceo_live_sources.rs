@@ -235,7 +235,7 @@ async fn smoke_source(
         .ok_or_else(|| "search returned no usable books".to_string())?;
 
     let info = service
-        .get_book_info("yckceo-live", source, &book.book_url)
+        .get_book_info("yckceo-live", source, &book.book_url, false)
         .await
         .map_err(|err| format!("book info failed for {}: {err:?}", book.book_url))?;
     let toc_url = info
