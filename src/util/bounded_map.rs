@@ -25,6 +25,7 @@ impl<V> BoundedMap<V> {
         self.map.get(key)
     }
 
+    #[cfg(test)]
     pub fn contains_key(&self, key: &str) -> bool {
         self.map.contains_key(key)
     }
