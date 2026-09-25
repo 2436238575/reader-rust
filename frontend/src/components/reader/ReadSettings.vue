@@ -104,6 +104,15 @@
         </div>
       </div>
 
+      <!-- 章节配图：书源配图规则取回的图 + 正文 HTML 里的 <img> -->
+      <div class="setting-row">
+        <label>章节配图</label>
+        <div class="btn-group">
+          <button class="opt-btn" :class="{ active: config.showChapterImages }" @click="store.updateConfig('showChapterImages', true)">显示</button>
+          <button class="opt-btn" :class="{ active: !config.showChapterImages }" @click="store.updateConfig('showChapterImages', false)">隐藏</button>
+        </div>
+      </div>
+
       <!-- 页面模式 -->
       <div class="setting-row">
         <label>页面模式</label>

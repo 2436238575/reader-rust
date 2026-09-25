@@ -384,3 +384,24 @@ export interface AiBookModelUpdate {
   shouldRegenerateMap: boolean
   mapPrompt?: string
 }
+
+/** 章节配图：来自书源的配图规则（正文 HTML 里内嵌的 <img> 不走这里） */
+export interface ChapterImage {
+  url: string
+  /** 图片说明文字（番茄是「配图（画师：奈月Oo）」） */
+  caption: string
+  /**
+   * 插入位置：正文按 `\n` 切分后的行号（从 0 开始，插在该行之前）。
+   * 为空表示站点没给位置，排在章末。
+   */
+  paraIndex: number | null
+  /** 原始尺寸，用来给图片占位；站点没给就是 0 */
+  width: number
+  height: number
+}
+
+/** 一章的配图；`enabled: false` 表示书源没声明配图规则 */
+export interface ChapterImages {
+  enabled: boolean
+  images: ChapterImage[]
+}

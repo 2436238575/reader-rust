@@ -13,7 +13,7 @@ export interface ContinuousChapterItem {
 
 export function useContinuousReading(
   store: ReaderStore,
-  renderChapterHtml: (rawText: string) => string,
+  renderChapterHtml: (rawText: string, chapterIndex?: number) => string,
   isContinuousMode: ComputedRef<boolean>,
   hideReadChaptersMode: ComputedRef<boolean>,
   scrollContainerRef: Ref<HTMLElement | undefined>,
@@ -53,14 +53,14 @@ export function useContinuousReading(
       index,
       title: chapter.title,
       content: chapterContent,
-      html: renderChapterHtml(chapterContent),
+      html: renderChapterHtml(chapterContent, index),
     } satisfies ContinuousChapterItem
   }
 
   function syncContinuousChapterHtml() {
     continuousChapters.value = continuousChapters.value.map((chapter) => ({
       ...chapter,
-      html: renderChapterHtml(chapter.content),
+      html: renderChapterHtml(chapter.content, chapter.index),
     }))
   }
 
@@ -114,7 +114,7 @@ export function useContinuousReading(
     if (current) {
       if (current.content !== store.content) {
         current.content = store.content
-        current.html = renderChapterHtml(store.content)
+        current.html = renderChapterHtml(store.content, current.index)
       }
       return
     }

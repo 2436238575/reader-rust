@@ -6,6 +6,7 @@ import { useAiBookStore } from './aiBook'
 import {
   getChapterList,
   getBookContent,
+  getChapterImages,
   saveBookProgress,
   setBookSource as apiSetBookSource,
 } from '../api/bookshelf'
@@ -17,7 +18,15 @@ import {
 } from '../api/bookmark'
 import { getChapterComments, getParaCommentIndex } from '../api/review'
 import { getReplaceRules } from '../api/replaceRule'
-import type { Book, BookChapter, Bookmark, ParaReviewCount, ReplaceRule, ReviewPage } from '../types'
+import type {
+  Book,
+  BookChapter,
+  Bookmark,
+  ChapterImage,
+  ParaReviewCount,
+  ReplaceRule,
+  ReviewPage,
+} from '../types'
 import { getBrowserCachedChapter, setBrowserCachedChapter } from '../utils/browserCache'
 import { isLocalBook } from '../utils/localBook'
 import { saveRecentReadBook } from '../utils/recentBooks'
@@ -59,6 +68,8 @@ export interface ReadConfig {
   chineseMode: 'simplified' | 'traditional'
   specialMode: 'normal' | 'simple'
   enablePreload: boolean
+  /** 显示章节配图（书源配图规则取回的图，以及正文 HTML 里的 <img>） */
+  showChapterImages: boolean
 }
 
 const defaultConfig: ReadConfig = {
@@ -81,6 +92,7 @@ const defaultConfig: ReadConfig = {
   chineseMode: 'simplified',
   specialMode: 'normal',
   enablePreload: false,
+  showChapterImages: true,
 }
 
 function loadConfig(): ReadConfig {
@@ -207,6 +219,9 @@ export const useReaderStore = defineStore('reader', () => {
   const chapterCommentTotal = ref(0)
   const chapterComments = ref<ReviewPage | null>(null)
   const reviewsLoading = ref(false)
+  /* 章节配图：书源声明了配图规则时才有 */
+  const chapterImages = ref<ChapterImage[]>([])
+  const chapterImagesEnabled = ref(false)
   const preloadedContent = ref<Map<number, string>>(new Map()) // index -> content
   const isAutoScrolling = ref(false)
   const chapterScrollProgress = ref(0)
@@ -1249,6 +1264,8 @@ export const useReaderStore = defineStore('reader', () => {
   function setActiveChapterState(index: number, chapterContent: string, progress = 0) {
     currentIndex.value = index
     content.value = chapterContent
+    // 配图跟着章节走：先清掉上一章的，等本次请求回来再填
+    resetChapterImages()
     chapterScrollProgress.value = Math.max(0, Math.min(1, progress))
     if (book.value) {
       book.value.durChapterIndex = index
@@ -1390,8 +1407,9 @@ export const useReaderStore = defineStore('reader', () => {
         await persistProgress(index, 0)
       }
 
-      // 正文先渲染，评论随后补上：拉不到评论不该拖慢或打断阅读
+      // 正文先渲染，评论与配图随后补上：拉不到不该拖慢或打断阅读
       void loadChapterReviews(index)
+      void loadChapterImages(index)
 
       if (config.enablePreload) {
         setTimeout(() => preloadAroundChapter(index), forceRefresh ? 1500 : 1000)
@@ -1447,6 +1465,41 @@ export const useReaderStore = defineStore('reader', () => {
     paraReviewIndex.value = []
     chapterCommentTotal.value = 0
     chapterComments.value = null
+  }
+
+  /**
+   * 拉取本章配图。
+   *
+   * 与评论同理：书源没声明配图规则时后端返回 `enabled: false`，前端不渲染配图区；
+   * 失败静默降级——配图是附加内容，不能影响正文阅读。
+   * 后端不缓存配图（图片地址带时效签名），所以这里也不做本地缓存。
+   */
+  async function loadChapterImages(index = currentIndex.value) {
+    const currentBook = book.value
+    const chapter = chapters.value[index]
+    if (!currentBook || !chapter || isLocalBook(currentBook)) {
+      resetChapterImages()
+      return
+    }
+    // 只认自己那次请求的结果，避免快速翻章时旧响应覆盖新章节
+    const requestedChapterUrl = chapter.url
+    try {
+      const resp = await getChapterImages({
+        bookUrl: currentBook.bookUrl,
+        chapterUrl: requestedChapterUrl,
+        bookSourceUrl: currentBook.origin,
+      })
+      if (chapters.value[currentIndex.value]?.url !== requestedChapterUrl) return
+      chapterImagesEnabled.value = resp?.enabled === true
+      chapterImages.value = resp?.images || []
+    } catch {
+      if (chapters.value[currentIndex.value]?.url === requestedChapterUrl) resetChapterImages()
+    }
+  }
+
+  function resetChapterImages() {
+    chapterImagesEnabled.value = false
+    chapterImages.value = []
   }
 
   /** 段号 → 该段评论条数，供正文渲染气泡时查表。 */
@@ -1714,5 +1767,6 @@ export const useReaderStore = defineStore('reader', () => {
     reviewEnabled, paraReviewEnabled, paraReviewIndex, paraReviewCountByIndex,
     chapterCommentTotal, chapterComments, reviewsLoading,
     loadChapterReviews, resetReviews,
+    chapterImages, chapterImagesEnabled, loadChapterImages, resetChapterImages,
   }
 })

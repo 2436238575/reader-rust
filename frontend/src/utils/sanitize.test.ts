@@ -50,6 +50,17 @@ describe('sanitizeUntrustedHtml', () => {
     expect(out).toContain('data:image/png')
   })
 
+  it('keeps chapter illustration markup (figure + size hints)', () => {
+    const out = sanitizeUntrustedHtml(
+      '<figure class="chapter-figure"><img src="https://x/2.jpg" width="1400" height="933">' +
+        '<figcaption>配图（画师：奈月Oo）</figcaption></figure>',
+    )
+    expect(out).toContain('<figure')
+    expect(out).toContain('<figcaption>')
+    expect(out).toContain('width="1400"')
+    expect(out).toContain('height="933"')
+  })
+
   it('keeps plain text untouched', () => {
     expect(sanitizeUntrustedHtml('纯文本正文')).toBe('纯文本正文')
   })

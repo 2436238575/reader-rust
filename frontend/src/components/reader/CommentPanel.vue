@@ -92,15 +92,14 @@
       </div>
     </Transition>
 
-    <div v-if="preview" class="comment-preview" @click="preview = ''">
-      <img :src="preview" alt="" referrerpolicy="no-referrer">
-    </div>
+    <ImageLightbox :src="preview" @close="preview = ''" />
   </Teleport>
 </template>
 
 <script setup lang="ts">
 import { computed, nextTick, ref, watch } from 'vue'
 import type { ReviewItem, ReviewPage } from '../../types'
+import ImageLightbox from './ImageLightbox.vue'
 import type { ThemePreset } from '../../stores/reader'
 import { getChapterComments, getParaComments, type ReviewSort } from '../../api/review'
 
@@ -522,24 +521,6 @@ function formatReviewTime(raw: string) {
   border-radius: 8px;
   object-fit: cover;
   cursor: zoom-in;
-}
-
-.comment-preview {
-  position: fixed;
-  inset: 0;
-  z-index: 3100;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 24px;
-  background: rgba(0, 0, 0, 0.88);
-  cursor: zoom-out;
-}
-
-.comment-preview img {
-  max-width: 100%;
-  max-height: 100%;
-  object-fit: contain;
 }
 
 .comment-replies {

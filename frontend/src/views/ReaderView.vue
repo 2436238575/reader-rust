@@ -244,6 +244,7 @@
               '--p-spacing': config.paragraphSpacing + 'em',
             }"
             v-html="chapter.html"
+            @click="handleChapterTextClick"
           ></div>
 
           <div v-if="chapter.index === continuousChapters[continuousChapters.length - 1]?.index" class="chapter-footer">
@@ -300,6 +301,8 @@
       v-model="showBookInfo"
       :book="bookInfoBook"
     />
+
+    <ImageLightbox :src="previewImage" @close="previewImage = ''" />
   </div>
 </template>
 
@@ -314,7 +317,7 @@ import { countBrowserBookCache } from '../utils/browserCache'
 import { APP_VIEWPORT_CHANGE_EVENT, syncViewportSize } from '../utils/viewport'
 import { isReaderInteractiveClickTarget } from '../utils/readerClick'
 import { sanitizeUntrustedHtml } from '../utils/sanitize'
-import type { ParaReviewCount } from '../types'
+import type { ChapterImage, ParaReviewCount } from '../types'
 import { createReaderProgressAutoSaveScheduler, createReaderProgressExitSaver } from '../utils/readerProgressAutoSave'
 import type { Book } from '../types'
 
@@ -337,6 +340,7 @@ const BookDetailModal = defineAsyncComponent(() => import('../components/BookDet
 const ReaderTtsPanel = defineAsyncComponent(() => import('../components/reader/ReaderTtsPanel.vue'))
 const ReaderSearchPanel = defineAsyncComponent(() => import('../components/reader/ReaderSearchPanel.vue'))
 const CommentPanel = defineAsyncComponent(() => import('../components/reader/CommentPanel.vue'))
+const ImageLightbox = defineAsyncComponent(() => import('../components/reader/ImageLightbox.vue'))
 
 const router = useRouter()
 const store = useReaderStore()
@@ -546,6 +550,9 @@ function buildBaseChapterHtml(rawText: string) {
   if (/<[a-z][\s\S]*>/i.test(text)) {
     // 书源返回的正文 HTML 完全不可信：先白名单消毒再进 DOM
     wrapper.innerHTML = sanitizeUntrustedHtml(text)
+    if (!config.value.showChapterImages) {
+      wrapper.querySelectorAll('img').forEach((image) => image.remove())
+    }
     const paragraphs = Array.from(wrapper.querySelectorAll('p')) as HTMLParagraphElement[]
     if (paragraphs.length) {
       paragraphs.forEach((paragraph) => {
@@ -558,7 +565,9 @@ function buildBaseChapterHtml(rawText: string) {
         paragraph.innerHTML = paragraph.innerHTML.replace(/^[\u3000\u00A0 \t]+/, '')
         paragraph.style.marginTop = '0'
         paragraph.style.marginBottom = `${config.value.paragraphSpacing}em`
-        paragraph.classList.toggle('reader-indent', config.value.firstLineIndent)
+        // 图独占一段时不缩进：首行缩进会把整张图往右推
+        const imageOnly = Boolean(paragraph.querySelector('img')) && !plainText
+        paragraph.classList.toggle('reader-indent', config.value.firstLineIndent && !imageOnly)
       })
     }
   } else {
@@ -577,11 +586,14 @@ function buildBaseChapterHtml(rawText: string) {
 
 const baseChapterHtml = computed(() => buildBaseChapterHtml(store.displayContent || ''))
 
-// 装饰层：段评气泡 + 本地 EPUB 资源改写 + 搜索高亮，作用在基础 HTML 之上
+// 装饰层：章节配图 + 段评气泡 + 本地 EPUB 资源改写 + 搜索高亮，作用在基础 HTML 之上
 function decorateChapterHtml(baseHtml: string, withBubbles: boolean) {
   const wrapper = document.createElement('div')
   wrapper.innerHTML = baseHtml
   if (withBubbles) {
+    // 配图先插：段评气泡按 `<p>` 顺序定位，figure 不是 <p> 不影响它，
+    // 但气泡会往段落里塞计数，得赶在它之前比对段落原文
+    insertChapterImages(wrapper)
     const bubbleMap = paraBubbleMap.value
     if (bubbleMap.size) {
       // base 渲染时空段已被移除，剩余 <p> 的顺序即段落位置
@@ -598,6 +610,53 @@ function decorateChapterHtml(baseHtml: string, withBubbles: boolean) {
   return wrapper.innerHTML
 }
 
+/**
+ * 把配图插进正文。
+ *
+ * 位置是「插在该段之前」；位置缺失或超出正文范围的一律排在章末。
+ * 说明文字只在正文里没有同一句话时才显示——番茄把说明也写进了正文，
+ * 再显示一遍就是重复。
+ */
+function insertChapterImages(wrapper: HTMLElement, imageMap = chapterImageMap.value) {
+  if (!imageMap.size) return
+  const paragraphs = Array.from(wrapper.querySelectorAll('p')) as HTMLElement[]
+  const trailing: ChapterImage[] = []
+  imageMap.forEach((images, position) => {
+    if (position < 0 || position >= paragraphs.length) {
+      trailing.push(...images)
+      return
+    }
+    const paragraph = paragraphs[position]
+    const paragraphText = (paragraph.textContent || '').trim()
+    paragraph.insertAdjacentHTML(
+      'beforebegin',
+      renderChapterImageFigures(images, paragraphText),
+    )
+  })
+  if (trailing.length) {
+    wrapper.insertAdjacentHTML('beforeend', renderChapterImageFigures(trailing, ''))
+  }
+}
+
+function renderChapterImageFigures(images: ChapterImage[], paragraphText: string) {
+  return images
+    .map((image) => {
+      const caption = image.caption.trim()
+      const size = image.width > 0 && image.height > 0 ? ` width="${image.width}" height="${image.height}"` : ''
+      const captionHtml =
+        caption && caption !== paragraphText
+          ? `<figcaption>${escapeHtmlText(caption)}</figcaption>`
+          : ''
+      return (
+        '<figure class="chapter-figure">' +
+        `<img src="${escapeHtmlAttr(image.url)}" alt="${escapeHtmlAttr(caption)}"` +
+        `${size} loading="lazy" referrerpolicy="no-referrer">` +
+        `${captionHtml}</figure>`
+      )
+    })
+    .join('')
+}
+
 function formatChapterHtml(rawText: string, withParaComments = false) {
   const base = withParaComments ? baseChapterHtml.value : buildBaseChapterHtml(rawText)
   if (!base) return ''
@@ -605,25 +664,21 @@ function formatChapterHtml(rawText: string, withParaComments = false) {
 }
 
 /**
- * 段评气泡定位。
+ * 渲染段落位置 → 正文原始行号。
  *
  * 后端给的段号是「正文按 `\n` 切分后的下标」，而渲染用的正文已经过书源替换
  * 规则与繁简转换，空行也被丢掉，段号可能对不上。这里以「非空行位置对齐」
  * 为主、段落原文匹配为辅，算出每个渲染段落对应正文里的哪一段。
+ * 段评气泡与章节配图都靠它定位。
  */
-const paraBubbleMap = computed(() => {
-  const map = new Map<number, ParaReviewCount>()
-  const counts = store.paraReviewCountByIndex
-  if (!counts.size) return map
+const rawLineByPosition = computed(() => {
+  const map = new Map<number, number>()
   const rawLines = splitParagraphLines(store.content)
   const displayLines = splitParagraphLines(store.displayContent)
   if (!displayLines.length) return map
 
   if (rawLines.length === displayLines.length) {
-    displayLines.forEach((_line, position) => {
-      const item = counts.get(rawLines[position].index)
-      if (item) map.set(position, item)
-    })
+    displayLines.forEach((_line, position) => map.set(position, rawLines[position].index))
     return map
   }
 
@@ -648,9 +703,50 @@ const paraBubbleMap = computed(() => {
     const hit = prefixIndex.get(head)?.find((idx) => !used.has(idx))
     if (hit === undefined) return
     used.add(hit)
-    const item = counts.get(hit)
+    map.set(position, hit)
+  })
+  return map
+})
+
+const paraBubbleMap = computed(() => {
+  const map = new Map<number, ParaReviewCount>()
+  const counts = store.paraReviewCountByIndex
+  if (!counts.size) return map
+  rawLineByPosition.value.forEach((rawIndex, position) => {
+    const item = counts.get(rawIndex)
     if (item) map.set(position, item)
   })
+  return map
+})
+
+/**
+ * 正文原始行号 → 渲染段落位置（章末用 `-1`）。
+ *
+ * 行号落在空行上时，退到它之后第一个非空段落；超出正文则算章末——
+ * 配图规则给的插入位置是「插在该行之前」，指向末尾就等于排在章末。
+ */
+function positionForRawLine(rawLine: number) {
+  let position = -1
+  let nearest = Number.POSITIVE_INFINITY
+  rawLineByPosition.value.forEach((rawIndex, renderedPosition) => {
+    if (rawIndex >= rawLine && rawIndex < nearest) {
+      nearest = rawIndex
+      position = renderedPosition
+    }
+  })
+  return position
+}
+
+/** 渲染段落位置（`-1` = 章末）→ 该处要显示的配图。 */
+const chapterImageMap = computed(() => {
+  const map = new Map<number, ChapterImage[]>()
+  if (!store.chapterImagesEnabled || !config.value.showChapterImages) return map
+  for (const image of store.chapterImages) {
+    const position = image.paraIndex == null ? -1 : positionForRawLine(image.paraIndex)
+    const bucket = map.get(position)
+    if (bucket) bucket.push(image)
+    else map.set(position, [image])
+  }
   return map
 })
 
@@ -680,12 +776,22 @@ function renderParaCommentBubble(item: ParaReviewCount) {
 function handleChapterTextClick(event: MouseEvent) {
   const target = event.target as HTMLElement | null
   const bubble = target?.closest('.para-comment-bubble') as HTMLElement | null
-  if (!bubble) return
-  event.stopPropagation()
-  const paraIndex = Number(bubble.dataset.paraIndex)
-  if (!Number.isFinite(paraIndex)) return
-  openParaComments(paraIndex)
+  if (bubble) {
+    event.stopPropagation()
+    const paraIndex = Number(bubble.dataset.paraIndex)
+    if (!Number.isFinite(paraIndex)) return
+    openParaComments(paraIndex)
+    return
+  }
+  // 正文配图：点开看大图
+  if (target?.tagName === 'IMG') {
+    event.stopPropagation()
+    previewImage.value = (target as HTMLImageElement).src
+  }
 }
+
+/* ─── 图片放大预览 ─── */
+const previewImage = ref('')
 
 /* ─── 评论面板 ─── */
 const showCommentPanel = ref(false)
@@ -771,8 +877,26 @@ function escapeHtmlText(value: string) {
     .replace(/>/g, '&gt;')
 }
 
-function renderChapterHtml(rawText: string) {
-  return formatChapterHtml(store.processContentForDisplay(rawText || ''))
+/** 属性值转义：除了 `&<>` 还要挡引号，否则能拼出新的属性。 */
+function escapeHtmlAttr(value: string) {
+  return escapeHtmlText(value).replace(/"/g, '&quot;').replace(/'/g, '&#39;')
+}
+
+/**
+ * 渲染某一章的正文 HTML。
+ *
+ * `chapterIndex` 用于章节配图：配图是「当前章」的状态（后端按章返回），
+ * 连续滚动模式下只有当前章该插配图，前后预加载的章节不插。
+ */
+function renderChapterHtml(rawText: string, chapterIndex?: number) {
+  const html = formatChapterHtml(store.processContentForDisplay(rawText || ''))
+  if (chapterIndex === undefined) return html
+  const images = chapterIndex === store.currentIndex ? chapterImageMap.value : null
+  if (!images?.size) return html
+  const wrapper = document.createElement('div')
+  wrapper.innerHTML = html
+  insertChapterImages(wrapper, images)
+  return wrapper.innerHTML
 }
 
 const formattedContent = computed(() => formatChapterHtml(store.displayContent || '', true))
@@ -1942,7 +2066,7 @@ watch(() => store.currentIndex, () => {
 })
 
 watch(
-  [() => store.content, () => config.value.fontSize, () => config.value.fontWeight, () => config.value.lineHeight, () => config.value.paragraphSpacing, () => config.value.firstLineIndent, showSearch, searchQuery],
+  [() => store.content, () => config.value.fontSize, () => config.value.fontWeight, () => config.value.lineHeight, () => config.value.paragraphSpacing, () => config.value.firstLineIndent, () => config.value.showChapterImages, showSearch, searchQuery],
   () => {
     if (isHorizontalPageMode.value) {
       horizontalPageIndex.value = 0
@@ -1986,7 +2110,7 @@ watch(() => store.content, () => {
     const current = getContinuousChapter(store.currentIndex)
     if (current) {
       current.content = store.content
-      current.html = renderChapterHtml(store.content)
+      current.html = renderChapterHtml(store.content, current.index)
     } else if (store.content) {
       void initializeContinuousChapters(store.currentIndex, false)
     }
@@ -1995,6 +2119,13 @@ watch(() => store.content, () => {
   handleContentUpdated()
   scheduleRefreshOfflineCacheState()
   scheduleRestoreReadingPosition()
+})
+
+// 配图比正文晚到：连续滚动模式的 HTML 是预渲染的，得为当前章补一次
+watch(() => store.chapterImages, () => {
+  if (!isContinuousMode.value) return
+  const current = getContinuousChapter(store.currentIndex)
+  if (current) current.html = renderChapterHtml(store.content, current.index)
 })
 
 watch(() => store.loading, (loading) => {
@@ -2008,7 +2139,7 @@ watch(() => store.book?.bookUrl, () => {
   scheduleRefreshOfflineCacheState()
 })
 
-watch([showSearch, searchQuery, () => config.value.paragraphSpacing, () => config.value.firstLineIndent, () => config.value.chineseMode, () => store.replaceRules], () => {
+watch([showSearch, searchQuery, () => config.value.paragraphSpacing, () => config.value.firstLineIndent, () => config.value.showChapterImages, () => config.value.chineseMode, () => store.replaceRules], () => {
   if (isContinuousMode.value) {
     syncContinuousChapterHtml()
   }
@@ -2339,6 +2470,30 @@ watch(
   text-indent: 0;
   user-select: text;
   -webkit-user-select: text;
+}
+
+/* ─── 章节配图：书源配图规则插进来的 figure，以及正文 HTML 自带的 <img> ─── */
+:deep(.chapter-text img) {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  margin: 0.6em auto;
+  border-radius: 6px;
+  cursor: zoom-in;
+  /* 未加载完时按属性给出的宽高占位，避免正文跳动 */
+  background: rgba(127, 127, 127, 0.08);
+}
+
+:deep(.chapter-figure) {
+  margin: 1em 0;
+}
+
+:deep(.chapter-figure figcaption) {
+  margin-top: 0.4em;
+  text-align: center;
+  font-size: 0.85em;
+  opacity: 0.65;
+  text-indent: 0;
 }
 
 .chapter-footer {
