@@ -1887,7 +1887,8 @@ pub async fn search_book_multi_sse(
                         if !batch.is_empty() {
                             total += batch.len();
                             let payload = serde_json::json!({"lastIndex": cur_idx, "data": batch});
-                            if tx.send(Event::default().data(payload.to_string()))
+                            if tx
+                                .send(Event::default().data(payload.to_string()))
                                 .await
                                 .is_err()
                             {
@@ -2043,7 +2044,11 @@ pub async fn search_book_source_sse(
                         total += batch.len();
                         all_results.extend(batch.clone());
                         let payload = serde_json::json!({"lastIndex": cur_idx, "data": batch});
-                        if tx.send(Event::default().data(payload.to_string())).await.is_err() {
+                        if tx
+                            .send(Event::default().data(payload.to_string()))
+                            .await
+                            .is_err()
+                        {
                             // 客户端已断开：停止剩余抓取，别白白消耗出站带宽
                             break;
                         }
@@ -2301,7 +2306,9 @@ pub async fn get_available_book_source_sse(
                             )
                             .await;
                     });
-                    return Ok(Sse::new(ReceiverStream::new(rx).map(Ok)).keep_alive(KeepAlive::default()));
+                    return Ok(
+                        Sse::new(ReceiverStream::new(rx).map(Ok)).keep_alive(KeepAlive::default())
+                    );
                 }
             }
         }

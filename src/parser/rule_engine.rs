@@ -16,10 +16,14 @@ use sxd_xpath::{Context as XPathContext, Factory as XPathFactory, Value as XPath
 
 /// 规则模板/占位符的固定正则：热路径上对每个元素每个字段都会用到，
 /// 每次调用重新编译是纯浪费（2000 章目录页此前要编译数万次）。
-static TEMPLATE_JS_RE: Lazy<regex::Regex> = Lazy::new(|| regex::Regex::new(r"\{\{(.*?)\}\}").unwrap());
-static INLINE_JS_RE: Lazy<regex::Regex> = Lazy::new(|| regex::Regex::new(r"\{\{([^}]+)\}\}").unwrap());
-static TEMPLATE_GET_RE: Lazy<regex::Regex> = Lazy::new(|| regex::Regex::new(r"@get:\{([^}]+)\}").unwrap());
-static REGEX_PLACEHOLDER_RE: Lazy<regex::Regex> = Lazy::new(|| regex::Regex::new(r"\$(\d{1,2})").unwrap());
+static TEMPLATE_JS_RE: Lazy<regex::Regex> =
+    Lazy::new(|| regex::Regex::new(r"\{\{(.*?)\}\}").unwrap());
+static INLINE_JS_RE: Lazy<regex::Regex> =
+    Lazy::new(|| regex::Regex::new(r"\{\{([^}]+)\}\}").unwrap());
+static TEMPLATE_GET_RE: Lazy<regex::Regex> =
+    Lazy::new(|| regex::Regex::new(r"@get:\{([^}]+)\}").unwrap());
+static REGEX_PLACEHOLDER_RE: Lazy<regex::Regex> =
+    Lazy::new(|| regex::Regex::new(r"\$(\d{1,2})").unwrap());
 
 /// 文档级字段求值的共享视图：把整份 DOM 序列化成 HTML 字符串是
 /// O(文档大小) 的工作，book_info 一次要对同一份文档求值十余个字段，
@@ -1379,9 +1383,10 @@ fn parse_review_page_html(fields: &ReviewFields<'_>, body: &str, base_url: &str)
     if reverse {
         items.reverse();
     }
-    let total = eval_field_html_doc_with_ctx(fields.total.unwrap_or(""), &doc_view, base_url, &mut ctx)
-        .map(|text| parse_count_text(&text))
-        .unwrap_or(items.len() as i64);
+    let total =
+        eval_field_html_doc_with_ctx(fields.total.unwrap_or(""), &doc_view, base_url, &mut ctx)
+            .map(|text| parse_count_text(&text))
+            .unwrap_or(items.len() as i64);
     let has_more =
         eval_field_html_doc_with_ctx(fields.has_more.unwrap_or(""), &doc_view, base_url, &mut ctx)
             .map(is_truthy)
@@ -2827,8 +2832,8 @@ fn try_put_get_html_doc(
         let content = content.trim();
         if content.starts_with('{') && content.ends_with('}') {
             for (key, val_rule) in split_put_map(&content[1..content.len() - 1]) {
-                let val =
-                    eval_field_html_doc_with_ctx(&val_rule, doc_view, base_url, ctx).unwrap_or_default();
+                let val = eval_field_html_doc_with_ctx(&val_rule, doc_view, base_url, ctx)
+                    .unwrap_or_default();
                 ctx.insert(key, val);
             }
         }
