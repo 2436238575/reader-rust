@@ -397,6 +397,29 @@ export const useReaderStore = defineStore('reader', () => {
     progressDirty.value = true
   }
 
+  // 滚动事件每秒可触发数十次：把整本目录序列化进 localStorage 的会话保存
+  // 必须防抖（阅读位置本身另有 120ms 防抖的本地保存与服务端 10s 节流上报，
+  // 这里的会话只服务「回到上次阅读页」的恢复，晚 300ms 无感）
+  const READER_SESSION_SAVE_DEBOUNCE_MS = 300
+  let sessionSaveTimer: ReturnType<typeof setTimeout> | null = null
+
+  function scheduleReaderSessionSave() {
+    if (sessionSaveTimer) clearTimeout(sessionSaveTimer)
+    sessionSaveTimer = setTimeout(() => {
+      sessionSaveTimer = null
+      syncLocalBookProgress()
+      saveReaderSession()
+    }, READER_SESSION_SAVE_DEBOUNCE_MS)
+  }
+
+  function flushReaderSessionSave() {
+    if (!sessionSaveTimer) return
+    clearTimeout(sessionSaveTimer)
+    sessionSaveTimer = null
+    syncLocalBookProgress()
+    saveReaderSession()
+  }
+
   function syncLocalBookProgress(progress = chapterScrollProgress.value) {
     if (!book.value) return
     const encodedProgress = encodeServerProgress(progress)
@@ -1544,9 +1567,8 @@ export const useReaderStore = defineStore('reader', () => {
 
   function setChapterScrollProgress(value: number) {
     chapterScrollProgress.value = Math.max(0, Math.min(1, value))
-    syncLocalBookProgress(chapterScrollProgress.value)
-    saveReaderSession()
     markProgressDirty()
+    scheduleReaderSessionSave()
   }
 
   async function nextChapter() {
@@ -1665,7 +1687,7 @@ export const useReaderStore = defineStore('reader', () => {
     book, chapters, currentIndex, content, loading, chaptersLoading, loadError,
     currentChapter, hasNext, hasPrev, readingProgress,
       loadBook, loadChapter, fetchChapterContent, setActiveChapterState, refreshContent, nextChapter, prevChapter, clear,
-      chapterScrollProgress, setChapterScrollProgress,
+      chapterScrollProgress, setChapterScrollProgress, flushReaderSessionSave,
       getPersistedReaderSession, restorePersistedSession,
       persistProgress, flushProgressToServer, flushProgressToServerKeepalive,
       config, updateConfig, resetConfig, saveConfig,

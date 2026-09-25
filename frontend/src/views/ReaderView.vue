@@ -494,13 +494,32 @@ function scheduleRefreshOfflineCacheState() {
   }, 120)
 }
 
+// resize 与 viewport 事件双通道都会调 checkMedia：合并到同一帧，
+// 否则拖拽窗口/键盘弹起会连续多次全量分页
+let checkMediaQueued = false
 function checkMedia() {
   isMobile.value = window.innerWidth <= 768
+  if (checkMediaQueued) return
+  checkMediaQueued = true
   window.setTimeout(() => {
+    checkMediaQueued = false
     updateHorizontalMetrics()
     if (isHorizontalPageMode.value) {
-      rebuildHorizontalPages()
+      scheduleRebuildHorizontalPages()
     }
+  }, 0)
+}
+
+// 切章时 currentIndex 与 content 两个 watch 会在同一次 flush 内先后触发：
+// 合并到同一计时器，分页测量（每步强制同步布局）只跑一次
+let rebuildHorizontalTimer: number | null = null
+function scheduleRebuildHorizontalPages() {
+  if (rebuildHorizontalTimer) clearTimeout(rebuildHorizontalTimer)
+  rebuildHorizontalTimer = window.setTimeout(() => {
+    rebuildHorizontalTimer = null
+    if (!isHorizontalPageMode.value) return
+    rebuildHorizontalPages()
+    updateHorizontalEndState()
   }, 0)
 }
 
@@ -842,10 +861,12 @@ async function goHome() {
 }
 
 function handlePageHide() {
+  store.flushReaderSessionSave()
   persistReadingProgressKeepalive()
 }
 
 function handleBeforeUnload() {
+  store.flushReaderSessionSave()
   persistReadingProgressKeepalive()
 }
 
@@ -1825,6 +1846,7 @@ onMounted(async () => {
 })
 
 onUnmounted(() => {
+  store.flushReaderSessionSave()
     persistReadingProgressKeepalive()
     appStore.stopReadingSession()
     window.removeEventListener('keydown', handleKeydown)
@@ -1840,6 +1862,7 @@ onUnmounted(() => {
   if (restorePositionTimer) clearTimeout(restorePositionTimer)
   if (persistPositionTimer) clearTimeout(persistPositionTimer)
   if (refreshOfflineCacheStateTimer) clearTimeout(refreshOfflineCacheStateTimer)
+  if (rebuildHorizontalTimer) clearTimeout(rebuildHorizontalTimer)
   clearRestoreStabilizers()
   disposeSelection()
   disposeContinuousReading()
@@ -1881,8 +1904,7 @@ watch(() => config.value.readMethod, async () => {
 watch(() => store.currentIndex, () => {
   if (!isHorizontalPageMode.value) return
   resetHorizontalPagePosition()
-  rebuildHorizontalPages()
-  updateHorizontalEndState()
+  scheduleRebuildHorizontalPages()
 })
 
 watch(
@@ -1890,7 +1912,7 @@ watch(
   () => {
     if (isHorizontalPageMode.value) {
       horizontalPageIndex.value = 0
-      rebuildHorizontalPages()
+      scheduleRebuildHorizontalPages()
     }
   },
 )
