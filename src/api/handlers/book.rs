@@ -1308,67 +1308,89 @@ pub async fn save_book_progress(
         .await?
         .ok_or_else(|| AppError::BadRequest("书籍未加入书架".to_string()))?;
 
-    let mut updated = shelf_book.clone();
-    let mut chapter_title: Option<String> = None;
-    if is_local_txt_origin(&shelf_book.origin) || is_local_txt_url(&shelf_book.book_url) {
-        if let Ok(chapters) = state
-            .local_txt_book_service
-            .get_chapter_list(&user_ns, &shelf_book.book_url)
-            .await
-        {
-            if index >= 0 && (index as usize) < chapters.len() {
-                chapter_title = Some(chapters[index as usize].title.clone());
-            }
-            updated.total_chapter_num = Some(chapters.len() as i32);
-            if let Some(last) = chapters.last() {
-                updated.latest_chapter_title = Some(last.title.clone());
-            }
-        }
-    } else if is_local_epub_origin(&shelf_book.origin) || is_local_epub_url(&shelf_book.book_url) {
-        if let Ok(chapters) = state
-            .local_epub_book_service
-            .get_chapter_list(&user_ns, &shelf_book.book_url)
-            .await
-        {
-            if index >= 0 && (index as usize) < chapters.len() {
-                chapter_title = Some(chapters[index as usize].title.clone());
-            }
-            updated.total_chapter_num = Some(chapters.len() as i32);
-            if let Some(last) = chapters.last() {
-                updated.latest_chapter_title = Some(last.title.clone());
-            }
-        }
-    } else if let (Some(toc_url), Ok(Some(source))) = (
-        shelf_book.toc_url.clone(),
-        state
-            .book_source_service
-            .get(&user_ns, &shelf_book.origin)
-            .await,
-    ) {
-        if let Ok(chapters) = state
-            .book_service
-            .get_chapter_list(&user_ns, &source, &toc_url)
-            .await
-        {
-            if index >= 0 && (index as usize) < chapters.len() {
-                chapter_title = Some(chapters[index as usize].title.clone());
-            }
-            updated.total_chapter_num = Some(chapters.len() as i32);
-            if let Some(last) = chapters.last() {
-                updated.latest_chapter_title = Some(last.title.clone());
-            }
-        }
-    }
-    updated.dur_chapter_index = Some(index);
-    updated.dur_chapter_time = Some(crate::util::time::now_ts());
-    if let Some(title) = chapter_title {
-        updated.dur_chapter_title = Some(title);
-    }
-    if let Some(pos) = req.position {
-        updated.dur_chapter_pos = Some(pos);
+    // 无变化短路：同一章节同一位置（前端已有 10s 节流 + 去重，这里挡住
+    // 重试/多端重复上报），不读目录、不重写书架文件
+    let position_unchanged = match req.position {
+        Some(p) => shelf_book.dur_chapter_pos == Some(p),
+        None => true,
+    };
+    let index_changed = shelf_book.dur_chapter_index != Some(index);
+    if !index_changed && position_unchanged {
+        return Ok(Json(ApiResponse::ok(serde_json::json!(""))));
     }
 
-    let _ = state.book_service.save_book(&user_ns, updated).await?;
+    // 章节标题/总章数只有章节切换时才需要（在线书要整份解析目录缓存，
+    // 无缓存的书甚至会触发全量目录抓取——进度 ping 不能为此买单）
+    let mut chapter_title: Option<String> = None;
+    let mut total_chapter_num: Option<i32> = None;
+    let mut latest_chapter_title: Option<String> = None;
+    if index_changed {
+        if is_local_txt_origin(&shelf_book.origin) || is_local_txt_url(&shelf_book.book_url) {
+            if let Ok(chapters) = state
+                .local_txt_book_service
+                .get_chapter_list(&user_ns, &shelf_book.book_url)
+                .await
+            {
+                if index >= 0 && (index as usize) < chapters.len() {
+                    chapter_title = Some(chapters[index as usize].title.clone());
+                }
+                total_chapter_num = Some(chapters.len() as i32);
+                latest_chapter_title = chapters.last().map(|c| c.title.clone());
+            }
+        } else if is_local_epub_origin(&shelf_book.origin) || is_local_epub_url(&shelf_book.book_url)
+        {
+            if let Ok(chapters) = state
+                .local_epub_book_service
+                .get_chapter_list(&user_ns, &shelf_book.book_url)
+                .await
+            {
+                if index >= 0 && (index as usize) < chapters.len() {
+                    chapter_title = Some(chapters[index as usize].title.clone());
+                }
+                total_chapter_num = Some(chapters.len() as i32);
+                latest_chapter_title = chapters.last().map(|c| c.title.clone());
+            }
+        } else if let (Some(toc_url), Ok(Some(source))) = (
+            shelf_book.toc_url.clone(),
+            state
+                .book_source_service
+                .get(&user_ns, &shelf_book.origin)
+                .await,
+        ) {
+            if let Ok(chapters) = state
+                .book_service
+                .get_chapter_list(&user_ns, &source, &toc_url)
+                .await
+            {
+                if index >= 0 && (index as usize) < chapters.len() {
+                    chapter_title = Some(chapters[index as usize].title.clone());
+                }
+                total_chapter_num = Some(chapters.len() as i32);
+                latest_chapter_title = chapters.last().map(|c| c.title.clone());
+            }
+        }
+    }
+
+    state
+        .book_service
+        .update_shelf_book(&user_ns, &shelf_book.book_url, |b| {
+            b.dur_chapter_index = Some(index);
+            b.dur_chapter_time = Some(crate::util::time::now_ts());
+            if let Some(title) = chapter_title {
+                b.dur_chapter_title = Some(title);
+            }
+            if let Some(pos) = req.position {
+                b.dur_chapter_pos = Some(pos);
+            }
+            if let Some(total) = total_chapter_num {
+                b.total_chapter_num = Some(total);
+            }
+            if let Some(latest) = latest_chapter_title {
+                b.latest_chapter_title = Some(latest);
+            }
+        })
+        .await?
+        .ok_or_else(|| AppError::BadRequest("书籍未加入书架".to_string()))?;
     Ok(Json(ApiResponse::ok(serde_json::json!(""))))
 }
 

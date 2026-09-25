@@ -1776,6 +1776,27 @@ impl BookService {
             .find(|b| b.name.trim() == name.trim() && b.author.trim() == author.trim()))
     }
 
+    /// 就地更新一本书（按 bookUrl 精确匹配）：单次读-改-写整个书架文件。
+    ///
+    /// 进度上报这类高频更新用它避免 `get_shelf_book` + `save_book` 的两次
+    /// 全量读取；`update` 里只改必要的字段，改动是否落盘由调用方先做
+    /// 无变化判断（本方法总是写盘）。
+    pub async fn update_shelf_book(
+        &self,
+        user_ns: &str,
+        book_url: &str,
+        update: impl FnOnce(&mut Book),
+    ) -> Result<Option<Book>, AppError> {
+        let mut list = self.read_bookshelf(user_ns).await?;
+        let Some(book) = list.iter_mut().find(|b| b.book_url == book_url) else {
+            return Ok(None);
+        };
+        update(book);
+        let updated = book.clone();
+        self.write_bookshelf(user_ns, &list).await?;
+        Ok(Some(updated))
+    }
+
     pub async fn save_book(&self, user_ns: &str, mut book: Book) -> Result<Book, AppError> {
         sanitize_book_urls(&mut book);
         if book.origin.trim().is_empty() {
