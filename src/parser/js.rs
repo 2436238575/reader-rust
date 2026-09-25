@@ -1,4 +1,5 @@
 use crate::model::book_source::BookSource;
+use crate::util::bounded_map::BoundedMap;
 use crate::util::hash::md5_hex;
 use crate::util::text::{apply_regex_replace, strip_whitespace};
 use aes::Aes128;
@@ -21,9 +22,10 @@ use uuid::Uuid;
 ///
 /// 键一律经过 [`scoped_key`] 加用户前缀，避免不同书源/不同用户的键互相覆盖
 /// 或读取到他人写入的值。
-static JS_KV: Lazy<Mutex<HashMap<String, String>>> = Lazy::new(|| Mutex::new(HashMap::new()));
-static JS_LIB_CACHE: Lazy<Mutex<HashMap<String, String>>> =
-    Lazy::new(|| Mutex::new(HashMap::new()));
+static JS_KV: Lazy<Mutex<BoundedMap<String>>> =
+    Lazy::new(|| Mutex::new(BoundedMap::new(JS_KV_MAX_ENTRIES)));
+static JS_LIB_CACHE: Lazy<Mutex<BoundedMap<String>>> =
+    Lazy::new(|| Mutex::new(BoundedMap::new(JS_LIB_CACHE_MAX_ENTRIES)));
 /// 全局 KV / jsLib 缓存的条目上限。
 ///
 /// 这两张表都没有淘汰机制，而键由书源（第三方内容）决定：一个不断写入新键的
@@ -119,11 +121,11 @@ fn kv_get_scoped(key: &str) -> Option<String> {
 }
 
 fn kv_put_scoped(key: &str, value: &str) {
-    let mut map = JS_KV.lock().unwrap_or_else(|e| e.into_inner());
-    if map.len() >= JS_KV_MAX_ENTRIES && !map.contains_key(&scoped_key(key)) {
-        map.clear();
-    }
-    map.insert(scoped_key(key), value.to_string());
+    let scoped = scoped_key(key);
+    JS_KV
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .insert(scoped, value.to_string());
 }
 
 /// 每个命名空间一个稳定的设备标识（模拟阅读 App 的 deviceID）。
@@ -567,11 +569,10 @@ fn active_js_lib_script() -> anyhow::Result<String> {
 
     let compiled = compile_js_lib(&js_lib)?;
     {
-        let mut cache = JS_LIB_CACHE.lock().unwrap_or_else(|e| e.into_inner());
-        if cache.len() >= JS_LIB_CACHE_MAX_ENTRIES && !cache.contains_key(&cache_key) {
-            cache.clear();
-        }
-        cache.insert(cache_key, compiled.clone());
+        JS_LIB_CACHE
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert(cache_key, compiled.clone());
     }
     Ok(compiled)
 }

@@ -17,6 +17,7 @@ use crate::storage::cache::file_cache::{
     remove_dir_counting_files, remove_file_counting, CacheUsage, FileCache,
 };
 use crate::storage::cache::review_cache::ReviewCache;
+use crate::util::bounded_map::BoundedMap;
 use crate::util::hash::md5_hex;
 use crate::util::text::{normalize_source_url, repair_encoded_url};
 use serde_json::{json, Value};
@@ -2018,8 +2019,15 @@ impl BookService {
     ///
     /// 此前实现按章节 URL 列表逐个做同步 `exists()`，书架页对每本书执行，
     /// 千章书在书多的场景下是数万次 stat；一次 `read_dir` 计数就够了。
-    pub async fn cached_chapter_count(&self, user_ns: &str, book_url: &str) -> Result<usize, AppError> {
-        Ok(self.cache.book_file_count(user_ns, &md5_hex(book_url)).await as usize)
+    pub async fn cached_chapter_count(
+        &self,
+        user_ns: &str,
+        book_url: &str,
+    ) -> Result<usize, AppError> {
+        Ok(self
+            .cache
+            .book_file_count(user_ns, &md5_hex(book_url))
+            .await as usize)
     }
 
     pub async fn cache_chapter(
@@ -2406,9 +2414,10 @@ fn apply_login_check_js(source: &BookSource, res: FetchResponse) -> FetchRespons
 /// 请求取分类列表，而书海页每次进入都会问一次。键在规格基础上**另加用户命名
 /// 空间**——脚本的求值结果可能含用户相关值（`java.androidId`、cache/kv），
 /// 不能跨用户共享。另加 1 小时上限——进程长跑时不能永久陈旧的分类列表。
-static EXPLORE_URL_CACHE: once_cell::sync::Lazy<
-    std::sync::Mutex<HashMap<String, (String, Instant)>>,
-> = once_cell::sync::Lazy::new(|| std::sync::Mutex::new(HashMap::new()));
+static EXPLORE_URL_CACHE: once_cell::sync::Lazy<std::sync::Mutex<BoundedMap<(String, Instant)>>> =
+    once_cell::sync::Lazy::new(|| {
+        std::sync::Mutex::new(BoundedMap::new(EXPLORE_URL_CACHE_MAX_ENTRIES))
+    });
 const EXPLORE_URL_CACHE_TTL: Duration = Duration::from_secs(3600);
 const EXPLORE_URL_CACHE_MAX_ENTRIES: usize = 256;
 
@@ -2429,11 +2438,10 @@ fn cached_explore_script(
     }
 
     let value = evaluate().map_err(AppError::Internal)?;
-    let mut cache = EXPLORE_URL_CACHE.lock().unwrap_or_else(|e| e.into_inner());
-    if cache.len() >= EXPLORE_URL_CACHE_MAX_ENTRIES && !cache.contains_key(&key) {
-        cache.clear();
-    }
-    cache.insert(key, (value.clone(), Instant::now()));
+    EXPLORE_URL_CACHE
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .insert(key, (value.clone(), Instant::now()));
     Ok(value)
 }
 
