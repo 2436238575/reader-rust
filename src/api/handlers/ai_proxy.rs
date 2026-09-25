@@ -235,12 +235,18 @@ fn build_upstream_error_response(status: reqwest::StatusCode, body: &bytes::Byte
     response
 }
 
-fn ai_proxy_client() -> Result<reqwest::Client, AppError> {
+/// AI 代理客户端：进程级复用（连接池/TLS 握手跨请求共享）。
+/// 配置全是静态的（超时常量 + 固定重定向守卫），无需按请求构建。
+static AI_PROXY_CLIENT: once_cell::sync::Lazy<reqwest::Client> = once_cell::sync::Lazy::new(|| {
     reqwest::Client::builder()
         .timeout(ai_proxy_timeout())
         .redirect(crate::crawler::url_guard::guarded_redirect_policy())
         .build()
-        .map_err(AppError::Http)
+        .expect("AI 代理 reqwest 客户端构建失败")
+});
+
+fn ai_proxy_client() -> Result<reqwest::Client, AppError> {
+    Ok(AI_PROXY_CLIENT.clone())
 }
 
 fn map_ai_proxy_http_error(error: reqwest::Error) -> AppError {
