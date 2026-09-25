@@ -338,6 +338,15 @@ fn build_relative_path(parts: &[String], name: &str) -> String {
 }
 
 async fn webdav_propfind(full: &PathBuf, rel: &str) -> Response {
+    let full = full.clone();
+    let rel = rel.to_string();
+    tokio::task::spawn_blocking(move || webdav_propfind_sync(full, rel))
+        .await
+        .unwrap_or_else(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response())
+}
+
+/// [`webdav_propfind`] 的同步实现：目录元数据与遍历都是阻塞调用，放阻塞线程池。
+fn webdav_propfind_sync(full: PathBuf, rel: String) -> Response {
     if !full.exists() {
         return StatusCode::NOT_FOUND.into_response();
     }
@@ -351,11 +360,11 @@ async fn webdav_propfind(full: &PathBuf, rel: &str) -> Response {
         }
     };
     let href_base = if rel.ends_with('/') {
-        rel.to_string()
+        rel.clone()
     } else {
         format!("{}/", rel)
     };
-    let meta = std::fs::metadata(full).ok();
+    let meta = std::fs::metadata(&full).ok();
     let size = meta.as_ref().map(|m| m.len()).unwrap_or(0);
     let modified = meta
         .as_ref()
@@ -371,7 +380,7 @@ async fn webdav_propfind(full: &PathBuf, rel: &str) -> Response {
         modified.to_string(),
     );
     if full.is_dir() {
-        if let Ok(entries) = std::fs::read_dir(full) {
+        if let Ok(entries) = std::fs::read_dir(&full) {
             for entry in entries.flatten() {
                 let file = entry.path();
                 let name = entry.file_name().to_string_lossy().to_string();
@@ -481,24 +490,31 @@ async fn webdav_move(home: &PathBuf, full: &PathBuf, headers: &HeaderMap) -> Res
         Ok(p) => p,
         Err(status) => return status.into_response(),
     };
-    if dest.exists() {
-        let overwrite = headers
-            .get("Overwrite")
-            .and_then(|v| v.to_str().ok())
-            .unwrap_or("");
-        if overwrite.is_empty() {
-            return StatusCode::PRECONDITION_FAILED.into_response();
+    let overwrite_empty = headers
+        .get("Overwrite")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("")
+        .is_empty();
+    let full = full.clone();
+    let result = tokio::task::spawn_blocking(move || {
+        if dest.exists() {
+            if overwrite_empty {
+                return StatusCode::PRECONDITION_FAILED.into_response();
+            }
+            let _ = if dest.is_dir() {
+                std::fs::remove_dir_all(&dest)
+            } else {
+                std::fs::remove_file(&dest)
+            };
         }
-        let _ = if dest.is_dir() {
-            std::fs::remove_dir_all(&dest)
-        } else {
-            std::fs::remove_file(&dest)
-        };
-    }
-    match std::fs::rename(full, dest) {
-        Ok(_) => StatusCode::CREATED.into_response(),
-        Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
-    }
+        match std::fs::rename(&full, &dest) {
+            Ok(_) => StatusCode::CREATED.into_response(),
+            Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+        }
+    })
+    .await
+    .unwrap_or_else(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response());
+    result
 }
 
 async fn webdav_copy(home: &PathBuf, full: &PathBuf, headers: &HeaderMap) -> Response {
@@ -506,32 +522,39 @@ async fn webdav_copy(home: &PathBuf, full: &PathBuf, headers: &HeaderMap) -> Res
         Ok(p) => p,
         Err(status) => return status.into_response(),
     };
-    if dest.exists() {
-        let overwrite = headers
-            .get("Overwrite")
-            .and_then(|v| v.to_str().ok())
-            .unwrap_or("");
-        if overwrite.is_empty() {
-            return StatusCode::PRECONDITION_FAILED.into_response();
+    let overwrite_empty = headers
+        .get("Overwrite")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("")
+        .is_empty();
+    let full = full.clone();
+    let result = tokio::task::spawn_blocking(move || {
+        if dest.exists() {
+            if overwrite_empty {
+                return StatusCode::PRECONDITION_FAILED.into_response();
+            }
+            let _ = if dest.is_dir() {
+                std::fs::remove_dir_all(&dest)
+            } else {
+                std::fs::remove_file(&dest)
+            };
         }
-        let _ = if dest.is_dir() {
-            std::fs::remove_dir_all(&dest)
+        let res = if full.is_dir() {
+            copy_dir(&full, &dest)
         } else {
-            std::fs::remove_file(&dest)
+            std::fs::copy(&full, &dest).map(|_| ())
         };
-    }
-    let res = if full.is_dir() {
-        copy_dir(full, &dest)
-    } else {
-        std::fs::copy(full, &dest).map(|_| ())
-    };
-    match res {
-        Ok(_) => StatusCode::CREATED.into_response(),
-        Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
-    }
+        match res {
+            Ok(_) => StatusCode::CREATED.into_response(),
+            Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+        }
+    })
+    .await
+    .unwrap_or_else(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response());
+    result
 }
 
-fn copy_dir(src: &PathBuf, dst: &PathBuf) -> std::io::Result<()> {
+fn copy_dir(src: &std::path::Path, dst: &std::path::Path) -> std::io::Result<()> {
     std::fs::create_dir_all(dst)?;
     for entry in std::fs::read_dir(src)? {
         let entry = entry?;
