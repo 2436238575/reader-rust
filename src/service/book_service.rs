@@ -2027,6 +2027,7 @@ impl BookService {
             crate::storage::cache::file_cache::enforce_flat_dir_capacity(
                 parent,
                 self.cover_cache_limit,
+                bytes.len() as u64,
             )
             .await;
         }
