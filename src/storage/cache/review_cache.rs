@@ -1,5 +1,7 @@
 use crate::util::hash::md5_hex;
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime};
 use tokio::fs;
 
@@ -21,6 +23,10 @@ pub struct ReviewCache {
     ttl: Duration,
     /// 单用户容量上限（字节）；`0` 表示不限制。
     max_user_bytes: u64,
+    /// 每用户用量计量（字节）：与 [`super::file_cache::FileCache`] 相同的
+    /// 增量记账策略——评论翻页/换排序都会新增缓存文件，每次 put 全目录
+    /// 扫描在重度使用下是 O(N²) 次 stat。
+    usage: Arc<Mutex<HashMap<String, u64>>>,
 }
 
 impl ReviewCache {
@@ -29,6 +35,7 @@ impl ReviewCache {
             root: root.as_ref().to_path_buf(),
             ttl: Duration::from_secs(ttl_secs),
             max_user_bytes,
+            usage: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 
@@ -45,6 +52,7 @@ impl ReviewCache {
         };
         if self.is_expired(&meta) {
             let _ = fs::remove_file(&path).await;
+            self.subtract_usage(user_ns, meta.len());
             return Ok(None);
         }
         Ok(Some(fs::read_to_string(&path).await?))
@@ -63,23 +71,31 @@ impl ReviewCache {
             fs::create_dir_all(parent).await?;
         }
         fs::write(&path, value).await?;
-        self.enforce_user_capacity(user_ns).await;
+        self.enforce_user_capacity(user_ns, value.len() as u64).await;
         Ok(())
     }
 
     /// 删除某本书的全部评论缓存，返回删除的文件数。
     pub async fn remove_book(&self, user_ns: &str, book_key: &str) -> anyhow::Result<u64> {
-        remove_dir_counting_files(&self.root.join(user_ns).join(book_key)).await
+        let path = self.root.join(user_ns).join(book_key);
+        let book_usage = dir_usage(&path, 1).await;
+        let removed = remove_dir_counting_files(&path).await?;
+        self.subtract_usage(user_ns, book_usage.bytes);
+        Ok(removed)
     }
 
     /// 删除某个用户的全部评论缓存，返回删除的文件数。
     pub async fn remove_user(&self, user_ns: &str) -> anyhow::Result<u64> {
-        remove_dir_counting_files(&self.root.join(user_ns)).await
+        let removed = remove_dir_counting_files(&self.root.join(user_ns)).await?;
+        self.clear_usage(user_ns);
+        Ok(removed)
     }
 
     /// 删除所有用户的评论缓存，返回删除的文件数。
     pub async fn remove_all(&self) -> anyhow::Result<u64> {
-        remove_dir_counting_files(&self.root).await
+        let removed = remove_dir_counting_files(&self.root).await?;
+        self.usage.lock().unwrap().clear();
+        Ok(removed)
     }
 
     /// 某个用户已占用的评论缓存量。
@@ -106,16 +122,52 @@ impl ReviewCache {
         }
     }
 
-    async fn enforce_user_capacity(&self, user_ns: &str) {
+    async fn enforce_user_capacity(&self, user_ns: &str, written: u64) {
         if self.max_user_bytes == 0 {
+            return;
+        }
+        let (tracked, fresh) = {
+            let mut map = self.usage.lock().unwrap();
+            match map.get_mut(user_ns) {
+                Some(entry) => {
+                    *entry = entry.saturating_add(written);
+                    (*entry, false)
+                }
+                None => {
+                    map.insert(user_ns.to_string(), written);
+                    (written, true)
+                }
+            }
+        };
+        // 首次触达先校准（磁盘可能已有存量）；之后增量越限才扫描。
+        if !fresh && tracked <= self.max_user_bytes {
             return;
         }
         let dir = self.root.join(user_ns);
         let usage = dir_usage(&dir, 3).await;
         if usage.bytes <= self.max_user_bytes {
+            self.usage
+                .lock()
+                .unwrap()
+                .insert(user_ns.to_string(), usage.bytes);
             return;
         }
-        evict_oldest(&dir, usage.bytes - self.max_user_bytes).await;
+        let freed = evict_oldest(&dir, usage.bytes - self.max_user_bytes).await;
+        self.usage
+            .lock()
+            .unwrap()
+            .insert(user_ns.to_string(), usage.bytes - freed);
+    }
+
+    fn subtract_usage(&self, user_ns: &str, delta: u64) {
+        let mut map = self.usage.lock().unwrap();
+        if let Some(entry) = map.get_mut(user_ns) {
+            *entry = entry.saturating_sub(delta);
+        }
+    }
+
+    fn clear_usage(&self, user_ns: &str) {
+        self.usage.lock().unwrap().remove(user_ns);
     }
 
     fn entry_path(&self, user_ns: &str, book_key: &str, key: &str) -> PathBuf {
