@@ -1,3 +1,4 @@
+import { watch } from 'vue'
 import type { ComputedRef, Ref } from 'vue'
 import type { useReaderStore } from '../stores/reader'
 
@@ -49,7 +50,15 @@ export function useReaderAutoPlayback(
     void payload
   }
 
+  // 段落列表缓存：每步朗读/自动翻页都全章 querySelectorAll + 逐段 innerText
+  //（布局依赖属性，强制样式计算）。DOM 重建（切章/改排版）时失效；
+  // 再配 isConnected 自检，兜住「v-html 换掉了段落元素」的边角。
+  let paragraphCache: HTMLElement[] | null = null
+
   function getFilteredParagraphs() {
+    if (paragraphCache && paragraphCache.length && paragraphCache[0].isConnected) {
+      return paragraphCache
+    }
     const roots = isContinuousMode.value
       ? Array.from(scrollContainerRef.value?.querySelectorAll('.chapter-text[data-role="continuous"]') || []) as HTMLElement[]
       : (chapterTextRef.value ? [chapterTextRef.value] : [])
@@ -68,8 +77,17 @@ export function useReaderAutoPlayback(
         lastText = text
       }
     })
+    paragraphCache = list
     return list
   }
+
+  // DOM 重建时失效段落缓存（切章 / 改排版 / 繁简切换都会换掉段落元素）
+  watch(
+    [() => store.currentIndex, () => store.content, () => store.displayContent, () => config.value.fontSize, () => config.value.lineHeight, isContinuousMode],
+    () => {
+      paragraphCache = null
+    },
+  )
 
   function getCurrentParagraph() {
     const reading = chapterTextRef.value?.querySelector('.reading') as HTMLElement | null
