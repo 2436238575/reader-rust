@@ -2568,10 +2568,10 @@ pub(crate) async fn resolve_book_source(
             if let Some(src) = state.book_source_service.get(&user_ns, &normalized).await? {
                 return Ok(src);
             }
-            let sources = state.book_source_service.list(&user_ns).await?;
-            if let Some(src) = sources
-                .into_iter()
-                .find(|s| normalize_source_url(&s.book_source_url) == normalized)
+            if let Some(src) = state
+                .book_source_service
+                .find_by_normalized_url(&user_ns, &normalized)
+                .await?
             {
                 return Ok(src);
             }
@@ -2591,10 +2591,10 @@ pub(crate) async fn resolve_book_source(
                 {
                     return Ok(src);
                 }
-                let sources = state.book_source_service.list(&user_ns).await?;
-                if let Some(src) = sources
-                    .into_iter()
-                    .find(|s| normalize_source_url(&s.book_source_url) == shelf_origin)
+                if let Some(src) = state
+                    .book_source_service
+                    .find_by_normalized_url(&user_ns, &shelf_origin)
+                    .await?
                 {
                     return Ok(src);
                 }
@@ -2609,23 +2609,14 @@ pub(crate) async fn resolve_book_source(
             Err(_) => "".to_string(),
         };
         if !b_host.is_empty() {
-            // Extract root domain for comparison (e.g., "22biqu" from "m.22biqu.com")
-            let b_root = extract_root_domain(&b_host);
-            let sources = state.book_source_service.list(&user_ns).await?;
-            for s in sources {
-                let normalized_source_url = normalize_source_url(&s.book_source_url);
-                if let Ok(s_url) = url::Url::parse(&normalized_source_url) {
-                    if let Some(s_host) = s_url.host_str() {
-                        // Match by exact host or by root domain
-                        let s_root = extract_root_domain(s_host);
-                        if b_host.ends_with(s_host)
-                            || s_host.ends_with(&b_host)
-                            || (b_root == s_root && !b_root.is_empty())
-                        {
-                            return Ok(s);
-                        }
-                    }
-                }
+            // Match by exact host or by root domain (e.g., "22biqu" from "m.22biqu.com")
+            let b_root = crate::service::book_source_service::extract_root_domain(&b_host);
+            if let Some(s) = state
+                .book_source_service
+                .find_by_book_host(&user_ns, &b_host, &b_root)
+                .await?
+            {
+                return Ok(s);
             }
         }
     }
@@ -2633,16 +2624,6 @@ pub(crate) async fn resolve_book_source(
     Err(AppError::BadRequest(
         "bookSource or bookSourceUrl required, and auto-discovery failed".to_string(),
     ))
-}
-
-/// Extract root domain for matching (e.g., "22biqu" from "m.22biqu.com" or "m.22biqu.net")
-fn extract_root_domain(host: &str) -> String {
-    let parts: Vec<&str> = host.split('.').collect();
-    if parts.len() >= 2 {
-        parts[parts.len() - 2].to_string()
-    } else {
-        host.to_string()
-    }
 }
 
 fn merge_book(target: &mut Book, info: Book) {

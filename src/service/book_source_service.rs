@@ -1,15 +1,28 @@
 use crate::error::error::AppError;
 use crate::model::book_source::{book_source_from_value, BookSource};
 use crate::storage::db::repo::BookSourceRepo;
+use crate::util::text::normalize_source_url;
+use std::collections::HashMap;
 use std::path::PathBuf;
+use std::sync::{Arc, Mutex};
 use tokio::fs;
 
 pub const INVALID_BOOK_SOURCE_GROUP: &str = "失效";
+
+/// fallback 解析缓存的每命名空间键数上限，满了整表清空。
+const RESOLUTION_CACHE_MAX_KEYS: usize = 1024;
 
 #[derive(Clone)]
 pub struct BookSourceService {
     repo: BookSourceRepo,
     default_owner_path: PathBuf,
+    /// fallback 解析结果缓存：`ns -> 查询键 -> 命中的书源 URL`。
+    ///
+    /// origin 未直接命中主键 / 仅传 bookUrl 自动发现时，此前每次都全量
+    /// 拉取并反序列化该命名空间的所有书源 JSON（几百个源就是几 MB 解析）。
+    /// 缓存只存命中的 source URL（单行主键查询重建完整对象），
+    /// 任何书源写入/删除都会失效对应命名空间。
+    resolution_cache: Arc<Mutex<HashMap<String, HashMap<String, Option<String>>>>>,
 }
 
 impl BookSourceService {
@@ -21,13 +34,107 @@ impl BookSourceService {
         Self {
             repo,
             default_owner_path,
+            resolution_cache: Arc::new(Mutex::new(HashMap::new())),
         }
+    }
+
+    fn cached_resolution(&self, user_ns: &str, key: &str) -> Option<Option<String>> {
+        let cache = self
+            .resolution_cache
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        cache.get(user_ns).and_then(|m| m.get(key).cloned())
+    }
+
+    fn store_resolution(&self, user_ns: &str, key: String, value: Option<String>) {
+        let mut cache = self
+            .resolution_cache
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let ns_map = cache.entry(user_ns.to_string()).or_default();
+        if ns_map.len() >= RESOLUTION_CACHE_MAX_KEYS {
+            ns_map.clear();
+        }
+        ns_map.insert(key, value);
+    }
+
+    fn invalidate_resolution(&self, user_ns: &str) {
+        self.resolution_cache
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .remove(user_ns);
+    }
+
+    /// 归一化 URL 的 fallback 匹配（主键未直接命中时调用），带缓存。
+    pub async fn find_by_normalized_url(
+        &self,
+        user_ns: &str,
+        normalized: &str,
+    ) -> Result<Option<BookSource>, AppError> {
+        let key = format!("norm:{normalized}");
+        if let Some(hit) = self.cached_resolution(user_ns, &key) {
+            return match hit {
+                Some(url) => self.get(user_ns, &url).await,
+                None => Ok(None),
+            };
+        }
+        let matched = self
+            .list(user_ns)
+            .await?
+            .into_iter()
+            .find(|s| normalize_source_url(&s.book_source_url) == normalized);
+        self.store_resolution(
+            user_ns,
+            key,
+            matched.as_ref().map(|s| s.book_source_url.clone()),
+        );
+        Ok(matched)
+    }
+
+    /// 按 bookUrl 的 host / 根域自动发现书源，带缓存。
+    pub async fn find_by_book_host(
+        &self,
+        user_ns: &str,
+        b_host: &str,
+        b_root: &str,
+    ) -> Result<Option<BookSource>, AppError> {
+        let key = format!("host:{b_host}|{b_root}");
+        if let Some(hit) = self.cached_resolution(user_ns, &key) {
+            return match hit {
+                Some(url) => self.get(user_ns, &url).await,
+                None => Ok(None),
+            };
+        }
+        let mut matched = None;
+        for s in self.list(user_ns).await? {
+            let normalized_source_url = normalize_source_url(&s.book_source_url);
+            if let Ok(s_url) = url::Url::parse(&normalized_source_url) {
+                if let Some(s_host) = s_url.host_str() {
+                    let s_root = extract_root_domain(s_host);
+                    if b_host.ends_with(s_host)
+                        || s_host.ends_with(b_host)
+                        || (b_root == s_root && !b_root.is_empty())
+                    {
+                        matched = Some(s);
+                        break;
+                    }
+                }
+            }
+        }
+        self.store_resolution(
+            user_ns,
+            key,
+            matched.as_ref().map(|s| s.book_source_url.clone()),
+        );
+        Ok(matched)
     }
 
     pub async fn save(&self, user_ns: &str, source: BookSource) -> Result<(), AppError> {
         let json =
             serde_json::to_string(&source).map_err(|e| AppError::BadRequest(e.to_string()))?;
-        self.repo.upsert(user_ns, &source, &json).await
+        self.repo.upsert(user_ns, &source, &json).await?;
+        self.invalidate_resolution(user_ns);
+        Ok(())
     }
 
     pub async fn save_many(&self, user_ns: &str, sources: Vec<BookSource>) -> Result<(), AppError> {
@@ -70,16 +177,22 @@ impl BookSourceService {
     }
 
     pub async fn delete(&self, user_ns: &str, book_source_url: &str) -> Result<(), AppError> {
-        self.repo.delete(user_ns, book_source_url).await
+        self.repo.delete(user_ns, book_source_url).await?;
+        self.invalidate_resolution(user_ns);
+        Ok(())
     }
 
     pub async fn delete_all(&self, user_ns: &str) -> Result<(), AppError> {
-        self.repo.delete_all(user_ns).await
+        self.repo.delete_all(user_ns).await?;
+        self.invalidate_resolution(user_ns);
+        Ok(())
     }
 
     /// Copy sources from one user to another (used for setting default sources)
     pub async fn copy_to(&self, from_ns: &str, to_ns: &str) -> Result<i64, AppError> {
-        self.repo.copy_to(from_ns, to_ns).await
+        let count = self.repo.copy_to(from_ns, to_ns).await?;
+        self.invalidate_resolution(to_ns);
+        Ok(count)
     }
 
     /// Set a user's sources as the default sources (for new users)
@@ -120,6 +233,16 @@ impl BookSourceService {
             Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(None),
             Err(err) => Err(AppError::Internal(err.into())),
         }
+    }
+}
+
+/// 取 host 的根域（倒数第二段）：`m.22biqu.com` → `22biqu`。
+pub fn extract_root_domain(host: &str) -> String {
+    let parts: Vec<&str> = host.split('.').collect();
+    if parts.len() >= 2 {
+        parts[parts.len() - 2].to_string()
+    } else {
+        host.to_string()
     }
 }
 
