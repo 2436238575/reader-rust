@@ -8,6 +8,7 @@ use crate::model::{
     book::Book,
     book_chapter::BookChapter,
     book_source::{BookSource, ExploreKind},
+    chapter_image::ChapterImages,
     review::{ParaReviewCount, ParaReviewIndex, ReviewPage, ReviewResponse, ReviewSort},
     search::SearchBook,
 };
@@ -1376,6 +1377,49 @@ impl BookService {
                 .await;
         }
         Ok(ReviewResponse::new(true, index))
+    }
+
+    /// 章节配图：给「配图另走一个接口」的站点用。
+    ///
+    /// 刻意不做缓存：图片地址普遍带时效签名（番茄的 `x-expires`），存下来过一阵
+    /// 就是一堆打不开的死链；配图接口本身很小，每次开章取一次更省心。
+    /// 章节正文响应走 [`Self::chapter_source_body`]，紧接着正文请求时命中内存暂存，
+    /// 不额外多抓一次正文。
+    pub async fn get_chapter_images(
+        &self,
+        user_ns: &str,
+        source: &BookSource,
+        chapter_url: &str,
+    ) -> Result<ChapterImages, AppError> {
+        if !self.parser.has_content_image_rule(source) {
+            return Ok(ChapterImages::disabled());
+        }
+        let (body, base) = self
+            .chapter_source_body(user_ns, source, chapter_url)
+            .await?;
+        let url = self
+            .parse_body_blocking(
+                user_ns,
+                source,
+                &body,
+                &base,
+                &HashMap::new(),
+                |p, s, b, u, _ctx| p.content_image_url(s, b, u),
+            )
+            .await?;
+        // 规则求值不出地址（比如书源里写死了别的取法）不算错误：这一章就是没有配图
+        let Some(url) = url else {
+            return Ok(ChapterImages::new(Vec::new()));
+        };
+        let res = self
+            .fetch_source_url(user_ns, source, &url, &source.book_source_url)
+            .await?;
+        let images = self
+            .parse_response_blocking(user_ns, source, &res, |p, s, b, u| {
+                p.content_images(s, b, u)
+            })
+            .await?;
+        Ok(ChapterImages::new(images))
     }
 
     /// 段评：某一段的评论列表。

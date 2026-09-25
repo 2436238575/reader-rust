@@ -208,6 +208,10 @@ pub fn build_router(state: AppState) -> Router {
             get(handlers::get_book_content).post(handlers::get_book_content),
         )
         .route(
+            "/reader3/getChapterImages",
+            get(handlers::get_chapter_images).post(handlers::get_chapter_images),
+        )
+        .route(
             "/reader3/getChapterComments",
             get(handlers::get_chapter_comments).post(handlers::get_chapter_comments),
         )

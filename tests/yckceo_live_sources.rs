@@ -276,9 +276,183 @@ async fn smoke_source(
     })
 }
 
+/// 配图探测用的候选筛选：比 smoke 宽松——漫画/图集类源（bookSourceType 1）
+/// 正文里几乎一定有图，正是这条路径要覆盖的；只挡掉需要 WebView/JS 的源。
+fn is_image_probe_candidate(value: &Value) -> bool {
+    let source_type = value
+        .get("bookSourceType")
+        .and_then(Value::as_i64)
+        .unwrap_or(0);
+    if !matches!(source_type, 0 | 1) {
+        return false;
+    }
+    for key in [
+        "searchUrl",
+        "ruleSearch",
+        "ruleBookInfo",
+        "ruleToc",
+        "ruleContent",
+    ] {
+        if value.get(key).is_none_or(Value::is_null) {
+            return false;
+        }
+    }
+    let raw = value.to_string().to_lowercase();
+    let blocked = [
+        "webview",
+        "startbrowser",
+        "org.jsoup",
+        "java.",
+        "cookie.",
+        "@js",
+        "<js>",
+        "@get",
+        "@put",
+        "logincheckjs",
+    ];
+    !blocked.iter().any(|marker| raw.contains(marker))
+}
+
+async fn fetch_probe_source(
+    client: &reqwest::Client,
+    id: &str,
+) -> anyhow::Result<Option<(BookSource, String)>> {
+    let url = format!("{YCKCEO_JSON_PREFIX}/{id}.json");
+    let value: Value = client
+        .get(url)
+        .send()
+        .await?
+        .error_for_status()?
+        .json()
+        .await?;
+    let raw_source = value
+        .as_array()
+        .and_then(|items| items.first())
+        .cloned()
+        .unwrap_or(value);
+    if !is_image_probe_candidate(&raw_source) {
+        return Ok(None);
+    }
+    let source = book_source_from_value(raw_source)?;
+    let keyword = source
+        .rule_search
+        .as_ref()
+        .and_then(|rule| rule.check_key_word.as_deref())
+        .map(str::trim)
+        .filter(|key| !key.is_empty())
+        .unwrap_or("斗破苍穹")
+        .to_string();
+    Ok(Some((source, keyword)))
+}
+
 fn env_usize(key: &str, default: usize) -> usize {
     env::var(key)
         .ok()
         .and_then(|value| value.parse().ok())
         .unwrap_or(default)
+}
+
+/// 真实书源里的正文配图（HTML 内嵌 `<img>`）能否一路走到 `get_content` 的返回值。
+///
+/// 章节配图有两套来源：书源声明配图规则（独立接口）与正文 HTML 里内嵌 `<img>`。
+/// 后者不依赖任何规则，只要书源的正文规则吐出 HTML 就得原样保留下来——这个
+/// 用例专门盯这条路径：扫一批真实书源，找出正文带图的书，确认 `<img>` 没被
+/// 解析环节吃掉。找不到带图的书不算失败（书源站改版很常见），但会打印统计。
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "hits the live YCKCeo source repository and public book sites"]
+async fn yckceo_live_chapter_images_survive_content_parsing() {
+    let max_candidates = env_usize("YCKCEO_MAX_CANDIDATES", 24);
+    let http = HttpClient::new(20, None).expect("http client");
+    let shared = http.client_for("test").expect("http client");
+    let ids = fetch_yckceo_ids(&shared, 1)
+        .await
+        .expect("fetch YCKCeo index");
+
+    let cache_root = env::temp_dir().join(format!("reader-rust-yckceo-img-{}", Uuid::new_v4()));
+    let service = BookService::new(
+        http.clone(),
+        RuleEngine::new().expect("rule engine"),
+        FileCache::new(cache_root.join("cache"), 0),
+        cache_root.to_string_lossy().as_ref(),
+    );
+
+    let mut checked = 0usize;
+    let mut with_images = 0usize;
+    let mut broken = Vec::new();
+    let mut samples = Vec::new();
+
+    for id in ids {
+        if checked >= max_candidates {
+            break;
+        }
+        let Ok(Some((source, keyword))) = fetch_probe_source(&shared, &id).await else {
+            continue;
+        };
+        let book = service
+            .search_book("yckceo-live", &source, &keyword, 1)
+            .await
+            .ok()
+            .and_then(|books| books.into_iter().find(|b| !b.book_url.trim().is_empty()));
+        let Some(book) = book else { continue };
+        let Ok(info) = service
+            .get_book_info("yckceo-live", &source, &book.book_url, false)
+            .await
+        else {
+            continue;
+        };
+        let toc_url = info
+            .toc_url
+            .clone()
+            .filter(|url| !url.trim().is_empty())
+            .unwrap_or_else(|| book.book_url.clone());
+        let Ok((chapters, _)) = service
+            .get_chapter_list_first_page("yckceo-live", &source, &toc_url)
+            .await
+        else {
+            continue;
+        };
+        // 正文带图的多在卷首/插图章，扫前若干章提高命中率
+        for chapter in chapters
+            .iter()
+            .filter(|c| !c.is_volume && !c.url.trim().is_empty())
+            .take(5)
+        {
+            let Ok(content) = service
+                .get_content("yckceo-live", &book.book_url, &source, &chapter.url)
+                .await
+            else {
+                continue;
+            };
+            checked += 1;
+            let img_count = content.matches("<img").count() + content.matches("[img").count();
+            if img_count == 0 {
+                continue;
+            }
+            with_images += 1;
+            samples.push(format!(
+                "{} ({id}) 《{}》 {}: {img_count} 张图",
+                source.book_source_name, book.name, chapter.title
+            ));
+            // 图必须还在正文里（src 完整），否则前端拿不到地址
+            let keeps_img = content.contains("<img") && content.contains("src=");
+            let keeps_marker = content.contains("[img");
+            if !keeps_img && !keeps_marker {
+                broken.push(format!(
+                    "{} ({id}) 《{}》 {} 的 <img> 被解析环节吃掉了",
+                    source.book_source_name, book.name, chapter.title
+                ));
+            }
+            break;
+        }
+    }
+
+    for line in &samples {
+        println!("带图章节: {line}");
+    }
+    println!("扫描章节 {checked} 个，带图 {with_images} 个");
+    assert!(
+        broken.is_empty(),
+        "正文里的 <img> 应当原样保留：{}",
+        broken.join("; ")
+    );
 }

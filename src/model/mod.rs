@@ -6,6 +6,7 @@ pub mod book_chapter;
 pub mod book_group;
 pub mod book_source;
 pub mod bookmark;
+pub mod chapter_image;
 pub mod replace_rule;
 pub mod review;
 pub mod rss;

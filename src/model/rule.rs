@@ -152,3 +152,31 @@ pub struct ParaReviewRule {
     /// 评论配图，同 [`ReviewRule::image_rule`]。
     pub image_rule: Option<String>,
 }
+
+/// 章节配图规则（本项目扩展，阅读3.0 无此字段）。
+///
+/// 多数书源的配图就写在正文 HTML 里（`<img>`），渲染端直接显示，不需要规则；
+/// 这一组规则是给「配图另走一个接口」的站点用的：先用 `imageUrl` 拿配图接口
+/// 的地址，再用 `listRule` 取列表、用各字段规则取单张图的信息。
+///
+/// `imageUrl` 对**章节正文响应**求值（与 [`ReviewRule::review_url`] 同理），
+/// 所以模板里可以直接引用正文响应里的字段，例如
+/// `content/image?item_id={{$.data.data.novel_data.item_id}}`。
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(default, rename_all = "camelCase")]
+pub struct ContentImageRule {
+    /// 配图接口 URL 模板，对章节正文响应求值。
+    pub image_url: Option<String>,
+    /// 配图列表规则，如 `$.data.images[*]`（HTML 站点写 CSS 选择器）。
+    pub list_rule: Option<String>,
+    /// 单张图的地址规则，默认 `url`（HTML 站点默认取 `img` 的 `src`）。
+    pub url_rule: Option<String>,
+    /// 图片说明文字，默认 `caption`。
+    pub caption_rule: Option<String>,
+    /// 插入位置：正文按 `\n` 切分后的行号（从 0 开始，插在该行之前），
+    /// 默认 `para_index`。取不到位置时图片排在章末。
+    pub para_index_rule: Option<String>,
+    /// 原始宽高，用于给图片占位（避免加载时页面跳动），默认 `width` / `height`。
+    pub width_rule: Option<String>,
+    pub height_rule: Option<String>,
+}
