@@ -1,10 +1,9 @@
 <template>
   <div id="app">
     <AppTopBar v-if="showHeader" />
-    <main class="app-main" :class="{ 'with-bottom-nav': showBottomNav, 'without-header': !showHeader }">
+    <main class="app-main" :class="{ 'without-header': !showHeader }">
       <router-view />
     </main>
-    <AppBottomNav v-if="showBottomNav" />
     <SettingsDrawer v-model="appStore.showSettingsDrawer" />
     <SourceManager v-model="appStore.showSourceManager" />
     <WebdavManager v-model="appStore.showWebdavManager" />
@@ -30,7 +29,6 @@ import { computed, onMounted, onUnmounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useAppStore } from './stores/app'
 import AppTopBar from './components/AppTopBar.vue'
-import AppBottomNav from './components/AppBottomNav.vue'
 import SettingsDrawer from './components/SettingsDrawer.vue'
 import SourceManager from './components/SourceManager.vue'
 import WebdavManager from './components/WebdavManager.vue'
@@ -40,7 +38,6 @@ const router = useRouter()
 const appStore = useAppStore()
 
 const showHeader = computed(() => route.name !== 'reader')
-const showBottomNav = computed(() => route.name !== 'reader' && route.name !== 'login')
 
 onMounted(() => {
   appStore.fetchUserInfo()
@@ -84,8 +81,4 @@ body {
   height: var(--app-height, 100dvh);
 }
 
-.app-main.with-bottom-nav {
-  padding-bottom: calc(var(--bottom-nav-clearance) + var(--safe-area-bottom));
-  height: calc(var(--app-height, 100dvh) - var(--header-height) - var(--safe-area-top));
-}
 </style>

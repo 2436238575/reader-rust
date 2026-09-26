@@ -141,9 +141,4 @@
   --shadow-xl: 0 16px 48px rgba(0, 0, 0, 0.45);
 }
 
-/* 底部导航只在移动端出现，桌面端无需为其预留空间 */
-@media (max-width: 767px) {
-  :root {
-    --bottom-nav-clearance: 104px;
-  }
-}
+/* 底部悬浮胶囊已移除，改由顶栏汉堡打开整屏菜单（见 components/AppMobileMenu.vue） */

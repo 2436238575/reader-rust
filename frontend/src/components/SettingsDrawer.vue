@@ -206,38 +206,7 @@
             </div>
           </section>
 
-          <section class="drawer-section">
-            <h3 class="section-title">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18">
-                <circle cx="12" cy="12" r="4" />
-                <path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41" />
-              </svg>
-              外观
-            </h3>
-            <div class="theme-toggle">
-              <button
-                class="theme-option"
-                :class="{ active: appStore.theme === 'light' }"
-                @click="setTheme('light')"
-              >
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="20" height="20">
-                  <circle cx="12" cy="12" r="4" />
-                  <path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41" />
-                </svg>
-                亮色
-              </button>
-              <button
-                class="theme-option"
-                :class="{ active: appStore.theme === 'dark' }"
-                @click="setTheme('dark')"
-              >
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="20" height="20">
-                  <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" />
-                </svg>
-                暗色
-              </button>
-            </div>
-          </section>
+          
         </div>
       </aside>
     </Transition>
@@ -373,10 +342,6 @@ function refreshCache() {
   shelfStore.fetchBooks()
   appStore.showToast('书架已刷新', 'success')
   close()
-}
-
-function setTheme(t: 'light' | 'dark') {
-  appStore.setTheme(t)
 }
 
 async function handleInstallPwa() {
@@ -611,11 +576,6 @@ async function handleCheckVersionUpdate() {
   color: var(--color-primary-dark);
 }
 
-.theme-toggle {
-  display: flex;
-  gap: var(--space-2);
-}
-
 .status-card {
   display: flex;
   flex-direction: column;
@@ -648,31 +608,5 @@ async function handleCheckVersionUpdate() {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: var(--space-2);
-}
-
-.theme-option {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: var(--space-2);
-  padding: var(--space-4);
-  border-radius: var(--radius-md);
-  border: 2px solid var(--color-border-light);
-  background: var(--color-bg);
-  font-size: var(--text-sm);
-  font-weight: 500;
-  transition: all var(--duration-fast);
-  color: var(--color-text-secondary);
-}
-
-.theme-option.active {
-  border-color: var(--color-primary);
-  color: var(--color-primary);
-  background: var(--color-primary-bg);
-}
-
-.theme-option:hover:not(.active) {
-  border-color: var(--color-border);
 }
 </style>

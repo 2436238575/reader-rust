@@ -36,7 +36,7 @@
           </router-link>
           <span class="nav-divider" aria-hidden="true"></span>
         </nav>
-        <button class="topbar-btn" @click="toggleTheme" title="切换主题">
+        <button class="topbar-btn theme-btn" @click="toggleTheme" title="切换主题">
           <svg v-if="theme === 'light'" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" />
           </svg>
@@ -56,6 +56,12 @@
           <span v-if="hasVersionUpdateReminder" class="update-indicator" aria-hidden="true"></span>
         </button>
 
+        <button v-else-if="!isLoginPage" class="topbar-btn user-btn" @click="openSettings" title="用户">
+          <div class="user-avatar">{{ userInfo?.username?.charAt(0)?.toUpperCase() || 'U' }}</div>
+          <span v-if="hasVersionUpdateReminder" class="update-indicator" aria-hidden="true"></span>
+        </button>
+
+        <!-- 移动端菜单入口；独立的 v-if，不参与上面「设置/用户」的 else-if 链 -->
         <button
           v-if="!isLoginPage"
           class="topbar-btn menu-btn"
@@ -67,11 +73,6 @@
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <path d="M3 6h18M3 12h18M3 18h18" />
           </svg>
-        </button>
-
-        <button v-else-if="!isLoginPage" class="topbar-btn user-btn" @click="openSettings" title="用户">
-          <div class="user-avatar">{{ userInfo?.username?.charAt(0)?.toUpperCase() || 'U' }}</div>
-          <span v-if="hasVersionUpdateReminder" class="update-indicator" aria-hidden="true"></span>
         </button>
       </div>
     </div>
@@ -349,6 +350,14 @@ function openSettings() {
 
 @media (max-width: 767px) {
   .topbar-nav {
+    display: none;
+  }
+}
+
+/* 移动端把入口收进整屏菜单：主题切换在菜单的「外观」开关里，
+   顶栏不再单独放一个（桌面端仍保留顶栏主题按钮） */
+@media (max-width: 767px) {
+  .topbar-btn.theme-btn {
     display: none;
   }
 }
