@@ -1,6 +1,7 @@
 import axios from 'axios'
 import type { ApiResponse } from '../types'
 import { readAccessToken } from '../utils/secureAccess'
+import { API_BASE } from '../utils/appBase'
 
 let lastNeedLoginDispatchAt = 0
 
@@ -12,7 +13,7 @@ function dispatchNeedLogin() {
 }
 
 const http = axios.create({
-  baseURL: '/reader3',
+  baseURL: API_BASE,
   timeout: 120000,
   headers: { 'Content-Type': 'application/json' },
 })

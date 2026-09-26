@@ -119,6 +119,7 @@
 
 <script setup lang="ts">
 import { ref, computed, watch } from 'vue'
+import { API_BASE } from '../utils/appBase'
 import {
   getBookSources,
   deleteBookSource,
@@ -476,7 +477,7 @@ function buildLoginProxyUrl(bookSourceUrl: string, targetUrl: string) {
   appendAuthQueryParams(params)
   params.set('bookSourceUrl', bookSourceUrl)
   params.set('url', targetUrl)
-  return `/reader3/bookSourceProxy?${params.toString()}`
+  return `${API_BASE}/bookSourceProxy?${params.toString()}`
 }
 
 function triggerFileImport() {

@@ -1,4 +1,5 @@
 import http from './http'
+import { API_BASE } from '../utils/appBase'
 import { appendAuthQueryParams } from '../utils/secureAccess'
 
 /**
@@ -20,7 +21,7 @@ export function cacheBookSSE(params: {
 
   appendAuthQueryParams(query)
 
-  return new EventSource(`/reader3/cacheBookSSE?${query.toString()}`)
+  return new EventSource(`${API_BASE}/cacheBookSSE?${query.toString()}`)
 }
 
 /**

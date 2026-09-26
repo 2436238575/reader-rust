@@ -1,4 +1,5 @@
 ﻿import { defineStore } from 'pinia'
+import { API_BASE } from '../utils/appBase'
 import { ref, computed, reactive, watch } from 'vue'
 import { useAppStore } from './app'
 import { useBookshelfStore } from './bookshelf'
@@ -1318,7 +1319,7 @@ export const useReaderStore = defineStore('reader', () => {
       headers.Authorization = token
     }
 
-    void fetch('/reader3/saveBookProgress', {
+    void fetch(`${API_BASE}/saveBookProgress`, {
       method: 'POST',
       headers,
       body: JSON.stringify(payload),

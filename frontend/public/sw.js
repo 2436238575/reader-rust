@@ -1,14 +1,17 @@
 const SHELL_CACHE = 'reader-shell-v1-0-1'
 const RUNTIME_CACHE = 'reader-runtime-v1-0-1'
+// 部署前缀按 SW 自身的位置推导（`/read/sw.js` → `/read/`）：
+// public/ 下的文件不经过构建处理，写死根路径在子路径部署下会全部 404
+const BASE = new URL('./', self.location).pathname
 const SHELL_ASSETS = [
-  '/',
-  '/index.html',
-  '/offline.html',
-  '/site.webmanifest',
-  '/favicon.ico',
-  '/favicon-32x32.png',
-  '/favicon-16x16.png',
-  '/apple-touch-icon.png',
+  BASE,
+  `${BASE}index.html`,
+  `${BASE}offline.html`,
+  `${BASE}site.webmanifest`,
+  `${BASE}favicon.ico`,
+  `${BASE}favicon-32x32.png`,
+  `${BASE}favicon-16x16.png`,
+  `${BASE}apple-touch-icon.png`,
 ]
 
 self.addEventListener('install', (event) => {
@@ -48,12 +51,20 @@ self.addEventListener('fetch', (event) => {
           caches.open(RUNTIME_CACHE).then((cache) => cache.put(request, copy))
           return response
         })
-        .catch(async () => (await caches.match(request)) || caches.match('/offline.html') || caches.match('/index.html')),
+        .catch(async () =>
+          (await caches.match(request))
+          || caches.match(`${BASE}offline.html`)
+          || caches.match(`${BASE}index.html`),
+        ),
     )
     return
   }
 
-  if (url.pathname.startsWith('/assets/') || url.pathname.startsWith('/icons/') || /\.(png|svg|css|js|ico)$/.test(url.pathname)) {
+  if (
+    url.pathname.startsWith(`${BASE}assets/`)
+    || url.pathname.startsWith(`${BASE}icons/`)
+    || /\.(png|svg|css|js|ico)$/.test(url.pathname)
+  ) {
     event.respondWith(
       caches.match(request).then((cached) => {
         if (cached) return cached

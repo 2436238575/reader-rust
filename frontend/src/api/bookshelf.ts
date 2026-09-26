@@ -1,6 +1,7 @@
 import http from './http'
 import type { Book, BookChapter, BookGroup, ChapterImages } from '../types'
 import { appendAuthQueryParams } from '../utils/secureAccess'
+import { withAppBase } from '../utils/appBase'
 
 export function getBookshelf() {
   return http.get<Book[]>('/getBookshelf').then((r) => r.data)
@@ -129,15 +130,15 @@ export function getCoverUrl(coverUrl?: string) {
     // 兼容入口：没被改写过的地址（历史书架记录等）仍走封面接口
     const params = new URLSearchParams({ path: coverUrl })
     appendAuthQueryParams(params)
-    return `/reader3/cover?${params.toString()}`
+    return withAppBase(`/reader3/cover?${params.toString()}`)
   }
   return coverUrl
 }
 
-/// 给需要鉴权的直链（本地书资源、封面等）补上令牌。
+/// 给需要鉴权的直链（本地书资源、封面、配图等）补上令牌与部署前缀。
 export function withAuthQuery(url: string) {
   const [path, rawQuery = ''] = url.split('?')
   const params = new URLSearchParams(rawQuery)
   appendAuthQueryParams(params)
-  return `${path}?${params.toString()}`
+  return `${withAppBase(path)}?${params.toString()}`
 }

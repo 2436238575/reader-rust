@@ -13,6 +13,8 @@ import type {
 import { isAiBookConfigReady, isAiBookImageConfigReady } from './aiBookConfig'
 import { summarizeHttpErrorBody } from './httpError'
 
+import { API_BASE } from './appBase'
+
 export type AiBookChatMessage = {
   role: 'system' | 'user' | 'assistant' | 'tool'
   content?: string | null
@@ -554,7 +556,7 @@ export async function uploadGeneratedMap({
     headers.Authorization = token
   }
 
-  const response = await fetchImpl('/reader3/uploadFile?type=ai-maps', {
+  const response = await fetchImpl(`${API_BASE}/uploadFile?type=ai-maps`, {
     method: 'POST',
     headers,
     body: formData,
@@ -1076,7 +1078,7 @@ async function requestModelJson({
   fetchImpl,
 }: AiProxyRequestParams) {
   if (config.modelSource === 'server') {
-    return fetchImpl('/reader3/aiProxy', {
+    return fetchImpl(`${API_BASE}/aiProxy`, {
       method: 'POST',
       headers: {
         ...buildReaderAuthHeaders(),
@@ -1093,7 +1095,7 @@ async function requestModelJson({
 
   const endpointUrl = fullUrl ? normalizeBaseUrl(baseUrl) : `${normalizeBaseUrl(baseUrl)}${path}`
   if (config.useBackendProxy) {
-    return fetchImpl('/reader3/aiProxy', {
+    return fetchImpl(`${API_BASE}/aiProxy`, {
       method: 'POST',
       headers: {
         ...buildReaderAuthHeaders(),
@@ -1239,7 +1241,7 @@ async function fetchImageBlob(imageUrl: string, fetchImpl: typeof fetch, useBack
     throw new Error('地图图片地址为空')
   }
   const response = useBackendProxy
-    ? await fetchImpl('/reader3/aiProxyImage', {
+    ? await fetchImpl(`${API_BASE}/aiProxyImage`, {
       method: 'POST',
       headers: {
         ...buildReaderAuthHeaders(),

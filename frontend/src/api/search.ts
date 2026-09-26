@@ -1,4 +1,5 @@
 import http from './http'
+import { API_BASE } from '../utils/appBase'
 import type { SearchBook } from '../types'
 import { appendAuthQueryParams } from '../utils/secureAccess'
 
@@ -31,7 +32,7 @@ export function searchBookMultiSSE(params: {
 
   appendAuthQueryParams(query)
 
-  return new EventSource(`/reader3/searchBookMultiSSE?${query.toString()}`)
+  return new EventSource(`${API_BASE}/searchBookMultiSSE?${query.toString()}`)
 }
 
 export function exploreBook(params: {
@@ -77,7 +78,7 @@ export function getAvailableBookSourceSSE(params: {
 
   appendAuthQueryParams(query)
 
-  return new EventSource(`/reader3/getAvailableBookSourceSSE?${query.toString()}`)
+  return new EventSource(`${API_BASE}/getAvailableBookSourceSSE?${query.toString()}`)
 }
 
 export interface AvailableBookSourceResult {
@@ -117,5 +118,5 @@ export function searchBookSourceSSE(params: {
 
   appendAuthQueryParams(query)
 
-  return new EventSource(`/reader3/searchBookSourceSSE?${query.toString()}`)
+  return new EventSource(`${API_BASE}/searchBookSourceSSE?${query.toString()}`)
 }

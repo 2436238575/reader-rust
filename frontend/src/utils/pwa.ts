@@ -77,7 +77,7 @@ export function registerPwa(appStore: AppStore) {
   }
 
   window.addEventListener('load', () => {
-    navigator.serviceWorker.register('/sw.js').then((registration) => {
+    navigator.serviceWorker.register(`${import.meta.env.BASE_URL}sw.js`).then((registration) => {
       appStore.setPwaReady(true)
 
       if (registration.waiting) {
