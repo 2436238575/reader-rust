@@ -22,7 +22,7 @@ Reader-Rust 是 [阅读3.0](https://github.com/hectorqin/reader) 的 Rust 重写
 cargo run                      # 开发模式运行，默认监听 0.0.0.0:8080
 cargo build                    # 调试构建
 cargo build --release          # 发布构建
-cargo test                     # 全部测试（Rust 侧共 228 个，另有 2 个真实网络用例默认忽略）
+cargo test                     # 全部测试（Rust 侧共 230 个，另有 2 个真实网络用例默认忽略）
 cargo test <关键字>             # 按名称过滤测试
 cargo clippy --all-targets     # 静态检查
 cargo fmt                      # 格式化
@@ -245,6 +245,13 @@ HTTP 请求
   **配图不进缓存**：图片地址带时效签名（番茄的 `x-expires`），存下来过一阵就是死链。
   阅读器设置里的「章节配图」开关可整体隐藏（`ReadConfig.showChapterImages`）。
 
+**图片地址一律收口到图片管道**（`service/image_service.rs`）：书籍封面（`coverUrl`）、
+章节配图（`images[].url`）与评论配图（`items[].images`）在响应里都被换成
+`/reader3/image/<id>`，前端不接触书源地址。评论配图的多个格式变体由后端挑一张能渲染的
+（`pick_renderable`，HEIC 会被管道转成 JPEG），所以数组里只剩一个元素。
+id = `md5(去掉查询串的地址)`；抓取失败时按登记时的书籍上下文回源刷新一次（封面走书籍详情，
+章节/评论配图靠下一次拉取重新登记）。
+
 ### 解析方式识别
 
 | 方式 | 识别规则 |
@@ -320,14 +327,14 @@ HTTP 请求
 
 ## 测试
 
-Rust 侧共 **228 个测试**（159 个内联单元测试 + 69 个集成用例，另有 2 个 `#[ignore]` 的真实网络用例），分布为：
+Rust 侧共 **230 个测试**（161 个内联单元测试 + 69 个集成用例，另有 2 个 `#[ignore]` 的真实网络用例），分布为：
 
 - `tests/` 下 14 个集成测试文件（69 个用例），其中 `book_source_compat.rs` 用例最多（17 个）；
   `auth_flow.rs`、`review_flow.rs`、`chapter_image_flow.rs` 与 `image_pipeline.rs` 起真实监听端口，
   前者覆盖 401、静态回落、缓存清理与改密吊销令牌，其余各用一个假上游覆盖评论规则（7 天缓存、
   按类型清理）、章节配图（配图规则、无图不报错、正文 HTML 内嵌图片透传）与图片管道
   （封面地址改写、HEIC→JPEG、过期签名回源自愈、缓存命中不重抓）；
-- `src/` 内的内联单元测试模块（159 个）。
+- `src/` 内的内联单元测试模块（161 个）。
 
 前端使用 vitest，共 22 个 `*.test.ts`（86 个用例）。
 
