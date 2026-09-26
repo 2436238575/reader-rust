@@ -1,8 +1,10 @@
+use crate::api::handlers::image::ok_with_cover_routes;
 use crate::api::handlers::multipart::read_limited_multipart_field;
 use crate::api::AppState;
 use crate::auth::CurrentUser;
 use crate::error::error::{ApiResponse, AppError};
 use crate::model::{book::Book, book_source::BookSource, search::SearchBook};
+use crate::service::image_service::ImageService;
 use crate::service::local_epub_book::{
     is_local_epub_origin, is_local_epub_url, LOCAL_EPUB_ORIGIN, MAX_EPUB_UPLOAD_BYTES,
 };
@@ -12,9 +14,9 @@ use crate::service::local_txt_book::{
 use crate::util::text::{normalize_source_url, repair_encoded_url};
 use axum::body::Body;
 use axum::body::Bytes;
-use axum::http::{header, StatusCode};
+use axum::http::header;
 use axum::response::sse::{Event, KeepAlive};
-use axum::response::{IntoResponse, Response, Sse};
+use axum::response::{Response, Sse};
 use axum::{
     extract::{Multipart, Query, State},
     Json,
@@ -129,11 +131,6 @@ pub struct SearchBookRef {
 #[derive(Debug, Deserialize)]
 pub struct GetShelfBookRequest {
     url: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct CoverQuery {
-    path: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -262,9 +259,7 @@ pub async fn search_book(
             tracing::error!("search_book failed: {:?}", e);
             e
         })?;
-    Ok(Json(ApiResponse::ok(
-        serde_json::to_value(books).unwrap_or_default(),
-    )))
+    Ok(ok_with_cover_routes(&state, serde_json::to_value(books).unwrap_or_default()).await)
 }
 
 pub async fn search_book_multi(
@@ -315,9 +310,7 @@ pub async fn search_book_multi(
     // Merge books with same name and author
     let merged = merge_search_results(results);
 
-    Ok(Json(ApiResponse::ok(
-        serde_json::to_value(merged).unwrap_or_default(),
-    )))
+    Ok(ok_with_cover_routes(&state, serde_json::to_value(merged).unwrap_or_default()).await)
 }
 
 /// Merge search results from different book sources for the same book
@@ -416,9 +409,7 @@ pub async fn explore_book(
         .book_service
         .explore_book(&user_ns, &source, &rule_find_url, page)
         .await?;
-    Ok(Json(ApiResponse::ok(
-        serde_json::to_value(list).unwrap_or_default(),
-    )))
+    Ok(ok_with_cover_routes(&state, serde_json::to_value(list).unwrap_or_default()).await)
 }
 
 pub async fn get_book_info(
@@ -458,9 +449,9 @@ pub async fn get_book_info(
             .local_txt_book_service
             .get_book_info(&user_ns, &url)
             .await?;
-        return Ok(Json(ApiResponse::ok(
-            serde_json::to_value(book).unwrap_or_default(),
-        )));
+        return Ok(
+            ok_with_cover_routes(&state, serde_json::to_value(book).unwrap_or_default()).await,
+        );
     }
     if is_local_epub_url(&url)
         || req
@@ -472,9 +463,9 @@ pub async fn get_book_info(
             .local_epub_book_service
             .get_book_info(&user_ns, &url)
             .await?;
-        return Ok(Json(ApiResponse::ok(
-            serde_json::to_value(book).unwrap_or_default(),
-        )));
+        return Ok(
+            ok_with_cover_routes(&state, serde_json::to_value(book).unwrap_or_default()).await,
+        );
     }
     let source = resolve_book_source(
         &state,
@@ -488,9 +479,7 @@ pub async fn get_book_info(
         .book_service
         .get_book_info(&user_ns, &source, &url, req.refresh.unwrap_or(0) > 0)
         .await?;
-    Ok(Json(ApiResponse::ok(
-        serde_json::to_value(book).unwrap_or_default(),
-    )))
+    Ok(ok_with_cover_routes(&state, serde_json::to_value(book).unwrap_or_default()).await)
 }
 
 pub async fn get_chapter_list(
@@ -952,9 +941,7 @@ pub async fn get_bookshelf(
 ) -> Result<Json<ApiResponse<serde_json::Value>>, AppError> {
     let user_ns = user.0.ns.clone();
     let list = state.book_service.get_bookshelf(&user_ns).await?;
-    Ok(Json(ApiResponse::ok(
-        serde_json::to_value(list).unwrap_or_default(),
-    )))
+    Ok(ok_with_cover_routes(&state, serde_json::to_value(list).unwrap_or_default()).await)
 }
 
 async fn ensure_user_local_book_limit(
@@ -1077,6 +1064,25 @@ pub async fn upload_epub_book(
     )))
 }
 
+/// 把前端可能存回来的「本站取图地址」还原成书源地址。
+///
+/// 封面在响应里被改写成了 `/reader3/image/<id>`，前端编辑/保存书籍时会把
+/// 这个值原样发回来；直接落盘就等于把书源地址弄丢了，回源刷新也就没了依据。
+async fn restore_cover_urls(state: &AppState, books: &mut [Book]) {
+    for book in books.iter_mut() {
+        let Some(id) = book
+            .cover_url
+            .as_deref()
+            .and_then(ImageService::id_from_route)
+        else {
+            continue;
+        };
+        if let Some(record) = state.image_service.record(id).await {
+            book.cover_url = Some(record.source_url);
+        }
+    }
+}
+
 pub async fn save_book(
     State(state): State<AppState>,
     user: CurrentUser,
@@ -1112,10 +1118,9 @@ pub async fn save_book(
         }
     }
 
+    restore_cover_urls(&state, std::slice::from_mut(&mut book)).await;
     let saved = state.book_service.save_book(&user_ns, book).await?;
-    Ok(Json(ApiResponse::ok(
-        serde_json::to_value(saved).unwrap_or_default(),
-    )))
+    Ok(ok_with_cover_routes(&state, serde_json::to_value(saved).unwrap_or_default()).await)
 }
 
 pub async fn save_books(
@@ -1140,10 +1145,9 @@ pub async fn save_books(
         }
     }
 
+    restore_cover_urls(&state, &mut books).await;
     let saved = state.book_service.save_books(&user_ns, books).await?;
-    Ok(Json(ApiResponse::ok(
-        serde_json::to_value(saved).unwrap_or_default(),
-    )))
+    Ok(ok_with_cover_routes(&state, serde_json::to_value(saved).unwrap_or_default()).await)
 }
 
 pub async fn set_book_source(
@@ -1408,9 +1412,7 @@ pub async fn get_shelf_book(
         .get_shelf_book(&user_ns, &repair_encoded_url(&url))
         .await?
         .ok_or_else(|| AppError::BadRequest("书籍不存在".to_string()))?;
-    Ok(Json(ApiResponse::ok(
-        serde_json::to_value(book).unwrap_or_default(),
-    )))
+    Ok(ok_with_cover_routes(&state, serde_json::to_value(book).unwrap_or_default()).await)
 }
 
 pub async fn get_shelf_book_with_cache_info(
@@ -1517,40 +1519,7 @@ pub async fn get_shelf_book_with_cache_info(
         });
     }
 
-    Ok(Json(ApiResponse::ok(
-        serde_json::to_value(result).unwrap_or_default(),
-    )))
-}
-
-pub async fn get_book_cover(
-    State(state): State<AppState>,
-    Query(q): Query<CoverQuery>,
-) -> Result<Response, AppError> {
-    let url = match q.path {
-        Some(u) if !u.trim().is_empty() => u,
-        _ => return Ok(StatusCode::NOT_FOUND.into_response()),
-    };
-    // Use "public" namespace for unauthenticated cover requests
-    match state.book_service.get_cover("public", &url).await {
-        Ok((bytes, content_type)) => {
-            let mut resp = Response::new(Body::from(bytes));
-            let headers = resp.headers_mut();
-            headers.insert(
-                header::CACHE_CONTROL,
-                header::HeaderValue::from_static("public, max-age=86400"),
-            );
-            if let Ok(v) = header::HeaderValue::from_str(&content_type) {
-                headers.insert(header::CONTENT_TYPE, v);
-            }
-            Ok(resp)
-        }
-        Err(e) => {
-            // 对外仍统一 404（不向匿名调用方泄露上游细节），但必须留下日志，
-            // 否则“体积超限 / 守卫拒绝 / 上游异常”在运维侧完全不可见。
-            tracing::warn!("封面抓取失败 url={} err={:?}", url, e);
-            Ok(StatusCode::NOT_FOUND.into_response())
-        }
-    }
+    Ok(ok_with_cover_routes(&state, serde_json::to_value(result).unwrap_or_default()).await)
 }
 
 pub async fn get_local_epub_asset(

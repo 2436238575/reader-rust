@@ -12,9 +12,9 @@ use crate::parser::rule_engine::RuleEngine;
 use crate::service::{
     ai_book_service::AiBookService, ai_model_service::AiModelService,
     book_group_service::BookGroupService, book_service::BookService,
-    book_source_service::BookSourceService, json_document_service::JsonDocumentService,
-    local_epub_book::LocalEpubBookService, local_txt_book::LocalTxtBookService,
-    update_service::UpdateService, user_service::UserService,
+    book_source_service::BookSourceService, image_service::ImageService,
+    json_document_service::JsonDocumentService, local_epub_book::LocalEpubBookService,
+    local_txt_book::LocalTxtBookService, update_service::UpdateService, user_service::UserService,
 };
 use crate::storage::{cache::file_cache::FileCache, db, fs::storage_fs::StorageFs};
 
@@ -78,11 +78,16 @@ pub async fn build_state(cfg: AppConfig) -> anyhow::Result<AppState> {
     );
     tracing::info!("core services initialized (db/http/rule engine/cache)");
 
+    // 图片管道与书源抓取共用同一个 HttpClient（同一套出站守卫与代理配置）
+    let image_service = Arc::new(ImageService::new(
+        http.clone(),
+        &cfg.storage_dir,
+        cfg.cache_cover_limit_bytes,
+    ));
     let book_service = Arc::new(
         BookService::new(http, parser, cache, &cfg.storage_dir)
             .with_user_book_limit(cfg.user_book_limit)
             .with_user_local_book_limit(cfg.user_local_book_limit)
-            .with_cover_cache_limit(cfg.cache_cover_limit_bytes)
             .with_review_cache(cfg.review_cache_ttl_secs, cfg.review_cache_user_limit_bytes),
     );
     let book_source_service = Arc::new(BookSourceService::new(repo, &cfg.storage_dir));
@@ -110,6 +115,7 @@ pub async fn build_state(cfg: AppConfig) -> anyhow::Result<AppState> {
 
     Ok(AppState {
         config: cfg,
+        image_service,
         auth: AuthState::new(pool.clone(), jwt_secret),
         book_service,
         book_source_service,

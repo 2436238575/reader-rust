@@ -56,8 +56,6 @@ pub struct BookService {
     user_book_limit: u32,
     /// 单用户本地书上限（0 = 不限），来自 `USER_LOCAL_BOOK_LIMIT`。
     user_local_book_limit: u32,
-    /// 封面缓存目录的容量上限（0 = 不限），来自 `CACHE_COVER_LIMIT_BYTES`。
-    cover_cache_limit: u64,
     /// 正在后台补全目录的 `(user_ns, toc_url)` 集合：防止同一本书并发触发
     /// 两个补全任务（竞态下各自抓全部分页并各 append 一次，缓存里出现重复章节）。
     pending_toc_fills: Arc<Mutex<HashSet<(String, String)>>>,
@@ -205,7 +203,6 @@ impl BookService {
             recent_bodies: Arc::new(RwLock::new(HashMap::new())),
             user_book_limit: 0,
             user_local_book_limit: 0,
-            cover_cache_limit: DEFAULT_COVER_CACHE_BYTES,
             pending_toc_fills: Arc::new(Mutex::new(HashSet::new())),
         }
     }
@@ -229,12 +226,6 @@ impl BookService {
     /// 设置单用户本地书上限（`USER_LOCAL_BOOK_LIMIT`；0 = 不限）。
     pub fn with_user_local_book_limit(mut self, limit: u32) -> Self {
         self.user_local_book_limit = limit;
-        self
-    }
-
-    /// 设置封面缓存目录容量上限（0 = 不限）。
-    pub fn with_cover_cache_limit(mut self, limit: u64) -> Self {
-        self.cover_cache_limit = limit;
         self
     }
 
@@ -1612,6 +1603,11 @@ impl BookService {
         let mut result = CachePurgeResult {
             cover: remove_dir_counting_files(&self.cover_cache_dir(user_ns))
                 .await
+                .map_err(internal_error)?
+                + remove_dir_counting_files(&crate::service::image_service::image_cache_dir(
+                    &self.storage_dir,
+                ))
+                .await
                 .map_err(internal_error)?,
             chapter_list: remove_dir_counting_files(&self.chapter_cache_dir(user_ns))
                 .await
@@ -1676,6 +1672,11 @@ impl BookService {
             }
             CacheKind::Cover => {
                 result.cover = remove_dir_counting_files(&self.cover_cache_dir(user_ns))
+                    .await
+                    .map_err(internal_error)?
+                    + remove_dir_counting_files(&crate::service::image_service::image_cache_dir(
+                        &self.storage_dir,
+                    ))
                     .await
                     .map_err(internal_error)?
             }
@@ -1756,9 +1757,20 @@ impl BookService {
             Some(ns) => self.cache.user_usage(ns).await,
             None => self.cache.total_usage().await,
         };
-        let cover = match user_ns {
+        // 封面现在由图片管道统一管理（`cache/image`，全局共享），
+        // 旧封面目录（`cache/<ns>/cover`）可能还有历史文件，一并计入
+        let image = dir_usage(
+            &crate::service::image_service::image_cache_dir(&self.storage_dir),
+            usize::MAX,
+        )
+        .await;
+        let legacy_cover = match user_ns {
             Some(ns) => dir_usage(&self.cover_cache_dir(ns), usize::MAX).await,
             None => dir_usage(&self.cover_cache_dir("public"), usize::MAX).await,
+        };
+        let cover = CacheUsage {
+            files: image.files + legacy_cover.files,
+            bytes: image.bytes + legacy_cover.bytes,
         };
         let chapter_list = match user_ns {
             Some(ns) => dir_usage(&self.chapter_cache_dir(ns), usize::MAX).await,
@@ -2090,83 +2102,6 @@ impl BookService {
             .get_content(user_ns, book_url, source, chapter_url)
             .await?;
         Ok(())
-    }
-
-    pub async fn get_cover(&self, user_ns: &str, url: &str) -> Result<(Vec<u8>, String), AppError> {
-        // 出站守卫：封面 URL 来自查询参数，且 `/cover` 允许匿名访问
-        crate::crawler::url_guard::ensure_outbound_url_str_allowed(url)
-            .await
-            .map_err(AppError::BadRequest)?;
-        let ext = file_ext_from_url(url).unwrap_or_else(|| "png".to_string());
-        let name = md5_hex(url);
-        let path = self
-            .storage_dir
-            .join("cache")
-            .join(user_ns)
-            .join("cover")
-            .join(format!("{}.{}", name, ext));
-        if path.exists() {
-            let data = fs::read(&path)
-                .await
-                .map_err(|e| AppError::Internal(e.into()))?;
-            let content_type = safe_cover_content_type(None, &ext);
-            return Ok((data, content_type));
-        }
-        if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent)
-                .await
-                .map_err(|e| AppError::Internal(e.into()))?;
-        }
-
-        // Extract referer from URL for anti-hotlinking bypass
-        let referer = url::Url::parse(url).ok().and_then(|u| {
-            let scheme = u.scheme();
-            let host = u.host_str()?;
-            Some(format!("{}://{}", scheme, host))
-        });
-
-        // 封面属于匿名资源，固定用 "public" 命名空间，绝不携带任何用户的
-        // 书源会话 Cookie
-        let http = self.http.client_for("public").map_err(AppError::Internal)?;
-        let mut req = http.get(url);
-
-        // Add necessary headers to bypass anti-hotlinking
-        req = req
-            .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
-            .header("Accept", "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8");
-
-        if let Some(ref referer) = referer {
-            req = req.header("Referer", referer);
-        }
-
-        let res = req.send().await.map_err(|e| AppError::Internal(e.into()))?;
-        if !res.status().is_success() {
-            return Err(AppError::NotFound("cover not found".to_string()));
-        }
-        let upstream_content_type = res
-            .headers()
-            .get(reqwest::header::CONTENT_TYPE)
-            .and_then(|v| v.to_str().ok())
-            .map(|s| s.to_string());
-        let bytes = crate::crawler::fetcher::read_body_limited(
-            res,
-            crate::crawler::fetcher::MAX_RESPONSE_BYTES,
-        )
-        .await
-        .map_err(AppError::Internal)?
-        .to_vec();
-        let _ = fs::write(&path, &bytes).await;
-        // 匿名可写的缓存目录必须有容量上限，否则换 URL 即可打满磁盘
-        if let Some(parent) = path.parent() {
-            crate::storage::cache::file_cache::enforce_flat_dir_capacity(
-                parent,
-                self.cover_cache_limit,
-                bytes.len() as u64,
-            )
-            .await;
-        }
-        let content_type = safe_cover_content_type(upstream_content_type.as_deref(), &ext);
-        Ok((bytes, content_type))
     }
 
     pub async fn load_book_sources_cache(
@@ -2803,101 +2738,9 @@ fn push_recovered_book(recovered: &mut Vec<Book>, seen: &mut HashSet<String>, mu
     }
 }
 
-fn file_ext_from_url(url: &str) -> Option<String> {
-    let url = url.split('?').next().unwrap_or(url);
-    let url = url.split('#').next().unwrap_or(url);
-    let pos = url.rfind('.')?;
-    let ext = &url[pos + 1..];
-    if ext.len() > 0 && ext.len() <= 8 {
-        Some(ext.to_ascii_lowercase())
-    } else {
-        None
-    }
-}
-
-fn content_type_from_ext(ext: &str) -> String {
-    match ext {
-        "png" => "image/png",
-        "jpg" | "jpeg" => "image/jpeg",
-        "webp" => "image/webp",
-        "gif" => "image/gif",
-        "bmp" => "image/bmp",
-        "svg" => "image/svg+xml",
-        _ => "application/octet-stream",
-    }
-    .to_string()
-}
-
-/// 封面缓存目录的容量上限。
-const DEFAULT_COVER_CACHE_BYTES: u64 = 256 * 1024 * 1024;
-
-/// 封面响应只允许安全的位图类型。
-///
-/// 上游 Content-Type 原样透传时，`text/html` / `image/svg+xml` 会让直接打开
-/// `/cover` 链接的读者在站点源下执行脚本（同源 XSS，可偷 localStorage 的 token）。
-/// SVG 作为矢量图含脚本能力，同样不放行；上游类型不可信时按扩展名兜底，
-/// 扩展名也不安全就强制 application/octet-stream（浏览器仅下载不渲染）。
-fn safe_cover_content_type(upstream: Option<&str>, ext: &str) -> String {
-    const ALLOWED: &[&str] = &[
-        "image/jpeg",
-        "image/png",
-        "image/webp",
-        "image/gif",
-        "image/avif",
-        "image/bmp",
-        "image/x-icon",
-        "image/vnd.microsoft.icon",
-    ];
-    if let Some(ct) = upstream
-        .and_then(|v| v.split(';').next())
-        .map(|v| v.trim().to_ascii_lowercase())
-    {
-        if ALLOWED.contains(&ct.as_str()) {
-            return ct;
-        }
-    }
-    let by_ext = content_type_from_ext(ext);
-    if ALLOWED.contains(&by_ext.as_str()) {
-        by_ext
-    } else {
-        "application/octet-stream".to_string()
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn cover_content_type_is_whitelisted() {
-        assert_eq!(
-            safe_cover_content_type(Some("image/jpeg"), "png"),
-            "image/jpeg"
-        );
-        assert_eq!(
-            safe_cover_content_type(Some("image/png; charset=binary"), "x"),
-            "image/png"
-        );
-        // html/svg 一律不放行（同源 XSS 通道）
-        assert_eq!(
-            safe_cover_content_type(Some("text/html"), "html"),
-            "application/octet-stream"
-        );
-        assert_eq!(
-            safe_cover_content_type(Some("image/svg+xml"), "svg"),
-            "application/octet-stream"
-        );
-        assert_eq!(
-            safe_cover_content_type(None, "svg"),
-            "application/octet-stream"
-        );
-        // 上游类型不可信时按扩展名兜底
-        assert_eq!(
-            safe_cover_content_type(Some("text/plain"), "jpg"),
-            "image/jpeg"
-        );
-        assert_eq!(safe_cover_content_type(None, "webp"), "image/webp");
-    }
 
     #[tokio::test]
     async fn append_chapter_list_cache_dedups_by_url_and_keeps_index_sequential() {

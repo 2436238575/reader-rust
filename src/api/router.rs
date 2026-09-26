@@ -228,6 +228,8 @@ pub fn build_router(state: AppState) -> Router {
             get(handlers::book_source_debug_sse),
         )
         .route("/reader3/cover", get(handlers::get_book_cover))
+        // 图片管道：前端只拿 id，不接触书源地址（见 service/image_service.rs）
+        .route("/reader3/image/:id", get(handlers::get_image))
         .route(
             "/reader3/localEpubAsset",
             get(handlers::get_local_epub_asset),

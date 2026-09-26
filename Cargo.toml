@@ -46,3 +46,5 @@ sxd-xpath = "0.4"
 sxd-document = "0.3"
 quick-xml = "0.41"
 zip = { version = "0.6", default-features = false, features = ["deflate"] }
+heic-rs = { version = "0.1", default-features = false, features = ["std"] }
+jpeg-encoder = "0.7"
