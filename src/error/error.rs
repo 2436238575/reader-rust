@@ -6,8 +6,9 @@ use axum::{
 use serde::Serialize;
 use thiserror::Error;
 
-/// 未登录 / 令牌无效或过期。前端据此弹出登录框。
-pub const NEED_LOGIN: &str = "NEED_LOGIN";
+/// 未登录 / 令牌无效或过期。识别靠 HTTP 401（前端拦截器据此弹登录框），
+/// errorMsg 会被前端原样 toast 展示，因此是用户可直接阅读的文案。
+pub const NEED_LOGIN: &str = "需要登录";
 
 #[derive(Debug, Error)]
 pub enum AppError {

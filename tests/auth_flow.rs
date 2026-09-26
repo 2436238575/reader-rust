@@ -129,8 +129,8 @@ async fn protected_routes_require_a_token_and_answer_401() {
     assert_eq!(response.status(), 401, "缺少令牌应返回 401 而不是 400");
     let body: serde_json::Value = response.json().await.unwrap();
     assert_eq!(body["isSuccess"], serde_json::json!(false));
-    // 保留 NEED_LOGIN 供前端拦截器识别
-    assert_eq!(body["errorMsg"], serde_json::json!("NEED_LOGIN"));
+    // 前端凭 401 识别登录失效；errorMsg 会被原样 toast，必须是用户可读的文案
+    assert_eq!(body["errorMsg"], serde_json::json!("需要登录"));
 
     // 无效令牌同样 401
     let response = server.get("/reader3/getBookshelf", Some("not-a-jwt")).await;

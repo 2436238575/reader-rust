@@ -40,19 +40,19 @@ http://localhost:8080/reader3
 
 ### 两个特殊约定
 
-**`NEED_LOGIN` —— 需要登录**
+**需要登录 —— HTTP 401**
 
 未登录、令牌无效或令牌已过期，一律返回 **HTTP 401**，响应体为：
 
 ```json
 {
   "isSuccess": false,
-  "errorMsg": "NEED_LOGIN",
+  "errorMsg": "需要登录",
   "data": null
 }
 ```
 
-前端对 `errorMsg === "NEED_LOGIN"` 与 HTTP 401 两种信号都会弹出登录框。
+`errorMsg` 是用户可读的提示文案（前端会原样 toast 展示）；前端凭 **HTTP 401** 状态码弹出登录框，不识别具体文案。
 
 （唯一的例外是 WebDAV 的 `/reader3/webdav/*path`，它走 HTTP Basic 认证，返回裸 401，不带上述 JSON 结构。）
 

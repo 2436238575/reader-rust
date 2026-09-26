@@ -36,9 +36,6 @@ http.interceptors.response.use(
       return response
     }
     if (!data.isSuccess) {
-      if (data.errorMsg === 'NEED_LOGIN') {
-        dispatchNeedLogin()
-      }
       return Promise.reject(new Error(data.errorMsg || '请求失败'))
     }
     // Return unwrapped data
@@ -47,14 +44,12 @@ http.interceptors.response.use(
   },
   (error) => {
     const data = error.response?.data as Partial<ApiResponse> | undefined
-    // 未登录/令牌失效统一为 401；服务端仍保留 NEED_LOGIN 供识别
+    // 未登录/令牌失效统一为 HTTP 401，据此拉起登录框；
+    // errorMsg 是用户可读的文案，直接作为错误信息抛出
     if (error.response?.status === 401) {
       dispatchNeedLogin()
     }
     if (data && typeof data === 'object') {
-      if (data.errorMsg === 'NEED_LOGIN') {
-        dispatchNeedLogin()
-      }
       if (typeof data.errorMsg === 'string' && data.errorMsg.trim()) {
         return Promise.reject(new Error(data.errorMsg))
       }

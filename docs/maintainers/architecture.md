@@ -170,7 +170,7 @@ JS 求值本身带资源上限：内存 128MiB、调用栈 1MiB、单次求值 5
 | 需登录 | `require_auth` | 其余全部 `/reader3/*` |
 | WebDAV | 自带 HTTP Basic | `/reader3/webdav/*path`，不经 JWT |
 
-失败时的状态码：未登录/令牌无效或过期 → **401 + `errorMsg="NEED_LOGIN"`**。
+失败时的状态码：未登录/令牌无效或过期 → **401 + `errorMsg="需要登录"`**（用户可读文案，前端会原样 toast；识别只靠 401 状态码）。
 
 ### 撤销
 
@@ -254,7 +254,7 @@ frontend/src/
 两个关键约定：
 
 - `api/http.ts` 里的 axios 实例 `baseURL = /reader3`，超时 120 秒。请求拦截器用 `utils/secureAccess` 的 `readAccessToken(localStorage)` 取出 JWT，注入 `Authorization: Bearer <jwt>`。
-- 响应拦截器会自动拆掉 `{ isSuccess, errorMsg, data }` 外壳，业务代码直接拿 `data`。识别到 `errorMsg === 'NEED_LOGIN'` 或 HTTP 401 时派发 `need-login` 事件拉起登录框（同一时间 1.5 秒内只派发一次，避免并发请求弹出多个登录框）。
+- 响应拦截器会自动拆掉 `{ isSuccess, errorMsg, data }` 外壳，业务代码直接拿 `data`。HTTP 401 时派发 `need-login` 事件拉起登录框（同一时间 1.5 秒内只派发一次，避免并发请求弹出多个登录框）；`errorMsg` 是用户可读的文案，作为错误信息原样抛出。
 - SSE 与 `<img>` 这类带不了请求头的请求用 `appendAuthQueryParams` 把令牌放进查询串，后端中间件会回退到该参数。
 
 对返回裸数据（封面图、文件下载等没有 `isSuccess` 字段的响应）的接口，拦截器会原样放行。
