@@ -20,7 +20,7 @@
 
       <div v-if="store.book" class="book-brief">
         <div class="book-brief-cover">
-          <img v-if="store.book.coverUrl" :src="store.book.coverUrl" :alt="store.book.name">
+          <img v-if="coverSrc" :src="coverSrc" :alt="store.book.name">
           <div v-else class="book-brief-placeholder">{{ store.book.name.slice(0, 1) }}</div>
         </div>
         <div class="book-brief-main">
@@ -124,7 +124,7 @@ import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useReaderStore } from '../../stores/reader'
 import { useAppStore } from '../../stores/app'
 import { getAvailableBookSourceSSE } from '../../api/search'
-import { getBookInfo } from '../../api/bookshelf'
+import { getBookInfo, getCoverUrl } from '../../api/bookshelf'
 import type { Book, SearchBook } from '../../types'
 
 type CandidateItem = {
@@ -139,6 +139,8 @@ type CandidateItem = {
 const store = useReaderStore()
 const appStore = useAppStore()
 const theme = computed(() => store.currentTheme)
+/// 封面要经后端取图接口并带上令牌（<img> 带不了请求头）
+const coverSrc = computed(() => getCoverUrl(store.book?.coverUrl))
 const searching = ref(false)
 const loadingMore = ref(false)
 const results = ref<SearchBook[]>([])
