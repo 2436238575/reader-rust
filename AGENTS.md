@@ -22,7 +22,7 @@ Reader-Rust 是 [阅读3.0](https://github.com/hectorqin/reader) 的 Rust 重写
 cargo run                      # 开发模式运行，默认监听 0.0.0.0:8080
 cargo build                    # 调试构建
 cargo build --release          # 发布构建
-cargo test                     # 全部测试（Rust 侧共 219 个，另有 2 个真实网络用例默认忽略）
+cargo test                     # 全部测试（Rust 侧共 228 个，另有 2 个真实网络用例默认忽略）
 cargo test <关键字>             # 按名称过滤测试
 cargo clippy --all-targets     # 静态检查
 cargo fmt                      # 格式化
@@ -135,7 +135,8 @@ src/
     secret.rs             JWT_SECRET 解析与持久化
     extractor.rs          CurrentUser / MaybeUser 提取器
     middleware.rs         require_auth / require_admin / optional_auth
-  service/                业务编排，11 文件约 6000 行
+  service/                业务编排，12 文件约 6500 行
+    image_service.rs       图片管道：id 映射 + HEIC→JPEG + 永久缓存 + 回源自愈
   parser/                 规则解析引擎，6 文件约 4300 行
     rule_engine.rs        核心（3000 行）：六种用途的解析入口 + 评论解析
     rule_analyzer.rs      组合规则拆分（正确处理引号与括号嵌套）
@@ -305,6 +306,10 @@ HTTP 请求
 - 缓存**不按时间过期**，只在显式调用 `POST /reader3/purgeCache` 或超出容量上限时回收；占用可用 `GET /reader3/cacheStats` 查看。例外有二：评论缓存（见下）与书籍详情缓存（`storage/cache/bookinfo/`，10 分钟 TTL，`refresh=1` 强刷）。
 - 唯一例外是**评论缓存**（`storage/cache/reviews/<ns>/<md5(bookUrl)>/`）：评论是会变的第三方数据，
   因此保留 7 天 TTL（`REVIEW_CACHE_TTL_SECS`），同时也受容量上限约束。
+- **图片缓存**（`storage/cache/image/`）是书源图片的统一出口：`<id>.bin` 是图片本体、
+  `<id>.json` 是映射记录（id = `md5(去掉查询串的地址)`，附上游地址与书籍上下文）。
+  它**不按时间过期**（id 稳定，抓下来就长期复用），容量与封面共用 `CACHE_COVER_LIMIT_BYTES`；
+  上游地址失效时按记录里的书籍上下文回源刷新一次再试（`service/image_service.rs`）。
 - 另有若干**进程内**小缓存，重启即失效：书源正则编译缓存、JS `cache`/`kv` 与 jsLib 编译缓存、
   `exploreUrl` 的 JS 求值结果（按 `MD5(用户命名空间 | bookSourceUrl + exploreUrl)` 缓存 1 小时，
   键含用户维度——脚本输出可能含 `java.androidId` 等用户相关值）。
@@ -315,15 +320,16 @@ HTTP 请求
 
 ## 测试
 
-Rust 侧共 **219 个测试**（153 个内联单元测试 + 66 个集成用例，另有 2 个 `#[ignore]` 的真实网络用例），分布为：
+Rust 侧共 **228 个测试**（159 个内联单元测试 + 69 个集成用例，另有 2 个 `#[ignore]` 的真实网络用例），分布为：
 
-- `tests/` 下 13 个集成测试文件（66 个用例），其中 `book_source_compat.rs` 用例最多（17 个）；
-  `auth_flow.rs`、`review_flow.rs` 与 `chapter_image_flow.rs` 起真实监听端口，前者覆盖 401、
-  静态回落、缓存清理与改密吊销令牌，后两者各用一个假上游覆盖评论规则（7 天缓存、按类型清理）
-  与章节配图（配图规则、无图不报错、正文 HTML 内嵌图片透传）；
-- `src/` 内的内联单元测试模块（153 个）。
+- `tests/` 下 14 个集成测试文件（69 个用例），其中 `book_source_compat.rs` 用例最多（17 个）；
+  `auth_flow.rs`、`review_flow.rs`、`chapter_image_flow.rs` 与 `image_pipeline.rs` 起真实监听端口，
+  前者覆盖 401、静态回落、缓存清理与改密吊销令牌，其余各用一个假上游覆盖评论规则（7 天缓存、
+  按类型清理）、章节配图（配图规则、无图不报错、正文 HTML 内嵌图片透传）与图片管道
+  （封面地址改写、HEIC→JPEG、过期签名回源自愈、缓存命中不重抓）；
+- `src/` 内的内联单元测试模块（159 个）。
 
-前端使用 vitest，共 21 个 `*.test.ts`（83 个用例）。
+前端使用 vitest，共 22 个 `*.test.ts`（86 个用例）。
 
 需要注意：
 

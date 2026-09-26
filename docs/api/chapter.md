@@ -153,20 +153,38 @@ POST /reader3/saveReadProgress
 
 > **未实现**：该接口尚未在代码中实现（依据：`src/api/router.rs` 查无 `saveReadProgress` 路由；正确路径为 `POST /reader3/saveBookProgress`）。
 
-## 获取封面
+## 获取图片（封面等）
+
+```text
+GET /reader3/image/<id>?accessToken=<jwt>
+```
+
+书源里的图片地址普遍是**带时效签名的短命 URL**（番茄图床的 `x-expires` / `x-signature`，
+签名还会随宿主会话轮换），而且格式不一定是浏览器能渲染的（番茄封面是 HEIC，Chrome 直接报错）。
+后端因此把图片统一收口到这一层：
+
+- **id = `md5(去掉查询串的地址)`**：同一张图永远同一个 id，前端只拿 id、不接触书源地址。
+  书籍响应里的 `coverUrl` 会被自动改写成本接口路径。
+- **首次取图时抓上游并落盘**：HEIC/HEIF 转成 JPEG，其余格式原样缓存（类型走位图白名单，
+  `text/html`、`image/svg+xml` 一律降级为 `application/octet-stream`）。
+- **之后长期命中本地缓存**（`Cache-Control: public, max-age=31536000, immutable`）：
+  签名过期不影响已经抓下来的图。
+- **签名失效会自愈**：抓取失败时，用登记时留下的书籍上下文重新求值一次书源的封面地址再试。
+- 映射与图片本体落在 `<STORAGE_DIR>/cache/image/`：`<id>.json` 是记录（上游地址 + 书籍上下文），
+  `<id>.bin` 是图片字节；目录本身即「id → 记录」的映射表。
+
+单个图片最大 32MiB；目录容量上限与封面共用 `CACHE_COVER_LIMIT_BYTES`（超限按最旧优先淘汰）。
+上游失败、id 未登记、出站守卫拦截都返回 404。目标地址同样过出站守卫。
+
+## 获取封面（兼容入口）
 
 ```text
 GET /reader3/cover?path=<封面URL>
 ```
 
-抓取远程封面并缓存返回。**匿名可访问**（固定使用隔离的 `public` 命名空间，不携带任何用户书源会话 Cookie）。
-
-行为约定：
-
-- 响应 `Content-Type` 收敛为位图白名单（jpeg/png/webp/gif/avif/bmp/ico）；上游返回 `text/html`、`image/svg+xml` 等不可渲染为位图的类型时一律降级为 `application/octet-stream`（防同源脚本执行）
-- 单个封面最大 32MiB；缓存目录容量上限 256MiB，超限按最旧优先淘汰
-- 上游失败/被出站守卫拦截时统一返回 404
-- 目标 URL 经出站守卫校验（`ALLOW_PRIVATE_NETWORK=false` 时拒绝私网/环回/链路本地地址）
+早期版本的前端与历史书架记录里存的是书源地址，这个入口保留兼容：把 `path` 登记成 id
+后走上面同一条管道（转码、缓存、自愈一致）。**匿名可访问**（固定使用隔离的 `public`
+命名空间，不携带任何用户书源会话 Cookie），行为约定同上。
 
 ## 获取本地 EPUB 资源
 
