@@ -120,8 +120,13 @@ export function getCoverUrl(coverUrl?: string) {
   if (coverUrl.startsWith('/reader3/localEpubAsset')) {
     return withAuthQuery(coverUrl)
   }
+  // 后端已经把书源地址换成了本站取图地址（`/reader3/image/<id>`）：
+  // id 由后端映射表维护，前端不接触会过期的书源地址，补个令牌直接用
+  if (coverUrl.startsWith('/reader3/image/')) {
+    return withAuthQuery(coverUrl)
+  }
   if (coverUrl.startsWith('http') || coverUrl.startsWith('/')) {
-    // 封面接口需要鉴权，而 <img> 带不了请求头，只能把令牌放进查询参数
+    // 兼容入口：没被改写过的地址（历史书架记录等）仍走封面接口
     const params = new URLSearchParams({ path: coverUrl })
     appendAuthQueryParams(params)
     return `/reader3/cover?${params.toString()}`
