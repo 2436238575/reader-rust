@@ -47,8 +47,26 @@
               <div class="comment-meta">
                 <span class="comment-name">{{ item.name || '匿名读者' }}</span>
                 <span class="comment-time">{{ formatReviewTime(item.time) }}</span>
+                <button
+                  v-if="isExpanded(itemKey(item, index))"
+                  class="comment-toggle"
+                  type="button"
+                  @click="toggleExpand(itemKey(item, index))"
+                >折叠</button>
               </div>
-              <p v-if="item.content" class="comment-text">{{ item.content }}</p>
+              <p
+                v-if="item.content"
+                class="comment-text"
+                :class="{
+                  clamped: !isExpanded(itemKey(item, index)),
+                  'has-toggle': collapsibleKeys.has(itemKey(item, index)) && !isExpanded(itemKey(item, index)),
+                }"
+              ><button
+                  v-if="collapsibleKeys.has(itemKey(item, index)) && !isExpanded(itemKey(item, index))"
+                  class="comment-toggle comment-expand-inline"
+                  type="button"
+                  @click="toggleExpand(itemKey(item, index))"
+                >展开</button>{{ item.content }}</p>
               <div v-if="item.images.length" class="comment-images">
                 <img
                   v-for="(url, imageIndex) in item.images"
@@ -77,6 +95,12 @@
                   </svg>
                   {{ item.digg }}
                 </span>
+                <button
+                  v-if="isExpanded(itemKey(item, index))"
+                  class="comment-toggle"
+                  type="button"
+                  @click="toggleExpand(itemKey(item, index))"
+                >折叠</button>
               </div>
             </article>
 
@@ -145,6 +169,59 @@ const sort = ref<ReviewSort>('hot')
 const serverSort = ref(false)
 
 /**
+ * 超长评论折叠。
+ *
+ * 正文默认一律按 6 行截断（line-clamp 对短评论是无操作），渲染后量
+ * scrollHeight 与 clientHeight 的差值，真超长的条目才把「展开」按钮
+ * 放到截断省略号后面；展开后右上角和右下角都会出现「折叠」。
+ */
+const collapsibleKeys = ref(new Set<string>())
+const expandedKeys = ref(new Set<string>())
+
+function itemKey(item: ReviewItem, index: number) {
+  return item.id || `c-${index}`
+}
+
+function isExpanded(key: string) {
+  return expandedKeys.value.has(key)
+}
+
+function toggleExpand(key: string) {
+  const next = new Set(expandedKeys.value)
+  if (next.has(key)) {
+    next.delete(key)
+  } else {
+    next.add(key)
+  }
+  expandedKeys.value = next
+}
+
+async function measureCollapsible() {
+  await nextTick()
+  const list = listRef.value
+  if (!list) return
+  const next = new Set<string>()
+  list.querySelectorAll<HTMLElement>('.comment-item').forEach((el) => {
+    const key = el.dataset.reviewKey || ''
+    if (!key) return
+    // 展开中/已标记的条目量不出溢出（截断已解除），沿用已有标记
+    if (expandedKeys.value.has(key) || collapsibleKeys.value.has(key)) {
+      next.add(key)
+      return
+    }
+    const text = el.querySelector<HTMLElement>('.comment-text')
+    if (text && text.scrollHeight - text.clientHeight > 2) {
+      next.add(key)
+    }
+  })
+  collapsibleKeys.value = next
+}
+
+watch(items, () => {
+  void measureCollapsible()
+}, { flush: 'post' })
+
+/**
  * 展示顺序。
  *
  * 「最热」直接用站点顺序，不做二次加工；「最新」按时间倒序。
@@ -177,6 +254,8 @@ watch(
 async function reload() {
   error.value = ''
   sort.value = 'hot'
+  collapsibleKeys.value = new Set()
+  expandedKeys.value = new Set()
   const initial = props.mode === 'chapter' ? props.initialPage : null
   if (initial && initial.items?.length) {
     // 首屏那一页由阅读器 store 预先取好，同样要过一遍配图规范化
@@ -231,6 +310,8 @@ async function changeSort(next: ReviewSort) {
   total.value = 0
   page.value = 1
   hasMore.value = false
+  collapsibleKeys.value = new Set()
+  expandedKeys.value = new Set()
   await fetchPage(1)
   await nextTick()
   listRef.value?.scrollTo({ top: 0 })
@@ -513,6 +594,42 @@ function formatReviewTime(raw: string) {
   line-height: 1.65;
   word-break: break-word;
   white-space: pre-wrap;
+}
+
+/* 默认按 6 行截断；不足 6 行时是无操作。是否露出展开按钮由测量结果决定 */
+.comment-text.clamped {
+  display: -webkit-box;
+  -webkit-line-clamp: 6;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+/* 「展开」跟在截断省略号后面：零宽浮动占位占满前 5 行的高度，
+   按钮 float:right + clear 被压到末行右侧，文本环绕它排布。
+   截断盒高度是 auto，百分比占位解析不出来，只能按行高写死 5 行 */
+.comment-text.has-toggle::before {
+  content: '';
+  float: right;
+  width: 0;
+  height: calc(1.65em * 5);
+}
+
+.comment-expand-inline {
+  float: right;
+  clear: both;
+  margin-left: 4px;
+}
+
+.comment-toggle {
+  margin-left: auto;
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--color-primary);
+  font-size: 12px;
+  line-height: 1.5;
+  flex-shrink: 0;
+  cursor: pointer;
 }
 
 .comment-images {
