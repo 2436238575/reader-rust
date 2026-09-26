@@ -18,6 +18,34 @@
           <section class="drawer-section">
             <h3 class="section-title">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18">
+                <path d="M12 8v4l3 3" />
+                <circle cx="12" cy="12" r="9" />
+              </svg>
+              阅读统计
+            </h3>
+            <div class="stats-grid">
+              <div class="status-card">
+                <span>{{ appStore.readingStatsSummary.totalTimeText }}</span>
+                <small>累计阅读时长</small>
+              </div>
+              <div class="status-card">
+                <span>{{ appStore.readingStatsSummary.openedBooks }}</span>
+                <small>打开过的书籍</small>
+              </div>
+              <div class="status-card">
+                <span>{{ appStore.readingStatsSummary.readChapters }}</span>
+                <small>阅读章节数</small>
+              </div>
+              <div class="status-card">
+                <span>{{ appStore.readingStatsSummary.completedBooks }}</span>
+                <small>读完书籍数</small>
+              </div>
+            </div>
+          </section>
+
+          <section class="drawer-section">
+            <h3 class="section-title">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18">
                 <path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2" />
                 <circle cx="12" cy="7" r="4" />
               </svg>
@@ -76,6 +104,15 @@
                   <path d="M12 20h9M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z" />
                 </svg>
                 书源管理
+              </button>
+              <button class="btn btn-soft" @click="refreshCache">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
+                  <path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />
+                  <path d="M3 3v5h5" />
+                  <path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16" />
+                  <path d="M16 16h5v5" />
+                </svg>
+                刷新缓存
               </button>
             </div>
           </section>
@@ -155,58 +192,6 @@
             </div>
           </section>
 
-          <section class="drawer-section">
-            <h3 class="section-title">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18">
-                <rect width="7" height="7" x="3" y="3" rx="1" />
-                <rect width="7" height="7" x="14" y="3" rx="1" />
-                <rect width="7" height="7" x="3" y="14" rx="1" />
-                <rect width="7" height="7" x="14" y="14" rx="1" />
-              </svg>
-              书架设置
-            </h3>
-            <div class="btn-group">
-              <button class="btn btn-soft" @click="refreshCache">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
-                  <path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />
-                  <path d="M3 3v5h5" />
-                  <path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16" />
-                  <path d="M16 16h5v5" />
-                </svg>
-                刷新缓存
-              </button>
-            </div>
-          </section>
-
-          <section class="drawer-section">
-            <h3 class="section-title">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18">
-                <path d="M12 8v4l3 3" />
-                <circle cx="12" cy="12" r="9" />
-              </svg>
-              阅读统计
-            </h3>
-            <div class="stats-grid">
-              <div class="status-card">
-                <span>{{ appStore.readingStatsSummary.totalTimeText }}</span>
-                <small>累计阅读时长</small>
-              </div>
-              <div class="status-card">
-                <span>{{ appStore.readingStatsSummary.openedBooks }}</span>
-                <small>打开过的书籍</small>
-              </div>
-              <div class="status-card">
-                <span>{{ appStore.readingStatsSummary.readChapters }}</span>
-                <small>阅读章节数</small>
-              </div>
-              <div class="status-card">
-                <span>{{ appStore.readingStatsSummary.completedBooks }}</span>
-                <small>读完书籍数</small>
-              </div>
-            </div>
-          </section>
-
-          
         </div>
       </aside>
     </Transition>
@@ -441,9 +426,14 @@ async function handleCheckVersionUpdate() {
   padding: var(--space-4) calc(var(--space-6) + var(--safe-area-right)) calc(var(--space-4) + var(--safe-area-bottom)) var(--space-6);
 }
 
-@media (max-width: 768px) {
+/* 移动端与导航菜单一样整屏铺开；遮罩被完全盖住，直接隐藏 */
+@media (max-width: 767px) {
   .settings-drawer {
-    width: min(420px, 92vw);
+    width: 100%;
+  }
+
+  .drawer-overlay {
+    display: none;
   }
 }
 
