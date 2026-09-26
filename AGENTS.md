@@ -365,6 +365,18 @@ Rust 侧共 **230 个测试**（161 个内联单元测试 + 69 个集成用例�
 5. 修改前端后至少跑一次 `npm run build`，确保类型检查通过。
 6. `AGENTS.md` 与 `CLAUDE.md` 保持单一来源：`CLAUDE.md` 只是导入入口，内容不要在这里重复维护。
 
+## 前端 UI 约定
+
+管理类弹窗/面板（设置抽屉、书源管理、缓存管理、WebDAV 备份、书源订阅等）共用一套形态语言，**新弹窗照此实现，不要发明新样式**：
+
+- **桌面端居中卡片，移动端整屏**。断点全站统一 **767px**（顶栏汉堡、整屏菜单、各弹窗同一断点）。整屏时：隐藏遮罩（被完全盖住）、去圆角与边框、头部/底部加 `safe-area` 内边距。参考实现：`SettingsDrawer.vue`、`CacheLibraryModal.vue`、`WebdavManager.vue`、`SourceManager.vue`。
+- **入场动画随形态切换**：用 `matchMedia('(max-width: 767px)')` 驱动一个 `isMobileLayout` ref，移动端 `slide-right`、桌面端 `scale`（`<Transition :name="...">`）。
+- **头部操作区中心对齐**（`align-items: center`），不要顶对齐——按钮高度不一会视觉错位。
+- **图标按钮无边框**（关闭、刷新等）：全局 `button` 已默认无边框，纯图标 + 悬停出底色（`--color-bg-hover`）即可；注意别让「带边框按钮」的共享选择器把它捎上。
+- **toast 固定右下角**，容器带 safe-area 内边距 + `align-items: flex-end`（各条宽度独立，不跟随最长那条），单条上限 380px。
+- 移动端导航是**顶栏汉堡 + 整屏菜单**（`AppMobileMenu.vue`），底部胶囊已删除，不要恢复；深浅色开关统一用 `ThemeSwitch.vue`（顶栏与移动菜单共用，设置抽屉里不再放）。
+- 阅读器内的评论超长折叠：正文默认 6 行 `line-clamp` 截断，渲染后量 `scrollHeight`/`clientHeight` 决定是否露出「展开」；「展开」跟在截断省略号后（零宽浮动占位 + `float: right`），展开后「折叠」在条目右上角与右下角。
+
 ---
 
 ## 文档地图
