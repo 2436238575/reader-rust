@@ -95,7 +95,7 @@ cp .env.example .env
 # 编辑 .env
 ```
 
-`JWT_SECRET`、`INVITE_CODE`、用户配额、缓存上限等其余配置项见 [配置](./configuration)。
+`JWT_SECRET`、`ADMIN_USERNAME`/`ADMIN_PASSWORD`、资源限额、缓存上限等其余配置项见 [配置](./configuration)。
 
 ## 常见问题
 

@@ -103,32 +103,4 @@ impl BookSourceRepo {
             .map(|r| r.get::<String, _>("json"))
             .collect())
     }
-
-    pub async fn copy_to(&self, from_ns: &str, to_ns: &str) -> Result<i64, AppError> {
-        let rows = sqlx::query("SELECT book_source_url, book_source_name, json, updated_at FROM book_sources WHERE user_ns=?1")
-            .bind(from_ns)
-            .fetch_all(&self.pool)
-            .await?;
-        let count = rows.len() as i64;
-        let mut tx = self.pool.begin().await?;
-        for row in rows {
-            let url: String = row.get("book_source_url");
-            let name: String = row.get("book_source_name");
-            let json: String = row.get("json");
-            let updated_at: i64 = row.get("updated_at");
-            sqlx::query(
-                "INSERT INTO book_sources (user_ns, book_source_url, book_source_name, json, updated_at) VALUES (?1, ?2, ?3, ?4, ?5) \
-                 ON CONFLICT(user_ns, book_source_url) DO UPDATE SET book_source_name=excluded.book_source_name, json=excluded.json, updated_at=excluded.updated_at"
-            )
-            .bind(to_ns)
-            .bind(&url)
-            .bind(&name)
-            .bind(&json)
-            .bind(updated_at)
-            .execute(&mut *tx)
-            .await?;
-        }
-        tx.commit().await?;
-        Ok(count)
-    }
 }

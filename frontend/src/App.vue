@@ -7,7 +7,6 @@
     <AppBottomNav v-if="showBottomNav" />
     <SettingsDrawer v-model="appStore.showSettingsDrawer" />
     <SourceManager v-model="appStore.showSourceManager" />
-    <UserManager v-model="appStore.showUserManager" />
     <WebdavManager v-model="appStore.showWebdavManager" />
 
     <!-- Toast notifications -->
@@ -34,7 +33,6 @@ import AppTopBar from './components/AppTopBar.vue'
 import AppBottomNav from './components/AppBottomNav.vue'
 import SettingsDrawer from './components/SettingsDrawer.vue'
 import SourceManager from './components/SourceManager.vue'
-import UserManager from './components/UserManager.vue'
 import WebdavManager from './components/WebdavManager.vue'
 
 const route = useRoute()

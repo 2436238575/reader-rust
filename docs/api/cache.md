@@ -15,7 +15,7 @@
 | `invalidSources` | `storage/cache/invalid_book_sources/<ns>.json` | 失效书源清单 |
 | `bookInfo` | `storage/cache/bookinfo/<ns>/<md5(bookUrl)>.json` | 书籍详情，10 分钟 TTL（唯一例外，`refresh=1` 强刷） |
 
-容量上限由 `CACHE_USER_LIMIT_BYTES`（默认 512MiB，按用户）与 `CACHE_COVER_LIMIT_BYTES`（默认 256MiB，封面目录）控制，超出时按修改时间最旧优先淘汰；设为 `0` 表示不限制。
+容量上限由 `CACHE_USER_LIMIT_BYTES`（默认 512MiB）与 `CACHE_COVER_LIMIT_BYTES`（默认 256MiB，封面目录）控制，超出时按修改时间最旧优先淘汰；设为 `0` 表示不限制。
 
 ## 清理缓存
 
@@ -39,14 +39,9 @@ POST /reader3/purgeCache
 | `user` | 清理该用户的全部缓存 | `username` 可选，缺省为自己 |
 | `book` | 清理单本书的正文、章节列表、搜索结果与评论 | `bookUrl` 必填 |
 | `kind` | 只清理该用户的某一层 | `kind` 必填 |
-| `all` | 清理所有用户的全部缓存 | 无（**仅管理员**） |
+| `all` | 清理全部缓存 | 无 |
 
 `kind` 取值：`content`、`cover`、`chapterList`、`searchResults`、`review`（`chapterList` 同时清书籍详情缓存）。
-
-权限：
-
-- 普通用户只能清理**自己**的命名空间；`username` 指定他人返回 403。
-- `scope=all` 需要管理员，否则 403。
 
 响应 `data` 为各层被删除的**文件数**：
 
@@ -81,8 +76,8 @@ GET /reader3/cacheStats?username=<其他用户>
 
 | 参数 | 说明 |
 |------|------|
-| `username` | 目标用户；缺省为自己，指定他人需要管理员 |
-| `all` | `true` 时汇总全部用户，**仅管理员可用** |
+| `username` | 目标命名空间；缺省为自己 |
+| `all` | `true` 时汇总全部命名空间 |
 
 响应 `data` 为各层的文件数与字节数：
 

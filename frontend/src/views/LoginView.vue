@@ -8,8 +8,8 @@
             <path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z" />
           </svg>
         </div>
-        <h2>{{ isLogin ? '登录' : '注册' }}</h2>
-        <p class="login-desc">{{ isLogin ? '登录以同步你的阅读数据' : '创建新账号开始阅读' }}</p>
+        <h2>登录</h2>
+        <p class="login-desc">登录以同步你的阅读数据</p>
       </div>
 
       <form class="login-form" @submit.prevent="handleSubmit">
@@ -32,32 +32,17 @@
             type="password"
             placeholder="请输入密码"
             required
-            :autocomplete="isLogin ? 'current-password' : 'new-password'"
-          />
-        </div>
-        <div v-if="!isLogin" class="form-field">
-          <label for="invite-code">邀请码</label>
-          <input
-            id="invite-code"
-            v-model="form.code"
-            type="text"
-            placeholder="没有则留空"
-            autocomplete="off"
+            autocomplete="current-password"
           />
         </div>
 
         <button type="submit" class="btn btn-primary btn-block submit-btn" :disabled="submitting">
           <span v-if="submitting" class="btn-spinner"></span>
-          {{ isLogin ? '登 录' : '注 册' }}
+          登 录
         </button>
       </form>
 
-      <p class="switch-mode">
-        {{ isLogin ? '没有账号？' : '已有账号？' }}
-        <a href="#" @click.prevent="isLogin = !isLogin">
-          {{ isLogin ? '注册' : '登录' }}
-        </a>
-      </p>
+      <p class="switch-mode">账号由服务端启动时创建，初始密码见启动日志</p>
     </div>
   </div>
 </template>
@@ -65,7 +50,7 @@
 <script setup lang="ts">
 import { reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { login, register } from '../api/user'
+import { login } from '../api/user'
 import { useAppStore } from '../stores/app'
 import { useBookshelfStore } from '../stores/bookshelf'
 
@@ -74,12 +59,10 @@ const router = useRouter()
 const appStore = useAppStore()
 const shelfStore = useBookshelfStore()
 
-const isLogin = ref(true)
 const submitting = ref(false)
 const form = reactive({
   username: '',
   password: '',
-  code: '',
 })
 
 function redirectTarget(): string {
@@ -100,16 +83,14 @@ async function handleSubmit() {
   if (!form.username || !form.password) return
   submitting.value = true
   try {
-    const user = isLogin.value
-      ? await login(form.username, form.password)
-      : await register(form.username, form.password, form.code || undefined)
+    const user = await login(form.username, form.password)
     appStore.setUser(user)
-    appStore.showToast(isLogin.value ? '登录成功' : '注册成功', 'success')
+    appStore.showToast('登录成功', 'success')
     shelfStore.fetchBooks()
     shelfStore.fetchGroups()
     router.replace(redirectTarget())
   } catch (e: unknown) {
-    appStore.showToast((e as Error).message || '操作失败', 'error')
+    appStore.showToast((e as Error).message || '登录失败', 'error')
   } finally {
     submitting.value = false
   }

@@ -19,27 +19,12 @@ const MAX_UPLOAD_FILE_BYTES: usize = 32 * 1024 * 1024;
 pub struct LoginRequest {
     pub username: Option<String>,
     pub password: Option<String>,
-    #[serde(rename = "isLogin")]
-    pub is_login: Option<bool>,
-    pub code: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
 pub struct FileTypeQuery {
     #[serde(rename = "type")]
     pub file_type: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct AddUserRequest {
-    pub username: Option<String>,
-    pub password: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct ResetPasswordRequest {
-    pub username: Option<String>,
-    pub password: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -51,22 +36,14 @@ pub struct ChangePasswordRequest {
 }
 
 #[derive(Debug, Deserialize)]
-pub struct UpdateUserRequest {
-    pub username: Option<String>,
-    #[serde(rename = "enableWebdav")]
-    pub enable_webdav: Option<bool>,
-    #[serde(rename = "enableLocalStore")]
-    pub enable_local_store: Option<bool>,
-    #[serde(rename = "enableAiModel")]
-    pub enable_ai_model: Option<bool>,
-}
-
-#[derive(Debug, Deserialize)]
 pub struct DeleteFileRequest {
     pub url: Option<String>,
 }
 
-/// 公开端点：登录与注册。成功时返回含 JWT 的用户信息。
+/// 公开端点：登录。成功时返回含 JWT 的用户信息。
+///
+/// 不提供注册：唯一账号由启动时的 bootstrap 创建（`ADMIN_USERNAME` /
+/// `ADMIN_PASSWORD`，见 `UserService::bootstrap_admin`）。
 pub async fn login(
     State(state): State<AppState>,
     ConnectInfo(addr): ConnectInfo<std::net::SocketAddr>,
@@ -74,27 +51,12 @@ pub async fn login(
 ) -> Result<Json<ApiResponse<Value>>, AppError> {
     let username = req.username.unwrap_or_default();
     let password = req.password.unwrap_or_default();
-    let is_login = req.is_login.unwrap_or(false);
-    let is_new_user = !is_login && !username.is_empty(); // registration attempt
-                                                         // 限速按对端 IP 记账（ConnectInfo 由 into_make_service_with_connect_info 注入）
+    // 限速按对端 IP 记账（ConnectInfo 由 into_make_service_with_connect_info 注入）
     let client_ip = addr.ip().to_string();
     let data = state
         .user_service
-        .login(
-            &username,
-            &password,
-            is_login,
-            req.code.as_deref(),
-            Some(&client_ip),
-        )
+        .login(&username, &password, Some(&client_ip))
         .await?;
-    // If this was a new user registration, copy default book sources
-    if is_new_user {
-        let _ = state
-            .book_source_service
-            .copy_default_to_user(&username)
-            .await;
-    }
     Ok(Json(ApiResponse::ok(data)))
 }
 
@@ -136,40 +98,7 @@ pub async fn get_user_config(
     Ok(Json(ApiResponse::ok(cfg)))
 }
 
-/// 管理员专用：路由层已挂 `require_admin`。
-pub async fn get_user_list(
-    State(state): State<AppState>,
-) -> Result<Json<ApiResponse<Value>>, AppError> {
-    let list = state.user_service.get_user_list().await?;
-    Ok(Json(ApiResponse::ok(Value::from(list))))
-}
-
-/// 管理员专用：路由层已挂 `require_admin`。
-pub async fn add_user(
-    State(state): State<AppState>,
-    Json(req): Json<AddUserRequest>,
-) -> Result<Json<ApiResponse<Value>>, AppError> {
-    let username = req.username.unwrap_or_default();
-    let password = req.password.unwrap_or_default();
-    let list = state.user_service.add_user(&username, &password).await?;
-    Ok(Json(ApiResponse::ok(Value::from(list))))
-}
-
-/// 管理员专用：路由层已挂 `require_admin`。
-pub async fn reset_password(
-    State(state): State<AppState>,
-    Json(req): Json<ResetPasswordRequest>,
-) -> Result<Json<ApiResponse<Value>>, AppError> {
-    let username = req.username.unwrap_or_default();
-    let password = req.password.unwrap_or_default();
-    state
-        .user_service
-        .reset_password(&username, &password)
-        .await?;
-    Ok(Json(ApiResponse::ok(Value::String("".to_string()))))
-}
-
-/// 修改自己的密码；响应携带换发的新令牌。
+/// 修改密码；响应携带换发的新令牌。
 ///
 /// 改密码会自增撤销版本号，令其他设备上的令牌立即失效；当前设备用
 /// 返回的新令牌继续使用，避免用户改完密码就被登出。
@@ -188,33 +117,6 @@ pub async fn change_password(
         .change_password(&user.0.username, &old_password, &new_password)
         .await?;
     Ok(Json(ApiResponse::ok(data)))
-}
-
-/// 管理员专用：路由层已挂 `require_admin`。
-pub async fn delete_users(
-    State(state): State<AppState>,
-    Json(list): Json<Vec<String>>,
-) -> Result<Json<ApiResponse<Value>>, AppError> {
-    let users = state.user_service.delete_users(&list).await?;
-    Ok(Json(ApiResponse::ok(Value::from(users))))
-}
-
-/// 管理员专用：路由层已挂 `require_admin`。
-pub async fn update_user(
-    State(state): State<AppState>,
-    Json(req): Json<UpdateUserRequest>,
-) -> Result<Json<ApiResponse<Value>>, AppError> {
-    let username = req.username.unwrap_or_default();
-    let list = state
-        .user_service
-        .update_user(
-            &username,
-            req.enable_webdav,
-            req.enable_local_store,
-            req.enable_ai_model,
-        )
-        .await?;
-    Ok(Json(ApiResponse::ok(Value::from(list))))
 }
 
 pub async fn upload_file(

@@ -1,5 +1,5 @@
 use crate::api::{handlers, AppState};
-use crate::auth::{optional_auth, require_admin, require_auth};
+use crate::auth::{optional_auth, require_auth};
 use axum::{
     extract::DefaultBodyLimit,
     http::HeaderValue,
@@ -48,36 +48,6 @@ pub fn build_router(state: AppState) -> Router {
         .route("/reader3/getUserInfo", get(handlers::get_user_info))
         .route("/reader3/logout", post(handlers::logout))
         .layer(middleware::from_fn_with_state(state.clone(), optional_auth))
-        .with_state(state.clone());
-
-    // ── 管理员：认证 + 角色校验，非管理员 403 ──
-    let admin = Router::new()
-        .route("/reader3/getUserList", get(handlers::get_user_list))
-        .route("/reader3/addUser", post(handlers::add_user))
-        .route("/reader3/resetPassword", post(handlers::reset_password))
-        .route("/reader3/deleteUsers", post(handlers::delete_users))
-        .route("/reader3/updateUser", post(handlers::update_user))
-        .route(
-            "/reader3/setAsDefaultBookSources",
-            post(handlers::set_as_default_book_sources),
-        )
-        .route(
-            "/reader3/getDefaultBookSourceOwner",
-            get(handlers::get_default_book_source_owner),
-        )
-        .route(
-            "/reader3/getVersionUpdate",
-            get(handlers::get_version_update),
-        )
-        .route(
-            "/reader3/dismissVersionUpdate",
-            post(handlers::dismiss_version_update),
-        )
-        .route(
-            "/reader3/saveAiModelConfig",
-            post(handlers::save_ai_model_config),
-        )
-        .layer(middleware::from_fn_with_state(state.clone(), require_admin))
         .with_state(state.clone());
 
     // ── WebDAV 文件接口：自带 HTTP Basic 认证，不经 JWT ──
@@ -325,6 +295,18 @@ pub fn build_router(state: AppState) -> Router {
         .route("/reader3/uploadFile", post(handlers::upload_file))
         .route("/reader3/deleteFile", post(handlers::delete_file))
         .route("/reader3/getTxtTocRules", get(handlers::get_txt_toc_rules))
+        .route(
+            "/reader3/getVersionUpdate",
+            get(handlers::get_version_update),
+        )
+        .route(
+            "/reader3/dismissVersionUpdate",
+            post(handlers::dismiss_version_update),
+        )
+        .route(
+            "/reader3/saveAiModelConfig",
+            post(handlers::save_ai_model_config),
+        )
         .layer(middleware::from_fn_with_state(state.clone(), require_auth))
         .with_state(state.clone());
 
@@ -334,7 +316,6 @@ pub fn build_router(state: AppState) -> Router {
     let api = Router::new()
         .merge(public)
         .merge(optional)
-        .merge(admin)
         .merge(webdav)
         .merge(protected)
         .route("/reader3", any(handlers::api_not_found))

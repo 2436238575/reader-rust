@@ -5,8 +5,8 @@ use std::convert::Infallible;
 
 /// 已认证用户，由 [`super::middleware::require_auth`] / `optional_auth` 写入请求扩展。
 ///
-/// 各 handler 通过 [`CurrentUser`] / [`MaybeUser`] 取用，不再自行解析凭据；
-/// 管理员端点则由 `require_admin` 中间件在路由层拦截。
+/// 各 handler 通过 [`CurrentUser`] / [`MaybeUser`] 取用，不再自行解析凭据。
+/// 单用户部署下没有角色区分：能拿到 AuthUser 即拥有全部能力。
 #[derive(Debug, Clone)]
 pub struct AuthUser {
     pub username: String,
@@ -15,24 +15,6 @@ pub struct AuthUser {
     /// 本次请求使用的原始令牌。`bookSourceProxy` 需要把它注入被代理的
     /// 页面，好让页面自身的后续请求继续带着身份回来。
     pub token: String,
-    pub is_admin: bool,
-    pub enable_webdav: bool,
-    pub enable_ai_model: bool,
-}
-
-impl AuthUser {
-    /// WebDAV 的按用户开关；未开启一律 403。
-    pub fn require_webdav_ns(&self) -> Result<&str, AppError> {
-        if !self.enable_webdav {
-            return Err(AppError::Forbidden("未开启webdav功能".to_string()));
-        }
-        Ok(&self.ns)
-    }
-
-    /// 服务端 AI 模型配置的使用权限。
-    pub fn can_use_ai_model(&self) -> bool {
-        self.is_admin || self.enable_ai_model
-    }
 }
 
 /// 必须已登录；中间件未写入身份时返回 401。
@@ -83,21 +65,18 @@ mod tests {
     use super::*;
     use axum::http::Request;
 
-    fn user(is_admin: bool) -> AuthUser {
+    fn user() -> AuthUser {
         AuthUser {
             username: "reader1".to_string(),
             ns: "reader1".to_string(),
             token: "test-token".to_string(),
-            is_admin,
-            enable_webdav: true,
-            enable_ai_model: false,
         }
     }
 
     #[tokio::test]
     async fn current_user_reads_identity_from_extensions() {
         let mut request = Request::new(());
-        request.extensions_mut().insert(user(false));
+        request.extensions_mut().insert(user());
         let (mut parts, _) = request.into_parts();
         let CurrentUser(extracted) = CurrentUser::from_request_parts(&mut parts, &())
             .await
@@ -123,16 +102,5 @@ mod tests {
             .await
             .unwrap();
         assert!(extracted.is_none());
-    }
-
-    #[test]
-    fn webdav_switch_and_ai_permission() {
-        assert!(user(true).require_webdav_ns().is_ok());
-        assert!(user(true).can_use_ai_model());
-
-        let mut disabled = user(false);
-        disabled.enable_webdav = false;
-        assert!(disabled.require_webdav_ns().is_err());
-        assert!(!disabled.can_use_ai_model());
     }
 }

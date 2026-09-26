@@ -37,7 +37,7 @@ pub async fn get_webdav_file_list(
     user: CurrentUser,
     Query(req): Query<WebdavPathRequest>,
 ) -> Result<Json<ApiResponse<Value>>, AppError> {
-    let user_ns = user.0.require_webdav_ns()?.to_string();
+    let user_ns = user.0.ns.clone();
     let home = webdav_home(&state, &user_ns).await?;
     let path = req.path.unwrap_or_else(|| "/".to_string());
     let parts = normalize_rel_path(&path)?;
@@ -82,7 +82,7 @@ pub async fn get_webdav_file(
     user: CurrentUser,
     Query(req): Query<WebdavPathRequest>,
 ) -> Result<Response, AppError> {
-    let user_ns = user.0.require_webdav_ns()?.to_string();
+    let user_ns = user.0.ns.clone();
     let home = webdav_home(&state, &user_ns).await?;
     let path = req.path.unwrap_or_default();
     if path.is_empty() {
@@ -107,7 +107,7 @@ pub async fn upload_file_to_webdav(
     user: CurrentUser,
     mut multipart: Multipart,
 ) -> Result<Json<ApiResponse<Value>>, AppError> {
-    let user_ns = user.0.require_webdav_ns()?.to_string();
+    let user_ns = user.0.ns.clone();
     let home = webdav_home(&state, &user_ns).await?;
     let mut file_list = Vec::new();
     let mut path = "/".to_string();
@@ -167,7 +167,7 @@ pub async fn delete_webdav_file(
     user: CurrentUser,
     Json(req): Json<WebdavPathRequest>,
 ) -> Result<Json<ApiResponse<Value>>, AppError> {
-    let user_ns = user.0.require_webdav_ns()?.to_string();
+    let user_ns = user.0.ns.clone();
     let home = webdav_home(&state, &user_ns).await?;
     let path = req.path.unwrap_or_default();
     if path.is_empty() {
@@ -195,7 +195,7 @@ pub async fn delete_webdav_file_list(
     user: CurrentUser,
     Json(req): Json<WebdavDeleteListRequest>,
 ) -> Result<Json<ApiResponse<Value>>, AppError> {
-    let user_ns = user.0.require_webdav_ns()?.to_string();
+    let user_ns = user.0.ns.clone();
     let home = webdav_home(&state, &user_ns).await?;
     let paths = req.path.unwrap_or_default();
     for p in paths {

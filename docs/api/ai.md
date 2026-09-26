@@ -40,7 +40,7 @@ POST /reader3/deleteAiBookMemory
 GET /reader3/getAiModelConfig
 ```
 
-响应 `data`：`{ "config": {...}, "canUseServerModel": bool, "isAdmin": bool }`。非管理员的 `config` 中三组 `apiKey` 均已被清空（不会泄露服务端密钥）。
+响应 `data`：`{ "config": {...}, "canUseServerModel": bool, "isAdmin": bool }`（后两者为兼容字段，单用户下恒为 `true`）。
 
 ### 保存模型配置
 
@@ -48,7 +48,7 @@ GET /reader3/getAiModelConfig
 POST /reader3/saveAiModelConfig
 ```
 
-仅管理员可用。请求体为完整 `AiModelConfig`：
+请求体为完整 `AiModelConfig`：
 
 ```json
 {
@@ -70,7 +70,7 @@ POST /reader3/aiProxy
 
 | 参数 | 类型 | 说明 |
 |------|------|------|
-| `useServerConfig` | boolean | true 时使用服务端配置的模型（需 `enableAiModel` 权限或管理员），忽略下面的 baseUrl/apiKey |
+| `useServerConfig` | boolean | true 时使用服务端配置的模型，忽略下面的 baseUrl/apiKey |
 | `baseUrl` | string | 客户端自定的上游地址（`useServerConfig=false` 时必填） |
 | `apiKey` | string? | 客户端自带密钥，仅加入出站请求头，不回传 |
 | `path` | string | API 路径；`fullUrl=false` 时仅允许 `/v1/chat/completions`、`/v1/images/generations`、`/v1/audio/speech` |
@@ -78,7 +78,7 @@ POST /reader3/aiProxy
 | `kind` | string? | `text`/`image`/`speech`，用于服务端配置的默认值补全 |
 | `body` | object | 透传给上游的请求体 |
 
-> **权限**：`useServerConfig=false`（客户端自带端点，含 `fullUrl=true` 任意路径）仅**管理员**可用，普通账号返回 403——该分支等价于向任意地址发 POST 的通用代理。服务端配置的端点仍按 `enableAiModel` 判定。
+> **注意**：`useServerConfig=false`（客户端自带端点，含 `fullUrl=true` 任意路径）等价于向任意地址发 POST 的通用代理——单用户下登录者即所有者，不再收敛；公网暴露时请配合 `ALLOW_PRIVATE_NETWORK=false`。
 
 响应为上游响应体原样透传（上限 32MB，非 JSON 包装）。所有目标地址经过出站守卫（`ALLOW_PRIVATE_NETWORK=false` 时拒绝私网/环回/链路本地地址，含重定向逐跳检查）。
 

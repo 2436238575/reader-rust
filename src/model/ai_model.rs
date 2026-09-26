@@ -107,13 +107,6 @@ impl AiModelConfig {
         self
     }
 
-    pub fn without_secrets(mut self) -> Self {
-        self.text.api_key.clear();
-        self.image.api_key.clear();
-        self.speech.api_key.clear();
-        self
-    }
-
     pub fn resolve(&self, kind: AiModelKind) -> ResolvedAiModelEndpoint {
         match kind {
             AiModelKind::Text => ResolvedAiModelEndpoint {

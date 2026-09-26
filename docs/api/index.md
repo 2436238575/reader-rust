@@ -56,18 +56,6 @@ http://localhost:8080/reader3
 
 （唯一的例外是 WebDAV 的 `/reader3/webdav/*path`，它走 HTTP Basic 认证，返回裸 401，不带上述 JSON 结构。）
 
-**`FORBIDDEN` —— 权限不足**
-
-已登录但当前账号不是管理员，访问管理员接口时返回 **HTTP 403**：
-
-```json
-{
-  "isSuccess": false,
-  "errorMsg": "FORBIDDEN",
-  "data": null
-}
-```
-
 ## 请求方法
 
 本项目**只注册了 `GET` 与 `POST`**，没有 `PUT` / `DELETE`（依据：`src/api/router.rs`）。
@@ -101,7 +89,7 @@ http://localhost:8080/reader3
 - [书籍搜索](./search) - 搜索书籍、发现页、获取详情与目录
 - [章节内容](./chapter) - 获取章节列表和正文、缓存与进度
 - [缓存管理](./cache) - 缓存清理与占用统计
-- [用户管理](./user) - 用户注册/登录、配置与管理
+- [账号](./user) - 登录、配置与文件
 
 ## 认证
 
@@ -111,7 +99,6 @@ http://localhost:8080/reader3
 |-------|------|
 | `sub` | 用户名 |
 | `ns` | 用户命名空间（数据隔离前缀，当前等于用户名） |
-| `is_admin` | 签发时的管理员标记 |
 | `iat` / `exp` | 签发时间 / 过期时间（默认 7 天） |
 | `ver` | 撤销版本号，对应 `users.token_version` |
 
@@ -130,21 +117,12 @@ http://localhost:8080/reader3
 
 `/reader3/getUserInfo` 与 `/reader3/logout` 是**可选鉴权**：未登录也返回 200，只是 `userInfo` 为 `null` / 不做任何事。
 
-### 管理员接口
-
-下列接口在登录之上还要求 `is_admin`，否则返回 403：
-
-`getUserList`、`addUser`、`resetPassword`、`deleteUsers`、`updateUser`、`setAsDefaultBookSources`、`getDefaultBookSourceOwner`、`getVersionUpdate`、`dismissVersionUpdate`、`saveAiModelConfig`，以及 `purgeCache` 的 `scope=all` 与 `cacheStats` 的 `all=true`。
-
-**首个注册的账号自动成为管理员**（`ensure_admin_user` 也会在缺少管理员时把最早创建的账号提为管理员）。
-
 ### 令牌失效
 
-JWT 是无状态的，但服务端每个请求都会比对 `users.token_version`。以下操作会自增该版本号，使该用户**此前签发的所有令牌立即失效**：
+JWT 是无状态的，但服务端每个请求都会比对 `users.token_version`。以下操作会自增该版本号，使该账号**此前签发的所有令牌立即失效**：
 
-- 修改自己的密码（`changePassword`）——响应会换发一个新令牌给当前设备
-- 管理员重置密码（`resetPassword`）
-- 删除账号（`deleteUsers`）
+- 修改密码（`changePassword`）——响应会换发一个新令牌给当前设备
+- 以不同的 `ADMIN_PASSWORD` 重启服务（强制重置，见 [账号 API](./user#账号的创建与初始密码)）
 
 登出（`logout`）不涉及服务端状态：客户端丢弃本地令牌即可，该接口因此总是返回成功。
 

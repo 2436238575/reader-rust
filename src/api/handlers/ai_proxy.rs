@@ -53,15 +53,10 @@ pub async fn ai_proxy(
 
 async fn resolve_ai_proxy_target(
     state: &AppState,
-    user: &CurrentUser,
+    _user: &CurrentUser,
     req: AiProxyRequest,
 ) -> Result<(ResolvedAiModelEndpoint, Option<AiModelKind>, String, Value), AppError> {
     if req.use_server_config {
-        if !user.0.can_use_ai_model() {
-            return Err(AppError::BadRequest(
-                "当前账号没有使用后端模型配置的权限".to_string(),
-            ));
-        }
         let kind = req.kind.unwrap_or_else(|| infer_ai_model_kind(&req.path));
         let config = state.ai_model_service.get().await?;
         let endpoint = config.resolve(kind);
@@ -82,13 +77,8 @@ async fn resolve_ai_proxy_target(
     }
 
     // 客户端自带端点（含 fullUrl 任意路径）等于把服务端当成向任意地址发 POST
-    // 的通用代理，收敛为管理员能力；走服务端配置的端点仍按 can_use_ai_model 判定
-    if !user.0.is_admin {
-        return Err(AppError::Forbidden(
-            "自定义 AI 端点仅管理员可用".to_string(),
-        ));
-    }
-
+    // 的通用代理。单用户部署下登录者即所有者，不额外收敛；出站安全由
+    // `ALLOW_PRIVATE_NETWORK` 的 URL 守卫兜底。
     Ok((
         ResolvedAiModelEndpoint {
             enabled: true,

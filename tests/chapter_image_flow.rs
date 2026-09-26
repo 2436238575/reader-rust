@@ -173,6 +173,9 @@ impl TestServer {
             assets_dir: temp_dir.join("assets").to_string_lossy().to_string(),
             jwt_secret: "image-test-secret".to_string(),
             request_timeout_secs: 10,
+            // bootstrap 用预设凭据建号，测试直接登录
+            admin_username: "reader1".to_string(),
+            admin_password: "password123".to_string(),
             rate_limit_disabled: true,
             ..AppConfig::default()
         };
@@ -250,12 +253,12 @@ impl Drop for TestServer {
 async fn register(client: &reqwest::Client, base_url: &str, username: &str) -> String {
     let resp = client
         .post(format!("{base_url}/reader3/login"))
-        .json(&json!({ "username": username, "password": "password123", "isLogin": false }))
+        .json(&json!({ "username": username, "password": "password123" }))
         .send()
         .await
         .unwrap();
     let payload: Value = resp.json().await.unwrap();
-    assert_eq!(payload["isSuccess"], json!(true), "注册应成功: {payload}");
+    assert_eq!(payload["isSuccess"], json!(true), "登录应成功: {payload}");
     payload["data"]["accessToken"].as_str().unwrap().to_string()
 }
 

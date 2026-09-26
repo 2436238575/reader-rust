@@ -18,7 +18,7 @@ pub struct DismissVersionUpdateRequest {
     pub version: Option<String>,
 }
 
-/// 管理员专用：路由层已挂 `require_admin`。
+/// 版本更新检查与忽略（路由层需登录）。
 pub async fn get_version_update(
     State(state): State<AppState>,
     Query(query): Query<VersionUpdateQuery>,
@@ -32,7 +32,7 @@ pub async fn get_version_update(
     )))
 }
 
-/// 管理员专用：路由层已挂 `require_admin`。
+/// 版本更新检查与忽略（路由层需登录）。
 pub async fn dismiss_version_update(
     State(state): State<AppState>,
     Json(req): Json<DismissVersionUpdateRequest>,

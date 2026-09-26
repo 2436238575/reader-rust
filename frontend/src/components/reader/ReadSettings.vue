@@ -322,10 +322,10 @@
 
         <div v-else class="server-speech-note">
           <template v-if="canUseServerModel">
-            使用管理员配置的 OpenAI Speech 模型、音色和音频格式。请求通过后端代理转发，浏览器不会保存后端 API Key。
+            使用后端配置的 OpenAI Speech 模型、音色和音频格式。请求通过后端代理转发，浏览器不会保存后端 API Key。
           </template>
           <template v-else>
-            当前账号没有使用后端模型配置的权限，请让管理员在用户管理中开启“AI 模型”，或切回自己配置。
+            后端模型配置暂不可用（未登录或服务端未启用），或切回自己配置。
           </template>
         </div>
 
@@ -451,7 +451,7 @@ async function selectOpenAISpeechSource(source: 'browser' | 'server') {
   }
   if (!canUseServerModel.value) {
     store.setOpenAISpeechSource('browser')
-    appStore.showToast('当前账号没有使用后端模型配置的权限', 'warning')
+    appStore.showToast('后端模型配置暂不可用，请先登录', 'warning')
     return
   }
   store.setOpenAISpeechSource('server')

@@ -16,11 +16,16 @@ pub struct AppConfig {
     pub jwt_secret: String,
     /// JWT 有效期（秒），默认 7 天。
     pub jwt_ttl_secs: u64,
-    pub invite_code: String,
-    pub user_limit: u32,
+    /// 唯一账号的用户名，首次启动建号时使用；建号后修改不会再改已有数据。
+    pub admin_username: String,
+    /// 唯一账号的密码。非空时**每次启动都会强制写入**（覆盖现有密码），
+    /// 因此它也是「忘记密码」的找回通道；留空则首次启动随机生成并打印到日志。
+    pub admin_password: String,
+    /// 全局书架上限，`0` 表示不限制。
     pub user_book_limit: u32,
+    /// 全局本地上传上限，`0` 表示不限制。
     pub user_local_book_limit: u32,
-    /// 单个用户章节正文缓存的容量上限（字节）；`0` 表示不限制。
+    /// 缓存容量上限（字节）；`0` 表示不限制。
     /// 缓存不再按时间过期，容量上限是唯一的自动回收手段。
     pub cache_user_limit_bytes: u64,
     /// 封面缓存目录的容量上限（字节）；`0` 表示不限制。
@@ -30,7 +35,7 @@ pub struct AppConfig {
     /// 评论是**会变的第三方数据**（新评论、点赞数、热度排序都在动），
     /// 因此这里保留时间过期，与正文缓存的「只靠容量回收」不同。
     pub review_cache_ttl_secs: u64,
-    /// 单个用户评论缓存的容量上限（字节）；`0` 表示不限制。
+    /// 评论缓存容量上限（字节）；`0` 表示不限制。
     pub review_cache_user_limit_bytes: u64,
     /// 出站请求是否允许访问私网/环回/链路本地地址。
     ///
@@ -38,7 +43,7 @@ pub struct AppConfig {
     /// （如 `http://192.168.x.x:9999`）、本地模型服务都属正常用法，参考实现
     /// （阅读/Legado）同样不做限制。
     ///
-    /// **多用户或公网暴露的部署应设为 `false`**，否则任意用户都能把服务端
+    /// **公网暴露的部署应设为 `false`**，否则任何人拿到登录态后都能把服务端
     /// 当成内网探测代理（读取云元数据、扫内网端口）。
     pub allow_private_network: bool,
     /// 允许跨域访问的来源列表（逗号分隔，如 `https://a.example,https://b.example`）。
@@ -46,10 +51,9 @@ pub struct AppConfig {
     /// 留空表示**仅同源**：不发送任何 CORS 响应头，浏览器同源策略自然生效。
     /// 前端与后端同域部署（`WEB_ROOT` 静态托管）时无需配置。
     pub cors_allowed_origins: String,
-    /// 豁免登录/注册的全部限速（开发与测试环境用）。
+    /// 豁免登录失败限速（开发与测试环境用）。
     ///
-    /// 设为 `true` 时跳过：用户名维度的登录失败封禁、IP 维度的登录失败封禁、
-    /// IP 的 48 小时注册冷却与邀请码错误封禁。生产部署**不应**开启。
+    /// 设为 `true` 时跳过用户名维度与 IP 维度的登录失败封禁。生产部署**不应**开启。
     pub rate_limit_disabled: bool,
 }
 
@@ -66,8 +70,8 @@ impl Default for AppConfig {
             request_timeout_secs: 15,
             jwt_secret: String::new(),
             jwt_ttl_secs: 7 * 24 * 3600,
-            invite_code: String::new(),
-            user_limit: 50,
+            admin_username: "admin".to_string(),
+            admin_password: String::new(),
             user_book_limit: 2000,
             user_local_book_limit: 0,
             cache_user_limit_bytes: 512 * 1024 * 1024,
@@ -95,8 +99,8 @@ pub fn load() -> anyhow::Result<AppConfig> {
         .set_default("request_timeout_secs", defaults.request_timeout_secs as i64)?
         .set_default("jwt_secret", defaults.jwt_secret)?
         .set_default("jwt_ttl_secs", defaults.jwt_ttl_secs as i64)?
-        .set_default("invite_code", defaults.invite_code)?
-        .set_default("user_limit", defaults.user_limit as i64)?
+        .set_default("admin_username", defaults.admin_username)?
+        .set_default("admin_password", defaults.admin_password)?
         .set_default("user_book_limit", defaults.user_book_limit as i64)?
         .set_default(
             "user_local_book_limit",

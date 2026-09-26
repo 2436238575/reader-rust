@@ -76,11 +76,6 @@ struct TestBookSourcesResponse {
     results: Vec<TestBookSourceItem>,
 }
 
-#[derive(Debug, Deserialize)]
-pub struct UsernameParam {
-    pub username: Option<String>,
-}
-
 pub async fn save_book_source(
     State(state): State<AppState>,
     user: CurrentUser,
@@ -142,16 +137,6 @@ pub async fn get_book_sources(
     let list = state.book_source_service.list(&user_ns).await?;
     Ok(Json(ApiResponse::ok(
         serde_json::to_value(list).unwrap_or_default(),
-    )))
-}
-
-/// 管理员专用：路由层已挂 `require_admin`。
-pub async fn get_default_book_source_owner(
-    State(state): State<AppState>,
-) -> Result<Json<ApiResponse<serde_json::Value>>, AppError> {
-    let username = state.book_source_service.get_default_owner().await?;
-    Ok(Json(ApiResponse::ok(
-        serde_json::json!({ "username": username }),
     )))
 }
 
@@ -1100,20 +1085,6 @@ pub async fn read_source_file(
         }
     }
     Err(AppError::BadRequest("No json file uploaded".to_string()))
-}
-
-/// 管理员专用：路由层已挂 `require_admin`。
-pub async fn set_as_default_book_sources(
-    State(state): State<AppState>,
-    Json(param): Json<UsernameParam>,
-) -> Result<Json<ApiResponse<serde_json::Value>>, AppError> {
-    let username = param
-        .username
-        .ok_or_else(|| AppError::BadRequest("username required".to_string()))?;
-    let count = state.book_source_service.set_as_default(&username).await?;
-    Ok(Json(ApiResponse::ok(
-        serde_json::json!({"success": true, "count": count}),
-    )))
 }
 
 #[cfg(test)]

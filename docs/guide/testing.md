@@ -89,7 +89,7 @@ PLAYWRIGHT_BASE_URL=http://127.0.0.1:18080 npm run test:e2e
 - 顶部 / 底部导航切换
 - 书架、书海、最近主页面可打开
 - 设置抽屉可打开
-- 书源管理、用户管理、备份恢复入口可见
+- 书源管理、备份恢复入口可见
 - 全局搜索可进入搜索模式
 - 搜索结果范围切换 UI 可见
 - 分组管理、缓存管理弹窗可打开
@@ -103,6 +103,8 @@ PLAYWRIGHT_BASE_URL=http://127.0.0.1:18080 npm run test:e2e
 ```bash
 E2E_USERNAME=admin E2E_PASSWORD=12345678 npm run test:e2e
 ```
+
+`E2E_USERNAME`/`E2E_PASSWORD` 必须与后端的 `ADMIN_USERNAME`/`ADMIN_PASSWORD` 一致——没有注册接口，账号由服务端启动时按这两个变量创建。
 
 **搜索结果详情回归**
 
@@ -170,13 +172,12 @@ E2E_SOURCE_IMPORT_FILE=/absolute/path/to/book-sources.json npm run test:e2e
 3. 打开历史条目继续阅读
 4. 删除最近阅读条目
 
-### G. 用户与备份
+### G. 账号与备份
 
 1. 未登录时打开设置，确认登录入口正常
-2. 登录后确认用户名和角色显示正常
-3. 修改密码
-4. 多用户模式下打开用户管理
-5. 开启 WebDAV / 服务器备份时验证备份恢复入口
+2. 登录后确认用户名显示正常
+3. 修改密码（确认其他设备的登录态被吊销）
+4. 验证 WebDAV / 服务器备份的备份恢复入口
 
 ## 6. 发布前建议流程
 
@@ -192,7 +193,7 @@ E2E_SOURCE_IMPORT_FILE=/absolute/path/to/book-sources.json npm run test:e2e
 |---------|---------|
 | 解析器 | 书源导入、搜索、详情、目录、正文 |
 | 阅读器 | 阅读页、TTS、移动端与 iOS/iPadOS |
-| 用户系统 | 登录、登出、用户管理、权限 |
+| 账号 | 登录、登出、修改密码 |
 
 ## 后续可补充的方向
 

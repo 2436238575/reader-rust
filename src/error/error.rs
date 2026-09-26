@@ -8,17 +8,12 @@ use thiserror::Error;
 
 /// 未登录 / 令牌无效或过期。前端据此弹出登录框。
 pub const NEED_LOGIN: &str = "NEED_LOGIN";
-/// 已登录但权限不足。
-pub const FORBIDDEN: &str = "FORBIDDEN";
 
 #[derive(Debug, Error)]
 pub enum AppError {
     /// 401：未登录、令牌无效或已过期
     #[error("unauthorized: {0}")]
     Unauthorized(String),
-    /// 403：已认证但无权访问
-    #[error("forbidden: {0}")]
-    Forbidden(String),
     #[error("not found: {0}")]
     NotFound(String),
     #[error("bad request: {0}")]
@@ -81,7 +76,6 @@ impl IntoResponse for AppError {
     fn into_response(self) -> Response {
         let (status, message) = match &self {
             AppError::Unauthorized(msg) => (StatusCode::UNAUTHORIZED, msg.clone()),
-            AppError::Forbidden(msg) => (StatusCode::FORBIDDEN, msg.clone()),
             AppError::NotFound(msg) => (StatusCode::NOT_FOUND, msg.clone()),
             AppError::BadRequest(msg) => (StatusCode::BAD_REQUEST, msg.clone()),
             AppError::Blocked(msg) => (StatusCode::BAD_REQUEST, msg.clone()),

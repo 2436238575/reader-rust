@@ -244,7 +244,10 @@ impl TestServer {
             assets_dir: temp_dir.join("assets").to_string_lossy().to_string(),
             jwt_secret: "review-test-secret".to_string(),
             request_timeout_secs: 10,
-            // 集成测试从同一地址注册多个账号，豁免 IP 限速
+            // bootstrap 用预设凭据建号，测试直接登录
+            admin_username: "reader1".to_string(),
+            admin_password: "password123".to_string(),
+            // 集成测试从同一地址重复登录，豁免 IP 限速
             rate_limit_disabled: true,
             ..AppConfig::default()
         };
@@ -340,13 +343,12 @@ async fn register(client: &reqwest::Client, base_url: &str, username: &str) -> S
         .json(&json!({
             "username": username,
             "password": "password123",
-            "isLogin": false,
         }))
         .send()
         .await
         .unwrap();
     let payload: Value = resp.json().await.unwrap();
-    assert_eq!(payload["isSuccess"], json!(true), "注册应成功: {payload}");
+    assert_eq!(payload["isSuccess"], json!(true), "登录应成功: {payload}");
     payload["data"]["accessToken"].as_str().unwrap().to_string()
 }
 

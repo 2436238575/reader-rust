@@ -268,7 +268,7 @@
             <div class="settings-card-head">
               <h2>模型来源</h2>
               <span class="server-status" :class="{ active: canUseServerModel }">
-                {{ canUseServerModel ? '可用后端配置' : '未授权后端配置' }}
+                {{ canUseServerModel ? '可用后端配置' : '未登录' }}
               </span>
             </div>
             <div class="source-options">
@@ -285,7 +285,7 @@
               </button>
             </div>
             <p class="settings-hint">
-              后端配置由管理员保存到服务器；只有开启 AI 模型权限的账号才能使用。自己配置仍只保存在当前浏览器。
+              后端配置保存在服务器上，全端共享；自己配置仍只保存在当前浏览器。
             </p>
           </article>
 
@@ -770,7 +770,7 @@ function graphLabelWidth(label: string) {
 
 function saveConfig() {
   if (configDraft.modelSource === 'server' && !canUseServerModel.value) {
-    appStore.showToast('当前账号没有使用后端模型配置的权限', 'warning')
+    appStore.showToast('后端配置暂不可用，请先登录', 'warning')
     configDraft.modelSource = 'browser'
   }
   aiStore.persistConfig({ ...configDraft })

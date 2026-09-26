@@ -4,16 +4,15 @@ use serde::{Deserialize, Serialize};
 
 /// JWT 载荷。
 ///
-/// `ver` 对应 `users.token_version`：改密码、重置密码、删除账号时自增，
-/// 使此前签发的所有令牌立即失效。纯无状态令牌无法撤销——已删除的用户
-/// 在过期前仍能访问——所以这里保留版本号，由中间件做一次服务端比对。
+/// `ver` 对应 `users.token_version`：改密码时自增，使此前签发的所有令牌
+/// 立即失效。纯无状态令牌无法撤销——改密后旧令牌在过期前仍能访问——所以
+/// 这里保留版本号，由中间件做一次服务端比对。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Claims {
     /// 用户名（`users.username`）
     pub sub: String,
     /// 用户命名空间，直接参与 storage 路径拼接
     pub ns: String,
-    pub is_admin: bool,
     /// 签发时间（Unix 秒）
     pub iat: i64,
     /// 过期时间（Unix 秒）
@@ -54,7 +53,6 @@ mod tests {
         Claims {
             sub: "reader1".to_string(),
             ns: "reader1".to_string(),
-            is_admin: false,
             iat: 1_700_000_000,
             exp,
             ver,
@@ -68,7 +66,6 @@ mod tests {
         let decoded = decode_token(&token, secret).unwrap();
         assert_eq!(decoded.sub, "reader1");
         assert_eq!(decoded.ns, "reader1");
-        assert!(!decoded.is_admin);
         assert_eq!(decoded.ver, 3);
     }
 

@@ -2,13 +2,13 @@ use crate::api::AppState;
 use crate::auth::extractor::AuthUser;
 use crate::auth::jwt::decode_token;
 use crate::auth::{is_valid_user_ns, AuthState};
-use crate::error::error::{AppError, FORBIDDEN, NEED_LOGIN};
+use crate::error::error::{AppError, NEED_LOGIN};
 use axum::extract::{Request, State};
 use axum::http::header::AUTHORIZATION;
 use axum::middleware::Next;
 use axum::response::Response;
 
-/// 强制鉴权：缺失/无效/过期令牌，或用户已被删除、撤销版本不匹配，一律 401。
+/// 强制鉴权：缺失/无效/过期令牌，或撤销版本不匹配，一律 401。
 pub async fn require_auth(
     State(state): State<AppState>,
     mut request: Request,
@@ -16,21 +16,6 @@ pub async fn require_auth(
 ) -> Result<Response, AppError> {
     let token = extract_token(&request).ok_or_else(unauthorized)?;
     let user = authenticate(&state.auth, token).await?;
-    request.extensions_mut().insert(user);
-    Ok(next.run(request).await)
-}
-
-/// 管理员专用：先认证，再校验角色；非管理员一律 403。
-pub async fn require_admin(
-    State(state): State<AppState>,
-    mut request: Request,
-    next: Next,
-) -> Result<Response, AppError> {
-    let token = extract_token(&request).ok_or_else(unauthorized)?;
-    let user = authenticate(&state.auth, token).await?;
-    if !user.is_admin {
-        return Err(AppError::Forbidden(FORBIDDEN.to_string()));
-    }
     request.extensions_mut().insert(user);
     Ok(next.run(request).await)
 }
@@ -55,12 +40,12 @@ pub async fn optional_auth(
 /// axum 无法推导中间件的 extractor 元组，`from_fn_with_state` 直接编译失败。
 async fn authenticate(state: &AuthState, token: String) -> Result<AuthUser, AppError> {
     let claims = decode_token(&token, state.jwt_secret())?;
-    let identity = state
-        .load_identity(&claims.sub)
+    let token_version = state
+        .load_token_version(&claims.sub)
         .await?
         .ok_or_else(unauthorized)?;
-    // 撤销检查：改密码/重置/删号会自增 token_version，使旧令牌立即失效
-    if identity.token_version != claims.ver {
+    // 撤销检查：改密码会自增 token_version，使旧令牌立即失效
+    if token_version != claims.ver {
         return Err(unauthorized());
     }
     let ns = resolve_ns(&claims.ns, &claims.sub);
@@ -68,9 +53,6 @@ async fn authenticate(state: &AuthState, token: String) -> Result<AuthUser, AppE
         username: claims.sub,
         ns,
         token,
-        is_admin: identity.is_admin,
-        enable_webdav: identity.enable_webdav,
-        enable_ai_model: identity.enable_ai_model,
     })
 }
 

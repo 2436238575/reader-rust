@@ -31,7 +31,6 @@
                 <div class="user-card-header">
                   <div class="user-detail">
                     <span class="user-name">{{ appStore.userInfo?.username }}</span>
-                    <span class="user-role">{{ appStore.userInfo?.isAdmin ? '管理员' : '普通用户' }}</span>
                   </div>
                   <button class="btn btn-danger" @click="handleLogout">注销</button>
                 </div>
@@ -60,7 +59,7 @@
               </div>
             </div>
             <button v-else class="btn btn-primary btn-block" @click="handleLogin">
-              登录 / 注册
+              登录
             </button>
           </section>
 
@@ -84,27 +83,6 @@
           <section class="drawer-section">
             <h3 class="section-title">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18">
-                <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" />
-                <circle cx="9" cy="7" r="4" />
-                <path d="M19 8v6" />
-                <path d="M22 11h-6" />
-              </svg>
-              用户管理
-            </h3>
-            <div class="status-card">
-              <span>{{ userManagerTitle }}</span>
-              <small>{{ userManagerMessage }}</small>
-            </div>
-            <div class="btn-group">
-              <button class="btn btn-soft" :disabled="!canManageUsers" @click="openUserManager">
-                用户管理
-              </button>
-            </div>
-          </section>
-
-          <section class="drawer-section">
-            <h3 class="section-title">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18">
                 <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
                 <path d="M7 10l5 5 5-5" />
                 <path d="M12 15V3" />
@@ -116,7 +94,7 @@
               <small>{{ webdavStatusMessage }}</small>
             </div>
             <div class="btn-group">
-              <button class="btn btn-soft" :disabled="!canOpenWebdav" @click="openWebdavManager">
+              <button class="btn btn-soft" :disabled="!appStore.isLoggedIn" @click="openWebdavManager">
                 备份与恢复
               </button>
             </div>
@@ -293,27 +271,13 @@ const passwordForm = reactive({
   confirmPassword: '',
 })
 
-const canManageUsers = computed(() => appStore.adminAuthorized)
-const userManagerTitle = computed(() => {
-  if (!appStore.isLoggedIn) return '登录后可查看状态'
-  return appStore.userInfo?.isAdmin ? '当前账号拥有管理员权限' : '当前账号不是管理员'
-})
-const userManagerMessage = computed(() => {
-  if (!appStore.isLoggedIn) return '请先登录管理员账号后管理其他用户。'
-  return appStore.userInfo?.isAdmin
-    ? '支持新增用户、重置密码、删除用户和调整权限。'
-    : '请使用管理员账号登录后再进行用户管理。'
-})
-const canOpenWebdav = computed(() => appStore.isLoggedIn && !!appStore.userInfo?.enableWebdav)
 const webdavStatusTitle = computed(() => {
   if (!appStore.isLoggedIn) return '登录后可用'
-  return appStore.userInfo?.enableWebdav ? '当前账号已开启服务器备份' : '当前账号未开启服务器备份'
+  return '支持将数据备份到服务器'
 })
 const webdavStatusMessage = computed(() => {
-  if (!appStore.isLoggedIn) return '登录并具备备份权限后，可管理服务器中的备份文件。'
-  return appStore.userInfo?.enableWebdav
-    ? '支持将数据备份到服务器、下载备份文件、上传备份文件并执行恢复。'
-    : '请在用户管理中为当前账号开启服务器备份权限。'
+  if (!appStore.isLoggedIn) return '登录后可管理服务器中的备份文件。'
+  return '支持将数据备份到服务器、下载备份文件、上传备份文件并执行恢复。'
 })
 const versionUpdateTitle = computed(() => {
   const info = appStore.versionUpdate
@@ -326,7 +290,7 @@ const versionUpdateTitle = computed(() => {
 const versionUpdateMessage = computed(() => {
   const info = appStore.versionUpdate
   if (appStore.versionUpdateLoading && !info) return '正在从 GitHub Release 获取最新版本。'
-  if (!info) return '管理员可检查 GitHub Release，发现新版后会在设置入口提示。'
+  if (!info) return '从 GitHub Release 获取最新版本，发现新版后会在设置入口提示。'
   if (info.error && !info.latestVersion) return info.error
   if (info.updateAvailable && info.shouldRemind) {
     return `当前 ${info.currentVersion}，最新 ${info.latestVersion}。`
@@ -398,11 +362,6 @@ async function handleChangePassword() {
 function openSourceManager() {
   close()
   appStore.showSourceManager = true
-}
-
-function openUserManager() {
-  close()
-  appStore.showUserManager = true
 }
 
 function openWebdavManager() {
@@ -588,11 +547,6 @@ async function handleCheckVersionUpdate() {
 .user-name {
   font-weight: 600;
   font-size: var(--text-sm);
-}
-
-.user-role {
-  font-size: var(--text-xs);
-  color: var(--color-text-tertiary);
 }
 
 .password-panel {

@@ -94,6 +94,8 @@ pub async fn build_state(cfg: AppConfig) -> anyhow::Result<AppState> {
         pool.clone(),
         jwt_secret.clone(),
     ));
+    // 唯一账号的建号与 ADMIN_PASSWORD 强制重置都在这里完成
+    user_service.bootstrap_admin().await?;
     let book_group_service = Arc::new(BookGroupService::new(json_document_service.clone()));
     let ai_book_service = Arc::new(AiBookService::new(pool.clone(), &cfg.storage_dir));
     let ai_model_service = Arc::new(AiModelService::new(

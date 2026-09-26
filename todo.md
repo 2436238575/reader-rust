@@ -17,7 +17,7 @@
 - 索引语法：新式 `[0,2,-1]` / `[1:5:2]` / `[!0,-1]` 与旧式 `!0:2`、`.1:5:2`（区间与步长）
 - JS 运行时：`java.ajax/get/post/put`、`md5Encode`、`timeFormat`、base64、AES-CBC 解密、encodeURI 系列、`now`/`uuid`、`cache.get/put`、`kv_get/kv_put`、`cookie.removeCookie`、`java.log/toast/openUrl`（空操作）；jsLib（远程 URL + 内联）
 - loginCheckJs（每次抓取后执行，可改写响应）、`@put`/`@get` 临时变量（值规则支持逗号与冒号）
-- 多用户隔离（命名空间 + 独立 Cookie jar/JS KV）、WebDAV 备份、本地 TXT/EPUB、RSS、AI 记忆/代理、章节文件缓存（容量淘汰）
+- 命名空间隔离（独立 Cookie jar/JS KV）、WebDAV 备份、本地 TXT/EPUB、AI 记忆/代理、章节文件缓存（容量淘汰）
 - 章评/段评（`ruleReview` / `ruleParaReview`，含配图与内联回复）与 7 天评论缓存
 - 安全基线：SSRF 出站守卫（含重定向逐跳 DNS 复检）、JS 沙箱资源上限、Argon2id 密码哈希、登录/WebDAV 限速、路径穿越防护、各类体积上限
 
@@ -67,7 +67,6 @@
 - 书源登录流程：`loginUi` 表单、登录脚本 `login()` 调用、AES 登录信息、登录头合并（规格 §11.1/§12.1 已标注）
 - WebView 渲染抓取（`webView`/`webJs`/`webViewDelayTime` 仅解析不执行，规格 §5.7 已标注）
 - 批量导入/导出书源接口（`docs/api/book-source.md` 已标注，可用 readSourceFile + saveBookSources 两步替代）
-- `register` 独立注册接口（注册走 `login` + `isLogin=false`）
 - `cacheBookContent` / `getReadProgress` / `saveReadProgress`（`docs/api/chapter.md` 已标注）
 - `getTxtTocRules` 恒返回空数组（已标注）
 - 保留字段无消费方：`enabledCookieJar`、`coverDecodeJs`、`exploreScreen`
@@ -84,7 +83,7 @@
 **待拍板**：
 - `bookSourceProxy` 把用户真实 JWT 注入第三方书源页面，前端又同源渲染进 iframe（登录预览功能）；缓解方向见审计报告（短期 scoped token / sandbox / 接受）
 
-**已处理（2026-09-25 晚）**：注册/IP 维度限速已实现——IP 48h 注册成功 1 次、邀请码错 3 次封该 IP 注册 168h、IP 登录败 5 次封登录 6h、用户名败 10 次封 6h，`RATE_LIMIT_DISABLED=true` 供开发/测试豁免（原「注册无限速/锁号」待拍板项由此关闭）。
+**已处理（2026-09-25 晚）**：登录限速已实现——IP 登录败 5 次封登录 6h、用户名败 10 次封 6h，`RATE_LIMIT_DISABLED=true` 供开发/测试豁免。（注册功能后随单用户化整体移除，注册限速一并消失。）
 
 **接受 / 部署卫生**：
 - 出站守卫 DNS 校验与实际连接分离（TOCTOU），理论可 DNS rebinding；需连接层 IP 钉扎，reqwest 未暴露
@@ -96,7 +95,7 @@
 - ServeDir 跟随符号链接、WEB_ROOT fallback 暴露全部文件、Windows 下 `jwt_secret` 无 ACL：部署目录不要混入敏感内容
 - 依赖遗留：sqlx 0.7.4 待升级 0.8（`rustls-webpki` 0.101 的三条 advisory 随之解决）；`rsa`（经 jsonwebtoken 拉入，HS256-only 不可达）无修复版本
 
-**公网部署要点**：`ALLOW_PRIVATE_NETWORK=false`，并按需配置 `INVITE_CODE` 与 `USER_LIMIT`
+**公网部署要点**：`ALLOW_PRIVATE_NETWORK=false`，并显式配置 `ADMIN_PASSWORD`（或首启后到设置里改密）
 （旧的 `SECURE` 开关已随 JWT 重构删除）
 
 ## 配额默认值

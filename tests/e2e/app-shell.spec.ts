@@ -23,7 +23,6 @@ test.describe('Standard E2E: app shell', () => {
     await openSettings(page)
 
     await expect(page.getByRole('button', { name: '书源管理', exact: true })).toBeVisible()
-    await expect(page.getByRole('button', { name: '用户管理', exact: true })).toBeVisible()
     await expect(page.getByRole('button', { name: '备份与恢复', exact: true })).toBeVisible()
 
     await closeSettings(page)

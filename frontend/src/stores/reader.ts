@@ -1009,7 +1009,7 @@ export const useReaderStore = defineStore('reader', () => {
     if (speechConfig.openaiSource === 'server') {
       const serverConfig = await aiBookStore.loadServerModelConfig()
       if (!serverConfig?.canUseServerModel) {
-        const error = new Error('当前账号没有使用后端模型配置的权限')
+        const error = new Error('后端模型配置暂不可用，请先登录')
         appStore.showToast(error.message, 'warning')
         options.onError?.(error)
         return

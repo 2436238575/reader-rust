@@ -69,7 +69,7 @@ WEB_ROOT=web/dist
 LOG_LEVEL=info
 
 JWT_SECRET=<足够随机的密钥>
-INVITE_CODE=<注册邀请码>
+ADMIN_PASSWORD=<登录密码>
 ```
 
 ::: warning 路径都相对于工作目录

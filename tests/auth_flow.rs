@@ -8,6 +8,10 @@ use reader_rust::app::bootstrap::build_state;
 use reader_rust::app::config::AppConfig;
 use std::path::PathBuf;
 
+/// 测试账号：由 bootstrap 用预设的 ADMIN_USERNAME/ADMIN_PASSWORD 创建。
+const TEST_USERNAME: &str = "reader1";
+const TEST_PASSWORD: &str = "password123";
+
 struct TestServer {
     base_url: String,
     temp_dir: PathBuf,
@@ -37,7 +41,10 @@ impl TestServer {
             web_root: web_root.to_string_lossy().to_string(),
             assets_dir: temp_dir.join("assets").to_string_lossy().to_string(),
             jwt_secret: "integration-test-secret".to_string(),
-            // 集成测试从同一地址注册多个账号，豁免 IP 限速
+            // 预设凭据，bootstrap 直接建号，测试拿到确定密码
+            admin_username: TEST_USERNAME.to_string(),
+            admin_password: TEST_PASSWORD.to_string(),
+            // 同一地址会重复登录，豁免 IP 限速
             rate_limit_disabled: true,
             ..AppConfig::default()
         };
@@ -66,24 +73,23 @@ impl TestServer {
         format!("{}{}", self.base_url, path)
     }
 
-    /// 注册（或登录）一个账号，返回 JWT。
-    async fn register(&self, username: &str) -> String {
+    /// 用预设账号登录，返回 JWT。
+    async fn login(&self) -> String {
         let response = self
             .client
             .post(self.url("/reader3/login"))
             .json(&serde_json::json!({
-                "username": username,
-                "password": "password123",
-                "isLogin": false,
+                "username": TEST_USERNAME,
+                "password": TEST_PASSWORD,
             }))
             .send()
             .await
             .unwrap();
-        assert_eq!(response.status(), 200, "注册应成功: {username}");
+        assert_eq!(response.status(), 200, "登录应成功");
         let body: serde_json::Value = response.json().await.unwrap();
         body["data"]["accessToken"]
             .as_str()
-            .expect("注册响应应含 accessToken")
+            .expect("登录响应应含 accessToken")
             .to_string()
     }
 
@@ -131,7 +137,7 @@ async fn protected_routes_require_a_token_and_answer_401() {
     assert_eq!(response.status(), 401);
 
     // 有效令牌放行
-    let token = server.register("reader1").await;
+    let token = server.login().await;
     let response = server.get("/reader3/getBookshelf", Some(&token)).await;
     assert_eq!(response.status(), 200);
 }
@@ -139,7 +145,7 @@ async fn protected_routes_require_a_token_and_answer_401() {
 #[tokio::test]
 async fn token_is_accepted_from_the_query_parameter_for_event_source() {
     let server = TestServer::start().await;
-    let token = server.register("reader1").await;
+    let token = server.login().await;
 
     // EventSource 无法设置请求头，只能把令牌放进查询串
     let response = server
@@ -152,38 +158,56 @@ async fn token_is_accepted_from_the_query_parameter_for_event_source() {
 }
 
 #[tokio::test]
-async fn admin_routes_forbid_non_admins_with_403() {
+async fn login_rejects_wrong_password_and_unknown_users() {
     let server = TestServer::start().await;
-    // 首个注册者自动成为管理员
-    let admin = server.register("admin1").await;
-    let member = server.register("member1").await;
 
-    let response = server.get("/reader3/getUserList", Some(&member)).await;
-    assert_eq!(response.status(), 403, "非管理员应返回 403");
-    let body: serde_json::Value = response.json().await.unwrap();
-    assert_eq!(body["errorMsg"], serde_json::json!("FORBIDDEN"));
+    let response = server
+        .post(
+            "/reader3/login",
+            None,
+            serde_json::json!({ "username": TEST_USERNAME, "password": "wrong-password" }),
+        )
+        .await;
+    assert_eq!(response.status(), 400);
 
-    let response = server.get("/reader3/getUserList", Some(&admin)).await;
-    assert_eq!(response.status(), 200);
+    // 不存在的用户名同样报「用户名或密码错误」，不提供注册入口
+    let response = server
+        .post(
+            "/reader3/login",
+            None,
+            serde_json::json!({ "username": "nobody", "password": "password123" }),
+        )
+        .await;
+    assert_eq!(response.status(), 400);
     let body: serde_json::Value = response.json().await.unwrap();
-    let users = body["data"].as_array().unwrap();
-    assert_eq!(users.len(), 2);
-    // 用户列表不得回吐任何人的凭据
-    for user in users {
-        assert!(user.get("accessToken").is_none(), "列表不应含 accessToken");
-    }
+    assert!(body["errorMsg"]
+        .as_str()
+        .unwrap()
+        .contains("用户名或密码错误"));
+}
+
+#[tokio::test]
+async fn multi_user_admin_endpoints_are_gone() {
+    let server = TestServer::start().await;
+    let token = server.login().await;
+
+    // 多用户时代的管理端点已删除，落在 JSON 404 上而不是 403
+    let response = server.get("/reader3/getUserList", Some(&token)).await;
+    assert_eq!(response.status(), 404);
+    let body: serde_json::Value = response.json().await.unwrap();
+    assert_eq!(body["isSuccess"], serde_json::json!(false));
 }
 
 #[tokio::test]
 async fn changing_password_revokes_old_tokens_but_keeps_the_current_device() {
     let server = TestServer::start().await;
-    let old_token = server.register("reader1").await;
+    let old_token = server.login().await;
 
     let response = server
         .post(
             "/reader3/changePassword",
             Some(&old_token),
-            serde_json::json!({ "oldPassword": "password123", "newPassword": "newpassword123" }),
+            serde_json::json!({ "oldPassword": TEST_PASSWORD, "newPassword": "newpassword123" }),
         )
         .await;
     assert_eq!(response.status(), 200);
@@ -244,17 +268,15 @@ async fn root_and_real_static_files_are_still_served() {
 }
 
 #[tokio::test]
-async fn purge_cache_respects_ownership_and_admin_only_scopes() {
+async fn purge_cache_scopes_all_work_for_the_single_user() {
     let server = TestServer::start().await;
-    // 首个注册者自动成为管理员，因此先注册管理员再注册普通用户
-    let admin = server.register("admin1").await;
-    let member = server.register("member1").await;
+    let token = server.login().await;
 
-    // 普通用户可清理自己的命名空间
+    // 按命名空间清理
     let response = server
         .post(
             "/reader3/purgeCache",
-            Some(&member),
+            Some(&token),
             serde_json::json!({ "scope": "user" }),
         )
         .await;
@@ -271,11 +293,11 @@ async fn purge_cache_respects_ownership_and_admin_only_scopes() {
         assert!(purged[layer].is_number(), "缺少 {layer} 计数");
     }
 
-    // 按类型清理自己的某一层
+    // 按类型清理某一层
     let response = server
         .post(
             "/reader3/purgeCache",
-            Some(&member),
+            Some(&token),
             serde_json::json!({ "scope": "kind", "kind": "content" }),
         )
         .await;
@@ -285,7 +307,7 @@ async fn purge_cache_respects_ownership_and_admin_only_scopes() {
     let response = server
         .post(
             "/reader3/purgeCache",
-            Some(&member),
+            Some(&token),
             serde_json::json!({ "scope": "book" }),
         )
         .await;
@@ -293,66 +315,24 @@ async fn purge_cache_respects_ownership_and_admin_only_scopes() {
     let response = server
         .post(
             "/reader3/purgeCache",
-            Some(&member),
+            Some(&token),
             serde_json::json!({ "scope": "book", "bookUrl": "https://example.com/book/1" }),
         )
         .await;
     assert_eq!(response.status(), 200);
 
-    // 普通用户不能清理他人，也不能全局清理
+    // 单用户即所有者：全局清理与全局统计都直接可用
     let response = server
         .post(
             "/reader3/purgeCache",
-            Some(&member),
-            serde_json::json!({ "scope": "user", "username": "admin1" }),
-        )
-        .await;
-    assert_eq!(response.status(), 403);
-    let response = server
-        .post(
-            "/reader3/purgeCache",
-            Some(&member),
-            serde_json::json!({ "scope": "all" }),
-        )
-        .await;
-    assert_eq!(response.status(), 403);
-
-    // 管理员可以指定他人、也可以全局清理
-    let response = server
-        .post(
-            "/reader3/purgeCache",
-            Some(&admin),
-            serde_json::json!({ "scope": "user", "username": "member1" }),
-        )
-        .await;
-    assert_eq!(response.status(), 200);
-    let response = server
-        .post(
-            "/reader3/purgeCache",
-            Some(&admin),
+            Some(&token),
             serde_json::json!({ "scope": "all" }),
         )
         .await;
     assert_eq!(response.status(), 200);
-
-    // 统计接口：普通用户只能看自己，全局统计仅管理员可用
     assert_eq!(
         server
-            .get("/reader3/cacheStats", Some(&member))
-            .await
-            .status(),
-        200
-    );
-    assert_eq!(
-        server
-            .get("/reader3/cacheStats?all=true", Some(&member))
-            .await
-            .status(),
-        403
-    );
-    assert_eq!(
-        server
-            .get("/reader3/cacheStats?all=true", Some(&admin))
+            .get("/reader3/cacheStats?all=true", Some(&token))
             .await
             .status(),
         200
@@ -379,13 +359,15 @@ async fn get_user_info_reports_no_session_when_anonymous() {
     assert_eq!(response.status(), 200, "未登录也应可调用");
     let body: serde_json::Value = response.json().await.unwrap();
     assert!(body["data"]["userInfo"].is_null());
-    assert_eq!(body["data"]["adminAuthorized"], serde_json::json!(false));
 
-    let token = server.register("reader1").await;
+    let token = server.login().await;
     let response = server.get("/reader3/getUserInfo", Some(&token)).await;
     let body: serde_json::Value = response.json().await.unwrap();
     assert_eq!(
         body["data"]["userInfo"]["username"],
-        serde_json::json!("reader1")
+        serde_json::json!(TEST_USERNAME)
     );
+    // 响应不含任何凭据
+    assert!(body["data"]["userInfo"].get("accessToken").is_none());
+    assert!(body["data"]["userInfo"].get("password").is_none());
 }

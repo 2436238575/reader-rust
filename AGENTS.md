@@ -22,7 +22,7 @@ Reader-Rust 是 [阅读3.0](https://github.com/hectorqin/reader) 的 Rust 重写
 cargo run                      # 开发模式运行，默认监听 0.0.0.0:8080
 cargo build                    # 调试构建
 cargo build --release          # 发布构建
-cargo test                     # 全部测试（Rust 侧共 225 个，另有 2 个真实网络用例默认忽略）
+cargo test                     # 全部测试（Rust 侧共 219 个，另有 2 个真实网络用例默认忽略）
 cargo test <关键字>             # 按名称过滤测试
 cargo clippy --all-targets     # 静态检查
 cargo fmt                      # 格式化
@@ -60,7 +60,7 @@ npm run test:e2e:ui            # UI 模式
 
 - 用例位于 `tests/e2e/*.spec.ts`，默认访问 `http://127.0.0.1:8080`。
 - 后端换端口时用环境变量覆盖：`PLAYWRIGHT_BASE_URL=http://127.0.0.1:18080 npm run test:e2e`。
-- 被测后端建议以 `RATE_LIMIT_DISABLED=true` 启动，否则 IP 限速（48h 注册冷却等）会拦住重复跑的用例。
+- 被测后端建议以 `RATE_LIMIT_DISABLED=true` 启动，否则登录失败限速会拦住重复跑的用例；登录用例还需要 `E2E_USERNAME`/`E2E_PASSWORD` 与后端 `ADMIN_USERNAME`/`ADMIN_PASSWORD` 一致。
 - 配置使用系统已安装的 Chrome（`channel: 'chrome'`），机器上需要有 Chrome。
 
 ### 发布
@@ -99,17 +99,17 @@ cp .env.example .env
 | `REQUEST_TIMEOUT_SECS` | `15` | 抓取上游站点的超时时间 |
 | `JWT_SECRET` | 空 | JWT 签名密钥；留空时自动生成并持久化到 `<STORAGE_DIR>/jwt_secret` |
 | `JWT_TTL_SECS` | `604800`（7 天） | 令牌有效期 |
-| `INVITE_CODE` | 空 | 注册邀请码，为空表示不限制；同一 IP 邀请码错误 3 次封禁注册 168h |
-| `USER_LIMIT` | `50` | 用户数上限 |
-| `USER_BOOK_LIMIT` | `2000` | 单用户书架上限，`0` 表示不限制 |
-| `USER_LOCAL_BOOK_LIMIT` | `0` | 单用户本地上传上限，`0` 表示不限制 |
-| `CACHE_USER_LIMIT_BYTES` | `536870912` | 单用户正文缓存上限；`0` 表示不限制 |
+| `ADMIN_USERNAME` | `admin` | 唯一账号的用户名，首次启动建号时使用；只允许小写字母/数字/下划线 |
+| `ADMIN_PASSWORD` | 空 | 唯一账号的密码；非空时每次启动强制覆盖（兼作忘记密码的找回通道），相同则 no-op；留空时首启随机生成并打印到启动日志 |
+| `USER_BOOK_LIMIT` | `2000` | 书架上限，`0` 表示不限制 |
+| `USER_LOCAL_BOOK_LIMIT` | `0` | 本地上传上限，`0` 表示不限制 |
+| `CACHE_USER_LIMIT_BYTES` | `536870912` | 正文缓存上限；`0` 表示不限制 |
 | `CACHE_COVER_LIMIT_BYTES` | `268435456` | 封面缓存目录上限；`0` 表示不限制 |
 | `REVIEW_CACHE_TTL_SECS` | `604800`（7 天） | 章评/段评缓存有效期；`0` 表示不过期 |
-| `REVIEW_CACHE_USER_LIMIT_BYTES` | `67108864` | 单用户评论缓存上限；`0` 表示不限制 |
-| `ALLOW_PRIVATE_NETWORK` | `true` | 出站请求是否允许访问私网/内网地址；自托管单用户默认放行（局域网书源是正常用法），多用户/公网部署应设为 `false` |
+| `REVIEW_CACHE_USER_LIMIT_BYTES` | `67108864` | 评论缓存上限；`0` 表示不限制 |
+| `ALLOW_PRIVATE_NETWORK` | `true` | 出站请求是否允许访问私网/内网地址；自托管单用户默认放行（局域网书源是正常用法），公网部署应设为 `false` |
 | `CORS_ALLOWED_ORIGINS` | 空 | 跨域来源白名单；留空仅同源 |
-| `RATE_LIMIT_DISABLED` | `false` | 豁免登录/注册限速（开发/测试用）。默认：IP 48h 注册成功 1 次、邀请码错 3 次封该 IP 注册 168h、IP 登录败 5 次封该 IP 登录 6h、用户名败 10 次封 6h。e2e 跑测试时建议后端开此项 |
+| `RATE_LIMIT_DISABLED` | `false` | 豁免登录限速（开发/测试用）。默认：IP 登录败 5 次封该 IP 登录 6h、用户名败 10 次封 6h。e2e 跑测试时建议后端开此项 |
 
 两点需要注意：
 
@@ -191,10 +191,9 @@ HTTP 请求
 
 - `isSuccess=false` 时从 `errorMsg` 读取失败原因。
 - 未登录/令牌无效或过期 → **HTTP 401**，`errorMsg` 为 `"NEED_LOGIN"`，前端据此弹出登录框。
-- 已登录但非管理员访问管理员接口 → **HTTP 403**，`errorMsg` 为 `"FORBIDDEN"`。
 - `/reader3` 是纯 API 命名空间：未注册路径返回 JSON 404，不落到静态文件服务。
 
-鉴权说明：使用 **JWT（HS256）**。登录返回的 `accessToken` 是标准 JWT，载荷为 `{ sub, ns, is_admin, iat, exp, ver }`。传递方式只有两种：`Authorization: Bearer <jwt>` 头，或查询参数 `accessToken`（SSE 与 `<img>` 无法设置请求头，只能走查询串）。中间件位于 `src/auth/middleware.rs`，分 `require_auth` / `require_admin` / `optional_auth` 三档，在 `api/router.rs` 里按分组挂载；handler 通过 `CurrentUser` 提取器取身份，不再自行解析凭据。撤销靠 `users.token_version`：改密码/重置密码/删号自增版本号即作废该用户所有旧令牌。
+鉴权说明：**单用户**，使用 **JWT（HS256）**。唯一账号由启动时的 bootstrap 创建：用户名取 `ADMIN_USERNAME`，密码取 `ADMIN_PASSWORD`（非空则每次启动强制覆盖，兼作找回通道），都为空则首启随机生成并打印到启动日志；不提供注册、用户管理与角色/权限分层——登录即拥有全部能力。登录返回的 `accessToken` 是标准 JWT，载荷为 `{ sub, ns, iat, exp, ver }`。传递方式只有两种：`Authorization: Bearer <jwt>` 头，或查询参数 `accessToken`（SSE 与 `<img>` 无法设置请求头，只能走查询串）。中间件位于 `src/auth/middleware.rs`，分 `require_auth` / `optional_auth` 两档，在 `api/router.rs` 里按分组挂载；handler 通过 `CurrentUser` 提取器取身份，不再自行解析凭据。撤销靠 `users.token_version`：改密码自增版本号即作废该账号所有旧令牌。
 
 ### 静态资源与 404
 
@@ -316,13 +315,13 @@ HTTP 请求
 
 ## 测试
 
-Rust 侧共 **225 个测试**（160 个内联单元测试 + 65 个集成用例，另有 2 个 `#[ignore]` 的真实网络用例），分布为：
+Rust 侧共 **219 个测试**（153 个内联单元测试 + 66 个集成用例，另有 2 个 `#[ignore]` 的真实网络用例），分布为：
 
-- `tests/` 下 13 个集成测试文件（65 个用例），其中 `book_source_compat.rs` 用例最多（17 个）；
-  `auth_flow.rs`、`review_flow.rs` 与 `chapter_image_flow.rs` 起真实监听端口，前者覆盖 401/403、
-  静态回落与缓存清理，后两者各用一个假上游覆盖评论规则（7 天缓存、按类型清理）与章节配图
-  （配图规则、无图不报错、正文 HTML 内嵌图片透传）；
-- `src/` 内的内联单元测试模块（160 个）。
+- `tests/` 下 13 个集成测试文件（66 个用例），其中 `book_source_compat.rs` 用例最多（17 个）；
+  `auth_flow.rs`、`review_flow.rs` 与 `chapter_image_flow.rs` 起真实监听端口，前者覆盖 401、
+  静态回落、缓存清理与改密吊销令牌，后两者各用一个假上游覆盖评论规则（7 天缓存、按类型清理）
+  与章节配图（配图规则、无图不报错、正文 HTML 内嵌图片透传）；
+- `src/` 内的内联单元测试模块（153 个）。
 
 前端使用 vitest，共 21 个 `*.test.ts`（83 个用例）。
 

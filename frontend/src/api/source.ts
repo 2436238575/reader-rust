@@ -6,10 +6,6 @@ export function getBookSources() {
   return http.get<BookSource[]>('/getBookSources').then((r) => r.data)
 }
 
-export function getDefaultBookSourceOwner() {
-  return http.get<{ username: string | null }>('/getDefaultBookSourceOwner').then((r) => r.data)
-}
-
 export function loginBookSource(bookSourceUrl: string) {
   return http.post<{
     success: boolean
@@ -59,10 +55,6 @@ export function testBookSources(params: {
 
 export function deleteInvalidBookSources() {
   return http.post<{ deleted: number }>('/deleteInvalidBookSources').then((r) => r.data)
-}
-
-export function setAsDefaultBookSources(username: string) {
-  return http.post<{ success: boolean; count: number }>('/setAsDefaultBookSources', { username }).then((r) => r.data)
 }
 
 export function readRemoteSourceFile(url: string) {

@@ -33,8 +33,8 @@ pub use replace_rule::{
 pub use review::{get_chapter_comments, get_para_comment_index, get_para_comments};
 pub use update::{dismiss_version_update, get_version_update};
 pub use user::{
-    add_user, change_password, delete_file, delete_users, get_user_config, get_user_info,
-    get_user_list, login, logout, reset_password, save_user_config, update_user, upload_file,
+    change_password, delete_file, get_user_config, get_user_info, login, logout, save_user_config,
+    upload_file,
 };
 pub use webdav::{
     delete_webdav_file, delete_webdav_file_list, get_webdav_file, get_webdav_file_list,

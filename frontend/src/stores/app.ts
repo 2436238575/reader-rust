@@ -32,21 +32,18 @@ export const useAppStore = defineStore('app', () => {
 
   // ─── User ───
   const userInfo = ref<UserInfo | null>(null)
-  /// 当前令牌是否具备管理员角色（由服务端按 JWT 判定）
-  const adminAuthorized = ref(false)
   const isLoggedIn = ref(false)
   const versionUpdate = ref<VersionUpdateInfo | null>(null)
   const versionUpdateLoading = ref(false)
   const versionUpdateChecked = ref(false)
   let versionUpdateToastVersion = ''
-  const canCheckVersionUpdate = computed(() => adminAuthorized.value)
+  const canCheckVersionUpdate = computed(() => isLoggedIn.value)
   const hasVersionUpdateReminder = computed(() => !!versionUpdate.value?.shouldRemind)
 
   async function fetchUserInfo() {
     try {
       const data = await getUserInfo()
       userInfo.value = data.userInfo
-      adminAuthorized.value = data.adminAuthorized
       isLoggedIn.value = !!data.userInfo?.username
       if (canCheckVersionUpdate.value) {
         void checkVersionUpdate()
@@ -59,7 +56,6 @@ export const useAppStore = defineStore('app', () => {
   function setUser(user: UserInfo) {
     userInfo.value = user
     isLoggedIn.value = true
-    adminAuthorized.value = !!user.isAdmin
     if (user.accessToken) {
       localStorage.setItem(ACCESS_TOKEN_STORAGE_KEY, user.accessToken)
     }
@@ -83,7 +79,6 @@ export const useAppStore = defineStore('app', () => {
   function clearUser() {
     userInfo.value = null
     isLoggedIn.value = false
-    adminAuthorized.value = false
     localStorage.removeItem(ACCESS_TOKEN_STORAGE_KEY)
   }
 
@@ -137,7 +132,6 @@ export const useAppStore = defineStore('app', () => {
   // ─── UI State ───
   const showSettingsDrawer = ref(false)
   const showSourceManager = ref(false)
-  const showUserManager = ref(false)
   const showWebdavManager = ref(false)
   const isOnline = ref(typeof navigator !== 'undefined' ? navigator.onLine : true)
   const pwaReady = ref(false)
@@ -263,10 +257,10 @@ export const useAppStore = defineStore('app', () => {
 
   return {
     theme, setTheme, toggleTheme,
-    userInfo, adminAuthorized, isLoggedIn,
+    userInfo, isLoggedIn,
     versionUpdate, versionUpdateLoading, versionUpdateChecked, canCheckVersionUpdate, hasVersionUpdateReminder,
     fetchUserInfo, setUser, setAccessToken, clearUser, updateUserInfo, checkVersionUpdate, dismissVersionUpdateReminder,
-    showSettingsDrawer, showSourceManager, showUserManager, showWebdavManager,
+    showSettingsDrawer, showSourceManager, showWebdavManager,
     isOnline, pwaReady, pwaUpdateAvailable, deferredInstallPrompt, waitingServiceWorker,
     setOnlineStatus, setPwaReady, setPwaUpdateAvailable, setDeferredInstallPrompt, setWaitingServiceWorker, installPwa, applyPwaUpdate,
     readingStats, readingStatsSummary, startReadingSession, stopReadingSession, markBookOpened, markChapterRead,

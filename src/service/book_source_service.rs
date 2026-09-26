@@ -3,9 +3,7 @@ use crate::model::book_source::{book_source_from_value, BookSource};
 use crate::storage::db::repo::BookSourceRepo;
 use crate::util::text::normalize_source_url;
 use std::collections::HashMap;
-use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
-use tokio::fs;
 
 pub const INVALID_BOOK_SOURCE_GROUP: &str = "失效";
 
@@ -15,7 +13,6 @@ const RESOLUTION_CACHE_MAX_KEYS: usize = 1024;
 #[derive(Clone)]
 pub struct BookSourceService {
     repo: BookSourceRepo,
-    default_owner_path: PathBuf,
     /// fallback 解析结果缓存：`ns -> 查询键 -> 命中的书源 URL`。
     ///
     /// origin 未直接命中主键 / 仅传 bookUrl 自动发现时，此前每次都全量
@@ -26,14 +23,9 @@ pub struct BookSourceService {
 }
 
 impl BookSourceService {
-    pub fn new(repo: BookSourceRepo, storage_dir: &str) -> Self {
-        let default_owner_path = PathBuf::from(storage_dir)
-            .join("data")
-            .join("__default__")
-            .join("defaultBookSourceOwner.txt");
+    pub fn new(repo: BookSourceRepo, _storage_dir: &str) -> Self {
         Self {
             repo,
-            default_owner_path,
             resolution_cache: Arc::new(Mutex::new(HashMap::new())),
         }
     }
@@ -193,53 +185,6 @@ impl BookSourceService {
         self.repo.delete_all(user_ns).await?;
         self.invalidate_resolution(user_ns);
         Ok(())
-    }
-
-    /// Copy sources from one user to another (used for setting default sources)
-    pub async fn copy_to(&self, from_ns: &str, to_ns: &str) -> Result<i64, AppError> {
-        let count = self.repo.copy_to(from_ns, to_ns).await?;
-        self.invalidate_resolution(to_ns);
-        Ok(count)
-    }
-
-    /// Set a user's sources as the default sources (for new users)
-    pub async fn set_as_default(&self, from_ns: &str) -> Result<i64, AppError> {
-        let count = self.copy_to(from_ns, "__default__").await?;
-        if let Some(dir) = self.default_owner_path.parent() {
-            fs::create_dir_all(dir)
-                .await
-                .map_err(|e| AppError::Internal(e.into()))?;
-        }
-        fs::write(&self.default_owner_path, from_ns)
-            .await
-            .map_err(|e| AppError::Internal(e.into()))?;
-        Ok(count)
-    }
-
-    /// Copy default sources to a new user
-    pub async fn copy_default_to_user(&self, to_ns: &str) -> Result<i64, AppError> {
-        let defaults = self.list("__default__").await?;
-        if defaults.is_empty() {
-            return Ok(0);
-        }
-        let count = defaults.len() as i64;
-        self.save_many(to_ns, defaults).await?;
-        Ok(count)
-    }
-
-    pub async fn get_default_owner(&self) -> Result<Option<String>, AppError> {
-        match fs::read_to_string(&self.default_owner_path).await {
-            Ok(value) => {
-                let trimmed = value.trim();
-                if trimmed.is_empty() {
-                    Ok(None)
-                } else {
-                    Ok(Some(trimmed.to_string()))
-                }
-            }
-            Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(None),
-            Err(err) => Err(AppError::Internal(err.into())),
-        }
     }
 }
 

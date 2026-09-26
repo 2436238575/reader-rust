@@ -96,7 +96,7 @@ JS 求值本身带资源上限：内存 128MiB、调用栈 1MiB、单次求值 5
 
 | 文件 | 职责 |
 |------|------|
-| `http_client.rs` | 按 `user_ns` 缓存独立 reqwest Client（各自独立 Cookie jar 与连接池，数量受 `USER_LIMIT` 约束），支持 gzip / brotli / deflate |
+| `http_client.rs` | 按 `user_ns` 缓存独立 reqwest Client（各自独立 Cookie jar 与连接池），支持 gzip / brotli / deflate |
 | `url_analyzer.rs` | URL 占位符展开（`{key}`、`{page}`、<code v-pre>{{js}}</code>、`<1,2,3>`）、分页生成、内联 JS |
 | `url_guard.rs` | 出站请求守卫：协议 + 主机名 + DNS 解析后逐 IP 校验（拦截私网、环回、链路本地、云元数据地址），跟随重定向时逐跳校验；`ALLOW_PRIVATE_NETWORK` 控制开关 |
 | `fetcher.rs` | 抓取重试与响应读取；`read_body_limited` 边收边计数，响应体超过 32MiB 直接拒绝，避免超大响应/解压炸弹打爆内存 |
@@ -140,13 +140,17 @@ JS 求值本身带资源上限：内存 128MiB、调用栈 1MiB、单次求值 5
 | `jwt.rs` | `Claims` 定义与 HS256 编解码 |
 | `secret.rs` | 解析 `JWT_SECRET`；未配置时生成并持久化到 `<STORAGE_DIR>/jwt_secret` |
 | `extractor.rs` | `CurrentUser` / `MaybeUser` 提取器，从请求扩展取身份 |
-| `middleware.rs` | `require_auth` / `require_admin` / `optional_auth` 三个中间件 |
+| `middleware.rs` | `require_auth` / `optional_auth` 两个中间件 |
 
-`AppState` 里持有 `AuthState`（连接池 + 签名密钥），中间件每个请求做一次主键查询读出 `token_version` 与权限位。
+`AppState` 里持有 `AuthState`（连接池 + 签名密钥），中间件每个请求做一次主键查询读出 `token_version`。
+
+### 账号（单用户）
+
+不提供注册与用户管理：唯一账号由 `bootstrap_admin`（`service/user_service.rs`）在启动时创建——用户名取 `ADMIN_USERNAME`，密码取 `ADMIN_PASSWORD`（非空则每次启动强制覆盖并吊销旧令牌，是忘记密码时的找回通道），都为空则随机生成 20 位强密码并打印到启动日志。没有角色与权限开关：登录即拥有全部能力。
 
 ### 令牌
 
-登录成功后签发标准 JWT，载荷为 `{ sub, ns, is_admin, iat, exp, ver }`。传递方式只有两种：
+登录成功后签发标准 JWT，载荷为 `{ sub, ns, iat, exp, ver }`。传递方式只有两种：
 
 | 传法 | 位置 | 用途 |
 |------|------|------|
@@ -157,32 +161,31 @@ JS 求值本身带资源上限：内存 128MiB、调用栈 1MiB、单次求值 5
 
 ### 路由分层
 
-路由按鉴权强度分成四组，各自在 `src/api/router.rs` 里挂不同的中间件后再 merge：
+路由按鉴权强度分成三组，各自在 `src/api/router.rs` 里挂不同的中间件后再 merge：
 
 | 分组 | 中间件 | 内容 |
 |------|--------|------|
 | 公开 | 无 | `/health`、`/reader3/login` |
 | 可选鉴权 | `optional_auth` | `getUserInfo`、`logout` |
-| 管理员 | `require_admin` | 用户管理、默认书源、版本更新、AI 模型配置 |
 | 需登录 | `require_auth` | 其余全部 `/reader3/*` |
 | WebDAV | 自带 HTTP Basic | `/reader3/webdav/*path`，不经 JWT |
 
-失败时的状态码：未登录/令牌无效或过期 → **401 + `errorMsg="NEED_LOGIN"`**；已登录但非管理员 → **403 + `errorMsg="FORBIDDEN"`**。
+失败时的状态码：未登录/令牌无效或过期 → **401 + `errorMsg="NEED_LOGIN"`**。
 
 ### 撤销
 
 JWT 本身无状态，但服务端每个请求都比对 `users.token_version`：
 
-- 修改自己的密码 / 管理员重置密码 → 自增版本号，该用户所有旧令牌立即失效（改密码的响应会为当前设备换发新令牌）
-- 删除账号 → 用户行消失，`load_identity` 返回 `None`，令牌即刻无效
+- 修改密码 → 自增版本号，该账号所有旧令牌立即失效（响应会为当前设备换发新令牌）
+- 以不同的 `ADMIN_PASSWORD` 重启 → 强制重置密码并自增版本号
 
 登出没有服务端状态可清，接口总是返回成功，令牌由客户端丢弃。
 
 ### `user_ns` 的作用
 
-`user_ns` 是**多用户数据隔离键**，当前恒等于用户名（JWT 的 `ns` claim，由中间件校验字符集后使用，因为它直接参与 storage 路径拼接）。`book_sources` 表用 `(user_ns, book_source_url)` 作复合主键 —— 每个用户持有自己的一整套书源，书架、缓存、AI 资料等也按 `user_ns` 隔离。
+`user_ns` 是数据隔离键，当前恒等于用户名（JWT 的 `ns` claim，由中间件校验字符集后使用，因为它直接参与 storage 路径拼接）。`book_sources` 表用 `(user_ns, book_source_url)` 作复合主键；书架、缓存、AI 资料等也按 `user_ns` 隔离——单用户下整个存储空间只有一个命名空间，这套键结构原样保留，handler 不需要感知。
 
-`__default__` 与 `__app__` 是内部保留命名空间，分别用于默认书源模板与全局 AI 模型配置。
+`__app__` 是内部保留命名空间，用于全局 AI 模型配置。
 
 ## 安全机制
 
@@ -201,10 +204,9 @@ JWT 本身无状态，但服务端每个请求都比对 `users.token_version`：
 | WebDAV 路径收敛 | `api/handlers/webdav.rs` | 相对路径按 `/`、`\` 双分隔符切分并拒绝 `..`/盘符/ADS/设备名；multipart 文件名经 `sanitize_file_name`；上传字段限量读取，下载流式返回 |
 | 密码哈希 | `util/crypto.rs` | Argon2id（PHC 字符串自含盐与参数），哈希与校验在 `spawn_blocking` 中执行 |
 | 登录限速 | `service/user_service.rs` | 用户名与 IP 双维度：用户名失败 10 次封该用户名登录 6 小时；IP 失败 5 次封该地址登录 6 小时。悲观计数（尝试先计数、成功再清除）使并发爆发无法绕过；WebDAV Basic 认证共享同一份限速。`RATE_LIMIT_DISABLED=true` 全部豁免（开发/测试） |
-| 注册限速 | `service/user_service.rs` | IP 维度：48 小时内最多注册成功 1 次；邀请码错误 3 次封禁该地址注册 168 小时（封禁检查先于邀请码判定，被禁地址无法继续试探） |
 | 登录防枚举 | `service/user_service.rs` | 失败文案统一「用户名或密码错误」，用户不存在时补一次 dummy Argon2 校验对齐响应时序 |
 | WebDAV Destination 校验 | `api/handlers/webdav.rs` | MOVE/COPY 的 `Destination` 必须带 `/reader3/webdav/` 前缀，缺前缀直接 400（否则目标塌缩成家目录，配合 `Overwrite` 可整目录清空） |
-| AI 代理权限收敛 | `api/handlers/ai_proxy.rs` | 客户端自带端点（`useServerConfig=false`，含 `fullUrl=true`）仅管理员可用；服务端配置端点按 `enableAiModel` 判定 |
+| AI 代理 | `api/handlers/ai_proxy.rs` | 客户端自带端点（`useServerConfig=false`，含 `fullUrl=true`）能把服务端当成向任意地址发 POST 的通用代理；单用户下登录者即所有者，不再收敛，出站安全由 URL 守卫（`ALLOW_PRIVATE_NETWORK`）兜底 |
 | 前端 HTML 消毒 | `frontend/src/utils/sanitize.ts` | 书源正文经 DOMPurify 白名单消毒后才进 `v-html`（保留排版标签，剥脚本/事件属性/iframe） |
 | CORS | `api/router.rs` | 默认仅同源（不下发任何 CORS 头）；跨域需 `CORS_ALLOWED_ORIGINS` 显式白名单 |
 | 令牌 | `auth/`、`service/user_service.rs` | HS256 JWT；签名密钥来自 `JWT_SECRET` 或自动生成并持久化到 `storage/jwt_secret`；`token_version` 提供即时撤销 |
@@ -223,7 +225,7 @@ SQLite 表：
 | 表 | 主键 | 用途 |
 |----|------|------|
 | `book_sources` | `(user_ns, book_source_url)` | 书源配置（整份 JSON 存储） |
-| `users` | `username` | 用户、token、权限开关（`is_admin`、`enable_webdav`、`enable_local_store`、`enable_ai_model`） |
+| `users` | `username` | 唯一账号与 `token_version`（撤销版本号） |
 | `json_documents` | `(namespace, name)` | 通用 JSON 文档存取（用户配置、书源变量等复用这张表） |
 | `ai_book_memories` | `(user_ns, book_key)` | AI 资料 |
 
@@ -235,7 +237,6 @@ SQLite 表：
 - **书源存整份 JSON** 而不是打散成列 —— 书源字段会随阅读3.0 规范演进，打散后每次都要改表；整份存换来结构灵活性，代价是无法按字段建索引。
 - **章节正文存文件而不是数据库** —— 单章动辄数十 KB 且数量极多，塞进 SQLite 会让库文件迅速膨胀并拖慢备份。文件用 MD5 命名，天然去重。
 - **`json_documents` 通用化** —— 用户配置、书源变量等零散键值不再各建一张表，减少迁移次数。
-- **权限用布尔列而非角色表** —— 目前只有 `is_admin` 加三个功能开关（WebDAV / 本地存储 / AI 模型），用列更直观；若将来权限维度继续膨胀，需要再拆表。
 
 `storage/` 整个目录属于运行期数据，已被 gitignore，清理时不要误删。
 

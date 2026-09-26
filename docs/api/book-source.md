@@ -43,14 +43,6 @@ GET /reader3/getBookSource
 
 响应：`data` 为该书源对象。
 
-## 获取默认书源归属用户
-
-```text
-GET /reader3/getDefaultBookSourceOwner
-```
-
-仅安全模式且管理员可用。响应：`data` 形如 `{ "username": "用户名" }`；未配置安全模式时 `username` 为 `null`。
-
 ## 登录书源
 
 ```text
@@ -166,18 +158,6 @@ POST /reader3/testBookSources
 | `concurrent` | number | 否 | 并发数，默认 12，范围 1–12 |
 
 响应：`data` 形如 `{ "total": 10, "valid": 8, "invalid": 2, "markedInvalid": 2, "results": [ ... ] }`。
-
-## 设为默认书源
-
-```text
-POST /reader3/setAsDefaultBookSources
-```
-
-仅管理员可用。请求参数：
-
-| 参数 | 类型 | 必填 | 说明 |
-|------|------|------|------|
-| `username` | string | 是 | 目标用户名，将其书源设为默认 |
 
 ## 远程读取书源文件
 

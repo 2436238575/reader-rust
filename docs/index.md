@@ -30,8 +30,8 @@ features:
     title: 数据持久化
     details: SQLite 存储书源与用户数据，章节正文以文件形式缓存
   - icon: 👥
-    title: 多用户
-    details: 账号体系、数据按命名空间隔离、书架与本地书籍配额
+    title: 单用户账号
+    details: 首次启动自动建号，初始密码打印到日志，改密即吊销其他设备的登录态
   - icon: 📱
     title: 配套 Web 界面
     details: Vue 3 + TypeScript，支持亮暗主题、简繁转换、TTS 与 PWA 离线阅读

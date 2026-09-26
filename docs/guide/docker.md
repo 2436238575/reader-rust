@@ -81,7 +81,7 @@ docker run -d \
   -p 8080:8080 \
   -v $(pwd)/storage:/app/storage \
   -e JWT_SECRET=your-random-secret \
-  -e INVITE_CODE=your-invite-code \
+  -e ADMIN_PASSWORD=your-strong-password \
   -e LOG_LEVEL=debug \
   givenge/reader-rust:latest
 ```

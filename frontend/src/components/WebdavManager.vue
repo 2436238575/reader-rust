@@ -18,12 +18,7 @@
             </button>
           </header>
 
-          <div v-if="!webdavAvailable" class="notice warning">
-            <strong>{{ unavailableTitle }}</strong>
-            <span>{{ unavailableMessage }}</span>
-          </div>
-
-          <template v-else>
+          <template>
             <div class="toolbar">
               <div class="toolbar-left">
                 <button class="btn btn-primary" :disabled="working" @click="createBackup">
@@ -123,7 +118,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { ref, watch } from 'vue'
 import { useAppStore } from '../stores/app'
 import {
   deleteWebdavFile,
@@ -161,24 +156,10 @@ const loading = ref(false)
 const working = ref(false)
 const errorMessage = ref('')
 
-const webdavAvailable = computed(
-  () => appStore.isLoggedIn && !!appStore.userInfo?.enableWebdav,
-)
-
-const unavailableTitle = computed(() =>
-  appStore.isLoggedIn ? '当前账号尚未开启服务器备份' : '需要先登录后才能使用服务器备份',
-)
-
-const unavailableMessage = computed(() => {
-  return appStore.isLoggedIn
-    ? '请在用户管理中为当前账号开启服务器备份权限后再使用备份与恢复功能。'
-    : '登录后如果账号具备备份权限，就可以把数据备份到服务器并执行恢复。'
-})
-
 watch(
   () => props.modelValue,
   (visible) => {
-    if (visible && webdavAvailable.value) {
+    if (visible && appStore.isLoggedIn) {
       void loadFiles(currentPath.value)
     }
     if (!visible) {
