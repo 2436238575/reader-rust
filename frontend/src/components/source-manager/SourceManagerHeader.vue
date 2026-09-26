@@ -66,7 +66,7 @@ defineEmits<{
 <style scoped>
 .source-manager-header {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   justify-content: space-between;
   gap: 16px;
   padding: calc(var(--space-5) + var(--safe-area-top)) var(--space-6) var(--space-5);
@@ -97,9 +97,10 @@ defineEmits<{
   gap: var(--space-2);
 }
 
+/* 图标按钮与其他弹窗统一：无边框，悬停出底色 */
 .icon-btn {
   border-radius: var(--radius-md);
-  border: 1px solid var(--color-border);
+  border: none;
   background: transparent;
   cursor: pointer;
   transition: all var(--duration-fast);

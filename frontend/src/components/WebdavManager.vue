@@ -402,7 +402,7 @@ async function restoreBackup(entry: EntryRow) {
 
 .modal-header {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   justify-content: space-between;
   gap: var(--space-4);
   padding: var(--space-5) var(--space-6);

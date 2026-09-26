@@ -4,7 +4,7 @@
       <div v-if="modelValue" class="modal-overlay" @click="close"></div>
     </Transition>
 
-    <Transition name="scale">
+    <Transition :name="isMobileLayout ? 'slide-right' : 'scale'">
       <div v-if="modelValue" class="modal-container" @click.self="close">
         <div class="source-modal">
           <SourceManagerHeader
@@ -118,7 +118,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch } from 'vue'
+import { ref, computed, watch, onBeforeUnmount, onMounted } from 'vue'
 import { API_BASE } from '../utils/appBase'
 import {
   getBookSources,
@@ -165,6 +165,15 @@ const emit = defineEmits<{
 }>()
 
 const appStore = useAppStore()
+
+// 移动端整屏铺开（对齐导航菜单/设置抽屉的断点），入场动画随之换成侧滑
+const mobileQuery = typeof window !== 'undefined' ? window.matchMedia('(max-width: 767px)') : null
+const isMobileLayout = ref(mobileQuery?.matches ?? false)
+function handleLayoutChange() {
+  isMobileLayout.value = mobileQuery?.matches ?? false
+}
+onMounted(() => mobileQuery?.addEventListener('change', handleLayoutChange))
+onBeforeUnmount(() => mobileQuery?.removeEventListener('change', handleLayoutChange))
 
 const sources = ref<BookSource[]>([])
 const loading = ref(false)
@@ -773,17 +782,20 @@ watch(() => props.modelValue, (v) => {
   }
 }
 
-@media (max-width: 420px) {
+/* 移动端与其他管理页一致：整屏铺开，遮罩被完全盖住 */
+@media (max-width: 767px) {
+  .modal-overlay {
+    display: none;
+  }
+
   .modal-container {
-    padding:
-      calc(8px + var(--safe-area-top))
-      calc(8px + var(--safe-area-right))
-      calc(8px + var(--safe-area-bottom))
-      calc(8px + var(--safe-area-left));
+    padding: 0;
   }
 
   .source-modal {
-    border-radius: 20px;
+    height: 100%;
+    max-height: none;
+    border-radius: 0;
   }
 }
 </style>

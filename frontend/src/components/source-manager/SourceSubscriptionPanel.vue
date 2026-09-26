@@ -97,7 +97,7 @@ function formatTime(ts: number) {
 
 .subscription-header {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   justify-content: space-between;
   gap: 16px;
 }
@@ -204,10 +204,19 @@ function formatTime(ts: number) {
   opacity: 0;
 }
 
-@media (max-width: 640px) {
+@media (max-width: 767px) {
   .subscription-backdrop {
-    align-items: stretch;
-    padding: 12px;
+    padding: 0;
+  }
+
+  .subscription-panel {
+    width: 100%;
+    height: 100%;
+    max-height: none;
+    border: none;
+    border-radius: 0;
+    padding-top: calc(20px + var(--safe-area-top));
+    padding-bottom: calc(20px + var(--safe-area-bottom));
   }
 
   .remote-form,
