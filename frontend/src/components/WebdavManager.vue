@@ -3,7 +3,7 @@
     <Transition name="fade">
       <div v-if="modelValue" class="modal-overlay" @click="close"></div>
     </Transition>
-    <Transition name="scale">
+    <Transition :name="isMobileLayout ? 'slide-right' : 'scale'">
       <div v-if="modelValue" class="modal-container" @click.self="close">
         <section class="webdav-modal">
           <header class="modal-header">
@@ -116,7 +116,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, watch } from 'vue'
+import { onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useAppStore } from '../stores/app'
 import {
   deleteWebdavFile,
@@ -153,6 +153,15 @@ const selectedPaths = ref<string[]>([])
 const loading = ref(false)
 const working = ref(false)
 const errorMessage = ref('')
+
+// 移动端整屏铺开（对齐导航菜单/设置抽屉的断点），入场动画随之换成侧滑
+const mobileQuery = typeof window !== 'undefined' ? window.matchMedia('(max-width: 767px)') : null
+const isMobileLayout = ref(mobileQuery?.matches ?? false)
+function handleLayoutChange() {
+  isMobileLayout.value = mobileQuery?.matches ?? false
+}
+onMounted(() => mobileQuery?.addEventListener('change', handleLayoutChange))
+onBeforeUnmount(() => mobileQuery?.removeEventListener('change', handleLayoutChange))
 
 watch(
   () => props.modelValue,
@@ -568,13 +577,26 @@ async function restoreBackup(entry: EntryRow) {
   display: none;
 }
 
-@media (max-width: 768px) {
+/* 移动端与设置抽屉一样整屏铺开；遮罩被完全盖住，直接隐藏 */
+@media (max-width: 767px) {
+  .modal-overlay {
+    display: none;
+  }
+
   .modal-container {
-    padding: var(--space-3);
+    padding: 0;
   }
 
   .webdav-modal {
-    max-height: 92vh;
+    width: 100%;
+    height: 100%;
+    max-height: none;
+    border: none;
+    border-radius: 0;
+  }
+
+  .modal-header {
+    padding-top: calc(var(--space-5) + var(--safe-area-top));
   }
 
   .toolbar {
@@ -584,6 +606,10 @@ async function restoreBackup(entry: EntryRow) {
 
   .toolbar-left {
     width: 100%;
+  }
+
+  .file-list {
+    padding-bottom: calc(var(--space-6) + var(--safe-area-bottom));
   }
 
   .file-row {
