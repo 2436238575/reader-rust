@@ -599,18 +599,13 @@ async function restoreBackup(entry: EntryRow) {
     padding-top: calc(var(--space-5) + var(--safe-area-top));
   }
 
+  /* 四个按钮同一行排得开；极窄屏换行时删除按钮也贴右 */
   .toolbar {
-    flex-direction: column;
-    align-items: stretch;
+    flex-wrap: wrap;
   }
 
-  /* 删除按钮不跟随拉伸，自然宽度右对齐 */
   .toolbar > .btn-danger {
-    align-self: flex-end;
-  }
-
-  .toolbar-left {
-    width: 100%;
+    margin-left: auto;
   }
 
   .file-list {
