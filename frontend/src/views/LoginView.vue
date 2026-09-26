@@ -41,8 +41,6 @@
           登 录
         </button>
       </form>
-
-      <p class="switch-mode">账号由服务端启动时创建，初始密码见启动日志</p>
     </div>
   </div>
 </template>
