@@ -6,6 +6,7 @@
 use axum::{
     extract::{Query, State},
     http::StatusCode,
+    response::Response,
     routing::get,
     Json, Router,
 };
@@ -18,6 +19,19 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 const BOOK_ID: &str = "7406592861791063064";
+/// 1x1 的最小 JPEG。
+const TINY_JPEG: &[u8] = &[
+    0xFF, 0xD8, 0xFF, 0xDB, 0x00, 0x43, 0x00, 0x08, 0x06, 0x06, 0x07, 0x06, 0x05, 0x08, 0x07, 0x07,
+    0x07, 0x09, 0x09, 0x08, 0x0A, 0x0C, 0x14, 0x0D, 0x0C, 0x0B, 0x0B, 0x0C, 0x19, 0x12, 0x13, 0x0F,
+    0x14, 0x1D, 0x1A, 0x1F, 0x1E, 0x1D, 0x1A, 0x1C, 0x1C, 0x20, 0x24, 0x2E, 0x27, 0x20, 0x22, 0x2C,
+    0x23, 0x1C, 0x1C, 0x28, 0x37, 0x29, 0x2C, 0x30, 0x31, 0x34, 0x34, 0x34, 0x1F, 0x27, 0x39, 0x3D,
+    0x38, 0x32, 0x3C, 0x2E, 0x33, 0x34, 0x32, 0xFF, 0xC0, 0x00, 0x0B, 0x08, 0x00, 0x01, 0x00, 0x01,
+    0x01, 0x01, 0x11, 0x00, 0xFF, 0xC4, 0x00, 0x14, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x03, 0xFF, 0xC4, 0x00, 0x14, 0x10, 0x01,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0xFF, 0xDA, 0x00, 0x08, 0x01, 0x01, 0x00, 0x00, 0x3F, 0x00, 0x37, 0xFF, 0xD9,
+];
+
 const ITEM_ID: &str = "7406592932351836696";
 
 type HitCounter = Arc<Mutex<HashMap<String, usize>>>;
@@ -39,7 +53,7 @@ async fn start_upstream() -> (String, HitCounter) {
             "item_id": ITEM_ID,
             "has_image": true,
             "images": [{
-                "url": "https://img.example/857a72fe.jpeg?x-expires=1884944022&x-signature=abc%3D",
+                "url": "/chapter-image.jpeg?x-expires=1884944022&x-signature=abc%3D",
                 "width": 1400,
                 "height": 933,
                 "para_index": 2,
@@ -80,6 +94,17 @@ async fn start_upstream() -> (String, HitCounter) {
                     };
                     async move { Json(body) }
                 }
+            }),
+        )
+        .route(
+            "/chapter-image.jpeg",
+            get(|| async {
+                let mut resp = Response::new(axum::body::Body::from(TINY_JPEG.to_vec()));
+                resp.headers_mut().insert(
+                    axum::http::header::CONTENT_TYPE,
+                    axum::http::HeaderValue::from_static("image/jpeg"),
+                );
+                resp
             }),
         )
         .route(
@@ -278,11 +303,25 @@ async fn chapter_images_come_from_the_source_rule() {
     assert_eq!(images[0]["paraIndex"], json!(2));
     assert_eq!(images[0]["width"], json!(1400));
     assert_eq!(images[0]["height"], json!(933));
-    // 图片地址原样返回（带签名参数），由客户端直接取用
-    assert!(images[0]["url"]
-        .as_str()
-        .unwrap()
-        .starts_with("https://img.example/857a72fe.jpeg"));
+    // 图片地址收口成本站取图接口：不再把带签名的书源地址交给前端
+    let route = images[0]["url"].as_str().unwrap();
+    assert!(route.starts_with("/reader3/image/"), "实际 {route}");
+    assert!(
+        !route.contains("x-signature"),
+        "不该把签名地址交给前端：{route}"
+    );
+
+    // 真取一次：能拿到上游那张图
+    let resp = server
+        .client
+        .get(format!("{}{route}", server.base_url))
+        .query(&[("accessToken", server.token.as_str())])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK, "配图应当取得到：{route}");
+    let bytes = resp.bytes().await.unwrap();
+    assert_eq!(&bytes[..2], &[0xFF, 0xD8], "应当是 JPEG");
 }
 
 #[tokio::test]

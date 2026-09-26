@@ -7,6 +7,7 @@
 use axum::{
     extract::{Query, State},
     http::StatusCode,
+    response::{IntoResponse, Response},
     routing::get,
     Json, Router,
 };
@@ -20,6 +21,19 @@ use std::sync::{Arc, Mutex};
 
 const BOOK_ID: &str = "7143038691944959011";
 const ITEM_ID: &str = "7173615518858150414";
+/// 1x1 的最小 JPEG：验证配图能真的取回来。
+const TINY_JPEG: &[u8] = &[
+    0xFF, 0xD8, 0xFF, 0xDB, 0x00, 0x43, 0x00, 0x08, 0x06, 0x06, 0x07, 0x06, 0x05, 0x08, 0x07, 0x07,
+    0x07, 0x09, 0x09, 0x08, 0x0A, 0x0C, 0x14, 0x0D, 0x0C, 0x0B, 0x0B, 0x0C, 0x19, 0x12, 0x13, 0x0F,
+    0x14, 0x1D, 0x1A, 0x1F, 0x1E, 0x1D, 0x1A, 0x1C, 0x1C, 0x20, 0x24, 0x2E, 0x27, 0x20, 0x22, 0x2C,
+    0x23, 0x1C, 0x1C, 0x28, 0x37, 0x29, 0x2C, 0x30, 0x31, 0x34, 0x34, 0x34, 0x1F, 0x27, 0x39, 0x3D,
+    0x38, 0x32, 0x3C, 0x2E, 0x33, 0x34, 0x32, 0xFF, 0xC0, 0x00, 0x0B, 0x08, 0x00, 0x01, 0x00, 0x01,
+    0x01, 0x01, 0x11, 0x00, 0xFF, 0xC4, 0x00, 0x14, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x03, 0xFF, 0xC4, 0x00, 0x14, 0x10, 0x01,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0xFF, 0xDA, 0x00, 0x08, 0x01, 0x01, 0x00, 0x00, 0x3F, 0x00, 0x37, 0xFF, 0xD9,
+];
+
 const ITEM_VERSION: &str = "52754e01aa26a8dbd8c15cbcf7f4f64b_1_v5";
 
 type HitCounter = Arc<Mutex<HashMap<String, usize>>>;
@@ -76,9 +90,11 @@ async fn start_upstream() -> (String, HitCounter) {
                 "digg_count": 216,
                 "reply_count": 1,
                 // 番茄同一张图给多个格式变体，后端按原序返回，由客户端挑
+                // 同一张图的两个格式变体：HEIC 那条取不到（模拟上游只认某一种），
+                // JPEG 那条可用——用来验证后端挑的是能渲染的那张
                 "image_url": [
-                    "https://img.example/a.heic?sign=1",
-                    "https://img.example/a.jpeg?sign=2"
+                    "/a.heic?sign=1",
+                    "/a.jpeg?sign=2"
                 ],
                 "user_info": { "user_name": "读者丙" },
                 "reply_list": [
@@ -116,6 +132,21 @@ async fn start_upstream() -> (String, HitCounter) {
                     }
                     async move { Json(body) }
                 }
+            }),
+        )
+        .route(
+            "/a.heic",
+            get(|| async { StatusCode::FORBIDDEN.into_response() }),
+        )
+        .route(
+            "/a.jpeg",
+            get(|| async {
+                let mut resp = Response::new(axum::body::Body::from(TINY_JPEG.to_vec()));
+                resp.headers_mut().insert(
+                    axum::http::header::CONTENT_TYPE,
+                    axum::http::HeaderValue::from_static("image/jpeg"),
+                );
+                resp
             }),
         )
         .route(
@@ -411,14 +442,24 @@ async fn chapter_and_para_comments_are_parsed_from_the_source_rules() {
     assert_eq!(item["replyCount"], json!(1));
     assert_eq!(item["replies"][0]["name"], json!("读者丁"));
     assert_eq!(item["replies"][0]["content"], json!("同感"));
-    // 图片按原序返回（HEIC 在前、JPEG 在后），挑格式是客户端的事
-    assert_eq!(
-        item["images"],
-        json!([
-            "https://img.example/a.heic?sign=1",
-            "https://img.example/a.jpeg?sign=2"
-        ])
-    );
+    // 配图收口成本站取图地址：多格式变体由后端挑一张能渲染的（HEIC 那条取不到）
+    let images = item["images"].as_array().unwrap();
+    assert_eq!(images.len(), 1, "应当只留一张：{images:?}");
+    let route = images[0].as_str().unwrap();
+    assert!(route.starts_with("/reader3/image/"), "实际 {route}");
+    assert!(!route.contains("heic"), "不该挑 HEIC 变体：{route}");
+
+    // 真取一次：挑对了变体才会 200（HEIC 那条上游 403）
+    let resp = server
+        .client
+        .get(format!("{}{route}", server.base_url))
+        .query(&[("accessToken", server.token.as_str())])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK, "配图应当取得到：{route}");
+    let bytes = resp.bytes().await.unwrap();
+    assert_eq!(&bytes[..2], &[0xFF, 0xD8], "应当是 JPEG");
 }
 
 #[tokio::test]

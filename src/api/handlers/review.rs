@@ -147,10 +147,26 @@ fn required(value: &Option<String>, name: &str) -> Result<String, AppError> {
         .ok_or_else(|| AppError::BadRequest(format!("{name} required")))
 }
 
-fn ok_json<T: serde::Serialize>(value: T) -> Json<ApiResponse<Value>> {
-    Json(ApiResponse::ok(
-        serde_json::to_value(value).unwrap_or_default(),
-    ))
+/// 评论配图收口到本站取图接口（签名会过期，id 不会），并带上书籍上下文。
+///
+/// 站点给的多个格式变体在这里挑一张（管道会把 HEIC 转成 JPEG），
+/// 前端拿到的是单张 `/reader3/image/<id>`。
+async fn ok_json_with_images<T: serde::Serialize>(
+    state: &AppState,
+    ctx: &ReviewContext,
+    value: T,
+) -> Json<ApiResponse<Value>> {
+    let mut value = serde_json::to_value(value).unwrap_or_default();
+    state
+        .image_service
+        .rewrite_image_lists(
+            &mut value,
+            "review",
+            Some(&ctx.book_url),
+            Some(&ctx.source.book_source_url),
+        )
+        .await;
+    Json(ApiResponse::ok(value))
 }
 
 /// 章评：本章评论列表。
@@ -176,7 +192,7 @@ pub async fn get_chapter_comments(
             ctx.refresh,
         )
         .await?;
-    Ok(ok_json(result))
+    Ok(ok_json_with_images(&state, &ctx, result).await)
 }
 
 /// 段评概览：本章哪些段落有段评、各有多少条。
@@ -199,7 +215,7 @@ pub async fn get_para_comment_index(
             ctx.refresh,
         )
         .await?;
-    Ok(ok_json(result))
+    Ok(ok_json_with_images(&state, &ctx, result).await)
 }
 
 /// 段评：指定段落的评论列表。
@@ -230,5 +246,5 @@ pub async fn get_para_comments(
             ctx.refresh,
         )
         .await?;
-    Ok(ok_json(result))
+    Ok(ok_json_with_images(&state, &ctx, result).await)
 }

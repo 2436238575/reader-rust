@@ -211,6 +211,33 @@ impl ImageService {
         }
     }
 
+    /// 把响应里评论配图（`images` 字符串数组）收口成单张本站取图地址。
+    ///
+    /// 站点常为同一张图给多个格式变体（番茄同时给 HEIC 与 JPEG），这里替客户端
+    /// 挑一张能渲染的：管道会把 HEIC 转成 JPEG，所以只要留一张就够，
+    /// 留多张反而会在前端渲染出重复的图。
+    pub async fn rewrite_image_lists(
+        &self,
+        value: &mut Value,
+        kind: &str,
+        book_url: Option<&str>,
+        book_source_url: Option<&str>,
+    ) {
+        let mut targets = Vec::new();
+        collect_string_arrays(value, "", "images", &mut targets);
+        for target in targets {
+            let Some(picked) = pick_renderable(&target.urls) else {
+                continue;
+            };
+            let Some(id) = self.register(kind, picked, book_url, book_source_url).await else {
+                continue;
+            };
+            if let Some(slot) = value.pointer_mut(&target.pointer) {
+                *slot = Value::Array(vec![Value::String(Self::route(&id))]);
+            }
+        }
+    }
+
     /// 取图：缓存命中直接返回，否则抓上游（必要时转码）后落盘。
     pub async fn load(&self, id: &str) -> Result<(Vec<u8>, String), AppError> {
         let Some(mut record) = self.record(id).await else {
@@ -457,6 +484,77 @@ fn escape_pointer(key: &str) -> String {
     key.replace('~', "~0").replace('/', "~1")
 }
 
+/// 待改写的图片数组：JSON 指针 + 候选地址。
+struct ImageListTarget {
+    pointer: String,
+    urls: Vec<String>,
+}
+
+/// 收集形如 `"images": ["https://…", …]` 的字符串数组（评论配图就是这个形状）。
+///
+/// 章节配图接口里的 `images` 是对象数组，形状不同，不会被这里命中——
+/// 那条路在 handler 里按类型直接改写。
+fn collect_string_arrays(
+    value: &Value,
+    pointer: &str,
+    key_filter: &str,
+    out: &mut Vec<ImageListTarget>,
+) {
+    match value {
+        Value::Object(map) => {
+            for (key, child) in map {
+                let child_pointer = format!("{pointer}/{}", escape_pointer(key));
+                match child {
+                    Value::Array(items) if key == key_filter => {
+                        let urls: Vec<String> = items
+                            .iter()
+                            .filter_map(Value::as_str)
+                            .filter(|url| url.starts_with("http://") || url.starts_with("https://"))
+                            .map(str::to_string)
+                            .collect();
+                        if !urls.is_empty() {
+                            out.push(ImageListTarget {
+                                pointer: child_pointer,
+                                urls,
+                            });
+                        }
+                    }
+                    Value::Object(_) | Value::Array(_) => {
+                        collect_string_arrays(child, &child_pointer, key_filter, out)
+                    }
+                    _ => {}
+                }
+            }
+        }
+        Value::Array(items) => {
+            for (index, child) in items.iter().enumerate() {
+                let child_pointer = format!("{pointer}/{index}");
+                if matches!(child, Value::Object(_) | Value::Array(_)) {
+                    collect_string_arrays(child, &child_pointer, key_filter, out);
+                }
+            }
+        }
+        _ => {}
+    }
+}
+
+/// 浏览器能直接渲染的位图扩展名（与前端 `RENDERABLE_IMAGE_EXTENSIONS` 一致）。
+const RENDERABLE_EXTS: &[&str] = &[
+    "jpg", "jpeg", "png", "gif", "webp", "awebp", "avif", "bmp", "ico",
+];
+
+/// 从同一张图的多个格式变体里挑一个能渲染的；都不认识就取第一个
+/// （HEIC 会由管道转成 JPEG，所以「取第一个」也是可用的兜底）。
+fn pick_renderable(urls: &[String]) -> Option<&String> {
+    urls.iter()
+        .find(|url| {
+            file_ext(url)
+                .map(|ext| RENDERABLE_EXTS.contains(&ext.as_str()))
+                .unwrap_or(false)
+        })
+        .or_else(|| urls.first())
+}
+
 /// 图片缓存目录（供清理接口使用）。
 pub fn image_cache_dir(storage_dir: &Path) -> PathBuf {
     storage_dir.join(IMAGE_DIR)
@@ -547,6 +645,38 @@ mod tests {
             url: "https://host/a.heic".to_string(),
         };
         assert!(transcode(image).is_err());
+    }
+
+    #[test]
+    fn pick_renderable_prefers_renderable_variants() {
+        // 番茄同时给 HEIC 与 JPEG：挑能渲染的那张
+        let urls = vec![
+            "https://host/a.heic?sign=1".to_string(),
+            "https://host/a.jpeg?sign=2".to_string(),
+        ];
+        assert_eq!(pick_renderable(&urls).unwrap(), &urls[1]);
+
+        // 只有 HEIC 时退回第一个（管道会把它转成 JPEG）
+        let heic_only = vec!["https://host/a.heic".to_string()];
+        assert_eq!(pick_renderable(&heic_only).unwrap(), &heic_only[0]);
+
+        assert!(pick_renderable(&[]).is_none());
+    }
+
+    #[test]
+    fn string_arrays_are_collected_for_rewrite() {
+        let value = json!({
+            "data": { "items": [
+                { "content": "评论", "images": ["https://host/a.heic", "https://host/a.jpeg"] },
+                { "content": "没图", "images": [] }
+            ]},
+            "other": { "images": [{"url": "https://host/b.jpg"}] }
+        });
+        let mut targets = Vec::new();
+        collect_string_arrays(&value, "", "images", &mut targets);
+        assert_eq!(targets.len(), 1, "空数组与对象数组都不该被收集");
+        assert_eq!(targets[0].pointer, "/data/items/0/images");
+        assert_eq!(targets[0].urls.len(), 2);
     }
 
     #[test]

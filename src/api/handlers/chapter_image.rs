@@ -10,6 +10,7 @@ use crate::api::AppState;
 use crate::auth::CurrentUser;
 use crate::error::error::{ApiResponse, AppError};
 use crate::model::book_source::BookSource;
+use crate::service::image_service::ImageService;
 
 /// 章节配图接口的入参。
 ///
@@ -93,10 +94,21 @@ pub async fn get_chapter_images(
         Some(&book_url),
     )
     .await?;
-    let result = state
+    let mut result = state
         .book_service
         .get_chapter_images(&user_ns, &source, &chapter_url)
         .await?;
+    // 图片地址收口到本站取图接口：签名会过期，id 不会
+    let source_url = source.book_source_url.clone();
+    for image in result.images.iter_mut() {
+        if let Some(id) = state
+            .image_service
+            .register("chapter", &image.url, Some(&book_url), Some(&source_url))
+            .await
+        {
+            image.url = ImageService::route(&id);
+        }
+    }
     Ok(Json(ApiResponse::ok(
         serde_json::to_value(result).unwrap_or_default(),
     )))
