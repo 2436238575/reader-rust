@@ -56,12 +56,27 @@
           <span v-if="hasVersionUpdateReminder" class="update-indicator" aria-hidden="true"></span>
         </button>
 
+        <button
+          v-if="!isLoginPage"
+          class="topbar-btn menu-btn"
+          type="button"
+          title="菜单"
+          aria-label="打开菜单"
+          @click="showMobileMenu = true"
+        >
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M3 6h18M3 12h18M3 18h18" />
+          </svg>
+        </button>
+
         <button v-else-if="!isLoginPage" class="topbar-btn user-btn" @click="openSettings" title="用户">
           <div class="user-avatar">{{ userInfo?.username?.charAt(0)?.toUpperCase() || 'U' }}</div>
           <span v-if="hasVersionUpdateReminder" class="update-indicator" aria-hidden="true"></span>
         </button>
       </div>
     </div>
+
+    <AppMobileMenu :open="showMobileMenu" @close="showMobileMenu = false" />
   </header>
 </template>
 
@@ -71,6 +86,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { useAppStore } from '../stores/app'
 import { useBookshelfStore } from '../stores/bookshelf'
 import { useExploreStore } from '../stores/explore'
+import AppMobileMenu from './AppMobileMenu.vue'
 
 const router = useRouter()
 const route = useRoute()
@@ -97,6 +113,7 @@ const activeNavKey = computed<NavKey>(() => {
 const showNavTabs = computed(() => route.name !== 'login')
 const isLoginPage = computed(() => route.name === 'login')
 
+const showMobileMenu = ref(false)
 const theme = computed(() => appStore.theme)
 const isLoggedIn = computed(() => appStore.isLoggedIn)
 const userInfo = computed(() => appStore.userInfo)
@@ -333,6 +350,18 @@ function openSettings() {
 @media (max-width: 767px) {
   .topbar-nav {
     display: none;
+  }
+}
+
+/* 汉堡菜单只在移动端出现（桌面端用顶栏 Tab 导航）；
+   复合选择器是为了不被后面的 .topbar-btn { display: flex } 盖掉 */
+.topbar-btn.menu-btn {
+  display: none;
+}
+
+@media (max-width: 767px) {
+  .topbar-btn.menu-btn {
+    display: flex;
   }
 }
 
