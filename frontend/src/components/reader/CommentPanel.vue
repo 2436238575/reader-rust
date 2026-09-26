@@ -99,6 +99,7 @@
 <script setup lang="ts">
 import { computed, nextTick, ref, watch } from 'vue'
 import type { ReviewItem, ReviewPage } from '../../types'
+import { withAuthQuery } from '../../api/bookshelf'
 import ImageLightbox from './ImageLightbox.vue'
 import type { ThemePreset } from '../../stores/reader'
 import { getChapterComments, getParaComments, type ReviewSort } from '../../api/review'
@@ -178,7 +179,9 @@ async function reload() {
   sort.value = 'hot'
   const initial = props.mode === 'chapter' ? props.initialPage : null
   if (initial && initial.items?.length) {
-    items.value = initial.items
+    // 首屏那一页由阅读器 store 预先取好，同样要过一遍配图规范化
+    // （补令牌、挑可渲染的格式），否则首屏的配图会挂
+    items.value = initial.items.map(normalizeItem)
     total.value = initial.total
     page.value = initial.page || 1
     hasMore.value = initial.hasMore
@@ -288,14 +291,18 @@ function restoreScrollAnchor(anchor: ScrollAnchor | null) {
 /**
  * 一条评论的配图。
  *
- * 站点常为同一张图给出多个格式变体（番茄同时给 HEIC 和 JPEG），
- * 这里挑浏览器能直接渲染的第一个；都不认识时退回第一个，交给 `onerror` 兜底。
+ * 后端已经把配图收口成单张 `/reader3/image/<id>`（替我们挑好格式、必要时转成 JPEG），
+ * 这种地址补个令牌直接用；只有历史缓存里还留着书源原始地址时才需要在多个
+ * 格式变体里挑（番茄同时给 HEIC 和 JPEG，浏览器渲染不了 HEIC）。
  */
 function normalizeItem(item: ReviewItem): ReviewItem {
   const urls = item.images || []
   if (!urls.length) return { ...item, images: [] }
+  if (urls.every((url) => url.startsWith('/reader3/image/'))) {
+    return { ...item, images: urls.map((url) => withAuthQuery(url)) }
+  }
   const renderable = urls.find((url) => RENDERABLE_IMAGE_EXTENSIONS.includes(extensionOf(url)))
-  return { ...item, images: [renderable || urls[0]] }
+  return { ...item, images: [withAuthQuery(renderable || urls[0])] }
 }
 
 /** Unix 秒/毫秒时间戳；认不出来返回 null（排序时保持站点顺序）。 */

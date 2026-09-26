@@ -647,9 +647,11 @@ function renderChapterImageFigures(images: ChapterImage[], paragraphText: string
         caption && caption !== paragraphText
           ? `<figcaption>${escapeHtmlText(caption)}</figcaption>`
           : ''
+      // 后端把配图收口成 /reader3/image/<id>：<img> 带不了请求头，令牌只能进查询串
+      const src = withAuthQuery(image.url)
       return (
         '<figure class="chapter-figure">' +
-        `<img src="${escapeHtmlAttr(image.url)}" alt="${escapeHtmlAttr(caption)}"` +
+        `<img src="${escapeHtmlAttr(src)}" alt="${escapeHtmlAttr(caption)}"` +
         `${size} loading="lazy" referrerpolicy="no-referrer">` +
         `${captionHtml}</figure>`
       )
