@@ -248,8 +248,8 @@ ul, ol {
 /* ─── Toast / Message ─── */
 .toast-container {
   position: fixed;
-  top: var(--space-6);
-  right: var(--space-6);
+  right: calc(var(--space-6) + var(--safe-area-right));
+  bottom: calc(var(--space-6) + var(--safe-area-bottom));
   z-index: var(--z-toast);
   display: flex;
   flex-direction: column;
