@@ -253,10 +253,13 @@ ul, ol {
   z-index: var(--z-toast);
   display: flex;
   flex-direction: column;
+  /* 各条独立取内容宽度并右对齐，不跟随最长那条拉伸 */
+  align-items: flex-end;
   gap: var(--space-2);
 }
 
 .toast {
+  max-width: min(380px, calc(100vw - 2 * var(--space-6)));
   padding: var(--space-3) var(--space-5);
   background: var(--color-bg-elevated);
   border: 1px solid var(--color-border);
