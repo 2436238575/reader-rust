@@ -604,6 +604,11 @@ async function restoreBackup(entry: EntryRow) {
     align-items: stretch;
   }
 
+  /* 删除按钮不跟随拉伸，自然宽度右对齐 */
+  .toolbar > .btn-danger {
+    align-self: flex-end;
+  }
+
   .toolbar-left {
     width: 100%;
   }
