@@ -96,7 +96,7 @@
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18">
                 <path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H20v20H6.5a2.5 2.5 0 0 1 0-5H20" />
               </svg>
-              书源管理
+              管理
             </h3>
             <div class="btn-group">
               <button class="btn btn-soft" @click="openSourceManager">
@@ -114,24 +114,12 @@
                 </svg>
                 刷新缓存
               </button>
-            </div>
-          </section>
-
-          <section class="drawer-section">
-            <h3 class="section-title">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18">
+              <button class="btn btn-soft" :disabled="!appStore.isLoggedIn" @click="openWebdavManager">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18">
                 <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
                 <path d="M7 10l5 5 5-5" />
                 <path d="M12 15V3" />
               </svg>
-              服务器备份
-            </h3>
-            <div class="status-card">
-              <span>{{ webdavStatusTitle }}</span>
-              <small>{{ webdavStatusMessage }}</small>
-            </div>
-            <div class="btn-group">
-              <button class="btn btn-soft" :disabled="!appStore.isLoggedIn" @click="openWebdavManager">
                 备份与恢复
               </button>
             </div>
@@ -225,14 +213,6 @@ const passwordForm = reactive({
   confirmPassword: '',
 })
 
-const webdavStatusTitle = computed(() => {
-  if (!appStore.isLoggedIn) return '登录后可用'
-  return '支持将数据备份到服务器'
-})
-const webdavStatusMessage = computed(() => {
-  if (!appStore.isLoggedIn) return '登录后可管理服务器中的备份文件。'
-  return '支持将数据备份到服务器、下载备份文件、上传备份文件并执行恢复。'
-})
 const versionUpdateTitle = computed(() => {
   const info = appStore.versionUpdate
   if (appStore.versionUpdateLoading && !info) return '正在检查服务端版本'

@@ -18,99 +18,97 @@
             </button>
           </header>
 
-          <template>
-            <div class="toolbar">
-              <div class="toolbar-left">
-                <button class="btn btn-primary" :disabled="working" @click="createBackup">
-                  备份当前数据
-                </button>
-                <button class="btn" :disabled="working || loading" @click="loadFiles(currentPath)">
-                  刷新列表
-                </button>
-                <button class="btn" :disabled="working" @click="triggerUpload">
-                  上传文件
-                </button>
-                <input
-                  ref="fileInputRef"
-                  type="file"
-                  multiple
-                  class="hidden-input"
-                  @change="handleUpload"
-                />
-              </div>
-              <button
-                class="btn btn-danger"
-                :disabled="working || selectedPaths.length === 0"
-                @click="removeSelected"
-              >
-                删除选中项
+          <div class="toolbar">
+            <div class="toolbar-left">
+              <button class="btn btn-primary" :disabled="working" @click="createBackup">
+                备份
               </button>
+              <button class="btn" :disabled="working || loading" @click="loadFiles(currentPath)">
+                刷新
+              </button>
+              <button class="btn" :disabled="working" @click="triggerUpload">
+                上传
+              </button>
+              <input
+                ref="fileInputRef"
+                type="file"
+                multiple
+                class="hidden-input"
+                @change="handleUpload"
+              />
             </div>
+            <button
+              class="btn btn-danger"
+              :disabled="working || selectedPaths.length === 0"
+              @click="removeSelected"
+            >
+              删除选中项
+            </button>
+          </div>
 
-            <div class="path-bar">
-              <span class="path-label">当前目录</span>
-              <code>{{ currentPath }}</code>
-            </div>
+          <div class="path-bar">
+            <span class="path-label">当前目录</span>
+            <code>{{ currentPath }}</code>
+          </div>
 
-            <div v-if="errorMessage" class="notice error">
-              <strong>加载失败</strong>
-              <span>{{ errorMessage }}</span>
-            </div>
+          <div v-if="errorMessage" class="notice error">
+            <strong>加载失败</strong>
+            <span>{{ errorMessage }}</span>
+          </div>
 
-            <div class="file-list">
-              <div v-if="loading" class="empty-state">正在加载文件列表...</div>
-              <div v-else-if="entries.length === 0" class="empty-state">当前目录为空</div>
-              <div v-else v-for="entry in entries" :key="entry.path" class="file-row">
-                <label class="file-check" v-if="!entry.toParent">
-                  <input
-                    type="checkbox"
-                    :checked="selectedPaths.includes(entry.path)"
-                    @change="toggleSelection(entry.path)"
-                  />
-                </label>
-                <span v-else class="file-check placeholder"></span>
+          <div class="file-list">
+            <div v-if="loading" class="empty-state">正在加载文件列表...</div>
+            <div v-else-if="entries.length === 0" class="empty-state">当前目录为空</div>
+            <div v-else v-for="entry in entries" :key="entry.path" class="file-row">
+              <label class="file-check" v-if="!entry.toParent">
+                <input
+                  type="checkbox"
+                  :checked="selectedPaths.includes(entry.path)"
+                  @change="toggleSelection(entry.path)"
+                />
+              </label>
+              <span v-else class="file-check placeholder"></span>
 
+              <button
+                class="file-main"
+                :class="{ directory: entry.isDirectory }"
+                @click="openEntry(entry)"
+              >
+                <span class="file-icon">{{ entry.isDirectory ? '📁' : '📄' }}</span>
+                <span class="file-name">{{ entry.name }}</span>
+              </button>
+
+              <span class="file-meta">{{ entry.isDirectory ? '目录' : formatSize(entry.size) }}</span>
+              <span class="file-meta">{{ formatDate(entry.lastModified) }}</span>
+
+              <div class="file-actions">
                 <button
-                  class="file-main"
-                  :class="{ directory: entry.isDirectory }"
-                  @click="openEntry(entry)"
+                  v-if="!entry.isDirectory && isBackupFile(entry.name)"
+                  class="btn btn-sm"
+                  :disabled="working"
+                  @click="restoreBackup(entry)"
                 >
-                  <span class="file-icon">{{ entry.isDirectory ? '📁' : '📄' }}</span>
-                  <span class="file-name">{{ entry.name }}</span>
+                  恢复
                 </button>
-
-                <span class="file-meta">{{ entry.isDirectory ? '目录' : formatSize(entry.size) }}</span>
-                <span class="file-meta">{{ formatDate(entry.lastModified) }}</span>
-
-                <div class="file-actions">
-                  <button
-                    v-if="!entry.isDirectory && isBackupFile(entry.name)"
-                    class="btn btn-sm"
-                    :disabled="working"
-                    @click="restoreBackup(entry)"
-                  >
-                    恢复
-                  </button>
-                  <button
-                    v-if="!entry.isDirectory"
-                    class="btn btn-sm"
-                    :disabled="working"
-                    @click="downloadEntry(entry)"
-                  >
-                    下载
-                  </button>
-                  <button
-                    v-if="!entry.toParent"
-                    class="btn btn-sm btn-danger"
-                    :disabled="working"
-                    @click="removeEntry(entry)"
-                  >
-                    删除
-                  </button>
-                </div>
+                <button
+                  v-if="!entry.isDirectory"
+                  class="btn btn-sm"
+                  :disabled="working"
+                  @click="downloadEntry(entry)"
+                >
+                  下载
+                </button>
+                <button
+                  v-if="!entry.toParent"
+                  class="btn btn-sm btn-danger"
+                  :disabled="working"
+                  @click="removeEntry(entry)"
+                >
+                  删除
+                </button>
               </div>
             </div>
-          </template>
+          </div>
         </section>
       </div>
     </Transition>
