@@ -43,6 +43,10 @@ npm test                       # vitest 单元测试
 ```
 
 - `npm run build` 会先执行 `vue-tsc -b`，**类型错误会直接导致构建失败**。
+- 部署到子路径（nginx 反代 `https://example.org/read/`）时用
+  `VITE_BASE_PATH=/read/ npm run build`；**新增任何绝对路径都要过
+  `utils/appBase.ts`**（`API_BASE` 给接口/SSE，`withAppBase` 给服务端返回的
+  `/reader3/...` 路径），否则子路径部署下会 404。
 - 开发服务器把 `/reader3` 反向代理到后端（见 `frontend/vite.config.ts`）。代理目标端口必须与后端 `SERVER_PORT` 保持一致。
 - 前端可用脚本只有 `dev` / `build` / `preview` / `test`，**没有 `lint` 或 `serve` 脚本**。
 

@@ -16,6 +16,8 @@ cd reader-rust
 
 # 前端
 cd frontend && npm install && npm run build && cd ..
+# 部署在非根路径（如 https://example.org/read/）时加部署前缀：
+# VITE_BASE_PATH=/read/ npm run build
 
 # 后端（本机架构）
 cargo build --release
@@ -141,6 +143,43 @@ server {
 ::: tip SSE 与长连接
 搜索、缓存整本书、书源调试等接口使用 SSE 流式返回，`proxy_buffering off` 是必需的，否则前端会一直收不到数据。同时建议放开 `proxy_read_timeout`。
 :::
+
+### 部署到子路径
+
+想把整个服务挂在 `https://example.org/read/` 这样的子路径下，分两步：
+
+**1. 带前缀构建前端**（不加前缀时产物里的资源与接口地址都指向 `/`）：
+
+```bash
+cd frontend
+VITE_BASE_PATH=/read/ npm run build
+```
+
+**2. nginx 里剥掉前缀再转发**（`proxy_pass` 末尾的 `/` 是关键，
+它会把 `/read/` 前缀去掉，后端仍按根路径处理）：
+
+```nginx
+location /read/ {
+    proxy_pass http://127.0.0.1:8080/;
+    proxy_http_version 1.1;
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_buffering off;
+    proxy_read_timeout 300s;
+}
+```
+
+要点：
+
+- 前端是 hash 路由（`https://example.org/read/#/reader`），不需要服务端 SPA 回落。
+- 服务端返回的图片路径（`/reader3/image/<id>`）由前端统一套上部署前缀，
+  不需要后端感知子路径。
+- PWA 的 Service Worker 与 manifest 都按自身位置推导作用域，
+  子路径下装到桌面也不会互相干扰。
+- 本地想先试：`VITE_BASE_PATH=/read/ npm run build && VITE_BASE_PATH=/read/ npm run preview`
+  （`vite preview` 的代理同样会剥掉前缀，等价于上面的 nginx）。
 
 ## 7. 升级
 
