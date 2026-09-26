@@ -36,28 +36,14 @@
           </router-link>
           <span class="nav-divider" aria-hidden="true"></span>
         </nav>
-        <button class="topbar-btn theme-btn" @click="toggleTheme" title="切换主题">
-          <svg v-if="theme === 'light'" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" />
-          </svg>
-          <svg v-else viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <circle cx="12" cy="12" r="4" />
-            <path
-              d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41" />
-          </svg>
-        </button>
+        <ThemeSwitch class="theme-switch-desktop" />
 
-        <button v-if="!isLoggedIn && !isLoginPage" class="topbar-btn" @click="openSettings" title="设置">
+        <button v-if="!isLoginPage" class="topbar-btn settings-btn" @click="openSettings" title="设置">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <path
-              d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z" />
+              d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43-.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z" />
             <circle cx="12" cy="12" r="3" />
           </svg>
-          <span v-if="hasVersionUpdateReminder" class="update-indicator" aria-hidden="true"></span>
-        </button>
-
-        <button v-else-if="!isLoginPage" class="topbar-btn user-btn" @click="openSettings" title="用户">
-          <div class="user-avatar">{{ userInfo?.username?.charAt(0)?.toUpperCase() || 'U' }}</div>
           <span v-if="hasVersionUpdateReminder" class="update-indicator" aria-hidden="true"></span>
         </button>
 
@@ -88,6 +74,7 @@ import { useAppStore } from '../stores/app'
 import { useBookshelfStore } from '../stores/bookshelf'
 import { useExploreStore } from '../stores/explore'
 import AppMobileMenu from './AppMobileMenu.vue'
+import ThemeSwitch from './ThemeSwitch.vue'
 
 const router = useRouter()
 const route = useRoute()
@@ -115,9 +102,6 @@ const showNavTabs = computed(() => route.name !== 'login')
 const isLoginPage = computed(() => route.name === 'login')
 
 const showMobileMenu = ref(false)
-const theme = computed(() => appStore.theme)
-const isLoggedIn = computed(() => appStore.isLoggedIn)
-const userInfo = computed(() => appStore.userInfo)
 const hasVersionUpdateReminder = computed(() => appStore.hasVersionUpdateReminder)
 const showGlobalSearch = computed(() => route.path !== '/recent')
 const canSearch = computed(() => searchValue.value.trim().length > 0)
@@ -146,9 +130,6 @@ function clearSearch() {
   shelfStore.clearSearch()
 }
 
-function toggleTheme() {
-  appStore.toggleTheme()
-}
 
 function openSettings() {
   appStore.showSettingsDrawer = true
@@ -357,7 +338,10 @@ function openSettings() {
 /* 移动端把入口收进整屏菜单：主题切换在菜单的「外观」开关里，
    顶栏不再单独放一个（桌面端仍保留顶栏主题按钮） */
 @media (max-width: 767px) {
-  .topbar-btn.theme-btn {
+  /* 移动端入口收进整屏菜单：主题用「外观」开关，设置用「设置」行 */
+  .topbar-btn.theme-btn,
+  .topbar-btn.settings-btn,
+  .theme-switch-desktop {
     display: none;
   }
 }
