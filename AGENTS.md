@@ -207,8 +207,9 @@ HTTP 请求
 | 路径 | 行为 |
 |------|------|
 | `/` | 返回 `WEB_ROOT/index.html` |
-| `/assets/*` | 先查 `WEB_ROOT/assets`，再回落到 `ASSETS_DIR` |
-| `WEB_ROOT` 下的真实文件（`sw.js`、`site.webmanifest`、favicon、`icons/`、`svg/`） | 按文件名直接可取 |
+| `/assets/*` | 先查 `WEB_ROOT/assets`，再回落到 `ASSETS_DIR`；一年 immutable |
+| `/fonts/*` | `WEB_ROOT/fonts` 下的自托管字体分片（文件名带内容 hash）；一年 immutable |
+| `WEB_ROOT` 下的真实文件（`sw.js`、`site.webmanifest`、favicon、`icons/`、`svg/`） | 按文件名直接可取；no-cache 每次重验证 |
 | `/reader3/*` 未注册 | JSON 404（不落到静态服务） |
 | 其他不存在的路径 | 404，**不会**回落 index.html |
 

@@ -328,7 +328,8 @@ pub fn build_router(state: AppState) -> Router {
     // 因此这里**不提供 SPA fallback**：只有真实存在的文件才会被返回，
     // 其余路径一律 404。`/` 显式指向 index.html；dist 根目录下的
     // sw.js / site.webmanifest / favicon 等 PWA 资源仍按文件名直接可取。
-    // 缓存策略：assets 带 hash 文件名 → 一年 immutable；index.html / sw.js
+    // 缓存策略：assets 带 hash 文件名 → 一年 immutable；fonts 下的字体分片
+    // 文件名同样带内容 hash → 一年 immutable；index.html / sw.js
     // 等无 hash 文件 → no-cache（每次重验证拿 304）。此前完全不发
     // Cache-Control，浏览器每次回源拉全部资源。
     let immutable_cache = SetResponseHeaderLayer::overriding(
@@ -345,6 +346,14 @@ pub fn build_router(state: AppState) -> Router {
             "/assets",
             ServeDir::new(web_assets_root).not_found_service(ServeDir::new(assets_root)),
         )
+        .layer(immutable_cache.clone());
+
+    // 自托管字体（MiSans 分片）：文件名带内容 hash，与 assets 同档缓存
+    let fonts_web = Router::new()
+        .nest_service(
+            "/fonts",
+            ServeDir::new(PathBuf::from(&web_root).join("fonts")),
+        )
         .layer(immutable_cache);
 
     let static_web = Router::new()
@@ -353,6 +362,7 @@ pub fn build_router(state: AppState) -> Router {
             ServeFile::new(PathBuf::from(&web_root).join("index.html")),
         )
         .merge(assets_web)
+        .merge(fonts_web)
         .fallback_service(ServeDir::new(web_root).append_index_html_on_directories(false))
         .layer(no_cache)
         // 压缩只加在静态层：/reader3 的 SSE 流式响应不能被压缩层缓冲。

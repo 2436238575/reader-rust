@@ -63,6 +63,8 @@ self.addEventListener('fetch', (event) => {
   if (
     url.pathname.startsWith(`${BASE}assets/`)
     || url.pathname.startsWith(`${BASE}icons/`)
+    // 字体分片文件名带内容 hash（MiSansVF.<hash>.<n>.woff2），可以安全 cache-first
+    || url.pathname.startsWith(`${BASE}fonts/`)
     || /\.(png|svg|css|js|ico)$/.test(url.pathname)
   ) {
     event.respondWith(
