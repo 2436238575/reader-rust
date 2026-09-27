@@ -457,7 +457,7 @@ const introText = computed(() => {
 
 /* 搜索/发现卡片没有已读/最新行，简介多放一行 */
 .book-intro.intro-3-lines {
-  -webkit-line-clamp: 3;
+  -webkit-line-clamp: 2;
 }
 
 .book-cache-row {
@@ -519,18 +519,6 @@ const introText = computed(() => {
   color: var(--color-text-tertiary);
   border: 1px solid var(--color-border);
   cursor: default;
-}
-
-/* 搜索/发现卡片：没有已读/最新两行内容，整体收紧 */
-.book-card.search-mode {
-  min-height: 132px;
-  grid-template-columns: 78px minmax(0, 1fr);
-  gap: 13px;
-}
-
-.book-card.search-mode .card-cover {
-  width: 78px;
-  height: 104px;
 }
 
 @media (max-width: 520px) {
