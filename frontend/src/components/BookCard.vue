@@ -44,9 +44,8 @@
         </div>
       </div>
 
-      <div v-if="isSearch && (sourceName || sourceGroup)" class="book-source-row">
-        <span v-if="sourceName" class="source-chip source-name">{{ sourceName }}</span>
-        <span v-if="sourceGroup" class="source-chip source-group">{{ sourceGroup }}</span>
+      <div v-if="isSearch && introText" class="book-intro-row">
+        <p class="book-intro">{{ introText }}</p>
       </div>
 
       <div class="chapter-lines">
@@ -58,7 +57,7 @@
         </p>
       </div>
 
-      <div class="card-footer">
+      <div class="card-footer" :class="{ 'search-footer': isSearch }">
         <div v-if="!isSearch && (browserCachedCount > 0 || serverCachedCount > 0)" class="book-cache-row">
           <span v-if="browserCachedCount > 0" class="cache-chip primary">本地 {{ browserCachedCount }} 章</span>
           <span v-if="serverCachedCount > 0" class="cache-chip">远程 {{ serverCachedCount }} 章</span>
@@ -140,13 +139,9 @@ const latestChapterText = computed(() => {
   }
   return asBook.value.latestChapterTitle || ''
 })
-const sourceName = computed(() => {
+const introText = computed(() => {
   if (!props.isSearch) return ''
-  return asSearchBook.value.originName || props.book.origin || ''
-})
-const sourceGroup = computed(() => {
-  if (!props.isSearch) return ''
-  return asSearchBook.value.originGroup || ''
+  return asSearchBook.value.intro?.trim() || ''
 })
 </script>
 
@@ -440,34 +435,19 @@ const sourceGroup = computed(() => {
   min-height: 35px;
 }
 
-.book-source-row {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  min-height: 24px;
+.book-intro-row {
+  min-width: 0;
 }
 
-.source-chip {
-  display: inline-flex;
-  align-items: center;
-  max-width: 100%;
-  padding: 2px 8px;
-  border-radius: 999px;
+.book-intro {
+  margin: 0;
   font-size: var(--text-xs);
-  line-height: 1.4;
-  white-space: nowrap;
+  color: var(--color-text-tertiary);
+  line-height: var(--leading-normal);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
   overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.source-name {
-  background: rgba(201, 127, 58, 0.12);
-  color: var(--color-primary);
-}
-
-.source-group {
-  background: rgba(0, 0, 0, 0.05);
-  color: var(--color-text-secondary);
 }
 
 .book-cache-row {
@@ -496,6 +476,10 @@ const sourceGroup = computed(() => {
   color: var(--color-primary);
 }
 
+.card-footer.search-footer {
+  justify-content: flex-end;
+}
+
 .add-shelf-btn {
   display: inline-flex;
   align-items: center;
@@ -509,7 +493,6 @@ const sourceGroup = computed(() => {
   font-size: var(--text-xs);
   font-weight: 700;
   transition: all var(--duration-fast);
-  align-self: flex-start;
 }
 
 .add-shelf-btn:hover {
