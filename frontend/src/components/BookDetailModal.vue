@@ -477,14 +477,10 @@ function openAiBook() {
   min-height: 38px;
 }
 
-/* 桌面端：左右分栏，卡片整体不滚动；高度按当前窗口封顶（目录/简介内容
-   不再撑大窗口），简介与目录各自滚动，操作按钮缩小后只放右侧目录栏下方 */
+/* 桌面端：左右分栏，卡片整体不滚动；高度按窗口封顶（目录/简介不再撑大），
+   简介过长加滚动；目录最多显示 14.5 行（露半行提示可滚），
+   操作按钮放在左侧简介栏下方，避免左下空置 */
 @media (min-width: 768px) {
-  .detail-modal {
-    height: min(85vh, calc(var(--app-height, 100dvh) - var(--safe-area-top) - var(--safe-area-bottom) - 32px));
-    max-height: none;
-  }
-
   .detail-body {
     flex-direction: row;
     overflow: visible;
@@ -513,25 +509,15 @@ function openAiBook() {
     min-height: 0;
   }
 
-  .chapter-section {
-    display: flex;
-    flex-direction: column;
-    flex: 1;
-    min-height: 0;
-  }
-
   .chapter-list {
-    flex: 1;
-    min-height: 0;
+    flex: 0 1 auto;
+    max-height: calc(37px * 14.5);
     overflow-y: auto;
     -webkit-overflow-scrolling: touch;
   }
 
   .modal-actions {
-    width: 300px;
-    margin-left: auto;
-    margin-top: var(--space-4);
-    padding-top: var(--space-4);
+    margin-right: calc(300px + var(--space-6));
   }
 }
 
