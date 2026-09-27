@@ -69,6 +69,20 @@
         </button>
         <button
           class="jump-btn"
+          title="定位当前章节"
+          :disabled="!currentChapterInList"
+          @click="scrollToCurrent"
+        >
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M12 2v3" />
+            <path d="M12 19v3" />
+            <path d="M2 12h3" />
+            <path d="M19 12h3" />
+            <circle cx="12" cy="12" r="3" />
+          </svg>
+        </button>
+        <button
+          class="jump-btn"
           title="跳到目录底部"
           :disabled="!filteredChapters.length"
           @click="scrollCatalogTo('bottom')"
@@ -177,6 +191,11 @@ const filteredChapters = computed(() => {
     .map((chapter, index) => ({ ...chapter, index }))
     .filter(chapter => chapter.title.toLowerCase().includes(searchTerm))
 })
+
+// 搜索过滤后当前章可能不在列表里，此时定位按钮不可点
+const currentChapterInList = computed(() =>
+  filteredChapters.value.some(chapter => chapter.index === store.currentIndex)
+)
 
 onMounted(() => {
   activeTab.value = props.initialTab
