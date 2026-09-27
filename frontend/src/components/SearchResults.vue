@@ -11,9 +11,10 @@
       </h2>
       <button class="back-btn" @click="$emit('back')">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18">
-          <path d="M18 6 6 18M6 6l12 12" />
+          <path d="M19 12H5" />
+          <path d="m12 19-7-7 7-7" />
         </svg>
-        返回书架
+        返回
       </button>
     </div>
 

@@ -1,13 +1,7 @@
 <template>
   <div class="home-view">
-    <!-- Search Mode -->
-    <SearchResults
-      v-if="shelfStore.isSearchMode"
-      @back="shelfStore.clearSearch()"
-    />
-
-    <!-- Normal Bookshelf View -->
-    <div v-else class="shelf-content">
+    <!-- Bookshelf View -->
+    <div class="shelf-content">
       <!-- Shelf Header -->
       <div class="shelf-header">
         <h1 class="shelf-title">
@@ -100,7 +94,7 @@
           :edit-mode="shelfStore.editMode"
           :selected-urls="shelfStore.selectedBookUrls"
           :loading="shelfStore.loading"
-          :sortable="!shelfStore.editMode && !shelfStore.loading && !shelfStore.sorting && !shelfStore.isSearchMode"
+          :sortable="!shelfStore.editMode && !shelfStore.loading && !shelfStore.sorting"
           empty-text="书架空空如也，搜索添加新书吧"
         @click="handleBookClick"
         @info="handleBookInfo"
@@ -157,7 +151,6 @@ import BookGrid from '../components/BookGrid.vue'
 import BookDetailModal from '../components/BookDetailModal.vue'
 import GroupSelectModal from '../components/bookshelf/GroupSelectModal.vue'
 import GroupManagerModal from '../components/bookshelf/GroupManagerModal.vue'
-import SearchResults from '../components/SearchResults.vue'
 import type { Book, SearchBook } from '../types'
 
 const router = useRouter()

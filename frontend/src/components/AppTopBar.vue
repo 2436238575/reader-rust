@@ -68,10 +68,9 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useAppStore } from '../stores/app'
-import { useBookshelfStore } from '../stores/bookshelf'
 import { useExploreStore } from '../stores/explore'
 import AppMobileMenu from './AppMobileMenu.vue'
 import ThemeSwitch from './ThemeSwitch.vue'
@@ -79,11 +78,21 @@ import ThemeSwitch from './ThemeSwitch.vue'
 const router = useRouter()
 const route = useRoute()
 const appStore = useAppStore()
-const shelfStore = useBookshelfStore()
 const exploreStore = useExploreStore()
 
 const searchFocused = ref(false)
 const searchValue = ref('')
+
+// 停留在搜索页时输入框跟随 URL 上的 q（直达链接也能显示当前搜索词）
+watch(
+  () => [route.path, route.query.q] as const,
+  ([path, q]) => {
+    if (path === '/search' && typeof q === 'string') {
+      searchValue.value = q
+    }
+  },
+  { immediate: true }
+)
 
 type NavKey = 'home' | 'explore' | 'recent'
 
@@ -107,7 +116,6 @@ const showGlobalSearch = computed(() => route.path !== '/recent')
 const canSearch = computed(() => searchValue.value.trim().length > 0)
 
 function goHome() {
-  shelfStore.clearSearch()
   router.replace('/')
 }
 
@@ -115,19 +123,16 @@ function handleSearch() {
   const value = searchValue.value.trim()
   if (!value) return
 
-  shelfStore.startSearch(value, {
-    scope: 'source',
-    sourceUrl: route.path === '/explore' ? exploreStore.activeSourceUrl : '',
-  })
-
-  if (route.path !== '/') {
-    router.push('/')
+  // 书海页发起的搜索限定在当前浏览的书源内
+  const query: Record<string, string> = { q: value }
+  if (route.path === '/explore' && exploreStore.activeSourceUrl) {
+    query.source = exploreStore.activeSourceUrl
   }
+  router.push({ path: '/search', query })
 }
 
 function clearSearch() {
   searchValue.value = ''
-  shelfStore.clearSearch()
 }
 
 
