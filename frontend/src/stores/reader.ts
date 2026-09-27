@@ -1,5 +1,6 @@
 ﻿import { defineStore } from 'pinia'
 import { API_BASE } from '../utils/appBase'
+import { safeLocalSet } from '../utils/storage'
 import { ref, computed, reactive, watch } from 'vue'
 import { useAppStore } from './app'
 import { useBookshelfStore } from './bookshelf'
@@ -377,14 +378,17 @@ export const useReaderStore = defineStore('reader', () => {
 
   function saveReaderSession() {
     if (!book.value || !chapters.value.length) return
-    const payload: PersistedReaderSession = {
+    const base = {
       book: book.value,
-      chapters: chapters.value,
       currentIndex: currentIndex.value,
       chapterScrollProgress: chapterScrollProgress.value,
       updatedAt: Date.now(),
     }
-    localStorage.setItem(READER_SESSION_KEY, JSON.stringify(payload))
+    const full: PersistedReaderSession = { ...base, chapters: chapters.value }
+    // 整本目录可能有几 MB：配额写满时降级为不带目录的瘦身会话，恢复时重新拉目录
+    if (!safeLocalSet(READER_SESSION_KEY, JSON.stringify(full))) {
+      safeLocalSet(READER_SESSION_KEY, JSON.stringify({ ...base, chapters: [] }))
+    }
   }
 
   function encodeServerProgress(progress = chapterScrollProgress.value) {
@@ -458,10 +462,22 @@ export const useReaderStore = defineStore('reader', () => {
 
   async function restorePersistedSession() {
     const session = getPersistedReaderSession()
-    if (!session?.book || !session.chapters?.length) return false
+    if (!session?.book) return false
 
     book.value = session.book
-    chapters.value = session.chapters
+    chapters.value = session.chapters ?? []
+    // 瘦身会话（配额降级时落的盘）不带目录：恢复时重新拉一次
+    if (!chapters.value.length) {
+      try {
+        chapters.value = await getChapterList({
+          bookUrl: session.book.bookUrl,
+          bookSourceUrl: session.book.origin,
+        })
+      } catch {
+        return false
+      }
+    }
+    if (!chapters.value.length) return false
     loadReadChapterHistory(session.book)
 
     const nextIndex = Math.max(0, Math.min(session.currentIndex || 0, session.chapters.length - 1))
@@ -514,7 +530,7 @@ export const useReaderStore = defineStore('reader', () => {
   function persistReadChapterHistory(currentBook?: Book | null) {
     const storageKey = getReadHistoryStorageKey(currentBook)
     if (!storageKey) return
-    localStorage.setItem(storageKey, JSON.stringify(Array.from(readChapterKeys.value)))
+    safeLocalSet(storageKey, JSON.stringify(Array.from(readChapterKeys.value)))
   }
 
   function markChapterAsRead(index: number) {
@@ -573,12 +589,16 @@ export const useReaderStore = defineStore('reader', () => {
   const inFlightOpenAIAudioRequests = new Map<string, Promise<Blob>>()
   let currentTTSSessionId = 0
 
+  // 排查 TTS 状态机问题时临时打开
+  const TTS_DEBUG = false
+
   function logTTS(message: string, payload?: unknown) {
-    void message
-    void payload
+    if (!TTS_DEBUG) return
+    console.debug(`[TTS] ${message}`, payload ?? '')
   }
 
   function captureTTSCaller() {
+    if (!TTS_DEBUG) return ''
     try {
       const stack = new Error().stack || ''
       return stack
@@ -1227,7 +1247,13 @@ export const useReaderStore = defineStore('reader', () => {
   }
 
   /* ─── Book / chapter ops ─── */
+  let bookLoadSeq = 0
+
   async function loadBook(b: Book) {
+    // 连点两本书时目录响应可能乱序到达：只认最后一次打开的书。
+    // 同时作废在途的 loadChapter，免得旧书正文写到新书上。
+    const loadSeq = ++bookLoadSeq
+    chapterLoadSeq++
     loading.value = true
     loadError.value = ''
     book.value = b
@@ -1243,22 +1269,26 @@ export const useReaderStore = defineStore('reader', () => {
     lastServerProgressKey.value = ''
     chaptersLoading.value = true
     try {
-      chapters.value = await getChapterList({
+      const list = await getChapterList({
         bookUrl: b.bookUrl,
         bookSourceUrl: b.origin,
       })
+      if (loadSeq !== bookLoadSeq) return
+      chapters.value = list
       saveReaderSession()
     } catch (error) {
       // 目录都拿不到就等于这本书打不开。清掉半开状态并记下原因：否则阅读页
       // 会一直停在「加载中...」的占位符上，用户完全看不出发生了什么。
-      loading.value = false
-      chapters.value = []
-      content.value = ''
-      loadError.value = (error as Error)?.message || '打开书籍失败'
-      appStore.showToast(loadError.value, 'error')
+      if (loadSeq === bookLoadSeq) {
+        loading.value = false
+        chapters.value = []
+        content.value = ''
+        loadError.value = (error as Error)?.message || '打开书籍失败'
+        appStore.showToast(loadError.value, 'error')
+      }
       throw error
     } finally {
-      chaptersLoading.value = false
+      if (loadSeq === bookLoadSeq) chaptersLoading.value = false
     }
   }
 
@@ -1417,7 +1447,8 @@ export const useReaderStore = defineStore('reader', () => {
         setTimeout(() => preloadAroundChapter(index), forceRefresh ? 1500 : 1000)
       }
     } finally {
-      loading.value = false
+      // 过期请求的 finally 不能灭掉新一轮加载的 loading
+      if (loadSeq === chapterLoadSeq) loading.value = false
     }
   }
 
@@ -1595,14 +1626,19 @@ export const useReaderStore = defineStore('reader', () => {
 
   async function refreshContent() {
     if (!book.value || !chapters.value[currentIndex.value]) return
+    // 快照当前章节：await 期间用户可能已翻章，旧正文不能盖到新章上。
+    // 与 loadChapter 共用序号，翻章后迟到的刷新结果直接作废。
+    const index = currentIndex.value
+    const loadSeq = ++chapterLoadSeq
     loading.value = true
     try {
-      const chapterContent = await fetchChapterContent(currentIndex.value, true)
+      const chapterContent = await fetchChapterContent(index, true)
       if (chapterContent == null) return
-      setActiveChapterState(currentIndex.value, chapterContent, chapterScrollProgress.value)
-      void preloadAroundChapter(currentIndex.value)
+      if (loadSeq !== chapterLoadSeq || index !== currentIndex.value) return
+      setActiveChapterState(index, chapterContent, chapterScrollProgress.value)
+      void preloadAroundChapter(index)
     } finally {
-      loading.value = false
+      if (loadSeq === chapterLoadSeq) loading.value = false
     }
   }
 

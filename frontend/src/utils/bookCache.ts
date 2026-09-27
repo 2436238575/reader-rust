@@ -37,12 +37,17 @@ export async function cacheBookToBrowser(params: {
       bookUrl: params.book.bookUrl,
       bookSourceUrl: params.book.origin,
     })
-    await setBrowserCachedChapter({
-      bookUrl: params.book.bookUrl,
-      chapterUrl: chapter.url,
-      chapterTitle: chapter.title,
-      content,
-    })
+    // 浏览器配额写满时写库会抛：停下并保留已完成部分，而不是整个任务报错归零
+    try {
+      await setBrowserCachedChapter({
+        bookUrl: params.book.bookUrl,
+        chapterUrl: chapter.url,
+        chapterTitle: chapter.title,
+        content,
+      })
+    } catch {
+      break
+    }
     completed += 1
     params.onProgress?.({
       total: sliced.length,

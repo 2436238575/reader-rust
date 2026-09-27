@@ -65,7 +65,8 @@ const form = reactive({
 
 function redirectTarget(): string {
   const r = route.query.redirect
-  return typeof r === 'string' && r.startsWith('/') && !r.startsWith('/login') ? r : '/'
+  // `//evil.com` 会被当成跨域跳转，只允许站内绝对路径
+  return typeof r === 'string' && r.startsWith('/') && !r.startsWith('//') && !r.startsWith('/login') ? r : '/'
 }
 
 // 已登录用户访问登录页时直接送走；fetchUserInfo 可能尚未返回，用 watch 覆盖

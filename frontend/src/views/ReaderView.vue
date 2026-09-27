@@ -317,6 +317,7 @@ import { countBrowserBookCache } from '../utils/browserCache'
 import { APP_VIEWPORT_CHANGE_EVENT, syncViewportSize } from '../utils/viewport'
 import { isReaderInteractiveClickTarget } from '../utils/readerClick'
 import { sanitizeUntrustedHtml } from '../utils/sanitize'
+import { safeLocalSet } from '../utils/storage'
 import type { ChapterImage, ParaReviewCount } from '../types'
 import { createReaderProgressAutoSaveScheduler, createReaderProgressExitSaver } from '../utils/readerProgressAutoSave'
 import type { Book } from '../types'
@@ -358,9 +359,12 @@ interface SavedReadingPosition {
 
 const CONTINUOUS_POSITION_ANCHOR_RATIO = 0.12
 
+// 排查阅读位置恢复问题时临时打开
+const POSITION_DEBUG = false
+
 function debugPositionLog(message: string, payload?: unknown) {
-  void message
-  void payload
+  if (!POSITION_DEBUG) return
+  console.debug(`[reader-position] ${message}`, payload ?? '')
 }
 
 const config = computed(() => store.config)
@@ -1253,7 +1257,7 @@ function saveReadingPosition(options: { force?: boolean } = {}) {
     }
   }
 
-  localStorage.setItem(key, JSON.stringify(basePosition))
+  safeLocalSet(key, JSON.stringify(basePosition))
   debugPositionLog('saved position', { key, position: basePosition })
 }
 
@@ -1878,10 +1882,6 @@ watch(() => store.isAutoScrolling, (val) => {
   store.autoReading = val
   if (val) startAutoScroll()
   else stopAutoScroll()
-})
-
-watch(showTTSPanel, (visible) => {
-  if (!visible) return
 })
 
 function changeVoice(name: string) {
