@@ -32,6 +32,7 @@
           :edit-mode="editMode"
           :selected="selectedUrls?.has(item.bookUrl)"
           :is-search="isSearch"
+          :on-shelf="shelfUrls?.has(item.bookUrl) ?? false"
           :dragging="sortable && draggedUrl === item.bookUrl"
           :show-delete-action="showDeleteAction"
           @click="$emit('click', $event)"
@@ -88,6 +89,8 @@ const props = defineProps<{
   emptyText?: string
   sortable?: boolean
   showDeleteAction?: boolean
+  /** 已加入书架的 bookUrl 集合：搜索/发现卡片用它把按钮切为「已在书架」 */
+  shelfUrls?: Set<string>
 }>()
 
 const emit = defineEmits<{

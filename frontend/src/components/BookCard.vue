@@ -1,5 +1,5 @@
 <template>
-  <div class="book-card" :class="{ 'edit-mode': editMode, 'selected': selected, 'dragging': dragging }"
+  <div class="book-card" :class="{ 'edit-mode': editMode, 'selected': selected, 'dragging': dragging, 'search-mode': isSearch }"
     @click="handleCardClick">
     <!-- Cover -->
     <div class="card-cover" @click.stop="handleCoverClick">
@@ -45,10 +45,10 @@
       </div>
 
       <div v-if="isSearch && introText" class="book-intro-row">
-        <p class="book-intro">{{ introText }}</p>
+        <p class="book-intro" :class="{ 'intro-3-lines': isSearch }">{{ introText }}</p>
       </div>
 
-      <div class="chapter-lines">
+      <div v-if="(!isSearch && asBook.durChapterTitle) || latestChapterText" class="chapter-lines">
         <p v-if="asBook.durChapterTitle && !isSearch" class="book-progress">
           已读：{{ asBook.durChapterTitle }}
         </p>
@@ -63,7 +63,10 @@
           <span v-if="serverCachedCount > 0" class="cache-chip">远程 {{ serverCachedCount }} 章</span>
         </div>
         <!-- Search mode: add to shelf -->
-        <button v-if="isSearch" class="add-shelf-btn" @click.stop="$emit('addToShelf', book)">
+        <button v-if="isSearch && onShelf" class="add-shelf-btn on-shelf" disabled title="已加入书架">
+          已在书架
+        </button>
+        <button v-else-if="isSearch" class="add-shelf-btn" @click.stop="$emit('addToShelf', book)">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
             <path d="M12 5v14M5 12h14" />
           </svg>
@@ -87,6 +90,8 @@ const props = defineProps<{
   isSearch?: boolean
   dragging?: boolean
   showDeleteAction?: boolean
+  /** 搜索/发现卡片：该书已在书架中 */
+  onShelf?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -450,6 +455,11 @@ const introText = computed(() => {
   overflow: hidden;
 }
 
+/* 搜索/发现卡片没有已读/最新行，简介多放一行 */
+.book-intro.intro-3-lines {
+  -webkit-line-clamp: 3;
+}
+
 .book-cache-row {
   display: flex;
   flex-wrap: wrap;
@@ -502,6 +512,25 @@ const introText = computed(() => {
 
 .add-shelf-btn:active {
   transform: scale(0.98);
+}
+
+.add-shelf-btn.on-shelf {
+  background: transparent;
+  color: var(--color-text-tertiary);
+  border: 1px solid var(--color-border);
+  cursor: default;
+}
+
+/* 搜索/发现卡片：没有已读/最新两行内容，整体收紧 */
+.book-card.search-mode {
+  min-height: 132px;
+  grid-template-columns: 78px minmax(0, 1fr);
+  gap: 13px;
+}
+
+.book-card.search-mode .card-cover {
+  width: 78px;
+  height: 104px;
 }
 
 @media (max-width: 520px) {

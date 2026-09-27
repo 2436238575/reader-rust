@@ -42,8 +42,10 @@
           <BookGrid
             :books="store.books"
             :is-search="true"
+            :shelf-urls="shelfUrls"
             empty-text="暂无数据"
             @click="handleBookClick"
+            @info="handleBookInfo"
             @addToShelf="handleAddToShelf"
           />
         </div>
@@ -64,17 +66,21 @@
         <div ref="sentinelRef" class="load-more-sentinel" aria-hidden="true"></div>
       </div>
     </div>
+
+    <BookDetailModal v-model="showDetail" :book="selectedBook" />
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, watch, onMounted, onUnmounted } from 'vue'
+import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useExploreStore } from '../stores/explore'
 import { useReaderStore } from '../stores/reader'
+import { useBookshelfStore } from '../stores/bookshelf'
 import { saveBook } from '../api/bookshelf'
 import { useAppStore } from '../stores/app'
 import BookGrid from '../components/BookGrid.vue'
+import BookDetailModal from '../components/BookDetailModal.vue'
 import type { Book, SearchBook } from '../types'
 import {
   getExploreCategoryKey,
@@ -84,12 +90,18 @@ import {
 
 const store = useExploreStore()
 const readerStore = useReaderStore()
+const shelfStore = useBookshelfStore()
 const appStore = useAppStore()
 const router = useRouter()
 
 const scrollContainer = ref<HTMLElement>()
 const sentinelRef = ref<HTMLElement>()
 const openingBookUrl = ref('')
+const showDetail = ref(false)
+const selectedBook = ref<Book | SearchBook | null>(null)
+
+// 书架上已有书籍的 bookUrl 集合：发现卡片把「加入书架」切为「已在书架」
+const shelfUrls = computed(() => new Set(shelfStore.books.map((book) => book.bookUrl)))
 
 onMounted(async () => {
   await store.init()
@@ -151,6 +163,11 @@ async function handleBookClick(book: Book | SearchBook) {
   }
 }
 
+function handleBookInfo(book: Book | SearchBook) {
+  selectedBook.value = book
+  showDetail.value = true
+}
+
 async function handleAddToShelf(book: Book | SearchBook) {
   try {
     await saveBook({
@@ -161,6 +178,8 @@ async function handleAddToShelf(book: Book | SearchBook) {
       coverUrl: book.coverUrl,
     })
     appStore.showToast(`"${book.name}" 已加入书架`, 'success')
+    // 刷新书架列表，让「加入书架」按钮翻转为「已在书架」
+    await shelfStore.fetchBooks().catch(() => undefined)
   } catch (e: unknown) {
     appStore.showToast((e as Error).message, 'error')
   }
