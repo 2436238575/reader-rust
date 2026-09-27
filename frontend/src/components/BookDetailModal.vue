@@ -5,7 +5,7 @@
     </Transition>
     <Transition name="scale">
       <div v-if="modelValue && book" class="modal-container" @click.self="close">
-        <div class="detail-modal">
+        <div class="detail-modal" :class="{ 'has-long-toc': chapters.length > 14 }">
           <button class="modal-close" @click="close">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
               <path d="M18 6 6 18M6 6l12 12" />
@@ -81,23 +81,31 @@
 
           <!-- Actions -->
           <div class="modal-actions">
-            <button class="btn detail-btn" @click="openAiBook">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18">
-                <path d="M12 2v4" />
-                <path d="M12 18v4" />
-                <path d="M2 12h4" />
-                <path d="M18 12h4" />
-                <circle cx="12" cy="12" r="3" />
-              </svg>
-              AI资料
-            </button>
-            <button class="btn btn-primary detail-btn" @click="startReading">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18">
-                <path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z" />
-                <path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z" />
-              </svg>
-              {{ (book as Book).durChapterIndex ? '继续阅读' : '开始阅读' }}
-            </button>
+            <div class="actions-left">
+              <button class="btn detail-btn" @click="openAiBook">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18">
+                  <path d="M12 2v4" />
+                  <path d="M12 18v4" />
+                  <path d="M2 12h4" />
+                  <path d="M18 12h4" />
+                  <circle cx="12" cy="12" r="3" />
+                </svg>
+                AI资料
+              </button>
+              <button class="btn btn-primary detail-btn" @click="startReading">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18">
+                  <path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z" />
+                  <path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z" />
+                </svg>
+                {{ (book as Book).durChapterIndex ? '继续阅读' : '开始阅读' }}
+              </button>
+            </div>
+            <!-- 桌面端放在右栏位与「开始阅读」同一行对齐；移动端隐藏，用目录内的同名按钮 -->
+            <div v-if="chapters.length > 50 && !showAllChapters" class="actions-right">
+              <button class="show-more-btn" @click="showAllChapters = true">
+                显示全部 {{ chapters.length }} 章
+              </button>
+            </div>
           </div>
         </div>
       </div>
@@ -465,22 +473,37 @@ function openAiBook() {
 
 .modal-actions {
   display: flex;
-  gap: var(--space-3);
+  flex-direction: column;
+  gap: var(--space-2);
   margin-top: var(--space-5);
   padding-top: var(--space-5);
   border-top: 1px solid var(--color-divider);
   flex-shrink: 0;
 }
 
-.detail-btn {
+.actions-left {
+  display: flex;
+  gap: var(--space-3);
+}
+
+.actions-left .detail-btn {
   flex: 1;
   min-height: 38px;
 }
 
-/* 桌面端：左右分栏，卡片整体不滚动；高度按窗口封顶（目录/简介不再撑大），
-   简介过长加滚动；目录最多显示 14.5 行（露半行提示可滚），
-   操作按钮放在左侧简介栏下方，避免左下空置 */
+/* 「显示全部」在目录区内另有一份；这里的一份只给桌面端右栏位用 */
+.actions-right {
+  display: none;
+}
+
+/* 桌面端：左右分栏，卡片整体不滚动。弹窗高度由内容决定（简介可撑大），
+   目录超过 14 章且视口放得下时垫高到至少露 14.5 行（174px ≈ 目录标题、
+   操作区与上下内边距）；装不下则目录自身滚动，不硬塞。 */
 @media (min-width: 768px) {
+  .detail-modal.has-long-toc {
+    min-height: min(85vh, calc(37px * 14.5 + 174px));
+  }
+
   .detail-body {
     flex-direction: row;
     overflow: visible;
@@ -494,8 +517,16 @@ function openAiBook() {
     min-height: 0;
   }
 
+  /* 「简介」标题固定，只有正文滚动 */
   .book-intro {
     flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+  }
+
+  .book-intro p {
+    flex: 1 1 auto;
     min-height: 0;
     overflow-y: auto;
     padding-right: var(--space-2);
@@ -509,15 +540,47 @@ function openAiBook() {
     min-height: 0;
   }
 
+  .chapter-section {
+    display: flex;
+    flex-direction: column;
+    flex: 1;
+    min-height: 0;
+  }
+
   .chapter-list {
-    flex: 0 1 auto;
-    max-height: calc(37px * 14.5);
     overflow-y: auto;
     -webkit-overflow-scrolling: touch;
   }
 
+  /* 长目录不传导高度：弹窗高度只由左侧内容（含简介完整显示所需）决定，
+     目录在右栏内自适应填充、装不下自行滚动 */
+  .has-long-toc .chapter-list {
+    height: 0;
+    flex: 1 1 auto;
+    min-height: 0;
+  }
+
+  .chapter-section > .show-more-btn {
+    display: none;
+  }
+
   .modal-actions {
-    margin-right: calc(300px + var(--space-6));
+    flex-direction: row;
+    gap: var(--space-6);
+  }
+
+  .actions-left {
+    flex: 1;
+  }
+
+  /* 「显示全部」落在右栏正下方，与左栏的「开始阅读」同一行 */
+  .actions-right {
+    display: block;
+    width: 300px;
+  }
+
+  .actions-right .show-more-btn {
+    margin-top: 0;
   }
 }
 
