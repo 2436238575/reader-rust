@@ -1,8 +1,7 @@
 import { defineStore } from 'pinia'
 import { ref, watch, computed } from 'vue'
 import { getUserInfo } from '../api/user'
-import { dismissVersionUpdate, getVersionUpdate } from '../api/update'
-import type { UserInfo, VersionUpdateInfo } from '../types'
+import type { UserInfo } from '../types'
 import { applySystemTheme } from '../utils/systemUi'
 import { ACCESS_TOKEN_STORAGE_KEY } from '../utils/secureAccess'
 
@@ -33,21 +32,12 @@ export const useAppStore = defineStore('app', () => {
   // ─── User ───
   const userInfo = ref<UserInfo | null>(null)
   const isLoggedIn = ref(false)
-  const versionUpdate = ref<VersionUpdateInfo | null>(null)
-  const versionUpdateLoading = ref(false)
-  const versionUpdateChecked = ref(false)
-  let versionUpdateToastVersion = ''
-  const canCheckVersionUpdate = computed(() => isLoggedIn.value)
-  const hasVersionUpdateReminder = computed(() => !!versionUpdate.value?.shouldRemind)
 
   async function fetchUserInfo() {
     try {
       const data = await getUserInfo()
       userInfo.value = data.userInfo
       isLoggedIn.value = !!data.userInfo?.username
-      if (canCheckVersionUpdate.value) {
-        void checkVersionUpdate()
-      }
     } catch {
       isLoggedIn.value = false
     }
@@ -58,9 +48,6 @@ export const useAppStore = defineStore('app', () => {
     isLoggedIn.value = true
     if (user.accessToken) {
       localStorage.setItem(ACCESS_TOKEN_STORAGE_KEY, user.accessToken)
-    }
-    if (canCheckVersionUpdate.value) {
-      void checkVersionUpdate()
     }
   }
 
@@ -85,48 +72,6 @@ export const useAppStore = defineStore('app', () => {
   function updateUserInfo(next: UserInfo | null) {
     userInfo.value = next
     isLoggedIn.value = !!next?.username
-  }
-
-  async function checkVersionUpdate(force = false) {
-    if (versionUpdateLoading.value) return versionUpdate.value
-    versionUpdateLoading.value = true
-    try {
-      const info = await getVersionUpdate(force)
-      versionUpdate.value = info
-      versionUpdateChecked.value = true
-      if (info.shouldRemind && info.latestVersion && versionUpdateToastVersion !== info.latestVersion) {
-        versionUpdateToastVersion = info.latestVersion
-        showToast(`发现服务端新版本 ${info.latestVersion}`, 'warning')
-      }
-      return info
-    } catch (error) {
-      if (force) {
-        showToast((error as Error).message || '检查更新失败', 'error')
-      }
-      return null
-    } finally {
-      versionUpdateLoading.value = false
-    }
-  }
-
-  async function dismissVersionUpdateReminder(version = versionUpdate.value?.latestVersion || '') {
-    if (!version) {
-      showToast('当前没有可忽略的版本', 'warning')
-      return null
-    }
-    versionUpdateLoading.value = true
-    try {
-      const info = await dismissVersionUpdate(version)
-      versionUpdate.value = info
-      versionUpdateToastVersion = version
-      showToast('已忽略当前版本更新提醒', 'success')
-      return info
-    } catch (error) {
-      showToast((error as Error).message || '忽略版本失败', 'error')
-      return null
-    } finally {
-      versionUpdateLoading.value = false
-    }
   }
 
   // ─── UI State ───
@@ -259,8 +204,7 @@ export const useAppStore = defineStore('app', () => {
   return {
     theme, setTheme, toggleTheme,
     userInfo, isLoggedIn,
-    versionUpdate, versionUpdateLoading, versionUpdateChecked, canCheckVersionUpdate, hasVersionUpdateReminder,
-    fetchUserInfo, setUser, setAccessToken, clearUser, updateUserInfo, checkVersionUpdate, dismissVersionUpdateReminder,
+    fetchUserInfo, setUser, setAccessToken, clearUser, updateUserInfo,
     showSettingsDrawer, showSourceManager, showWebdavManager, showCacheLibrary,
     isOnline, pwaReady, pwaUpdateAvailable, deferredInstallPrompt, waitingServiceWorker,
     setOnlineStatus, setPwaReady, setPwaUpdateAvailable, setDeferredInstallPrompt, setWaitingServiceWorker, installPwa, applyPwaUpdate,

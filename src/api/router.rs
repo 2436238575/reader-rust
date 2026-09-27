@@ -298,14 +298,6 @@ pub fn build_router(state: AppState) -> Router {
         .route("/reader3/deleteFile", post(handlers::delete_file))
         .route("/reader3/getTxtTocRules", get(handlers::get_txt_toc_rules))
         .route(
-            "/reader3/getVersionUpdate",
-            get(handlers::get_version_update),
-        )
-        .route(
-            "/reader3/dismissVersionUpdate",
-            post(handlers::dismiss_version_update),
-        )
-        .route(
             "/reader3/saveAiModelConfig",
             post(handlers::save_ai_model_config),
         )

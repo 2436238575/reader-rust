@@ -109,41 +109,6 @@ POST /reader3/saveUserConfig
 }
 ```
 
-## 检查版本更新
-
-```text
-GET /reader3/getVersionUpdate
-```
-
-查询参数：`force`（boolean，可选，是否强制刷新缓存）。响应 `data` 为 `VersionUpdateInfo`（`src/service/update_service.rs` 的 `VersionUpdateInfo`，camelCase）：
-
-| 字段 | 类型 | 说明 |
-|------|------|------|
-| `currentVersion` | string | 当前版本 |
-| `latestVersion` | string? | 最新版本号 |
-| `latestName` | string? | 最新版本发布名 |
-| `releaseUrl` | string? | 发布页地址 |
-| `publishedAt` | string? | 发布时间 |
-| `updateAvailable` | boolean | 是否有可用更新 |
-| `shouldRemind` | boolean | 是否应提醒 |
-| `dismissedVersion` | string? | 已忽略的版本 |
-| `checkedAt` | number | 检查时间戳 |
-| `error` | string? | 错误信息 |
-
-## 忽略版本更新
-
-```text
-POST /reader3/dismissVersionUpdate
-```
-
-请求体：
-
-```json
-{ "version": "v1.0.9" }
-```
-
-`version` 为要忽略的版本号；忽略后 `getVersionUpdate` 对该版本不再提示。
-
 ## 上传资源文件
 
 ```text

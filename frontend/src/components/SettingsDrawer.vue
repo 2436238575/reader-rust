@@ -141,30 +141,6 @@
               <span>{{ appVersion }}</span>
               <small>当前应用版本</small>
             </div>
-            <template v-if="appStore.canCheckVersionUpdate">
-              <div
-                class="status-card"
-                :class="{ accent: appStore.hasVersionUpdateReminder, muted: appStore.versionUpdateLoading }"
-              >
-                <span>{{ versionUpdateTitle }}</span>
-                <small>{{ versionUpdateMessage }}</small>
-              </div>
-              <div class="btn-group version-actions">
-                <button class="btn btn-soft" :disabled="!appStore.versionUpdate?.releaseUrl" @click="handleOpenRelease">
-                  查看 Release
-                </button>
-                <button
-                  class="btn btn-soft"
-                  :disabled="!appStore.hasVersionUpdateReminder || appStore.versionUpdateLoading"
-                  @click="handleDismissVersionUpdate"
-                >
-                  本版本不再提醒
-                </button>
-                <button class="btn btn-soft" :disabled="appStore.versionUpdateLoading" @click="handleCheckVersionUpdate">
-                  {{ appStore.versionUpdateLoading ? '检查中...' : '重新检查' }}
-                </button>
-              </div>
-            </template>
             <div v-if="appStore.pwaUpdateAvailable" class="status-card accent">
               <span>发现新版本</span>
               <small>刷新后可使用最新离线资源</small>
@@ -186,7 +162,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, reactive, ref } from 'vue'
+import { reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAppStore } from '../stores/app'
 import { useBookshelfStore } from '../stores/bookshelf'
@@ -210,29 +186,6 @@ const passwordForm = reactive({
   oldPassword: '',
   newPassword: '',
   confirmPassword: '',
-})
-
-const versionUpdateTitle = computed(() => {
-  const info = appStore.versionUpdate
-  if (appStore.versionUpdateLoading && !info) return '正在检查服务端版本'
-  if (!info) return '服务端版本检查'
-  if (info.error && !info.latestVersion) return '版本检查失败'
-  if (info.updateAvailable) return `发现服务端新版本 ${info.latestVersion}`
-  return '服务端已是最新版本'
-})
-const versionUpdateMessage = computed(() => {
-  const info = appStore.versionUpdate
-  if (appStore.versionUpdateLoading && !info) return '正在从 GitHub Release 获取最新版本。'
-  if (!info) return '从 GitHub Release 获取最新版本，发现新版后会在设置入口提示。'
-  if (info.error && !info.latestVersion) return info.error
-  if (info.updateAvailable && info.shouldRemind) {
-    return `当前 ${info.currentVersion}，最新 ${info.latestVersion}。`
-  }
-  if (info.updateAvailable) {
-    return `当前 ${info.currentVersion}，最新 ${info.latestVersion}，本版本已设置不再提醒。`
-  }
-  if (info.error) return `当前 ${info.currentVersion}，上次检查失败：${info.error}`
-  return `当前 ${info.currentVersion}。`
 })
 
 function close() {
@@ -321,20 +274,6 @@ function handleApplyUpdate() {
   if (!ok) {
     appStore.showToast('当前没有可应用的新版本', 'warning')
   }
-}
-
-function handleOpenRelease() {
-  const url = appStore.versionUpdate?.releaseUrl
-  if (!url) return
-  window.open(url, '_blank', 'noopener,noreferrer')
-}
-
-async function handleDismissVersionUpdate() {
-  await appStore.dismissVersionUpdateReminder()
-}
-
-async function handleCheckVersionUpdate() {
-  await appStore.checkVersionUpdate(true)
 }
 </script>
 
@@ -524,10 +463,6 @@ async function handleCheckVersionUpdate() {
   display: flex;
   flex-wrap: wrap;
   gap: var(--space-2);
-}
-
-.version-actions {
-  margin-bottom: var(--space-3);
 }
 
 .inline-link {

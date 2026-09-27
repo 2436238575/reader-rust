@@ -8,7 +8,7 @@ use crate::service::{
     book_group_service::BookGroupService, book_service::BookService,
     book_source_service::BookSourceService, image_service::ImageService,
     json_document_service::JsonDocumentService, local_epub_book::LocalEpubBookService,
-    local_txt_book::LocalTxtBookService, update_service::UpdateService, user_service::UserService,
+    local_txt_book::LocalTxtBookService, user_service::UserService,
 };
 use std::sync::Arc;
 
@@ -27,5 +27,4 @@ pub struct AppState {
     pub image_service: Arc<ImageService>,
     pub ai_book_service: Arc<AiBookService>,
     pub ai_model_service: Arc<AiModelService>,
-    pub update_service: Arc<UpdateService>,
 }

@@ -131,7 +131,7 @@ src/
     router.rs             全部路由定义 + 鉴权分组（唯一真相来源）
     handlers/             14 个领域模块：book、book_source、user、bookmark、
                           book_group、ai_book、ai_model、ai_proxy、replace_rule、
-                          update、webdav、cache（缓存清理与统计）、chapter_image、
+                          image、webdav、cache（缓存清理与统计）、chapter_image、
                           review（章评/段评）；
                           另有共享的 multipart.rs（限量读取工具）
   auth/                   JWT 鉴权，4 文件
@@ -139,7 +139,7 @@ src/
     secret.rs             JWT_SECRET 解析与持久化
     extractor.rs          CurrentUser / MaybeUser 提取器
     middleware.rs         require_auth / require_admin / optional_auth
-  service/                业务编排，12 文件约 6500 行
+  service/                业务编排，11 文件约 7100 行
     image_service.rs       图片管道：id 映射 + HEIC→JPEG + 永久缓存 + 回源自愈
   parser/                 规则解析引擎，6 文件约 4300 行
     rule_engine.rs        核心（3000 行）：六种用途的解析入口 + 评论解析
@@ -163,7 +163,7 @@ scripts/release.sh        发布脚本
 storage/                  运行期数据，gitignored，首次启动自动创建
 ```
 
-规模参照（便于判断改动影响面）：后端 `src/` 共 82 个 `.rs`、约 26400 行，其中最大的三个文件是
+规模参照（便于判断改动影响面）：后端 `src/` 共 82 个 `.rs`、约 26300 行，其中最大的三个文件是
 `parser/rule_engine.rs`（约 4700 行）、`api/handlers/book.rs`（约 3100 行）、`service/book_service.rs`（约 3100 行）；
 前端 `src/` 下 118 个文件（73 个 `.ts`，其中 21 个是测试；39 个 `.vue`；3 个 CSS + 2 个静态资源 + 1 个 JS 工具）。
 

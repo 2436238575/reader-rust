@@ -72,7 +72,7 @@ let books = self.parser.search_books(source, &res.body, &res.url);  // parser �
 | `ai_book_service.rs` | AI 资料生成与增量更新 |
 | `ai_model_service.rs` | 后端模型配置与可见性控制 |
 | `json_document_service.rs` | 通用 JSON 文档存取（namespace + name） |
-| `book_group_service.rs` / `update_service.rs` | 分组、版本更新检查 |
+| `book_group_service.rs` | 书籍分组 |
 
 ### `src/parser/`
 

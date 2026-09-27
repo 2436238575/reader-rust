@@ -44,7 +44,6 @@
               d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43-.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z" />
             <circle cx="12" cy="12" r="3" />
           </svg>
-          <span v-if="hasVersionUpdateReminder" class="update-indicator" aria-hidden="true"></span>
         </button>
 
         <!-- 移动端菜单入口；独立的 v-if，不参与上面「设置/用户」的 else-if 链 -->
@@ -111,7 +110,6 @@ const showNavTabs = computed(() => route.name !== 'login')
 const isLoginPage = computed(() => route.name === 'login')
 
 const showMobileMenu = ref(false)
-const hasVersionUpdateReminder = computed(() => appStore.hasVersionUpdateReminder)
 const showGlobalSearch = computed(() => route.path !== '/recent')
 const canSearch = computed(() => searchValue.value.trim().length > 0)
 
@@ -376,17 +374,6 @@ function openSettings() {
   transition: all var(--duration-fast) var(--ease-out);
 }
 
-.update-indicator {
-  position: absolute;
-  top: 7px;
-  right: 7px;
-  width: 9px;
-  height: 9px;
-  border-radius: var(--radius-full);
-  background: var(--color-warning);
-  border: 2px solid var(--color-bg-elevated);
-  box-shadow: 0 0 0 2px rgba(201, 127, 58, 0.14);
-}
 
 .topbar-btn:hover {
   background: var(--color-bg-elevated);

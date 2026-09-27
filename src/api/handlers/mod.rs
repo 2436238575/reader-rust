@@ -11,7 +11,6 @@ mod image;
 mod multipart;
 mod replace_rule;
 mod review;
-mod update;
 mod user;
 mod webdav;
 
@@ -20,7 +19,6 @@ pub use ai_model::*;
 pub use ai_proxy::*;
 pub use book::*;
 pub use book_group::*;
-pub use book_source::login_book_source;
 pub use book_source::*;
 pub use bookmark::{
     delete_bookmark, delete_bookmarks, get_bookmarks, save_bookmark, save_bookmarks,
@@ -33,7 +31,6 @@ pub use replace_rule::{
     save_replace_rules,
 };
 pub use review::{get_chapter_comments, get_para_comment_index, get_para_comments};
-pub use update::{dismiss_version_update, get_version_update};
 pub use user::{
     change_password, delete_file, get_user_config, get_user_info, login, logout, save_user_config,
     upload_file,
