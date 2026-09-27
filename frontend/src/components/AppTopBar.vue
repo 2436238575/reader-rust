@@ -227,7 +227,7 @@ function openSettings() {
   border: 1px solid var(--color-border-light);
   border-radius: var(--radius-full);
   padding: 0 6px 0 var(--space-4);
-  width: 220px;
+  width: 180px;
   flex: 0 0 auto;
   transition: width var(--duration-normal) var(--ease-out),
     border-color var(--duration-normal) var(--ease-out),
