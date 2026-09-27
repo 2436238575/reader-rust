@@ -18,6 +18,10 @@
     <link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png" />
     <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" />
     <link rel="manifest" href="/site.webmanifest" />
+    <!-- MiSans 分片声明（56 条 @font-face，内容稳定）：public 下的独立文件，
+         与频繁迭代的应用样式解耦——样式改版不用重下这 80KB 声明。
+         内部用相对路径引用 woff2，子路径部署（VITE_BASE_PATH）下也能命中 -->
+    <link rel="stylesheet" href="/fonts.css" />
     <title>阅读</title>
   </head>
   <body>

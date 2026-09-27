@@ -1,4 +1,6 @@
-@import './fonts.css';
+/* fonts.css 不走这里 @import：56 条 @font-face 声明从不变化，
+   放在 public/fonts.css 由 index.html 独立引入（约 80KB），
+   应用样式改版时不用跟着重下。 */
 @import './variables.css';
 
 /* ─── Reset ─── */
