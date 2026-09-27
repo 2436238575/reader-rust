@@ -13,6 +13,7 @@ GET /reader3/getBookContent
 | 参数 | 类型 | 必填 | 说明 |
 |------|------|------|------|
 | `chapterUrl` | string | 是 | 章节 URL（别名 `url`、`href`） |
+| `bookUrl` | string | 建议 | 章节所属书籍的 URL，用于服务端缓存归位；缺省时服务端依次按书架 URL 前缀、目录缓存反推所属书籍，都失败会把 `chapterUrl` 当缓存键（孤儿缓存，按书清理清不掉） |
 | `bookSourceUrl` | string | 否 | 书源 URL（别名 `origin`） |
 | `index` | number | 否 | 章节下标（当传入书籍 URL 时定位章节） |
 | `refresh` | number | 否 | 非 0 时强制刷新缓存 |

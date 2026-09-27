@@ -1885,6 +1885,47 @@ impl BookService {
         Ok(None)
     }
 
+    /// 按目录缓存反查：哪本书的缓存目录里包含这个章节 URL。
+    ///
+    /// 只读已缓存的目录 JSON，不触发网络。供 getBookContent 在请求没带
+    /// bookUrl 且书架 URL 启发式失败时兜底——API 型书源的书/章节 URL
+    /// 没有公共前缀（如 /info 与 /content），启发式必然失败。
+    pub async fn find_book_by_chapter_in_cached_tocs(
+        &self,
+        user_ns: &str,
+        chapter_url: &str,
+    ) -> Option<String> {
+        let books = self.read_bookshelf(user_ns).await.ok()?;
+        for book in books {
+            let mut candidates: Vec<String> = Vec::with_capacity(3);
+            if let Some(toc) = &book.toc_url {
+                candidates.push(toc.clone());
+            }
+            if !candidates.contains(&book.book_url) {
+                candidates.push(book.book_url.clone());
+            }
+            // 书架记录里的 tocUrl 可能为空或陈旧，bookinfo 缓存里存的才是
+            // 上次实际解析出来的目录地址
+            if let Some(info) = self.load_book_info_cache(user_ns, &book.book_url).await {
+                if let Some(toc) = info.toc_url {
+                    if !candidates.contains(&toc) {
+                        candidates.push(toc);
+                    }
+                }
+            }
+            for toc_url in candidates {
+                let Ok(Some(chapters)) = self.load_chapter_list_cache(user_ns, &toc_url).await
+                else {
+                    continue;
+                };
+                if chapters.iter().any(|c| c.url == chapter_url) {
+                    return Some(book.book_url.clone());
+                }
+            }
+        }
+        None
+    }
+
     /// Find book by name and author (for cases where book_url might differ)
     pub async fn find_shelf_book_by_name_author(
         &self,

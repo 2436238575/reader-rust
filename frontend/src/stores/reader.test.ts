@@ -72,6 +72,7 @@ describe('reader local txt chapters', () => {
     expect(getBrowserCachedChapter).not.toHaveBeenCalled()
     expect(getBookContent).toHaveBeenCalledWith({
       chapterUrl: 'local-txt:abc123#0',
+      bookUrl: 'local-txt:abc123',
       bookSourceUrl: 'local-txt',
       refresh: 0,
     })

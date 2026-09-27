@@ -1359,6 +1359,7 @@ export const useReaderStore = defineStore('reader', () => {
     try {
       chapterContent = await getBookContent({
         chapterUrl: chapter.url,
+        bookUrl: book.value.bookUrl,
         bookSourceUrl: book.value.origin,
         refresh: forceRefresh ? 1 : 0,
       })

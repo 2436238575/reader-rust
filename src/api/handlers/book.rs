@@ -94,6 +94,10 @@ pub struct ChapterListRequest {
 pub struct BookContentRequest {
     #[serde(rename = "chapterUrl", alias = "url", alias = "href")]
     pub chapter_url: Option<String>,
+    /// 章节所属书籍的 URL。缺省时服务端靠书架/目录缓存反推，
+    /// 反推失败会把 chapterUrl 当缓存键，产生孤儿缓存目录。
+    #[serde(rename = "bookUrl")]
+    pub book_url: Option<String>,
     #[serde(rename = "bookSourceUrl", alias = "origin")]
     pub book_source_url: Option<String>,
     #[serde(rename = "bookSource")]
@@ -675,6 +679,9 @@ pub async fn get_book_content(
             if req.chapter_url.is_none() {
                 req.chapter_url = v.chapter_url;
             }
+            if req.book_url.is_none() {
+                req.book_url = v.book_url;
+            }
             if req.book_source_url.is_none() {
                 req.book_source_url = v.book_source_url;
             }
@@ -691,6 +698,7 @@ pub async fn get_book_content(
             for (k, v) in url::form_urlencoded::parse(s.as_bytes()) {
                 match k.as_ref() {
                     "chapterUrl" | "href" => req.chapter_url = Some(v.into_owned()),
+                    "bookUrl" => req.book_url = Some(v.into_owned()),
                     "bookSourceUrl" | "origin" => req.book_source_url = Some(v.into_owned()),
                     "index" => req.index = v.parse().ok(),
                     "refresh" => req.refresh = v.parse().ok(),
@@ -812,13 +820,29 @@ pub async fn get_book_content(
             }
             (url.clone(), chapters[idx].url.clone())
         } else {
-            // url is chapterUrl, try to find book_url from shelf
-            let book_url = if let Ok(Some(shelf_book)) = state
+            // url is chapterUrl。book_url 解析优先级：请求显式携带 > 书架 URL
+            // 启发式 > 目录缓存反查 > 兜底用 chapterUrl 当缓存键。API 型书源的
+            // 书/章节 URL 没有公共前缀（/info 与 /content），启发式必失败，
+            // 没有反查会把正文缓存写进 md5(chapterUrl) 孤儿目录——读不到也清不掉。
+            let book_url = if let Some(bu) = req
+                .book_url
+                .as_deref()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+            {
+                bu.to_string()
+            } else if let Ok(Some(shelf_book)) = state
                 .book_service
                 .get_shelf_book_by_chapter(&user_ns, url)
                 .await
             {
                 shelf_book.book_url
+            } else if let Some(bu) = state
+                .book_service
+                .find_book_by_chapter_in_cached_tocs(&user_ns, url)
+                .await
+            {
+                bu
             } else {
                 url.clone() // fallback to using chapter url as book key
             };
