@@ -267,9 +267,10 @@ export const useReaderStore = defineStore('reader', () => {
 
   async function ensureChineseConverterLoaded() {
     if (chineseConverter.value || chineseLoading) return chineseLoading || Promise.resolve()
-    chineseLoading = import('../utils/chinese.js')
+    // 只引 cn2t 子路径（而非 full 包）：词级字典只带简→繁一份，按需动态加载
+    chineseLoading = import('opencc-js/cn2t')
       .then((module) => {
-        chineseConverter.value = module.traditionalized
+        chineseConverter.value = module.Converter({ from: 'cn', to: 'tw' })
       })
       .catch(() => {
         chineseConverter.value = null
