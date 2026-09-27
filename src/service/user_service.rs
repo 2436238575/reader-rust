@@ -301,6 +301,8 @@ impl UserService {
             iat: now,
             exp: now.saturating_add(self.cfg.jwt_ttl_secs as i64),
             ver: user.token_version,
+            scope: None,
+            bsu: None,
         };
         encode_token(&claims, &self.jwt_secret)
     }
@@ -840,7 +842,9 @@ mod tests {
         let auth = AuthUser {
             username: "reader1".to_string(),
             ns: "reader1".to_string(),
-            token: "test-token".to_string(),
+            ver: 1,
+            scope: None,
+            proxy_source: None,
         };
         let info = service.get_user_info(Some(&auth)).await.unwrap();
         assert_eq!(info["userInfo"]["username"], "reader1");

@@ -7,6 +7,13 @@ use serde::{Deserialize, Serialize};
 /// `ver` 对应 `users.token_version`：改密码时自增，使此前签发的所有令牌
 /// 立即失效。纯无状态令牌无法撤销——改密后旧令牌在过期前仍能访问——所以
 /// 这里保留版本号，由中间件做一次服务端比对。
+/// 限定用途令牌：书源登录代理。
+///
+/// 被代理页面是第三方书源的 HTML/JS，与主站同源吐出——把主 JWT 嵌进页面
+/// 等于把账号交给书源。代理页面改发这种短寿命、绑定单个书源、且只能
+/// 访问代理路径的令牌；泄漏了也只能用来继续代理同一书源的页面。
+pub const PROXY_TOKEN_SCOPE: &str = "bookSourceProxy";
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Claims {
     /// 用户名（`users.username`）
@@ -19,6 +26,12 @@ pub struct Claims {
     pub exp: i64,
     /// 撤销版本号
     pub ver: i64,
+    /// 限定用途（空 = 全功能主令牌）；目前是 [`PROXY_TOKEN_SCOPE`]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scope: Option<String>,
+    /// 代理令牌绑定的书源（`bookSourceUrl`）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bsu: Option<String>,
 }
 
 /// 用 HS256 签发令牌。算法固定，不接受载荷指定。
@@ -56,6 +69,8 @@ mod tests {
             iat: 1_700_000_000,
             exp,
             ver,
+            scope: None,
+            bsu: None,
         }
     }
 
@@ -92,6 +107,27 @@ mod tests {
         let token = encode_token(&claims(1_000_000_000, 0), b"test-secret").unwrap();
         let err = decode_token(&token, b"test-secret").unwrap_err();
         assert!(matches!(err, AppError::Unauthorized(_)));
+    }
+
+    #[test]
+    fn scoped_claims_round_trip() {
+        let secret = b"test-secret";
+        let mut scoped = claims(4_000_000_000, 1);
+        scoped.scope = Some(PROXY_TOKEN_SCOPE.to_string());
+        scoped.bsu = Some("https://source.example".to_string());
+        let token = encode_token(&scoped, secret).unwrap();
+        let decoded = decode_token(&token, secret).unwrap();
+        assert_eq!(decoded.scope.as_deref(), Some(PROXY_TOKEN_SCOPE));
+        assert_eq!(decoded.bsu.as_deref(), Some("https://source.example"));
+        // 主令牌不带 scope 字段，序列化里不该出现（老令牌格式保持干净）
+        let plain = encode_token(&claims(4_000_000_000, 1), secret).unwrap();
+        let payload = plain.split('.').nth(1).unwrap().to_string();
+        let json = String::from_utf8(
+            base64::Engine::decode(&base64::engine::general_purpose::URL_SAFE_NO_PAD, payload)
+                .unwrap(),
+        )
+        .unwrap();
+        assert!(!json.contains("scope") && !json.contains("bsu"));
     }
 
     #[test]

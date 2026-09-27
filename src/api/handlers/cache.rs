@@ -118,7 +118,9 @@ mod tests {
         AuthUser {
             username: "reader1".to_string(),
             ns: "reader1".to_string(),
-            token: "t".to_string(),
+            ver: 1,
+            scope: None,
+            proxy_source: None,
         }
     }
 

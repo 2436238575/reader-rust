@@ -110,7 +110,14 @@
               </svg>
             </button>
           </div>
-          <iframe class="login-preview-frame" :src="loginPreviewFrameUrl"></iframe>
+          <!-- 被代理的是第三方书源页面：sandbox 把它关进不透明源，
+               防它的脚本读主应用 localStorage / DOM；页面内请求靠后端
+               签发的限定令牌（绑定书源、短寿命、只能走代理路径） -->
+          <iframe
+            class="login-preview-frame"
+            :src="loginPreviewFrameUrl"
+            sandbox="allow-scripts allow-forms"
+          ></iframe>
         </div>
       </div>
     </Transition>

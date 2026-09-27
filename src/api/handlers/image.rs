@@ -21,6 +21,15 @@ pub struct CoverQuery {
     pub path: Option<String>,
 }
 
+/// 图片 id 只能是 md5 hex：axum 会把 `%2F` 解码进路径段，
+/// 不校验就把 `../` 拼进了缓存目录的文件路径。
+fn is_valid_image_id(id: &str) -> bool {
+    id.len() == 32
+        && id
+            .bytes()
+            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+}
+
 /// 本站取图：`/reader3/image/<id>`。
 ///
 /// 缓存命中直接返回；没命中就抓上游（HEIC 转 JPEG）后落盘，之后长期命中。
@@ -30,6 +39,9 @@ pub async fn get_image(
     user: CurrentUser,
     Path(id): Path<String>,
 ) -> Result<Response<Body>, AppError> {
+    if !is_valid_image_id(&id) {
+        return Err(AppError::NotFound("图片不存在".to_string()));
+    }
     let user_ns = user.0.ns.clone();
     match state.image_service.load(&id).await {
         Ok((bytes, content_type)) => Ok(image_response(bytes, content_type)),
@@ -108,6 +120,23 @@ fn image_response(bytes: Vec<u8>, content_type: String) -> Response<Body> {
         headers.insert(header::CONTENT_TYPE, value);
     }
     resp
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_valid_image_id;
+
+    #[test]
+    fn image_id_must_be_lowercase_md5_hex() {
+        assert!(is_valid_image_id("0123456789abcdef0123456789abcdef"));
+        // 长度不对、大写、非 hex、路径穿越全部拒绝
+        assert!(!is_valid_image_id("abc"));
+        assert!(!is_valid_image_id("0123456789ABCDEF0123456789ABCDEF"));
+        assert!(!is_valid_image_id("0123456789abcdef0123456789abcdeg"));
+        assert!(!is_valid_image_id("../../etc/passwd"));
+        assert!(!is_valid_image_id("..%2F..%2Fetc"));
+        assert!(!is_valid_image_id(""));
+    }
 }
 
 /// 包一层响应，并把书籍封面换成本站取图地址。

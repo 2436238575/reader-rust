@@ -155,6 +155,8 @@ fn js_http_client() -> Client {
         .deflate(true)
         // 与全局一致的重定向策略：限制跳数，开启防护时拒绝跳往内网
         .redirect(crate::crawler::url_guard::guarded_redirect_policy())
+        // 解析期守卫：堵住「预检解析一次、连接再解析一次」的 DNS rebinding 窗口
+        .dns_resolver(crate::crawler::url_guard::guarded_dns_resolver())
         .build()
         .expect("failed to build JS HTTP client");
     let mut map = JS_HTTP_CLIENTS.lock().unwrap_or_else(|e| e.into_inner());

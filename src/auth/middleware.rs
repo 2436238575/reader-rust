@@ -16,8 +16,20 @@ pub async fn require_auth(
 ) -> Result<Response, AppError> {
     let token = extract_token(&request).ok_or_else(unauthorized)?;
     let user = authenticate(&state.auth, token).await?;
+    // 限定用途令牌（书源登录代理）只能访问代理自身的路径，不能当主令牌用
+    if user.scope.is_some() && !scoped_token_path_allowed(request.uri().path()) {
+        return Err(unauthorized());
+    }
     request.extensions_mut().insert(user);
     Ok(next.run(request).await)
+}
+
+/// 限定令牌允许访问的路径：代理本身 + 代理页面的错误上报。
+fn scoped_token_path_allowed(path: &str) -> bool {
+    matches!(
+        path,
+        "/reader3/bookSourceProxy" | "/reader3/bookSourceClientLog"
+    )
 }
 
 /// 可选鉴权：携带有效令牌时注入身份，否则静默放行。
@@ -30,7 +42,10 @@ pub async fn optional_auth(
 ) -> Result<Response, AppError> {
     if let Some(token) = extract_token(&request) {
         if let Ok(user) = authenticate(&state.auth, token).await {
-            request.extensions_mut().insert(user);
+            // 限定令牌在通用接口上按匿名处理，不注入身份
+            if user.scope.is_none() {
+                request.extensions_mut().insert(user);
+            }
         }
     }
     Ok(next.run(request).await)
@@ -52,7 +67,9 @@ async fn authenticate(state: &AuthState, token: String) -> Result<AuthUser, AppE
     Ok(AuthUser {
         username: claims.sub,
         ns,
-        token,
+        ver: claims.ver,
+        scope: claims.scope,
+        proxy_source: claims.bsu,
     })
 }
 
@@ -193,6 +210,15 @@ mod tests {
     fn missing_token_yields_none() {
         let request = Request::builder().uri("/reader3/x").body(()).unwrap();
         assert_eq!(extract_token(&request), None);
+    }
+
+    #[test]
+    fn scoped_tokens_are_confined_to_proxy_paths() {
+        assert!(scoped_token_path_allowed("/reader3/bookSourceProxy"));
+        assert!(scoped_token_path_allowed("/reader3/bookSourceClientLog"));
+        assert!(!scoped_token_path_allowed("/reader3/getBookSources"));
+        assert!(!scoped_token_path_allowed("/reader3/bookSourceProxy2"));
+        assert!(!scoped_token_path_allowed("/"));
     }
 
     #[test]

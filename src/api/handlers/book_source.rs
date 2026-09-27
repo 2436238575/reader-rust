@@ -27,6 +27,9 @@ use url::Url;
 
 const MAX_TEST_SOURCE_BATCH_SIZE: usize = 100;
 
+/// `readSourceFile` 上传的书源文件上限：书源是 JSON 文本，32MB 已远超正常体积。
+const MAX_SOURCE_FILE_BYTES: usize = 32 * 1024 * 1024;
+
 #[derive(Debug, Deserialize)]
 pub struct BookSourceUrlParam {
     #[serde(rename = "bookSourceUrl")]
@@ -390,11 +393,20 @@ pub async fn book_source_proxy(
         .await
         .map_err(AppError::BadRequest)?;
     let upstream_referer = extract_upstream_referer(&headers);
+    // 限定令牌只能继续代理它绑定的那个书源
+    if let Some(bound) = user.0.proxy_source.as_deref() {
+        if bound != source.book_source_url {
+            return Err(AppError::BadRequest("代理令牌与书源不匹配".to_string()));
+        }
+    }
+    // 被代理页面是第三方书源的 HTML/JS，与主站同源吐出：嵌进去的必须是
+    // 限定令牌（短寿命、绑定书源、只能访问代理路径），而不是主 JWT。
+    let page_token = mint_proxy_token(&state, &user.0, &source.book_source_url)?;
     let response = forward_book_source_request(
         &state,
         &source,
         &user_ns,
-        Some(user.0.token.as_str()),
+        Some(page_token.as_str()),
         &method,
         &headers,
         &target_url,
@@ -404,6 +416,27 @@ pub async fn book_source_proxy(
     .await?;
 
     Ok(response)
+}
+
+/// 代理令牌有效期：每次页面响应都会重签一把新的，30 分钟足够完成一次登录流程。
+const PROXY_TOKEN_TTL_SECS: i64 = 30 * 60;
+
+fn mint_proxy_token(
+    state: &AppState,
+    user: &crate::auth::extractor::AuthUser,
+    book_source_url: &str,
+) -> Result<String, AppError> {
+    let now = chrono::Utc::now().timestamp();
+    let claims = crate::auth::jwt::Claims {
+        sub: user.username.clone(),
+        ns: user.ns.clone(),
+        iat: now,
+        exp: now + PROXY_TOKEN_TTL_SECS,
+        ver: user.ver,
+        scope: Some(crate::auth::jwt::PROXY_TOKEN_SCOPE.to_string()),
+        bsu: Some(book_source_url.to_string()),
+    };
+    crate::auth::jwt::encode_token(&claims, state.auth.jwt_secret())
 }
 
 #[derive(Debug, Deserialize)]
@@ -577,8 +610,8 @@ async fn forward_book_source_request(
     tracing::info!(
         "bookSourceProxy upstream request: method={} target={} referer={} body_len={}",
         method,
-        target_url,
-        referer_value,
+        redact_url_query(target_url),
+        redact_url_query(referer_value),
         body.len()
     );
     let upstream = builder.send().await.map_err(AppError::Http)?;
@@ -604,24 +637,25 @@ async fn forward_book_source_request(
     tracing::info!(
         "bookSourceProxy upstream response: method={} target={} status={} final_url={}",
         method,
-        target_url,
+        redact_url_query(target_url),
         status,
-        final_url
+        redact_url_query(&final_url)
     );
+    // 响应预览可能含登录态/签名等敏感内容，只进 debug 日志
     if is_ajax_api_target(target_url) {
         let preview = String::from_utf8_lossy(&bytes[..bytes.len().min(500)]).replace('\n', "\\n");
-        tracing::info!(
+        tracing::debug!(
             "bookSourceProxy upstream api body: target={} status={} preview={}",
-            target_url,
+            redact_url_query(target_url),
             status,
             preview
         );
     }
     if status.is_client_error() || status.is_server_error() {
         let preview = String::from_utf8_lossy(&bytes[..bytes.len().min(400)]).replace('\n', "\\n");
-        tracing::warn!(
+        tracing::debug!(
             "bookSourceProxy upstream error body: target={} status={} preview={}",
-            target_url,
+            redact_url_query(target_url),
             status,
             preview
         );
@@ -665,6 +699,11 @@ fn is_ajax_api_target(target_url: &str) -> bool {
         return path.ends_with("_api") || path.contains("/api/");
     }
     false
+}
+
+/// 日志里的上游地址一律剥掉查询串：书源站点的签名/登录态参数不该落进日志文件。
+fn redact_url_query(raw: &str) -> String {
+    url_guard::redact_url_for_log(raw)
 }
 
 fn is_html_response(content_type: Option<&str>, body: &[u8]) -> bool {
@@ -1070,10 +1109,13 @@ pub async fn read_source_file(
     {
         if let Some(file_name) = field.file_name() {
             if file_name.ends_with(".json") || file_name.ends_with(".txt") {
-                let bytes = field
-                    .bytes()
-                    .await
-                    .map_err(|e| AppError::BadRequest(e.to_string()))?;
+                // DefaultBodyLimit 不覆盖 multipart 字段，必须逐块限量读
+                let bytes = super::multipart::read_limited_multipart_field(
+                    field,
+                    MAX_SOURCE_FILE_BYTES,
+                    "书源文件过大（上限 32MB）",
+                )
+                .await?;
                 let text = String::from_utf8_lossy(&bytes);
                 let sources: Vec<BookSource> = serde_json::from_str::<serde_json::Value>(&text)
                     .map_err(|_| {

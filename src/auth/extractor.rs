@@ -12,9 +12,12 @@ pub struct AuthUser {
     pub username: String,
     /// 用户命名空间；所有按用户隔离的存储都以它为路径前缀
     pub ns: String,
-    /// 本次请求使用的原始令牌。`bookSourceProxy` 需要把它注入被代理的
-    /// 页面，好让页面自身的后续请求继续带着身份回来。
-    pub token: String,
+    /// 令牌里的撤销版本号（`users.token_version`），供铸造派生令牌时沿用
+    pub ver: i64,
+    /// 限定用途（空 = 全功能主令牌），见 `auth::jwt::PROXY_TOKEN_SCOPE`
+    pub scope: Option<String>,
+    /// 代理令牌绑定的书源（`bookSourceUrl`）
+    pub proxy_source: Option<String>,
 }
 
 /// 必须已登录；中间件未写入身份时返回 401。
@@ -69,7 +72,9 @@ mod tests {
         AuthUser {
             username: "reader1".to_string(),
             ns: "reader1".to_string(),
-            token: "test-token".to_string(),
+            ver: 1,
+            scope: None,
+            proxy_source: None,
         }
     }
 

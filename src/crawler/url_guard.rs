@@ -112,6 +112,19 @@ pub fn is_obviously_internal_url(url: &Url) -> bool {
     }
 }
 
+/// 日志里的上游地址一律剥掉查询串与片段：书源站点的签名/登录态参数
+/// 不该落进日志文件。解析失败时至少截掉 `?`/`#` 之后的部分。
+pub fn redact_url_for_log(raw: &str) -> String {
+    match Url::parse(raw) {
+        Ok(mut url) => {
+            url.set_query(None);
+            url.set_fragment(None);
+            url.to_string()
+        }
+        Err(_) => raw.split(['?', '#']).next().unwrap_or(raw).to_string(),
+    }
+}
+
 /// 协议与内网主机名检查，并返回用于 DNS 解析的主机字符串。
 ///
 /// 注意：`Url::host_str()` 对 IPv6 返回带方括号的形式（`[::1]`），
@@ -228,12 +241,47 @@ pub fn guarded_redirect_policy() -> Policy {
     })
 }
 
-/// 带守卫的基础 client builder：统一超时、UA 与重定向策略。
+/// DNS 解析期守卫：把内网 IP 检查钉在 reqwest 的 DNS 解析环节里。
+///
+/// 仅靠「请求前守卫解析一次」存在 TOCTOU 窗口：守卫校验通过后，reqwest 连接时
+/// 会**重新解析** DNS，控制域名解析的攻击者（恶意书源）可以让两次解析返回不同
+/// 结果（DNS rebinding）。把检查放进解析环节后，连接用的就是这份已校验的结果，
+/// 重定向跳也由同一解析路径覆盖。
+///
+/// 注意：IP 字面量不经过 DNS 解析，所以 URL 预检（[`ensure_outbound_url_allowed`]）
+/// 与重定向逐跳检查仍然保留——这里是兜底，不是替代。
+#[derive(Debug)]
+pub struct GuardedResolver;
+
+impl reqwest::dns::Resolve for GuardedResolver {
+    fn resolve(&self, name: reqwest::dns::Name) -> reqwest::dns::Resolving {
+        Box::pin(async move {
+            // 与 reqwest 默认的 GaiResolver 一致：端口由连接器后续填充，这里用 0 占位
+            let host = name.as_str().trim_end_matches('.');
+            let addrs: Vec<std::net::SocketAddr> =
+                tokio::net::lookup_host((host, 0)).await?.collect();
+            if !private_network_allowed() {
+                check_resolved_ips(addrs.iter().map(|addr| addr.ip())).map_err(OutboundBlocked)?;
+            }
+            let addrs: reqwest::dns::Addrs = Box::new(addrs.into_iter());
+            Ok(addrs)
+        })
+    }
+}
+
+/// 解析期守卫的共享句柄：不走 [`guarded_client_builder`] 的客户端
+/// （需要自定义 cookie jar / 压缩等）也应装上它，否则仍有 DNS rebinding 窗口。
+pub fn guarded_dns_resolver() -> std::sync::Arc<GuardedResolver> {
+    std::sync::Arc::new(GuardedResolver)
+}
+
+/// 带守卫的基础 client builder：统一超时、UA、重定向策略与 DNS 解析期守卫。
 pub fn guarded_client_builder(timeout: Duration, user_agent: &str) -> reqwest::ClientBuilder {
     reqwest::Client::builder()
         .timeout(timeout)
         .user_agent(user_agent.to_string())
         .redirect(guarded_redirect_policy())
+        .dns_resolver(guarded_dns_resolver())
 }
 
 #[cfg(test)]

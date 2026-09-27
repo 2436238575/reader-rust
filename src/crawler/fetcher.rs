@@ -146,7 +146,7 @@ pub async fn fetch(
 
         tracing::debug!(
             method = ?req.method,
-            url = %req.url,
+            url = %crate::crawler::url_guard::redact_url_for_log(&req.url),
             "fetch 发起请求"
         );
         match builder.send().await {
@@ -154,7 +154,7 @@ pub async fn fetch(
                 let status = res.status().as_u16();
                 let is_successful = res.status().is_success();
                 let url = res.url().to_string();
-                tracing::debug!(status = status, url = %url, "fetch 收到响应");
+                tracing::debug!(status = status, url = %crate::crawler::url_guard::redact_url_for_log(&url), "fetch 收到响应");
                 let content_type = res
                     .headers()
                     .get(reqwest::header::CONTENT_TYPE)

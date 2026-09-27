@@ -255,7 +255,10 @@ impl ImageService {
             );
             AppError::NotFound("图片抓取失败".to_string())
         })?;
-        let (bytes, content_type, ext) = transcode(res)?;
+        // HEIC 解码 + JPEG 编码是百毫秒级的 CPU 活，不能占着 async worker
+        let (bytes, content_type, ext) = tokio::task::spawn_blocking(move || transcode(res))
+            .await
+            .map_err(|e| AppError::Internal(e.into()))??;
         let dir = self.dir();
         fs::create_dir_all(&dir)
             .await
@@ -275,14 +278,18 @@ impl ImageService {
     }
 
     async fn fetch(&self, url: &str) -> Result<FetchedImage, AppError> {
+        // 出站守卫：上游地址来自书源/用户输入，不过守卫就能借服务端探内网
+        // （`ALLOW_PRIVATE_NETWORK=false` 时这里曾是唯一漏检的出站口）
+        let url = crate::crawler::url_guard::ensure_outbound_url_str_allowed(url)
+            .await
+            .map_err(AppError::Blocked)?;
         // 与封面抓取同一套头：有些站点按 UA / Referer 做防盗链
-        let referer = url::Url::parse(url).ok().and_then(|parsed| {
-            let host = parsed.host_str()?;
-            Some(format!("{}://{}", parsed.scheme(), host))
-        });
+        let referer = url
+            .host_str()
+            .map(|host| format!("{}://{}", url.scheme(), host));
         let http = self.http.client_for("public").map_err(AppError::Internal)?;
         let mut req = http
-            .get(url)
+            .get(url.as_str())
             .header(
                 "User-Agent",
                 "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",

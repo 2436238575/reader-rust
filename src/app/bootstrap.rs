@@ -38,6 +38,14 @@ pub async fn run() -> anyhow::Result<()> {
     let app: Router = api::router::build_router(state);
 
     let addr = SocketAddr::new(cfg.server_host.parse()?, cfg.server_port);
+    // 非环回监听 + 放行私网出站 = 把内网探测代理暴露给整个网络面，启动时明确提示
+    if !addr.ip().is_loopback() && cfg.allow_private_network {
+        tracing::warn!(
+            "正在监听 {} 且 ALLOW_PRIVATE_NETWORK=true：公网/多用户部署建议显式设 \
+             ALLOW_PRIVATE_NETWORK=false，否则出站抓取可直达内网地址",
+            addr
+        );
+    }
     tracing::info!("listening on {}", addr);
     let listener = tokio::net::TcpListener::bind(addr).await?;
     axum::serve(
