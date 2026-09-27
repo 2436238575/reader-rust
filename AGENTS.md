@@ -22,7 +22,7 @@ Reader-Rust 是 [阅读3.0](https://github.com/hectorqin/reader) 的 Rust 重写
 cargo run                      # 开发模式运行，默认监听 0.0.0.0:8080
 cargo build                    # 调试构建
 cargo build --release          # 发布构建
-cargo test                     # 全部测试（Rust 侧共 230 个，另有 2 个真实网络用例默认忽略）
+cargo test                     # 全部测试（Rust 侧共 233 个，另有 2 个真实网络用例默认忽略）
 cargo test <关键字>             # 按名称过滤测试
 cargo clippy --all-targets     # 静态检查
 cargo fmt                      # 格式化
@@ -198,7 +198,7 @@ HTTP 请求
 - 未登录/令牌无效或过期 → **HTTP 401**，`errorMsg` 为 `"需要登录"`（用户可读文案，前端原样 toast）；前端凭 401 状态码弹出登录框。
 - `/reader3` 是纯 API 命名空间：未注册路径返回 JSON 404，不落到静态文件服务。
 
-鉴权说明：**单用户**，使用 **JWT（HS256）**。唯一账号由启动时的 bootstrap 创建：用户名取 `ADMIN_USERNAME`，密码取 `ADMIN_PASSWORD`（非空则每次启动强制覆盖，兼作找回通道），都为空则首启随机生成并打印到启动日志；不提供注册、用户管理与角色/权限分层——登录即拥有全部能力。登录返回的 `accessToken` 是标准 JWT，载荷为 `{ sub, ns, iat, exp, ver }`。传递方式只有两种：`Authorization: Bearer <jwt>` 头，或查询参数 `accessToken`（SSE 与 `<img>` 无法设置请求头，只能走查询串）。中间件位于 `src/auth/middleware.rs`，分 `require_auth` / `optional_auth` 两档，在 `api/router.rs` 里按分组挂载；handler 通过 `CurrentUser` 提取器取身份，不再自行解析凭据。撤销靠 `users.token_version`：改密码自增版本号即作废该账号所有旧令牌。
+鉴权说明：**单用户**，使用 **JWT（HS256）**。唯一账号由启动时的 bootstrap 创建：用户名取 `ADMIN_USERNAME`，密码取 `ADMIN_PASSWORD`（非空则每次启动强制覆盖，兼作找回通道），都为空则首启随机生成并打印到启动日志；不提供注册、用户管理与角色/权限分层——登录即拥有全部能力。登录返回的 `accessToken` 是标准 JWT，载荷为 `{ sub, ns, iat, exp, ver }`（`bookSourceProxy` 注入被代理页面的令牌额外带 `scope`/`bsu`，是只能访问代理路径、绑定单个书源的 30 分钟限定令牌）。传递方式只有两种：`Authorization: Bearer <jwt>` 头，或查询参数 `accessToken`（SSE 与 `<img>` 无法设置请求头，只能走查询串）。中间件位于 `src/auth/middleware.rs`，分 `require_auth` / `optional_auth` 两档，在 `api/router.rs` 里按分组挂载；handler 通过 `CurrentUser` 提取器取身份，不再自行解析凭据。撤销靠 `users.token_version`：改密码自增版本号即作废该账号所有旧令牌。
 
 ### 静态资源与 404
 
@@ -331,16 +331,16 @@ id = `md5(去掉查询串的地址)`；抓取失败时按登记时的书籍上�
 
 ## 测试
 
-Rust 侧共 **230 个测试**（161 个内联单元测试 + 69 个集成用例，另有 2 个 `#[ignore]` 的真实网络用例），分布为：
+Rust 侧共 **233 个测试**（164 个内联单元测试 + 69 个集成用例，另有 2 个 `#[ignore]` 的真实网络用例），分布为：
 
 - `tests/` 下 14 个集成测试文件（69 个用例），其中 `book_source_compat.rs` 用例最多（17 个）；
   `auth_flow.rs`、`review_flow.rs`、`chapter_image_flow.rs` 与 `image_pipeline.rs` 起真实监听端口，
   前者覆盖 401、静态回落、缓存清理与改密吊销令牌，其余各用一个假上游覆盖评论规则（7 天缓存、
   按类型清理）、章节配图（配图规则、无图不报错、正文 HTML 内嵌图片透传）与图片管道
   （封面地址改写、HEIC→JPEG、过期签名回源自愈、缓存命中不重抓）；
-- `src/` 内的内联单元测试模块（161 个）。
+- `src/` 内的内联单元测试模块（164 个）。
 
-前端使用 vitest，共 22 个 `*.test.ts`（86 个用例）。
+前端使用 vitest，共 21 个 `*.test.ts`（84 个用例）。
 
 需要注意：
 

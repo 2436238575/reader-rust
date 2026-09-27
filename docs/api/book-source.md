@@ -190,6 +190,8 @@ ANY /reader3/bookSourceProxy
 
 将目标站点的 HTML 页面注入代理脚本后返回，使页面内相对链接、表单、脚本自动走本代理。支持 GET/POST。
 
+安全设计：注入页面的 `accessToken` 是**限定用途令牌**——短寿命（30 分钟）、绑定当前书源、且只能访问 `bookSourceProxy` / `bookSourceClientLog` 两个路径；即使被代理页面的第三方脚本窃取，也不能用它调用其它接口。前端嵌入代理页面时应使用无 `allow-same-origin` 的 sandbox iframe。
+
 ## 书源客户端日志
 
 ```text
