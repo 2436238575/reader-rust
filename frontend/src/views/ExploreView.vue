@@ -39,7 +39,7 @@
       </div>
 
       <!-- 书籍列表区 -->
-      <div class="content-panel" ref="scrollContainer" @scroll="handleScroll">
+      <div class="content-panel" ref="scrollContainer" @scroll="tryFetchMore">
         <div class="books-grid-wrapper" v-if="store.books.length > 0">
           <BookGrid
             :books="store.books"
@@ -49,11 +49,11 @@
             @addToShelf="handleAddToShelf"
           />
         </div>
-        
+
         <div class="loading-state" v-if="store.loading">
           <div class="spinner"></div>加载中...
         </div>
-        
+
         <div class="end-state" v-else-if="!store.hasMore && store.books.length > 0">
           没有更多了
         </div>
@@ -61,13 +61,16 @@
         <div class="error-state" v-else-if="store.error">
           {{ store.error }}
         </div>
+
+        <!-- 滚动加载哨兵：距底部 200px 内即翻页 -->
+        <div ref="sentinelRef" class="load-more-sentinel" aria-hidden="true"></div>
       </div>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, watch, onMounted, onUnmounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useExploreStore } from '../stores/explore'
 import { useReaderStore } from '../stores/reader'
@@ -87,24 +90,44 @@ const appStore = useAppStore()
 const router = useRouter()
 
 const scrollContainer = ref<HTMLElement>()
+const sentinelRef = ref<HTMLElement>()
 const openingBookUrl = ref('')
 
 onMounted(async () => {
   await store.init()
+  tryFetchMore()
 })
+
+onUnmounted(() => {
+  stopWatchers()
+})
+
+// 哨兵（列表末尾占位）距面板底部 200px 内视为「该翻页」；
+// 视口大到最后一批也放得下时 scroll 永不触发，靠加载完成后的 watch 链式补页
+function nearBottom() {
+  const panel = scrollContainer.value
+  const sentinel = sentinelRef.value
+  if (!panel || !sentinel) return false
+  const panelTop = panel.getBoundingClientRect().top
+  const sentinelTop = sentinel.getBoundingClientRect().top
+  return sentinelTop - panelTop <= panel.clientHeight + 200
+}
+
+function tryFetchMore() {
+  if (!store.loading && store.hasMore && nearBottom()) {
+    store.fetchMore()
+  }
+}
+
+const stopWatchers = watch(
+  [() => store.loading, () => store.books.length],
+  () => tryFetchMore(),
+  // 必须等 DOM 渲染完再量哨兵位置，否则拿到的是上一轮布局
+  { flush: 'post' },
+)
 
 function onSourceChange(event: Event) {
   store.setSource((event.target as HTMLSelectElement).value)
-}
-
-function handleScroll() {
-  const el = scrollContainer.value
-  if (!el) return
-  const { scrollTop, scrollHeight, clientHeight } = el
-  // 触底 100px 触发加载
-  if (scrollTop + clientHeight >= scrollHeight - 100) {
-    store.fetchMore()
-  }
 }
 
 function handleCategoryClick(category: ExploreCategory) {
@@ -244,6 +267,10 @@ async function handleAddToShelf(book: Book | SearchBook) {
 
 .books-grid-wrapper {
   margin-bottom: 24px;
+}
+
+.load-more-sentinel {
+  height: 1px;
 }
 
 .loading-state, .end-state, .error-state {
