@@ -452,6 +452,11 @@ function handleApplyUpdate() {
   gap: var(--space-2);
 }
 
+/* 应用区：状态卡网格与下方按钮排拉开一行间距 */
+.stats-grid + .btn-group {
+  margin-top: var(--space-3);
+}
+
 .status-card {
   display: flex;
   flex-direction: column;
