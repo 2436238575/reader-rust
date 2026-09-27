@@ -73,7 +73,7 @@
       />
 
       <!-- Group Tabs -->
-      <div class="group-tabs">
+      <div v-if="shelfStore.showGroupTabs" class="group-tabs">
         <div class="tabs-scroll">
           <button
             v-for="group in shelfStore.displayGroups"

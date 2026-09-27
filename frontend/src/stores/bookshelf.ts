@@ -91,6 +91,12 @@ export const useBookshelfStore = defineStore('bookshelf', () => {
     return [all, ...groups.value, ungrouped]
   })
 
+  // 没有自定义分组且所有书都未分组（含空书架）时，「全部/未分组」两个 Tab
+  // 完全等价，整个分组 Tab 行隐藏
+  const showGroupTabs = computed(
+    () => groups.value.length > 0 || books.value.some((b) => b.group && b.group !== 0),
+  )
+
   const filteredBooks = computed(() => {
     if (activeGroupId.value === -1) return books.value
     if (activeGroupId.value === 0) {
@@ -259,7 +265,7 @@ export const useBookshelfStore = defineStore('bookshelf', () => {
     books, recentBooks, recentFilter, loading, sorting,
     fetchBooks, removeBook,
     refreshRecentBooks, removeRecentBook, clearAllRecentBooks,
-    groups, activeGroupId, displayGroups, filteredBooks,
+    groups, activeGroupId, displayGroups, filteredBooks, showGroupTabs,
     fetchGroups, saveGroup, removeGroup,
     searchResults, isSearching, searchKey,
     searchScope, searchGroup, searchSourceUrl, startSearch, clearSearch, isSearchMode,
