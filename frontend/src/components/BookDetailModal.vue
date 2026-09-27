@@ -12,65 +12,71 @@
             </svg>
           </button>
 
-          <!-- Book Header -->
-          <div class="book-header">
-            <div class="book-cover-lg">
-              <img
-                v-if="coverSrc"
-                :src="coverSrc"
-                :alt="book.name"
-                @error="coverFailed = true"
-              />
-              <div v-else class="cover-placeholder-lg">
-                <span>{{ book.name }}</span>
+          <div class="detail-body">
+            <!-- 左栏：书籍信息 + 简介 -->
+            <div class="detail-left">
+              <div class="book-header">
+                <div class="book-cover-lg">
+                  <img
+                    v-if="coverSrc"
+                    :src="coverSrc"
+                    :alt="book.name"
+                    @error="coverFailed = true"
+                  />
+                  <div v-else class="cover-placeholder-lg">
+                    <span>{{ book.name }}</span>
+                  </div>
+                </div>
+                <div class="book-header-info">
+                  <h2>{{ book.name }}</h2>
+                  <p class="author">{{ book.author || '未知作者' }}</p>
+                  <div class="book-tags">
+                    <span v-if="book.kind" class="tag">{{ book.kind }}</span>
+                    <span v-if="(book as Book).totalChapterNum" class="tag">共{{ (book as Book).totalChapterNum }}章</span>
+                    <span v-if="(book as Book).originName" class="tag origin">{{ (book as Book).originName }}</span>
+                  </div>
+                  <p v-if="(book as Book).durChapterTitle" class="progress">
+                    已读至：{{ (book as Book).durChapterTitle }}
+                  </p>
+                </div>
               </div>
-            </div>
-            <div class="book-header-info">
-              <h2>{{ book.name }}</h2>
-              <p class="author">{{ book.author || '未知作者' }}</p>
-              <div class="book-tags">
-                <span v-if="book.kind" class="tag">{{ book.kind }}</span>
-                <span v-if="(book as Book).totalChapterNum" class="tag">共{{ (book as Book).totalChapterNum }}章</span>
-                <span v-if="(book as Book).originName" class="tag origin">{{ (book as Book).originName }}</span>
-              </div>
-              <p v-if="(book as Book).durChapterTitle" class="progress">
-                已读至：{{ (book as Book).durChapterTitle }}
-              </p>
-            </div>
-          </div>
 
-          <!-- Intro -->
-          <div v-if="book.intro" class="book-intro">
-            <h3>简介</h3>
-            <p>{{ book.intro }}</p>
-          </div>
-
-          <!-- Chapters -->
-          <div class="chapter-section" v-if="chapters.length > 0">
-            <h3>目录 ({{ chapters.length }})</h3>
-            <div class="chapter-list">
-              <div
-                v-for="(chapter, i) in displayChapters"
-                :key="chapter.url"
-                class="chapter-item"
-                :class="{ current: i === (book as Book).durChapterIndex }"
-                @click="readChapter(i)"
-              >
-                <span class="chapter-index">{{ i + 1 }}</span>
-                <span class="chapter-title">{{ chapter.title }}</span>
+              <!-- Intro -->
+              <div v-if="book.intro" class="book-intro">
+                <h3>简介</h3>
+                <p>{{ book.intro }}</p>
               </div>
             </div>
-            <button
-              v-if="chapters.length > 50 && !showAllChapters"
-              class="show-more-btn"
-              @click="showAllChapters = true"
-            >
-              显示全部 {{ chapters.length }} 章
-            </button>
-          </div>
-          <div v-else-if="chaptersLoading" class="chapter-loading">
-            <div class="loading-spinner"></div>
-            加载目录中...
+
+            <!-- 右栏：目录 -->
+            <div class="detail-right">
+              <div class="chapter-section" v-if="chapters.length > 0">
+                <h3>目录 ({{ chapters.length }})</h3>
+                <div class="chapter-list">
+                  <div
+                    v-for="(chapter, i) in displayChapters"
+                    :key="chapter.url"
+                    class="chapter-item"
+                    :class="{ current: i === (book as Book).durChapterIndex }"
+                    @click="readChapter(i)"
+                  >
+                    <span class="chapter-index">{{ i + 1 }}</span>
+                    <span class="chapter-title">{{ chapter.title }}</span>
+                  </div>
+                </div>
+                <button
+                  v-if="chapters.length > 50 && !showAllChapters"
+                  class="show-more-btn"
+                  @click="showAllChapters = true"
+                >
+                  显示全部 {{ chapters.length }} 章
+                </button>
+              </div>
+              <div v-else-if="chaptersLoading" class="chapter-loading">
+                <div class="loading-spinner"></div>
+                加载目录中...
+              </div>
+            </div>
           </div>
 
           <!-- Actions -->
@@ -92,7 +98,6 @@
               </svg>
               AI资料
             </button>
-            <button class="btn detail-btn" @click="close">关闭</button>
           </div>
         </div>
       </div>
@@ -220,15 +225,34 @@ function openAiBook() {
 
 .detail-modal {
   width: 100%;
-  max-width: 600px;
+  max-width: 880px;
   max-height: min(85vh, calc(var(--app-height, 100dvh) - var(--safe-area-top) - var(--safe-area-bottom) - 32px));
-  overflow-y: auto;
-  -webkit-overflow-scrolling: touch;
+  display: flex;
+  flex-direction: column;
   background: var(--color-bg-elevated);
   border-radius: var(--radius-xl);
   padding: var(--space-8);
   position: relative;
   box-shadow: var(--shadow-xl);
+  overflow: hidden;
+}
+
+.detail-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.detail-left {
+  min-width: 0;
+}
+
+.detail-right {
+  min-width: 0;
 }
 
 .modal-close {
@@ -336,7 +360,7 @@ function openAiBook() {
 }
 
 .book-intro {
-  margin-bottom: var(--space-6);
+  margin-bottom: var(--space-2);
 }
 
 .book-intro h3 {
@@ -359,18 +383,8 @@ function openAiBook() {
 }
 
 .chapter-list {
-  max-height: 300px;
-  overflow-y: auto;
-  -webkit-overflow-scrolling: touch;
   border: 1px solid var(--color-border-light);
   border-radius: var(--radius-md);
-}
-
-@media (max-width: 768px) {
-  .detail-modal {
-    padding: var(--space-6);
-    border-radius: 20px;
-  }
 }
 
 .chapter-item {
@@ -452,13 +466,87 @@ function openAiBook() {
 .modal-actions {
   display: flex;
   gap: var(--space-3);
-  margin-top: var(--space-6);
+  margin-top: var(--space-5);
   padding-top: var(--space-5);
   border-top: 1px solid var(--color-divider);
+  flex-shrink: 0;
 }
 
 .detail-btn {
   flex: 1;
   min-height: 42px;
+}
+
+/* 桌面端：左右分栏，卡片整体不滚动，简介与目录各自滚动 */
+@media (min-width: 768px) {
+  .detail-body {
+    flex-direction: row;
+    overflow: visible;
+    gap: var(--space-7);
+  }
+
+  .detail-left {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+  }
+
+  .book-intro {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+    padding-right: var(--space-2);
+  }
+
+  .detail-right {
+    width: 300px;
+    flex-shrink: 0;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+  }
+
+  .chapter-section {
+    display: flex;
+    flex-direction: column;
+    flex: 1;
+    min-height: 0;
+  }
+
+  .chapter-list {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+}
+
+/* 移动端：整屏面板，正文整体滚动，操作栏固定底部 */
+@media (max-width: 767px) {
+  .modal-overlay {
+    display: none;
+  }
+
+  .modal-container {
+    padding:
+      var(--safe-area-top)
+      0
+      var(--safe-area-bottom)
+      0;
+  }
+
+  .detail-modal {
+    height: 100%;
+    max-height: none;
+    border-radius: 0;
+    padding: calc(var(--space-6) + var(--safe-area-top)) var(--space-5) var(--space-4);
+    box-shadow: none;
+  }
+
+  .chapter-list {
+    border: none;
+    border-radius: 0;
+  }
 }
 </style>
