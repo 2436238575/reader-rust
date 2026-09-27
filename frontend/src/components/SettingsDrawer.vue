@@ -400,6 +400,15 @@ function handleApplyUpdate() {
   gap: var(--space-2);
 }
 
+/* 修改密码沿用原内联链接的主题色文字，与红色「退出登录」形成区分 */
+.user-actions .btn-soft {
+  color: var(--color-primary);
+}
+
+.user-actions .btn-soft:hover {
+  color: var(--color-primary-dark);
+}
+
 .user-name {
   font-weight: 600;
   font-size: var(--text-sm);
