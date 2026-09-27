@@ -4,9 +4,17 @@ import { getUserInfo } from '../api/user'
 import type { UserInfo } from '../types'
 import { applySystemTheme } from '../utils/systemUi'
 import { ACCESS_TOKEN_STORAGE_KEY } from '../utils/secureAccess'
+import {
+  loadLocalReadingStats,
+  persistLocalReadingStats,
+  pushReadingStatsToBackend,
+  syncReadingStatsFromBackend,
+  MAX_READ_CHAPTER_ENTRIES,
+  STATS_PUSH_DEBOUNCE_MS,
+  type ReadingStats,
+} from '../utils/readingStats'
 
 export const useAppStore = defineStore('app', () => {
-  const STATS_KEY = 'reader-stats'
   // ─── Theme ───
   const savedTheme = localStorage.getItem('theme') as 'light' | 'dark' | null
   const legacyReaderNight = localStorage.getItem('reader-isNight') === 'true'
@@ -33,6 +41,20 @@ export const useAppStore = defineStore('app', () => {
   const userInfo = ref<UserInfo | null>(null)
   const isLoggedIn = ref(false)
 
+  // 每个会话只做一次后端合并；登出后复位
+  let statsSynced = false
+
+  /** 登录态就绪后从后端合并一次阅读统计（跨浏览器同步）；失败则继续用本地 */
+  function syncStatsOnce() {
+    if (!isLoggedIn.value || statsSynced) return
+    statsSynced = true
+    void syncReadingStatsFromBackend(readingStats.value)
+      .then((merged) => {
+        readingStats.value = merged
+      })
+      .catch(() => undefined)
+  }
+
   async function fetchUserInfo() {
     try {
       const data = await getUserInfo()
@@ -41,6 +63,7 @@ export const useAppStore = defineStore('app', () => {
     } catch {
       isLoggedIn.value = false
     }
+    syncStatsOnce()
   }
 
   function setUser(user: UserInfo) {
@@ -49,6 +72,8 @@ export const useAppStore = defineStore('app', () => {
     if (user.accessToken) {
       localStorage.setItem(ACCESS_TOKEN_STORAGE_KEY, user.accessToken)
     }
+    // 登录后不一定经过会调 fetchUserInfo 的页面，直接在登录点触发
+    syncStatsOnce()
   }
 
   /**
@@ -66,6 +91,7 @@ export const useAppStore = defineStore('app', () => {
   function clearUser() {
     userInfo.value = null
     isLoggedIn.value = false
+    statsSynced = false
     localStorage.removeItem(ACCESS_TOKEN_STORAGE_KEY)
   }
 
@@ -85,24 +111,18 @@ export const useAppStore = defineStore('app', () => {
   const deferredInstallPrompt = ref<any>(null)
   const waitingServiceWorker = ref<ServiceWorker | null>(null)
 
-  const initialReadingStats = (() => {
-    try {
-      return JSON.parse(localStorage.getItem(STATS_KEY) || '{"totalSeconds":0,"openedBooks":[],"readChapters":[],"completedBooks":[]}')
-    } catch {
-      return { totalSeconds: 0, openedBooks: [], readChapters: [], completedBooks: [] }
-    }
-  })()
-
-  const readingStats = ref<{
-    totalSeconds: number
-    openedBooks: string[]
-    readChapters: string[]
-    completedBooks: string[]
-  }>(initialReadingStats)
+  const readingStats = ref<ReadingStats>(loadLocalReadingStats())
   let readingSessionStartedAt = 0
+  let statsPushTimer: ReturnType<typeof setTimeout> | null = null
 
   function persistStats() {
-    localStorage.setItem(STATS_KEY, JSON.stringify(readingStats.value))
+    persistLocalReadingStats(readingStats.value)
+    // 防抖推后端：快速连读多章时合并为一次写入
+    if (statsPushTimer) clearTimeout(statsPushTimer)
+    statsPushTimer = setTimeout(() => {
+      statsPushTimer = null
+      pushReadingStatsToBackend(readingStats.value)
+    }, STATS_PUSH_DEBOUNCE_MS)
   }
 
   function startReadingSession() {
@@ -124,9 +144,6 @@ export const useAppStore = defineStore('app', () => {
     }
   }
 
-  // readChapters 的保留条数上限（只作累计统计用，裁掉最旧的）
-  const MAX_READ_CHAPTER_ENTRIES = 5000
-
   function markChapterRead(bookUrl: string, index: number, totalChapters: number) {
     const key = `${bookUrl}#${index}`
     if (!readingStats.value.readChapters.includes(key)) {
@@ -141,7 +158,6 @@ export const useAppStore = defineStore('app', () => {
     }
     persistStats()
   }
-
   const readingStatsSummary = computed(() => {
     const totalMinutes = Math.floor(readingStats.value.totalSeconds / 60)
     const hours = Math.floor(totalMinutes / 60)

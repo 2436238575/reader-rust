@@ -25,6 +25,7 @@ vi.mock('../utils/recentBooks', () => ({
   getRecentReadBookKey: vi.fn((book) => `${book.origin || ''}::${book.bookUrl}`),
   loadRecentReadBooks: vi.fn(() => []),
   removeRecentReadBook: vi.fn(),
+  syncRecentBooksFromBackend: vi.fn(async () => undefined),
 }))
 
 describe('bookshelf search state', () => {

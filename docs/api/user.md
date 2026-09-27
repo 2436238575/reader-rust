@@ -136,3 +136,39 @@ GET /reader3/getTxtTocRules
 响应 `data` 为规则数组。
 
 > **未实现**：当前恒返回空数组（依据：`src/api/handlers/book.rs` 的 `get_txt_toc_rules`），TXT 导入使用内置默认章节规则。
+
+## 读取用户数据文档
+
+```text
+GET /reader3/getUserdata?name=<文档名>
+```
+
+读取当前用户命名空间下的一个 JSON 文档，用于**跨浏览器同步**的轻量用户数据（最近阅读、阅读统计等）。文档不存在时 `data` 为 `null`。
+
+- `name` 仅允许字母数字、`.`、`_`、`-`，首字符必须是字母数字，长度 ≤128（需同时满足后端存储键与旧版文件路径回退的安全约束）；
+- 存储在 `json_documents` 表（按 `namespace + name` 唯一），与阅读进度等共用一套用户命名空间。
+
+```json
+{
+  "isSuccess": true,
+  "data": { "totalSeconds": 3600 },
+  "errorMsg": ""
+}
+```
+
+## 保存用户数据文档
+
+```text
+POST /reader3/saveUserdata
+```
+
+请求体：
+
+```json
+{
+  "name": "reading-stats",
+  "value": { "totalSeconds": 3600 }
+}
+```
+
+**整文档覆盖写**：`value` 可以是任意 JSON（对象/数组/标量），服务端不做合并——多端合并语义由客户端负责（前端内置的最近阅读与阅读统计会在启动时做并集/取大合并后回写）。响应 `data` 为空字符串；`name` 不合法或缺少 `value` 时返回 `isSuccess: false`。

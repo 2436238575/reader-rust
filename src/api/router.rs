@@ -294,6 +294,8 @@ pub fn build_router(state: AppState) -> Router {
         .route("/reader3/changePassword", post(handlers::change_password))
         .route("/reader3/saveUserConfig", post(handlers::save_user_config))
         .route("/reader3/getUserConfig", get(handlers::get_user_config))
+        .route("/reader3/getUserdata", get(handlers::get_userdata))
+        .route("/reader3/saveUserdata", post(handlers::save_userdata))
         .route("/reader3/uploadFile", post(handlers::upload_file))
         .route("/reader3/deleteFile", post(handlers::delete_file))
         .route("/reader3/getTxtTocRules", get(handlers::get_txt_toc_rules))

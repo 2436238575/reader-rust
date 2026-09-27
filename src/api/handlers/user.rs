@@ -40,6 +40,69 @@ pub struct DeleteFileRequest {
     pub url: Option<String>,
 }
 
+#[derive(Debug, Deserialize)]
+pub struct UserdataNameQuery {
+    pub name: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct SaveUserdataRequest {
+    pub name: Option<String>,
+    pub value: Option<Value>,
+}
+
+/// userdata 文档名的白名单：映射到 json_documents 的 name 键，并兼容旧的
+/// `data/<ns>/<name>` 文件路径回退，必须是单一路径分量且不能是 `.` / `..`。
+/// 首字符限定字母数字即可同时排除上述两种情况。
+fn validate_userdata_name(name: &str) -> bool {
+    let mut chars = name.chars();
+    match chars.next() {
+        Some(first) if first.is_ascii_alphanumeric() => {}
+        _ => return false,
+    }
+    name.len() <= 128
+        && name
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '_' || c == '-')
+}
+
+/// 读取当前用户的 JSON 文档（如最近阅读、阅读统计）。不存在时返回 null。
+pub async fn get_userdata(
+    State(state): State<AppState>,
+    user: CurrentUser,
+    Query(q): Query<UserdataNameQuery>,
+) -> Result<Json<ApiResponse<Value>>, AppError> {
+    let name = q.name.unwrap_or_default();
+    if !validate_userdata_name(&name) {
+        return Ok(Json(ApiResponse::err("文档名不合法")));
+    }
+    let value = state
+        .json_document_service
+        .get_value(&user.0.ns, &name)
+        .await?;
+    Ok(Json(ApiResponse::ok(value.unwrap_or(Value::Null))))
+}
+
+/// 保存当前用户的 JSON 文档（整文档覆盖写）。
+pub async fn save_userdata(
+    State(state): State<AppState>,
+    user: CurrentUser,
+    Json(req): Json<SaveUserdataRequest>,
+) -> Result<Json<ApiResponse<Value>>, AppError> {
+    let name = req.name.unwrap_or_default();
+    if !validate_userdata_name(&name) {
+        return Ok(Json(ApiResponse::err("文档名不合法")));
+    }
+    let Some(value) = req.value else {
+        return Ok(Json(ApiResponse::err("缺少文档内容")));
+    };
+    state
+        .json_document_service
+        .set_value(&user.0.ns, &name, &value)
+        .await?;
+    Ok(Json(ApiResponse::ok(Value::String(String::new()))))
+}
+
 /// 公开端点：登录。成功时返回含 JWT 的用户信息。
 ///
 /// 不提供注册：唯一账号由启动时的 bootstrap 创建（`ADMIN_USERNAME` /

@@ -13,7 +13,7 @@ import {
 import type { Book, BookGroup, SearchBook } from '../types'
 import { deleteBrowserBookCache, listBrowserCacheSummary } from '../utils/browserCache'
 import { isLocalBook } from '../utils/localBook'
-import { clearRecentReadBooks, getRecentReadBookKey, loadRecentReadBooks, removeRecentReadBook } from '../utils/recentBooks'
+import { clearRecentReadBooks, getRecentReadBookKey, loadRecentReadBooks, removeRecentReadBook, syncRecentBooksFromBackend } from '../utils/recentBooks'
 
 export const useBookshelfStore = defineStore('bookshelf', () => {
   // ─── Bookshelf ───
@@ -23,6 +23,8 @@ export const useBookshelfStore = defineStore('bookshelf', () => {
   const sorting = ref(false)
 
   async function refreshRecentBooks() {
+    // 与后端文档做并集合并（内部有每会话一次的节流），跨浏览器同步最近阅读
+    await syncRecentBooksFromBackend().catch(() => undefined)
     const browserSummaries = await listBrowserCacheSummary().catch(() => [])
     const browserMap = new Map(browserSummaries.map((item) => [item.bookUrl, item.cachedChapterCount]))
     const shelfMap = new Map(books.value.map((book) => [getRecentReadBookKey(book), book]))
