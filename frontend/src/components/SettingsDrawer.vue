@@ -52,37 +52,32 @@
               用户
             </h3>
             <div v-if="appStore.isLoggedIn" class="user-info-card">
-              <div class="user-avatar-lg">
-                {{ appStore.userInfo?.username?.charAt(0)?.toUpperCase() || 'U' }}
-              </div>
-              <div class="user-panel">
-                <div class="user-card-header">
-                  <div class="user-detail">
-                    <span class="user-name">{{ appStore.userInfo?.username }}</span>
-                  </div>
-                  <button class="btn btn-danger" @click="handleLogout">注销</button>
+              <div class="user-card-header">
+                <span class="user-name">{{ displayName }}</span>
+                <div class="user-actions">
+                  <button class="btn btn-soft" @click="togglePasswordPanel">
+                    {{ showPasswordPanel ? '收起修改密码' : '修改密码' }}
+                  </button>
+                  <button class="btn btn-danger" @click="handleLogout">退出登录</button>
                 </div>
-                <button class="inline-link" @click="togglePasswordPanel">
-                  {{ showPasswordPanel ? '收起修改密码' : '修改密码' }}
-                </button>
-                <div v-if="showPasswordPanel" class="password-panel embedded">
-                  <label class="password-field">
-                    <span>当前密码</span>
-                    <input v-model="passwordForm.oldPassword" type="password" autocomplete="current-password" />
-                  </label>
-                  <label class="password-field">
-                    <span>新密码</span>
-                    <input v-model="passwordForm.newPassword" type="password" autocomplete="new-password" />
-                  </label>
-                  <label class="password-field">
-                    <span>确认新密码</span>
-                    <input v-model="passwordForm.confirmPassword" type="password" autocomplete="new-password" />
-                  </label>
-                  <div class="password-actions">
-                    <button class="btn btn-primary" :disabled="changingPassword" @click="handleChangePassword">
-                      {{ changingPassword ? '提交中...' : '保存新密码' }}
-                    </button>
-                  </div>
+              </div>
+              <div v-if="showPasswordPanel" class="password-panel embedded">
+                <label class="password-field">
+                  <span>当前密码</span>
+                  <input v-model="passwordForm.oldPassword" type="password" autocomplete="current-password" />
+                </label>
+                <label class="password-field">
+                  <span>新密码</span>
+                  <input v-model="passwordForm.newPassword" type="password" autocomplete="new-password" />
+                </label>
+                <label class="password-field">
+                  <span>确认新密码</span>
+                  <input v-model="passwordForm.confirmPassword" type="password" autocomplete="new-password" />
+                </label>
+                <div class="password-actions">
+                  <button class="btn btn-primary" :disabled="changingPassword" @click="handleChangePassword">
+                    {{ changingPassword ? '提交中...' : '保存新密码' }}
+                  </button>
                 </div>
               </div>
             </div>
@@ -133,13 +128,15 @@
               </svg>
               应用
             </h3>
-            <div class="status-card">
-              <span>{{ appStore.isOnline ? '在线' : '离线' }}</span>
-              <small>{{ appStore.pwaReady ? '已启用离线外壳缓存' : '离线外壳未启用' }}</small>
-            </div>
-            <div class="status-card">
-              <span>{{ appVersion }}</span>
-              <small>当前应用版本</small>
+            <div class="stats-grid">
+              <div class="status-card">
+                <span>{{ appStore.isOnline ? '在线' : '离线' }}</span>
+                <small>{{ appStore.pwaReady ? '已启用离线外壳缓存' : '离线外壳未启用' }}</small>
+              </div>
+              <div class="status-card">
+                <span>{{ appVersion }}</span>
+                <small>当前应用版本</small>
+              </div>
             </div>
             <div v-if="appStore.pwaUpdateAvailable" class="status-card accent">
               <span>发现新版本</span>
@@ -162,7 +159,7 @@
 </template>
 
 <script setup lang="ts">
-import { reactive, ref } from 'vue'
+import { computed, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAppStore } from '../stores/app'
 import { useBookshelfStore } from '../stores/bookshelf'
@@ -181,6 +178,12 @@ const shelfStore = useBookshelfStore()
 const router = useRouter()
 const appVersion = __APP_VERSION__
 const showPasswordPanel = ref(false)
+
+// 用户名首字母大写展示（账号本身保持原样）
+const displayName = computed(() => {
+  const name = appStore.userInfo?.username || ''
+  return name ? name.charAt(0).toUpperCase() + name.slice(1) : ''
+})
 const changingPassword = ref(false)
 const passwordForm = reactive({
   oldPassword: '',
@@ -377,49 +380,33 @@ function handleApplyUpdate() {
 }
 
 .user-info-card {
-  display: flex;
-  align-items: flex-start;
+  display: grid;
   gap: var(--space-3);
   padding: var(--space-3);
   background: var(--color-bg-sunken);
   border-radius: var(--radius-md);
 }
 
-.user-panel {
-  flex: 1;
-  display: grid;
-  gap: var(--space-3);
-}
-
 .user-card-header {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
+  justify-content: space-between;
   gap: var(--space-3);
 }
 
-.user-avatar-lg {
-  width: 40px;
-  height: 40px;
-  border-radius: var(--radius-full);
-  background: linear-gradient(135deg, var(--color-primary), var(--color-primary-light));
-  color: white;
+.user-actions {
   display: flex;
   align-items: center;
-  justify-content: center;
-  font-weight: 700;
-  font-size: var(--text-lg);
-  flex-shrink: 0;
-}
-
-.user-detail {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
+  gap: var(--space-2);
 }
 
 .user-name {
   font-weight: 600;
   font-size: var(--text-sm);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .password-panel {
@@ -465,21 +452,6 @@ function handleApplyUpdate() {
   gap: var(--space-2);
 }
 
-.inline-link {
-  padding: 0;
-  background: transparent;
-  border: none;
-  color: var(--color-primary);
-  font-weight: 500;
-  justify-content: flex-start;
-}
-
-.inline-link:hover {
-  background: transparent;
-  border: none;
-  color: var(--color-primary-dark);
-}
-
 .status-card {
   display: flex;
   flex-direction: column;
@@ -512,5 +484,9 @@ function handleApplyUpdate() {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: var(--space-2);
+}
+
+.stats-grid .status-card {
+  margin-bottom: 0;
 }
 </style>
