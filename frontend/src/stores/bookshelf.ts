@@ -20,7 +20,6 @@ export const useBookshelfStore = defineStore('bookshelf', () => {
   const books = ref<Book[]>([])
   const recentBooks = ref<Book[]>([])
   const loading = ref(false)
-  const refreshing = ref(false)
   const sorting = ref(false)
 
   async function refreshRecentBooks() {
@@ -71,25 +70,6 @@ export const useBookshelfStore = defineStore('bookshelf', () => {
       loading.value = false
     }
   }
-
-  async function refreshBooks() {
-    refreshing.value = true
-    try {
-      const [serverBooks, browserSummaries] = await Promise.all([
-        getBookshelfWithCacheInfo(),
-        listBrowserCacheSummary().catch(() => []),
-      ])
-      const browserMap = new Map(browserSummaries.map((item) => [item.bookUrl, item.cachedChapterCount]))
-      books.value = serverBooks.map((book) => ({
-        ...book,
-        browserCachedChapterCount: isLocalBook(book) ? 0 : browserMap.get(book.bookUrl) || 0,
-      }))
-      await refreshRecentBooks()
-    } finally {
-      refreshing.value = false
-    }
-  }
-
   async function removeBook(book: Book) {
     await apiDeleteBook(book)
     await deleteBrowserBookCache(book.bookUrl).catch(() => undefined)
@@ -272,8 +252,8 @@ export const useBookshelfStore = defineStore('bookshelf', () => {
   }
 
   return {
-    books, recentBooks, loading, refreshing, sorting,
-    fetchBooks, refreshBooks, removeBook,
+    books, recentBooks, loading, sorting,
+    fetchBooks, removeBook,
     refreshRecentBooks, removeRecentBook, clearAllRecentBooks,
     groups, activeGroupId, displayGroups, filteredBooks,
     fetchGroups, saveGroup, removeGroup,

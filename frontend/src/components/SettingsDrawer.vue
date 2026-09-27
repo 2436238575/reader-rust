@@ -105,14 +105,13 @@
                 </svg>
                 书源管理
               </button>
-              <button class="btn btn-soft" @click="refreshCache">
+              <button class="btn btn-soft" :disabled="!appStore.isLoggedIn" @click="openCacheLibrary">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
-                  <path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />
-                  <path d="M3 3v5h5" />
-                  <path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16" />
-                  <path d="M16 16h5v5" />
+                  <ellipse cx="12" cy="5" rx="8" ry="3" />
+                  <path d="M4 5v6c0 1.66 3.58 3 8 3s8-1.34 8-3V5" />
+                  <path d="M4 11v6c0 1.66 3.58 3 8 3s8-1.34 8-3v-6" />
                 </svg>
-                刷新缓存
+                缓存管理
               </button>
               <button class="btn btn-soft" :disabled="!appStore.isLoggedIn" @click="openWebdavManager">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18">
@@ -303,10 +302,9 @@ function openWebdavManager() {
   appStore.showWebdavManager = true
 }
 
-function refreshCache() {
-  shelfStore.fetchBooks()
-  appStore.showToast('书架已刷新', 'success')
+function openCacheLibrary() {
   close()
+  appStore.showCacheLibrary = true
 }
 
 async function handleInstallPwa() {

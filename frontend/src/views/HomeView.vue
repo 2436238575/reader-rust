@@ -43,29 +43,12 @@
             </svg>
             <span class="shelf-btn-label">{{ localBookUploading ? '导入中' : '导入本地书' }}</span>
           </button>
-          <button class="btn shelf-btn" type="button" title="刷新书架" aria-label="刷新书架" @click="handleRefreshBooks" :disabled="shelfStore.refreshing">
-            <svg :class="{ spinning: shelfStore.refreshing }" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <path d="M21 12a9 9 0 0 0-15.55-6.2L3 8" />
-              <path d="M3 3v5h5" />
-              <path d="M3 12a9 9 0 0 0 15.55 6.2L21 16" />
-              <path d="M21 21v-5h-5" />
-            </svg>
-            <span class="shelf-btn-label">{{ shelfStore.refreshing ? '刷新中' : '刷新书架' }}</span>
-          </button>
           <button class="btn shelf-btn" type="button" title="分组管理" aria-label="分组管理" @click="showGroupManager = true">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
               <path d="M4 7h6l2 2h8v8a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V9a2 2 0 0 1 2-2Z" />
               <path d="M8 13h8" />
             </svg>
             <span class="shelf-btn-label">分组管理</span>
-          </button>
-          <button class="btn shelf-btn" type="button" title="缓存管理" aria-label="缓存管理" @click="showCacheManager = true">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <ellipse cx="12" cy="5" rx="8" ry="3" />
-              <path d="M4 5v6c0 1.66 3.58 3 8 3s8-1.34 8-3V5" />
-              <path d="M4 11v6c0 1.66 3.58 3 8 3s8-1.34 8-3v-6" />
-            </svg>
-            <span class="shelf-btn-label">缓存管理</span>
           </button>
           <button
             class="btn shelf-btn"
@@ -160,8 +143,6 @@
       @select="handleSetGroup"
     />
     <GroupManagerModal v-model="showGroupManager" />
-
-    <CacheLibraryModal v-model="showCacheManager" />
   </div>
 </template>
 
@@ -177,7 +158,6 @@ import BookDetailModal from '../components/BookDetailModal.vue'
 import GroupSelectModal from '../components/bookshelf/GroupSelectModal.vue'
 import GroupManagerModal from '../components/bookshelf/GroupManagerModal.vue'
 import SearchResults from '../components/SearchResults.vue'
-import CacheLibraryModal from '../components/CacheLibraryModal.vue'
 import type { Book, SearchBook } from '../types'
 
 const router = useRouter()
@@ -188,7 +168,6 @@ const appStore = useAppStore()
 const showDetail = ref(false)
 const showGroupSelect = ref(false)
 const showGroupManager = ref(false)
-const showCacheManager = ref(false)
 const selectedBook = ref<Book | SearchBook | null>(null)
 const openingBookUrl = ref('')
 const localBookFileInputRef = ref<HTMLInputElement | null>(null)
@@ -320,16 +299,7 @@ async function handleReorderBooks(payload: { draggedUrl: string; targetUrl: stri
   } catch (e: any) {
     appStore.showToast(e.message || '排序失败', 'error')
   }
-}
-
-async function handleRefreshBooks() {
-  try {
-    await shelfStore.refreshBooks()
-  } catch (e: any) {
-    appStore.showToast(e.message || '刷新书架失败', 'error')
-  }
-}
-</script>
+}</script>
 
 <style scoped>
 .home-view {

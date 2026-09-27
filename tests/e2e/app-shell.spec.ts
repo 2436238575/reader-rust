@@ -23,6 +23,7 @@ test.describe('Standard E2E: app shell', () => {
     await openSettings(page)
 
     await expect(page.getByRole('button', { name: '书源管理', exact: true })).toBeVisible()
+    await expect(page.getByRole('button', { name: '缓存管理', exact: true })).toBeVisible()
     await expect(page.getByRole('button', { name: '备份与恢复', exact: true })).toBeVisible()
 
     await closeSettings(page)
@@ -45,6 +46,7 @@ test.describe('Standard E2E: app shell', () => {
     await page.locator('.modal-container .close-btn').first().click()
     await expect(page.getByRole('heading', { name: '分组管理' })).not.toBeVisible()
 
+    await openSettings(page)
     await page.getByRole('button', { name: '缓存管理' }).click()
     await expect(page.getByRole('heading', { name: '缓存管理' })).toBeVisible()
   })
