@@ -12,14 +12,15 @@
 
         <form v-if="showGlobalSearch && !isLoginPage" class="search-box" :class="{ focused: searchFocused }"
           role="search" @submit.prevent="handleSearch">
-          <input v-model="searchValue" type="text" placeholder="搜索书籍..." @focus="searchFocused = true"
+          <input v-model="searchValue" type="text" :placeholder="searchPlaceholder" @focus="searchFocused = true"
             @blur="searchFocused = false" />
           <button v-if="searchValue" class="search-clear" type="button" @click="clearSearch">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
               <path d="M18 6 6 18M6 6l12 12" />
             </svg>
           </button>
-          <button class="search-submit" type="submit" title="搜索" aria-label="搜索" :disabled="!canSearch">
+          <button v-if="!isRecentPage" class="search-submit" type="submit" title="搜索" aria-label="搜索"
+            :disabled="!canSearch">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
               <circle cx="11" cy="11" r="8" />
               <path d="m21 21-4.3-4.3" />
@@ -70,6 +71,7 @@
 import { computed, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useAppStore } from '../stores/app'
+import { useBookshelfStore } from '../stores/bookshelf'
 import { useExploreStore } from '../stores/explore'
 import AppMobileMenu from './AppMobileMenu.vue'
 import ThemeSwitch from './ThemeSwitch.vue'
@@ -77,6 +79,7 @@ import ThemeSwitch from './ThemeSwitch.vue'
 const router = useRouter()
 const route = useRoute()
 const appStore = useAppStore()
+const shelfStore = useBookshelfStore()
 const exploreStore = useExploreStore()
 
 const searchFocused = ref(false)
@@ -110,8 +113,26 @@ const showNavTabs = computed(() => route.name !== 'login')
 const isLoginPage = computed(() => route.name === 'login')
 
 const showMobileMenu = ref(false)
-const showGlobalSearch = computed(() => route.path !== '/recent')
+const showGlobalSearch = computed(() => route.name !== 'login')
+const isRecentPage = computed(() => route.path === '/recent')
+// 最近页没有自己的搜索框：顶栏搜索框在该页充当最近阅读的过滤器
+const searchPlaceholder = computed(() => (isRecentPage.value ? '搜索最近阅读' : '搜索书籍...'))
 const canSearch = computed(() => searchValue.value.trim().length > 0)
+
+// 最近页：输入即过滤；进出页面时清空，避免上次的关键词误过滤
+watch(
+  [isRecentPage, searchValue],
+  ([recent, value]) => {
+    shelfStore.recentFilter = recent ? value : ''
+  },
+  { flush: 'post' },
+)
+
+watch(isRecentPage, (recent) => {
+  if (recent) {
+    searchValue.value = ''
+  }
+})
 
 function goHome() {
   router.replace('/')
@@ -120,6 +141,8 @@ function goHome() {
 function handleSearch() {
   const value = searchValue.value.trim()
   if (!value) return
+  // 最近页的搜索框只做本地过滤，不跳全局搜索
+  if (isRecentPage.value) return
 
   // 发现页发起的搜索限定在当前浏览的书源内
   const query: Record<string, string> = { q: value }

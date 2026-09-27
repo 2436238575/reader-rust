@@ -17,14 +17,6 @@
         </div>
       </div>
 
-      <div class="recent-search-row">
-        <input
-          v-model.trim="searchText"
-          class="recent-search-input"
-          placeholder="搜索最近阅读"
-        />
-      </div>
-
       <BookGrid
         :books="filteredRecentBooks"
         :loading="shelfStore.loading"
@@ -60,12 +52,12 @@ const readerStore = useReaderStore()
 const showDetail = ref(false)
 const selectedBook = ref<Book | SearchBook | null>(null)
 const openingBookUrl = ref('')
-const searchText = ref('')
 
 const filteredRecentBooks = computed(() => {
   const list = shelfStore.recentBooks
 
-  const keyword = searchText.value.trim().toLowerCase()
+  // 搜索复用顶栏搜索框：关键词由 AppTopBar 写入 recentFilter
+  const keyword = shelfStore.recentFilter.trim().toLowerCase()
   if (!keyword) return list
 
   return list.filter((book) =>
@@ -158,25 +150,6 @@ async function handleClearRecent() {
   flex: 1;
   min-height: 0;
   overflow: auto;
-}
-
-.recent-search-row {
-  padding-bottom: var(--space-3);
-  flex-shrink: 0;
-}
-
-.recent-search-input {
-  width: 100%;
-  border: 1px solid var(--color-border-light);
-  background: var(--color-bg-elevated);
-  border-radius: 16px;
-  padding: 12px 14px;
-  font-size: var(--text-sm);
-  color: var(--color-text);
-}
-
-.recent-search-input::placeholder {
-  color: var(--color-text-tertiary);
 }
 
 .recent-title {

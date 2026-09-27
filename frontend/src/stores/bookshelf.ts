@@ -19,6 +19,8 @@ export const useBookshelfStore = defineStore('bookshelf', () => {
   // ─── Bookshelf ───
   const books = ref<Book[]>([])
   const recentBooks = ref<Book[]>([])
+  // 最近阅读的过滤关键词，由顶栏搜索框在最近页写入
+  const recentFilter = ref('')
   const loading = ref(false)
   const sorting = ref(false)
 
@@ -254,7 +256,7 @@ export const useBookshelfStore = defineStore('bookshelf', () => {
   }
 
   return {
-    books, recentBooks, loading, sorting,
+    books, recentBooks, recentFilter, loading, sorting,
     fetchBooks, removeBook,
     refreshRecentBooks, removeRecentBook, clearAllRecentBooks,
     groups, activeGroupId, displayGroups, filteredBooks,
