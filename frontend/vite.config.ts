@@ -1,7 +1,7 @@
 import { defineConfig, loadEnv } from 'vite'
 import vue from '@vitejs/plugin-vue'
 import { resolve } from 'path'
-import pkg from './package.json'
+import pkg from './package.json' with { type: 'json' }
 
 /// 部署前缀：根路径部署留空即可；用 nginx 反代到 `/read/` 这类子路径时设
 /// `VITE_BASE_PATH=/read/`（构建产物里的资源与接口地址都会带上前缀）。
@@ -33,7 +33,7 @@ export default defineConfig(({ mode }) => {
     },
     resolve: {
       alias: {
-        '@': resolve(__dirname, 'src'),
+        '@': resolve(import.meta.dirname, 'src'),
       },
     },
     server: {
