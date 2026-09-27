@@ -29,7 +29,7 @@
           <article v-for="item in subscriptions" :key="item.url" class="subscription-item">
             <div class="subscription-main">
               <span class="subscription-url">{{ item.url }}</span>
-              <span v-if="item.lastSyncedAt" class="subscription-time">上次同步 {{ formatTime(item.lastSyncedAt) }}</span>
+              <span v-if="item.lastSyncedAt" class="subscription-time">上次同步 {{ formatDateTime(item.lastSyncedAt) }}</span>
             </div>
             <div class="subscription-actions">
               <button class="btn btn-sm" type="button" @click="$emit('sync-subscription', item.url)">同步</button>
@@ -44,6 +44,8 @@
 </template>
 
 <script setup lang="ts">
+import { formatDateTime } from '../../utils/format'
+
 export type SourceSubscription = {
   url: string
   lastSyncedAt?: number
@@ -63,10 +65,6 @@ defineEmits<{
   'remove-subscription': [url: string]
   close: []
 }>()
-
-function formatTime(ts: number) {
-  return new Date(ts).toLocaleString()
-}
 </script>
 
 <style scoped>

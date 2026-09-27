@@ -17,10 +17,6 @@ export function loginBookSource(bookSourceUrl: string) {
   }>('/loginBookSource', { bookSourceUrl }).then((r) => r.data)
 }
 
-export function getBookSource(bookSourceUrl: string) {
-  return http.post<BookSource>('/getBookSource', { bookSourceUrl }).then((r) => r.data)
-}
-
 export function saveBookSource(source: BookSource) {
   return http.post<{ saved: boolean }>('/saveBookSource', source).then((r) => r.data)
 }
@@ -69,8 +65,4 @@ export function readSourceFile(file: File) {
       'Content-Type': 'multipart/form-data',
     },
   }).then((r) => r.data)
-}
-
-export function getInvalidBookSources() {
-  return http.post<unknown[]>('/getInvalidBookSources').then((r) => r.data)
 }

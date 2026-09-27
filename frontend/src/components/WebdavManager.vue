@@ -78,8 +78,8 @@
                 <span class="file-name">{{ entry.name }}</span>
               </button>
 
-              <span class="file-meta">{{ entry.isDirectory ? '目录' : formatSize(entry.size) }}</span>
-              <span class="file-meta">{{ formatDate(entry.lastModified) }}</span>
+              <span class="file-meta">{{ entry.isDirectory ? '目录' : formatBytes(entry.size) }}</span>
+              <span class="file-meta">{{ formatDateTime(entry.lastModified) }}</span>
 
               <div class="file-actions">
                 <button
@@ -116,7 +116,7 @@
 </template>
 
 <script setup lang="ts">
-import { onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { ref, watch } from 'vue'
 import { useAppStore } from '../stores/app'
 import {
   deleteWebdavFile,
@@ -134,6 +134,8 @@ import {
   restoreWebdavBackup,
   serializeWebdavBackup,
 } from '../utils/webdavBackup'
+import { formatBytes, formatDateTime } from '../utils/format'
+import { useMobileLayout } from '../composables/useMobileLayout'
 
 type EntryRow = WebdavFileEntry & { toParent?: boolean }
 
@@ -155,13 +157,7 @@ const working = ref(false)
 const errorMessage = ref('')
 
 // 移动端整屏铺开（对齐导航菜单/设置抽屉的断点），入场动画随之换成侧滑
-const mobileQuery = typeof window !== 'undefined' ? window.matchMedia('(max-width: 767px)') : null
-const isMobileLayout = ref(mobileQuery?.matches ?? false)
-function handleLayoutChange() {
-  isMobileLayout.value = mobileQuery?.matches ?? false
-}
-onMounted(() => mobileQuery?.addEventListener('change', handleLayoutChange))
-onBeforeUnmount(() => mobileQuery?.removeEventListener('change', handleLayoutChange))
+const { isMobileLayout } = useMobileLayout()
 
 watch(
   () => props.modelValue,
@@ -182,23 +178,6 @@ function close() {
 
 function isBackupFile(name: string) {
   return name.toLowerCase().endsWith('.json')
-}
-
-function formatSize(size: number) {
-  if (!size) return '0 B'
-  const units = ['B', 'KB', 'MB', 'GB']
-  let value = size
-  let unitIndex = 0
-  while (value >= 1024 && unitIndex < units.length - 1) {
-    value /= 1024
-    unitIndex += 1
-  }
-  return `${value >= 10 || unitIndex === 0 ? value.toFixed(0) : value.toFixed(1)} ${units[unitIndex]}`
-}
-
-function formatDate(timestamp: number) {
-  if (!timestamp) return '-'
-  return new Date(timestamp).toLocaleString()
 }
 
 function toParentPath(path: string) {

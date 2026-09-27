@@ -226,8 +226,6 @@
           lineHeight: config.lineHeight,
         }"
       >
-        <div v-if="continuousLoadingPrev" class="continuous-loading-inline">正在加载上一章...</div>
-
         <section
           v-for="chapter in continuousChapters"
           :key="chapter.index"
@@ -943,7 +941,6 @@ const horizontalPageTransitionDuration = computed(() => {
 const {
   continuousChapters,
   continuousLoadingNext,
-  continuousLoadingPrev,
   suppressContinuousSync,
   syncContinuousChapterHtml,
   getContinuousChapter,

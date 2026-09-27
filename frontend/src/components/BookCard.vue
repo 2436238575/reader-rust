@@ -1,29 +1,16 @@
 <template>
-  <div
-    class="book-card"
-    :class="{ 'edit-mode': editMode, 'selected': selected, 'dragging': dragging }"
-    @click="handleCardClick"
-  >
+  <div class="book-card" :class="{ 'edit-mode': editMode, 'selected': selected, 'dragging': dragging }"
+    @click="handleCardClick">
     <!-- Cover -->
     <div class="card-cover" @click.stop="handleCoverClick">
-      <button
-        v-if="showDeleteAction && !editMode"
-        class="card-delete-btn"
-        title="删除最近阅读"
-        @click.stop="$emit('delete', book)"
-      >
+      <button v-if="showDeleteAction && !editMode" class="card-delete-btn" title="删除最近阅读"
+        @click.stop="$emit('delete', book)">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
           <path d="M18 6 6 18M6 6l12 12" />
         </svg>
       </button>
-      <img
-        v-if="coverSrc"
-        :src="coverSrc"
-        :alt="book.name"
-        class="cover-img"
-        loading="lazy"
-        @error="coverFailed = true"
-      />
+      <img v-if="coverSrc" :src="coverSrc" :alt="book.name" class="cover-img" loading="lazy"
+        @error="coverFailed = true" />
       <div v-else class="cover-placeholder">
         <span class="cover-title">{{ book.name }}</span>
         <span class="cover-author">{{ book.author }}</span>
@@ -55,13 +42,6 @@
             <span v-if="asBook.totalChapterNum" class="book-chapters">共{{ asBook.totalChapterNum }}章</span>
           </div>
         </div>
-        <button
-          v-if="showAiEntry"
-          class="ai-entry-btn"
-          @click.stop="$emit('ai', book)"
-        >
-          AI资料
-        </button>
       </div>
 
       <div v-if="isSearch && (sourceName || sourceGroup)" class="book-source-row">
@@ -80,15 +60,11 @@
 
       <div class="card-footer">
         <div v-if="!isSearch && (browserCachedCount > 0 || serverCachedCount > 0)" class="book-cache-row">
-          <span v-if="browserCachedCount > 0" class="cache-chip primary">离线 {{ browserCachedCount }} 章</span>
-          <span v-if="serverCachedCount > 0" class="cache-chip">服务端 {{ serverCachedCount }} 章</span>
+          <span v-if="browserCachedCount > 0" class="cache-chip primary">本地 {{ browserCachedCount }} 章</span>
+          <span v-if="serverCachedCount > 0" class="cache-chip">远程 {{ serverCachedCount }} 章</span>
         </div>
         <!-- Search mode: add to shelf -->
-        <button
-          v-if="isSearch"
-          class="add-shelf-btn"
-          @click.stop="$emit('addToShelf', book)"
-        >
+        <button v-if="isSearch" class="add-shelf-btn" @click.stop="$emit('addToShelf', book)">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
             <path d="M12 5v14M5 12h14" />
           </svg>
@@ -118,7 +94,6 @@ const emit = defineEmits<{
   click: [book: Book | SearchBook]
   info: [book: Book | SearchBook]
   delete: [book: Book | SearchBook]
-  ai: [book: Book | SearchBook]
   addToShelf: [book: Book | SearchBook]
   select: [book: Book | SearchBook]
 }>()
@@ -172,10 +147,6 @@ const sourceName = computed(() => {
 const sourceGroup = computed(() => {
   if (!props.isSearch) return ''
   return asSearchBook.value.originGroup || ''
-})
-const showAiEntry = computed(() => {
-  if (props.isSearch || props.editMode) return false
-  return true
 })
 </script>
 
@@ -378,31 +349,6 @@ const showAiEntry = computed(() => {
   box-shadow: none;
 }
 
-.edit-btn {
-  width: 36px;
-  height: 36px;
-  border-radius: var(--radius-full);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  transition: all var(--duration-fast);
-}
-
-.edit-btn svg {
-  width: 18px;
-  height: 18px;
-}
-
-.edit-btn.delete {
-  background: var(--color-danger);
-  color: white;
-}
-
-.edit-btn.delete:hover {
-  background: #ff4d4f;
-  transform: scale(1.1);
-}
-
 .card-info {
   min-width: 0;
   display: flex;
@@ -550,30 +496,6 @@ const showAiEntry = computed(() => {
   color: var(--color-primary);
 }
 
-.ai-entry-btn {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-1);
-  flex: 0 0 auto;
-  min-height: 28px;
-  padding: 0 10px;
-  margin-left: auto;
-  background: rgba(212, 129, 42, 0.075);
-  color: var(--color-primary);
-  border: 1px solid rgba(212, 129, 42, 0.24);
-  border-radius: 7px;
-  font-size: var(--text-xs);
-  font-weight: 700;
-  transition: all var(--duration-fast);
-  white-space: nowrap;
-}
-
-.ai-entry-btn:hover {
-  background: rgba(201, 127, 58, 0.16);
-  border-color: rgba(201, 127, 58, 0.42);
-  transform: translateY(-1px);
-}
-
 .add-shelf-btn {
   display: inline-flex;
   align-items: center;
@@ -617,12 +539,6 @@ const showAiEntry = computed(() => {
 
   .card-footer {
     gap: 7px;
-  }
-
-  .ai-entry-btn {
-    min-height: 30px;
-    padding: 0 11px;
-    font-size: var(--text-xs);
   }
 }
 </style>

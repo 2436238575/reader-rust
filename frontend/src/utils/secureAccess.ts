@@ -1,3 +1,5 @@
+import { API_BASE } from './appBase'
+
 export const ACCESS_TOKEN_STORAGE_KEY = 'accessToken'
 
 type StorageLike = Pick<Storage, 'getItem'>
@@ -26,4 +28,22 @@ export function appendAuthQueryParams(
   if (token) {
     params.set('accessToken', token)
   }
+}
+
+/**
+ * 构造带鉴权查询串的 EventSource（SSE 无法设置请求头，只能走查询串）。
+ * `undefined` 的参数自动跳过。调用方负责关闭返回的连接。
+ */
+export function createAuthedEventSource(
+  path: string,
+  params: Record<string, string | number | undefined>,
+): EventSource {
+  const query = new URLSearchParams()
+  for (const [key, value] of Object.entries(params)) {
+    if (value !== undefined) {
+      query.set(key, String(value))
+    }
+  }
+  appendAuthQueryParams(query)
+  return new EventSource(`${API_BASE}${path}?${query.toString()}`)
 }

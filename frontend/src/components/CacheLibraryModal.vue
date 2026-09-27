@@ -120,7 +120,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { useBookshelfStore } from '../stores/bookshelf'
 import { useAppStore } from '../stores/app'
 import { getBookshelfWithCacheInfo, deleteBookCache } from '../api/bookshelf'
@@ -136,6 +136,8 @@ import {
   type ServerCacheKind,
 } from '../api/cache'
 import { isLocalBook } from '../utils/localBook'
+import { formatBytes } from '../utils/format'
+import { useMobileLayout } from '../composables/useMobileLayout'
 
 const props = defineProps<{
   modelValue: boolean
@@ -171,31 +173,13 @@ const purging = ref('')
 const showCachePurge = ref(false)
 
 // 移动端整屏铺开（对齐导航菜单/设置抽屉的断点），入场动画随之换成侧滑
-const mobileQuery = typeof window !== 'undefined' ? window.matchMedia('(max-width: 767px)') : null
-const isMobileLayout = ref(mobileQuery?.matches ?? false)
-function handleLayoutChange() {
-  isMobileLayout.value = mobileQuery?.matches ?? false
-}
-onMounted(() => mobileQuery?.addEventListener('change', handleLayoutChange))
-onBeforeUnmount(() => mobileQuery?.removeEventListener('change', handleLayoutChange))
+const { isMobileLayout } = useMobileLayout()
 
 const browserCacheUsageText = computed(() => {
   const chapters = browserSummaries.value.reduce((sum, item) => sum + item.cachedChapterCount, 0)
   const books = browserSummaries.value.filter((item) => item.cachedChapterCount > 0).length
   return chapters > 0 ? `${chapters} 章 · ${books} 本书` : '空'
 })
-
-function formatBytes(bytes: number) {
-  if (!bytes) return '0 B'
-  const units = ['B', 'KB', 'MB', 'GB']
-  let value = bytes
-  let unitIndex = 0
-  while (value >= 1024 && unitIndex < units.length - 1) {
-    value /= 1024
-    unitIndex += 1
-  }
-  return `${value >= 10 || unitIndex === 0 ? value.toFixed(0) : value.toFixed(1)} ${units[unitIndex]}`
-}
 
 function layerUsage(kind: ServerCacheKind) {
   const usage = serverStats.value?.[kind]

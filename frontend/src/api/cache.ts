@@ -1,6 +1,5 @@
 import http from './http'
-import { API_BASE } from '../utils/appBase'
-import { appendAuthQueryParams } from '../utils/secureAccess'
+import { createAuthedEventSource } from '../utils/secureAccess'
 
 /**
  * SSE-based book caching. Returns an EventSource.
@@ -12,23 +11,13 @@ export function cacheBookSSE(params: {
   refresh?: number
   concurrentCount?: number
 }) {
-  const query = new URLSearchParams()
-  query.set('bookUrl', params.bookUrl)
-  if (params.tocUrl) query.set('tocUrl', params.tocUrl)
-  if (params.count) query.set('count', String(params.count))
-  if (params.refresh) query.set('refresh', String(params.refresh))
-  if (params.concurrentCount) query.set('concurrentCount', String(params.concurrentCount))
-
-  appendAuthQueryParams(query)
-
-  return new EventSource(`${API_BASE}/cacheBookSSE?${query.toString()}`)
-}
-
-/**
- * Delete all content cache for a book
- */
-export function deleteBookCache(bookUrl: string) {
-  return http.post('/deleteBookCache', { bookUrl }).then((r) => r.data)
+  return createAuthedEventSource('/cacheBookSSE', {
+    bookUrl: params.bookUrl,
+    tocUrl: params.tocUrl,
+    count: params.count,
+    refresh: params.refresh,
+    concurrentCount: params.concurrentCount,
+  })
 }
 
 /** 服务端缓存分层，与后端 `CacheKind`（camelCase）一一对应 */

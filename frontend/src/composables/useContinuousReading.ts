@@ -20,7 +20,6 @@ export function useContinuousReading(
 ) {
   const continuousChapters = ref<ContinuousChapterItem[]>([])
   const continuousLoadingNext = ref(false)
-  const continuousLoadingPrev = ref(false)
   const suppressContinuousSync = ref(false)
   let continuousStateSyncTimer: number | null = null
 
@@ -139,52 +138,6 @@ export function useContinuousReading(
     }
   }
 
-  async function loadContinuousPrev() {
-    if (hideReadChaptersMode.value) return
-    if (continuousLoadingPrev.value || !continuousChapters.value.length) return
-    const first = continuousChapters.value[0]
-    const prevIndex = first.index - 1
-    if (prevIndex < 0) return
-
-    const container = scrollContainerRef.value
-    const previousHeight = container?.scrollHeight || 0
-    const previousTop = container?.scrollTop || 0
-
-    continuousLoadingPrev.value = true
-    try {
-      const prev = await buildContinuousChapter(prevIndex)
-      if (prev && !getContinuousChapter(prev.index)) {
-        continuousChapters.value = [prev, ...continuousChapters.value]
-        await nextTick()
-        if (container) {
-          const heightDiff = container.scrollHeight - previousHeight
-          container.scrollTop = previousTop + heightDiff
-        }
-      }
-    } finally {
-      continuousLoadingPrev.value = false
-    }
-  }
-
-  async function ensureContinuousChapterLoaded(index: number) {
-    if (getContinuousChapter(index)) return
-    if (!continuousChapters.value.length) {
-      await initializeContinuousChapters(index, false)
-      return
-    }
-
-    while (continuousChapters.value[0] && index < continuousChapters.value[0].index) {
-      await loadContinuousPrev()
-    }
-
-    while (
-      continuousChapters.value[continuousChapters.value.length - 1]
-      && index > continuousChapters.value[continuousChapters.value.length - 1].index
-    ) {
-      await loadContinuousNext()
-    }
-  }
-
   function getContinuousSections() {
     const container = scrollContainerRef.value
     if (!container) return [] as HTMLElement[]
@@ -216,7 +169,6 @@ export function useContinuousReading(
   return {
     continuousChapters,
     continuousLoadingNext,
-    continuousLoadingPrev,
     suppressContinuousSync,
     syncContinuousChapterHtml,
     getContinuousChapter,
@@ -224,8 +176,6 @@ export function useContinuousReading(
     initializeContinuousChapters,
     syncContinuousToStoreState,
     loadContinuousNext,
-    loadContinuousPrev,
-    ensureContinuousChapterLoaded,
     getContinuousSections,
     scrollToContinuousChapter,
     pruneReadChapters,

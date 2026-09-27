@@ -145,7 +145,7 @@
           <div class="map-toolbar">
             <div class="map-title">
               <h2>世界地图</h2>
-              <p>{{ memory.map?.updatedAt ? formatTime(memory.map.updatedAt) : '未生成' }}</p>
+              <p>{{ memory.map?.updatedAt ? formatDateTime(memory.map.updatedAt) : '未生成' }}</p>
             </div>
             <button class="secondary-btn" :disabled="aiStore.isBusy" @click="redrawMap">
               {{ aiStore.phase === 'map' ? '绘制中...' : '重绘地图' }}
@@ -518,6 +518,7 @@ import { getBookContent, getChapterList, getShelfBook } from '../api/bookshelf'
 import { useAiBookStore } from '../stores/aiBook'
 import { useAppStore } from '../stores/app'
 import { useReaderStore } from '../stores/reader'
+import { formatDateTime } from '../utils/format'
 import type {
   AiBookCharacter,
   AiBookConfig,
@@ -812,10 +813,6 @@ async function resolveChapterContent(index: number, chapter: BookChapter) {
     chapterUrl: chapter.url,
     bookSourceUrl: book.value?.origin,
   })
-}
-
-function formatTime(value: number) {
-  return new Date(value).toLocaleString()
 }
 
 function normalizeDisplayCharacters(characters: AiBookCharacter[]) {

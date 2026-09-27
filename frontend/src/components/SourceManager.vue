@@ -125,7 +125,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch, onBeforeUnmount, onMounted } from 'vue'
+import { ref, computed, watch } from 'vue'
 import { API_BASE } from '../utils/appBase'
 import {
   getBookSources,
@@ -149,6 +149,7 @@ import {
   toBookSourceDeletePayload,
 } from '../utils/sourceSelection'
 import { appendAuthQueryParams } from '../utils/secureAccess'
+import { useMobileLayout } from '../composables/useMobileLayout'
 import { chunkBookSourceUrls, mergeBookSourceTestResponses } from '../utils/sourceTesting'
 import SourceEditorPanel from './source-manager/SourceEditorPanel.vue'
 import SourceFilterBar from './source-manager/SourceFilterBar.vue'
@@ -174,13 +175,7 @@ const emit = defineEmits<{
 const appStore = useAppStore()
 
 // 移动端整屏铺开（对齐导航菜单/设置抽屉的断点），入场动画随之换成侧滑
-const mobileQuery = typeof window !== 'undefined' ? window.matchMedia('(max-width: 767px)') : null
-const isMobileLayout = ref(mobileQuery?.matches ?? false)
-function handleLayoutChange() {
-  isMobileLayout.value = mobileQuery?.matches ?? false
-}
-onMounted(() => mobileQuery?.addEventListener('change', handleLayoutChange))
-onBeforeUnmount(() => mobileQuery?.removeEventListener('change', handleLayoutChange))
+const { isMobileLayout } = useMobileLayout()
 
 const sources = ref<BookSource[]>([])
 const loading = ref(false)
