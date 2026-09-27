@@ -428,7 +428,9 @@ function formatReviewTime(raw: string) {
   display: flex;
   align-items: flex-end;
   justify-content: center;
-  background: rgba(0, 0, 0, 0.35);
+  background: var(--overlay-mask-bg);
+  -webkit-backdrop-filter: var(--overlay-mask-blur);
+  backdrop-filter: var(--overlay-mask-blur);
 }
 
 .comment-panel {
@@ -446,7 +448,6 @@ function formatReviewTime(raw: string) {
   .comment-mask {
     align-items: stretch;
     justify-content: flex-end;
-    background: rgba(0, 0, 0, 0.28);
   }
 
   .comment-panel {

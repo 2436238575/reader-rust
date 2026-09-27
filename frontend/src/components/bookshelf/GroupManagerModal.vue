@@ -96,8 +96,9 @@ async function deleteGroup(groupId: number, groupName: string) {
 .modal-overlay {
   position: fixed;
   inset: 0;
-  background: rgba(0, 0, 0, 0.4);
-  backdrop-filter: blur(4px);
+  background: var(--overlay-mask-bg);
+  -webkit-backdrop-filter: var(--overlay-mask-blur);
+  backdrop-filter: var(--overlay-mask-blur);
   z-index: 1000;
 }
 

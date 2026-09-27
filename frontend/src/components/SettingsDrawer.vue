@@ -342,9 +342,10 @@ async function handleCheckVersionUpdate() {
 .drawer-overlay {
   position: fixed;
   inset: 0;
-  background: rgba(0, 0, 0, 0.4);
+  background: var(--overlay-mask-bg);
   z-index: var(--z-overlay);
-  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: var(--overlay-mask-blur);
+  backdrop-filter: var(--overlay-mask-blur);
 }
 
 .settings-drawer {

@@ -607,9 +607,10 @@ watch(() => props.modelValue, (v) => {
 .modal-overlay {
   position: fixed;
   inset: 0;
-  background: rgba(0, 0, 0, 0.5);
+  background: var(--overlay-mask-bg);
   z-index: var(--z-overlay);
-  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: var(--overlay-mask-blur);
+  backdrop-filter: var(--overlay-mask-blur);
 }
 
 .modal-container {
@@ -698,7 +699,9 @@ watch(() => props.modelValue, (v) => {
   align-items: center;
   justify-content: center;
   padding: 24px;
-  background: rgba(0, 0, 0, 0.35);
+  background: var(--overlay-mask-bg);
+  -webkit-backdrop-filter: var(--overlay-mask-blur);
+  backdrop-filter: var(--overlay-mask-blur);
 }
 
 .login-preview-modal {

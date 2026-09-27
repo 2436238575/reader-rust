@@ -109,6 +109,10 @@
   --z-overlay: 300;
   --z-modal: 400;
   --z-toast: 500;
+
+  /* 全站统一的弹层遮罩（图片灯箱等特殊查看器除外） */
+  --overlay-mask-bg: rgba(0, 0, 0, 0.45);
+  --overlay-mask-blur: blur(4px);
 }
 
 /* ─── Dark Theme ─── */

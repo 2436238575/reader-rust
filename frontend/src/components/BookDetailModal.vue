@@ -196,9 +196,10 @@ function openAiBook() {
 .modal-overlay {
   position: fixed;
   inset: 0;
-  background: rgba(0, 0, 0, 0.5);
+  background: var(--overlay-mask-bg);
   z-index: var(--z-overlay);
-  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: var(--overlay-mask-blur);
+  backdrop-filter: var(--overlay-mask-blur);
 }
 
 .modal-container {
