@@ -490,15 +490,15 @@ async fn webdav_move(home: &PathBuf, full: &PathBuf, headers: &HeaderMap) -> Res
         Ok(p) => p,
         Err(status) => return status.into_response(),
     };
-    let overwrite_empty = headers
+    // RFC 4918 §10.6：未携带 Overwrite 头默认按 "T"（允许覆盖），只有 "F" 才拒绝
+    let overwrite_forbidden = headers
         .get("Overwrite")
         .and_then(|v| v.to_str().ok())
-        .unwrap_or("")
-        .is_empty();
+        .is_some_and(|v| v.eq_ignore_ascii_case("F"));
     let full = full.clone();
     let result = tokio::task::spawn_blocking(move || {
         if dest.exists() {
-            if overwrite_empty {
+            if overwrite_forbidden {
                 return StatusCode::PRECONDITION_FAILED.into_response();
             }
             let _ = if dest.is_dir() {
@@ -522,15 +522,15 @@ async fn webdav_copy(home: &PathBuf, full: &PathBuf, headers: &HeaderMap) -> Res
         Ok(p) => p,
         Err(status) => return status.into_response(),
     };
-    let overwrite_empty = headers
+    // RFC 4918 §10.6：未携带 Overwrite 头默认按 "T"（允许覆盖），只有 "F" 才拒绝
+    let overwrite_forbidden = headers
         .get("Overwrite")
         .and_then(|v| v.to_str().ok())
-        .unwrap_or("")
-        .is_empty();
+        .is_some_and(|v| v.eq_ignore_ascii_case("F"));
     let full = full.clone();
     let result = tokio::task::spawn_blocking(move || {
         if dest.exists() {
-            if overwrite_empty {
+            if overwrite_forbidden {
                 return StatusCode::PRECONDITION_FAILED.into_response();
             }
             let _ = if dest.is_dir() {

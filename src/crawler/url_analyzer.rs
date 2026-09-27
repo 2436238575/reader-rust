@@ -18,6 +18,9 @@ static INLINE_ANGLE_RE: Lazy<regex::Regex> = Lazy::new(|| regex::Regex::new(r"<(
 
 pub const DEFAULT_USER_AGENT: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
 
+/// 书源 `retry` 选项的上限：正常书源重试个位数足够，写大了只是把自己挂死。
+const MAX_RETRY: usize = 10;
+
 #[derive(Debug, Clone, Default)]
 pub struct HeaderSpec {
     pub headers: Vec<(String, String)>,
@@ -76,8 +79,9 @@ pub fn analyze_url(
                 });
             }
             if let Some(value) = options.get("retry") {
-                // 显式写成 0 才是「不重试」；解析不出来的值保留默认次数
-                retry = parse_usize(value).unwrap_or(retry);
+                // 显式写成 0 才是「不重试」；解析不出来的值保留默认次数。
+                // 上限兜底：书源写出天文数字会让请求按退避挂极久
+                retry = parse_usize(value).unwrap_or(retry).min(MAX_RETRY);
             }
             if let Some(value) = options.get("type").and_then(Value::as_str) {
                 if !value.trim().is_empty() {

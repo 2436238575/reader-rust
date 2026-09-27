@@ -63,7 +63,11 @@ impl FileCache {
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent).await?;
         }
-        fs::write(&path, value).await?;
+        // 先写临时文件再改名：并发读到的要么是旧内容、要么是新内容，
+        // 不会是两次写入拼起来的半截正文（缓存无 TTL，写坏会一直脏下去）
+        let tmp = path.with_extension("txt.tmp");
+        fs::write(&tmp, value).await?;
+        fs::rename(&tmp, &path).await?;
         self.enforce_user_capacity(user_ns, value.len() as u64)
             .await;
         Ok(())
@@ -164,35 +168,8 @@ impl FileCache {
     /// 平时只做增量记账（`written` 累加），计量越过上限才全量扫描校准一次；
     /// 校准发现实际未超限（外部清理过目录）就继续用校准值。
     async fn enforce_user_capacity(&self, user_ns: &str, written: u64) {
-        if self.max_user_bytes == 0 {
-            return;
-        }
-        let (tracked, fresh) = {
-            let mut map = self.usage.lock().unwrap();
-            match map.get_mut(user_ns) {
-                Some(entry) => {
-                    *entry = entry.saturating_add(written);
-                    (*entry, false)
-                }
-                None => {
-                    map.insert(user_ns.to_string(), written);
-                    (written, true)
-                }
-            }
-        };
-        // 首次触达（进程冷启动或整用户清理后）必须校准一次：磁盘可能已有存量，
-        // 从零记账会漏淘汰；之后增量越过上限才再扫描。
-        if !fresh && tracked <= self.max_user_bytes {
-            return;
-        }
         let dir = self.root.join(user_ns);
-        let usage = dir_usage(&dir, 2).await;
-        if usage.bytes <= self.max_user_bytes {
-            self.set_usage(user_ns, usage.bytes);
-            return;
-        }
-        let freed = evict_oldest(&dir, usage.bytes - self.max_user_bytes).await;
-        self.set_usage(user_ns, usage.bytes - freed);
+        enforce_scoped_capacity(&self.usage, user_ns, &dir, 2, self.max_user_bytes, written).await;
     }
 
     fn subtract_usage(&self, user_ns: &str, delta: u64) {
@@ -200,13 +177,6 @@ impl FileCache {
         if let Some(entry) = map.get_mut(user_ns) {
             *entry = entry.saturating_sub(delta);
         }
-    }
-
-    fn set_usage(&self, user_ns: &str, value: u64) {
-        self.usage
-            .lock()
-            .unwrap()
-            .insert(user_ns.to_string(), value);
     }
 
     fn clear_usage(&self, user_ns: &str) {
@@ -223,6 +193,52 @@ impl FileCache {
             .join(name)
             .with_extension("txt")
     }
+}
+
+/// 两层缓存（正文/评论）共用的容量控制：平时只增量记账（`written` 累加），
+/// 计量越过上限才做一次全目录扫描校准，确实超限时按修改时间最旧优先淘汰。
+/// 首次触达（进程冷启动或整用户清理后）必须校准一次：磁盘可能已有存量，
+/// 从零记账会漏淘汰；之后增量越过上限才再扫描。
+pub(crate) async fn enforce_scoped_capacity(
+    usage: &Mutex<HashMap<String, u64>>,
+    scope: &str,
+    dir: &Path,
+    depth: usize,
+    max_bytes: u64,
+    written: u64,
+) {
+    if max_bytes == 0 {
+        return;
+    }
+    let (tracked, fresh) = {
+        let mut map = usage.lock().unwrap();
+        match map.get_mut(scope) {
+            Some(entry) => {
+                *entry = entry.saturating_add(written);
+                (*entry, false)
+            }
+            None => {
+                map.insert(scope.to_string(), written);
+                (written, true)
+            }
+        }
+    };
+    if !fresh && tracked <= max_bytes {
+        return;
+    }
+    let usage_now = dir_usage(dir, depth).await;
+    if usage_now.bytes <= max_bytes {
+        usage
+            .lock()
+            .unwrap()
+            .insert(scope.to_string(), usage_now.bytes);
+        return;
+    }
+    let freed = evict_oldest(dir, usage_now.bytes - max_bytes).await;
+    usage
+        .lock()
+        .unwrap()
+        .insert(scope.to_string(), usage_now.bytes - freed);
 }
 
 /// 一个目录的占用统计。

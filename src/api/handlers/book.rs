@@ -295,12 +295,17 @@ pub async fn search_book_multi(
         list
     };
 
+    // 与 SSE 版同一档并发上限：书源可装几百个，不设限就是几百条并发出站连接
+    let sem = std::sync::Arc::new(tokio::sync::Semaphore::new(24));
     let mut tasks = Vec::new();
     for source in sources {
         let svc = state.book_service.clone();
         let k = key.clone();
         let user_ns = user_ns.clone();
+        let permit = sem.clone().acquire_owned().await;
+        let Ok(permit) = permit else { break };
         tasks.push(tokio::spawn(async move {
+            let _permit = permit;
             svc.search_book(&user_ns, &source, &k, page).await
         }));
     }
@@ -865,7 +870,7 @@ pub async fn get_book_content(
     if do_refresh {
         let _ = state
             .book_service
-            .delete_book_cache(&user_ns, &book_url)
+            .delete_chapter_cache(&user_ns, &book_url, &chapter_url)
             .await;
     }
 
@@ -1868,10 +1873,12 @@ pub async fn search_book_multi_sse(
             if let Some(res) = tasks.next().await {
                 match res {
                     Ok((cur_idx, _source_name, Ok(list))) => {
-                        last_idx = cur_idx;
+                        // 任务并发完成、顺序不定：游标只许单调前进，
+                        // 否则续搜会在「已完成最大下标」与「最后完成下标」之间漏源/重复
+                        last_idx = last_idx.max(cur_idx);
                         let mut batch = Vec::new();
                         for b in list {
-                            let key = format!("{}_{}", b.name, b.author);
+                            let key = b.merge_key();
                             if !result_map.contains(&key) {
                                 result_map.insert(key);
                                 batch.push(b);
@@ -1879,7 +1886,7 @@ pub async fn search_book_multi_sse(
                         }
                         if !batch.is_empty() {
                             total += batch.len();
-                            let payload = serde_json::json!({"lastIndex": cur_idx, "data": batch});
+                            let payload = serde_json::json!({"lastIndex": last_idx, "data": batch});
                             if tx
                                 .send(Event::default().data(payload.to_string()))
                                 .await
@@ -1895,7 +1902,7 @@ pub async fn search_book_multi_sse(
                         }
                     }
                     Ok((cur_idx, _source_name, Err(e))) => {
-                        last_idx = cur_idx;
+                        last_idx = last_idx.max(cur_idx);
                         tracing::error!("search_book error from {}: {:?}", _source_name, e);
                     }
                     Err(e) => {

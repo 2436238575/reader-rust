@@ -5,7 +5,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime};
 use tokio::fs;
 
-use super::file_cache::{dir_usage, evict_oldest, remove_dir_counting_files, CacheUsage};
+use super::file_cache::{dir_usage, remove_dir_counting_files, CacheUsage};
 
 /// 评论缓存：`<root>/<user_ns>/<book_key>/<md5(key)>.json`。
 ///
@@ -70,7 +70,10 @@ impl ReviewCache {
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent).await?;
         }
-        fs::write(&path, value).await?;
+        // 先写临时文件再改名：并发读到的要么是旧内容、要么是新内容
+        let tmp = path.with_extension("json.tmp");
+        fs::write(&tmp, value).await?;
+        fs::rename(&tmp, &path).await?;
         self.enforce_user_capacity(user_ns, value.len() as u64)
             .await;
         Ok(())
@@ -124,40 +127,16 @@ impl ReviewCache {
     }
 
     async fn enforce_user_capacity(&self, user_ns: &str, written: u64) {
-        if self.max_user_bytes == 0 {
-            return;
-        }
-        let (tracked, fresh) = {
-            let mut map = self.usage.lock().unwrap();
-            match map.get_mut(user_ns) {
-                Some(entry) => {
-                    *entry = entry.saturating_add(written);
-                    (*entry, false)
-                }
-                None => {
-                    map.insert(user_ns.to_string(), written);
-                    (written, true)
-                }
-            }
-        };
-        // 首次触达先校准（磁盘可能已有存量）；之后增量越限才扫描。
-        if !fresh && tracked <= self.max_user_bytes {
-            return;
-        }
         let dir = self.root.join(user_ns);
-        let usage = dir_usage(&dir, 3).await;
-        if usage.bytes <= self.max_user_bytes {
-            self.usage
-                .lock()
-                .unwrap()
-                .insert(user_ns.to_string(), usage.bytes);
-            return;
-        }
-        let freed = evict_oldest(&dir, usage.bytes - self.max_user_bytes).await;
-        self.usage
-            .lock()
-            .unwrap()
-            .insert(user_ns.to_string(), usage.bytes - freed);
+        super::file_cache::enforce_scoped_capacity(
+            &self.usage,
+            user_ns,
+            &dir,
+            3,
+            self.max_user_bytes,
+            written,
+        )
+        .await;
     }
 
     fn subtract_usage(&self, user_ns: &str, delta: u64) {

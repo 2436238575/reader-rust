@@ -59,6 +59,9 @@ pub struct BookService {
     /// 正在后台补全目录的 `(user_ns, toc_url)` 集合：防止同一本书并发触发
     /// 两个补全任务（竞态下各自抓全部分页并各 append 一次，缓存里出现重复章节）。
     pending_toc_fills: Arc<Mutex<HashSet<(String, String)>>>,
+    /// 书架 JSON 的读-改-写串行化：进度上报与 saveBook 并发时
+    /// last-writer-wins 会丢一方更新。单用户场景竞争极少，一把全局锁足够。
+    shelf_lock: Arc<tokio::sync::Mutex<()>>,
 }
 
 /// 内存里暂存的章节正文响应体。
@@ -115,6 +118,37 @@ struct RateState {
     in_flight: bool,
     last_start: Option<Instant>,
     window_starts: Vec<Instant>,
+}
+
+/// `in_flight` 的复位保险（RAII）：正常路径 `disarm` 后由 `finish_rate` 复位；
+/// fetch panic / 任务被取消走 Drop，另起任务把标志复位，避免限速器永久卡死。
+struct SerialRateGuard {
+    states: Arc<RwLock<HashMap<String, RateState>>>,
+    key: String,
+    armed: bool,
+}
+
+impl SerialRateGuard {
+    fn disarm(&mut self) {
+        self.armed = false;
+    }
+}
+
+impl Drop for SerialRateGuard {
+    fn drop(&mut self) {
+        if !self.armed {
+            return;
+        }
+        let states = self.states.clone();
+        let key = std::mem::take(&mut self.key);
+        if let Ok(handle) = tokio::runtime::Handle::try_current() {
+            handle.spawn(async move {
+                if let Some(state) = states.write().await.get_mut(&key) {
+                    state.in_flight = false;
+                }
+            });
+        }
+    }
 }
 
 #[derive(Debug, Clone, serde::Serialize)]
@@ -204,6 +238,7 @@ impl BookService {
             user_book_limit: 0,
             user_local_book_limit: 0,
             pending_toc_fills: Arc::new(Mutex::new(HashSet::new())),
+            shelf_lock: Arc::new(tokio::sync::Mutex::new(())),
         }
     }
 
@@ -380,7 +415,15 @@ impl BookService {
         spec: RequestSpec,
     ) -> anyhow::Result<FetchResponse> {
         self.wait_for_rate(source).await;
+        // fetch panic 或任务被取消时靠 Drop 复位 in_flight，
+        // 否则该标志永远卡住，书源后续请求会全部自旋挂死
+        let mut guard = SerialRateGuard {
+            states: self.rate_states.clone(),
+            key: source.book_source_url.clone(),
+            armed: true,
+        };
         let result = fetch(&self.http, user_ns, spec).await;
+        guard.disarm();
         self.finish_rate(source).await;
         result
     }
@@ -877,9 +920,14 @@ impl BookService {
                         &pagination.source.book_source_url,
                     )
                     .await?;
-                let (chapters, _) =
-                    self.parser
-                        .chapter_list(&pagination.source, &res.body, &res.url);
+                let (chapters, _) = self
+                    .parse_response_blocking(
+                        &pagination.user_ns,
+                        &pagination.source,
+                        &res,
+                        |p, s, b, u| p.chapter_list(s, b, u),
+                    )
+                    .await?;
 
                 // Check if this page is a duplicate (all chapters already seen)
                 // This handles cases where the first page URL differs from toc_url (e.g., different domain)
@@ -923,9 +971,14 @@ impl BookService {
                         &pagination.source.book_source_url,
                     )
                     .await?;
-                let (chapters, next_urls) =
-                    self.parser
-                        .chapter_list(&pagination.source, &res.body, &res.url);
+                let (chapters, next_urls) = self
+                    .parse_response_blocking(
+                        &pagination.user_ns,
+                        &pagination.source,
+                        &res,
+                        |p, s, b, u| p.chapter_list(s, b, u),
+                    )
+                    .await?;
 
                 // Check if this page is a duplicate
                 let all_seen = chapters
@@ -1174,6 +1227,20 @@ impl BookService {
         let book_key = md5_hex(book_url);
         self.cache
             .remove_book(user_ns, &book_key)
+            .await
+            .map_err(AppError::Internal)
+    }
+
+    /// Delete a single chapter's content cache (used by refresh-this-chapter).
+    pub async fn delete_chapter_cache(
+        &self,
+        user_ns: &str,
+        book_url: &str,
+        chapter_url: &str,
+    ) -> Result<(), AppError> {
+        let book_key = md5_hex(book_url);
+        self.cache
+            .remove(user_ns, &book_key, chapter_url)
             .await
             .map_err(AppError::Internal)
     }
@@ -1950,6 +2017,7 @@ impl BookService {
         book_url: &str,
         update: impl FnOnce(&mut Book),
     ) -> Result<Option<Book>, AppError> {
+        let _shelf = self.shelf_lock.lock().await;
         let mut list = self.read_bookshelf(user_ns).await?;
         let Some(book) = list.iter_mut().find(|b| b.book_url == book_url) else {
             return Ok(None);
@@ -1969,6 +2037,7 @@ impl BookService {
             return Err(AppError::BadRequest("bookUrl required".to_string()));
         }
 
+        let _shelf = self.shelf_lock.lock().await;
         let mut list = self.read_bookshelf(user_ns).await?;
         let mut exist_idx: Option<usize> = None;
         for (i, b) in list.iter().enumerate() {
@@ -2032,6 +2101,7 @@ impl BookService {
     }
 
     pub async fn save_books(&self, user_ns: &str, books: Vec<Book>) -> Result<Vec<Book>, AppError> {
+        let _shelf = self.shelf_lock.lock().await;
         let mut normalized = Vec::with_capacity(books.len());
         for mut book in books {
             sanitize_book_urls(&mut book);
@@ -2068,6 +2138,7 @@ impl BookService {
     }
 
     pub async fn delete_book(&self, user_ns: &str, book: &Book) -> Result<bool, AppError> {
+        let _shelf = self.shelf_lock.lock().await;
         let mut list = self.read_bookshelf(user_ns).await?;
         let orig_len = list.len();
         let removed: Vec<Book> = list
@@ -2087,6 +2158,7 @@ impl BookService {
     }
 
     pub async fn delete_books(&self, user_ns: &str, books: Vec<Book>) -> Result<usize, AppError> {
+        let _shelf = self.shelf_lock.lock().await;
         let mut list = self.read_bookshelf(user_ns).await?;
         let mut deleted = 0usize;
         let mut removed_books: Vec<Book> = Vec::new();
