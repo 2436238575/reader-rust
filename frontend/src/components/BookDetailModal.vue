@@ -81,13 +81,6 @@
 
           <!-- Actions -->
           <div class="modal-actions">
-            <button class="btn btn-primary detail-btn" @click="startReading">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18">
-                <path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z" />
-                <path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z" />
-              </svg>
-              {{ (book as Book).durChapterIndex ? '继续阅读' : '开始阅读' }}
-            </button>
             <button class="btn detail-btn" @click="openAiBook">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18">
                 <path d="M12 2v4" />
@@ -97,6 +90,13 @@
                 <circle cx="12" cy="12" r="3" />
               </svg>
               AI资料
+            </button>
+            <button class="btn btn-primary detail-btn" @click="startReading">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18">
+                <path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z" />
+                <path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z" />
+              </svg>
+              {{ (book as Book).durChapterIndex ? '继续阅读' : '开始阅读' }}
             </button>
           </div>
         </div>
@@ -474,15 +474,21 @@ function openAiBook() {
 
 .detail-btn {
   flex: 1;
-  min-height: 42px;
+  min-height: 38px;
 }
 
-/* 桌面端：左右分栏，卡片整体不滚动，简介与目录各自滚动 */
+/* 桌面端：左右分栏，卡片整体不滚动；高度按当前窗口封顶（目录/简介内容
+   不再撑大窗口），简介与目录各自滚动，操作按钮缩小后只放右侧目录栏下方 */
 @media (min-width: 768px) {
+  .detail-modal {
+    height: min(85vh, calc(var(--app-height, 100dvh) - var(--safe-area-top) - var(--safe-area-bottom) - 32px));
+    max-height: none;
+  }
+
   .detail-body {
     flex-direction: row;
     overflow: visible;
-    gap: var(--space-7);
+    gap: var(--space-6);
   }
 
   .detail-left {
@@ -519,6 +525,13 @@ function openAiBook() {
     min-height: 0;
     overflow-y: auto;
     -webkit-overflow-scrolling: touch;
+  }
+
+  .modal-actions {
+    width: 300px;
+    margin-left: auto;
+    margin-top: var(--space-4);
+    padding-top: var(--space-4);
   }
 }
 
