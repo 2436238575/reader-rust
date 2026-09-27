@@ -8,7 +8,7 @@ axum = { version = "0.7", features = ["macros", "json", "multipart"] }
 tokio = { version = "1", features = ["full"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-sqlx = { version = "0.7", features = ["runtime-tokio-rustls", "sqlite", "macros", "migrate"] }
+sqlx = { version = "0.8", features = ["runtime-tokio-rustls", "sqlite", "macros", "migrate"] }
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json", "gzip", "brotli", "deflate", "blocking", "cookies"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt", "json"] }
@@ -25,14 +25,12 @@ chrono = { version = "0.4", features = ["serde"] }
 encoding_rs = "0.8"
 md-5 = "0.10"
 hex = "0.4"
-serde_with = "3"
 scraper = "0.20"
 jsonpath_lib = "0.3"
 regex = "1"
 rquickjs = { version = "0.7", features = ["futures"] }
 tower-http = { version = "0.5", features = ["trace", "cors", "request-id", "fs", "set-header", "compression-gzip"] }
 http = "1"
-http-body-util = "0.1"
 urlencoding = "2"
 futures = "0.3"
 rand = "0.8"
