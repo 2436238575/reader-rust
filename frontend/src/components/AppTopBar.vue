@@ -97,7 +97,7 @@ type NavKey = 'home' | 'explore' | 'recent'
 
 const navItems: Array<{ key: NavKey; label: string; path: string }> = [
   { key: 'home', label: '书架', path: '/' },
-  { key: 'explore', label: '书海', path: '/explore' },
+  { key: 'explore', label: '发现', path: '/explore' },
   { key: 'recent', label: '最近', path: '/recent' },
 ]
 
@@ -121,7 +121,7 @@ function handleSearch() {
   const value = searchValue.value.trim()
   if (!value) return
 
-  // 书海页发起的搜索限定在当前浏览的书源内
+  // 发现页发起的搜索限定在当前浏览的书源内
   const query: Record<string, string> = { q: value }
   if (route.path === '/explore' && exploreStore.activeSourceUrl) {
     query.source = exploreStore.activeSourceUrl

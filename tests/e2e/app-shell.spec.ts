@@ -6,9 +6,9 @@ test.describe('Standard E2E: app shell', () => {
     await gotoApp(page, '/')
 
     await expect(page.getByTitle('书架', { exact: true })).toBeVisible()
-    await page.getByTitle('书海', { exact: true }).click()
+    await page.getByTitle('发现', { exact: true }).click()
     await expect(page).toHaveURL(/#\/explore$/)
-    await expect(page.getByRole('heading', { name: '发现书海' })).toBeVisible()
+    await expect(page.getByRole('heading', { name: '发现' })).toBeVisible()
 
     await page.getByTitle('最近', { exact: true }).click()
     await expect(page).toHaveURL(/#\/recent$/)

@@ -164,7 +164,7 @@ const cacheLayers: CacheLayer[] = [
   { kind: 'content', label: '正文缓存', hint: '已抓取的章节正文' },
   { kind: 'cover', label: '封面与图片', hint: '书籍封面、章节配图与评论图片' },
   { kind: 'chapterList', label: '目录与详情', hint: '章节目录与书籍详情缓存' },
-  { kind: 'searchResults', label: '搜索结果', hint: '搜索与书海的结果缓存' },
+  { kind: 'searchResults', label: '搜索结果', hint: '搜索与发现的结果缓存' },
   { kind: 'review', label: '评论缓存', hint: '章评与段评' },
 ]
 

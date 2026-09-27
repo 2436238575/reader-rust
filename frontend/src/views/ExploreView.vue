@@ -1,21 +1,19 @@
 <template>
   <div class="explore-view" :style="{ '--color-primary': '#c97f3a' }">
     <div class="explore-header">
-      <div class="header-left">
-        <h2>发现书海</h2>
-        <!-- 顶部：书源切换 -->
-        <div class="source-selector">
-          <select :value="store.activeSourceUrl" @change="onSourceChange" v-if="store.exploreSources.length > 0">
-            <option
-              v-for="src in store.exploreSources"
-              :key="src.bookSourceUrl"
-              :value="src.bookSourceUrl"
-            >
-              {{ src.bookSourceName }}
-            </option>
-          </select>
-          <span v-else class="no-sources-text">无带有发现规则的书源</span>
-        </div>
+      <h2>发现</h2>
+      <!-- 顶部：书源切换（与标题同行，右对齐） -->
+      <div class="source-selector">
+        <select :value="store.activeSourceUrl" @change="onSourceChange" v-if="store.exploreSources.length > 0">
+          <option
+            v-for="src in store.exploreSources"
+            :key="src.bookSourceUrl"
+            :value="src.bookSourceUrl"
+          >
+            {{ src.bookSourceName }}
+          </option>
+        </select>
+        <span v-else class="no-sources-text">无带有发现规则的书源</span>
       </div>
     </div>
 
@@ -188,11 +186,15 @@ async function handleAddToShelf(book: Book | SearchBook) {
   background: var(--color-bg-elevated);
 }
 
-.header-left h2 {
+.explore-header h2 {
   font-size: var(--text-xl);
   font-weight: 700;
-  margin: 0 0 8px 0;
+  margin: 0;
   color: var(--color-text);
+}
+
+.source-selector {
+  min-width: 0;
 }
 
 .source-selector select {
@@ -204,6 +206,11 @@ async function handleAddToShelf(book: Book | SearchBook) {
   font-size: var(--text-base);
   outline: none;
   cursor: pointer;
+  /* 书源名过长时截断省略 */
+  max-width: min(320px, 52vw);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  overflow: hidden;
 }
 
 .no-sources-text {
