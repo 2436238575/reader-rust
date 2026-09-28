@@ -98,9 +98,7 @@ fn merge_body(mut req: ReviewRequest, body: &axum::body::Bytes) -> ReviewRequest
             "count" => req.count = value.parse().ok(),
             "paraIndex" => req.para_index = value.parse().ok(),
             "sort" => req.sort = Some(value.into_owned()),
-            "authorOnly" => {
-                req.author_only = Some(matches!(value.as_ref(), "1" | "true"))
-            }
+            "authorOnly" => req.author_only = Some(matches!(value.as_ref(), "1" | "true")),
             "refresh" => req.refresh = value.parse().ok(),
             _ => {}
         }
@@ -191,7 +189,14 @@ pub async fn get_chapter_comments(
     let result = if author_only {
         state
             .book_service
-            .get_author_reviews(&user_ns, &ctx.source, &ctx.book_url, &ctx.chapter_url, None, ctx.refresh)
+            .get_author_reviews(
+                &user_ns,
+                &ctx.source,
+                &ctx.book_url,
+                &ctx.chapter_url,
+                None,
+                ctx.refresh,
+            )
             .await?
     } else {
         state

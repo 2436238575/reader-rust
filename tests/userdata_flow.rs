@@ -109,7 +109,9 @@ impl Drop for TestServer {
 async fn userdata_requires_a_token() {
     let server = TestServer::start().await;
 
-    let response = server.get("/reader3/getUserdata?name=recent-books", None).await;
+    let response = server
+        .get("/reader3/getUserdata?name=recent-books", None)
+        .await;
     assert_eq!(response.status(), 401);
 
     let response = server
@@ -230,7 +232,10 @@ async fn userdata_accepts_array_documents() {
         )
         .await;
     let body: serde_json::Value = response.json().await.unwrap();
-    assert!(body["isSuccess"].as_bool().unwrap(), "数组文档应可保存: {body}");
+    assert!(
+        body["isSuccess"].as_bool().unwrap(),
+        "数组文档应可保存: {body}"
+    );
 
     let response = server
         .get("/reader3/getUserdata?name=recent-books", Some(&token))

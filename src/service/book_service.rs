@@ -108,7 +108,10 @@ const BOOK_INFO_CACHE_DIR: &str = "bookinfo";
 fn is_author_related(item: &crate::model::review::ReviewItem) -> bool {
     item.author
         || item.author_digg
-        || item.replies.iter().any(|reply| reply.author || reply.author_digg)
+        || item
+            .replies
+            .iter()
+            .any(|reply| reply.author || reply.author_digg)
 }
 
 /// 书源的评论 URL 模板是否用到了 `{{sort}}`。
@@ -1624,12 +1627,17 @@ impl BookService {
                     para_index,
                 );
                 let url = self
-                    .parse_body_blocking(user_ns, source, &body, &base, &ctx, move |p, s, b, u, ctx| {
-                        match para_index {
+                    .parse_body_blocking(
+                        user_ns,
+                        source,
+                        &body,
+                        &base,
+                        &ctx,
+                        move |p, s, b, u, ctx| match para_index {
                             Some(_) => p.para_review_url(s, b, u, ctx),
                             None => p.chapter_review_url(s, b, u, ctx),
-                        }
-                    })
+                        },
+                    )
                     .await?
                     .ok_or_else(|| AppError::BadRequest("书源的评论地址解析失败".to_string()))?;
                 let result = self

@@ -1108,9 +1108,10 @@ impl RuleEngine {
                     if count <= 0 {
                         continue;
                     }
-                    let author_commented = eval_field_json_with_ctx(author_rule, value, base_url, &mut ctx)
-                        .map(is_truthy)
-                        .unwrap_or(false);
+                    let author_commented =
+                        eval_field_json_with_ctx(author_rule, value, base_url, &mut ctx)
+                            .map(is_truthy)
+                            .unwrap_or(false);
                     paras.push(ParaReviewCount {
                         para_index,
                         count,
@@ -1273,7 +1274,6 @@ fn parse_count_text(text: &str) -> i64 {
     };
     value as i64
 }
-
 
 fn parse_review_page(fields: &ReviewFields<'_>, body: &str, base_url: &str) -> ReviewPage {
     if fields.list.trim().is_empty() {

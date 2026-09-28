@@ -274,7 +274,11 @@ async fn font_shards_get_immutable_cache_while_plain_files_revalidate() {
     // 字体目录不在默认骨架里，现场补一个带内容 hash 文件名的分片
     let fonts_dir = server.temp_dir.join("dist").join("fonts").join("misans");
     std::fs::create_dir_all(&fonts_dir).unwrap();
-    std::fs::write(fonts_dir.join("MiSansVF.0123456789abcdef.0.woff2"), b"fake-font").unwrap();
+    std::fs::write(
+        fonts_dir.join("MiSansVF.0123456789abcdef.0.woff2"),
+        b"fake-font",
+    )
+    .unwrap();
 
     let response = server
         .get("/fonts/misans/MiSansVF.0123456789abcdef.0.woff2", None)

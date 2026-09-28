@@ -32,7 +32,7 @@ pub use replace_rule::{
 };
 pub use review::{get_chapter_comments, get_para_comment_index, get_para_comments};
 pub use user::{
-    change_password, delete_file, get_userdata, get_user_config, get_user_info, login, logout,
+    change_password, delete_file, get_user_config, get_user_info, get_userdata, login, logout,
     save_user_config, save_userdata, upload_file,
 };
 pub use webdav::{
