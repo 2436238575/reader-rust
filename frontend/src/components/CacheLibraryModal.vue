@@ -306,15 +306,27 @@ async function cacheBrowser(book: Book) {
 }
 
 async function clearServer(book: Book) {
-  await deleteBookCache(book.bookUrl)
-  appStore.showToast(`"${book.name}" 服务端缓存已清除`, 'success')
-  await refreshData()
+  if (!confirm(`确定清除"${book.name}"的服务端缓存吗？已缓存的正文需要重新抓取。`)) return
+  try {
+    await deleteBookCache(book.bookUrl)
+    appStore.showToast(`"${book.name}" 服务端缓存已清除`, 'success')
+  } catch (error) {
+    appStore.showToast((error as Error).message || '清除服务端缓存失败', 'error')
+  } finally {
+    await refreshData()
+  }
 }
 
 async function clearBrowser(book: Book) {
-  await deleteBrowserBookCache(book.bookUrl)
-  appStore.showToast(`"${book.name}" 浏览器缓存已清除`, 'success')
-  await refreshData()
+  if (!confirm(`确定清除"${book.name}"的浏览器缓存吗？离线章节会被删除。`)) return
+  try {
+    await deleteBrowserBookCache(book.bookUrl)
+    appStore.showToast(`"${book.name}" 浏览器缓存已清除`, 'success')
+  } catch (error) {
+    appStore.showToast((error as Error).message || '清除浏览器缓存失败', 'error')
+  } finally {
+    await refreshData()
+  }
 }
 </script>
 

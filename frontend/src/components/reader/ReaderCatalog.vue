@@ -294,8 +294,12 @@ function toggleBookmarkSelection(bm: Bookmark) {
 }
 
 async function addCurrentBookmark() {
-  await store.addBookmark()
-  appStore.showToast('已添加当前页书签', 'success')
+  try {
+    await store.addBookmark()
+    appStore.showToast('已添加当前页书签', 'success')
+  } catch (error) {
+    appStore.showToast((error as Error).message || '添加书签失败', 'error')
+  }
 }
 
 async function handleBatchAction() {
@@ -308,10 +312,15 @@ async function handleBatchAction() {
     return
   }
   const items = store.bookmarks.filter((bookmark) => selectedBookmarkKeys.value.has(getBookmarkKey(bookmark)))
-  await store.removeBookmarks(items)
-  selectedBookmarkKeys.value.clear()
-  bookmarkEditMode.value = false
-  appStore.showToast(`已删除 ${items.length} 条书签`, 'success')
+  if (!confirm(`确定删除选中的 ${items.length} 条书签吗？`)) return
+  try {
+    await store.removeBookmarks(items)
+    selectedBookmarkKeys.value.clear()
+    bookmarkEditMode.value = false
+    appStore.showToast(`已删除 ${items.length} 条书签`, 'success')
+  } catch (error) {
+    appStore.showToast((error as Error).message || '删除书签失败', 'error')
+  }
 }
 
 const formatDate = formatMonthDayTime

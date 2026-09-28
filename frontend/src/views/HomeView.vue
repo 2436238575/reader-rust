@@ -169,10 +169,15 @@ const localBookUploading = ref(false)
 
 onMounted(async () => {
   await appStore.fetchUserInfo()
-  await Promise.all([
-    shelfStore.fetchBooks().catch(() => undefined),
-    shelfStore.fetchGroups().catch(() => undefined),
+  // 首载失败不能静默：否则用户看到「书架空空如也」的误导性空态
+  const results = await Promise.allSettled([
+    shelfStore.fetchBooks(),
+    shelfStore.fetchGroups(),
   ])
+  const failed = results.find((r): r is PromiseRejectedResult => r.status === 'rejected')
+  if (failed) {
+    appStore.showToast((failed.reason as Error)?.message || '书架加载失败', 'error')
+  }
   if (!appStore.isOnline) {
     const restored = await readerStore.restorePersistedSession()
     if (restored) {

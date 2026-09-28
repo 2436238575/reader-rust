@@ -254,16 +254,28 @@ async function startBrowserCaching(count: number) {
 
 async function clearServerCache() {
   if (!store.book || isLocalBookInServer.value) return
-  await deleteBookCache(store.book.bookUrl)
-  appStore.showToast('服务端缓存已清除', 'success')
-  await refreshStats()
+  if (!confirm('确定清除这本书的服务端缓存吗？已缓存的正文需要重新抓取。')) return
+  try {
+    await deleteBookCache(store.book.bookUrl)
+    appStore.showToast('服务端缓存已清除', 'success')
+  } catch (error) {
+    appStore.showToast((error as Error).message || '清除服务端缓存失败', 'error')
+  } finally {
+    await refreshStats()
+  }
 }
 
 async function clearBrowserCache() {
   if (!store.book || isLocalBookInServer.value) return
-  await deleteBrowserBookCache(store.book.bookUrl)
-  appStore.showToast('浏览器缓存已清除', 'success')
-  await refreshStats()
+  if (!confirm('确定清除这本书的浏览器缓存吗？离线章节会被删除。')) return
+  try {
+    await deleteBrowserBookCache(store.book.bookUrl)
+    appStore.showToast('浏览器缓存已清除', 'success')
+  } catch (error) {
+    appStore.showToast((error as Error).message || '清除浏览器缓存失败', 'error')
+  } finally {
+    await refreshStats()
+  }
 }
 
 function closeSSE() {

@@ -696,8 +696,12 @@ async function saveServerConfig() {
 async function resetMemory() {
   if (!book.value) return
   if (!confirm('确定重置当前书的 AI资料？')) return
-  await aiStore.reset(book.value)
-  appStore.showToast('AI资料已重置', 'success')
+  try {
+    await aiStore.reset(book.value)
+    appStore.showToast('AI资料已重置', 'success')
+  } catch (error) {
+    appStore.showToast((error as Error).message || '重置失败', 'error')
+  }
 }
 
 function resolveCurrentIndex() {

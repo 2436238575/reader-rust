@@ -42,11 +42,13 @@ import { useRouter } from 'vue-router'
 import BookDetailModal from '../components/BookDetailModal.vue'
 import BookGrid from '../components/BookGrid.vue'
 import { useBookshelfStore } from '../stores/bookshelf'
+import { useAppStore } from '../stores/app'
 import { useOpenBook } from '../composables/useOpenBook'
 import type { Book, SearchBook } from '../types'
 
 const router = useRouter()
 const shelfStore = useBookshelfStore()
+const appStore = useAppStore()
 const { openBook } = useOpenBook()
 
 const showDetail = ref(false)
@@ -76,7 +78,10 @@ const filteredRecentBooks = computed(() => {
 
 onMounted(async () => {
   await shelfStore.fetchBooks().catch(() => undefined)
-  await shelfStore.refreshRecentBooks().catch(() => undefined)
+  await shelfStore.refreshRecentBooks().catch((error) => {
+    // 首载失败不能静默：否则用户看到「暂无最近阅读」的误导性空态
+    appStore.showToast((error as Error)?.message || '最近阅读加载失败', 'error')
+  })
 })
 
 async function handleBookClick(book: Book | SearchBook) {
@@ -89,7 +94,12 @@ function handleBookInfo(book: Book | SearchBook) {
 }
 
 async function handleRecentDelete(book: Book | SearchBook) {
-  await shelfStore.removeRecentBook(book as Book).catch(() => undefined)
+  try {
+    await shelfStore.removeRecentBook(book as Book)
+    appStore.showToast(`已删除 "${book.name}"`, 'success')
+  } catch (error) {
+    appStore.showToast((error as Error).message || '删除失败', 'error')
+  }
 }
 
 function handleBookAi(book: Book | SearchBook) {
@@ -100,7 +110,13 @@ function handleBookAi(book: Book | SearchBook) {
 }
 
 async function handleClearRecent() {
-  await shelfStore.clearAllRecentBooks().catch(() => undefined)
+  if (!confirm('确定清空最近阅读记录吗？')) return
+  try {
+    await shelfStore.clearAllRecentBooks()
+    appStore.showToast('已清空最近阅读', 'success')
+  } catch (error) {
+    appStore.showToast((error as Error).message || '清空失败', 'error')
+  }
 }
 </script>
 

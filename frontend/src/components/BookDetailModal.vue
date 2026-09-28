@@ -76,6 +76,10 @@
                 <div class="loading-spinner"></div>
                 加载目录中...
               </div>
+              <div v-else-if="chaptersFailed" class="chapter-failed">
+                目录加载失败
+                <button class="chapter-retry-btn" @click="loadChapters">重试</button>
+              </div>
             </div>
           </div>
 
@@ -137,6 +141,7 @@ const { isMobileLayout } = useMobileLayout()
 const coverFailed = ref(false)
 const chapters = ref<BookChapter[]>([])
 const chaptersLoading = ref(false)
+const chaptersFailed = ref(false)
 const showAllChapters = ref(false)
 
 const coverSrc = computed(() => {
@@ -150,23 +155,31 @@ const displayChapters = computed(() => {
   return chapters.value.slice(0, 50)
 })
 
+async function loadChapters() {
+  if (!props.book) return
+  chaptersFailed.value = false
+  chaptersLoading.value = true
+  try {
+    const b = props.book as Book
+    chapters.value = await getChapterList({
+      bookUrl: b.bookUrl,
+      bookSourceUrl: b.origin,
+    })
+  } catch {
+    // 此前静默吞掉：目录区直接空白，用户分不清「没目录」还是「加载失败」
+    chapters.value = []
+    chaptersFailed.value = true
+  } finally {
+    chaptersLoading.value = false
+  }
+}
+
 watch(() => props.modelValue, async (visible) => {
   if (visible && props.book) {
     coverFailed.value = false
     showAllChapters.value = false
     chapters.value = []
-    chaptersLoading.value = true
-    try {
-      const b = props.book as Book
-      chapters.value = await getChapterList({
-        bookUrl: b.bookUrl,
-        bookSourceUrl: b.origin,
-      })
-    } catch {
-      chapters.value = []
-    } finally {
-      chaptersLoading.value = false
-    }
+    await loadChapters()
   }
 })
 
@@ -450,6 +463,26 @@ function openAiBook() {
   padding: var(--space-6);
   color: var(--color-text-tertiary);
   font-size: var(--text-sm);
+}
+
+.chapter-failed {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-3);
+  padding: var(--space-6);
+  color: var(--color-danger);
+  font-size: var(--text-sm);
+}
+
+.chapter-retry-btn {
+  padding: 2px 14px;
+  border-radius: var(--radius-md);
+  border: 1px solid currentColor;
+  background: transparent;
+  color: inherit;
+  font-size: var(--text-xs);
+  cursor: pointer;
 }
 
 .loading-spinner {

@@ -90,10 +90,12 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
 import { useReaderStore } from '../../stores/reader'
+import { useAppStore } from '../../stores/app'
 import { saveReplaceRule, deleteReplaceRule } from '../../api/replaceRule'
 import type { ReplaceRule } from '../../types'
 
 const store = useReaderStore()
+const appStore = useAppStore()
 const theme = computed(() => store.currentTheme)
 const loading = ref(false)
 const editingRule = ref<ReplaceRule | null>(null)
@@ -158,7 +160,7 @@ function setScopeMode(mode: 'global' | 'book' | 'source') {
 async function handleSave() {
   if (!editingRule.value) return
   if (!editingRule.value.name || !editingRule.value.pattern) {
-    alert('请填写名称和匹配项')
+    appStore.showToast('请填写名称和匹配项', 'warning')
     return
   }
   try {
@@ -166,7 +168,7 @@ async function handleSave() {
     await store.fetchReplaceRules()
     editingRule.value = null
   } catch (e: any) {
-    alert(e.message)
+    appStore.showToast(e.message || '保存失败', 'error')
   }
 }
 
@@ -174,7 +176,7 @@ async function toggleRule(rule: ReplaceRule) {
   try {
     await saveReplaceRule(rule)
   } catch (e: any) {
-    alert(e.message)
+    appStore.showToast(e.message || '操作失败', 'error')
     rule.isEnabled = !rule.isEnabled
   }
 }
@@ -185,7 +187,7 @@ async function handleDelete(rule: ReplaceRule) {
     await deleteReplaceRule(rule)
     await store.fetchReplaceRules()
   } catch (e: any) {
-    alert(e.message)
+    appStore.showToast(e.message || '删除失败', 'error')
   }
 }
 </script>
