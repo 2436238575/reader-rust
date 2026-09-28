@@ -55,6 +55,15 @@ export function useReaderSelection(
     scheduleSelectionMenuUpdate(120)
   }
 
+  /** 新的按下动作让上一次「释放」留下的弹出许可失效。
+   *
+   * 否则「点一下再按住慢慢拖选」会带着前一次单击 mouseup 的旧闩，
+   * 拖选还没松手弹窗就先弹出来了。 */
+  function handlePressStartSelection() {
+    releaseLatch = false
+    touchSession = false
+  }
+
   function handleTouchEndSelection() {
     releaseLatch = true
     touchSession = true
@@ -216,6 +225,7 @@ export function useReaderSelection(
     scheduleSelectionMenuUpdate,
     showSelectionMenuAt,
     handleMouseUpSelection,
+    handlePressStartSelection,
     handleTouchEndSelection,
     handleSelectionChange,
     updateSelectionMenu,

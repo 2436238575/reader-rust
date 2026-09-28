@@ -466,6 +466,7 @@ const {
   scheduleSelectionMenuUpdate,
   showSelectionMenuAt,
   handleMouseUpSelection,
+  handlePressStartSelection,
   handleTouchEndSelection,
   handleSelectionChange,
   addSelectionBookmark,
@@ -2004,6 +2005,8 @@ onMounted(async () => {
   window.addEventListener('keydown', handleKeydown)
   document.addEventListener('mouseup', handleMouseUpSelection)
   document.addEventListener('touchend', handleTouchEndSelection)
+  document.addEventListener('mousedown', handlePressStartSelection)
+  document.addEventListener('touchstart', handlePressStartSelection)
     document.addEventListener('selectionchange', handleSelectionChange)
     checkMedia()
     window.addEventListener('resize', checkMedia)
@@ -2039,6 +2042,8 @@ onUnmounted(() => {
     window.removeEventListener('keydown', handleKeydown)
   document.removeEventListener('mouseup', handleMouseUpSelection)
   document.removeEventListener('touchend', handleTouchEndSelection)
+  document.removeEventListener('mousedown', handlePressStartSelection)
+  document.removeEventListener('touchstart', handlePressStartSelection)
     document.removeEventListener('selectionchange', handleSelectionChange)
     window.removeEventListener('resize', checkMedia)
     window.removeEventListener(APP_VIEWPORT_CHANGE_EVENT, handleViewportChange)
