@@ -112,6 +112,7 @@
       :para-text="commentParaText"
       :initial-page="store.chapterComments"
       :author-marks="store.reviewAuthorMarks"
+      :para-author-marked="commentParaAuthorMarked"
       @close="closeCommentPanel"
     />
 
@@ -814,6 +815,10 @@ const commentMode = ref<'chapter' | 'para'>('chapter')
 const commentParaIndex = ref(0)
 const commentParaText = computed(
   () => store.paraReviewCountByIndex.get(commentParaIndex.value)?.text || '',
+)
+// 概览没标记 authorCommented 的段落，作者扫描注定空手，「只看作者」入口不显示
+const commentParaAuthorMarked = computed(
+  () => store.paraReviewCountByIndex.get(commentParaIndex.value)?.authorCommented === true,
 )
 
 function openChapterComments() {

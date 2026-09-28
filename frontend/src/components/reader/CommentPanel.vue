@@ -171,6 +171,8 @@ const props = defineProps<{
   initialPage?: ReviewPage | null
   /** 书源配了作者标记规则（章评预取时带回），据此显示「只看作者」 */
   authorMarks?: boolean
+  /** 当前段在概览里被标记 authorCommented（段评模式下没有它就不显示「只看作者」） */
+  paraAuthorMarked?: boolean
 }>()
 
 defineEmits<{ close: [] }>()
@@ -190,7 +192,11 @@ const serverSort = ref(false)
 const authorOnly = ref(false)
 /** 段评路径下书源可能只给章评配了作者规则；扫描报不支持时把按钮收掉 */
 const authorUnsupported = ref(false)
-const authorMarksAvailable = computed(() => Boolean(props.authorMarks) && !authorUnsupported.value)
+const authorMarksAvailable = computed(() => {
+  if (!props.authorMarks || authorUnsupported.value) return false
+  // 章评没有概览标记可用，书源支持就显示；段评只看概览点了名的段落
+  return props.mode === 'chapter' || props.paraAuthorMarked === true
+})
 
 /**
  * 超长评论折叠。
