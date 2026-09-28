@@ -41,6 +41,9 @@ pub async fn save_ai_book_memory(
 ) -> Result<Json<ApiResponse<Value>>, AppError> {
     let user_ns = user.0.ns.clone();
     let book_url = required_book_url(Some(memory.book_url.clone()))?;
+    // 统一为 repair 后的规范形：service 侧的 mismatch 校验要求两侧口径一致，
+    // 否则 URL 被 repair 动过一个字符就必然误报 "bookUrl mismatch"
+    memory.book_url = book_url.clone();
     let shelf_book = ensure_shelf_book(&state, &user_ns, &book_url).await?;
     if memory.book_name.as_deref().unwrap_or("").trim().is_empty() {
         memory.book_name = Some(shelf_book.name);
