@@ -1918,6 +1918,48 @@ function handleKeydown(e: KeyboardEvent) {
   }
 }
 
+/* ─── 移动端返回键/手势：先关面板，不直接退出阅读页 ─── */
+// 覆盖型面板打开时压入一条同 URL 的历史标记；返回键弹掉标记时只关最上层面板。
+// UI 途径（按钮/ESC/遮罩）关闭时主动 history.back() 把标记消费掉，保持返回语义一致。
+// 瞬时元素（点按控制条、选字菜单）不参与：它们自动消失，压栈反而会吃掉返回键。
+const anyOverlayPanelOpen = computed(() =>
+  !!(store.activePanel || showSearch.value || showTTSPanel.value || showCommentPanel.value || showBookInfo.value || previewImage.value),
+)
+
+let panelHistoryActive = false
+let consumingPanelHistory = false
+
+// 与 ESC 关闭链同序（不含 goBack）
+function closeTopmostOverlayPanel() {
+  if (store.activePanel) store.closePanel()
+  else if (showSearch.value) closeSearch()
+  else if (showCommentPanel.value) showCommentPanel.value = false
+  else if (previewImage.value) previewImage.value = ''
+  else if (showTTSPanel.value) closeTTSPanel()
+  else if (showBookInfo.value) showBookInfo.value = false
+}
+
+watch(anyOverlayPanelOpen, (open) => {
+  if (open && !panelHistoryActive) {
+    history.pushState({ ...(history.state ?? {}), __readerOverlay: true }, '')
+    panelHistoryActive = true
+  } else if (!open && panelHistoryActive && !consumingPanelHistory) {
+    consumingPanelHistory = true
+    history.back()
+  }
+})
+
+function handleOverlayPopState() {
+  if (consumingPanelHistory) {
+    consumingPanelHistory = false
+    panelHistoryActive = false
+    return
+  }
+  if (!panelHistoryActive) return
+  panelHistoryActive = false
+  closeTopmostOverlayPanel()
+}
+
 // Toolbar actions
 async function toggleBookmark() {
   store.togglePanel('bookmark')
@@ -2052,6 +2094,7 @@ onMounted(async () => {
   }
   loadSavedReadingPosition()
   window.addEventListener('keydown', handleKeydown)
+  window.addEventListener('popstate', handleOverlayPopState)
   document.addEventListener('mouseup', handleMouseUpSelection)
   document.addEventListener('touchend', handleTouchEndSelection)
   document.addEventListener('mousedown', handlePressStartSelection)
@@ -2089,6 +2132,7 @@ onUnmounted(() => {
     persistReadingProgressKeepalive()
     appStore.stopReadingSession()
     window.removeEventListener('keydown', handleKeydown)
+    window.removeEventListener('popstate', handleOverlayPopState)
   document.removeEventListener('mouseup', handleMouseUpSelection)
   document.removeEventListener('touchend', handleTouchEndSelection)
   document.removeEventListener('mousedown', handlePressStartSelection)
