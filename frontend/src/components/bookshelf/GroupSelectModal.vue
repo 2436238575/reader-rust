@@ -19,17 +19,17 @@
             <span class="group-icon">#</span>
             <span class="group-name">{{ group.groupName }}</span>
           </button>
-          
+
           <div class="new-group">
-             <input 
-               v-model="newGroupName" 
-               placeholder="新建分组名称..." 
-               class="group-input"
-               @keyup.enter="handleCreate"
-             />
-             <button class="add-btn" @click="handleCreate" :disabled="!newGroupName.trim()">
-               新建并移动
-             </button>
+            <input
+              v-model="newGroupName"
+              placeholder="新建分组名称..."
+              class="group-input"
+              @keyup.enter="handleCreate"
+            />
+            <button class="add-btn" @click="handleCreate" :disabled="!newGroupName.trim()">
+              新建并移动
+            </button>
           </div>
         </div>
       </div>
@@ -88,7 +88,8 @@ async function handleCreate() {
     calc(16px + var(--safe-area-right))
     calc(16px + var(--safe-area-bottom))
     calc(16px + var(--safe-area-left));
-  z-index: 1000;
+  /* 叠在分组管理弹窗（--z-modal）之上 */
+  z-index: calc(var(--z-modal) + 1);
 }
 
 .modal-content {

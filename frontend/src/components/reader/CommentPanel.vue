@@ -479,7 +479,8 @@ function formatReviewTime(raw: string) {
 .comment-mask {
   position: fixed;
   inset: 0;
-  z-index: 3000;
+  /* 弹窗层级即可：阅读器内部控件的 z-index 都在各自上下文中，toast 会盖在本面板之上 */
+  z-index: var(--z-modal);
   display: flex;
   align-items: flex-end;
   justify-content: center;

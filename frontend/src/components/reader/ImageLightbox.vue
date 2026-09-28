@@ -16,8 +16,8 @@ const emit = defineEmits<{ (e: 'close'): void }>()
 .image-lightbox {
   position: fixed;
   inset: 0;
-  /* 盖在评论侧栏（z-index 3000）之上 */
-  z-index: 3100;
+  /* 终止级查看器：盖在评论面板（--z-modal）与 toast 之上 */
+  z-index: var(--z-lightbox);
   display: flex;
   align-items: center;
   justify-content: center;
