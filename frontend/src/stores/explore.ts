@@ -93,20 +93,30 @@ export const useExploreStore = defineStore('explore', () => {
     page.value = 1
     hasMore.value = true
     error.value = null
-    await fetchMore()
+    // 有在途请求也要发起新请求：旧响应回来时被代际检查丢弃
+    await fetchMore(true)
   }
 
-  async function fetchMore() {
-    if (loading.value || !hasMore.value || !activeSourceUrl.value || !activeCategoryUrl.value) return
+  // 请求代际：响应回来时若已切换分类/书源（有更新的请求），直接丢弃，
+  // 避免加载中切分类时旧分类数据混入新分类的空列表
+  let fetchSeq = 0
+
+  async function fetchMore(force = false) {
+    if ((!force && loading.value) || !hasMore.value || !activeSourceUrl.value || !activeCategoryUrl.value) return
+
+    const seq = ++fetchSeq
+    const sourceUrl = activeSourceUrl.value
+    const categoryUrl = activeCategoryUrl.value
 
     loading.value = true
     error.value = null
     try {
       const result = await exploreBook({
-        bookSourceUrl: activeSourceUrl.value,
-        ruleFindUrl: activeCategoryUrl.value,
+        bookSourceUrl: sourceUrl,
+        ruleFindUrl: categoryUrl,
         page: page.value,
       })
+      if (seq !== fetchSeq) return
 
       if (result && result.length > 0) {
         books.value.push(...result)
@@ -115,17 +125,36 @@ export const useExploreStore = defineStore('explore', () => {
         hasMore.value = false
       }
     } catch (err: any) {
+      if (seq !== fetchSeq) return
       error.value = err.message || '加载失败'
+      // 停住自动翻页等用户点重试；error 态在视图里优先于「没有更多了」展示
       hasMore.value = false
     } finally {
-      loading.value = false
+      // 过期请求的 finally 不能灭掉新请求的 loading
+      if (seq === fetchSeq) loading.value = false
     }
+  }
+
+  /** 错误态的重试入口：恢复翻页条件后重拉当前页 */
+  function retryFetch() {
+    if (loading.value) return
+    hasMore.value = true
+    error.value = null
+    void fetchMore()
   }
 
   // 初始化时加载书源数据
   async function init() {
-    if (sourceStore.sources.length === 0) {
-      await sourceStore.fetchSources()
+    error.value = null
+    try {
+      if (sourceStore.sources.length === 0) {
+        await sourceStore.fetchSources()
+      }
+    } catch (err: any) {
+      // 书源列表都拉不到时把错误摆到内容区（带重试），而不是抛给 onMounted
+      // 变成 unhandled rejection + 一句误导的「无带有发现规则的书源」
+      error.value = err?.message || '书源加载失败'
+      return
     }
     ensureActiveSource()
   }
@@ -149,6 +178,7 @@ export const useExploreStore = defineStore('explore', () => {
     setSource,
     setCategory,
     fetchMore,
+    retryFetch,
     resetAndFetch,
   }
 })

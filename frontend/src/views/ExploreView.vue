@@ -50,7 +50,13 @@
           />
         </div>
 
-        <div class="loading-state" v-if="store.loading">
+        <!-- 错误优先于「没有更多了」：已有部分书籍时加载失败也要能看到错误与重试 -->
+        <div class="error-state" v-if="store.error">
+          <span>{{ store.error }}</span>
+          <button class="retry-btn" @click="handleRetry">重试</button>
+        </div>
+
+        <div class="loading-state" v-else-if="store.loading">
           <div class="spinner"></div>加载中...
         </div>
 
@@ -58,8 +64,9 @@
           没有更多了
         </div>
 
-        <div class="error-state" v-else-if="store.error">
-          {{ store.error }}
+        <!-- 第一页就返回空：此前三个状态分支都不命中，页面一片空白 -->
+        <div class="empty-state" v-else-if="!store.hasMore && store.books.length === 0 && store.exploreSources.length > 0">
+          该分类暂时没有书籍
         </div>
 
         <!-- 滚动加载哨兵：距底部 200px 内即翻页 -->
@@ -166,6 +173,17 @@ async function handleAddToShelf(book: Book | SearchBook) {
   } catch (e: unknown) {
     appStore.showToast((e as Error).message, 'error')
   }
+}
+
+// 重试：书源列表都没拉到时重跑初始化，否则重拉当前分类的当前页
+async function handleRetry() {
+  if (store.loading) return
+  if (!store.exploreSources.length) {
+    await store.init()
+    tryFetchMore()
+    return
+  }
+  store.retryFetch()
 }
 </script>
 
@@ -295,6 +313,29 @@ async function handleAddToShelf(book: Book | SearchBook) {
 
 .error-state {
   color: #ef4444;
+}
+
+.error-state .retry-btn {
+  padding: 4px 16px;
+  border-radius: var(--radius-md);
+  border: 1px solid currentColor;
+  background: transparent;
+  color: inherit;
+  font-size: var(--text-sm);
+  cursor: pointer;
+  opacity: 0.85;
+  transition: opacity 0.2s;
+}
+
+.error-state .retry-btn:hover {
+  opacity: 1;
+}
+
+.empty-state {
+  text-align: center;
+  padding: 48px 0;
+  color: var(--color-text-tertiary);
+  font-size: var(--text-base);
 }
 
 .spinner {
