@@ -1339,22 +1339,24 @@ function restoreReadingPositionInternal(saved: SavedReadingPosition | null, fina
   }
 
   if (isHorizontalPageMode.value) {
-    if (store.loading || container.scrollWidth <= container.clientWidth + 4) {
-      debugPositionLog('restore waiting: horizontal content not ready', {
+    // 横翻由 transform 分页驱动：写 scrollLeft 会被对齐/翻页逻辑立刻归零（此前的
+    // 恢复因此是死代码，横翻离开再回来永远在第 1 页）。恢复 = 按进度落到第几页
+    const maxPage = Math.max(0, horizontalPages.value.length - 1)
+    if (store.loading || maxPage <= 0) {
+      debugPositionLog('restore waiting: horizontal pages not ready', {
         saved,
         loading: store.loading,
-        scrollWidth: container.scrollWidth,
-        clientWidth: container.clientWidth,
+        pageCount: horizontalPages.value.length,
       })
       return false
     }
-    const maxScroll = Math.max(0, container.scrollWidth - container.clientWidth)
-    container.scrollTo({ left: maxScroll * Math.max(0, Math.min(1, saved.progress || 0)), behavior: 'auto' })
+    horizontalPageIndex.value = Math.max(0, Math.min(maxPage, Math.round(maxPage * Math.max(0, Math.min(1, saved.progress || 0)))))
+    updateHorizontalEndState()
     if (finalize) {
       pendingRestorePosition.value = null
       pendingRestoreAttempts = 0
     }
-    debugPositionLog('restored horizontal position', { saved, maxScroll })
+    debugPositionLog('restored horizontal position', { saved, pageIndex: horizontalPageIndex.value })
     return true
   }
 
@@ -2168,6 +2170,16 @@ watch(() => config.value.autoPageMode, () => {
 })
 
 watch(() => config.value.readMethod, async () => {
+  // 切换前记下当前章内进度（竖滚/横翻都在持续维护 chapterScrollProgress），
+  // 交给结尾的 scheduleRestoreReadingPosition 在新模式下恢复，而不是回章首
+  if (store.book && store.chapterScrollProgress > 0) {
+    pendingRestorePosition.value = {
+      chapterIndex: store.currentIndex,
+      progress: store.chapterScrollProgress,
+      updatedAt: Date.now(),
+    }
+    pendingRestoreAttempts = 0
+  }
   clearSelectionState()
   if (isContinuousMode.value) {
     await initializeContinuousChapters(store.currentIndex, false)
