@@ -1,4 +1,5 @@
 import type { AiBookLocation, AiBookNote } from '../types'
+import { importanceRank, isLowImportance, normalizeKey } from './aiBookNormalize'
 
 export interface AiBookWorldviewGroup {
   category: string
@@ -236,27 +237,4 @@ function isCityLikeKind(kind: string | undefined) {
 function isTownLikeKind(kind: string | undefined) {
   const key = normalizeKey(kind)
   return ['村落', '村', '街区', '社区', '街道'].some((item) => key.includes(item))
-}
-
-function isLowImportance(value: string | undefined) {
-  const key = normalizeKey(value)
-  if (!key) return false
-  return ['low', '低', '低重要性', '不重要', '路人', '背景', 'minor', 'background', 'oneoff', '一次性']
-    .some((term) => key.includes(term))
-}
-
-function importanceRank(value: string | undefined) {
-  const key = normalizeKey(value)
-  if (key.includes('high') || key.includes('高')) return 3
-  if (key.includes('medium') || key.includes('中')) return 2
-  if (isLowImportance(value)) return 1
-  return 0
-}
-
-function normalizeKey(value: string | undefined) {
-  return (value || '')
-    .trim()
-    .toLowerCase()
-    .replace(/[·•・]/g, '.')
-    .replace(/\s+/g, '')
 }

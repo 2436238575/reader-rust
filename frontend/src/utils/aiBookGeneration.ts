@@ -12,6 +12,15 @@ import type {
 } from '../types'
 import { isAiBookConfigReady, isAiBookImageConfigReady } from './aiBookConfig'
 import { summarizeHttpErrorBody } from './httpError'
+import {
+  isLowImportance,
+  isLowValueRelationship,
+  normalizeKey,
+  preferImportance,
+  relationshipKey,
+  richerString,
+  uniqueStrings,
+} from './aiBookNormalize'
 
 import { API_BASE } from './appBase'
 
@@ -982,80 +991,8 @@ function readBoolean(record: UnknownRecord, key: string) {
   return record[key] === true
 }
 
-function uniqueStrings(values: string[]) {
-  const seen = new Set<string>()
-  const result: string[] = []
-  for (const value of values) {
-    const key = normalizeKey(value)
-    if (!key || seen.has(key)) continue
-    seen.add(key)
-    result.push(value)
-  }
-  return result
-}
-
-function normalizeKey(value: string | undefined) {
-  return (value || '')
-    .trim()
-    .toLowerCase()
-    .replace(/[·•・]/g, '.')
-    .replace(/\s+/g, '')
-}
-
-function isLowImportance(value: string | undefined) {
-  const normalized = normalizeKey(value || '')
-  if (!normalized) return false
-  return [
-    'low',
-    '低',
-    '低重要性',
-    '不重要',
-    '路人',
-    '背景',
-    'minor',
-    'background',
-    'oneoff',
-    '一次性',
-  ].some((term) => normalized.includes(term))
-}
-
-function isLowValueRelationship(relation: string, detail: string, importance: string) {
-  const normalizedImportance = normalizeKey(importance)
-  if (normalizedImportance.includes('high') || normalizedImportance.includes('medium') || normalizedImportance.includes('高') || normalizedImportance.includes('中')) {
-    return false
-  }
-  const normalizedRelation = normalizeKey(relation)
-  if (!['认识', '见过', '路过', '同村', '同校', '位于', '相关'].includes(normalizedRelation)) {
-    return false
-  }
-  return normalizeKey(detail).length < 18
-}
-
-function relationshipKey(source: string, target: string, relation: string) {
-  const pair = [normalizeKey(source), normalizeKey(target)].sort().join('::')
-  return `${pair}::${normalizeKey(relation)}`
-}
-
-function richerString(current: string | undefined, next: string | undefined) {
-  if (!current) return next || ''
-  if (!next) return current
-  return next.length > current.length ? next : current
-}
-
 function preferString(current: string | undefined, next: string | undefined) {
   return current || next || undefined
-}
-
-function preferImportance(current: string | undefined, next: string | undefined) {
-  return importanceRank(next) > importanceRank(current) ? next : current || next
-}
-
-function importanceRank(value: string | undefined) {
-  const normalized = normalizeKey(value || '')
-  if (normalized.includes('high') || normalized.includes('高')) return 3
-  if (normalized.includes('medium') || normalized.includes('中')) return 2
-  if (isLowImportance(value)) return 1
-  return 0
 }
 
 function buildModelHeaders(apiKey: string) {

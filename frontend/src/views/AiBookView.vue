@@ -461,6 +461,15 @@ import type {
   BookChapter,
 } from '../types'
 import RelationshipGraph from '../components/ai-book/RelationshipGraph.vue'
+import {
+  isLowImportance,
+  isLowValueRelationship,
+  normalizeKey,
+  preferImportance,
+  relationshipKey,
+  richerString,
+  uniqueStrings,
+} from '../utils/aiBookNormalize'
 import { buildAiBookLocationRows, groupAiBookWorldview } from '../utils/aiBookPresentation'
 import { collapseWhitespace, summarizeDisplayError } from '../utils/httpError'
 
@@ -742,7 +751,11 @@ function normalizeDisplayRelationships(relationships: AiBookRelationship[]) {
       || !relationship.relation
       || normalizeKey(relationship.source) === normalizeKey(relationship.target)
       || isLowImportance(relationship.importance)
-      || isLowValueRelationship(relationship)
+      || isLowValueRelationship(
+        relationship.relation,
+        relationship.description || relationship.status || '',
+        relationship.importance,
+      )
     ) {
       continue
     }
@@ -803,64 +816,8 @@ function mergeDisplayLocation(current: AiBookLocation, next: AiBookLocation): Ai
   }
 }
 
-function relationshipKey(source: string, target: string, relation: string) {
-  return `${[normalizeKey(source), normalizeKey(target)].sort().join('::')}::${normalizeKey(relation)}`
-}
-
-function isLowValueRelationship(relationship: AiBookRelationship) {
-  if (importanceRank(relationship.importance) >= 2) return false
-  const relation = normalizeKey(relationship.relation)
-  if (!['认识', '见过', '路过', '同村', '同校', '位于', '相关'].includes(relation)) return false
-  return normalizeKey(relationship.description || relationship.status || '').length < 18
-}
-
 function normalizeSearch(value: string) {
   return value.trim().toLowerCase().replace(/\s+/g, '')
-}
-
-function normalizeKey(value: string | undefined) {
-  return (value || '')
-    .trim()
-    .toLowerCase()
-    .replace(/[·•・]/g, '.')
-    .replace(/\s+/g, '')
-}
-
-function isLowImportance(value: string | undefined) {
-  const key = normalizeKey(value)
-  if (!key) return false
-  return ['low', '低', '低重要性', '不重要', '路人', '背景', 'minor', 'background', 'oneoff', '一次性']
-    .some((term) => key.includes(term))
-}
-
-function importanceRank(value: string | undefined) {
-  const key = normalizeKey(value)
-  if (key.includes('high') || key.includes('高')) return 3
-  if (key.includes('medium') || key.includes('中')) return 2
-  if (isLowImportance(value)) return 1
-  return 0
-}
-
-function richerString(current: string | undefined, next: string | undefined) {
-  if (!current) return next || ''
-  if (!next) return current
-  return next.length > current.length ? next : current
-}
-
-function preferImportance(current: string | undefined, next: string | undefined) {
-  return importanceRank(next) > importanceRank(current) ? next : current || next
-}
-
-function uniqueStrings(values: string[]) {
-  const seen = new Set<string>()
-  const result: string[] = []
-  for (const value of values) {
-    const key = normalizeKey(value)
-    if (!key || seen.has(key)) continue
-    seen.add(key)
-    result.push(value)
-  }
-  return result
 }
 
 function createEmptyServerModelConfig(): AiServerModelConfig {
