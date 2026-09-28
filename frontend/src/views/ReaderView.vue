@@ -1160,7 +1160,9 @@ function buildServerSavedPosition(): SavedReadingPosition | null {
   return {
     chapterIndex: store.currentIndex,
     progress: Math.max(0, Math.min(1, progress || 0)),
-    updatedAt: normalizePositionTimestamp(store.book.durChapterTime),
+    // 用打开书时捕获的服务端保存时间：book.durChapterTime 在打开章节时已被
+    // 刷成 Date.now()，直接用它会让服务端在这场比较里永远「更新」
+    updatedAt: normalizePositionTimestamp(store.serverProgressTime || store.book.durChapterTime),
   }
 }
 

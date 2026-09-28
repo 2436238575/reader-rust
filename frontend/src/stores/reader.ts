@@ -519,6 +519,11 @@ export const useReaderStore = defineStore('reader', () => {
 
   /* ─── Book / chapter ops ─── */
   let bookLoadSeq = 0
+  // 打开这本书时服务端进度的真实保存时间。setActiveChapterState 会把
+  // book.durChapterTime 刷成 Date.now()（书架排序需要），本地/服务端进度
+  // 比新旧时若直接用被刷新的值，服务端会靠这个伪造的新鲜时间戳「永远获胜」，
+  // 离线读了几章没同步成功的本地进度就被误判为旧数据丢弃
+  const serverProgressTime = ref(0)
 
   async function loadBook(b: Book) {
     // 连点两本书时目录响应可能乱序到达：只认最后一次打开的书。
@@ -528,6 +533,7 @@ export const useReaderStore = defineStore('reader', () => {
     loading.value = true
     loadError.value = ''
     book.value = b
+    serverProgressTime.value = b.durChapterTime || 0
     chapters.value = []
     content.value = ''
     resetReviews()
@@ -1042,6 +1048,7 @@ export const useReaderStore = defineStore('reader', () => {
     currentIndex.value = 0
     chapterScrollProgress.value = 0
     readChapterKeys.value = new Set()
+    serverProgressTime.value = 0
     resetReviews()
     stopAutoReading()
   }
@@ -1078,7 +1085,7 @@ export const useReaderStore = defineStore('reader', () => {
   }
 
   return {
-    book, chapters, currentIndex, content, loading, chaptersLoading, loadError,
+    book, chapters, currentIndex, content, loading, chaptersLoading, loadError, serverProgressTime,
     currentChapter, hasNext, hasPrev, readingProgress,
       loadBook, loadChapter, retryLoad, fetchChapterContent, setActiveChapterState, refreshContent, nextChapter, prevChapter, clear,
       chapterScrollProgress, setChapterScrollProgress, flushReaderSessionSave,
