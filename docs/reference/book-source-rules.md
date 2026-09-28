@@ -181,6 +181,10 @@ data class ReviewRule(
   var replyContentRule: String? = null,
   var replyPostTimeRule: String? = null,
   var replyToRule: String? = null,
+  var authorRule: String? = null,
+  var authorDiggRule: String? = null,
+  var replyAuthorRule: String? = null,
+  var replyAuthorDiggRule: String? = null,
   var imageRule: String? = null
 )
 ```
@@ -209,6 +213,10 @@ data class ParaReviewRule(
   var replyContentRule: String? = null,
   var replyPostTimeRule: String? = null,
   var replyToRule: String? = null,
+  var authorRule: String? = null,
+  var authorDiggRule: String? = null,
+  var replyAuthorRule: String? = null,
+  var replyAuthorDiggRule: String? = null,
   var imageRule: String? = null
 )
 ```
@@ -1400,6 +1408,8 @@ getContentAwait(source, book, chapter, nextChapterUrl=null, needSave=true):
 | `hasMoreRule` | 是否还有下一页（对**整个响应**求值） |
 | `replyListRule` | 内联回复列表 |
 | `replyNameRule` / `replyContentRule` / `replyPostTimeRule` / `replyToRule` | 单条回复的字段 |
+| `authorRule` / `authorDiggRule` | 评论者是作者本人 / 作者赞过这条评论（真值词表同 §15，如 `1`/`true`） |
+| `replyAuthorRule` / `replyAuthorDiggRule` | 回复者是作者本人 / 作者赞过这条回复 |
 | `imageRule` | 评论配图，**列表规则**（见 17.5） |
 
 `voteUpUrl` / `voteDownUrl` / `postReviewUrl` / `postQuoteUrl` / `deleteUrl` /
@@ -1419,6 +1429,7 @@ getContentAwait(source, book, chapter, nextChapterUrl=null, needSave=true):
 | `reviewUrl` | 段评列表 URL 模板（可用 `{{paraIndex}}`） |
 | `listRule` / `idRule` / `nameRule` / `avatarRule` / `contentRule` / `postTimeRule` / `diggRule` / `totalRule` / `hasMoreRule` | 同章评 |
 | `replyCountRule` / `replyListRule` / `replyNameRule` / `replyContentRule` / `replyPostTimeRule` / `replyToRule` | 同章评（段评同样可能有内联回复） |
+| `authorRule` / `authorDiggRule` / `replyAuthorRule` / `replyAuthorDiggRule` | 同章评 |
 | `imageRule` | 同章评 |
 
 段号按定义是**正文按 `
@@ -1464,6 +1475,10 @@ getContentAwait(source, book, chapter, nextChapterUrl=null, needSave=true):
     "replyListRule": "$.reply_list[*]",
     "replyNameRule": "$.user_info.user_name",
     "replyContentRule": "$.text",
+    "authorRule": "$.author",
+    "authorDiggRule": "$.has_author_digg",
+    "replyAuthorRule": "$.author",
+    "replyAuthorDiggRule": "$.has_author_digg",
     "imageRule": "$.image_url[*]"
   },
   "ruleParaReview": {
@@ -1483,6 +1498,10 @@ getContentAwait(source, book, chapter, nextChapterUrl=null, needSave=true):
     "replyListRule": "$.reply_list[*]",
     "replyNameRule": "$.user_info.user_name",
     "replyContentRule": "$.text",
+    "authorRule": "$.author",
+    "authorDiggRule": "$.has_author_digg",
+    "replyAuthorRule": "$.author",
+    "replyAuthorDiggRule": "$.has_author_digg",
     "imageRule": "$.image_url[*]"
   }
 }

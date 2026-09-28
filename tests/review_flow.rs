@@ -63,9 +63,11 @@ async fn start_upstream() -> (String, HitCounter) {
                 "create_timestamp": 1717597455,
                 "digg_count": 68,
                 "reply_count": 1,
+                "author": 1,
+                "has_author_digg": true,
                 "user_info": { "user_name": "读者甲", "user_avatar": "https://img.example/a.jpg" },
                 "reply_list": [
-                    { "text": "同感", "user_info": { "user_name": "读者乙" } }
+                    { "text": "同感", "user_info": { "user_name": "读者乙" }, "author": 1 }
                 ]
             }]
         }}
@@ -234,6 +236,10 @@ fn book_source(upstream_url: &str) -> Value {
             "replyListRule": "$.reply_list[*]",
             "replyNameRule": "$.user_info.user_name",
             "replyContentRule": "$.text",
+            "authorRule": "$.author",
+            "authorDiggRule": "$.has_author_digg",
+            "replyAuthorRule": "$.author",
+            "replyAuthorDiggRule": "$.has_author_digg",
             "imageRule": "$.image_url[*]"
         },
         "ruleParaReview": {
@@ -254,6 +260,10 @@ fn book_source(upstream_url: &str) -> Value {
             "replyListRule": "$.reply_list[*]",
             "replyNameRule": "$.user_info.user_name",
             "replyContentRule": "$.text",
+            "authorRule": "$.author",
+            "authorDiggRule": "$.has_author_digg",
+            "replyAuthorRule": "$.author",
+            "replyAuthorDiggRule": "$.has_author_digg",
             "imageRule": "$.image_url[*]"
         }
     })
@@ -402,6 +412,11 @@ async fn chapter_and_para_comments_are_parsed_from_the_source_rules() {
     assert_eq!(items[0]["digg"], json!(68));
     assert_eq!(items[0]["replies"][0]["name"], json!("读者乙"));
     assert_eq!(items[0]["replies"][0]["content"], json!("同感"));
+    // 作者标记：作者本人评论 + 作者赞过 + 回复者是作者
+    assert_eq!(items[0]["author"], json!(true));
+    assert_eq!(items[0]["authorDigg"], json!(true));
+    assert_eq!(items[0]["replies"][0]["author"], json!(true));
+    assert_eq!(items[0]["replies"][0]["authorDigg"], json!(false));
 
     let index = server
         .post("getParaCommentIndex", server.review_body(json!({})))

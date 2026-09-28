@@ -997,6 +997,10 @@ impl RuleEngine {
             reply_content: rule.reply_content_rule.as_deref(),
             reply_time: rule.reply_post_time_rule.as_deref(),
             reply_to: rule.reply_to_rule.as_deref(),
+            author: rule.author_rule.as_deref(),
+            author_digg: rule.author_digg_rule.as_deref(),
+            reply_author: rule.reply_author_rule.as_deref(),
+            reply_author_digg: rule.reply_author_digg_rule.as_deref(),
             image: rule.image_rule.as_deref(),
         };
         with_book_source(source, || parse_review_page(&fields, body, base_url))
@@ -1023,6 +1027,10 @@ impl RuleEngine {
             reply_content: rule.reply_content_rule.as_deref(),
             reply_time: rule.reply_post_time_rule.as_deref(),
             reply_to: rule.reply_to_rule.as_deref(),
+            author: rule.author_rule.as_deref(),
+            author_digg: rule.author_digg_rule.as_deref(),
+            reply_author: rule.reply_author_rule.as_deref(),
+            reply_author_digg: rule.reply_author_digg_rule.as_deref(),
             image: rule.image_rule.as_deref(),
         };
         with_book_source(source, || parse_review_page(&fields, body, base_url))
@@ -1079,7 +1087,7 @@ impl RuleEngine {
                         continue;
                     }
                     let author_commented = eval_field_json_with_ctx(author_rule, value, base_url, &mut ctx)
-                        .map(|text| parse_truthy_flag(&text))
+                        .map(is_truthy)
                         .unwrap_or(false);
                     paras.push(ParaReviewCount {
                         para_index,
@@ -1179,6 +1187,10 @@ struct ReviewFields<'a> {
     reply_content: Option<&'a str>,
     reply_time: Option<&'a str>,
     reply_to: Option<&'a str>,
+    author: Option<&'a str>,
+    author_digg: Option<&'a str>,
+    reply_author: Option<&'a str>,
+    reply_author_digg: Option<&'a str>,
     image: Option<&'a str>,
 }
 
@@ -1240,12 +1252,6 @@ fn parse_count_text(text: &str) -> i64 {
     value as i64
 }
 
-/// 站点布尔标记的宽容解析：`true`/`1`/非零数字都算真（番茄给的是 0/1）。
-fn parse_truthy_flag(text: &str) -> bool {
-    let trimmed = text.trim();
-    trimmed.eq_ignore_ascii_case("true")
-        || trimmed.parse::<f64>().map(|n| n != 0.0).unwrap_or(false)
-}
 
 fn parse_review_page(fields: &ReviewFields<'_>, body: &str, base_url: &str) -> ReviewPage {
     if fields.list.trim().is_empty() {
@@ -1304,6 +1310,22 @@ fn parse_review_page_json(fields: &ReviewFields<'_>, v: &Value, base_url: &str) 
                             &mut ctx,
                         )
                         .unwrap_or_default(),
+                        author: eval_field_json_with_ctx(
+                            fields.reply_author.unwrap_or(""),
+                            reply,
+                            base_url,
+                            &mut ctx,
+                        )
+                        .map(is_truthy)
+                        .unwrap_or(false),
+                        author_digg: eval_field_json_with_ctx(
+                            fields.reply_author_digg.unwrap_or(""),
+                            reply,
+                            base_url,
+                            &mut ctx,
+                        )
+                        .map(is_truthy)
+                        .unwrap_or(false),
                     })
                     .filter(|reply| !reply.content.trim().is_empty())
                     .collect::<Vec<_>>()
@@ -1334,6 +1356,17 @@ fn parse_review_page_json(fields: &ReviewFields<'_>, v: &Value, base_url: &str) 
             .map(|text| parse_count_text(&text))
             .unwrap_or(0),
             replies,
+            author: eval_field_json_with_ctx(fields.author.unwrap_or(""), node, base_url, &mut ctx)
+                .map(is_truthy)
+                .unwrap_or(false),
+            author_digg: eval_field_json_with_ctx(
+                fields.author_digg.unwrap_or(""),
+                node,
+                base_url,
+                &mut ctx,
+            )
+            .map(is_truthy)
+            .unwrap_or(false),
             images: eval_image_list_json(fields.image.unwrap_or(""), node, base_url),
         });
     }
@@ -1404,6 +1437,22 @@ fn parse_review_page_html(fields: &ReviewFields<'_>, body: &str, base_url: &str)
                             &mut ctx,
                         )
                         .unwrap_or_default(),
+                        author: eval_field_html_with_ctx(
+                            fields.reply_author.unwrap_or(""),
+                            reply,
+                            base_url,
+                            &mut ctx,
+                        )
+                        .map(is_truthy)
+                        .unwrap_or(false),
+                        author_digg: eval_field_html_with_ctx(
+                            fields.reply_author_digg.unwrap_or(""),
+                            reply,
+                            base_url,
+                            &mut ctx,
+                        )
+                        .map(is_truthy)
+                        .unwrap_or(false),
                     })
                     .filter(|reply| !reply.content.trim().is_empty())
                     .collect::<Vec<_>>()
@@ -1434,6 +1483,17 @@ fn parse_review_page_html(fields: &ReviewFields<'_>, body: &str, base_url: &str)
             .map(|text| parse_count_text(&text))
             .unwrap_or(0),
             replies,
+            author: eval_field_html_with_ctx(fields.author.unwrap_or(""), node, base_url, &mut ctx)
+                .map(is_truthy)
+                .unwrap_or(false),
+            author_digg: eval_field_html_with_ctx(
+                fields.author_digg.unwrap_or(""),
+                node,
+                base_url,
+                &mut ctx,
+            )
+            .map(is_truthy)
+            .unwrap_or(false),
             images: eval_image_list_html(fields.image.unwrap_or(""), node, base_url),
         });
     }
@@ -4099,6 +4159,10 @@ mod tests {
                 reply_name_rule: Some("$.user_info.user_name".to_string()),
                 reply_content_rule: Some("$.text".to_string()),
                 reply_post_time_rule: Some("$.create_timestamp".to_string()),
+                author_rule: Some("$.author".to_string()),
+                author_digg_rule: Some("$.has_author_digg".to_string()),
+                reply_author_rule: Some("$.author".to_string()),
+                reply_author_digg_rule: Some("$.has_author_digg".to_string()),
                 image_rule: Some("$.image_url[*]".to_string()),
                 ..Default::default()
             }),
@@ -4130,6 +4194,10 @@ mod tests {
                 reply_list_rule: Some("$.reply_list[*]".to_string()),
                 reply_name_rule: Some("$.user_info.user_name".to_string()),
                 reply_content_rule: Some("$.text".to_string()),
+                author_rule: Some("$.author".to_string()),
+                author_digg_rule: Some("$.has_author_digg".to_string()),
+                reply_author_rule: Some("$.author".to_string()),
+                reply_author_digg_rule: Some("$.has_author_digg".to_string()),
                 image_rule: Some("$.image_url[*]".to_string()),
                 ..Default::default()
             }),
@@ -4219,8 +4287,10 @@ mod tests {
                                 "user_name": "读者甲",
                                 "user_avatar": "https://img.example/a.jpg"
                             },
+                            "author": 1,
+                            "has_author_digg": true,
                             "reply_list": [
-                                {"text": "同感", "user_info": {"user_name": "读者乙"}}
+                                {"text": "同感", "user_info": {"user_name": "读者乙"}, "author": true}
                             ]
                         },
                         {
@@ -4250,6 +4320,33 @@ mod tests {
         assert_eq!(item.replies.len(), 1);
         assert_eq!(item.replies[0].name, "读者乙");
         assert_eq!(item.replies[0].content, "同感");
+        // 作者标记：数字 1 与布尔 true 都算真（is_truthy 词表）
+        assert!(item.author);
+        assert!(item.author_digg);
+        assert!(item.replies[0].author);
+        assert!(!item.replies[0].author_digg);
+    }
+
+    #[test]
+    fn author_flags_default_to_false_without_rules() {
+        let engine = RuleEngine::new().unwrap();
+        let mut source = fqweb_source();
+        let rule = source.rule_review.as_mut().unwrap();
+        rule.author_rule = None;
+        rule.author_digg_rule = None;
+        rule.reply_author_rule = None;
+        rule.reply_author_digg_rule = None;
+        let body = json!({
+            "data": { "data": { "comment": [
+                { "text": "x", "author": 1, "has_author_digg": true }
+            ] } }
+        })
+        .to_string();
+
+        let page = engine.chapter_reviews(&source, &body, "http://host/");
+        assert_eq!(page.items.len(), 1);
+        assert!(!page.items[0].author);
+        assert!(!page.items[0].author_digg);
     }
 
     #[test]

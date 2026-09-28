@@ -109,6 +109,14 @@ pub struct ReviewRule {
     pub reply_post_time_rule: Option<String>,
     /// 回复的目标用户名（「回复 @某人」）。
     pub reply_to_rule: Option<String>,
+    /// 评论者是作者本人（真值词表见规格 §15）。
+    pub author_rule: Option<String>,
+    /// 作者赞过这条评论。
+    pub author_digg_rule: Option<String>,
+    /// 回复者是作者本人。
+    pub reply_author_rule: Option<String>,
+    /// 作者赞过这条回复。
+    pub reply_author_digg_rule: Option<String>,
     /// 评论配图。写成列表规则（如 `$.image_url[*]`）时取多个；JS 规则按行切分。
     pub image_rule: Option<String>,
 }
@@ -151,6 +159,11 @@ pub struct ParaReviewRule {
     pub reply_content_rule: Option<String>,
     pub reply_post_time_rule: Option<String>,
     pub reply_to_rule: Option<String>,
+    /// 评论者/回复者是作者本人、作者赞过（同 [`ReviewRule`] 的四个字段）。
+    pub author_rule: Option<String>,
+    pub author_digg_rule: Option<String>,
+    pub reply_author_rule: Option<String>,
+    pub reply_author_digg_rule: Option<String>,
     /// 评论配图，同 [`ReviewRule::image_rule`]。
     pub image_rule: Option<String>,
 }

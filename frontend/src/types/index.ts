@@ -67,6 +67,10 @@ export interface ReviewReply {
   time: string
   /** 被回复者；为空表示直接回复评论本身 */
   replyTo: string
+  /** 回复者是作者本人（书源没配规则时缺省 false） */
+  author?: boolean
+  /** 作者赞过这条回复 */
+  authorDigg?: boolean
 }
 
 export interface ReviewItem {
@@ -78,6 +82,10 @@ export interface ReviewItem {
   digg: number
   replyCount: number
   replies: ReviewReply[]
+  /** 评论者是作者本人（书源没配规则时缺省 false） */
+  author?: boolean
+  /** 作者赞过这条评论 */
+  authorDigg?: boolean
   /** 评论配图。站点常给同一张图的多个变体（HEIC + JPEG），由前端挑可渲染的 */
   images: string[]
 }

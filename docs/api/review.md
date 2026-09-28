@@ -51,8 +51,10 @@
   "time": "1717597455",
   "digg": 68,
   "replyCount": 13,
+  "author": false,
+  "authorDigg": true,
   "replies": [
-    { "name": "读者乙", "content": "同感", "time": "1717597460", "replyTo": "" }
+    { "name": "读者乙", "content": "同感", "time": "1717597460", "replyTo": "", "author": false, "authorDigg": false }
   ],
   "images": [
     "https://.../a.heic?sign=1",
@@ -63,6 +65,7 @@
 
 - `time` 是**来源站点的原始时间字符串**，后端不做归一化（有的站点是 Unix 秒，有的是 `2024-06-05 12:00`）；前端只做展示，需要排序时用站点自己的顺序。
 - `digg` / `replyCount` 解析不出时是 `0`。
+- `author` 表示评论者是作者本人，`authorDigg` 表示作者赞过这条评论；回复（`replies` 各项）同样带这两个字段。两者分别来自书源规则的 `authorRule` / `authorDiggRule` / `replyAuthorRule` / `replyAuthorDiggRule`，书源没配对应规则时恒为 `false`。
 - `replies` 是评论下方直接展开的那几条，`replyTo` 为空表示直接回复评论本身。章评与段评都会解析内联回复，**一律按时间升序**（早在上、晚在下）；时间字段不是时间戳时保持站点顺序。
 - `images` 是评论配图，**按站点给的顺序原样返回**，不做格式过滤。站点常为同一张图给出多个变体（番茄同时给 HEIC 和 JPEG，而浏览器渲染不了 HEIC），由客户端挑自己能渲染的那个。
 - `avatar` 前端不再展示（站点头像经常 403），字段保留供其他客户端使用。

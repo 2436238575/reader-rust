@@ -46,6 +46,7 @@
             >
               <div class="comment-meta">
                 <span class="comment-name">{{ item.name || '匿名读者' }}</span>
+                <span v-if="item.author" class="comment-badge-author">作者</span>
                 <span class="comment-time">{{ formatReviewTime(item.time) }}</span>
                 <button
                   v-if="isExpanded(itemKey(item, index))"
@@ -81,14 +82,22 @@
               <div v-if="item.replies.length" class="comment-replies">
                 <p v-for="(reply, replyIndex) in item.replies" :key="replyIndex" class="comment-reply">
                   <span class="comment-reply-name">{{ reply.name || '匿名读者' }}</span>
+                  <span v-if="reply.author" class="comment-badge-author">作者</span>
                   <span v-if="reply.replyTo" class="comment-reply-to">回复 {{ reply.replyTo }}</span>
                   ：{{ reply.content }}
+                  <span v-if="reply.authorDigg" class="comment-author-digg">作者赞过</span>
                 </p>
               </div>
               <div v-if="item.replyCount > item.replies.length" class="comment-reply-more">
                 共 {{ item.replyCount }} 条回复
               </div>
               <div class="comment-actions">
+                <span v-if="item.authorDigg" class="comment-author-digg">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M7 22V11l5-9a2 2 0 0 1 2 2v5h5.5a2 2 0 0 1 2 2.3l-1.4 8A2 2 0 0 1 18 22H7z" />
+                  </svg>
+                  作者赞过
+                </span>
                 <span class="comment-digg">
                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                     <path d="M7 22V11l5-9a2 2 0 0 1 2 2v5h5.5a2 2 0 0 1 2 2.3l-1.4 8A2 2 0 0 1 18 22H7z" />
@@ -584,6 +593,38 @@ function formatReviewTime(raw: string) {
   opacity: 0.85;
 }
 
+/* 「作者」徽章：名字后面的小标签（番茄同款形态） */
+.comment-badge-author {
+  flex-shrink: 0;
+  padding: 0 5px;
+  border-radius: 4px;
+  background: var(--color-primary);
+  color: var(--color-bg-elevated, #fff);
+  font-size: 10px;
+  line-height: 1.6;
+  font-weight: 500;
+  transform: translateY(-0.5px);
+}
+
+/* 「作者赞过」：点赞行/回复里的浅色小字 */
+.comment-author-digg {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  flex-shrink: 0;
+  color: var(--color-primary);
+  font-size: 11px;
+}
+
+.comment-author-digg svg {
+  width: 11px;
+  height: 11px;
+}
+
+.comment-reply .comment-author-digg {
+  margin-left: 6px;
+}
+
 .comment-time {
   font-size: 11px;
   color: var(--color-text-tertiary);
@@ -684,6 +725,7 @@ function formatReviewTime(raw: string) {
 .comment-actions {
   display: flex;
   align-items: center;
+  gap: 10px;
   margin-top: 6px;
   color: var(--color-text-tertiary);
   font-size: 12px;

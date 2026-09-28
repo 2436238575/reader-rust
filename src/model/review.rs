@@ -16,6 +16,10 @@ pub struct ReviewItem {
     pub digg: i64,
     pub reply_count: i64,
     pub replies: Vec<ReviewReply>,
+    /// 评论者是作者本人（书源没配规则时恒为 false）。
+    pub author: bool,
+    /// 作者赞过这条评论（书源没配规则时恒为 false）。
+    pub author_digg: bool,
     /// 评论配图。同一个图站点常给出多个变体（番茄会同时给 HEIC 与 JPEG），
     /// 顺序原样保留，由客户端挑自己能渲染的那一个。
     pub images: Vec<String>,
@@ -30,6 +34,10 @@ pub struct ReviewReply {
     pub time: String,
     /// 被回复者；为空表示直接回复评论本身。
     pub reply_to: String,
+    /// 回复者是作者本人。
+    pub author: bool,
+    /// 作者赞过这条回复。
+    pub author_digg: bool,
 }
 
 /// 一页评论。
