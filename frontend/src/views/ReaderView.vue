@@ -122,7 +122,8 @@
       :class="{ 'horizontal-page-mode': isHorizontalPageMode }"
       ref="scrollContainerRef"
       @scroll="handleScroll"
-      @mousedown="stopAutoScroll"
+      @mousedown="interruptAutoScroll"
+      @wheel="interruptAutoScroll"
       @touchstart="handleTouchStart"
       @touchmove="handleTouchMove"
       @touchend="handleTouchEnd"
@@ -1492,6 +1493,16 @@ function scheduleRestoreReadingPosition() {
   }, pendingRestoreAttempts === 0 ? 0 : 80)
 }
 
+// 点按/滚轮/按键打断自动滚动的时间戳：打断后紧接着的那次 tap 只表示
+// 「停」，不再附带翻页或弹菜单（handleGlobalClick 据此吞掉）
+let autoScrollInterruptAt = 0
+
+function interruptAutoScroll() {
+  if (!store.isAutoScrolling) return
+  autoScrollInterruptAt = Date.now()
+  stopAutoScroll()
+}
+
 const {
   clearReadingClass,
   startAutoScroll,
@@ -1558,7 +1569,10 @@ function handleGlobalClick(e: MouseEvent) {
     return
   }
   if (store.isAutoScrolling) return
-  
+  // 这次点按刚用于停掉自动滚动（touchstart/mousedown 已先行处理），
+  // 不再附带翻页或弹菜单动作
+  if (Date.now() - autoScrollInterruptAt < 400) return
+
   if (isHorizontalPageMode.value && isMobile.value) {
     const x = e.clientX / window.innerWidth
     if (x < 0.3) {
@@ -1696,7 +1710,7 @@ function handleScroll() {
 }
 
 function handleTouchStart(event: TouchEvent) {
-  stopAutoScroll()
+  interruptAutoScroll()
   hideSelectionMenu()
   const touch = event.touches[0]
   if (!touch) return
@@ -1851,6 +1865,11 @@ function handleKeydown(e: KeyboardEvent) {
   // （TTS 面板是悬浮小条，不拦——边听边用键盘翻页是正常用法）
   if (store.activePanel || showSearch.value || showCommentPanel.value || showBookInfo.value || previewImage.value) return
 
+  // 滚屏/翻页键视为手动接管：先停自动滚动，再继续本次按键动作
+  if (store.isAutoScrolling && [' ', 'Space', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'PageUp', 'PageDown', 'Home', 'End'].includes(e.key)) {
+    interruptAutoScroll()
+  }
+
   const container = scrollContainerRef.value
   if (!container) return
 
@@ -1931,6 +1950,13 @@ function handleStopTTS() {
 }
 
 watch(() => store.isAutoScrolling, (val) => {
+  if (val && isHorizontalPageMode.value) {
+    // 横翻容器没有纵向滚动条：像素模式会立刻「到底」疯狂连翻，
+    // 段落模式的纵向滚动定位也无意义——明确拦下并告知，而不是假装在滚
+    store.isAutoScrolling = false
+    appStore.showToast('左右翻页模式不支持自动阅读', 'warning')
+    return
+  }
   if (val) startAutoScroll()
   else stopAutoScroll()
 })

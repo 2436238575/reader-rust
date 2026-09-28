@@ -360,8 +360,17 @@ export function useReaderAutoPlayback(
     container.scrollTop += speed
 
     if (container.scrollTop + container.clientHeight >= container.scrollHeight - 2) {
-      if (config.value.clickAction === 'auto' && store.hasNext) {
-        void nextChapter()
+      // 章末续翻下一章是自动阅读的本义，与「点击翻页」设置无关（此前错绑在
+      // clickAction==='auto' 上：设成「仅下滚」时每章末都会停住）
+      if (store.hasNext) {
+        // rAF 链到这里为止，新章正文到达后由 handleContentChanged 接力重启
+        const fromIndex = store.currentIndex
+        void Promise.resolve(nextChapter()).then(() => {
+          if (store.currentIndex === fromIndex && store.isAutoScrolling) {
+            // 翻章失败（loadChapter 已 toast）：停住，别让按钮假装还在滚
+            stopAutoScroll()
+          }
+        })
       } else {
         stopAutoScroll()
       }
@@ -737,6 +746,12 @@ export function useReaderAutoPlayback(
           runAutoParagraph()
         }
       }, 100)
+    }
+
+    // 像素模式：到底翻章时 rAF 链已断，新章正文到达后在这里接力重启
+    if (store.isAutoScrolling && config.value.autoPageMode !== 'paragraph') {
+      if (autoScrollId) cancelAnimationFrame(autoScrollId)
+      autoScrollId = requestAnimationFrame(runAutoScroll)
     }
 
     // 朗读/待播中正文被换掉，且不是朗读链路自己翻的章：用户手动翻了章
