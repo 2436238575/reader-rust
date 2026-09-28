@@ -111,6 +111,7 @@
       :para-index="commentParaIndex"
       :para-text="commentParaText"
       :initial-page="store.chapterComments"
+      :author-marks="store.reviewAuthorMarks"
       @close="closeCommentPanel"
     />
 

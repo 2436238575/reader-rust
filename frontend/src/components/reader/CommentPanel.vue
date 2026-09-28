@@ -12,14 +12,20 @@
               <div class="comment-sort" role="group" aria-label="评论排序">
                 <button
                   type="button"
-                  :class="{ active: sort === 'hot' }"
+                  :class="{ active: !authorOnly && sort === 'hot' }"
                   @click="changeSort('hot')"
                 >最热</button>
                 <button
                   type="button"
-                  :class="{ active: sort === 'time' }"
+                  :class="{ active: !authorOnly && sort === 'time' }"
                   @click="changeSort('time')"
                 >最新</button>
+                <button
+                  v-if="authorMarksAvailable"
+                  type="button"
+                  :class="{ active: authorOnly }"
+                  @click="changeAuthorOnly()"
+                >只看作者</button>
               </div>
               <button class="comment-close" aria-label="关闭" @click="$emit('close')">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -36,7 +42,9 @@
           <div ref="listRef" class="comment-list">
             <div v-if="loading && !items.length" class="comment-hint">加载中...</div>
             <div v-else-if="error" class="comment-hint comment-error">{{ error }}</div>
-            <div v-else-if="!items.length" class="comment-hint">还没有评论</div>
+            <div v-else-if="!items.length" class="comment-hint">
+              {{ authorOnly ? '没有作者评论、赞过或回复过的评论' : '还没有评论' }}
+            </div>
 
             <article
               v-for="(item, index) in visibleItems"
@@ -161,6 +169,8 @@ const props = defineProps<{
   paraText?: string
   /** 章评第一页已由阅读页预取，打开面板时直接复用，避免重复请求 */
   initialPage?: ReviewPage | null
+  /** 书源配了作者标记规则（章评预取时带回），据此显示「只看作者」 */
+  authorMarks?: boolean
 }>()
 
 defineEmits<{ close: [] }>()
@@ -176,6 +186,11 @@ const preview = ref('')
 /** 默认「最热」：站点自己的热度序（章评接口本身就按点赞递减返回） */
 const sort = ref<ReviewSort>('hot')
 const serverSort = ref(false)
+/** 「只看作者」模式：后端扫描全部评论页，一次返回所有命中，无分页 */
+const authorOnly = ref(false)
+/** 段评路径下书源可能只给章评配了作者规则；扫描报不支持时把按钮收掉 */
+const authorUnsupported = ref(false)
+const authorMarksAvailable = computed(() => Boolean(props.authorMarks) && !authorUnsupported.value)
 
 /**
  * 超长评论折叠。
@@ -238,7 +253,7 @@ watch(items, () => {
  * 排不了就保持站点顺序，宁可不动也不要把不可比的时间混着排。
  */
 const visibleItems = computed(() => {
-  if (sort.value === 'hot') return items.value
+  if (sort.value === 'hot' || authorOnly.value) return items.value
   // 「最新」始终在客户端再排一次：站点排对了这是稳定的 no-op，
   // 排错了（实测番茄对部分章节会忽略 sort）就当兜底纠偏。
   // 时间认不出来时保持站点顺序，宁可不动也不把不可比的时间混着排。
@@ -248,7 +263,7 @@ const visibleItems = computed(() => {
 })
 
 /** 站点不支持服务端排序时，「最新」只对已加载的条目生效 */
-const clientSideSortOnly = computed(() => sort.value === 'time' && !serverSort.value)
+const clientSideSortOnly = computed(() => sort.value === 'time' && !serverSort.value && !authorOnly.value)
 
 /** 每次打开都重新装载：评论会变，缓存里的旧数据不该拦住刷新 */
 watch(
@@ -263,6 +278,8 @@ watch(
 async function reload() {
   error.value = ''
   sort.value = 'hot'
+  authorOnly.value = false
+  authorUnsupported.value = false
   collapsibleKeys.value = new Set()
   expandedKeys.value = new Set()
   const initial = props.mode === 'chapter' ? props.initialPage : null
@@ -292,11 +309,18 @@ async function fetchPage(target: number) {
       bookSourceUrl: props.bookSourceUrl,
       page: target,
       sort: sort.value,
+      authorOnly: authorOnly.value || undefined,
     }
     const resp =
       props.mode === 'para'
         ? await getParaComments({ ...params, paraIndex: props.paraIndex ?? 0 })
         : await getChapterComments(params)
+    if (authorOnly.value && !resp.enabled) {
+      authorUnsupported.value = true
+      authorOnly.value = false
+      error.value = '书源未配置作者标记规则'
+      return
+    }
     const data = resp.data
     serverSort.value = resp.serverSort
     const incoming = (data.items || []).map(normalizeItem)
@@ -312,7 +336,8 @@ async function fetchPage(target: number) {
 }
 
 async function changeSort(next: ReviewSort) {
-  if (sort.value === next) return
+  if (!authorOnly.value && sort.value === next) return
+  authorOnly.value = false
   sort.value = next
   // 排序变了，已加载的分页作废，从头拉；顺序整体换过，回到顶部
   items.value = []
@@ -326,8 +351,23 @@ async function changeSort(next: ReviewSort) {
   listRef.value?.scrollTo({ top: 0 })
 }
 
+async function changeAuthorOnly() {
+  if (authorOnly.value) return
+  authorOnly.value = true
+  // 扫描结果与已加载分页不兼容，整体重来
+  items.value = []
+  total.value = 0
+  page.value = 1
+  hasMore.value = false
+  collapsibleKeys.value = new Set()
+  expandedKeys.value = new Set()
+  await fetchPage(1)
+  await nextTick()
+  listRef.value?.scrollTo({ top: 0 })
+}
+
 async function loadMore() {
-  if (loading.value) return
+  if (loading.value || authorOnly.value) return
   // 「加载更多」按钮在列表末尾，追加后浏览器本来就会保持 scrollTop，
   // 新条目正好接在原来的位置下方。这里额外记一个锚点，是为了「最新」排序：
   // 新一页要按时间重新插入，不锚定的话视口里的条目会整体错位。

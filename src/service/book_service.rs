@@ -81,6 +81,12 @@ const DEFAULT_REVIEW_CACHE_BYTES: u64 = 64 * 1024 * 1024;
 const REVIEW_CACHE_DIR: &str = "reviews";
 /// 评论每页条数；站点通常另有上限（番茄是 50）。
 pub const REVIEW_PAGE_SIZE: i32 = 20;
+
+/// 「只看作者」扫描的上限：25 页 × 50 条 = 一章最多扫 1250 条评论。
+/// 上游没有作者过滤参数，只能逐页翻；给上限是防止上万条的爆火章节
+/// 把请求打穿（25 个串行请求本身已经够慢了）。
+const AUTHOR_SCAN_MAX_PAGES: i32 = 25;
+const AUTHOR_SCAN_PAGE_SIZE: i32 = 50;
 /// 正文响应体内存暂存的条数、单条上限与存活时间。
 const RECENT_BODY_LIMIT: usize = 32;
 const RECENT_BODY_MAX_BYTES: usize = 1024 * 1024;
@@ -94,6 +100,16 @@ const RECENT_BODY_TTL: Duration = Duration::from_secs(600);
 /// 清理（详情与目录同属书籍元数据）。
 const BOOK_INFO_CACHE_TTL: Duration = Duration::from_secs(600);
 const BOOK_INFO_CACHE_DIR: &str = "bookinfo";
+
+/// 「作者相关」的评论：作者本人发的、作者赞过的、或有内联回复来自作者/被作者赞过。
+///
+/// 「作者回复过」只能看到内联回复预览里的那几条（站点的完整回复串不在
+/// 列表接口里），这是数据源头的限制。
+fn is_author_related(item: &crate::model::review::ReviewItem) -> bool {
+    item.author
+        || item.author_digg
+        || item.replies.iter().any(|reply| reply.author || reply.author_digg)
+}
 
 /// 书源的评论 URL 模板是否用到了 `{{sort}}`。
 ///
@@ -1354,9 +1370,12 @@ impl BookService {
             "chapter|{chapter_url}|{page}|{count}|{}",
             sort.as_ctx_value()
         );
+        let author_marks = self.parser.has_chapter_author_rules(source);
         if !refresh {
             if let Some(cached) = self.load_review_cache(user_ns, &book_key, &cache_key).await {
-                return Ok(ReviewResponse::new(true, cached).with_server_sort(server_sort));
+                return Ok(ReviewResponse::new(true, cached)
+                    .with_server_sort(server_sort)
+                    .with_author_marks(author_marks));
             }
         }
         let (body, base) = self
@@ -1380,7 +1399,9 @@ impl BookService {
             self.store_review_cache(user_ns, &book_key, &cache_key, &result)
                 .await;
         }
-        Ok(ReviewResponse::new(true, result).with_server_sort(server_sort))
+        Ok(ReviewResponse::new(true, result)
+            .with_server_sort(server_sort)
+            .with_author_marks(author_marks))
     }
 
     /// 段评概览：本章哪些段落有段评、各有多少条。
@@ -1503,6 +1524,7 @@ impl BookService {
                 .as_ref()
                 .and_then(|rule| rule.review_url.as_deref()),
         );
+        let author_marks = self.parser.has_para_author_rules(source);
         let book_key = md5_hex(book_url);
         let cache_key = format!(
             "para|{chapter_url}|{para_index}|{page}|{count}|{}",
@@ -1510,7 +1532,9 @@ impl BookService {
         );
         if !refresh {
             if let Some(cached) = self.load_review_cache(user_ns, &book_key, &cache_key).await {
-                return Ok(ReviewResponse::new(true, cached).with_server_sort(server_sort));
+                return Ok(ReviewResponse::new(true, cached)
+                    .with_server_sort(server_sort)
+                    .with_author_marks(author_marks));
             }
         }
         let (body, base) = self
@@ -1533,7 +1557,111 @@ impl BookService {
             self.store_review_cache(user_ns, &book_key, &cache_key, &result)
                 .await;
         }
-        Ok(ReviewResponse::new(true, result).with_server_sort(server_sort))
+        Ok(ReviewResponse::new(true, result)
+            .with_server_sort(server_sort)
+            .with_author_marks(author_marks))
+    }
+
+    /// 「只看作者」：扫描本章（`para_index` 为 `Some` 时是某一段）的全部评论页，
+    /// 挑出作者评论过、赞过或回复过的**整条**评论（回复完整保留）。
+    ///
+    /// 上游没有作者过滤参数，只能逐页扫，且**热度序与时间序各扫一遍**——实测
+    /// 番茄两种排序返回的评论集合并不一致（作者标记只出现在其中一种的深处），
+    /// 按 `comment_id` 去重合并。每种序最多 25 页 × 50 条。扫描结果——包括
+    /// 「没有作者相关评论」的空结果——进 7 天评论缓存：一次完整扫描最多 50 个
+    /// 上游请求，不能接受每次打开面板都重扫；`refresh=1` 仍可强刷。与单页评论
+    /// 的「空页不进缓存」相反，这里的空结果是扫完所有页得出的结论，不是上游
+    /// 抖动——中途任何一页失败都会整体报错、不写缓存。
+    pub async fn get_author_reviews(
+        &self,
+        user_ns: &str,
+        source: &BookSource,
+        book_url: &str,
+        chapter_url: &str,
+        para_index: Option<i32>,
+        refresh: bool,
+    ) -> Result<ReviewResponse<ReviewPage>, AppError> {
+        let (capable, author_marks) = match para_index {
+            Some(_) => (
+                self.parser.has_para_review_rule(source),
+                self.parser.has_para_author_rules(source),
+            ),
+            None => (
+                self.parser.has_chapter_review_rule(source),
+                self.parser.has_chapter_author_rules(source),
+            ),
+        };
+        // 没配作者标记规则时扫描注定颗粒无收，直接报不支持，前端藏入口
+        if !capable || !author_marks {
+            return Ok(ReviewResponse::new(false, ReviewPage::empty(1)));
+        }
+        let book_key = md5_hex(book_url);
+        let cache_key = match para_index {
+            Some(index) => format!("para-author|{chapter_url}|{index}"),
+            None => format!("chapter-author|{chapter_url}"),
+        };
+        if !refresh {
+            if let Some(cached) = self
+                .load_review_cache::<ReviewPage>(user_ns, &book_key, &cache_key)
+                .await
+            {
+                return Ok(ReviewResponse::new(true, cached).with_author_marks(true));
+            }
+        }
+        let (body, base) = self
+            .chapter_source_body(user_ns, source, chapter_url)
+            .await?;
+        let mut items: Vec<crate::model::review::ReviewItem> = Vec::new();
+        let mut seen = std::collections::HashSet::new();
+        for sort in [ReviewSort::Hot, ReviewSort::Time] {
+            for page in 1..=AUTHOR_SCAN_MAX_PAGES {
+                let ctx = self.review_ctx(
+                    book_url,
+                    chapter_url,
+                    page,
+                    AUTHOR_SCAN_PAGE_SIZE,
+                    sort,
+                    para_index,
+                );
+                let url = self
+                    .parse_body_blocking(user_ns, source, &body, &base, &ctx, move |p, s, b, u, ctx| {
+                        match para_index {
+                            Some(_) => p.para_review_url(s, b, u, ctx),
+                            None => p.chapter_review_url(s, b, u, ctx),
+                        }
+                    })
+                    .await?
+                    .ok_or_else(|| AppError::BadRequest("书源的评论地址解析失败".to_string()))?;
+                let result = self
+                    .fetch_review_page(user_ns, source, &url, page, move |p, s, b, u| {
+                        match para_index {
+                            Some(_) => p.para_reviews(s, b, u),
+                            None => p.chapter_reviews(s, b, u),
+                        }
+                    })
+                    .await?;
+                let has_more = result.has_more;
+                items.extend(
+                    result
+                        .items
+                        .into_iter()
+                        .filter(is_author_related)
+                        .filter(|item| seen.insert(item.id.clone())),
+                );
+                if !has_more {
+                    break;
+                }
+            }
+        }
+        let page_result = ReviewPage {
+            total: items.len() as i64,
+            has_more: false,
+            page: 1,
+            items,
+        };
+        self.store_review_cache(user_ns, &book_key, &cache_key, &page_result)
+            .await;
+        Ok(ReviewResponse::new(true, page_result).with_author_marks(true))
     }
 
     async fn fetch_review_page<F>(

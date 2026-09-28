@@ -32,6 +32,8 @@ pub struct ReviewRequest {
     pub para_index: Option<i32>,
     /// `hot`（默认，站点热度序）或 `time`（按时间倒序）
     pub sort: Option<String>,
+    /// true 时忽略分页参数，返回「只看作者」扫描结果（作者评论/赞过/回复过的整条评论）
+    pub author_only: Option<bool>,
     pub refresh: Option<i32>,
 }
 
@@ -76,6 +78,9 @@ fn merge_body(mut req: ReviewRequest, body: &axum::body::Bytes) -> ReviewRequest
         if req.sort.is_none() {
             req.sort = v.sort;
         }
+        if req.author_only.is_none() {
+            req.author_only = v.author_only;
+        }
         if req.refresh.is_none() {
             req.refresh = v.refresh;
         }
@@ -93,6 +98,9 @@ fn merge_body(mut req: ReviewRequest, body: &axum::body::Bytes) -> ReviewRequest
             "count" => req.count = value.parse().ok(),
             "paraIndex" => req.para_index = value.parse().ok(),
             "sort" => req.sort = Some(value.into_owned()),
+            "authorOnly" => {
+                req.author_only = Some(matches!(value.as_ref(), "1" | "true"))
+            }
             "refresh" => req.refresh = value.parse().ok(),
             _ => {}
         }
@@ -178,20 +186,28 @@ pub async fn get_chapter_comments(
 ) -> Result<Json<ApiResponse<Value>>, AppError> {
     let req = merge_body(q, &body);
     let user_ns = user.0.ns.clone();
+    let author_only = req.author_only.unwrap_or(false);
     let ctx = resolve_context(&state, &user_ns, req).await?;
-    let result = state
-        .book_service
-        .get_chapter_reviews(
-            &user_ns,
-            &ctx.source,
-            &ctx.book_url,
-            &ctx.chapter_url,
-            ctx.page,
-            ctx.count,
-            ctx.sort,
-            ctx.refresh,
-        )
-        .await?;
+    let result = if author_only {
+        state
+            .book_service
+            .get_author_reviews(&user_ns, &ctx.source, &ctx.book_url, &ctx.chapter_url, None, ctx.refresh)
+            .await?
+    } else {
+        state
+            .book_service
+            .get_chapter_reviews(
+                &user_ns,
+                &ctx.source,
+                &ctx.book_url,
+                &ctx.chapter_url,
+                ctx.page,
+                ctx.count,
+                ctx.sort,
+                ctx.refresh,
+            )
+            .await?
+    };
     Ok(ok_json_with_images(&state, &ctx, result).await)
 }
 
@@ -230,21 +246,36 @@ pub async fn get_para_comments(
         .para_index
         .filter(|v| *v >= 0)
         .ok_or_else(|| AppError::BadRequest("paraIndex required".to_string()))?;
+    let author_only = req.author_only.unwrap_or(false);
     let user_ns = user.0.ns.clone();
     let ctx = resolve_context(&state, &user_ns, req).await?;
-    let result = state
-        .book_service
-        .get_para_reviews(
-            &user_ns,
-            &ctx.source,
-            &ctx.book_url,
-            &ctx.chapter_url,
-            para_index,
-            ctx.page,
-            ctx.count,
-            ctx.sort,
-            ctx.refresh,
-        )
-        .await?;
+    let result = if author_only {
+        state
+            .book_service
+            .get_author_reviews(
+                &user_ns,
+                &ctx.source,
+                &ctx.book_url,
+                &ctx.chapter_url,
+                Some(para_index),
+                ctx.refresh,
+            )
+            .await?
+    } else {
+        state
+            .book_service
+            .get_para_reviews(
+                &user_ns,
+                &ctx.source,
+                &ctx.book_url,
+                &ctx.chapter_url,
+                para_index,
+                ctx.page,
+                ctx.count,
+                ctx.sort,
+                ctx.refresh,
+            )
+            .await?
+    };
     Ok(ok_json_with_images(&state, &ctx, result).await)
 }

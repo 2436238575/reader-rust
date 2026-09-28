@@ -906,6 +906,28 @@ impl RuleEngine {
         has_rule(rule.index_url.as_deref()) && has_rule(rule.index_list_rule.as_deref())
     }
 
+    /// 章评是否配了作者标记规则（「只看作者」的前提；缺规则时扫描只会得到空列表）。
+    pub fn has_chapter_author_rules(&self, source: &BookSource) -> bool {
+        let Some(rule) = source.rule_review.as_ref() else {
+            return false;
+        };
+        has_rule(rule.author_rule.as_deref())
+            || has_rule(rule.author_digg_rule.as_deref())
+            || has_rule(rule.reply_author_rule.as_deref())
+            || has_rule(rule.reply_author_digg_rule.as_deref())
+    }
+
+    /// 段评是否配了作者标记规则。
+    pub fn has_para_author_rules(&self, source: &BookSource) -> bool {
+        let Some(rule) = source.rule_para_review.as_ref() else {
+            return false;
+        };
+        has_rule(rule.author_rule.as_deref())
+            || has_rule(rule.author_digg_rule.as_deref())
+            || has_rule(rule.reply_author_rule.as_deref())
+            || has_rule(rule.reply_author_digg_rule.as_deref())
+    }
+
     /// 求值章评列表地址。
     pub fn chapter_review_url(
         &self,

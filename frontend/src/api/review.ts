@@ -15,6 +15,8 @@ export interface ReviewParams {
   count?: number
   /** `hot`（默认，站点热度序）或 `time`（按时间倒序） */
   sort?: ReviewSort
+  /** true 时忽略分页：后端扫描全部评论页，返回作者评论/赞过/回复过的整条评论 */
+  authorOnly?: boolean
   /** 1 表示忽略 7 天缓存重新抓取 */
   refresh?: number
 }

@@ -217,6 +217,7 @@ export const useReaderStore = defineStore('reader', () => {
   /* 评论（章评 / 段评）：由书源规则决定是否可用 */
   const reviewEnabled = ref(false)
   const paraReviewEnabled = ref(false)
+  const reviewAuthorMarks = ref(false)
   const paraReviewIndex = ref<ParaReviewCount[]>([])
   const chapterCommentTotal = ref(0)
   const chapterComments = ref<ReviewPage | null>(null)
@@ -1484,6 +1485,7 @@ export const useReaderStore = defineStore('reader', () => {
       paraReviewEnabled.value = indexResp.enabled
       paraReviewIndex.value = indexResp.data?.paras || []
       reviewEnabled.value = chapterResp.enabled
+      reviewAuthorMarks.value = chapterResp.authorMarks === true
       chapterCommentTotal.value = chapterResp.data?.total || 0
       chapterComments.value = chapterResp.data || null
     } catch {
@@ -1496,6 +1498,7 @@ export const useReaderStore = defineStore('reader', () => {
   function resetReviews() {
     reviewEnabled.value = false
     paraReviewEnabled.value = false
+    reviewAuthorMarks.value = false
     paraReviewIndex.value = []
     chapterCommentTotal.value = 0
     chapterComments.value = null
@@ -1803,7 +1806,7 @@ export const useReaderStore = defineStore('reader', () => {
     setOpenAISpeechSource, setOpenAISpeechBaseUrl, setOpenAISpeechApiKey, setOpenAISpeechModel, setOpenAISpeechVoice, setOpenAISpeechFormat, setOpenAISpeechRequestMode, preloadOpenAITTS,
     displayContent, processContentForDisplay,
     isAutoScrolling,
-    reviewEnabled, paraReviewEnabled, paraReviewIndex, paraReviewCountByIndex,
+    reviewEnabled, paraReviewEnabled, reviewAuthorMarks, paraReviewIndex, paraReviewCountByIndex,
     chapterCommentTotal, chapterComments, reviewsLoading,
     loadChapterReviews, resetReviews,
     chapterImages, chapterImagesEnabled, loadChapterImages, resetChapterImages,

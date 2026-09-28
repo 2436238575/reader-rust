@@ -91,6 +91,9 @@ pub struct ReviewResponse<T> {
     /// 书源的评论 URL 模板是否用到了 `{{sort}}`（即排序由站点自己做）。
     /// 为 `false` 时「最新」只能对已加载的条目重排，前端据此给出提示。
     pub server_sort: bool,
+    /// 书源是否配了作者标记规则（`authorRule` 等四条之一）。
+    /// 前端据此决定是否显示「只看作者」入口。
+    pub author_marks: bool,
     pub data: T,
 }
 
@@ -99,6 +102,7 @@ impl<T> ReviewResponse<T> {
         Self {
             enabled,
             server_sort: false,
+            author_marks: false,
             data,
         }
     }
@@ -106,6 +110,12 @@ impl<T> ReviewResponse<T> {
     /// 书源的评论 URL 模板用到了 `{{sort}}`，即排序由站点自己做。
     pub fn with_server_sort(mut self, server_sort: bool) -> Self {
         self.server_sort = server_sort;
+        self
+    }
+
+    /// 书源配了作者标记规则，可以走「只看作者」。
+    pub fn with_author_marks(mut self, author_marks: bool) -> Self {
+        self.author_marks = author_marks;
         self
     }
 }

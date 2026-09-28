@@ -132,6 +132,17 @@ async fn start_upstream() -> (String, HitCounter) {
                     if params.get("page").map(String::as_str) == Some("99") {
                         body["data"]["data"]["comment"] = json!([]);
                     }
+                    // page=2 是没有作者标记的尾部页，用于验证「只看作者」的翻页扫描
+                    if params.get("page").map(String::as_str) == Some("2") {
+                        body["data"]["data"]["has_more"] = json!(false);
+                        body["data"]["data"]["comment"] = json!([{
+                            "comment_id": "c2",
+                            "text": "普通评论",
+                            "author": 0,
+                            "has_author_digg": false,
+                            "user_info": { "user_name": "读者丙" }
+                        }]);
+                    }
                     async move { Json(body) }
                 }
             }),
@@ -654,6 +665,62 @@ async fn empty_comment_pages_are_not_cached() {
         hits_after_first + 1,
         "空页不该进缓存，第二次必须重新打上游——否则上游一次抖动就会让评论空白七天"
     );
+}
+
+/// 「只看作者」：扫描全部评论页，挑出作者相关的整条评论（含回复）。
+#[tokio::test]
+async fn author_only_sweeps_pages_and_caches_the_result() {
+    let server = TestServer::start().await;
+
+    // 普通响应带「可只看作者」的能力标记
+    let chapter = server
+        .post("getChapterComments", server.review_body(json!({})))
+        .await;
+    assert_eq!(chapter["authorMarks"], json!(true));
+
+    let hits_before = server.hits_for("/comment/item");
+    let resp = server
+        .post(
+            "getChapterComments",
+            server.review_body(json!({ "authorOnly": true })),
+        )
+        .await;
+    assert_eq!(resp["enabled"], json!(true));
+    assert_eq!(resp["authorMarks"], json!(true));
+    assert_eq!(resp["data"]["hasMore"], json!(false));
+    assert_eq!(resp["data"]["total"], json!(1));
+    let items = resp["data"]["items"].as_array().unwrap();
+    // 两页里只有 c1 是作者相关，整条返回（作者回复完整保留）；
+    // 热度序与时间序都会命中同一条 c1，按 id 去重后只保留一份
+    assert_eq!(items.len(), 1);
+    assert_eq!(items[0]["id"], json!("c1"));
+    assert_eq!(items[0]["author"], json!(true));
+    assert_eq!(items[0]["authorDigg"], json!(true));
+    assert_eq!(items[0]["replies"][0]["author"], json!(true));
+    assert_eq!(
+        server.hits_for("/comment/item") - hits_before,
+        4,
+        "热度序与时间序各翻两页（第 2 页 has_more=false 即停）"
+    );
+
+    // 扫描结果进 7 天缓存：再请求不再打上游
+    let cached = server
+        .post(
+            "getChapterComments",
+            server.review_body(json!({ "authorOnly": true })),
+        )
+        .await;
+    assert_eq!(server.hits_for("/comment/item") - hits_before, 4);
+    assert_eq!(cached["data"]["items"].as_array().unwrap().len(), 1);
+
+    // 段评路径同样支持 authorOnly
+    let para = server
+        .post(
+            "getParaComments",
+            server.review_body(json!({ "paraIndex": 2, "authorOnly": true })),
+        )
+        .await;
+    assert_eq!(para["enabled"], json!(true));
 }
 
 #[tokio::test]

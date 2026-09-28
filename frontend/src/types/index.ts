@@ -119,6 +119,8 @@ export interface ReviewResponse<T> {
    * 为 false 时「最新」只能对已加载的条目重排。
    */
   serverSort: boolean
+  /** 书源配了作者标记规则，可以走「只看作者」 */
+  authorMarks?: boolean
   data: T
 }
 
