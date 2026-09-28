@@ -134,7 +134,7 @@
           :class="{ checked: isBookmarkSelected(bm) }"
           @click.stop="toggleBookmarkSelection(bm)"
         >
-          鉁?
+          ✓
         </button>
         <div class="bm-header">
           <span class="bm-chapter">{{ bm.chapterName }}</span>
@@ -294,7 +294,7 @@ function toggleBookmarkSelection(bm: Bookmark) {
 
 async function addCurrentBookmark() {
   await store.addBookmark()
-  appStore.showToast('宸叉坊鍔犲綋鍓嶉〉涔︾', 'success')
+  appStore.showToast('已添加当前页书签', 'success')
 }
 
 async function handleBatchAction() {
@@ -310,7 +310,7 @@ async function handleBatchAction() {
   await store.removeBookmarks(items)
   selectedBookmarkKeys.value.clear()
   bookmarkEditMode.value = false
-  appStore.showToast(`&#x5DF2;&#x5220;&#x9664; ${items.length} &#x6761;&#x4E66;&#x7B7E;`, 'success')
+  appStore.showToast(`已删除 ${items.length} 条书签`, 'success')
 }
 
 function formatDate(ts?: number) {
