@@ -1051,6 +1051,7 @@ impl RuleEngine {
             };
             let mut ctx = HashMap::new();
             let count_rule = rule.index_count_rule.as_deref().unwrap_or("");
+            let author_rule = rule.index_author_commented_rule.as_deref().unwrap_or("");
             let mut paras: Vec<ParaReviewCount> = Vec::new();
             for node in jsonpath::jsonpath_query_combined(&v, strip_mode_prefix(list_rule)) {
                 let entries: Vec<(i32, &Value)> = match &node {
@@ -1077,9 +1078,13 @@ impl RuleEngine {
                     if count <= 0 {
                         continue;
                     }
+                    let author_commented = eval_field_json_with_ctx(author_rule, value, base_url, &mut ctx)
+                        .map(|text| parse_truthy_flag(&text))
+                        .unwrap_or(false);
                     paras.push(ParaReviewCount {
                         para_index,
                         count,
+                        author_commented,
                         text: String::new(),
                     });
                 }
@@ -1233,6 +1238,13 @@ fn parse_count_text(text: &str) -> i64 {
         base
     };
     value as i64
+}
+
+/// 站点布尔标记的宽容解析：`true`/`1`/非零数字都算真（番茄给的是 0/1）。
+fn parse_truthy_flag(text: &str) -> bool {
+    let trimmed = text.trim();
+    trimmed.eq_ignore_ascii_case("true")
+        || trimmed.parse::<f64>().map(|n| n != 0.0).unwrap_or(false)
 }
 
 fn parse_review_page(fields: &ReviewFields<'_>, body: &str, base_url: &str) -> ReviewPage {
@@ -4099,6 +4111,7 @@ mod tests {
                 ),
                 index_list_rule: Some("$.data.data.idea_data".to_string()),
                 index_count_rule: Some("$.idea_count".to_string()),
+                index_author_commented_rule: Some("$.author_commented".to_string()),
                 review_url: Some(
                     "comment/para?book_id={{$.data.data.novel_data.book_id}}\
                      &item_id={{$.data.data.novel_data.item_id}}\
@@ -4247,8 +4260,8 @@ mod tests {
             "data": {
                 "data": {
                     "idea_data": {
-                        "32": {"idea_count": 641},
-                        "5": {"idea_count": 192},
+                        "32": {"idea_count": 641, "author_commented": 1},
+                        "5": {"idea_count": 192, "author_commented": 0},
                         "7": {"idea_count": 0},
                         "-1": {"idea_count": 31},
                         "not-a-number": {"idea_count": 9}
@@ -4263,10 +4276,29 @@ mod tests {
         assert_eq!(
             paras
                 .iter()
-                .map(|p| (p.para_index, p.count))
+                .map(|p| (p.para_index, p.count, p.author_commented))
                 .collect::<Vec<_>>(),
-            vec![(5, 192), (32, 641)]
+            vec![(5, 192, false), (32, 641, true)]
         );
+    }
+
+    #[test]
+    fn para_review_index_without_author_rule_defaults_to_false() {
+        let engine = RuleEngine::new().unwrap();
+        let mut source = fqweb_source();
+        source
+            .rule_para_review
+            .as_mut()
+            .unwrap()
+            .index_author_commented_rule = None;
+        let body = json!({
+            "data": {"data": {"idea_data": {"3": {"idea_count": 9, "author_commented": 1}}}}
+        })
+        .to_string();
+
+        let paras = engine.para_review_index(&source, &body, "http://host/");
+        assert_eq!(paras.len(), 1);
+        assert!(!paras[0].author_commented);
     }
 
     #[test]

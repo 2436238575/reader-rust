@@ -130,6 +130,8 @@ pub struct ParaReviewRule {
     pub index_list_rule: Option<String>,
     /// 从单段数据里取评论条数。
     pub index_count_rule: Option<String>,
+    /// 从单段数据里取「作者评论/点赞过」标记；规则缺省时该标记恒为 false。
+    pub index_author_commented_rule: Option<String>,
     /// 段评列表 URL 模板；模板里可用 `{{paraIndex}}`。
     pub review_url: Option<String>,
     pub list_rule: Option<String>,

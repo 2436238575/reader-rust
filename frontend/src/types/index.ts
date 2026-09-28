@@ -93,6 +93,8 @@ export interface ReviewPage {
 export interface ParaReviewCount {
   paraIndex: number
   count: number
+  /** 该段有作者评论/点赞（书源没配规则时缺省为 false） */
+  authorCommented?: boolean
   /** 段落原文（截断）。段号会因替换规则/繁简转换漂移，用它兜底定位 */
   text: string
 }

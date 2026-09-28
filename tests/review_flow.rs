@@ -73,7 +73,7 @@ async fn start_upstream() -> (String, HitCounter) {
 
     let para_index = json!({
         "data": { "data": { "idea_data": {
-            "0": { "idea_count": 140 },
+            "0": { "idea_count": 140, "author_commented": 1 },
             "2": { "idea_count": 30 },
             "-1": { "idea_count": 9 }
         }}}
@@ -240,6 +240,7 @@ fn book_source(upstream_url: &str) -> Value {
             "indexUrl": "comment/para/list?book_id={{$.data.data.novel_data.book_id}}&item_id={{$.data.data.novel_data.item_id}}&item_version={{$.data.data.novel_data.version}}",
             "indexListRule": "$.data.data.idea_data",
             "indexCountRule": "$.idea_count",
+            "indexAuthorCommentedRule": "$.author_commented",
             "reviewUrl": "comment/para?book_id={{$.data.data.novel_data.book_id}}&item_id={{$.data.data.novel_data.item_id}}&para_index={{paraIndex}}&item_version={{$.data.data.novel_data.version}}&page={{page}}&count={{count}}&sort={{sort === 'hot' ? 'hot' : 'time_desc'}}",
             "listRule": "$.data.data.comments[*]",
             "totalRule": "$.data.data.count",
@@ -411,6 +412,9 @@ async fn chapter_and_para_comments_are_parsed_from_the_source_rules() {
     assert_eq!(paras.len(), 2);
     assert_eq!(paras[0]["paraIndex"], json!(0));
     assert_eq!(paras[0]["count"], json!(140));
+    // 作者评论/点赞标记：上游 author_commented=1 → true，缺省 → false
+    assert_eq!(paras[0]["authorCommented"], json!(true));
+    assert_eq!(paras[1]["authorCommented"], json!(false));
     // 段号会因替换规则漂移，后端要带上段落原文做兜底定位
     assert_eq!(paras[0]["text"], json!("第一段正文"));
 

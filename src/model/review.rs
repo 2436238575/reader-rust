@@ -59,6 +59,8 @@ pub struct ParaReviewCount {
     /// 段号，等于正文按 `\n` 切分后的下标（从 0 开始）。
     pub para_index: i32,
     pub count: i64,
+    /// 该段有作者评论或点赞（概览接口的标记字段，书源没配规则时恒为 false）。
+    pub author_commented: bool,
     /// 段落原文（截断）。段号会因用户的书源替换规则、繁简转换而漂移，
     /// 前端拿它做兜底定位。
     pub text: String,

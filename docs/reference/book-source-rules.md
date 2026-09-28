@@ -192,6 +192,7 @@ data class ParaReviewRule(
   var indexUrl: String? = null,
   var indexListRule: String? = null,
   var indexCountRule: String? = null,
+  var indexAuthorCommentedRule: String? = null,
   var reviewUrl: String? = null,
   var listRule: String? = null,
   var idRule: String? = null,
@@ -1414,6 +1415,7 @@ getContentAwait(source, book, chapter, nextChapterUrl=null, needSave=true):
 | `indexUrl` | 概览 URL 模板 |
 | `indexListRule` | 概览里「段号 → 该段数据」的映射；通常是一个对象，也可以是数组 |
 | `indexCountRule` | 从单段数据里取条数 |
+| `indexAuthorCommentedRule` | 从单段数据里取「作者评论/点赞过」标记（`true`/`1`/非零数字为真）；缺省时恒为 false，前端气泡不显示作者标记 |
 | `reviewUrl` | 段评列表 URL 模板（可用 `{{paraIndex}}`） |
 | `listRule` / `idRule` / `nameRule` / `avatarRule` / `contentRule` / `postTimeRule` / `diggRule` / `totalRule` / `hasMoreRule` | 同章评 |
 | `replyCountRule` / `replyListRule` / `replyNameRule` / `replyContentRule` / `replyPostTimeRule` / `replyToRule` | 同章评（段评同样可能有内联回复） |
@@ -1468,6 +1470,7 @@ getContentAwait(source, book, chapter, nextChapterUrl=null, needSave=true):
     "indexUrl": "comment/para/list?book_id={{$.data.data.novel_data.book_id}}&item_id={{$.data.data.novel_data.item_id}}&item_version={{$.data.data.novel_data.version}}",
     "indexListRule": "$.data.data.idea_data",
     "indexCountRule": "$.idea_count",
+    "indexAuthorCommentedRule": "$.author_commented",
     "reviewUrl": "comment/para?book_id={{$.data.data.novel_data.book_id}}&item_id={{$.data.data.novel_data.item_id}}&para_index={{paraIndex}}&item_version={{$.data.data.novel_data.version}}&page={{page}}&count={{count}}",
     "listRule": "$.data.data.comments[*]",
     "totalRule": "$.data.data.count",

@@ -767,12 +767,22 @@ function splitParagraphLines(text: string) {
 
 function renderParaCommentBubble(item: ParaReviewCount) {
   const count = item.count > 999 ? '999+' : String(item.count)
+  // 作者评论/点赞过的段落：气泡加底色，计数后带一支羽毛笔标记（参照番茄的样式）
+  const authorMark = item.authorCommented
+    ? '<svg class="para-author-mark" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">' +
+      '<path d="M20.24 12.24a6 6 0 0 0-8.49-8.49L5 10.5V19h8.5z" />' +
+      '<path d="m16 8-14 14" />' +
+      '<path d="M17.5 15H9" />' +
+      '</svg>'
+    : ''
+  const title = item.authorCommented ? ' title="作者评论过这一段"' : ''
   return (
-    `<span class="para-comment-bubble" role="button" tabindex="0" data-para-index="${item.paraIndex}">` +
+    `<span class="para-comment-bubble${item.authorCommented ? ' has-author' : ''}" role="button" tabindex="0" data-para-index="${item.paraIndex}"${title}>` +
     '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">' +
     '<path d="M21 11.5a8.5 8.5 0 0 1-12.3 7.6L3 21l1.9-5.6A8.5 8.5 0 1 1 21 11.5z" />' +
     '</svg>' +
     `<span class="para-comment-count">${count}</span>` +
+    authorMark +
     '</span>'
   )
 }
@@ -2386,6 +2396,24 @@ watch(
   height: 0.95em;
   flex: none;
   opacity: 0.75;
+}
+
+/* 作者评论/点赞过：气泡染上主题色，羽毛笔标记不透明 */
+:deep(.para-comment-bubble.has-author) {
+  background: rgba(201, 127, 58, 0.16);
+  color: var(--color-primary, #c97f3a);
+}
+
+:deep(.para-comment-bubble.has-author:hover),
+:deep(.para-comment-bubble.has-author:active) {
+  background: rgba(212, 129, 42, 0.28);
+}
+
+:deep(.para-comment-bubble svg.para-author-mark) {
+  width: 0.9em;
+  height: 0.9em;
+  margin-left: 1px;
+  opacity: 1;
 }
 
 :deep(.para-comment-count) {

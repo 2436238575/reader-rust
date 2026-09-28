@@ -109,8 +109,8 @@ POST /reader3/getParaCommentIndex
     "enabled": true,
     "data": {
       "paras": [
-        { "paraIndex": 0, "count": 256, "text": "此时，花臂男举起了手……" },
-        { "paraIndex": 5, "count": 192, "text": "“那接下来轮到我讲了。”……" }
+        { "paraIndex": 0, "count": 256, "authorCommented": true, "text": "此时，花臂男举起了手……" },
+        { "paraIndex": 5, "count": 192, "authorCommented": false, "text": "“那接下来轮到我讲了。”……" }
       ]
     }
   }
@@ -119,6 +119,7 @@ POST /reader3/getParaCommentIndex
 
 - `paraIndex` 是**正文按 `\n` 切分后的行号，从 0 开始**，与站点一致。负段号（部分站点的整章聚合桶）会被过滤掉。
 - `count` 是该段的评论条数。
+- `authorCommented` 表示作者在该段评论或点赞过，来自书源规则的 `indexAuthorCommentedRule`；书源没配这条规则时恒为 `false`。
 - `text` 是段落原文（截断到 60 字）。段号会因用户自己的书源替换规则、繁简转换而漂移，前端拿它做兜底定位：位置对不上时按原文匹配。
 - 列表按 `paraIndex` 升序。
 
