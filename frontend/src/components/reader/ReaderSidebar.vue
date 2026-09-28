@@ -20,9 +20,9 @@
     </div>
 
     <div class="sidebar-items bottom">
-      <div class="sidebar-item" @click="$emit('goHome')">
+      <div class="sidebar-item" @click="$emit('goBack')">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m15 18-6-6 6-6" /></svg>
-        <span>首页</span>
+        <span>返回</span>
       </div>
       <div class="sidebar-item" @click="$emit('scrollTop')">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m18 15-6-6-6 6" /></svg>
@@ -55,7 +55,7 @@ const theme = computed(() => {
 })
 
 defineEmits<{
-  goHome: []
+  goBack: []
   scrollTop: []
   scrollBottom: []
 }>()

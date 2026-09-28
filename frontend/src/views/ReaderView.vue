@@ -35,7 +35,7 @@
     <!-- PC Desktop Toolbars (Always shown) -->
     <ReaderSidebar
       v-if="!isMobile"
-      @goHome="goHome"
+      @goBack="goBack"
       @scrollTop="scrollToTop"
       @scrollBottom="scrollToBottom"
     />
@@ -57,7 +57,7 @@
     <ReaderMobileControls
       v-if="isMobile"
       :show="showControls || !!store.activePanel"
-      @goHome="goHome"
+      @goBack="goBack"
       @scrollTop="scrollToTop"
       @scrollBottom="scrollToBottom"
       @prev="prevChapter"
@@ -1032,9 +1032,14 @@ function pageBackward() {
 }
 
 // Navigation
-async function goHome() {
+async function goBack() {
   await persistReadingProgressBeforeLeave()
-  router.replace('/')
+  // 从发现/最近/搜索进入时返回来处；直接落在阅读器（刷新、直链）时兜底回首页
+  if (window.history.state?.back != null) {
+    router.back()
+  } else {
+    router.replace('/')
+  }
 }
 
 function handlePageHide() {
@@ -1804,8 +1809,8 @@ function handleKeydown(e: KeyboardEvent) {
       showControls.value = false
       return
     }
-    // If nothing is open, go home
-    goHome()
+    // If nothing is open, go back
+    goBack()
     return
   }
 

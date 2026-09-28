@@ -10,9 +10,9 @@
     <!-- Top Bar -->
     <Transition name="slide-down">
       <div v-show="show" class="m-top-bar">
-        <div class="m-top-item" @click="$emit('goHome')">
+        <div class="m-top-item" @click="$emit('goBack')">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m15 18-6-6 6-6" /></svg>
-          <span>首页</span>
+          <span>返回</span>
         </div>
         <div class="m-top-item" :class="{ active: store.activePanel === 'bookshelf' }" @click="store.togglePanel('bookshelf')">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H20v20H6.5a2.5 2.5 0 0 1 0-5H20" /></svg>
@@ -136,7 +136,7 @@ defineProps<{
 }>()
 
 defineEmits<{
-  goHome: []
+  goBack: []
   scrollTop: []
   scrollBottom: []
   prev: []
