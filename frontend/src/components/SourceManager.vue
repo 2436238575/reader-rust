@@ -146,6 +146,7 @@ import {
   getBookSourceGroups,
   getBookSourceStats,
   getVisibleSelection,
+  splitBookSourceGroups,
   toBookSourceDeletePayload,
 } from '../utils/sourceSelection'
 import { appendAuthQueryParams } from '../utils/secureAccess'
@@ -209,7 +210,7 @@ const selectedFilteredSources = computed(() =>
 )
 
 const invalidSources = computed(() =>
-  sources.value.filter((source) => hasSourceGroup(source, '失效'))
+  sources.value.filter((source) => splitBookSourceGroups(source.bookSourceGroup).includes('失效'))
 )
 
 const allFilteredSelected = computed(() =>
@@ -396,14 +397,6 @@ function pruneSelection() {
       selectedSourceUrls.value.delete(url)
     }
   })
-}
-
-function hasSourceGroup(source: BookSource, groupName: string) {
-  return (source.bookSourceGroup || '')
-    .split(/[,;；、]/)
-    .map((group) => group.trim())
-    .filter(Boolean)
-    .includes(groupName)
 }
 
 function createSource() {

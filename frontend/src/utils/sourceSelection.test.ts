@@ -5,6 +5,7 @@ import {
   getBookSourceOverview,
   getBookSourceStats,
   getVisibleSelection,
+  splitBookSourceGroups,
   toBookSourceDeletePayload,
 } from './sourceSelection'
 import type { BookSource } from '../types'
@@ -40,6 +41,19 @@ describe('sourceSelection', () => {
     expect(getBookSourceGroups(grouped)).toEqual(['API', '小说', '精选'])
   })
 
+  it('splits groups on the full separator set consistently across pages', () => {
+    // 全角逗号、竖线、斜杠同样是分隔符——搜索页与管理页必须拆出同一组结果
+    expect(splitBookSourceGroups('小说，精选|完本/出版；API')).toEqual([
+      '小说',
+      '精选',
+      '完本',
+      '出版',
+      'API',
+    ])
+    expect(splitBookSourceGroups(undefined)).toEqual([])
+    expect(splitBookSourceGroups('  ')).toEqual([])
+  })
+
   it('filters book sources by text and group', () => {
     const grouped: BookSource[] = [
       { bookSourceName: '猫眼看书', bookSourceUrl: 'https://maoyan.example', bookSourceGroup: 'API' },
@@ -48,6 +62,15 @@ describe('sourceSelection', () => {
 
     expect(filterBookSources(grouped, 'mao', '')).toEqual([grouped[0]])
     expect(filterBookSources(grouped, '', '网页')).toEqual([grouped[1]])
+  })
+
+  it('matches filter groups exactly instead of by substring', () => {
+    const grouped: BookSource[] = [
+      { bookSourceName: 'A', bookSourceUrl: 'a', bookSourceGroup: '新发现' },
+      { bookSourceName: 'B', bookSourceUrl: 'b', bookSourceGroup: '新' },
+    ]
+
+    expect(filterBookSources(grouped, '', '新')).toEqual([grouped[1]])
   })
 
   it('summarizes source counts and selected source metadata', () => {

@@ -88,6 +88,7 @@ import { useSourceStore } from '../stores/source'
 import { searchBookMultiSSE } from '../api/search'
 import { saveBook } from '../api/bookshelf'
 import { useOpenBook } from '../composables/useOpenBook'
+import { splitBookSourceGroups } from '../utils/sourceSelection'
 import BookGrid from './BookGrid.vue'
 import BookDetailModal from './BookDetailModal.vue'
 import type { Book, SearchBook } from '../types'
@@ -121,11 +122,7 @@ const sourceByUrl = computed(() => {
 const sourceGroups = computed(() => {
   const groups = new Set<string>()
   for (const source of sourceStore.sources) {
-    const parts = (source.bookSourceGroup || '')
-      .split(/[;,，；、|/]/)
-      .map((item) => item.trim())
-      .filter(Boolean)
-    for (const group of parts) {
+    for (const group of splitBookSourceGroups(source.bookSourceGroup)) {
       groups.add(group)
     }
   }
