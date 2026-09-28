@@ -3,7 +3,7 @@
     <Transition name="fade">
       <div v-if="modelValue" class="modal-overlay" @click="close"></div>
     </Transition>
-    <Transition name="scale">
+    <Transition :name="isMobileLayout ? 'slide-right' : 'scale'">
       <div v-if="modelValue && book" class="modal-container" @click.self="close">
         <div class="detail-modal" :class="{ 'has-long-toc': chapters.length > 14 }">
           <button class="modal-close" @click="close">
@@ -117,6 +117,7 @@
 import { ref, watch, computed } from 'vue'
 import { useRouter } from 'vue-router'
 import { getCoverUrl, getChapterList } from '../api/bookshelf'
+import { useMobileLayout } from '../composables/useMobileLayout'
 import { useOpenBook } from '../composables/useOpenBook'
 import type { Book, SearchBook, BookChapter } from '../types'
 
@@ -131,6 +132,7 @@ const emit = defineEmits<{
 
 const router = useRouter()
 const { openBook } = useOpenBook()
+const { isMobileLayout } = useMobileLayout()
 
 const coverFailed = ref(false)
 const chapters = ref<BookChapter[]>([])

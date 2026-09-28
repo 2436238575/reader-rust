@@ -1,40 +1,44 @@
 <template>
-  <div v-if="modelValue" class="modal-overlay" @click="$emit('update:modelValue', false)">
-    <div class="modal-content" @click.stop>
-      <div class="modal-header">
-        <h3>选择分组</h3>
-        <button class="close-btn" @click="$emit('update:modelValue', false)">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6 6 18M6 6l12 12" /></svg>
-        </button>
-      </div>
-
-      <div class="modal-body">
-        <div class="group-list">
-          <button
-            v-for="group in shelfStore.groups"
-            :key="group.groupId"
-            class="group-item"
-            @click="handleSelect(group.groupId)"
-          >
-            <span class="group-icon">#</span>
-            <span class="group-name">{{ group.groupName }}</span>
-          </button>
-
-          <div class="new-group">
-            <input
-              v-model="newGroupName"
-              placeholder="新建分组名称..."
-              class="group-input"
-              @keyup.enter="handleCreate"
-            />
-            <button class="add-btn" @click="handleCreate" :disabled="!newGroupName.trim()">
-              新建并移动
+  <Teleport to="body">
+    <Transition name="fade">
+      <div v-if="modelValue" class="modal-overlay" @click="$emit('update:modelValue', false)">
+        <div class="modal-content" @click.stop>
+          <div class="modal-header">
+            <h3>选择分组</h3>
+            <button class="close-btn" @click="$emit('update:modelValue', false)">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6 6 18M6 6l12 12" /></svg>
             </button>
+          </div>
+
+          <div class="modal-body">
+            <div class="group-list">
+              <button
+                v-for="group in shelfStore.groups"
+                :key="group.groupId"
+                class="group-item"
+                @click="handleSelect(group.groupId)"
+              >
+                <span class="group-icon">#</span>
+                <span class="group-name">{{ group.groupName }}</span>
+              </button>
+
+              <div class="new-group">
+                <input
+                  v-model="newGroupName"
+                  placeholder="新建分组名称..."
+                  class="group-input"
+                  @keyup.enter="handleCreate"
+                />
+                <button class="add-btn" @click="handleCreate" :disabled="!newGroupName.trim()">
+                  新建并移动
+                </button>
+              </div>
+            </div>
           </div>
         </div>
       </div>
-    </div>
-  </div>
+    </Transition>
+  </Teleport>
 </template>
 
 <script setup lang="ts">
