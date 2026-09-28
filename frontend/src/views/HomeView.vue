@@ -146,6 +146,7 @@ import { useRouter } from 'vue-router'
 import { useBookshelfStore } from '../stores/bookshelf'
 import { useReaderStore } from '../stores/reader'
 import { useAppStore } from '../stores/app'
+import { useOpenBook } from '../composables/useOpenBook'
 import { uploadEpubBook, uploadTxtBook } from '../api/bookshelf'
 import BookGrid from '../components/BookGrid.vue'
 import BookDetailModal from '../components/BookDetailModal.vue'
@@ -157,12 +158,12 @@ const router = useRouter()
 const shelfStore = useBookshelfStore()
 const readerStore = useReaderStore()
 const appStore = useAppStore()
+const { openBook } = useOpenBook()
 
 const showDetail = ref(false)
 const showGroupSelect = ref(false)
 const showGroupManager = ref(false)
 const selectedBook = ref<Book | SearchBook | null>(null)
-const openingBookUrl = ref('')
 const localBookFileInputRef = ref<HTMLInputElement | null>(null)
 const localBookUploading = ref(false)
 
@@ -214,21 +215,7 @@ async function handleLocalBookFileChange(event: Event) {
 }
 
 async function handleBookClick(book: Book | SearchBook) {
-  const b = book as Book
-  if (openingBookUrl.value === b.bookUrl) return
-
-  openingBookUrl.value = b.bookUrl
-  const targetIndex = b.durChapterIndex || 0
-
-  try {
-    await shelfStore.moveBookToFront(b.bookUrl).catch(() => undefined)
-    const loadBookTask = readerStore.loadBook(b)
-    await router.push('/reader')
-    await loadBookTask
-    await readerStore.loadChapter(targetIndex)
-  } finally {
-    openingBookUrl.value = ''
-  }
+  await openBook(book)
 }
 
 function handleBookInfo(book: Book | SearchBook) {

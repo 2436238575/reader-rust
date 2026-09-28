@@ -42,16 +42,15 @@ import { useRouter } from 'vue-router'
 import BookDetailModal from '../components/BookDetailModal.vue'
 import BookGrid from '../components/BookGrid.vue'
 import { useBookshelfStore } from '../stores/bookshelf'
-import { useReaderStore } from '../stores/reader'
+import { useOpenBook } from '../composables/useOpenBook'
 import type { Book, SearchBook } from '../types'
 
 const router = useRouter()
 const shelfStore = useBookshelfStore()
-const readerStore = useReaderStore()
+const { openBook } = useOpenBook()
 
 const showDetail = ref(false)
 const selectedBook = ref<Book | SearchBook | null>(null)
-const openingBookUrl = ref('')
 
 const filteredRecentBooks = computed(() => {
   const list = shelfStore.recentBooks
@@ -81,22 +80,7 @@ onMounted(async () => {
 })
 
 async function handleBookClick(book: Book | SearchBook) {
-  const currentBook = book as Book
-  if (!currentBook.origin || !currentBook.bookUrl) return
-  if (openingBookUrl.value === currentBook.bookUrl) return
-
-  openingBookUrl.value = currentBook.bookUrl
-  const targetIndex = currentBook.durChapterIndex || 0
-
-  try {
-    await shelfStore.moveBookToFront(currentBook.bookUrl).catch(() => undefined)
-    const loadBookTask = readerStore.loadBook(currentBook)
-    await router.push('/reader')
-    await loadBookTask
-    await readerStore.loadChapter(targetIndex)
-  } finally {
-    openingBookUrl.value = ''
-  }
+  await openBook(book)
 }
 
 function handleBookInfo(book: Book | SearchBook) {

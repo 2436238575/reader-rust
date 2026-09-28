@@ -117,8 +117,7 @@
 import { ref, watch, computed } from 'vue'
 import { useRouter } from 'vue-router'
 import { getCoverUrl, getChapterList } from '../api/bookshelf'
-import { useBookshelfStore } from '../stores/bookshelf'
-import { useReaderStore } from '../stores/reader'
+import { useOpenBook } from '../composables/useOpenBook'
 import type { Book, SearchBook, BookChapter } from '../types'
 
 const props = defineProps<{
@@ -131,8 +130,7 @@ const emit = defineEmits<{
 }>()
 
 const router = useRouter()
-const readerStore = useReaderStore()
-const shelfStore = useBookshelfStore()
+const { openBook } = useOpenBook()
 
 const coverFailed = ref(false)
 const chapters = ref<BookChapter[]>([])
@@ -176,22 +174,16 @@ function close() {
 
 async function startReading() {
   if (!props.book) return
-  const b = props.book as Book
-  await shelfStore.moveBookToFront(b.bookUrl).catch(() => undefined)
-  await readerStore.loadBook(b)
-  await readerStore.loadChapter(b.durChapterIndex || 0)
+  const book = props.book
   close()
-  router.push('/reader')
+  await openBook(book)
 }
 
 async function readChapter(index: number) {
   if (!props.book) return
-  const b = props.book as Book
-  await shelfStore.moveBookToFront(b.bookUrl).catch(() => undefined)
-  await readerStore.loadBook(b)
-  await readerStore.loadChapter(index)
+  const book = props.book
   close()
-  router.push('/reader')
+  await openBook(book, index)
 }
 
 function openAiBook() {

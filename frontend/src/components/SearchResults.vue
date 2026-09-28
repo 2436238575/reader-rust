@@ -82,24 +82,22 @@
 
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
-import { useRouter } from 'vue-router'
 import { useBookshelfStore } from '../stores/bookshelf'
-import { useReaderStore } from '../stores/reader'
 import { useAppStore } from '../stores/app'
 import { useSourceStore } from '../stores/source'
 import { searchBookMultiSSE } from '../api/search'
 import { saveBook } from '../api/bookshelf'
+import { useOpenBook } from '../composables/useOpenBook'
 import BookGrid from './BookGrid.vue'
 import BookDetailModal from './BookDetailModal.vue'
 import type { Book, SearchBook } from '../types'
 
 import { storeToRefs } from 'pinia'
 
-const router = useRouter()
 const shelfStore = useBookshelfStore()
-const readerStore = useReaderStore()
 const appStore = useAppStore()
 const sourceStore = useSourceStore()
+const { openBook } = useOpenBook()
 
 const {
   searchKey,
@@ -281,12 +279,7 @@ onUnmounted(() => {
 })
 
 async function handleBookClick(book: Book | SearchBook) {
-  const b = book as Book
-  if (b.origin && b.bookUrl) {
-    await readerStore.loadBook(b)
-    await readerStore.loadChapter(b.durChapterIndex || 0)
-    router.push('/reader')
-  }
+  await openBook(book)
 }
 
 function handleBookInfo(book: Book | SearchBook) {

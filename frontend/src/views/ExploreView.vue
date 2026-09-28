@@ -73,10 +73,9 @@
 
 <script setup lang="ts">
 import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
-import { useRouter } from 'vue-router'
 import { useExploreStore } from '../stores/explore'
-import { useReaderStore } from '../stores/reader'
 import { useBookshelfStore } from '../stores/bookshelf'
+import { useOpenBook } from '../composables/useOpenBook'
 import { saveBook } from '../api/bookshelf'
 import { useAppStore } from '../stores/app'
 import BookGrid from '../components/BookGrid.vue'
@@ -89,14 +88,12 @@ import {
 } from '../utils/exploreCategories'
 
 const store = useExploreStore()
-const readerStore = useReaderStore()
 const shelfStore = useBookshelfStore()
 const appStore = useAppStore()
-const router = useRouter()
+const { openBook } = useOpenBook()
 
 const scrollContainer = ref<HTMLElement>()
 const sentinelRef = ref<HTMLElement>()
-const openingBookUrl = ref('')
 const showDetail = ref(false)
 const selectedBook = ref<Book | SearchBook | null>(null)
 
@@ -146,21 +143,7 @@ function handleCategoryClick(category: ExploreCategory) {
 }
 
 async function handleBookClick(book: Book | SearchBook) {
-  const b = book as Book
-  if (!b.origin || !b.bookUrl) return
-  if (openingBookUrl.value === b.bookUrl) return
-
-  openingBookUrl.value = b.bookUrl
-  const targetIndex = b.durChapterIndex || 0
-
-  try {
-    const loadBookTask = readerStore.loadBook(b)
-    await router.push('/reader')
-    await loadBookTask
-    await readerStore.loadChapter(targetIndex)
-  } finally {
-    openingBookUrl.value = ''
-  }
+  await openBook(book)
 }
 
 function handleBookInfo(book: Book | SearchBook) {
