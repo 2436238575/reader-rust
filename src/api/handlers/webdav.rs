@@ -414,7 +414,8 @@ fn webdav_propfind_sync(full: PathBuf, rel: String) -> Response {
 
 async fn webdav_mkcol(full: &PathBuf) -> Response {
     if full.exists() {
-        return StatusCode::CREATED.into_response();
+        // RFC 4918 §9.3.1：对已存在的集合返回 405
+        return StatusCode::METHOD_NOT_ALLOWED.into_response();
     }
     match fs::create_dir_all(full).await {
         Ok(_) => StatusCode::CREATED.into_response(),
@@ -624,5 +625,17 @@ mod tests {
         );
         assert!(normalize_rel_path("/").unwrap().is_empty());
         assert_eq!(normalize_rel_path("//a//./b//").unwrap(), vec!["a", "b"]);
+    }
+
+    #[tokio::test]
+    async fn mkcol_returns_405_for_existing_collection() {
+        let dir = std::env::temp_dir().join(format!("rr-mkcol-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let resp = webdav_mkcol(&dir).await;
+        assert_eq!(resp.status(), StatusCode::METHOD_NOT_ALLOWED);
+        let fresh = dir.join("new-collection");
+        let resp = webdav_mkcol(&fresh).await;
+        assert_eq!(resp.status(), StatusCode::CREATED);
+        std::fs::remove_dir_all(&dir).ok();
     }
 }
