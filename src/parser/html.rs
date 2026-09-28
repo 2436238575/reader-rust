@@ -663,6 +663,9 @@ pub fn select_text_from_element(el: &ElementRef, rule: &str) -> Option<String> {
 }
 
 /// 元素级列表取值（规格 §8.3 `getStringList`）：返回规则在当前元素下命中的全部文本。
+///
+/// `@` 链与单值版同语义：前面的段逐级下钻选择器，最后一段是取值器
+/// （旧实现把 `parts[1..]` 拼回单个取值器，`a@b@c` 会静默退化成查属性 `"b@c"`）。
 pub fn select_text_list_from_element(el: &ElementRef, rule: &str) -> Vec<String> {
     let combo = split_top_level(rule, &["&&", "||", "%%"]);
     if let Some(operator) = combo.delimiter.as_deref() {
@@ -671,21 +674,39 @@ pub fn select_text_list_from_element(el: &ElementRef, rule: &str) -> Vec<String>
         });
     }
 
-    let parts = split_top_level(rule, &["@"]).parts;
+    let split = split_top_level(rule, &["@"]);
+    let parts: Vec<&str> = split
+        .parts
+        .iter()
+        .map(|part| part.trim())
+        .filter(|part| !part.is_empty())
+        .collect();
     if parts.is_empty() {
         return vec![];
     }
 
-    let matches = collect_matches_from_element(*el, &parse_selector_with_index(parts[0].trim()));
-    let extractor = if parts.len() > 1 {
-        parts[1..].join("@")
+    let (selectors, extractor) = if parts.len() > 1 {
+        (&parts[..parts.len() - 1], parts[parts.len() - 1])
     } else {
-        "text".to_string()
+        (&parts[..], "text")
     };
 
-    matches
+    let mut current_matches = vec![*el];
+    for selector in selectors {
+        let parsed = parse_selector_with_index(selector);
+        let mut next_matches = Vec::new();
+        for current in current_matches {
+            next_matches.extend(collect_matches_from_element(current, &parsed));
+        }
+        if next_matches.is_empty() {
+            return vec![];
+        }
+        current_matches = next_matches;
+    }
+
+    current_matches
         .into_iter()
-        .filter_map(|matched| extract_text(&matched, &extractor))
+        .filter_map(|matched| extract_text(&matched, extractor))
         .collect()
 }
 
@@ -1128,6 +1149,27 @@ mod tests {
         assert_eq!(
             select_text_list_from_element(&element, "span.tag@text"),
             vec!["玄幻".to_string(), "仙侠".to_string()]
+        );
+    }
+
+    #[test]
+    fn test_select_text_list_from_element_walks_at_chain() {
+        // `a@b@c` 的前几段是逐级下钻的选择器，最后一段才是取值器
+        let doc = parse_document(
+            r#"<div class="book"><ul><li><a href="/t1">玄幻</a></li><li><a href="/t2">仙侠</a></li></ul></div>"#,
+        );
+        let element = doc
+            .select(&Selector::parse("div.book").unwrap())
+            .next()
+            .unwrap();
+
+        assert_eq!(
+            select_text_list_from_element(&element, "ul@li@a@text"),
+            vec!["玄幻".to_string(), "仙侠".to_string()]
+        );
+        assert_eq!(
+            select_text_list_from_element(&element, "ul@li@a@href"),
+            vec!["/t1".to_string(), "/t2".to_string()]
         );
     }
 
