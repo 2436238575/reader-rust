@@ -1097,6 +1097,16 @@ impl BookService {
                     })
                     .await?;
 
+                // 整页重复熔断（与 fetch_remaining_chapters 一致）：
+                // 目录页全为已见章节时跳过，避免重定向/重发页被当作新章追加
+                let all_seen = chapters
+                    .iter()
+                    .all(|ch| seen_chapter_urls.contains(&ch.url));
+                if all_seen && !chapters.is_empty() {
+                    tracing::debug!("Skipping duplicate page: {}", url);
+                    continue;
+                }
+
                 for ch in chapters {
                     if seen_chapter_urls.contains(&ch.url) {
                         continue;
@@ -1128,6 +1138,15 @@ impl BookService {
                         p.chapter_list(s, b, u)
                     })
                     .await?;
+
+                // 整页重复即停（与 fetch_remaining_chapters 一致）
+                let all_seen = chapters
+                    .iter()
+                    .all(|ch| seen_chapter_urls.contains(&ch.url));
+                if all_seen && !chapters.is_empty() {
+                    tracing::debug!("Skipping duplicate page: {}", current_url);
+                    break;
+                }
 
                 for ch in chapters {
                     if seen_chapter_urls.contains(&ch.url) {
