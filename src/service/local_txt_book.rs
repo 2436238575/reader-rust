@@ -94,15 +94,8 @@ pub fn parse_txt_chapters(book_url: &str, text: &str) -> Vec<ParsedTxtChapter> {
         }
         offset += line.len();
     }
-
-    if offset < text.len() {
-        let raw_line = &text[offset..];
-        let title = raw_line.trim();
-        if is_chapter_heading(title, &heading_re) {
-            let leading_ws = raw_line.len().saturating_sub(raw_line.trim_start().len());
-            headings.push((offset + leading_ws, text.len(), title.to_string()));
-        }
-    }
+    // split_inclusive 覆盖到文末（最后一个无换行的行也在循环内处理），offset 至此恒等于
+    // text.len()，不需要尾部补偿块。
 
     if headings.is_empty() {
         return fallback_chapter(book_url, text);

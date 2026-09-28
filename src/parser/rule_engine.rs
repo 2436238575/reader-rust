@@ -104,13 +104,9 @@ impl RuleEngine {
             return ParseMode::Regex;
         }
 
-        // Auto-detect from content
+        // Auto-detect from content（规则的 `$.`/`$[` 前缀已在上方提前返回，这里只剩内容判定）
         let content_trimmed = content.trim();
         if content_trimmed.starts_with('{') || content_trimmed.starts_with('[') {
-            // Likely JSON content
-            if rule.starts_with("$.") || rule.starts_with("$[") {
-                return ParseMode::JsonPath;
-            }
             // Try to parse as JSON
             if serde_json::from_str::<Value>(content_trimmed).is_ok() {
                 return ParseMode::JsonPath;

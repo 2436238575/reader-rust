@@ -772,7 +772,10 @@ pub async fn get_book_content(
     // Determine book_url and chapter_url
     let (book_url, chapter_url) = if let Some(url) = &req.chapter_url {
         // Check if url looks like a book URL (not a chapter URL) and we have an index
-        if req.index.is_some() && !url.contains("/read/") && !url.contains("/chapter/") {
+        if let Some(idx) = req
+            .index
+            .filter(|_| !url.contains("/read/") && !url.contains("/chapter/"))
+        {
             // url is bookUrl, need to get chapter from index
             let source = resolve_book_source(
                 &state,
@@ -800,7 +803,7 @@ pub async fn get_book_content(
                 .book_service
                 .get_chapter_list_with_cache(&user_ns, &source, toc_url, do_refresh)
                 .await?;
-            let idx = req.index.unwrap() as usize;
+            let idx = idx as usize;
 
             if idx >= chapters.len() {
                 // If index is out of range, it's possible our cache was partial (first page only).
@@ -1459,10 +1462,8 @@ pub async fn get_shelf_book_with_cache_info(
         if is_local_book(&book) {
             let mut val = serde_json::to_value(&book).unwrap_or(serde_json::json!({}));
             if let Value::Object(ref mut map) = val {
-                map.insert(
-                    "cachedChapterCount".to_string(),
-                    serde_json::json!(cache_count_for_shelf_display(&book, cached_count)),
-                );
+                // 本地书没有正文缓存目录的概念，计数恒为 0
+                map.insert("cachedChapterCount".to_string(), serde_json::json!(0));
             }
             result.push(val);
             continue;
@@ -1527,21 +1528,20 @@ pub async fn get_shelf_book_with_cache_info(
                             toc_url = info.toc_url.or(Some(book.book_url.clone()));
                         }
                     }
-                    if let Some(toc_url) = toc_url.or(Some(book.book_url.clone())) {
-                        // 与 getChapterList 的后台补全共享同一把进行中守卫，
-                        // 避免两条路径同时抓同一本书的目录并互相覆盖
-                        if state_clone
+                    let toc_url = toc_url.unwrap_or_else(|| book.book_url.clone());
+                    // 与 getChapterList 的后台补全共享同一把进行中守卫，
+                    // 避免两条路径同时抓同一本书的目录并互相覆盖
+                    if state_clone
+                        .book_service
+                        .try_begin_toc_fill(&user_ns_clone, &toc_url)
+                    {
+                        let _ = state_clone
                             .book_service
-                            .try_begin_toc_fill(&user_ns_clone, &toc_url)
-                        {
-                            let _ = state_clone
-                                .book_service
-                                .get_chapter_list(&user_ns_clone, &source, &toc_url)
-                                .await;
-                            state_clone
-                                .book_service
-                                .end_toc_fill(&user_ns_clone, &toc_url);
-                        }
+                            .get_chapter_list(&user_ns_clone, &source, &toc_url)
+                            .await;
+                        state_clone
+                            .book_service
+                            .end_toc_fill(&user_ns_clone, &toc_url);
                     }
                 }
             }
@@ -2795,14 +2795,6 @@ fn build_available_book_source_response(
     }
 }
 
-fn cache_count_for_shelf_display(book: &Book, cached_count: usize) -> usize {
-    if is_local_book(book) {
-        0
-    } else {
-        cached_count
-    }
-}
-
 fn is_local_book(book: &Book) -> bool {
     is_local_txt_origin(&book.origin)
         || is_local_txt_url(&book.book_url)
@@ -2913,10 +2905,10 @@ fn take_available_source_sse_matches(
 #[cfg(test)]
 mod tests {
     use super::{
-        book_matches_delete_target, build_available_book_source_response,
-        cache_count_for_shelf_display, fallback_available_book, local_book_limit_exceeded,
-        should_use_available_source_cache, take_available_source_cached_matches,
-        take_available_source_sse_matches, GetAvailableBookSourceRequest,
+        book_matches_delete_target, build_available_book_source_response, fallback_available_book,
+        local_book_limit_exceeded, should_use_available_source_cache,
+        take_available_source_cached_matches, take_available_source_sse_matches,
+        GetAvailableBookSourceRequest,
     };
     use crate::model::{book::Book, search::SearchBook};
     use std::collections::HashSet;
@@ -2975,17 +2967,6 @@ mod tests {
         assert_eq!(response.books[19].name, "Book 19");
         assert_eq!(response.last_index, 11);
         assert!(response.has_more);
-    }
-
-    #[test]
-    fn local_txt_books_do_not_report_remote_cache_count_for_shelf_display() {
-        let book = Book {
-            origin: "local-txt".to_string(),
-            book_url: "local-txt:abc".to_string(),
-            ..Book::default()
-        };
-
-        assert_eq!(cache_count_for_shelf_display(&book, 42), 0);
     }
 
     #[test]

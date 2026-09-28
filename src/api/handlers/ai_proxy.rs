@@ -34,7 +34,7 @@ pub async fn ai_proxy(
     crate::crawler::url_guard::ensure_outbound_url_allowed(&target)
         .await
         .map_err(AppError::BadRequest)?;
-    let client = ai_proxy_client()?;
+    let client = ai_proxy_client();
     let mut builder = client
         .post(target)
         .header(reqwest::header::ACCEPT, "application/json")
@@ -153,7 +153,7 @@ pub async fn ai_proxy_image(Json(req): Json<AiProxyImageRequest>) -> Result<Resp
     crate::crawler::url_guard::ensure_outbound_url_allowed(&target)
         .await
         .map_err(AppError::BadRequest)?;
-    let client = ai_proxy_client()?;
+    let client = ai_proxy_client();
     let upstream = client
         .get(target)
         .header(reqwest::header::ACCEPT, "image/*,*/*;q=0.8")
@@ -176,9 +176,7 @@ pub async fn ai_proxy_image(Json(req): Json<AiProxyImageRequest>) -> Result<Resp
     let body = crate::crawler::fetcher::read_body_limited(upstream, MAX_PROXY_IMAGE_BYTES)
         .await
         .map_err(|e| AppError::BadRequest(e.to_string()))?;
-    if body.len() as u64 > MAX_PROXY_IMAGE_BYTES {
-        return Err(AppError::BadRequest("图片超过代理大小限制".to_string()));
-    }
+    // read_body_limited 内部已做限量，超限在这里不可达
     if !status.is_success() {
         return Ok(build_upstream_error_response(status, &body));
     }
@@ -236,8 +234,8 @@ static AI_PROXY_CLIENT: once_cell::sync::Lazy<reqwest::Client> = once_cell::sync
         .expect("AI 代理 reqwest 客户端构建失败")
 });
 
-fn ai_proxy_client() -> Result<reqwest::Client, AppError> {
-    Ok(AI_PROXY_CLIENT.clone())
+fn ai_proxy_client() -> reqwest::Client {
+    AI_PROXY_CLIENT.clone()
 }
 
 fn map_ai_proxy_http_error(error: reqwest::Error) -> AppError {

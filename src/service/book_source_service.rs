@@ -23,7 +23,7 @@ pub struct BookSourceService {
 }
 
 impl BookSourceService {
-    pub fn new(repo: BookSourceRepo, _storage_dir: &str) -> Self {
+    pub fn new(repo: BookSourceRepo) -> Self {
         Self {
             repo,
             resolution_cache: Arc::new(Mutex::new(HashMap::new())),
