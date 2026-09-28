@@ -81,6 +81,7 @@
 
 <script setup lang="ts">
 import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
+import { usePreserveScroll } from '../composables/usePreserveScroll'
 import { useExploreStore } from '../stores/explore'
 import { useBookshelfStore } from '../stores/bookshelf'
 import { useOpenBook } from '../composables/useOpenBook'
@@ -102,6 +103,8 @@ const { openBook } = useOpenBook()
 
 const scrollContainer = ref<HTMLElement>()
 const sentinelRef = ref<HTMLElement>()
+// 保活恢复时 Chromium 已丢失内部滚动位置，手动回填
+usePreserveScroll(() => scrollContainer.value)
 const showDetail = ref(false)
 const selectedBook = ref<Book | SearchBook | null>(null)
 

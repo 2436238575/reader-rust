@@ -22,7 +22,19 @@ function applyQuery() {
     return
   }
   const source = typeof route.query.source === 'string' ? route.query.source : ''
-  shelfStore.startSearch(q, source ? { scope: 'source', sourceUrl: source } : {})
+  if (source) {
+    shelfStore.startSearch(q, { scope: 'source', sourceUrl: source })
+    return
+  }
+  // URL 不带 source：别用默认值冲掉搜索页已有的范围/书源选择——
+  // 否则保活返回时会先清空再修复选择，白白重发两轮 SSE 搜索
+  if (shelfStore.searchKey !== q) {
+    shelfStore.startSearch(q, {
+      scope: shelfStore.searchScope,
+      group: shelfStore.searchGroup,
+      sourceUrl: shelfStore.searchSourceUrl,
+    })
+  }
 }
 
 function goBack() {
@@ -36,7 +48,8 @@ function goBack() {
 
 watch(() => route.fullPath, applyQuery, { immediate: true })
 
-// 离开搜索页即丢弃搜索状态；再次进入时由 URL 重新发起
+// 搜索页被 keep-alive 缓存：离开不再丢状态（结果、滚动位置都在），
+// 这里只在真正卸载（应用 teardown）时兜底清理
 onUnmounted(() => {
   shelfStore.clearSearch()
 })

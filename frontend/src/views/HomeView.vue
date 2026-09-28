@@ -88,7 +88,7 @@
       </div>
 
       <!-- Book Grid -->
-      <div class="shelf-grid-wrapper">
+      <div class="shelf-grid-wrapper" ref="shelfScrollRef">
         <BookGrid
           :books="shelfStore.filteredBooks"
           :edit-mode="shelfStore.editMode"
@@ -141,7 +141,8 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, onActivated } from 'vue'
+import { usePreserveScroll } from '../composables/usePreserveScroll'
 import { useRouter } from 'vue-router'
 import { useBookshelfStore } from '../stores/bookshelf'
 import { useReaderStore } from '../stores/reader'
@@ -167,8 +168,24 @@ const selectedBook = ref<Book | SearchBook | null>(null)
 const localBookFileInputRef = ref<HTMLInputElement | null>(null)
 const localBookUploading = ref(false)
 
+// 保活恢复时 Chromium 已丢失内部滚动位置，手动回填
+const shelfScrollRef = ref<HTMLElement>()
+usePreserveScroll(() => shelfScrollRef.value)
+
 onMounted(async () => {
   await appStore.fetchUserInfo()
+  if (!appStore.isOnline) {
+    const restored = await readerStore.restorePersistedSession()
+    if (restored) {
+      appStore.showToast('已恢复最近阅读的离线章节', 'success')
+      router.replace('/reader')
+    }
+  }
+})
+
+// 保活页面：onActivated 在首次挂载与每次返回时都触发。
+// 从阅读器返回时进度已变，必须重拉（onMounted 在保活复用时不再触发）
+onActivated(async () => {
   // 首载失败不能静默：否则用户看到「书架空空如也」的误导性空态
   const results = await Promise.allSettled([
     shelfStore.fetchBooks(),
@@ -177,13 +194,6 @@ onMounted(async () => {
   const failed = results.find((r): r is PromiseRejectedResult => r.status === 'rejected')
   if (failed) {
     appStore.showToast((failed.reason as Error)?.message || '书架加载失败', 'error')
-  }
-  if (!appStore.isOnline) {
-    const restored = await readerStore.restorePersistedSession()
-    if (restored) {
-      appStore.showToast('已恢复最近阅读的离线章节', 'success')
-      router.replace('/reader')
-    }
   }
 })
 

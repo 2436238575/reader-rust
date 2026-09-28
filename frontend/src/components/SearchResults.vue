@@ -1,5 +1,5 @@
 <template>
-  <div class="search-results">
+  <div class="search-results" ref="searchScrollRef">
     <div class="search-header">
       <h2>
         搜索 "{{ searchKey }}"
@@ -63,7 +63,14 @@
       </div>
     </div>
 
+    <!-- 搜索失败：不能与「未找到」混为一谈 -->
+    <div v-if="searchFailed && !displayResults.length && !isSearching" class="search-failed">
+      <p>搜索失败或连接中断</p>
+      <button class="search-retry-btn" @click="retrySearch">重试</button>
+    </div>
+
     <BookGrid
+      v-else
       :books="displayResults"
       :is-search="true"
       :loading="isSearching && displayResults.length === 0"
@@ -84,6 +91,7 @@
 
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
+import { usePreserveScroll } from '../composables/usePreserveScroll'
 import { useBookshelfStore } from '../stores/bookshelf'
 import { useAppStore } from '../stores/app'
 import { useSourceStore } from '../stores/source'
@@ -121,6 +129,12 @@ const selectedBook = ref<Book | SearchBook | null>(null)
 const shelfUrls = computed(() => new Set(shelfStore.books.map((book) => book.bookUrl)))
 // 加入书架请求进行中：按 bookUrl 防连点
 const addingUrls = ref(new Set<string>())
+// SSE 连接失败/中断：此前只置 isSearching=false，用户看到误导性的「未找到相关书籍」
+const searchFailed = ref(false)
+
+// 保活恢复时 Chromium 已丢失内部滚动位置，手动回填
+const searchScrollRef = ref<HTMLElement>()
+usePreserveScroll(() => searchScrollRef.value)
 
 const sourceByUrl = computed(() => {
   return new Map(sourceStore.sources.map((source) => [source.bookSourceUrl, source]))
@@ -185,6 +199,7 @@ function ensureSearchSelection() {
 function doSearch(key: string) {
   closeEventSource()
   searchSeen = new Set()
+  searchFailed.value = false
 
   if (searchScope.value === 'group' && !selectedGroup.value) {
     shelfStore.searchResults = []
@@ -243,13 +258,20 @@ function doSearch(key: string) {
 
   eventSource.addEventListener('error', () => {
     shelfStore.isSearching = false
+    searchFailed.value = true
     closeEventSource()
   })
 
   eventSource.onerror = () => {
     shelfStore.isSearching = false
+    searchFailed.value = true
     closeEventSource()
   }
+}
+
+function retrySearch() {
+  if (!searchKey.value || shelfStore.isSearching) return
+  doSearch(searchKey.value)
 }
 
 watch(
@@ -323,6 +345,26 @@ defineEmits<{
   min-height: 0;
   overflow: auto;
   padding: 0 var(--space-6);
+}
+
+.search-failed {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-3);
+  padding: 64px 0;
+  color: var(--color-danger);
+  font-size: var(--text-base);
+}
+
+.search-retry-btn {
+  padding: 6px 24px;
+  border-radius: var(--radius-md);
+  border: 1px solid currentColor;
+  background: transparent;
+  color: inherit;
+  font-size: var(--text-sm);
+  cursor: pointer;
 }
 
 .search-header {

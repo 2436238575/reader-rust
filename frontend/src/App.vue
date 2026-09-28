@@ -2,7 +2,13 @@
   <div id="app">
     <AppTopBar v-if="showHeader" />
     <main class="app-main" :class="{ 'without-header': !showHeader }">
-      <router-view />
+      <!-- 列表页保活：从阅读器/详情返回时保留滚动位置与已加载数据
+           （搜索页此前整轮 SSE 重搜、滚动全丢）；阅读器自身有会话恢复，不保活 -->
+      <router-view v-slot="{ Component }">
+        <keep-alive :include="['HomeView', 'ExploreView', 'RecentView', 'SearchView']">
+          <component :is="Component" />
+        </keep-alive>
+      </router-view>
     </main>
     <SettingsDrawer v-model="appStore.showSettingsDrawer" />
     <SourceManager v-model="appStore.showSourceManager" />

@@ -1,6 +1,6 @@
 ﻿<template>
   <div class="recent-view">
-    <div class="recent-content">
+    <div class="recent-content" ref="recentContentRef">
       <div class="recent-header">
         <h1 class="recent-title">
           最近阅读
@@ -37,7 +37,8 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onActivated, ref } from 'vue'
+import { usePreserveScroll } from '../composables/usePreserveScroll'
 import { useRouter } from 'vue-router'
 import BookDetailModal from '../components/BookDetailModal.vue'
 import BookGrid from '../components/BookGrid.vue'
@@ -53,6 +54,11 @@ const { openBook } = useOpenBook()
 
 const showDetail = ref(false)
 const selectedBook = ref<Book | SearchBook | null>(null)
+
+// 滚动容器是 BookGrid 根元素（.recent-content :deep(.book-grid)）；
+// 保活恢复时 Chromium 已丢失其滚动位置，手动回填
+const recentContentRef = ref<HTMLElement>()
+usePreserveScroll(() => recentContentRef.value?.querySelector('.book-grid') as HTMLElement | null)
 
 const filteredRecentBooks = computed(() => {
   const list = shelfStore.recentBooks
@@ -76,10 +82,12 @@ const filteredRecentBooks = computed(() => {
   )
 })
 
-onMounted(async () => {
+// 保活页面：onActivated 在首次挂载与每次返回时都触发——
+// 从阅读器返回后最近阅读排序/进度已变，必须重拉
+onActivated(async () => {
   await shelfStore.fetchBooks().catch(() => undefined)
   await shelfStore.refreshRecentBooks().catch((error) => {
-    // 首载失败不能静默：否则用户看到「暂无最近阅读」的误导性空态
+    // 加载失败不能静默：否则用户看到「暂无最近阅读」的误导性空态
     appStore.showToast((error as Error)?.message || '最近阅读加载失败', 'error')
   })
 })
