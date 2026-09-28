@@ -1798,12 +1798,12 @@ function openCachePanel() {
 function handleKeydown(e: KeyboardEvent) {
   const activeElement = document.activeElement as HTMLElement | null
   const tagName = activeElement?.tagName?.toLowerCase()
-  if (tagName === 'input' || tagName === 'textarea' || tagName === 'select' || activeElement?.isContentEditable) {
-    return
-  }
+  const isEditing =
+    tagName === 'input' || tagName === 'textarea' || tagName === 'select' || !!activeElement?.isContentEditable
 
-  // Handle Escape key first - close panels or go home
+  // Escape 优先于输入框守卫：焦点在搜索框里时也要能 ESC 关面板（先交还焦点）
   if (e.key === 'Escape') {
+    if (isEditing) activeElement?.blur()
     if (store.activePanel) {
       store.closePanel()
       return
@@ -1814,6 +1814,14 @@ function handleKeydown(e: KeyboardEvent) {
     }
     if (showSearch.value) {
       closeSearch()
+      return
+    }
+    if (showCommentPanel.value) {
+      showCommentPanel.value = false
+      return
+    }
+    if (previewImage.value) {
+      previewImage.value = ''
       return
     }
     if (showTTSPanel.value) {
@@ -1832,9 +1840,14 @@ function handleKeydown(e: KeyboardEvent) {
     goBack()
     return
   }
+  if (isEditing) return
 
-  // Don't process other keys when panels are open
-  if (store.activePanel) return
+  // 焦点停在按钮/链接上时按空格会同时触发原生点击与翻页：放行原生行为
+  if ((tagName === 'button' || tagName === 'a') && e.key === ' ') return
+
+  // 覆盖型面板打开时，翻页/滚屏键不穿透到背后的正文
+  // （TTS 面板是悬浮小条，不拦——边听边用键盘翻页是正常用法）
+  if (store.activePanel || showSearch.value || showCommentPanel.value || showBookInfo.value || previewImage.value) return
 
   const container = scrollContainerRef.value
   if (!container) return
