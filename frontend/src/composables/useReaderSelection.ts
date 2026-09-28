@@ -21,10 +21,18 @@ export function useReaderSelection(
     text: '',
     top: 0,
     left: 0,
+    /** popup=随选区自动弹出的胶囊；context=右键唤出的竖排菜单 */
+    variant: 'popup' as 'popup' | 'context',
   })
   const activeSelectionText = ref('')
   const suppressSelectionCloseUntil = ref(0)
   let selectionMenuUpdateTimer: number | null = null
+  // 「操作弹窗」的弹出许可：只在鼠标左键/触摸释放时置位（拖动选择过程中的
+  // selectionchange 只收起不弹出，桌面端才不会还没松手弹窗就跟着光标跳）。
+  // touchSession 让触摸端的后续 selectionchange（长按句柄微调）继续弹；
+  // 一次真实的 mouseup 会把它关掉，鼠标用户不受触摸屏能力上报影响。
+  let releaseLatch = false
+  let touchSession = false
 
   function hideSelectionMenu() {
     selectionMenu.value.visible = false
@@ -39,11 +47,17 @@ export function useReaderSelection(
     }, delay)
   }
 
-  function handleMouseUpSelection() {
+  function handleMouseUpSelection(event: MouseEvent) {
+    // 右键也会触发 mouseup（button=2），不处理否则会把刚唤出的右键菜单收掉
+    if (event.button !== 0) return
+    releaseLatch = true
+    touchSession = false
     scheduleSelectionMenuUpdate(120)
   }
 
   function handleTouchEndSelection() {
+    releaseLatch = true
+    touchSession = true
     scheduleSelectionMenuUpdate(260)
   }
 
@@ -52,16 +66,20 @@ export function useReaderSelection(
   }
 
   function updateSelectionMenu() {
-    // 只有「操作弹窗」模式随选择自动弹出；右键菜单/忽略模式下
-    // 选择变化只会收起菜单（右键模式由 contextmenu 事件唤出）
+    const selection = window.getSelection?.()
+    const text = selection?.toString().trim() || ''
+    const hasSelection = !!selection && selection.rangeCount > 0 && !!text && !selection.isCollapsed
+
+    if (config.value.selectAction === 'contextmenu') {
+      // 右键菜单模式：菜单只由 contextmenu 事件唤出；选区消失才收起
+      if (!hasSelection) hideSelectionMenu()
+      return
+    }
     if (config.value.selectAction !== 'popup') {
       hideSelectionMenu()
       return
     }
-
-    const selection = window.getSelection?.()
-    const text = selection?.toString().trim() || ''
-    if (!selection || selection.rangeCount === 0 || !text || selection.isCollapsed) {
+    if (!hasSelection) {
       hideSelectionMenu()
       return
     }
@@ -69,6 +87,12 @@ export function useReaderSelection(
       hideSelectionMenu()
       return
     }
+    // 只有「释放」触发的更新才允许弹出（触摸会话里 selectionchange 也算）
+    if (!releaseLatch && !touchSession) {
+      hideSelectionMenu()
+      return
+    }
+    if (releaseLatch) releaseLatch = false
 
     const container = scrollContainerRef.value
     const range = selection.getRangeAt(0)
@@ -89,6 +113,7 @@ export function useReaderSelection(
     selectionMenu.value = {
       visible: true,
       text: text.length > 48 ? `${text.slice(0, 48)}...` : text,
+      variant: 'popup',
       top: isTouchDevice
         ? Math.min(window.innerHeight - 76, Math.max(16 + Math.max(0, parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--safe-area-top')) || 0), rect.bottom + 12))
         : Math.max(16 + Math.max(0, parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--safe-area-top')) || 0), rect.top - 56),
@@ -159,12 +184,14 @@ export function useReaderSelection(
     // 桌面右键是显式动作，不套触摸端的最短选区长度门槛
     suppressSelectionCloseUntil.value = Date.now() + 250
     activeSelectionText.value = text
-    const safeTop = 16 + Math.max(0, parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--safe-area-top')) || 0)
+    // 像原生右键菜单：以鼠标位置为左上角，视口内夹紧（菜单约 4 行高）
+    const safeTop = 8 + Math.max(0, parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--safe-area-top')) || 0)
     selectionMenu.value = {
       visible: true,
       text: text.length > 48 ? `${text.slice(0, 48)}...` : text,
-      top: Math.max(safeTop, Math.min(window.innerHeight - 76, event.clientY - 56)),
-      left: Math.min(window.innerWidth - 240, Math.max(16, event.clientX - 110)),
+      variant: 'context',
+      top: Math.max(safeTop, Math.min(window.innerHeight - 190, event.clientY)),
+      left: Math.max(8, Math.min(window.innerWidth - 230, event.clientX)),
     }
     return true
   }

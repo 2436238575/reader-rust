@@ -280,6 +280,7 @@
       <div
         v-if="selectionMenu.visible"
         class="selection-menu"
+        :class="{ 'as-context-menu': selectionMenu.variant === 'context' }"
         @click.stop
         :style="{
           top: selectionMenu.top + 'px',
@@ -2653,6 +2654,52 @@ watch(
 
 .selection-menu-actions button:first-child {
   grid-column: 1 / -1;
+}
+
+/* 右键菜单形态：竖排列表，占满整宽，像原生上下文菜单 */
+.selection-menu.as-context-menu {
+  display: flex;
+  flex-direction: column;
+  min-width: 150px;
+  max-width: 260px;
+  padding: 3px 0;
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.2);
+}
+
+.selection-menu.as-context-menu .selection-menu-text {
+  margin: 0 0 2px;
+  padding: 6px 12px 7px;
+  border-bottom: 1px solid rgba(128, 128, 128, 0.2);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  opacity: 0.55;
+}
+
+.selection-menu.as-context-menu .selection-menu-actions {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 0;
+  padding: 2px 0 0;
+}
+
+.selection-menu.as-context-menu .selection-menu-actions button {
+  width: 100%;
+  padding: 8px 14px;
+  border-radius: 0;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+}
+
+.selection-menu.as-context-menu .selection-menu-actions button:hover {
+  background: rgba(128, 128, 128, 0.12);
+}
+
+.selection-menu.as-context-menu .selection-menu-actions button:first-child {
+  grid-column: auto;
 }
 
 :deep(.search-highlight) {
