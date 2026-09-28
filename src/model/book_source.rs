@@ -347,6 +347,9 @@ fn extract_legacy_header(input: &str) -> Option<(usize, usize, String)> {
 }
 
 fn convert_legacy_page_braces(input: &str) -> String {
-    let re = regex::Regex::new(r"\{([^{}]*,[^{}]*)\}").unwrap();
-    re.replace_all(input, "<$1>").into_owned()
+    static LEGACY_PAGE_BRACES_RE: once_cell::sync::Lazy<regex::Regex> =
+        once_cell::sync::Lazy::new(|| regex::Regex::new(r"\{([^{}]*,[^{}]*)\}").unwrap());
+    LEGACY_PAGE_BRACES_RE
+        .replace_all(input, "<$1>")
+        .into_owned()
 }

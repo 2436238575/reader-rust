@@ -25,6 +25,9 @@ static TEMPLATE_GET_RE: Lazy<regex::Regex> =
     Lazy::new(|| regex::Regex::new(r"@get:\{([^}]+)\}").unwrap());
 static REGEX_PLACEHOLDER_RE: Lazy<regex::Regex> =
     Lazy::new(|| regex::Regex::new(r"\$(\d{1,2})").unwrap());
+/// 「body > *」固定选择器（正则退化到全文档列表时用），只编译一次。
+static BODY_CHILDREN_SELECTOR: Lazy<scraper::Selector> =
+    Lazy::new(|| scraper::Selector::parse("body > *").unwrap());
 
 /// 文档级字段求值的共享视图：把整份 DOM 序列化成 HTML 字符串是
 /// O(文档大小) 的工作，book_info 一次要对同一份文档求值十余个字段，
@@ -467,12 +470,8 @@ impl RuleEngine {
         }
 
         let doc = html::parse_document(&output);
-        let sel = match scraper::Selector::parse("body > *") {
-            Ok(sel) => sel,
-            Err(_) => return vec![],
-        };
         let mut out = Vec::new();
-        for el in doc.select(&sel) {
+        for el in doc.select(&BODY_CHILDREN_SELECTOR) {
             let name = rule
                 .name
                 .as_ref()
@@ -605,13 +604,9 @@ impl RuleEngine {
         }
 
         let doc = html::parse_document(&output);
-        let sel = match scraper::Selector::parse("body > *") {
-            Ok(sel) => sel,
-            Err(_) => return (vec![], vec![]),
-        };
         let mut out = Vec::new();
         let mut seen_urls = std::collections::HashSet::new();
-        for el in doc.select(&sel) {
+        for el in doc.select(&BODY_CHILDREN_SELECTOR) {
             let title = rule
                 .chapter_name
                 .as_ref()

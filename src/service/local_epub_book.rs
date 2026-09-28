@@ -836,25 +836,26 @@ fn push_safe_attrs(
     }
 }
 
+static SCRIPT_BLOCK_RE: once_cell::sync::Lazy<Regex> = once_cell::sync::Lazy::new(|| {
+    Regex::new(r"(?is)<\s*script[^>]*>.*?<\s*/\s*script\s*>").unwrap()
+});
+static STYLE_BLOCK_RE: once_cell::sync::Lazy<Regex> =
+    once_cell::sync::Lazy::new(|| Regex::new(r"(?is)<\s*style[^>]*>.*?<\s*/\s*style\s*>").unwrap());
+static IMG_SRC_RE: once_cell::sync::Lazy<Regex> = once_cell::sync::Lazy::new(|| {
+    Regex::new(r#"(?is)<img\b[^>]*\bsrc=["']([^"']+)["'][^>]*>"#).unwrap()
+});
+
 fn strip_dangerous_html_fallback(
     html: &str,
     chapter_path: &str,
     book_url: &str,
     asset_paths: &HashSet<String>,
 ) -> String {
-    let mut without_scripts = html.to_string();
-    for pattern in [
-        r"(?is)<\s*script[^>]*>.*?<\s*/\s*script\s*>",
-        r"(?is)<\s*style[^>]*>.*?<\s*/\s*style\s*>",
-    ] {
-        if let Ok(re) = Regex::new(pattern) {
-            without_scripts = re.replace_all(&without_scripts, "").into_owned();
-        }
-    }
-    let img_re = Regex::new(r#"(?is)<img\b[^>]*\bsrc=["']([^"']+)["'][^>]*>"#).ok();
-    if let Some(re) = img_re {
-        let base = parent_zip_dir(chapter_path);
-        re.replace_all(&without_scripts, |captures: &regex::Captures<'_>| {
+    let without_scripts = SCRIPT_BLOCK_RE.replace_all(html, "");
+    let without_scripts = STYLE_BLOCK_RE.replace_all(&without_scripts, "");
+    let base = parent_zip_dir(chapter_path);
+    IMG_SRC_RE
+        .replace_all(&without_scripts, |captures: &regex::Captures<'_>| {
             let Some(src) = captures.get(1).map(|m| m.as_str()) else {
                 return String::new();
             };
@@ -870,9 +871,6 @@ fn strip_dangerous_html_fallback(
             )
         })
         .into_owned()
-    } else {
-        without_scripts
-    }
 }
 
 fn collect_asset_paths(
@@ -1216,15 +1214,13 @@ fn decode_utf8_lossy(bytes: &[u8]) -> String {
 }
 
 fn plain_text_len(html: &str) -> usize {
-    Regex::new(r"<[^>]+>")
-        .ok()
-        .map(|re| {
-            re.replace_all(html, "")
-                .chars()
-                .filter(|ch| !ch.is_whitespace())
-                .count()
-        })
-        .unwrap_or_else(|| html.chars().filter(|ch| !ch.is_whitespace()).count())
+    static TAG_STRIP_RE: once_cell::sync::Lazy<Regex> =
+        once_cell::sync::Lazy::new(|| Regex::new(r"<[^>]+>").unwrap());
+    TAG_STRIP_RE
+        .replace_all(html, "")
+        .chars()
+        .filter(|ch| !ch.is_whitespace())
+        .count()
 }
 
 #[cfg(test)]

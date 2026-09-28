@@ -843,15 +843,28 @@ fn build_proxy_script(
     )
 }
 
+// 代理页 HTML 重写的固定正则：每次请求现编译太浪费，全部只编译一次。
+static TAG_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r#"(?is)<[^>]+>"#).unwrap());
+static DOUBLE_QUOTED_ATTR_RE: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r#"(?i)\b(action|href|src)\s*=\s*"([^"]+)""#).unwrap());
+static SINGLE_QUOTED_ATTR_RE: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r#"(?i)\b(action|href|src)\s*=\s*'([^']+)'"#).unwrap());
+static SCRIPT_BLOCK_RE: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r#"(?is)<script\b[^>]*>.*?</script>"#).unwrap());
+static DOUBLE_QUOTED_ROOT_REL_RE: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r#""(/[^"\\\s<]*)""#).unwrap());
+static SINGLE_QUOTED_ROOT_REL_RE: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r#"'(/[^'\\\s<]*)'"#).unwrap());
+
 fn rewrite_proxy_actions(
     html: &str,
     upstream_url: &str,
     book_source_url: &str,
     access_token: Option<&str>,
 ) -> String {
-    let tag_re = Regex::new(r#"(?is)<[^>]+>"#).unwrap();
-    let double_quoted = Regex::new(r#"(?i)\b(action|href|src)\s*=\s*"([^"]+)""#).unwrap();
-    let single_quoted = Regex::new(r#"(?i)\b(action|href|src)\s*=\s*'([^']+)'"#).unwrap();
+    let tag_re = &*TAG_RE;
+    let double_quoted = &*DOUBLE_QUOTED_ATTR_RE;
+    let single_quoted = &*SINGLE_QUOTED_ATTR_RE;
 
     tag_re
         .replace_all(html, |tag_caps: &Captures| {
@@ -919,9 +932,9 @@ fn rewrite_script_root_relative_urls(
     book_source_url: &str,
     access_token: Option<&str>,
 ) -> String {
-    let script_re = Regex::new(r#"(?is)<script\b[^>]*>.*?</script>"#).unwrap();
-    let double_quoted = Regex::new(r#""(/[^"\\\s<]*)""#).unwrap();
-    let single_quoted = Regex::new(r#"'(/[^'\\\s<]*)'"#).unwrap();
+    let script_re = &*SCRIPT_BLOCK_RE;
+    let double_quoted = &*DOUBLE_QUOTED_ROOT_REL_RE;
+    let single_quoted = &*SINGLE_QUOTED_ROOT_REL_RE;
 
     script_re
         .replace_all(html, |script_caps: &Captures| {
