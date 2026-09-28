@@ -10,7 +10,7 @@ type AppStore = ReturnType<typeof useAppStore>
 export function useReaderSelection(
   store: ReaderStore,
   appStore: AppStore,
-  config: ComputedRef<{ selectAction: 'popup' | 'ignore' }>,
+  config: ComputedRef<{ selectAction: 'popup' | 'contextmenu' | 'ignore' }>,
   scrollContainerRef: Ref<HTMLElement | undefined>,
 ) {
   const isTouchDevice = typeof window !== 'undefined'
@@ -52,6 +52,8 @@ export function useReaderSelection(
   }
 
   function updateSelectionMenu() {
+    // 只有「操作弹窗」模式随选择自动弹出；右键菜单/忽略模式下
+    // 选择变化只会收起菜单（右键模式由 contextmenu 事件唤出）
     if (config.value.selectAction !== 'popup') {
       hideSelectionMenu()
       return
@@ -139,6 +141,34 @@ export function useReaderSelection(
     }
   }
 
+  /** 右键菜单模式：在选区上右键时唤出菜单（定位跟随光标），返回是否已唤出。 */
+  function showSelectionMenuAt(event: MouseEvent): boolean {
+    if (config.value.selectAction !== 'contextmenu') return false
+    const selection = window.getSelection?.()
+    const text = selection?.toString().trim() || ''
+    if (!selection || selection.rangeCount === 0 || !text || selection.isCollapsed) {
+      return false
+    }
+    const container = scrollContainerRef.value
+    const range = selection.getRangeAt(0)
+    const commonAncestor = range.commonAncestorContainer
+    const targetNode = commonAncestor.nodeType === Node.TEXT_NODE ? commonAncestor.parentElement : commonAncestor as HTMLElement | null
+    if (!container || !targetNode || !container.contains(targetNode)) {
+      return false
+    }
+    // 桌面右键是显式动作，不套触摸端的最短选区长度门槛
+    suppressSelectionCloseUntil.value = Date.now() + 250
+    activeSelectionText.value = text
+    const safeTop = 16 + Math.max(0, parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--safe-area-top')) || 0)
+    selectionMenu.value = {
+      visible: true,
+      text: text.length > 48 ? `${text.slice(0, 48)}...` : text,
+      top: Math.max(safeTop, Math.min(window.innerHeight - 76, event.clientY - 56)),
+      left: Math.min(window.innerWidth - 240, Math.max(16, event.clientX - 110)),
+    }
+    return true
+  }
+
   function clearSelectionState() {
     activeSelectionText.value = ''
     hideSelectionMenu()
@@ -157,6 +187,7 @@ export function useReaderSelection(
     suppressSelectionCloseUntil,
     hideSelectionMenu,
     scheduleSelectionMenuUpdate,
+    showSelectionMenuAt,
     handleMouseUpSelection,
     handleTouchEndSelection,
     handleSelectionChange,

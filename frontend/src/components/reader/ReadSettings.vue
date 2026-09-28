@@ -211,6 +211,7 @@
         <label>选择文字</label>
         <div class="btn-group">
           <button class="opt-btn" :class="{ active: config.selectAction === 'popup' }" @click="store.updateConfig('selectAction', 'popup')">操作弹窗</button>
+          <button class="opt-btn" :class="{ active: config.selectAction === 'contextmenu' }" @click="store.updateConfig('selectAction', 'contextmenu')">右键菜单</button>
           <button class="opt-btn" :class="{ active: config.selectAction === 'ignore' }" @click="store.updateConfig('selectAction', 'ignore')">忽略</button>
         </div>
       </div>

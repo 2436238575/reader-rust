@@ -463,6 +463,7 @@ const {
   suppressSelectionCloseUntil,
   hideSelectionMenu,
   scheduleSelectionMenuUpdate,
+  showSelectionMenuAt,
   handleMouseUpSelection,
   handleTouchEndSelection,
   handleSelectionChange,
@@ -1515,7 +1516,14 @@ function handleBackgroundClick(e: Event) {
   }
 }
 
-function handleContextMenu(event: Event) {
+function handleContextMenu(event: MouseEvent) {
+  // 「右键菜单」模式：选区上右键唤出操作菜单
+  if (config.value.selectAction === 'contextmenu') {
+    if (showSelectionMenuAt(event)) {
+      event.preventDefault()
+    }
+    return
+  }
   if (!disableSystemCallout.value) return
   event.preventDefault()
 }

@@ -66,7 +66,7 @@ export interface ReadConfig {
   scrollPixel: number
   pageSpeed: number
   clickAction: 'next' | 'auto' | 'none'
-  selectAction: 'popup' | 'ignore'
+  selectAction: 'popup' | 'contextmenu' | 'ignore'
   chineseMode: 'simplified' | 'traditional'
   specialMode: 'normal' | 'simple'
   enablePreload: boolean
@@ -263,23 +263,41 @@ export const useReaderStore = defineStore('reader', () => {
     saveConfig()
   }
 
-  const chineseConverter = ref<((text: string) => string) | null>(null)
-  let chineseLoading: Promise<void> | null = null
+  // 两个方向各自按需加载（cn2t=简→繁、t2cn=繁→简，字典互不重叠），
+  // 不用 full 包就是为了避免把没在用的那份字典也拉下来
+  const s2tConverter = ref<((text: string) => string) | null>(null)
+  const t2sConverter = ref<((text: string) => string) | null>(null)
+  let s2tLoading: Promise<void> | null = null
+  let t2sLoading: Promise<void> | null = null
 
-  async function ensureChineseConverterLoaded() {
-    if (chineseConverter.value || chineseLoading) return chineseLoading || Promise.resolve()
-    // 只引 cn2t 子路径（而非 full 包）：词级字典只带简→繁一份，按需动态加载
-    chineseLoading = import('opencc-js/cn2t')
+  function ensureChineseConverterLoaded() {
+    if (config.chineseMode === 'traditional') {
+      if (s2tConverter.value || s2tLoading) return s2tLoading ?? Promise.resolve()
+      // 只引 cn2t 子路径（而非 full 包）：词级字典只带简→繁一份，按需动态加载
+      s2tLoading = import('opencc-js/cn2t')
+        .then((module) => {
+          s2tConverter.value = module.Converter({ from: 'cn', to: 'tw' })
+        })
+        .catch(() => {
+          s2tConverter.value = null
+        })
+        .finally(() => {
+          s2tLoading = null
+        })
+      return s2tLoading
+    }
+    if (t2sConverter.value || t2sLoading) return t2sLoading ?? Promise.resolve()
+    t2sLoading = import('opencc-js/t2cn')
       .then((module) => {
-        chineseConverter.value = module.Converter({ from: 'cn', to: 'tw' })
+        t2sConverter.value = module.Converter({ from: 'tw', to: 'cn' })
       })
       .catch(() => {
-        chineseConverter.value = null
+        t2sConverter.value = null
       })
       .finally(() => {
-        chineseLoading = null
+        t2sLoading = null
       })
-    return chineseLoading
+    return t2sLoading
   }
 
   /* ─── Theme ─── */
@@ -356,8 +374,11 @@ export const useReaderStore = defineStore('reader', () => {
   }
 
   function convertContent(text: string) {
-    if (!text || !chineseConverter.value) return text
-    return chineseConverter.value(text)
+    if (!text) return text
+    // 按当前模式取对应方向的转换器；切换模式后转换器若还在加载，
+    // 先显示原文——converter 是 ref，加载完成时 displayContent 会自动重算
+    const converter = config.chineseMode === 'traditional' ? s2tConverter.value : t2sConverter.value
+    return converter ? converter(text) : text
   }
 
   function processContentForDisplay(text: string) {
