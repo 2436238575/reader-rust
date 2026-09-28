@@ -771,11 +771,17 @@ pub async fn get_book_content(
 
     // Determine book_url and chapter_url
     let (book_url, chapter_url) = if let Some(url) = &req.chapter_url {
-        // Check if url looks like a book URL (not a chapter URL) and we have an index
-        if let Some(idx) = req
-            .index
-            .filter(|_| !url.contains("/read/") && !url.contains("/chapter/"))
-        {
+        // 显式携带了不同的 bookUrl 时 url 必为章节地址——API 型书源的书/章节 URL
+        // 都不含 /read/|/chapter/（番茄Web 是 /info 与 /content），路径片段启发式
+        // 对它们必误判，只能在没有 bookUrl 旁证时按「带 index 的是书」猜（旧版 API 形态）
+        let book_url_explicit_other =
+            matches!(req.book_url.as_deref(), Some(bu) if !bu.trim().is_empty() && bu != url);
+        let url_is_book = !book_url_explicit_other
+            && req.index.is_some()
+            && !url.contains("/read/")
+            && !url.contains("/chapter/");
+        if url_is_book {
+            let idx = req.index.unwrap() as usize;
             // url is bookUrl, need to get chapter from index
             let source = resolve_book_source(
                 &state,
