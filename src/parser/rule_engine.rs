@@ -3500,7 +3500,8 @@ fn build_chapter_from_json(
 }
 
 /// 列表正则求值（规格 §9.3）：`&&` 分段逐级下钻，前一段的所有完整匹配串拼成文本喂给下一段；
-/// 最后一段的每个匹配产出一组捕获组（含 group 0），供字段规则的 `$n` 引用。
+/// 最后一段的每个匹配产出一组捕获组（含 group 0），供字段规则的 `$n` 引用——
+/// 但 `$0` 按 Legado 兼容保留字面量，只有 `$1` 起才替换（见 `capture_rule_value`）。
 fn regex_list_captures(pattern: &str, body: &str) -> Vec<Vec<String>> {
     let split = crate::parser::rule_analyzer::split_top_level(pattern, &["&&"]);
     let stages: Vec<&str> = split.parts.iter().map(|part| part.trim()).collect();
