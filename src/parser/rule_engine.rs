@@ -2325,7 +2325,9 @@ fn select_json_scope(
         return v.clone();
     };
 
-    if let Some(res) = try_put_get_json(init_rule, v, base_url, ctx) {
+    if let Some(res) = try_put_get(init_rule, ctx, |r, ctx| {
+        eval_field_json_with_ctx(r, v, base_url, ctx)
+    }) {
         let _ = res;
         return v.clone();
     }
@@ -2701,6 +2703,61 @@ fn eval_field_html(rule: &str, el: &scraper::ElementRef, base_url: &str) -> Opti
     eval_field_html_with_ctx(rule, el, base_url, &mut HashMap::new())
 }
 
+/// 字段规则求值的共享尾段：`##` 拆分 → JS 提取 → 取值 → JS/`<js>` 尾段链式 → `##` 替换
+/// → 空则 None。html 元素级 / xpath / json 三个入口共用；差异由调用方注入：
+///
+/// - 插值在调用方完成（JSON 上下文走 `interpolate_json_templates`，其余走 common），
+///   传入插值后的规则与 `had_templates`；
+/// - `default_text`：`pure` 为空时的起始文本（xpath 取节点自身文本，其余为空串）；
+/// - `select`：用 `pure` 选择器取起始文本（json 在内部附带「字面量启发式」）；
+/// - `template_fallback`：插值后选择器落空时把 `pure` 当字面量返回
+///   （json 有自己的字面量启发式，不走这条）。
+///
+/// 注意：文档级入口 `eval_field_html_doc_with_ctx` 是更精简的变体（无 `##` 拆分、
+/// 无组合符），刻意不走这里——改动它会改变书籍详情字段的既有解析行为。
+fn eval_field_tail(
+    interpolated_rule: &str,
+    had_templates: bool,
+    base_url: &str,
+    ctx: &mut HashMap<String, String>,
+    template_fallback: bool,
+    default_text: impl FnOnce() -> String,
+    select: impl FnOnce(&str) -> String,
+) -> Option<String> {
+    let (pure_rule, regex_part) = split_legado_regex(interpolated_rule);
+    let (pure, js, tail) = extract_js(&pure_rule);
+
+    let mut text = if pure.trim().is_empty() {
+        default_text()
+    } else {
+        select(pure)
+    };
+    if template_fallback && text.is_empty() && had_templates && !pure.trim().is_empty() {
+        text = pure.to_string();
+    }
+
+    if let Some(script) = js {
+        if let Ok(res) = eval_js(script, &text, base_url) {
+            text = res;
+        }
+    }
+    if let Some(tail) = tail {
+        if let Some(res) = eval_rule_on_text(tail, &text, base_url, ctx) {
+            text = res;
+        }
+    }
+
+    if let Some(reg) = regex_part {
+        text = apply_legado_regex(&text, reg);
+    }
+
+    if text.is_empty() {
+        None
+    } else {
+        Some(text)
+    }
+}
+
 fn eval_field_html_with_ctx(
     rule: &str,
     el: &scraper::ElementRef,
@@ -2739,47 +2796,29 @@ fn eval_field_html_with_ctx(
     }
 
     // Handle @put/@get
-    if let Some(res) = try_put_get_html(rule, el, base_url, ctx) {
+    if let Some(res) = try_put_get(rule, ctx, |r, ctx| {
+        eval_field_html_with_ctx(r, el, base_url, ctx)
+    }) {
         return Some(res);
     }
 
     let input = html::descendant_text(el);
     let interpolated_rule = interpolate_common_templates(rule, &input, base_url, ctx);
     let had_templates = interpolated_rule != rule;
-    let (pure_rule, regex_part) = split_legado_regex(&interpolated_rule);
-    let (pure, js, tail) = extract_js(&pure_rule);
-
-    let mut text = if pure.is_empty() {
-        "".to_string()
-    } else {
-        html::select_text_from_element(el, pure).unwrap_or_default()
-    };
-    if text.is_empty() && had_templates && !pure.is_empty() {
-        text = pure.to_string();
-    }
-
-    if let Some(script) = js {
-        if let Ok(res) = eval_js(script, &text, base_url) {
-            text = res;
-        }
-    }
-    if let Some(tail) = tail {
-        if let Some(res) = eval_rule_on_text(tail, &text, base_url, ctx) {
-            text = res;
-        }
-    }
-
-    if let Some(reg) = regex_part {
-        text = apply_legado_regex(&text, reg);
-    }
-
-    if text.is_empty() {
-        None
-    } else {
-        Some(text)
-    }
+    eval_field_tail(
+        &interpolated_rule,
+        had_templates,
+        base_url,
+        ctx,
+        true,
+        String::new,
+        |pure| html::select_text_from_element(el, pure).unwrap_or_default(),
+    )
 }
 
+/// 文档级字段求值（书籍详情等）。注意它与元素级入口并不等价：没有 `##` 替换、
+/// 字段级组合符（`&&`/`||`/`%%`）与 `@json:`/`@regex:` 前缀分支——是漂移还是有意
+/// 精简未考据；补齐会改变既有解析行为，如确认是缺陷需单独评估并补测试。
 fn eval_field_html_doc_with_ctx(
     rule: &str,
     doc_view: &DocView<'_>,
@@ -2797,7 +2836,9 @@ fn eval_field_html_doc_with_ctx(
         return html::select_xpath(doc_view.html(), pure).first().cloned();
     }
 
-    if let Some(res) = try_put_get_html_doc(rule, doc_view, base_url, ctx) {
+    if let Some(res) = try_put_get(rule, ctx, |r, ctx| {
+        eval_field_html_doc_with_ctx(r, doc_view, base_url, ctx)
+    }) {
         return Some(res);
     }
 
@@ -2864,44 +2905,28 @@ fn eval_field_xpath_with_ctx(
         // XPath 上下文里没有 HTML 文档可查，显式拒绝而不是误当 XPath 求值
         return None;
     }
-    if let Some(res) = try_put_get_xpath(rule, node, base_url, ctx) {
+    if let Some(res) = try_put_get(rule, ctx, |r, ctx| {
+        eval_field_xpath_with_ctx(r, node, base_url, ctx)
+    }) {
         return Some(res);
     }
 
     let interpolated_rule = interpolate_common_templates(rule, &node.string_value(), base_url, ctx);
     let had_templates = interpolated_rule != rule;
-    let (pure_rule, regex_part) = split_legado_regex(&interpolated_rule);
-    let (pure, js, tail) = extract_js(&pure_rule);
-    let mut text = if pure.trim().is_empty() {
-        node.string_value()
-    } else {
-        xpath_eval_strings(node, pure)
-            .into_iter()
-            .next()
-            .unwrap_or_default()
-    };
-    if text.is_empty() && had_templates && !pure.is_empty() {
-        text = pure.to_string();
-    }
-
-    if let Some(script) = js {
-        if let Ok(res) = eval_js(script, &text, base_url) {
-            text = res;
-        }
-    }
-    if let Some(tail) = tail {
-        if let Some(res) = eval_rule_on_text(tail, &text, base_url, ctx) {
-            text = res;
-        }
-    }
-    if let Some(reg) = regex_part {
-        text = apply_legado_regex(&text, reg);
-    }
-    if text.is_empty() {
-        None
-    } else {
-        Some(text)
-    }
+    eval_field_tail(
+        &interpolated_rule,
+        had_templates,
+        base_url,
+        ctx,
+        true,
+        || node.string_value(),
+        |pure| {
+            xpath_eval_strings(node, pure)
+                .into_iter()
+                .next()
+                .unwrap_or_default()
+        },
+    )
 }
 
 fn select_xpath_scope<'a>(
@@ -3019,49 +3044,36 @@ fn eval_field_json_with_ctx(
         return Some(texts.join("\n"));
     }
 
-    if let Some(res) = try_put_get_json(rule, v, base_url, ctx) {
+    if let Some(res) = try_put_get(rule, ctx, |r, ctx| {
+        eval_field_json_with_ctx(r, v, base_url, ctx)
+    }) {
         return Some(res);
     }
 
     let interpolated_rule = interpolate_json_templates(rule, v, base_url, ctx);
-    let (pure_rule, regex_part) = split_legado_regex(&interpolated_rule);
-    let (pure, js, tail) = extract_js(&pure_rule);
-
-    let mut text = if pure.is_empty() {
-        "".to_string()
-    } else if pure.contains("{{") && pure.contains("}}") {
-        pure.to_string()
-    } else if pure.contains('/')
-        || pure.contains('?')
-        || pure.contains('&')
-        || pure.contains('=')
-        || pure.contains(',')
-    {
-        pure.to_string()
-    } else {
-        pick_json_field(v, Some(pure)).unwrap_or_default()
-    };
-
-    if let Some(script) = js {
-        if let Ok(res) = eval_js(script, &text, base_url) {
-            text = res;
-        }
-    }
-    if let Some(tail) = tail {
-        if let Some(res) = eval_rule_on_text(tail, &text, base_url, ctx) {
-            text = res;
-        }
-    }
-
-    if let Some(reg) = regex_part {
-        text = apply_legado_regex(&text, reg);
-    }
-
-    if text.is_empty() {
-        None
-    } else {
-        Some(text)
-    }
+    eval_field_tail(
+        &interpolated_rule,
+        false,
+        base_url,
+        ctx,
+        false,
+        String::new,
+        |pure| {
+            // 「字面量启发式」：插值后仍含模板痕迹或带 URL/列表特征的规则按字面量返回
+            if pure.contains("{{") && pure.contains("}}") {
+                pure.to_string()
+            } else if pure.contains('/')
+                || pure.contains('?')
+                || pure.contains('&')
+                || pure.contains('=')
+                || pure.contains(',')
+            {
+                pure.to_string()
+            } else {
+                pick_json_field(v, Some(pure)).unwrap_or_default()
+            }
+        },
+    )
 }
 
 /// 去掉值规则两端成对的引号（只去一层，不误伤值内部或末尾的引号）。
@@ -3098,108 +3110,28 @@ fn split_put_map(inner: &str) -> Vec<(String, String)> {
     entries
 }
 
-fn try_put_get_html(
+/// `@put:{key: rule, ...}` 把各值规则的结果写入上下文字段表，`@get:{key}` 读回。
+/// 四种上下文（html 元素/文档、xpath、json）共用；`eval` 是所属上下文的字段求值入口。
+fn try_put_get(
     rule: &str,
-    el: &scraper::ElementRef,
-    base_url: &str,
     ctx: &mut HashMap<String, String>,
+    mut eval: impl FnMut(&str, &mut HashMap<String, String>) -> Option<String>,
 ) -> Option<String> {
     if let Some(content) = rule.strip_prefix("@put:") {
         let content = content.trim();
         if content.starts_with('{') && content.ends_with('}') {
             for (key, val_rule) in split_put_map(&content[1..content.len() - 1]) {
-                let val =
-                    eval_field_html_with_ctx(&val_rule, el, base_url, ctx).unwrap_or_default();
-                ctx.insert(key, val);
-            }
-        }
-        return Some("".to_string());
-    }
-    if rule.starts_with("@get:") {
-        let content = &rule[5..];
-        if content.starts_with('{') && content.ends_with('}') {
-            let key = &content[1..content.len() - 1].trim();
-            return ctx.get(*key).cloned();
-        }
-    }
-    None
-}
-
-fn try_put_get_html_doc(
-    rule: &str,
-    doc_view: &DocView<'_>,
-    base_url: &str,
-    ctx: &mut HashMap<String, String>,
-) -> Option<String> {
-    if let Some(content) = rule.strip_prefix("@put:") {
-        let content = content.trim();
-        if content.starts_with('{') && content.ends_with('}') {
-            for (key, val_rule) in split_put_map(&content[1..content.len() - 1]) {
-                let val = eval_field_html_doc_with_ctx(&val_rule, doc_view, base_url, ctx)
-                    .unwrap_or_default();
-                ctx.insert(key, val);
-            }
-        }
-        return Some("".to_string());
-    }
-    if rule.starts_with("@get:") {
-        let content = &rule[5..];
-        if content.starts_with('{') && content.ends_with('}') {
-            let key = &content[1..content.len() - 1].trim();
-            return ctx.get(*key).cloned();
-        }
-    }
-    None
-}
-
-fn try_put_get_json(
-    rule: &str,
-    v: &Value,
-    base_url: &str,
-    ctx: &mut HashMap<String, String>,
-) -> Option<String> {
-    if let Some(content) = rule.strip_prefix("@put:") {
-        let content = content.trim();
-        if content.starts_with('{') && content.ends_with('}') {
-            for (key, val_rule) in split_put_map(&content[1..content.len() - 1]) {
-                let val = eval_field_json_with_ctx(&val_rule, v, base_url, ctx).unwrap_or_default();
-                ctx.insert(key, val);
-            }
-        }
-        return Some("".to_string());
-    }
-    if rule.starts_with("@get:") {
-        let content = &rule[5..];
-        if content.starts_with('{') && content.ends_with('}') {
-            let key = &content[1..content.len() - 1].trim();
-            return ctx.get(*key).cloned();
-        }
-    }
-    None
-}
-
-fn try_put_get_xpath(
-    rule: &str,
-    node: sxd_xpath::nodeset::Node<'_>,
-    base_url: &str,
-    ctx: &mut HashMap<String, String>,
-) -> Option<String> {
-    if let Some(content) = rule.strip_prefix("@put:") {
-        let content = content.trim();
-        if content.starts_with('{') && content.ends_with('}') {
-            for (key, val_rule) in split_put_map(&content[1..content.len() - 1]) {
-                let val =
-                    eval_field_xpath_with_ctx(&val_rule, node, base_url, ctx).unwrap_or_default();
+                let val = eval(&val_rule, ctx).unwrap_or_default();
                 ctx.insert(key, val);
             }
         }
         return Some(String::new());
     }
-    if rule.starts_with("@get:") {
-        let content = &rule[5..];
+    if let Some(content) = rule.strip_prefix("@get:") {
+        let content = content.trim();
         if content.starts_with('{') && content.ends_with('}') {
-            let key = &content[1..content.len() - 1].trim();
-            return ctx.get(*key).cloned();
+            let key = content[1..content.len() - 1].trim();
+            return ctx.get(key).cloned();
         }
     }
     None
