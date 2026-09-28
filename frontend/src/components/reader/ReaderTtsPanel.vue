@@ -272,7 +272,7 @@ defineEmits<{
   opacity: 0.65;
 }
 
-@media (max-width: 768px) {
+@media (max-width: 767px) {
   .tts-controls {
     width: calc(100vw - 16px);
     max-width: calc(100vw - 16px);

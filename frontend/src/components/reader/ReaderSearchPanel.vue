@@ -212,7 +212,7 @@ watch(() => props.show, (visible) => {
   cursor: pointer;
 }
 
-@media (max-width: 768px) {
+@media (max-width: 767px) {
   .reader-search-panel {
     top: auto;
     bottom: calc(80px + var(--safe-area-bottom));

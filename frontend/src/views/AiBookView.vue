@@ -1620,7 +1620,7 @@ function cloneServerModelConfig(config: AiServerModelConfig): AiServerModelConfi
   justify-content: flex-end;
 }
 
-@media (max-width: 768px) {
+@media (max-width: 767px) {
   .ai-shell {
     padding: 16px;
   }

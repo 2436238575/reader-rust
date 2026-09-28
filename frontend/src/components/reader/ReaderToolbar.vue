@@ -176,7 +176,7 @@ defineEmits<{
   color: var(--color-primary, #c97f3a);
 }
 
-@media (max-width: 768px) {
+@media (max-width: 767px) {
   .reader-toolbar {
     right: 8px;
     padding: 6px 3px;

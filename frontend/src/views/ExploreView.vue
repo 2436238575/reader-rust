@@ -311,7 +311,7 @@ async function handleAddToShelf(book: Book | SearchBook) {
 }
 
 /* 移动端适配 */
-@media (max-width: 768px) {
+@media (max-width: 767px) {
   .explore-body {
     flex-direction: column;
   }

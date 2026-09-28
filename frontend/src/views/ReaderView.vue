@@ -509,7 +509,7 @@ function scheduleRefreshOfflineCacheState() {
 // 否则拖拽窗口/键盘弹起会连续多次全量分页
 let checkMediaQueued = false
 function checkMedia() {
-  isMobile.value = window.innerWidth <= 768
+  isMobile.value = window.innerWidth <= 767
   if (checkMediaQueued) return
   checkMediaQueued = true
   window.setTimeout(() => {
@@ -2717,7 +2717,7 @@ watch(
   background: orange;
 }
 
-@media (max-width: 768px) {
+@media (max-width: 767px) {
   .reader-scroll-container.horizontal-page-mode {
     scroll-behavior: auto;
   }
