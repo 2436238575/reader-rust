@@ -17,3 +17,11 @@ export function formatDateTime(ts: number | string | null | undefined): string {
   const date = new Date(ts)
   return Number.isNaN(date.getTime()) ? '-' : date.toLocaleString()
 }
+
+/** 时间戳（毫秒）格式化为 `M-D H:mm` 短形态（书签列表等紧凑场景）。 */
+export function formatMonthDayTime(ts: number | null | undefined): string {
+  if (!ts) return ''
+  const date = new Date(ts)
+  if (Number.isNaN(date.getTime())) return ''
+  return `${date.getMonth() + 1}-${date.getDate()} ${date.getHours()}:${String(date.getMinutes()).padStart(2, '0')}`
+}

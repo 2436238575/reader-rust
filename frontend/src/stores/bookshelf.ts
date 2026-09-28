@@ -170,8 +170,6 @@ export const useBookshelfStore = defineStore('bookshelf', () => {
     searchSourceUrl.value = ''
   }
 
-  const isSearchMode = computed(() => searchKey.value.length > 0)
-
   // ─── Edit mode and Selection ───
   const editMode = ref(false)
   const selectedBookUrls = ref<Set<string>>(new Set())
@@ -268,7 +266,7 @@ export const useBookshelfStore = defineStore('bookshelf', () => {
     groups, activeGroupId, displayGroups, filteredBooks, showGroupTabs,
     fetchGroups, saveGroup, removeGroup,
     searchResults, isSearching, searchKey,
-    searchScope, searchGroup, searchSourceUrl, startSearch, clearSearch, isSearchMode,
+    searchScope, searchGroup, searchSourceUrl, startSearch, clearSearch,
     editMode,
     selectedBookUrls, toggleSelection, selectAll, clearSelection,
     bulkDelete, bulkSetGroup, reorderBooks, moveBookToFront,

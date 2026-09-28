@@ -1907,7 +1907,6 @@ function handleStopTTS() {
 }
 
 watch(() => store.isAutoScrolling, (val) => {
-  store.autoReading = val
   if (val) startAutoScroll()
   else stopAutoScroll()
 })
@@ -2763,9 +2762,4 @@ watch(
 .slide-left-enter-active, .slide-left-leave-active { transition: transform 0.35s cubic-bezier(0.2, 0.8, 0.2, 1); }
 .slide-left-enter-from, .slide-left-leave-to { transform: translateX(-100%); }
 
-.fade-slide-right-enter-active, .fade-slide-right-leave-active { transition: all 0.3s ease; }
-.fade-slide-right-enter-from, .fade-slide-right-leave-to { transform: translateX(-20px); opacity: 0; }
-
-.fade-slide-left-enter-active, .fade-slide-left-leave-active { transition: all 0.3s ease; }
-.fade-slide-left-enter-from, .fade-slide-left-leave-to { transform: translateX(20px); opacity: 0; }
 </style>

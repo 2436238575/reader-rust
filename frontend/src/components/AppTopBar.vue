@@ -242,13 +242,6 @@ function openSettings() {
   box-shadow: 0 0 0 3px var(--color-primary-bg);
 }
 
-.search-icon {
-  width: 18px;
-  height: 18px;
-  color: var(--color-text-tertiary);
-  flex-shrink: 0;
-}
-
 .search-box input {
   flex: 1;
   border: none;
@@ -365,7 +358,6 @@ function openSettings() {
    顶栏不再单独放一个（桌面端仍保留顶栏主题按钮） */
 @media (max-width: 767px) {
   /* 移动端入口收进整屏菜单：主题用「外观」开关，设置用「设置」行 */
-  .topbar-btn.theme-btn,
   .topbar-btn.settings-btn,
   .theme-switch-desktop {
     display: none;
@@ -415,19 +407,6 @@ function openSettings() {
   flex-shrink: 0;
 }
 
-.user-avatar {
-  width: 30px;
-  height: 30px;
-  border-radius: var(--radius-full);
-  background: linear-gradient(135deg, var(--color-primary), var(--color-primary-light));
-  color: white;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: var(--text-sm);
-  font-weight: 600;
-}
-
 @media (max-width: 640px) {
   .topbar-inner {
     padding: 0 var(--space-3);
@@ -467,12 +446,6 @@ function openSettings() {
   .topbar-btn svg {
     width: 18px;
     height: 18px;
-  }
-
-  .user-avatar {
-    width: 28px;
-    height: 28px;
-    font-size: var(--text-xs);
   }
 }
 </style>

@@ -504,21 +504,14 @@ export const useReaderStore = defineStore('reader', () => {
   }
 
   /* ─── Auto reading ─── */
-  const autoReading = ref(false)
-  const autoReadingTimer = ref<number | null>(null)
+  // isAutoScrolling 是唯一状态；ReaderView 直接 watch 它驱动滚动
 
   function toggleAutoReading() {
     isAutoScrolling.value = !isAutoScrolling.value
-    autoReading.value = isAutoScrolling.value
   }
 
   function stopAutoReading() {
     isAutoScrolling.value = false
-    autoReading.value = false
-    if (autoReadingTimer.value) {
-      clearInterval(autoReadingTimer.value)
-      autoReadingTimer.value = null
-    }
   }
 
   /* ─── TTS：状态机在 composables/useReaderTts（唯一外部依赖是当前章正文） ─── */
@@ -1065,7 +1058,7 @@ export const useReaderStore = defineStore('reader', () => {
       persistProgress, flushProgressToServer, flushProgressToServerKeepalive,
       config, updateConfig, resetConfig, saveConfig,
     themeIndex, isNight, currentTheme, setThemeIndex, toggleNight,
-    autoReading, autoReadingTimer, toggleAutoReading, stopAutoReading,
+    toggleAutoReading, stopAutoReading,
     activePanel, openPanel, togglePanel, backPanel, closePanel,
     bookmarks, fetchBookmarks, addBookmark, removeBookmark, removeBookmarks,
     readChapterKeys, isChapterRead, markChapterAsRead,

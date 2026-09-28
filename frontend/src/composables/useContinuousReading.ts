@@ -177,7 +177,6 @@ export function useContinuousReading(
     syncContinuousToStoreState,
     loadContinuousNext,
     getContinuousSections,
-    scrollToContinuousChapter,
     pruneReadChapters,
     clearContinuousChapters,
     disposeContinuousReading,

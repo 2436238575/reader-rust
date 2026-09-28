@@ -156,6 +156,7 @@ import { useAppStore } from '../../stores/app'
 import type { Bookmark } from '../../types'
 import { listBrowserCachedChapterUrls } from '../../utils/browserCache'
 import { isLocalBook } from '../../utils/localBook'
+import { formatMonthDayTime } from '../../utils/format'
 
 const props = withDefaults(defineProps<{
   initialTab?: 'chapters' | 'bookmarks'
@@ -313,11 +314,7 @@ async function handleBatchAction() {
   appStore.showToast(`已删除 ${items.length} 条书签`, 'success')
 }
 
-function formatDate(ts?: number) {
-  if (!ts) return ''
-  const d = new Date(ts)
-  return `${d.getMonth() + 1}-${d.getDate()} ${d.getHours()}:${String(d.getMinutes()).padStart(2, '0')}`
-}
+const formatDate = formatMonthDayTime
 </script>
 
 <style scoped>

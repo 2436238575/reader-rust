@@ -219,9 +219,8 @@ function mergeCandidates(candidates: SearchBook[]) {
   candidates.forEach((item) => {
     if (item.origin === currentBook.origin) return
     if (currentAuthor && item.author && normalizeAuthorText(item.author) !== currentAuthor) return
-    const existed = results.value.some((candidate) =>
-      candidate.origin === item.origin || (candidate.bookUrl === item.bookUrl && candidate.origin === item.origin),
-    )
+    // 同源（origin=bookSourceUrl 唯一）即重复
+    const existed = results.value.some((candidate) => candidate.origin === item.origin)
     if (!existed) {
       results.value.push(item)
     }

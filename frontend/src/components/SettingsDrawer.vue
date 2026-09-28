@@ -490,10 +490,6 @@ function handleApplyUpdate() {
   border: 1px solid rgba(201, 127, 58, 0.18);
 }
 
-.status-card.muted {
-  opacity: 0.72;
-}
-
 .stats-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));

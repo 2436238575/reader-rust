@@ -13,7 +13,6 @@
           'is-touch-gap': sortable && touchDragState.started && isPlaceholder(item),
           'is-touch-sibling': sortable && touchDragState.started && !isPlaceholder(item),
         }"
-        :style="getItemStyle()"
         :draggable="sortable"
         @dragstart="!isPlaceholder(item) && handleDragStart(item)"
         @dragenter.prevent="!isPlaceholder(item) && handleDragEnter(item)"
@@ -127,10 +126,6 @@ const dragPointerOffset = ref({
 })
 let longPressTimer: number | null = null
 let autoScrollFrame: number | null = null
-const touchDragMetrics = ref({
-  itemHeight: 0,
-  gap: 16,
-})
 const flipAnimationDurationMs = 680
 const edgeScrollThresholdPx = 140
 const maxAutoScrollStepPx = 24
@@ -435,11 +430,7 @@ function stopAutoScroll() {
 
 function measureTouchDragMetrics(bookUrl: string, clientX?: number, clientY?: number) {
   const item = itemRefs.value[bookUrl]
-  const itemHeight = item?.getBoundingClientRect().height || 0
   const rect = item?.getBoundingClientRect()
-  const grid = item?.parentElement
-  const style = grid ? window.getComputedStyle(grid) : null
-  const gap = style ? parseFloat(style.rowGap || style.gap || '16') : 16
   if (rect) {
     dragGhostRect.value = {
       left: rect.left,
@@ -456,15 +447,6 @@ function measureTouchDragMetrics(bookUrl: string, clientX?: number, clientY?: nu
       touchDragState.value.offsetY = clientY - touchDragState.value.startY
     }
   }
-  touchDragMetrics.value = {
-    itemHeight,
-    gap: Number.isFinite(gap) ? gap : 16,
-  }
-}
-
-function getItemStyle() {
-  if (!(props.sortable && touchDragState.value.started)) return undefined
-  return undefined
 }
 
 const draggedBook = computed(() => {
@@ -540,11 +522,6 @@ const ghostStyle = computed(() => {
 
 .book-grid-item.is-dragging {
   cursor: grabbing;
-}
-
-.book-grid-item.is-touch-dragging {
-  position: relative;
-  pointer-events: none;
 }
 
 .book-grid-item.is-touch-gap :deep(.book-card) {

@@ -14,25 +14,20 @@ export function useReaderSearch(store: ReaderStore) {
   const searchQuery = ref('')
   const searchResults = ref<SearchResultItem[]>([])
   const searchIndex = ref(0)
-  const searchInputRef = ref<HTMLInputElement>()
   const bookSearchStatus = ref('')
   const pendingSearchResult = ref<SearchResultItem | null>(null)
   const searchCount = computed(() => searchResults.value.length)
 
+  // 输入框的 focus 由 ReaderSearchPanel 自己负责
   function toggleSearch() {
     showSearch.value = !showSearch.value
-    if (showSearch.value) {
-      nextTick(() => searchInputRef.value?.focus())
-    } else {
+    if (!showSearch.value) {
       closeSearch()
     }
   }
 
   function openSearch() {
-    if (!showSearch.value) {
-      showSearch.value = true
-    }
-    nextTick(() => searchInputRef.value?.focus())
+    showSearch.value = true
   }
 
   function closeSearch() {
@@ -151,18 +146,14 @@ export function useReaderSearch(store: ReaderStore) {
     }
   }
 
-  function handlePresentationUpdated() {
-    if (showSearch.value && searchQuery.value) {
-      runChapterSearch()
-    }
-  }
+  // 版式/字号切换与内容更新对搜索的重跑要求相同
+  const handlePresentationUpdated = handleContentUpdated
 
   return {
     showSearch,
     searchQuery,
     searchResults,
     searchIndex,
-    searchInputRef,
     searchCount,
     bookSearchStatus,
     toggleSearch,

@@ -199,18 +199,6 @@ async function handleSubmit() {
   to { transform: rotate(360deg); }
 }
 
-.switch-mode {
-  text-align: center;
-  margin-top: var(--space-6);
-  font-size: var(--text-sm);
-  color: var(--color-text-tertiary);
-}
-
-.switch-mode a {
-  color: var(--color-primary);
-  font-weight: 500;
-}
-
 @media (max-width: 767px) {
   .login-card {
     padding: var(--space-6);
