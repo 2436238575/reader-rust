@@ -181,7 +181,7 @@ export const useReaderStore = defineStore('reader', () => {
   const config = reactive<ReadConfig>(loadConfig())
 
   function saveConfig() {
-    localStorage.setItem('readConfig', JSON.stringify(config))
+    safeLocalSet('readConfig', JSON.stringify(config))
   }
 
   function updateConfig<K extends keyof ReadConfig>(key: K, value: ReadConfig[K]) {
@@ -240,7 +240,7 @@ export const useReaderStore = defineStore('reader', () => {
     get: () => appStore.theme === 'dark',
     set: (value: boolean) => {
       appStore.setTheme(value ? 'dark' : 'light')
-      localStorage.setItem('reader-isNight', String(value))
+      safeLocalSet('reader-isNight', String(value))
     },
   })
 
@@ -252,8 +252,8 @@ export const useReaderStore = defineStore('reader', () => {
   function setThemeIndex(idx: number) {
     themeIndex.value = idx
     isNight.value = false
-    localStorage.setItem('reader-themeIndex', String(idx))
-    localStorage.setItem('reader-isNight', 'false')
+    safeLocalSet('reader-themeIndex', String(idx))
+    safeLocalSet('reader-isNight', 'false')
   }
 
   function toggleNight() {
@@ -584,7 +584,7 @@ export const useReaderStore = defineStore('reader', () => {
     if (book.value) {
       saveRecentReadBook(book.value)
     }
-    localStorage.setItem('reader-currentIndex', String(index))
+    safeLocalSet('reader-currentIndex', String(index))
     saveReaderSession()
     markProgressDirty()
   }

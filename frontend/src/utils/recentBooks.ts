@@ -1,4 +1,5 @@
 import type { Book } from '../types'
+import { safeLocalSet } from './storage'
 import { getUserdata, saveUserdata } from '../api/userdata'
 
 const RECENT_BOOKS_KEY = 'reader-recent-books'
@@ -45,7 +46,7 @@ function readLocal(): RecentReadBook[] {
 }
 
 function writeLocal(list: RecentReadBook[]) {
-  localStorage.setItem(RECENT_BOOKS_KEY, JSON.stringify(list.slice(0, MAX_RECENT_BOOKS)))
+  safeLocalSet(RECENT_BOOKS_KEY, JSON.stringify(list.slice(0, MAX_RECENT_BOOKS)))
 }
 
 function sortByRecency(list: RecentReadBook[]) {

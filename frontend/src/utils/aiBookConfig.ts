@@ -1,4 +1,5 @@
 import type { AiBookConfig } from '../types'
+import { safeLocalSet } from './storage'
 
 export const DEFAULT_AI_BOOK_CONFIG: AiBookConfig = {
   modelSource: 'browser',
@@ -73,7 +74,7 @@ export function saveAiBookConfig(username: string | null | undefined, config: Ai
     imageUseFullUrl: Boolean(config.imageUseFullUrl),
     useBackendProxy: Boolean(config.useBackendProxy),
   }
-  localStorage.setItem(storageKey(username), JSON.stringify(next))
+  safeLocalSet(storageKey(username), JSON.stringify(next))
   return next
 }
 
