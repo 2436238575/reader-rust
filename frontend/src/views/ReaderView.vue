@@ -151,7 +151,11 @@
         }"
       >
         <div v-if="isHorizontalPageMode" class="horizontal-page-layout">
-          <section class="horizontal-content-page">
+          <div v-if="store.loadError" class="load-error">
+            <p>{{ store.loadError }}</p>
+            <button class="retry-btn" @click="store.retryLoad()">重试</button>
+          </div>
+          <section v-else class="horizontal-content-page">
             <div
               ref="chapterTextRef"
               class="horizontal-pages"
@@ -175,38 +179,43 @@
         </div>
 
         <div v-else>
-          <div v-if="store.loadError" class="load-error">{{ store.loadError }}</div>
-          <div v-else class="chapter-title">{{ store.currentChapter?.title || '加载中...' }}</div>
-
-          <div
-            ref="chapterTextRef"
-            class="chapter-text"
-            :style="{
-              '--p-spacing': config.paragraphSpacing + 'em',
-            }"
-            v-html="formattedContent"
-            @click="handleChapterTextClick"
-          ></div>
-
-          <button
-            v-if="store.reviewEnabled"
-            class="chapter-comments-bar"
-            @click="openChapterComments"
-          >
-            <span class="chapter-comments-label">本章评论</span>
-            <span v-if="store.chapterCommentTotal > 0" class="chapter-comments-count">
-              · {{ store.chapterCommentTotal }}
-            </span>
-            <svg class="chapter-comments-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <path d="m9 18 6-6-6-6" />
-            </svg>
-          </button>
-
-          <div class="chapter-footer">
-            <button class="next-btn" :disabled="!store.hasNext" @click="nextChapter">
-              {{ store.hasNext ? '下一章' : '没有更多了' }}
-            </button>
+          <div v-if="store.loadError" class="load-error">
+            <p>{{ store.loadError }}</p>
+            <button class="retry-btn" @click="store.retryLoad()">重试</button>
           </div>
+          <template v-else>
+            <div class="chapter-title">{{ store.currentChapter?.title || '加载中...' }}</div>
+
+            <div
+              ref="chapterTextRef"
+              class="chapter-text"
+              :style="{
+                '--p-spacing': config.paragraphSpacing + 'em',
+              }"
+              v-html="formattedContent"
+              @click="handleChapterTextClick"
+            ></div>
+
+            <button
+              v-if="store.reviewEnabled"
+              class="chapter-comments-bar"
+              @click="openChapterComments"
+            >
+              <span class="chapter-comments-label">本章评论</span>
+              <span v-if="store.chapterCommentTotal > 0" class="chapter-comments-count">
+                · {{ store.chapterCommentTotal }}
+              </span>
+              <svg class="chapter-comments-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="m9 18 6-6-6-6" />
+              </svg>
+            </button>
+
+            <div class="chapter-footer">
+              <button class="next-btn" :disabled="!store.hasNext" @click="nextChapter">
+                {{ store.hasNext ? '下一章' : '没有更多了' }}
+              </button>
+            </div>
+          </template>
         </div>
       </article>
 
@@ -2365,6 +2374,27 @@ watch(
   font-size: var(--text-base);
   line-height: 1.6;
   word-break: break-all;
+}
+
+.load-error p {
+  margin: 0 0 16px;
+}
+
+/* 与 next-btn 同一幽灵按钮语言：currentColor 跟随阅读器主题（错误态下继承 danger 红） */
+.load-error .retry-btn {
+  padding: 8px 24px;
+  border-radius: 30px;
+  background: transparent;
+  border: 1px solid currentColor;
+  color: inherit;
+  font-size: var(--text-sm);
+  opacity: 0.8;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.load-error .retry-btn:hover {
+  opacity: 1;
 }
 
 .chapter-title {

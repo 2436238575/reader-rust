@@ -26,7 +26,9 @@ export function useOpenBook() {
       await shelfStore.moveBookToFront(target.bookUrl).catch(() => undefined)
       const loadBookTask = readerStore.loadBook(target)
       await router.push('/reader')
-      await loadBookTask
+      // loadBook 失败时已自行 toast 并写入 loadError（阅读页有重试入口），
+      // 这里吞掉避免调用方链路上全是 unhandled rejection
+      await loadBookTask.catch(() => undefined)
       await readerStore.loadChapter(chapterIndex ?? target.durChapterIndex ?? 0)
     } finally {
       openingBookUrl.value = ''

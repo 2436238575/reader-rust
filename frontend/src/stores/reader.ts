@@ -682,6 +682,8 @@ export const useReaderStore = defineStore('reader', () => {
   }
 
   let chapterLoadSeq = 0
+  // 加载失败的目标章：重试时要重拉的是它，而不是还停留在旧章的 currentIndex
+  const failedChapterIndex = ref<number | null>(null)
 
   async function loadChapter(index: number, forceRefresh = false) {
     if (!book.value || !chapters.value[index]) return
@@ -689,6 +691,8 @@ export const useReaderStore = defineStore('reader', () => {
     // 快速连点下一章时旧响应可能后到：只认最新一次请求的结果
     const loadSeq = ++chapterLoadSeq
     loading.value = true
+    loadError.value = ''
+    failedChapterIndex.value = null
     try {
       const chapterContent = await fetchChapterContent(index, forceRefresh)
       if (chapterContent == null) return
@@ -714,9 +718,33 @@ export const useReaderStore = defineStore('reader', () => {
       if (config.enablePreload) {
         setTimeout(() => preloadAroundChapter(index), forceRefresh ? 1500 : 1000)
       }
+    } catch (error) {
+      // 失败要留下可见的错误态（正文区展示 + 重试入口），只清 loading 会让用户
+      // 对着旧章或空白分不清「还在加载」还是「已经失败」。不再向外抛：所有
+      // 调用方（翻章/目录/开书）都不接异常，抛出去只会变成 unhandled rejection。
+      if (loadSeq === chapterLoadSeq) {
+        loadError.value = (error as Error)?.message || '章节加载失败'
+        failedChapterIndex.value = index
+        appStore.showToast(loadError.value, 'error')
+      }
     } finally {
       // 过期请求的 finally 不能灭掉新一轮加载的 loading
       if (loadSeq === chapterLoadSeq) loading.value = false
+    }
+  }
+
+  /** 失败重试：目录都没拿到就整书重载，否则重拉失败时目标章（无记录退回当前章） */
+  async function retryLoad() {
+    if (!book.value) return
+    try {
+      if (!chapters.value.length) {
+        await loadBook(book.value)
+        await loadChapter(currentIndex.value)
+      } else {
+        await loadChapter(failedChapterIndex.value ?? currentIndex.value)
+      }
+    } catch {
+      // loadBook 失败时已自行 toast，这里不再重复提示
     }
   }
 
@@ -1052,7 +1080,7 @@ export const useReaderStore = defineStore('reader', () => {
   return {
     book, chapters, currentIndex, content, loading, chaptersLoading, loadError,
     currentChapter, hasNext, hasPrev, readingProgress,
-      loadBook, loadChapter, fetchChapterContent, setActiveChapterState, refreshContent, nextChapter, prevChapter, clear,
+      loadBook, loadChapter, retryLoad, fetchChapterContent, setActiveChapterState, refreshContent, nextChapter, prevChapter, clear,
       chapterScrollProgress, setChapterScrollProgress, flushReaderSessionSave,
       getPersistedReaderSession, restorePersistedSession,
       persistProgress, flushProgressToServer, flushProgressToServerKeepalive,
