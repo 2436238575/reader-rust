@@ -66,11 +66,11 @@
         <button v-if="isSearch && onShelf" class="add-shelf-btn on-shelf" disabled title="已加入书架">
           已在书架
         </button>
-        <button v-else-if="isSearch" class="add-shelf-btn" @click.stop="$emit('addToShelf', book)">
+        <button v-else-if="isSearch" class="add-shelf-btn" :disabled="adding" @click.stop="$emit('addToShelf', book)">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
             <path d="M12 5v14M5 12h14" />
           </svg>
-          加入书架
+          {{ adding ? '加入中...' : '加入书架' }}
         </button>
       </div>
     </div>
@@ -92,6 +92,8 @@ const props = defineProps<{
   showDeleteAction?: boolean
   /** 搜索/发现卡片：该书已在书架中 */
   onShelf?: boolean
+  /** 搜索/发现卡片：加入书架请求进行中（防连点） */
+  adding?: boolean
 }>()
 
 const emit = defineEmits<{

@@ -58,6 +58,7 @@ const emit = defineEmits<{
 const shelfStore = useBookshelfStore()
 const appStore = useAppStore()
 const newGroupName = ref('')
+const creating = ref(false)
 
 function handleSelect(id: number) {
   emit('select', id)
@@ -65,7 +66,8 @@ function handleSelect(id: number) {
 }
 
 async function handleCreate() {
-  if (!newGroupName.value.trim()) return
+  if (!newGroupName.value.trim() || creating.value) return
+  creating.value = true
   try {
     const groupId = await shelfStore.saveGroup(newGroupName.value.trim())
     emit('select', groupId)
@@ -73,6 +75,8 @@ async function handleCreate() {
     emit('update:modelValue', false)
   } catch (e: unknown) {
     appStore.showToast((e as Error).message || '创建分组失败', 'error')
+  } finally {
+    creating.value = false
   }
 }
 </script>

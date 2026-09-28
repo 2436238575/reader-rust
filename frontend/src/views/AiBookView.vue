@@ -26,8 +26,8 @@
             <span></span>
             自动更新
           </label>
-          <button class="primary-btn" :disabled="aiStore.isBusy" @click="updateToCurrent">
-            {{ aiStore.phase === 'text' ? '更新中...' : '更新到当前进度' }}
+          <button class="primary-btn" :disabled="aiStore.isBusy || updatingToCurrent" @click="updateToCurrent">
+            {{ aiStore.phase === 'text' || updatingToCurrent ? '更新中...' : '更新到当前进度' }}
           </button>
         </div>
       </header>
@@ -603,8 +603,12 @@ async function toggleEnabled(event: Event) {
   }
 }
 
+// 逐章循环里每章结束 phase 会短暂回到 idle（拉下一章正文期间），
+// isBusy 会出现空窗；整个循环用一个本地守卫盖住
+const updatingToCurrent = ref(false)
+
 async function updateToCurrent() {
-  if (!book.value || !memory.value) return
+  if (!book.value || !memory.value || updatingToCurrent.value) return
   const targetIndex = resolveCurrentIndex()
   if (!chapters.value.length) {
     appStore.showToast('目录未加载，无法更新', 'warning')
@@ -616,6 +620,7 @@ async function updateToCurrent() {
     return
   }
 
+  updatingToCurrent.value = true
   try {
     let currentMemory = memory.value
     for (let index = startIndex; index <= targetIndex; index += 1) {
@@ -633,6 +638,8 @@ async function updateToCurrent() {
     appStore.showToast('AI资料已更新', 'success')
   } catch (error) {
     appStore.showToast((error as Error).message || 'AI资料更新失败', 'error')
+  } finally {
+    updatingToCurrent.value = false
   }
 }
 

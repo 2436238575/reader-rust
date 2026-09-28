@@ -59,35 +59,48 @@ watch(() => shelfStore.groups, (groups) => {
   })
 }, { immediate: true, deep: true })
 
+// 增改删都会整表刷新：请求未落地前挡住连点（连点可重复创建同名分组）
+const groupWorking = ref(false)
+
 async function createGroup() {
-  if (!newGroupName.value) return
+  if (!newGroupName.value || groupWorking.value) return
+  groupWorking.value = true
   try {
     await shelfStore.saveGroup(newGroupName.value)
     newGroupName.value = ''
     appStore.showToast('分组已创建', 'success')
   } catch (e: unknown) {
     appStore.showToast((e as Error).message || '创建分组失败', 'error')
+  } finally {
+    groupWorking.value = false
   }
 }
 
 async function renameGroup(groupId: number) {
   const name = editingNames[groupId]?.trim()
-  if (!name) return
+  if (!name || groupWorking.value) return
+  groupWorking.value = true
   try {
     await shelfStore.saveGroup(name, groupId)
     appStore.showToast('分组已更新', 'success')
   } catch (e: unknown) {
     appStore.showToast((e as Error).message || '更新分组失败', 'error')
+  } finally {
+    groupWorking.value = false
   }
 }
 
 async function deleteGroup(groupId: number, groupName: string) {
+  if (groupWorking.value) return
   if (!confirm(`确定删除分组“${groupName}”？`)) return
+  groupWorking.value = true
   try {
     await shelfStore.removeGroup(groupId)
     appStore.showToast('分组已删除', 'success')
   } catch (e: unknown) {
     appStore.showToast((e as Error).message || '删除分组失败', 'error')
+  } finally {
+    groupWorking.value = false
   }
 }
 </script>

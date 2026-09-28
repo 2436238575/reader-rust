@@ -32,6 +32,7 @@
           :selected="selectedUrls?.has(item.bookUrl)"
           :is-search="isSearch"
           :on-shelf="shelfUrls?.has(item.bookUrl) ?? false"
+          :adding="addingUrls?.has(item.bookUrl) ?? false"
           :dragging="sortable && draggedUrl === item.bookUrl"
           :show-delete-action="showDeleteAction"
           @click="$emit('click', $event)"
@@ -90,6 +91,8 @@ const props = defineProps<{
   showDeleteAction?: boolean
   /** 已加入书架的 bookUrl 集合：搜索/发现卡片用它把按钮切为「已在书架」 */
   shelfUrls?: Set<string>
+  /** 加入书架请求进行中的 bookUrl 集合：按钮显示「加入中...」并禁用 */
+  addingUrls?: Set<string>
 }>()
 
 const emit = defineEmits<{

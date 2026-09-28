@@ -152,6 +152,8 @@ const appStore = useAppStore()
 const loading = ref(false)
 const cacheCount = ref(50)
 const serverBooks = ref<Book[]>([])
+// 缓存任务（SSE/浏览器写入）按书防重入：连点会并行起多条 SSE 连接
+const cachingUrls = ref(new Set<string>())
 const browserSummaries = ref<Array<{ bookUrl: string; cachedChapterCount: number }>>([])
 
 interface CacheLayer {
@@ -283,25 +285,33 @@ async function refreshData() {
 }
 
 function cacheServer(book: Book) {
+  if (cachingUrls.value.has(book.bookUrl)) return
+  cachingUrls.value.add(book.bookUrl)
   const sse = cacheBookSSE({ bookUrl: book.bookUrl, count: cacheCount.value, concurrentCount: 8 })
   sse.addEventListener('end', async () => {
     sse.close()
+    cachingUrls.value.delete(book.bookUrl)
     appStore.showToast(`"${book.name}" 已缓存到服务器`, 'success')
     await refreshData()
   })
   sse.onerror = () => {
     sse.close()
+    cachingUrls.value.delete(book.bookUrl)
     appStore.showToast(`"${book.name}" 服务端缓存失败`, 'error')
   }
 }
 
 async function cacheBrowser(book: Book) {
+  if (cachingUrls.value.has(book.bookUrl)) return
+  cachingUrls.value.add(book.bookUrl)
   try {
     await cacheBookToBrowser({ book, startIndex: 0, count: cacheCount.value || undefined })
     appStore.showToast(`"${book.name}" 已缓存到浏览器`, 'success')
     await refreshData()
   } catch (error) {
     appStore.showToast((error as Error).message || '浏览器缓存失败', 'error')
+  } finally {
+    cachingUrls.value.delete(book.bookUrl)
   }
 }
 

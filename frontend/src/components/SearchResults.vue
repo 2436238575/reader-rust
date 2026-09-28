@@ -67,6 +67,8 @@
       :books="displayResults"
       :is-search="true"
       :loading="isSearching && displayResults.length === 0"
+      :shelf-urls="shelfUrls"
+      :adding-urls="addingUrls"
       empty-text="未找到相关书籍"
       @click="handleBookClick"
       @info="handleBookInfo"
@@ -114,6 +116,11 @@ let eventSource: EventSource | null = null
 let searchSeen: Set<string> | null = null
 const showBookDetail = ref(false)
 const selectedBook = ref<Book | SearchBook | null>(null)
+
+// 已入库书籍把按钮切为「已在书架」（此前漏传，可重复添加同一本书）
+const shelfUrls = computed(() => new Set(shelfStore.books.map((book) => book.bookUrl)))
+// 加入书架请求进行中：按 bookUrl 防连点
+const addingUrls = ref(new Set<string>())
 
 const sourceByUrl = computed(() => {
   return new Map(sourceStore.sources.map((source) => [source.bookSourceUrl, source]))
@@ -285,6 +292,8 @@ function handleBookInfo(book: Book | SearchBook) {
 }
 
 async function handleAddToShelf(book: Book | SearchBook) {
+  if (addingUrls.value.has(book.bookUrl)) return
+  addingUrls.value.add(book.bookUrl)
   try {
     await saveBook({
       name: book.name,
@@ -294,9 +303,12 @@ async function handleAddToShelf(book: Book | SearchBook) {
       coverUrl: book.coverUrl,
     })
     appStore.showToast(`"${book.name}" 已加入书架`, 'success')
-    shelfStore.fetchBooks()
+    // 刷新书架列表让按钮翻转为「已在书架」；失败不影响主流程
+    await shelfStore.fetchBooks().catch(() => undefined)
   } catch (e: unknown) {
     appStore.showToast((e as Error).message, 'error')
+  } finally {
+    addingUrls.value.delete(book.bookUrl)
   }
 }
 

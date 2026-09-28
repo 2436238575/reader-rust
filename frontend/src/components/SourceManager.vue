@@ -195,6 +195,8 @@ const editorText = ref(JSON.stringify(createEmptySource(), null, 2))
 const sourceLoginLoading = ref(false)
 const loginPreviewVisible = ref(false)
 const loginPreviewUrl = ref('')
+// 保存/导入/同步都改书源并整表重载：串行化，挡住连点产生的并发写
+const sourceIoBusy = ref(false)
 const loginPreviewFrameUrl = ref('')
 
 const groupList = computed(() => getBookSourceGroups(sources.value))
@@ -419,6 +421,8 @@ function formatEditor() {
 }
 
 async function saveEditor() {
+  if (sourceIoBusy.value) return
+  sourceIoBusy.value = true
   try {
     const parsed = JSON.parse(editorText.value) as BookSource
     if (!parsed.bookSourceName?.trim()) {
@@ -436,6 +440,8 @@ async function saveEditor() {
     }
   } catch (e: unknown) {
     appStore.showToast((e as Error).message || '保存失败', 'error')
+  } finally {
+    sourceIoBusy.value = false
   }
 }
 
@@ -492,6 +498,8 @@ async function handleFileImport(event: Event) {
   const input = event.target as HTMLInputElement
   const file = input.files?.[0]
   if (!file) return
+  if (sourceIoBusy.value) return
+  sourceIoBusy.value = true
   try {
     const imported = await readSourceFile(file)
     if (!imported.length) {
@@ -504,6 +512,7 @@ async function handleFileImport(event: Event) {
     appStore.showToast((e as Error).message || '导入失败', 'error')
   } finally {
     input.value = ''
+    sourceIoBusy.value = false
   }
 }
 
@@ -512,6 +521,8 @@ async function importRemoteSource() {
     appStore.showToast('请输入远程书源链接', 'warning')
     return
   }
+  if (sourceIoBusy.value) return
+  sourceIoBusy.value = true
   try {
     const raw = await readRemoteSourceFile(remoteUrl.value)
     const parsed = raw.flatMap((item) => {
@@ -531,6 +542,8 @@ async function importRemoteSource() {
     await loadSources()
   } catch (e: unknown) {
     appStore.showToast((e as Error).message || '远程同步失败', 'error')
+  } finally {
+    sourceIoBusy.value = false
   }
 }
 

@@ -112,11 +112,11 @@
             已选中 <span>{{ shelfStore.selectedBookUrls.size }}</span> 本书
           </div>
           <div class="batch-actions">
-            <button class="btn" @click="handleBulkMove">
+            <button class="btn" :disabled="bulkWorking" @click="handleBulkMove">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14" /></svg>
               移动分组
             </button>
-            <button class="btn btn-danger" @click="handleBulkDelete">
+            <button class="btn btn-danger" :disabled="bulkWorking" @click="handleBulkDelete">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M19 6v14a3 3 0 0 1-3-3H7c-1 0-2-1-2-2V6M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2" /></svg>
               批量删除
             </button>
@@ -254,14 +254,21 @@ function toggleEditMode() {
   }
 }
 
+// 批量操作进行中：请求未落地前挡住重复点击（串行 N 个请求，连点会交错）
+const bulkWorking = ref(false)
+
 async function handleBulkDelete() {
+  if (bulkWorking.value) return
   const count = shelfStore.selectedBookUrls.size
   if (!confirm(`确定删除选中的 ${count} 本书？`)) return
+  bulkWorking.value = true
   try {
     await shelfStore.bulkDelete()
     appStore.showToast(`成功删除 ${count} 本书`, 'success')
   } catch (e: any) {
     appStore.showToast(e.message, 'error')
+  } finally {
+    bulkWorking.value = false
   }
 }
 
@@ -270,12 +277,16 @@ async function handleBulkMove() {
 }
 
 async function handleSetGroup(groupId: number) {
+  if (bulkWorking.value) return
   const count = shelfStore.selectedBookUrls.size
+  bulkWorking.value = true
   try {
     await shelfStore.bulkSetGroup(groupId)
     appStore.showToast(`成功将 ${count} 本书移至新分组`, 'success')
   } catch (e: any) {
     appStore.showToast(e.message, 'error')
+  } finally {
+    bulkWorking.value = false
   }
 }
 async function handleReorderBooks(payload: { draggedUrl: string; targetUrl: string }) {
