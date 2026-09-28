@@ -23,6 +23,7 @@ import {
 } from './aiBookNormalize'
 
 import { API_BASE } from './appBase'
+import { buildAuthHeaders } from './secureAccess'
 
 export type AiBookChatMessage = {
   role: 'system' | 'user' | 'assistant' | 'tool'
@@ -559,11 +560,7 @@ export async function uploadGeneratedMap({
   const formData = new FormData()
   formData.append('file', blob, filename)
 
-  const headers: Record<string, string> = {}
-  const token = safeLocalStorageGet('accessToken')
-  if (token) {
-    headers.Authorization = token
-  }
+  const headers: Record<string, string> = { ...buildAuthHeaders() }
 
   const response = await fetchImpl(`${API_BASE}/uploadFile?type=ai-maps`, {
     method: 'POST',
@@ -1018,7 +1015,7 @@ async function requestModelJson({
     return fetchImpl(`${API_BASE}/aiProxy`, {
       method: 'POST',
       headers: {
-        ...buildReaderAuthHeaders(),
+        ...buildAuthHeaders(),
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
@@ -1035,7 +1032,7 @@ async function requestModelJson({
     return fetchImpl(`${API_BASE}/aiProxy`, {
       method: 'POST',
       headers: {
-        ...buildReaderAuthHeaders(),
+        ...buildAuthHeaders(),
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
@@ -1181,7 +1178,7 @@ async function fetchImageBlob(imageUrl: string, fetchImpl: typeof fetch, useBack
     ? await fetchImpl(`${API_BASE}/aiProxyImage`, {
       method: 'POST',
       headers: {
-        ...buildReaderAuthHeaders(),
+        ...buildAuthHeaders(),
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({ url: imageUrl }),
@@ -1193,19 +1190,3 @@ async function fetchImageBlob(imageUrl: string, fetchImpl: typeof fetch, useBack
   return response.blob()
 }
 
-function buildReaderAuthHeaders() {
-  const headers: Record<string, string> = {}
-  const token = safeLocalStorageGet('accessToken')
-  if (token) {
-    headers.Authorization = token
-  }
-  return headers
-}
-
-function safeLocalStorageGet(key: string) {
-  try {
-    return localStorage.getItem(key) || ''
-  } catch {
-    return ''
-  }
-}

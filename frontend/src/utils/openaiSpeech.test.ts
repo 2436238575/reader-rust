@@ -33,7 +33,7 @@ describe('openaiSpeech', () => {
       expect.objectContaining({
         method: 'POST',
         headers: expect.objectContaining({
-          Authorization: 'alice-token',
+          Authorization: 'Bearer alice-token',
           'Content-Type': 'application/json',
         }),
       }),

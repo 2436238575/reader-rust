@@ -1,5 +1,6 @@
 import { summarizeHttpErrorBody } from './httpError'
 import { API_BASE } from './appBase'
+import { buildAuthHeaders as buildReaderJwtHeaders } from './secureAccess'
 
 export const DEFAULT_OPENAI_BASE_URL = 'http://localhost:8825'
 
@@ -74,7 +75,7 @@ export async function requestOpenAISpeechAudio({
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        ...buildReaderAuthHeaders(),
+        ...buildReaderJwtHeaders(),
       },
       body: JSON.stringify({
         useServerConfig: true,
@@ -99,15 +100,4 @@ export async function requestOpenAISpeechAudio({
   }
 
   return response.blob()
-}
-
-function buildReaderAuthHeaders() {
-  const headers: Record<string, string> = {}
-  try {
-    const token = localStorage.getItem('accessToken') || ''
-    if (token) headers.Authorization = token
-  } catch {
-    // ignore storage access failures
-  }
-  return headers
 }

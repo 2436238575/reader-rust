@@ -15,6 +15,21 @@ export function readAccessToken(storage: StorageLike = localStorage): string | u
 }
 
 /**
+ * 构造带 JWT 的请求头，供裸 fetch 路径使用（keepalive 上报 / blob 下载 /
+ * FormData 上传）；axios 实例由 http.ts 的拦截器统一处理，不要走这里。
+ * 存储不可读（隐私模式等）时返回空头，与未登录等价。
+ */
+export function buildAuthHeaders(storage?: StorageLike): Record<string, string> {
+  try {
+    // localStorage 在无 DOM 环境（Node 测试）里可能根本不存在，引用要放在 try 内
+    const token = readAccessToken(storage ?? localStorage)
+    return token ? { Authorization: `Bearer ${token}` } : {}
+  } catch {
+    return {}
+  }
+}
+
+/**
  * 把令牌放进查询参数。
  *
  * SSE 由浏览器 `EventSource` 发起、`<img>` 也带不了请求头，这些请求只能

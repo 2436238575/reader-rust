@@ -653,7 +653,7 @@ describe('aiBookGeneration', () => {
       expect.objectContaining({
         method: 'POST',
         headers: expect.objectContaining({
-          Authorization: 'alice-token',
+          Authorization: 'Bearer alice-token',
         }),
         body: JSON.stringify({ url: 'https://cdn.example.test/map.png' }),
       }),
@@ -690,7 +690,7 @@ describe('aiBookGeneration', () => {
       expect.objectContaining({
         method: 'POST',
         headers: expect.objectContaining({
-          Authorization: 'alice-token',
+          Authorization: 'Bearer alice-token',
         }),
         body: expect.any(FormData),
       }),
@@ -742,7 +742,7 @@ describe('aiBookGeneration', () => {
       expect.objectContaining({
         method: 'POST',
         headers: expect.objectContaining({
-          Authorization: 'alice-token',
+          Authorization: 'Bearer alice-token',
         }),
         body: expect.stringContaining('"path":"/v1/chat/completions"'),
       }),
@@ -805,7 +805,7 @@ describe('aiBookGeneration', () => {
       expect.objectContaining({
         method: 'POST',
         headers: expect.objectContaining({
-          Authorization: 'alice-token',
+          Authorization: 'Bearer alice-token',
         }),
       }),
     )

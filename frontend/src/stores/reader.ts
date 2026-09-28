@@ -1,5 +1,6 @@
 ﻿import { defineStore } from 'pinia'
 import { API_BASE } from '../utils/appBase'
+import { buildAuthHeaders } from '../utils/secureAccess'
 import { safeLocalSet } from '../utils/storage'
 import { ref, computed, reactive, watch } from 'vue'
 import { useAppStore } from './app'
@@ -1366,10 +1367,7 @@ export const useReaderStore = defineStore('reader', () => {
 
     const headers: Record<string, string> = {
       'Content-Type': 'application/json',
-    }
-    const token = localStorage.getItem('accessToken')
-    if (token) {
-      headers.Authorization = token
+      ...buildAuthHeaders(),
     }
 
     void fetch(`${API_BASE}/saveBookProgress`, {
