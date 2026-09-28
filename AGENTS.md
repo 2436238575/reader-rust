@@ -111,7 +111,8 @@ cp .env.example .env
 | `CACHE_COVER_LIMIT_BYTES` | `268435456` | 封面缓存目录上限；`0` 表示不限制 |
 | `REVIEW_CACHE_TTL_SECS` | `604800`（7 天） | 章评/段评缓存有效期；`0` 表示不过期 |
 | `REVIEW_CACHE_USER_LIMIT_BYTES` | `67108864` | 评论缓存上限；`0` 表示不限制 |
-| `ALLOW_PRIVATE_NETWORK` | `true` | 出站请求是否允许访问私网/内网地址；自托管单用户默认放行（局域网书源是正常用法），公网部署应设为 `false` |
+| `ALLOW_PRIVATE_NETWORK` | `true` | 出站请求是否允许访问私网/内网地址；自托管单用户默认放行（局域网书源是正常用法），公网部署应设为 `false` 并配合 `PRIVATE_NETWORK_WHITELIST` |
+| `PRIVATE_NETWORK_WHITELIST` | 空 | 私网白名单（逗号分隔），仅 `ALLOW_PRIVATE_NETWORK=false` 时生效。条目支持 IP / CIDR 网段 / 域名，均可带端口（如 `192.168.100.99:9999, 192.168.100.0/24, nas.lan`）。**名单为空时全部放行**（等同 `true`）；名单非空时只有命中的目标可以出站 |
 | `CORS_ALLOWED_ORIGINS` | 空 | 跨域来源白名单；留空仅同源 |
 | `RATE_LIMIT_DISABLED` | `false` | 豁免登录限速（开发/测试用）。默认：IP 登录败 5 次封该 IP 登录 6h、用户名败 10 次封 6h。e2e 跑测试时建议后端开此项 |
 

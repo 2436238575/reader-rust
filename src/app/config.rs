@@ -46,6 +46,13 @@ pub struct AppConfig {
     /// **公网暴露的部署应设为 `false`**，否则任何人拿到登录态后都能把服务端
     /// 当成内网探测代理（读取云元数据、扫内网端口）。
     pub allow_private_network: bool,
+    /// 私网白名单（逗号分隔），仅在 `ALLOW_PRIVATE_NETWORK=false` 时生效。
+    ///
+    /// 条目可以是 IP（`192.168.100.99`）、网段（`192.168.100.0/24`）或域名
+    /// （`nas.lan`），都可带端口（`192.168.100.99:9999`——带端口时目标端口也须一致）。
+    /// **名单为空时全部放行**（等同 `ALLOW_PRIVATE_NETWORK=true`）；名单非空时
+    /// 只有命中的目标可以出站，其余私网/环回地址一律拦截。
+    pub private_network_whitelist: String,
     /// 允许跨域访问的来源列表（逗号分隔，如 `https://a.example,https://b.example`）。
     ///
     /// 留空表示**仅同源**：不发送任何 CORS 响应头，浏览器同源策略自然生效。
@@ -79,6 +86,7 @@ impl Default for AppConfig {
             review_cache_ttl_secs: 7 * 24 * 3600,
             review_cache_user_limit_bytes: 64 * 1024 * 1024,
             allow_private_network: true,
+            private_network_whitelist: String::new(),
             cors_allowed_origins: String::new(),
             rate_limit_disabled: false,
         }
@@ -123,6 +131,10 @@ pub fn load() -> anyhow::Result<AppConfig> {
             defaults.review_cache_user_limit_bytes as i64,
         )?
         .set_default("allow_private_network", defaults.allow_private_network)?
+        .set_default(
+            "private_network_whitelist",
+            defaults.private_network_whitelist,
+        )?
         .set_default("cors_allowed_origins", defaults.cors_allowed_origins)?
         .set_default("rate_limit_disabled", defaults.rate_limit_disabled)?
         .add_source(config::Environment::default().try_parsing(true))

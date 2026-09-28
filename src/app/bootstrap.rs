@@ -64,10 +64,17 @@ pub async fn run() -> anyhow::Result<()> {
 /// 装配逻辑——复制出来的那份迟早会和这里漂移。
 pub async fn build_state(cfg: AppConfig) -> anyhow::Result<AppState> {
     // 出站守卫策略：默认放行私网——自托管单用户下局域网书源、本地模型服务
-    // 是正常用法；多用户或公网暴露的部署应显式设 ALLOW_PRIVATE_NETWORK=false。
+    // 是正常用法；多用户或公网暴露的部署应显式设 ALLOW_PRIVATE_NETWORK=false
+    // 并配置 PRIVATE_NETWORK_WHITELIST（名单为空时仍是全部放行，见 url_guard 文档）。
     let allow_private = cfg.allow_private_network;
     url_guard::set_allow_private_network(allow_private);
-    tracing::info!("outbound policy: allow_private_network={allow_private}");
+    let whitelist = url_guard::parse_private_whitelist(&cfg.private_network_whitelist)
+        .map_err(anyhow::Error::msg)?;
+    url_guard::set_private_network_whitelist(whitelist);
+    tracing::info!(
+        "outbound policy: allow_private_network={allow_private}, whitelist_entries={}",
+        url_guard::private_whitelist_len()
+    );
 
     let storage_fs = StorageFs::new(&cfg.storage_dir, &cfg.assets_dir);
     storage_fs.ensure().await?;

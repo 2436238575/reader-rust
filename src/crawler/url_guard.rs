@@ -8,9 +8,14 @@
 //! 场景使用，局域网书源、本地书源服务（如 `http://192.168.x.x:9999`）、本地模型服务
 //! 都属正常用法，参考实现（阅读/Legado）同样不做限制。
 //!
-//! 多用户或公网暴露的部署应显式设为 `ALLOW_PRIVATE_NETWORK=false`，此时会拦截私网、
-//! 环回、链路本地、ULA、CGNAT 等地址，并禁止 302 跳转到这些地址——否则任意用户都能
-//! 把服务端当成内网探测代理。
+//! 多用户或公网暴露的部署应显式设为 `ALLOW_PRIVATE_NETWORK=false` 并配置
+//! `PRIVATE_NETWORK_WHITELIST` 白名单，此时会拦截私网、环回、链路本地、ULA、
+//! CGNAT 等地址，并禁止 302 跳转到这些地址——否则任意用户都能把服务端当成
+//! 内网探测代理。
+//!
+//! 白名单语义：`ALLOW_PRIVATE_NETWORK=false` 启用白名单机制，**名单为空时全部
+//! 放行**（等同 `true`，方便先设 false 再逐步收紧），名单非空时只有命中的目标
+//! 可以出站。条目支持 IP、CIDR 网段与域名，均可带端口。
 //!
 //! 命中策略时抛出 [`OutboundBlocked`]，上层据此回一个带原因的 4xx，而不是
 //! 被兜底成看不出所以然的 "internal error"。
@@ -18,6 +23,7 @@
 use reqwest::redirect::Policy;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::RwLock;
 use std::time::Duration;
 use url::{Host, Url};
 
@@ -27,6 +33,10 @@ const MAX_REDIRECTS: usize = 5;
 /// 与 `AppConfig::allow_private_network` 的默认值保持一致（自托管单用户放行私网）。
 static ALLOW_PRIVATE_NETWORK: AtomicBool = AtomicBool::new(true);
 
+/// 私网白名单（`PRIVATE_NETWORK_WHITELIST`），由 bootstrap 按配置初始化。
+/// 读多写少（只在启动时写一次、测试里偶尔重置），用 RwLock 而不是 OnceLock。
+static PRIVATE_WHITELIST: RwLock<Vec<PrivateTarget>> = RwLock::new(Vec::new());
+
 /// 由 bootstrap 按配置初始化。
 pub fn set_allow_private_network(allow: bool) {
     ALLOW_PRIVATE_NETWORK.store(allow, Ordering::Relaxed);
@@ -34,6 +44,190 @@ pub fn set_allow_private_network(allow: bool) {
 
 pub fn private_network_allowed() -> bool {
     ALLOW_PRIVATE_NETWORK.load(Ordering::Relaxed)
+}
+
+/// 白名单条目。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PrivateTarget {
+    /// 单个 IP，可带端口约束。
+    Ip { ip: IpAddr, port: Option<u16> },
+    /// CIDR 网段（只对 IP 目标有意义，域名条目不走网段）。
+    Cidr { net: IpAddr, prefix: u8 },
+    /// 域名（小写、不带尾点），可带端口约束。
+    Domain { name: String, port: Option<u16> },
+}
+
+/// 解析白名单配置串（逗号分隔）。
+///
+/// 条目形态：`192.168.100.99`、`192.168.100.0/24`、`nas.lan`，均可带端口
+/// （`192.168.100.99:9999`；IPv6 带端口写作 `[::1]:8080`）。解析失败的条目
+/// 直接报错——静默忽略会让「收紧」悄悄变成「放行」。
+pub fn parse_private_whitelist(raw: &str) -> Result<Vec<PrivateTarget>, String> {
+    let mut targets = Vec::new();
+    for part in raw.split(',') {
+        let entry = part.trim();
+        if entry.is_empty() {
+            continue;
+        }
+        targets.push(parse_private_target(entry)?);
+    }
+    Ok(targets)
+}
+
+fn parse_private_target(entry: &str) -> Result<PrivateTarget, String> {
+    // CIDR：先于 host:port 判断（`10.0.0.0/8` 不含端口语义）
+    if let Some((addr, prefix)) = entry.rsplit_once('/') {
+        let ip: IpAddr = addr
+            .parse()
+            .map_err(|_| format!("白名单网段无效: {entry}"))?;
+        let max = match ip {
+            IpAddr::V4(_) => 32,
+            IpAddr::V6(_) => 128,
+        };
+        let prefix: u8 = prefix
+            .parse()
+            .map_err(|_| format!("白名单网段前缀无效: {entry}"))?;
+        if prefix > max {
+            return Err(format!("白名单网段前缀超出范围: {entry}"));
+        }
+        return Ok(PrivateTarget::Cidr { net: ip, prefix });
+    }
+    // host[:port]；IPv6 字面量带端口必须是 `[::1]:8080` 形态
+    let (host, port) = if let Some(rest) = entry.strip_prefix('[') {
+        let (v6, tail) = rest
+            .split_once(']')
+            .ok_or_else(|| format!("白名单条目无效: {entry}"))?;
+        let port = match tail.strip_prefix(':') {
+            Some(p) => Some(
+                p.parse::<u16>()
+                    .map_err(|_| format!("白名单端口无效: {entry}"))?,
+            ),
+            None if tail.is_empty() => None,
+            None => return Err(format!("白名单条目无效: {entry}")),
+        };
+        (v6, port)
+    } else if entry.matches(':').count() > 1 {
+        // 裸 IPv6（`::1`、`fd00::1`）不含端口语义
+        (entry, None)
+    } else if let Some((h, p)) = entry.rsplit_once(':') {
+        let port = p
+            .parse::<u16>()
+            .map_err(|_| format!("白名单端口无效: {entry}"))?;
+        (h, Some(port))
+    } else {
+        (entry, None)
+    };
+    if let Ok(ip) = host.parse::<IpAddr>() {
+        return Ok(PrivateTarget::Ip { ip, port });
+    }
+    let name = host.trim_end_matches('.').to_ascii_lowercase();
+    if name.is_empty() {
+        return Err(format!("白名单条目无效: {entry}"));
+    }
+    Ok(PrivateTarget::Domain { name, port })
+}
+
+/// 由 bootstrap 按配置初始化。
+pub fn set_private_network_whitelist(targets: Vec<PrivateTarget>) {
+    *PRIVATE_WHITELIST.write().unwrap() = targets;
+}
+
+/// 已加载的白名单条目数（启动日志用）。
+pub fn private_whitelist_len() -> usize {
+    PRIVATE_WHITELIST.read().unwrap().len()
+}
+
+/// 白名单为空 = 未启用收紧（`ALLOW_PRIVATE_NETWORK=false` 时也全部放行）。
+fn whitelist_is_empty() -> bool {
+    PRIVATE_WHITELIST.read().unwrap().is_empty()
+}
+
+/// 目标是否命中白名单（`url.host()` 枚举避免把 IPv6 字面量误判成域名）。
+fn url_matches_whitelist(url: &Url) -> bool {
+    let port = url.port_or_known_default();
+    let entries = PRIVATE_WHITELIST.read().unwrap();
+    match url.host() {
+        Some(Host::Ipv4(ip)) => matches_ip(&IpAddr::V4(ip), port, &entries),
+        Some(Host::Ipv6(ip)) => matches_ip(&IpAddr::V6(ip), port, &entries),
+        Some(Host::Domain(domain)) => matches_domain(domain, port, &entries),
+        None => false,
+    }
+}
+
+/// 域名是否命中白名单（供 DNS 解析期守卫用：那里只有主机名，没有端口）。
+/// 带端口约束的条目在这里只按域名匹配，端口一致性由请求前的 URL 预检保证。
+fn hostname_matches_whitelist(name: &str) -> bool {
+    let name = name.trim_end_matches('.').to_ascii_lowercase();
+    let entries = PRIVATE_WHITELIST.read().unwrap();
+    matches_domain(&name, None, &entries)
+}
+
+fn matches_ip(ip: &IpAddr, port: Option<u16>, entries: &[PrivateTarget]) -> bool {
+    entries.iter().any(|entry| match entry {
+        PrivateTarget::Ip {
+            ip: allowed,
+            port: allowed_port,
+        } => allowed == ip && port_matches(*allowed_port, port),
+        PrivateTarget::Cidr { net, prefix } => ip_in_cidr(ip, net, *prefix),
+        // 网段条目不约束端口：运维写网段就是要放一片，端口限制请写单 IP
+        PrivateTarget::Domain { .. } => false,
+    })
+}
+
+fn matches_domain(domain: &str, port: Option<u16>, entries: &[PrivateTarget]) -> bool {
+    let domain = domain.trim_end_matches('.').to_ascii_lowercase();
+    entries.iter().any(|entry| match entry {
+        PrivateTarget::Domain {
+            name,
+            port: allowed_port,
+        } => *name == domain && port_matches(*allowed_port, port),
+        // IP/CIDR 条目对域名目标不生效：域名须解析后按 IP 判定，
+        // 而白名单的语义是「预先信任」，解析期守卫只对未命中白名单的域名拦截
+        _ => false,
+    })
+}
+
+fn port_matches(allowed: Option<u16>, actual: Option<u16>) -> bool {
+    match allowed {
+        Some(p) => actual == Some(p),
+        None => true,
+    }
+}
+
+fn ip_in_cidr(ip: &IpAddr, net: &IpAddr, prefix: u8) -> bool {
+    match (ip, net) {
+        (IpAddr::V4(ip), IpAddr::V4(net)) => {
+            let prefix = prefix.min(32);
+            let mask = if prefix == 0 {
+                0
+            } else {
+                u32::MAX << (32 - prefix)
+            };
+            (u32::from(*ip) & mask) == (u32::from(*net) & mask)
+        }
+        (IpAddr::V6(ip), IpAddr::V6(net)) => {
+            let prefix = prefix.min(128);
+            let ip_seg = ip.segments();
+            let net_seg = net.segments();
+            let full = (prefix / 16) as usize;
+            if ip_seg[..full] != net_seg[..full] {
+                return false;
+            }
+            let rem = prefix % 16;
+            if rem == 0 {
+                return true;
+            }
+            let mask = u16::MAX << (16 - rem);
+            (ip_seg[full] & mask) == (net_seg[full] & mask)
+        }
+        _ => false,
+    }
+}
+
+/// 防护是否实际生效：`ALLOW_PRIVATE_NETWORK=false` 且白名单非空。
+/// 白名单为空时按用户配置「全部放行」，等同 `true`。
+fn guard_active() -> bool {
+    !private_network_allowed() && !whitelist_is_empty()
 }
 
 /// 出站策略拒绝。
@@ -171,7 +365,11 @@ pub async fn ensure_outbound_url_allowed(url: &Url) -> Result<(), String> {
     if !matches!(url.scheme(), "http" | "https") {
         return Err(format!("不支持的协议: {}", url.scheme()));
     }
-    if private_network_allowed() {
+    if !guard_active() {
+        return Ok(());
+    }
+    // 白名单是「预先信任」：命中的目标跳过主机名与 DNS/内网判定
+    if url_matches_whitelist(url) {
         return Ok(());
     }
     let host = outbound_lookup_host(url)?;
@@ -195,7 +393,10 @@ pub async fn ensure_outbound_url_str_allowed(raw: &str) -> Result<Url, String> {
 /// 语义与异步版本一致。
 pub fn ensure_outbound_url_str_allowed_blocking(raw: &str) -> Result<Url, String> {
     let url = Url::parse(raw.trim()).map_err(|e| format!("URL 解析失败: {e}"))?;
-    if private_network_allowed() {
+    if !guard_active() {
+        return Ok(url);
+    }
+    if url_matches_whitelist(&url) {
         return Ok(url);
     }
     let host = outbound_lookup_host(&url)?;
@@ -211,7 +412,10 @@ pub fn ensure_outbound_url_str_allowed_blocking(raw: &str) -> Result<Url, String
 /// 校验重定向目标。不能只看字面 IP/主机名：302 目标的域名同样可能解析到内网
 /// （攻击者把自家域名 A 记录指向 127.0.0.1），域名主机必须做真实 DNS 解析。
 fn check_redirect_target(url: &Url) -> Result<(), String> {
-    if private_network_allowed() {
+    if !guard_active() {
+        return Ok(());
+    }
+    if url_matches_whitelist(url) {
         return Ok(());
     }
     if is_obviously_internal_url(url) {
@@ -260,7 +464,7 @@ impl reqwest::dns::Resolve for GuardedResolver {
             let host = name.as_str().trim_end_matches('.');
             let addrs: Vec<std::net::SocketAddr> =
                 tokio::net::lookup_host((host, 0)).await?.collect();
-            if !private_network_allowed() {
+            if guard_active() && !hostname_matches_whitelist(host) {
                 check_resolved_ips(addrs.iter().map(|addr| addr.ip())).map_err(OutboundBlocked)?;
             }
             let addrs: reqwest::dns::Addrs = Box::new(addrs.into_iter());
@@ -354,15 +558,153 @@ mod tests {
         ));
     }
 
+    /// 改全局守卫状态的测试互斥：并行测试里 allow/whitelist 互相踩会偶发失败。
+    static TEST_SERIALIZER: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    fn restore_guard_defaults() {
+        set_allow_private_network(true);
+        set_private_network_whitelist(Vec::new());
+    }
+
     #[test]
     fn redirect_target_check_blocks_literal_internal() {
-        // 默认 SECURE=false → 放行私网，先强制切到防护态再测
+        let _lock = TEST_SERIALIZER.lock().unwrap();
+        // 空白名单 = 全部放行，先配一条名单让防护真正生效
         set_allow_private_network(false);
+        set_private_network_whitelist(parse_private_whitelist("192.168.100.0/24").unwrap());
         assert!(check_redirect_target(&Url::parse("http://127.0.0.1/").unwrap()).is_err());
         assert!(check_redirect_target(&Url::parse("http://[::1]/").unwrap()).is_err());
         assert!(check_redirect_target(&Url::parse("http://localhost/").unwrap()).is_err());
+        // 白名单命中的目标放行（字面 IP，无需 DNS）
+        assert!(check_redirect_target(&Url::parse("http://192.168.100.99:9999/").unwrap()).is_ok());
         // 守护状态下 localhost 既命中主机名黑名单，也过不了 DNS 解析检查
         set_allow_private_network(true);
         assert!(check_redirect_target(&Url::parse("http://127.0.0.1/").unwrap()).is_ok());
+        restore_guard_defaults();
+    }
+
+    #[test]
+    fn whitelist_parsing_and_matching() {
+        let _lock = TEST_SERIALIZER.lock().unwrap();
+        set_private_network_whitelist(
+            parse_private_whitelist(
+                "192.168.100.99:9999, 192.168.100.0/24, [::1]:8080, NAS.Lan, 10.0.0.1",
+            )
+            .unwrap(),
+        );
+        let entries = PRIVATE_WHITELIST.read().unwrap().clone();
+        assert_eq!(entries.len(), 5);
+        assert_eq!(
+            entries[0],
+            PrivateTarget::Ip {
+                ip: "192.168.100.99".parse().unwrap(),
+                port: Some(9999)
+            }
+        );
+        assert_eq!(
+            entries[1],
+            PrivateTarget::Cidr {
+                net: "192.168.100.0".parse().unwrap(),
+                prefix: 24
+            }
+        );
+        assert_eq!(
+            entries[2],
+            PrivateTarget::Ip {
+                ip: "::1".parse().unwrap(),
+                port: Some(8080)
+            }
+        );
+        assert_eq!(
+            entries[3],
+            PrivateTarget::Domain {
+                name: "nas.lan".to_string(),
+                port: None
+            }
+        );
+
+        // 域名匹配大小写与尾点不敏感；端口约束一致才算命中
+        assert!(url_matches_whitelist(
+            &Url::parse("http://nas.lan/x").unwrap()
+        ));
+        assert!(url_matches_whitelist(
+            &Url::parse("http://NAS.LAN.:80/x").unwrap()
+        ));
+        assert!(!url_matches_whitelist(
+            &Url::parse("http://other.lan/x").unwrap()
+        ));
+        // IP 目标：单 IP 带端口要端口一致；网段条目不看端口
+        assert!(url_matches_whitelist(
+            &Url::parse("http://192.168.100.99:9999/").unwrap()
+        ));
+        assert!(url_matches_whitelist(
+            &Url::parse("http://192.168.100.123/").unwrap()
+        ));
+        assert!(url_matches_whitelist(
+            &Url::parse("http://10.0.0.1:1/").unwrap()
+        ));
+        assert!(!url_matches_whitelist(
+            &Url::parse("http://10.0.0.2/").unwrap()
+        ));
+        assert!(url_matches_whitelist(
+            &Url::parse("http://[::1]:8080/").unwrap()
+        ));
+        assert!(!url_matches_whitelist(
+            &Url::parse("http://[::1]/").unwrap()
+        ));
+        // 裸 IPv6 白名单条目（无端口）匹配任意端口
+        set_private_network_whitelist(parse_private_whitelist("::1, fd00::1/8").unwrap());
+        assert!(url_matches_whitelist(
+            &Url::parse("http://[::1]:1/").unwrap()
+        ));
+        assert!(url_matches_whitelist(
+            &Url::parse("http://[fd00::1]/").unwrap()
+        ));
+        assert!(!url_matches_whitelist(
+            &Url::parse("http://[fe00::1]/").unwrap()
+        ));
+        // 公网地址不在名单里
+        assert!(!url_matches_whitelist(
+            &Url::parse("http://1.1.1.1/").unwrap()
+        ));
+        restore_guard_defaults();
+    }
+
+    #[test]
+    fn whitelist_rejects_invalid_entries() {
+        assert!(parse_private_whitelist("192.168.0.0/33").is_err());
+        assert!(parse_private_whitelist("192.168.0.0/notaprefix").is_err());
+        assert!(parse_private_whitelist("[::1").is_err());
+        assert!(parse_private_whitelist("foo:bar").is_err());
+    }
+
+    #[test]
+    fn guard_with_whitelist_blocks_unlisted_and_allows_listed() {
+        let _lock = TEST_SERIALIZER.lock().unwrap();
+        set_allow_private_network(false);
+        set_private_network_whitelist(
+            parse_private_whitelist("192.168.100.99:9999, nas.lan").unwrap(),
+        );
+        // 名单内：字面 IP 直接放行，域名跳过 DNS 检查
+        assert!(
+            ensure_outbound_url_str_allowed_blocking("http://192.168.100.99:9999/content").is_ok()
+        );
+        assert!(ensure_outbound_url_str_allowed_blocking("http://nas.lan/api").is_ok());
+        // 名单外：私网字面量、内网主机名一律拦截
+        assert!(ensure_outbound_url_str_allowed_blocking("http://192.168.100.98/").is_err());
+        assert!(ensure_outbound_url_str_allowed_blocking("http://10.1.2.3/").is_err());
+        assert!(ensure_outbound_url_str_allowed_blocking("http://localhost:6379/").is_err());
+        restore_guard_defaults();
+    }
+
+    #[test]
+    fn empty_whitelist_with_allow_false_allows_everything() {
+        let _lock = TEST_SERIALIZER.lock().unwrap();
+        set_allow_private_network(false);
+        set_private_network_whitelist(Vec::new());
+        // 名单为空 = 全部放行（等同 allow=true），不做 DNS 检查直接过
+        assert!(ensure_outbound_url_str_allowed_blocking("http://127.0.0.1/").is_ok());
+        assert!(ensure_outbound_url_str_allowed_blocking("http://192.168.1.1:9999/").is_ok());
+        restore_guard_defaults();
     }
 }
