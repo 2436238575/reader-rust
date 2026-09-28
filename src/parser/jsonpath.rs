@@ -1,6 +1,10 @@
 use serde_json::Value;
+use std::sync::LazyLock;
 
 use crate::parser::rule_analyzer::split_top_level;
+
+static EMBEDDED_PATH_RE: LazyLock<regex::Regex> =
+    LazyLock::new(|| regex::Regex::new(r"\{\s*(\$[^}]+)\}").unwrap());
 
 /// 单条 JsonPath 求值，不处理 `&&`/`||`/`%%` 组合符。
 pub fn jsonpath_query(value: &Value, rule: &str) -> Vec<Value> {
@@ -84,22 +88,44 @@ pub fn jsonpath_query_combined(value: &Value, rule: &str) -> Vec<Value> {
     result
 }
 
+/// 规则内嵌 `{$.path}` 占位符时整体按字符串模板渲染；含 `{$` 但占位符
+/// 未闭合/不匹配时返回 None，交回普通 JSONPath 求值，而不是吞成空串假命中。
 fn render_embedded_paths(value: &Value, rule: &str) -> Option<String> {
     if !rule.contains("{$") {
         return None;
     }
-    let re = regex::Regex::new(r"\{\s*(\$[^}]+)\}").unwrap();
     let mut replaced_any = false;
-    let rendered = re
+    let rendered = EMBEDDED_PATH_RE
         .replace_all(rule, |captures: &regex::Captures| {
             replaced_any = true;
             let path = captures.get(1).map(|m| m.as_str()).unwrap_or_default();
             jsonpath_first_string(value, path).unwrap_or_default()
         })
         .into_owned();
-    if replaced_any {
-        Some(rendered)
-    } else {
-        Some(String::new())
+    replaced_any.then_some(rendered)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn embedded_paths_render_against_document() {
+        let doc = json!({"data": {"name": "abc", "id": 7}});
+        assert_eq!(
+            jsonpath_first_string(&doc, "prefix-{$.data.name}-{$.data.id}"),
+            Some("prefix-abc-7".to_string())
+        );
+    }
+
+    #[test]
+    fn unclosed_embedded_path_falls_back_to_normal_query() {
+        let doc = json!({"a": 1});
+        // 未闭合的占位符不是合法 JSONPath：结果为空，但不能吞成空串假命中
+        assert_eq!(jsonpath_first_string(&doc, "{$.a"), None);
+        assert!(jsonpath_query(&doc, "{$.a").is_empty());
+        // 正常 JSONPath 不受影响
+        assert_eq!(jsonpath_first_string(&doc, "$.a"), Some("1".to_string()));
     }
 }
