@@ -2807,9 +2807,10 @@ fn eval_field_html_with_ctx(
     )
 }
 
-/// 文档级字段求值（书籍详情等）。注意它与元素级入口并不等价：没有 `##` 替换、
-/// 字段级组合符（`&&`/`||`/`%%`）与 `@json:`/`@regex:` 前缀分支——是漂移还是有意
-/// 精简未考据；补齐会改变既有解析行为，如确认是缺陷需单独评估并补测试。
+/// 文档级字段求值（书籍详情等），与元素级入口同构：模式前缀、字段级组合符、
+/// `@put`/`@get` 与共享尾段（`##` 拆分/替换、JS 链式）全部一致，只差取值原语
+/// 作用在整份文档上。此前缺 `##`/组合符是漂移——含这些记号的文档级规则原本
+/// 就是坏的（选择器非法恒落空），补齐只会修不会回归。
 fn eval_field_html_doc_with_ctx(
     rule: &str,
     doc_view: &DocView<'_>,
@@ -2818,13 +2819,43 @@ fn eval_field_html_doc_with_ctx(
 ) -> Option<String> {
     // Handle mode forcing prefixes
     let rule = rule.trim();
-    if rule.starts_with("@css:") {
-        let pure = &rule[5..];
+    if let Some(pure) = rule.strip_prefix("@css:") {
         return eval_field_html_doc_with_ctx(pure, doc_view, base_url, ctx);
     }
-    if rule.starts_with("@xpath:") {
-        let pure = &rule[7..];
-        return html::select_xpath(doc_view.html(), pure).first().cloned();
+    if let Some(pure) = rule.strip_prefix("@xpath:") {
+        return html::select_xpath(doc_view.html(), pure.trim())
+            .into_iter()
+            .next();
+    }
+    if let Some(pure) = rule.strip_prefix("@json:") {
+        // 文档级 JSON：规则作用在整份文档的文本上（通常是上一步 JS 产出的 JSON）
+        let text = doc_view
+            .doc()
+            .root_element()
+            .text()
+            .collect::<Vec<_>>()
+            .join("");
+        let value: Value = serde_json::from_str(&text).ok()?;
+        return eval_field_json_with_ctx(pure, &value, base_url, ctx);
+    }
+    if let Some(pure) = rule.strip_prefix("@regex:") {
+        let text = doc_view
+            .doc()
+            .root_element()
+            .text()
+            .collect::<Vec<_>>()
+            .join("");
+        return eval_literal_field(pure, &text, base_url, ctx);
+    }
+
+    // 字段级组合符：逐条求值后合并（规格 §8.3）
+    if let Some(texts) = combine_strings(rule, |part| {
+        eval_field_html_doc_with_ctx(part, doc_view, base_url, ctx)
+    }) {
+        if texts.is_empty() {
+            return None;
+        }
+        return Some(texts.join("\n"));
     }
 
     if let Some(res) = try_put_get(rule, ctx, |r, ctx| {
@@ -2835,32 +2866,15 @@ fn eval_field_html_doc_with_ctx(
 
     let interpolated_rule = interpolate_common_templates(rule, doc_view.html(), base_url, ctx);
     let had_templates = interpolated_rule != rule;
-    let (pure, js, tail) = extract_js(&interpolated_rule);
-    let mut text = if pure.is_empty() {
-        "".to_string()
-    } else {
-        html::select_text(doc_view.doc(), pure).unwrap_or_default()
-    };
-    if text.is_empty() && had_templates && !pure.is_empty() {
-        text = pure.to_string();
-    }
-
-    if let Some(script) = js {
-        if let Ok(res) = eval_js(script, &text, base_url) {
-            text = res;
-        }
-    }
-    if let Some(tail) = tail {
-        if let Some(res) = eval_rule_on_text(tail, &text, base_url, ctx) {
-            text = res;
-        }
-    }
-
-    if text.is_empty() {
-        None
-    } else {
-        Some(text)
-    }
+    eval_field_tail(
+        &interpolated_rule,
+        had_templates,
+        base_url,
+        ctx,
+        true,
+        String::new,
+        |pure| html::select_text(doc_view.doc(), pure).unwrap_or_default(),
+    )
 }
 
 fn eval_field_json(rule: &str, v: &Value, base_url: &str) -> Option<String> {
@@ -4078,6 +4092,33 @@ mod tests {
         );
         assert_eq!(book.name, "Book-Alias");
         assert_eq!(book.author, "Tester");
+    }
+
+    #[test]
+    fn test_book_info_html_supports_legado_regex_and_combinators() {
+        // 文档级字段与元素级同构：`##` 替换与 `&&` 组合都生效
+        let source = BookSource {
+            book_source_name: "Info".to_string(),
+            book_source_url: "https://source.example".to_string(),
+            rule_book_info: Some(BookInfoRule {
+                name: Some(".name@text##（.*）".to_string()),
+                author: Some(".a1@text&&.a2@text".to_string()),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let body = r#"<div class="name">雪中（修订版）</div><span class="a1">烽火</span><span class="a2">戏诸侯</span>"#;
+        let mut ctx = HashMap::new();
+        let book = parse_book_info_html(
+            &source,
+            body,
+            "https://books.example/detail/1",
+            &source.rule_book_info.clone().unwrap(),
+            "https://books.example/detail/1",
+            &mut ctx,
+        );
+        assert_eq!(book.name, "雪中");
+        assert_eq!(book.author, "烽火\n戏诸侯");
     }
 
     /// 一份按番茄接口（FQWeb）写的评论规则，用作解析回归的样本。
