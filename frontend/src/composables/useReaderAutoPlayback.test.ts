@@ -99,6 +99,7 @@ function fakeElement(innerText: string, paragraphs: HTMLElement[] = [], innerHTM
     offsetTop: 0,
     offsetHeight: 20,
     scrollTop: 0,
+    isConnected: true,
     classList: {
       add: vi.fn(),
       remove: vi.fn(),
@@ -106,5 +107,10 @@ function fakeElement(innerText: string, paragraphs: HTMLElement[] = [], innerHTM
     querySelector: vi.fn(() => null),
     querySelectorAll: vi.fn((selector: string) => selector === 'p' ? paragraphs : []),
     scrollTo: vi.fn(),
+    // paragraphSpeakText 会 clone 后剔除评论气泡再取文本；假元素没有气泡，原样返回文本
+    cloneNode: vi.fn(() => ({
+      querySelectorAll: vi.fn(() => []),
+      textContent: innerText,
+    })),
   } as unknown as HTMLElement
 }

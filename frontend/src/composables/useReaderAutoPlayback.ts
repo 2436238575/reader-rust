@@ -31,6 +31,9 @@ export function useReaderAutoPlayback(
   let autoReadingProcessing = false
   let speechRestartTimer: number | null = null
   let isSpeechTransitioning = false
+  // 朗读链路自己驱动的翻章（章末续读/跨章上一段）也会改 content；
+  // handleContentChanged 据此区分「用户手动翻章」——只有后者才把朗读重定位到新章
+  let speechDrivenChapterChange = false
   let currentSpeechParagraph: HTMLElement | null = null
   let currentSpeechSegments: { text: string; nextParagraph: HTMLElement | null }[] = []
   let currentSpeechSegmentIndex = 0
@@ -132,6 +135,25 @@ export function useReaderAutoPlayback(
     return null
   }
 
+  // 正文 DOM 会被评论气泡注入/简繁转换整棵重建：旧段元素失效 ≠ 章末。
+  // 朗读链路上下一步拿到的若是已 detach 的旧元素，按滚动位置重新锚定
+  //（showParagraph 已把刚读完的那段滚到顶部，其下一段即原定目标），
+  // 否则链路会把「重建」误判成「章末」而提前翻到下一章
+  function reanchorIfDetached(paragraph: HTMLElement | null) {
+    if (paragraph && !paragraph.isConnected) {
+      return getNextParagraphFrom(getCurrentParagraph())
+    }
+    return paragraph
+  }
+
+  // 朗读文本去掉段评气泡的计数按钮（innerText 会把「999+」也读出来）
+  function paragraphSpeakText(paragraph: HTMLElement | null | undefined) {
+    if (!paragraph) return ''
+    const clone = paragraph.cloneNode(true) as HTMLElement
+    clone.querySelectorAll('.para-comment-bubble').forEach((el) => el.remove())
+    return (clone.textContent || '').trim()
+  }
+
   function splitLongSentence(sentence: string) {
     const chunks: string[] = []
     let remaining = sentence.trim()
@@ -153,7 +175,7 @@ export function useReaderAutoPlayback(
   }
 
   function buildParagraphSpeechChunks(paragraph: HTMLElement | null) {
-    const rawText = paragraph?.innerText.trim() || ''
+    const rawText = paragraphSpeakText(paragraph)
     if (!rawText) return [] as string[]
 
     const sentences = rawText
@@ -191,7 +213,7 @@ export function useReaderAutoPlayback(
   }
 
   function buildMergedSpeechSegment(paragraph: HTMLElement | null) {
-    const currentText = paragraph?.innerText.trim() || ''
+    const currentText = paragraphSpeakText(paragraph)
     if (!currentText) {
       return {
         text: '',
@@ -213,7 +235,7 @@ export function useReaderAutoPlayback(
     let cursorIndex = startIndex + 1
 
     while (cursorIndex < list.length && mergedLength < OPENAI_MERGED_SEGMENT_CHAR_LIMIT) {
-      const nextText = list[cursorIndex]?.innerText.trim() || ''
+      const nextText = paragraphSpeakText(list[cursorIndex])
       if (!nextText) {
         cursorIndex += 1
         continue
@@ -255,7 +277,7 @@ export function useReaderAutoPlayback(
   function ensureSpeechChunkState(paragraph: HTMLElement) {
     if (store.speechConfig.provider !== 'openai') {
       return {
-        text: paragraph.innerText.trim(),
+        text: paragraphSpeakText(paragraph),
         nextParagraph: getNextParagraphFrom(paragraph),
       }
     }
@@ -421,6 +443,8 @@ export function useReaderAutoPlayback(
   }
 
   function restartSpeechTarget(paragraph: HTMLElement | null, interruptCurrent = true) {
+    // 不做 reanchorIfDetached：这里的入参也可能是「上一段」，方向会反；
+    // 其调用方的目标都取自实时 DOM，不会 detach
     logSpeech('restartSpeechTarget', {
       interruptCurrent,
       paragraph: paragraphPreview(paragraph),
@@ -454,6 +478,7 @@ export function useReaderAutoPlayback(
   }
 
   function continueSpeechTarget(paragraph: HTMLElement | null, resetChunks = true) {
+    paragraph = reanchorIfDetached(paragraph)
     logSpeech('continueSpeechTarget', {
       resetChunks,
       paragraph: paragraphPreview(paragraph),
@@ -493,18 +518,28 @@ export function useReaderAutoPlayback(
     if (resetChunks) {
       resetSpeechChunkState()
     }
+    speechDrivenChapterChange = true
+    const fromIndex = store.currentIndex
     Promise.resolve(nextChapter())
       .then(() => {
         speechRestartTimer = window.setTimeout(() => {
+          speechDrivenChapterChange = false
           if (store.isPaused) {
             isSpeechTransitioning = false
             return
           }
           isSpeechTransitioning = false
+          if (store.currentIndex === fromIndex) {
+            // 翻章失败（loadChapter 已 toast 并有错误态）：停播而不是在旧章上循环重试
+            store.stopTTS()
+            clearReadingClass()
+            return
+          }
           startSpeech(getFilteredParagraphs()[0] || null, false)
         }, continueDelay)
       })
       .catch(() => {
+        speechDrivenChapterChange = false
         isSpeechTransitioning = false
       })
   }
@@ -516,7 +551,7 @@ export function useReaderAutoPlayback(
       paragraph: paragraphPreview(current),
       currentIndex: store.currentIndex,
     })
-    if (!current?.innerText.trim()) {
+    if (!current || !paragraphSpeakText(current)) {
       if (interruptCurrent) {
         speechNext()
       } else {
@@ -594,12 +629,25 @@ export function useReaderAutoPlayback(
       return
     }
     store.stopTTS(false)
-    Promise.resolve(prevChapter()).then(() => {
-      window.setTimeout(() => {
-        const list = getFilteredParagraphs()
-        restartSpeechTarget(list[list.length - 1] || null)
-      }, 120)
-    })
+    speechDrivenChapterChange = true
+    const fromIndex = store.currentIndex
+    Promise.resolve(prevChapter())
+      .then(() => {
+        window.setTimeout(() => {
+          speechDrivenChapterChange = false
+          if (store.currentIndex === fromIndex) {
+            // 翻章失败：已 toast，停播而不是读旧章末尾再跳走
+            store.stopTTS()
+            clearReadingClass()
+            return
+          }
+          const list = getFilteredParagraphs()
+          restartSpeechTarget(list[list.length - 1] || null)
+        }, 120)
+      })
+      .catch(() => {
+        speechDrivenChapterChange = false
+      })
   }
 
   function speechNext(forcedNext?: HTMLElement | null, interruptCurrent = true) {
@@ -623,11 +671,24 @@ export function useReaderAutoPlayback(
     if (interruptCurrent) {
       store.stopTTS(false)
     }
-    Promise.resolve(nextChapter()).then(() => {
-      window.setTimeout(() => {
-        restartSpeechTarget(getFilteredParagraphs()[0] || null)
-      }, 120)
-    })
+    speechDrivenChapterChange = true
+    const fromIndex = store.currentIndex
+    Promise.resolve(nextChapter())
+      .then(() => {
+        window.setTimeout(() => {
+          speechDrivenChapterChange = false
+          if (store.currentIndex === fromIndex) {
+            // 翻章失败：已 toast，停播而不是在旧章上循环
+            store.stopTTS()
+            clearReadingClass()
+            return
+          }
+          restartSpeechTarget(getFilteredParagraphs()[0] || null)
+        }, 120)
+      })
+      .catch(() => {
+        speechDrivenChapterChange = false
+      })
   }
 
   function restartSpeechFromCurrentParagraph() {
@@ -676,6 +737,25 @@ export function useReaderAutoPlayback(
           runAutoParagraph()
         }
       }, 100)
+    }
+
+    // 朗读/待播中正文被换掉，且不是朗读链路自己翻的章：用户手动翻了章
+    // （或从书架面板换了书）。旧章段落已随 v-html 重建 detach，继续播会
+    // 读旧章文本、把新章滚回顶部，段末再触发一次翻章直接跳过用户打开的章。
+    // 停掉旧段并重定位到新章开头；暂停态只停旧段不自动开播（resume 落到新章）
+    const speechActive = store.isSpeaking || store.isPaused || isSpeechTransitioning || speechRestartTimer !== null
+    if (!speechDrivenChapterChange && speechActive) {
+      const wasPaused = store.isPaused
+      cancelSpeechTransition()
+      resetSpeechChunkState()
+      clearReadingClass()
+      store.stopTTS(false)
+      if (!wasPaused) {
+        speechRestartTimer = window.setTimeout(() => {
+          speechRestartTimer = null
+          startSpeech(getFilteredParagraphs()[0] || null, false)
+        }, 150)
+      }
     }
   }
 
