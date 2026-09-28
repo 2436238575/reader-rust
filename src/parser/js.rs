@@ -378,27 +378,19 @@ fn eval_js_inner_with_source(
         )?;
         java_obj.set(
             "encodeURIComponent",
-            Func::new(|input: String| -> String { urlencoding::encode(&input).into_owned() }),
+            Func::new(|input: String| -> String { js_encode_uri_component(&input) }),
         )?;
         java_obj.set(
             "decodeURIComponent",
-            Func::new(|input: String| -> String {
-                urlencoding::decode(&input)
-                    .map(|s| s.into_owned())
-                    .unwrap_or_default()
-            }),
+            Func::new(|input: String| -> String { js_decode_uri_component(&input) }),
         )?;
         java_obj.set(
             "encodeURI",
-            Func::new(|input: String| -> String { urlencoding::encode(&input).into_owned() }),
+            Func::new(|input: String| -> String { js_encode_uri(&input) }),
         )?;
         java_obj.set(
             "decodeURI",
-            Func::new(|input: String| -> String {
-                urlencoding::decode(&input)
-                    .map(|s| s.into_owned())
-                    .unwrap_or_default()
-            }),
+            Func::new(|input: String| -> String { js_decode_uri(&input) }),
         )?;
         java_obj.set(
             "now",
@@ -524,6 +516,91 @@ fn java_aes_base64_decode_to_string(input: &str, key: &str, algorithm: &str, iv:
         .ok()
         .and_then(|bytes| String::from_utf8(bytes.to_vec()).ok())
         .unwrap_or_default()
+}
+
+/// ECMAScript 风格百分号编码：`keep` 命中的字节原样保留，其余按 UTF-8 字节输出大写 %XX。
+fn percent_encode_keep(input: &str, keep: fn(u8) -> bool) -> String {
+    const HEX: &[u8; 16] = b"0123456789ABCDEF";
+    let mut out = String::with_capacity(input.len());
+    for &byte in input.as_bytes() {
+        if keep(byte) {
+            out.push(byte as char);
+        } else {
+            out.push('%');
+            out.push(HEX[(byte >> 4) as usize] as char);
+            out.push(HEX[(byte & 0xF) as usize] as char);
+        }
+    }
+    out
+}
+
+fn is_uri_unreserved(byte: u8) -> bool {
+    byte.is_ascii_alphanumeric()
+        || matches!(
+            byte,
+            b'-' | b'_' | b'.' | b'!' | b'~' | b'*' | b'\'' | b'(' | b')'
+        )
+}
+
+fn is_uri_reserved(byte: u8) -> bool {
+    matches!(
+        byte,
+        b';' | b'/' | b'?' | b':' | b'@' | b'&' | b'=' | b'+' | b'$' | b',' | b'#'
+    )
+}
+
+/// `encodeURIComponent`：只保留非保留字符（A-Z a-z 0-9 与 - _ . ! ~ * ' ( )）。
+fn js_encode_uri_component(input: &str) -> String {
+    percent_encode_keep(input, is_uri_unreserved)
+}
+
+/// `encodeURI`：额外保留 URI 保留字符 ; / ? : @ & = + $ , #，可直接处理完整 URL。
+fn js_encode_uri(input: &str) -> String {
+    percent_encode_keep(input, |byte| {
+        is_uri_unreserved(byte) || is_uri_reserved(byte)
+    })
+}
+
+fn hex_value(byte: u8) -> Option<u8> {
+    match byte {
+        b'0'..=b'9' => Some(byte - b'0'),
+        b'a'..=b'f' => Some(byte - b'a' + 10),
+        b'A'..=b'F' => Some(byte - b'A' + 10),
+        _ => None,
+    }
+}
+
+/// ECMAScript 风格百分号解码。`keep_reserved`（decodeURI）时，解码结果是
+/// URI 保留字符的 %XX 序列保持原样；非法序列一律按原文保留而不是清空整串。
+fn percent_decode(input: &str, keep_reserved: bool) -> String {
+    let bytes = input.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%' && i + 2 < bytes.len() {
+            if let (Some(hi), Some(lo)) = (hex_value(bytes[i + 1]), hex_value(bytes[i + 2])) {
+                let decoded = (hi << 4) | lo;
+                if keep_reserved && is_uri_reserved(decoded) {
+                    out.extend_from_slice(&bytes[i..i + 3]);
+                } else {
+                    out.push(decoded);
+                }
+                i += 3;
+                continue;
+            }
+        }
+        out.push(bytes[i]);
+        i += 1;
+    }
+    String::from_utf8_lossy(&out).into_owned()
+}
+
+fn js_decode_uri(input: &str) -> String {
+    percent_decode(input, true)
+}
+
+fn js_decode_uri_component(input: &str) -> String {
+    percent_decode(input, false)
 }
 
 fn eval_script<'js>(ctx: rquickjs::Ctx<'js>, script: &str) -> anyhow::Result<Value<'js>> {
@@ -768,6 +845,35 @@ mod tests {
         );
         // 字符串方法 / 正则等常用能力不受资源上限影响
         assert_eq!(eval_js("'a,b,c'.split(',').length", "", "").unwrap(), "3");
+    }
+
+    #[test]
+    fn java_uri_codecs_follow_ecmascript_semantics() {
+        // encodeURIComponent：URI 保留字符一律编码
+        assert_eq!(
+            eval_js("java.encodeURIComponent('a b?c=d&e')", "", "").unwrap(),
+            "a%20b%3Fc%3Dd%26e"
+        );
+        // encodeURI：保留字符原样保留，中文等非 URL 字符照常编码
+        assert_eq!(
+            eval_js(
+                "java.encodeURI('https://x.com/p?q=中文&page=1#top')",
+                "",
+                ""
+            )
+            .unwrap(),
+            "https://x.com/p?q=%E4%B8%AD%E6%96%87&page=1#top"
+        );
+        // decodeURIComponent：全部 %XX 解码
+        assert_eq!(
+            eval_js("java.decodeURIComponent('a%20b%3Fc%3Dd')", "", "").unwrap(),
+            "a b?c=d"
+        );
+        // decodeURI：解码结果是保留字符的序列保持原样，其余照解
+        assert_eq!(
+            eval_js("java.decodeURI('https%3A//x.com/%E4%B8%AD%20q')", "", "").unwrap(),
+            "https%3A//x.com/中 q"
+        );
     }
 
     #[test]
