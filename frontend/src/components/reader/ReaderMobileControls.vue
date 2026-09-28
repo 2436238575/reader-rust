@@ -38,11 +38,9 @@
       <div v-show="show" class="m-bottom-bar">
         <div class="progress-row" @click="$emit('progress')">
           <div class="progress-track">
-            <!-- Mock slider for now -->
             <div class="progress-fill" :style="{ width: store.readingProgress }"></div>
             <div class="progress-thumb" :style="{ left: store.readingProgress }"></div>
           </div>
-          <span class="page-text">第 1/1 页</span>
         </div>
         <div class="nav-row">
           <div class="nav-btn" :class="{ disabled: !store.hasPrev }" @click="$emit('prev')">
@@ -252,11 +250,6 @@ defineEmits<{
   box-shadow: 0 1px 3px rgba(0,0,0,0.2);
 }
 
-.page-text {
-  font-size: var(--text-xs);
-  opacity: 0.6;
-}
-
 .nav-row {
   display: flex;
   align-items: center;
@@ -351,10 +344,6 @@ defineEmits<{
 
   .progress-row {
     gap: 10px;
-  }
-
-  .page-text {
-    font-size: var(--text-xs);
   }
 
   .nav-row {
