@@ -1084,7 +1084,7 @@ function pageBackward() {
   if (!container) return
   if (isHorizontalPageMode.value) {
     if (horizontalPageIndex.value <= 0) {
-      prevChapter()
+      prevChapter(true)
       return
     }
     horizontalPageIndex.value = Math.max(0, horizontalPageIndex.value - 1)
@@ -1094,7 +1094,7 @@ function pageBackward() {
   }
   const step = container.clientHeight * 0.88
   if (container.scrollTop <= 10) {
-    prevChapter()
+    prevChapter(true)
     return
   }
   container.scrollBy({ top: -step, behavior: 'smooth' })
@@ -1138,12 +1138,24 @@ function persistReadingProgressTemporaryKeepalive() {
   readerProgressExitSaver.flushTemporaryKeepalive()
 }
 
-async function prevChapter() {
+async function prevChapter(toChapterEnd = false) {
   const targetIndex = store.currentIndex - 1
   if (targetIndex < 0) return
 
   if (!isContinuousMode.value) {
     await store.prevChapter()
+    if (toChapterEnd) {
+      // 「章头再翻上一页」是在往回读：落到上一章章末，而不是章头。
+      // 走恢复通道（与书签跳转同路）——横翻落最后一页、竖滚滚到底
+      pendingRestorePosition.value = {
+        chapterIndex: targetIndex,
+        progress: 1,
+        updatedAt: Date.now(),
+      }
+      pendingRestoreAttempts = 0
+      scheduleRestoreReadingPosition()
+      return
+    }
     scrollToTop()
     return
   }
@@ -1571,7 +1583,9 @@ function restoreReadingPositionInternal(saved: SavedReadingPosition | null, fina
     }
   }
 
-  container.scrollTo({ top: Math.max(0, targetTop), behavior: 'auto' })
+  // 恢复定位要瞬时完成：'auto' 会跟随容器 CSS 的 scroll-behavior:smooth，
+  // 恢复一个几千像素的位置会爬行数秒，看起来像卡在旧位置
+  container.scrollTo({ top: Math.max(0, targetTop), behavior: 'instant' as ScrollBehavior })
   if (finalize) {
     pendingRestorePosition.value = null
     pendingRestoreAttempts = 0
@@ -1752,7 +1766,7 @@ function clickZoneAction(zone: 'prev' | 'menu' | 'next') {
     }
   } else {
     if (container.scrollTop === 0) {
-      if (config.value.clickAction === 'auto') prevChapter()
+      if (config.value.clickAction === 'auto') prevChapter(true)
     } else {
       container.scrollBy({ top: -delta, behavior: 'smooth' })
     }
