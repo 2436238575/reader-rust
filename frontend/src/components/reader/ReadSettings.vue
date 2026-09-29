@@ -224,6 +224,15 @@
           </button>
           <button
             class="opt-btn"
+            :class="{ active: config.readMethod === '双页翻页' }"
+            :disabled="!dualPageAvailable"
+            :title="dualPageAvailable ? '' : '窗口宽度不足（需 ≥ 960px）'"
+            @click="store.updateConfig('readMethod', '双页翻页')"
+          >
+            双页翻页
+          </button>
+          <button
+            class="opt-btn"
             :class="{ active: config.readMethod === '上下滚动' }"
             @click="store.updateConfig('readMethod', '上下滚动')"
           >
@@ -603,10 +612,11 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, onBeforeUnmount, ref } from 'vue'
 import { useReaderStore, themePresets, fontPresets } from '../../stores/reader'
 import { useAiBookStore } from '../../stores/aiBook'
 import { useAppStore } from '../../stores/app'
+import { DUAL_PAGE_MIN_WIDTH } from '../../composables/useHorizontalPaging'
 
 const store = useReaderStore()
 const aiBookStore = useAiBookStore()
@@ -615,6 +625,15 @@ const config = computed(() => store.config)
 const theme = computed(() => store.currentTheme)
 const serverModelLoaded = ref(false)
 const canUseServerModel = computed(() => Boolean(aiBookStore.serverModelConfig?.canUseServerModel))
+
+// 双页翻页只在窗口宽度足够时可选（阅读器里过窄会自动退回单页）
+const windowWidth = ref(typeof window !== 'undefined' ? window.innerWidth : 1024)
+const dualPageAvailable = computed(() => windowWidth.value >= DUAL_PAGE_MIN_WIDTH)
+function trackWindowWidth() {
+  windowWidth.value = window.innerWidth
+}
+onMounted(() => window.addEventListener('resize', trackWindowWidth))
+onBeforeUnmount(() => window.removeEventListener('resize', trackWindowWidth))
 
 function step(
   key: 'fontSize' | 'fontWeight' | 'pageWidth' | 'animateDuration' | 'scrollPixel' | 'pageSpeed',

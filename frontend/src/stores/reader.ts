@@ -58,7 +58,7 @@ export interface ReadConfig {
   fontColor: string
   pageWidth: number
   pageMode: 'auto' | 'mobile'
-  readMethod: '上下滑动' | '左右翻页' | '上下滚动' | '上下滚动2'
+  readMethod: '上下滑动' | '左右翻页' | '双页翻页' | '上下滚动' | '上下滚动2'
   animateDuration: number
   autoPageMode: 'pixel' | 'paragraph'
   scrollPixel: number

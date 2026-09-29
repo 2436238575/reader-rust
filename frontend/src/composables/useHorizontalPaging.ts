@@ -7,6 +7,11 @@ const HORIZONTAL_PAGE_SIDE_PADDING = 24
 const HORIZONTAL_PAGE_VERTICAL_PADDING = 24
 const HORIZONTAL_PAGE_MIN_BOTTOM_GUARD = 18
 const HORIZONTAL_PAGE_BOTTOM_GUARD_LINES = 0.5
+// 桌面端左侧有 64px 固定 sidebar（>767px 时存在）：横翻内容区两侧各留 88px，
+// 居中后不被遮挡
+const HORIZONTAL_DESKTOP_SIDE_CLEARANCE = 88
+// 双页翻页的最小容器宽度：两列都要保持可读宽度
+export const DUAL_PAGE_MIN_WIDTH = 960
 const NON_STARTING_PUNCTUATION = new Set([
   '，',
   '。',
@@ -58,15 +63,25 @@ const MAX_PUNCTUATION_BACKTRACK = 12
 
 export function useHorizontalPaging(
   store: ReaderStore,
-  config: ComputedRef<{ fontSize: number; fontWeight: number; lineHeight: number }>,
+  config: ComputedRef<{
+    fontSize: number
+    fontWeight: number
+    lineHeight: number
+    pageWidth: number
+  }>,
   currentFontFamily: ComputedRef<string>,
   formattedContent: ComputedRef<string>,
   isHorizontalPageMode: ComputedRef<boolean>,
-  scrollContainerRef: Ref<HTMLElement | undefined>
+  scrollContainerRef: Ref<HTMLElement | undefined>,
+  isDualPageMode: ComputedRef<boolean>
 ) {
   const horizontalPageIndex = ref(0)
+  // 单列宽度（翻页的位移单位）；双页模式下窗口 = 两列
   const horizontalPageStep = ref(1)
   const horizontalPageStepStyle = computed(() => `${Math.max(1, horizontalPageStep.value)}px`)
+  const horizontalPageWindow = ref(1)
+  const horizontalPageWindowStyle = computed(() => `${Math.max(1, horizontalPageWindow.value)}px`)
+  const horizontalPageStride = computed(() => (isDualPageMode.value ? 2 : 1))
   const horizontalPages = ref<string[]>([])
   const isHorizontalAtEnd = ref(false)
   // 「瞬移」标记：章节切换/位置恢复的页码跳跃不走 transform 过渡动画，
@@ -268,7 +283,16 @@ export function useHorizontalPaging(
   function updateHorizontalMetrics() {
     const container = scrollContainerRef.value
     if (!container || !isHorizontalPageMode.value) return
-    horizontalPageStep.value = Math.max(1, container.clientWidth)
+    const containerWidth = Math.max(1, container.clientWidth)
+    // 桌面端（sidebar 存在）居中内容两侧避让；移动端全宽
+    const sideClear = containerWidth > 767 ? HORIZONTAL_DESKTOP_SIDE_CLEARANCE : 0
+    const avail = Math.max(280, containerWidth - sideClear * 2)
+    const columnCap = Math.max(280, config.value.pageWidth)
+    const column = isDualPageMode.value
+      ? Math.min(columnCap, Math.floor(avail / 2))
+      : Math.min(columnCap, avail)
+    horizontalPageStep.value = Math.max(1, column)
+    horizontalPageWindow.value = column * horizontalPageStride.value
   }
 
   function getHorizontalPageMeasure(container: HTMLElement) {
@@ -278,7 +302,11 @@ export function useHorizontalPaging(
       Math.ceil(lineHeightPx * HORIZONTAL_PAGE_BOTTOM_GUARD_LINES)
     )
     return {
-      innerWidth: Math.max(120, horizontalPageStep.value - HORIZONTAL_PAGE_SIDE_PADDING * 2),
+      // 双页模式右列带 1px 分隔线，文字区再让 2px 防爆版
+      innerWidth: Math.max(
+        120,
+        horizontalPageStep.value - HORIZONTAL_PAGE_SIDE_PADDING * 2 - (isDualPageMode.value ? 2 : 0)
+      ),
       pageHeight: Math.max(
         160,
         container.clientHeight - HORIZONTAL_PAGE_VERTICAL_PADDING * 2 - bottomGuard
@@ -293,8 +321,10 @@ export function useHorizontalPaging(
       return
     }
     updateHorizontalMetrics()
+    // 末屏即「末页已可见」：双页模式最后一屏可能同时露出最后两页
     const maxPage = Math.max(0, horizontalPages.value.length - 1)
-    isHorizontalAtEnd.value = horizontalPageIndex.value >= maxPage
+    isHorizontalAtEnd.value =
+      horizontalPageIndex.value >= maxPage - (horizontalPageStride.value - 1)
   }
 
   async function rebuildHorizontalPages() {
@@ -551,6 +581,8 @@ export function useHorizontalPaging(
     horizontalPageIndex,
     horizontalPageStep,
     horizontalPageStepStyle,
+    horizontalPageWindowStyle,
+    horizontalPageStride,
     horizontalPages,
     isHorizontalAtEnd,
     horizontalPageContentHeightStyle,

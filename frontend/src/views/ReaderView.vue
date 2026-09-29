@@ -147,17 +147,24 @@
         class="chapter-content"
         :class="{ 'horizontal-page-article': isHorizontalPageMode }"
         :style="{
-          maxWidth: isHorizontalPageMode ? 'none' : config.pageWidth + 'px',
+          maxWidth: isHorizontalPageMode
+            ? 'none'
+            : `min(${config.pageWidth}px, 100% - ${isMobile ? 0 : 176}px)`,
           fontSize: config.fontSize + 'px',
           fontWeight: config.fontWeight,
           lineHeight: config.lineHeight,
           '--reader-page-width': config.pageWidth + 'px',
           '--reader-side-padding': '24px',
           '--reader-page-step': horizontalPageStepStyle,
+          '--reader-page-window': horizontalPageWindowStyle,
           '--reader-page-content-height': horizontalPageContentHeightStyle,
         }"
       >
-        <div v-if="isHorizontalPageMode" class="horizontal-page-layout">
+        <div
+          v-if="isHorizontalPageMode"
+          class="horizontal-page-layout"
+          :class="{ 'dual-page-mode': isDualPageMode }"
+        >
           <div v-if="store.loadError" class="load-error">
             <p>{{ store.loadError }}</p>
             <button class="retry-btn" @click="store.retryLoad()">重试</button>
@@ -354,6 +361,7 @@ import { applySystemTheme } from '../utils/systemUi'
 import { countBrowserBookCache } from '../utils/browserCache'
 import { APP_VIEWPORT_CHANGE_EVENT, syncViewportSize } from '../utils/viewport'
 import { isReaderInteractiveClickTarget, resolveReaderTapZone } from '../utils/readerClick'
+import { DUAL_PAGE_MIN_WIDTH, useHorizontalPaging } from '../composables/useHorizontalPaging'
 import { sanitizeUntrustedHtml } from '../utils/sanitize'
 import { safeLocalSet } from '../utils/storage'
 import type { ChapterImage, ParaReviewCount } from '../types'
@@ -368,7 +376,6 @@ import ReaderToolbar from '../components/reader/ReaderToolbar.vue'
 import ReaderMobileControls from '../components/reader/ReaderMobileControls.vue'
 import { useReaderSearch } from '../composables/useReaderSearch'
 import { useReaderSelection } from '../composables/useReaderSelection'
-import { useHorizontalPaging } from '../composables/useHorizontalPaging'
 import { useContinuousReading } from '../composables/useContinuousReading'
 import { useReaderAutoPlayback } from '../composables/useReaderAutoPlayback'
 
@@ -455,7 +462,14 @@ const isContinuousMode = computed(
   () => config.value.readMethod === '上下滚动' || config.value.readMethod === '上下滚动2'
 )
 const hideReadChaptersMode = computed(() => config.value.readMethod === '上下滚动2')
-const isHorizontalPageMode = computed(() => config.value.readMethod === '左右翻页')
+const isHorizontalPageMode = computed(
+  () => config.value.readMethod === '左右翻页' || config.value.readMethod === '双页翻页'
+)
+// 双页只在宽度足够时生效：窗口收窄自动退回单页横翻
+const windowWidth = ref(typeof window !== 'undefined' ? window.innerWidth : 1024)
+const isDualPageMode = computed(
+  () => config.value.readMethod === '双页翻页' && windowWidth.value >= DUAL_PAGE_MIN_WIDTH
+)
 const isIosWebkit = computed(() => {
   const ua = typeof navigator !== 'undefined' ? navigator.userAgent : ''
   return (
@@ -575,6 +589,7 @@ function scheduleRefreshOfflineCacheState() {
 let checkMediaQueued = false
 function checkMedia() {
   isMobile.value = window.innerWidth <= 767
+  windowWidth.value = window.innerWidth
   if (checkMediaQueued) return
   checkMediaQueued = true
   window.setTimeout(() => {
@@ -994,6 +1009,8 @@ const {
   horizontalPageIndex,
   horizontalPageStep,
   horizontalPageStepStyle,
+  horizontalPageWindowStyle,
+  horizontalPageStride,
   horizontalPages,
   isHorizontalAtEnd,
   horizontalPageContentHeightStyle,
@@ -1010,11 +1027,13 @@ const {
     fontSize: config.value.fontSize,
     fontWeight: config.value.fontWeight,
     lineHeight: config.value.lineHeight,
+    pageWidth: config.value.pageWidth,
   })),
   currentFontFamily,
   formattedContent,
   isHorizontalPageMode,
-  scrollContainerRef
+  scrollContainerRef,
+  isDualPageMode
 )
 
 const horizontalPageTransform = computed(() => {
@@ -1065,12 +1084,13 @@ function pageForward() {
   const container = scrollContainerRef.value
   if (!container) return
   if (isHorizontalPageMode.value) {
+    const stride = horizontalPageStride.value
     const maxPage = Math.max(0, horizontalPages.value.length - 1)
-    if (horizontalPageIndex.value >= maxPage) {
+    if (horizontalPageIndex.value + stride > maxPage) {
       nextChapter()
       return
     }
-    horizontalPageIndex.value = Math.min(maxPage, horizontalPageIndex.value + 1)
+    horizontalPageIndex.value = Math.min(maxPage, horizontalPageIndex.value + stride)
     container.scrollTo({ left: 0, behavior: 'auto' })
     syncHorizontalPageState()
     return
@@ -1091,7 +1111,7 @@ function pageBackward() {
       prevChapter(true)
       return
     }
-    horizontalPageIndex.value = Math.max(0, horizontalPageIndex.value - 1)
+    horizontalPageIndex.value = Math.max(0, horizontalPageIndex.value - horizontalPageStride.value)
     container.scrollTo({ left: 0, behavior: 'auto' })
     syncHorizontalPageState()
     return
@@ -1877,7 +1897,7 @@ function handleTouchStart(event: TouchEvent) {
 }
 
 function handleTouchMove(event: TouchEvent) {
-  if (!isMobile.value || config.value.readMethod !== '左右翻页' || !touchState.value.moving) return
+  if (!isMobile.value || !isHorizontalPageMode.value || !touchState.value.moving) return
   const selectedText = window.getSelection?.()?.toString().trim()
   if (selectedText) return
   // Keep long-press text selection gestures available on mobile.
@@ -1893,7 +1913,7 @@ function handleTouchMove(event: TouchEvent) {
 }
 
 function handleTouchEnd(event: TouchEvent) {
-  if (!isMobile.value || config.value.readMethod !== '左右翻页' || !touchState.value.moving) {
+  if (!isMobile.value || !isHorizontalPageMode.value || !touchState.value.moving) {
     touchState.value.moving = false
     return
   }
@@ -2450,6 +2470,22 @@ watch(
   }
 )
 
+// 页面宽度/双页开关决定横翻列宽：变化时重排并按当前章内进度恢复，
+// 不打断阅读位置（与切换翻页方式同一套恢复通道）
+watch([() => config.value.pageWidth, isDualPageMode], () => {
+  if (!isHorizontalPageMode.value) return
+  if (store.book && store.chapterScrollProgress > 0) {
+    pendingRestorePosition.value = {
+      chapterIndex: store.currentIndex,
+      progress: store.chapterScrollProgress,
+      updatedAt: Date.now(),
+    }
+    pendingRestoreAttempts = 0
+  }
+  scheduleRebuildHorizontalPages()
+  scheduleRestoreReadingPosition()
+})
+
 watch(
   () => store.currentIndex,
   async () => {
@@ -2692,24 +2728,27 @@ watch(
   margin: 0;
   height: 100%;
   min-height: 100%;
-  width: max-content;
-  min-width: 100%;
+  width: 100%;
   padding: 0;
 }
 
+/* 横翻的可见窗口：宽度 = 单页(单列)或双页(两列)，居中显示。
+   窗口必须 overflow:hidden 裁剪页条——窗口比容器窄时，已翻过的页
+   会露在两侧留白里 */
 .horizontal-page-layout {
-  width: max-content;
-  min-width: var(--reader-page-step);
+  width: var(--reader-page-window);
+  max-width: 100%;
+  margin: 0 auto;
   height: 100%;
 }
 
 .horizontal-content-page {
-  width: max-content;
-  min-width: var(--reader-page-step);
+  width: 100%;
   height: 100%;
   min-height: 100%;
   padding: 0;
   box-sizing: border-box;
+  overflow: hidden;
 }
 
 .horizontal-pages {
@@ -2730,6 +2769,11 @@ watch(
   min-height: 100%;
   padding: 24px var(--reader-side-padding);
   box-sizing: border-box;
+}
+
+/* 双页模式：右列（偶数页）左缘加一条浅分隔线 */
+.dual-page-mode .horizontal-page:nth-child(even) {
+  border-left: 1px solid rgba(128, 128, 128, 0.18);
 }
 
 .continuous-reading {
@@ -3151,6 +3195,17 @@ watch(
     height: auto;
   }
 
+  /* 移动端字号本来就大，章节标题收一档 */
+  .chapter-title {
+    font-size: 1.35em;
+    margin-bottom: 0.9em;
+  }
+
+  :deep(.horizontal-page-content .horizontal-flow-title) {
+    font-size: 1.25em;
+    margin-bottom: 0.8em;
+  }
+
   .continuous-reading {
     padding: 16px 0 8px;
   }
@@ -3158,10 +3213,6 @@ watch(
   .continuous-chapter {
     padding-top: 20px;
     padding-bottom: 8px;
-  }
-
-  .chapter-title {
-    margin-bottom: 0.9em;
   }
 
   .chapter-footer {
