@@ -67,7 +67,9 @@
         <strong>还没有选中书源</strong>
         <span>可以从左侧列表选择，也可以新建或导入书源。</span>
         <div class="empty-actions">
-          <button class="btn btn-sm btn-primary" type="button" @click="$emit('create')">新增书源</button>
+          <button class="btn btn-sm btn-primary" type="button" @click="$emit('create')">
+            新增书源
+          </button>
           <button class="btn btn-sm" type="button" @click="$emit('import-local')">本地导入</button>
         </div>
       </div>
@@ -87,7 +89,12 @@
         <h4>书源登录调试</h4>
         <p v-if="canLogin">当前 JSON 包含 `bookSourceUrl` 和 `loginUrl`，可以打开代理登录预览。</p>
         <p v-else>当前书源未配置 `loginUrl`，或 JSON 暂时无法解析。</p>
-        <button class="btn btn-sm btn-primary" type="button" :disabled="!canLogin || loginLoading" @click="$emit('login')">
+        <button
+          class="btn btn-sm btn-primary"
+          type="button"
+          :disabled="!canLogin || loginLoading"
+          @click="$emit('login')"
+        >
           {{ loginLoading ? '登录中...' : '打开登录页' }}
         </button>
       </div>

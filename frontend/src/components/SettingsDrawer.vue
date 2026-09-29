@@ -17,7 +17,14 @@
         <div class="drawer-body">
           <section class="drawer-section">
             <h3 class="section-title">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18">
+              <svg
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                width="18"
+                height="18"
+              >
                 <path d="M12 8v4l3 3" />
                 <circle cx="12" cy="12" r="9" />
               </svg>
@@ -45,7 +52,14 @@
 
           <section class="drawer-section">
             <h3 class="section-title">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18">
+              <svg
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                width="18"
+                height="18"
+              >
                 <path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2" />
                 <circle cx="12" cy="7" r="4" />
               </svg>
@@ -61,18 +75,35 @@
                   <button class="btn btn-danger" @click="handleLogout">退出登录</button>
                 </div>
               </div>
-              <form v-if="showPasswordPanel" class="password-panel embedded" @submit.prevent="handleChangePassword">
+              <form
+                v-if="showPasswordPanel"
+                class="password-panel embedded"
+                @submit.prevent="handleChangePassword"
+              >
                 <label class="password-field">
                   <span>当前密码</span>
-                  <input ref="oldPasswordInputRef" v-model="passwordForm.oldPassword" type="password" autocomplete="current-password" />
+                  <input
+                    ref="oldPasswordInputRef"
+                    v-model="passwordForm.oldPassword"
+                    type="password"
+                    autocomplete="current-password"
+                  />
                 </label>
                 <label class="password-field">
                   <span>新密码</span>
-                  <input v-model="passwordForm.newPassword" type="password" autocomplete="new-password" />
+                  <input
+                    v-model="passwordForm.newPassword"
+                    type="password"
+                    autocomplete="new-password"
+                  />
                 </label>
                 <label class="password-field">
                   <span>确认新密码</span>
-                  <input v-model="passwordForm.confirmPassword" type="password" autocomplete="new-password" />
+                  <input
+                    v-model="passwordForm.confirmPassword"
+                    type="password"
+                    autocomplete="new-password"
+                  />
                 </label>
                 <div class="password-actions">
                   <button class="btn btn-primary" type="submit" :disabled="changingPassword">
@@ -81,39 +112,73 @@
                 </div>
               </form>
             </div>
-            <button v-else class="btn btn-primary btn-block" @click="handleLogin">
-              登录
-            </button>
+            <button v-else class="btn btn-primary btn-block" @click="handleLogin">登录</button>
           </section>
 
           <section class="drawer-section">
             <h3 class="section-title">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18">
+              <svg
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                width="18"
+                height="18"
+              >
                 <path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H20v20H6.5a2.5 2.5 0 0 1 0-5H20" />
               </svg>
               管理
             </h3>
             <div class="btn-group">
               <button class="btn btn-soft" @click="openSourceManager">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
+                <svg
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  width="16"
+                  height="16"
+                >
                   <path d="M12 20h9M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z" />
                 </svg>
                 书源管理
               </button>
-              <button class="btn btn-soft" :disabled="!appStore.isLoggedIn" @click="openCacheLibrary">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
+              <button
+                class="btn btn-soft"
+                :disabled="!appStore.isLoggedIn"
+                @click="openCacheLibrary"
+              >
+                <svg
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  width="16"
+                  height="16"
+                >
                   <ellipse cx="12" cy="5" rx="8" ry="3" />
                   <path d="M4 5v6c0 1.66 3.58 3 8 3s8-1.34 8-3V5" />
                   <path d="M4 11v6c0 1.66 3.58 3 8 3s8-1.34 8-3v-6" />
                 </svg>
                 缓存管理
               </button>
-              <button class="btn btn-soft" :disabled="!appStore.isLoggedIn" @click="openWebdavManager">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18">
-                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-                <path d="M7 10l5 5 5-5" />
-                <path d="M12 15V3" />
-              </svg>
+              <button
+                class="btn btn-soft"
+                :disabled="!appStore.isLoggedIn"
+                @click="openWebdavManager"
+              >
+                <svg
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  width="18"
+                  height="18"
+                >
+                  <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                  <path d="M7 10l5 5 5-5" />
+                  <path d="M12 15V3" />
+                </svg>
                 备份与恢复
               </button>
             </div>
@@ -121,7 +186,14 @@
 
           <section class="drawer-section">
             <h3 class="section-title">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18">
+              <svg
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                width="18"
+                height="18"
+              >
                 <path d="M12 16V4" />
                 <path d="m7 9 5-5 5 5" />
                 <path d="M20 16.5a2.5 2.5 0 0 1-2.5 2.5h-11A2.5 2.5 0 0 1 4 16.5" />
@@ -143,15 +215,22 @@
               <small>刷新后可使用最新离线资源</small>
             </div>
             <div class="btn-group">
-              <button class="btn btn-soft" :disabled="!appStore.deferredInstallPrompt" @click="handleInstallPwa">
+              <button
+                class="btn btn-soft"
+                :disabled="!appStore.deferredInstallPrompt"
+                @click="handleInstallPwa"
+              >
                 安装到主屏幕
               </button>
-              <button class="btn btn-primary" :disabled="!appStore.pwaUpdateAvailable" @click="handleApplyUpdate">
+              <button
+                class="btn btn-primary"
+                :disabled="!appStore.pwaUpdateAvailable"
+                @click="handleApplyUpdate"
+              >
                 更新应用
               </button>
             </div>
           </section>
-
         </div>
       </aside>
     </Transition>
@@ -322,7 +401,8 @@ function handleApplyUpdate() {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: calc(var(--space-5) + var(--safe-area-top)) calc(var(--space-6) + var(--safe-area-right)) var(--space-5) var(--space-6);
+  padding: calc(var(--space-5) + var(--safe-area-top)) calc(var(--space-6) + var(--safe-area-right))
+    var(--space-5) var(--space-6);
   border-bottom: 1px solid var(--color-border-light);
   flex-shrink: 0;
 }
@@ -359,7 +439,8 @@ function handleApplyUpdate() {
   overflow-y: auto;
   -webkit-overflow-scrolling: touch;
   overscroll-behavior: contain;
-  padding: var(--space-4) calc(var(--space-6) + var(--safe-area-right)) calc(var(--space-4) + var(--safe-area-bottom)) var(--space-6);
+  padding: var(--space-4) calc(var(--space-6) + var(--safe-area-right))
+    calc(var(--space-4) + var(--safe-area-bottom)) var(--space-6);
 }
 
 /* 移动端与导航菜单一样整屏铺开；遮罩被完全盖住，直接隐藏 */

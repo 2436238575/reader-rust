@@ -3,10 +3,12 @@
     <div class="shelf-header">
       <h3>书架 ({{ store.books.length }})</h3>
       <button class="close-btn" @click="readerStore.closePanel()">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6 6 18M6 6l12 12" /></svg>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M18 6 6 18M6 6l12 12" />
+        </svg>
       </button>
     </div>
-    
+
     <div class="shelf-list">
       <div
         v-for="book in store.books"
@@ -15,9 +17,13 @@
         :class="{ current: book.bookUrl === readerStore.book?.bookUrl }"
         @click="openBook(book)"
       >
-        <img v-if="getCoverUrl(book.coverUrl)" :src="getCoverUrl(book.coverUrl)" class="book-cover" />
+        <img
+          v-if="getCoverUrl(book.coverUrl)"
+          :src="getCoverUrl(book.coverUrl)"
+          class="book-cover"
+        />
         <div v-else class="book-cover placeholder">无封面</div>
-        
+
         <div class="book-info">
           <div class="book-title">{{ book.name }}</div>
           <div class="book-author">{{ book.author }}</div>
@@ -66,7 +72,7 @@ async function openBook(book: Book) {
   align-items: center;
   justify-content: space-between;
   padding: 16px 20px;
-  border-bottom: 1px solid rgba(0,0,0,0.06);
+  border-bottom: 1px solid rgba(0, 0, 0, 0.06);
   flex-shrink: 0;
 }
 
@@ -92,7 +98,7 @@ async function openBook(book: Book) {
 
 .close-btn:hover {
   opacity: 1;
-  background: rgba(0,0,0,0.05);
+  background: rgba(0, 0, 0, 0.05);
 }
 
 .close-btn svg {
@@ -117,7 +123,7 @@ async function openBook(book: Book) {
 }
 
 .shelf-item:hover {
-  background: rgba(0,0,0,0.03);
+  background: rgba(0, 0, 0, 0.03);
 }
 
 .shelf-item.current {
@@ -130,16 +136,16 @@ async function openBook(book: Book) {
   object-fit: cover;
   border-radius: 4px;
   flex-shrink: 0;
-  box-shadow: 0 2px 6px rgba(0,0,0,0.1);
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.1);
 }
 
 .book-cover.placeholder {
-  background: rgba(0,0,0,0.1);
+  background: rgba(0, 0, 0, 0.1);
   display: flex;
   align-items: center;
   justify-content: center;
   font-size: var(--text-xs);
-  color: rgba(0,0,0,0.4);
+  color: rgba(0, 0, 0, 0.4);
 }
 
 .book-info {

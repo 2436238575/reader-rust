@@ -21,7 +21,5 @@ export function getUserInfo() {
 
 /// 改密码会作废其他设备上的令牌，并返回当前设备换发的新令牌
 export function changePassword(oldPassword: string, newPassword: string) {
-  return http
-    .post<UserInfo>('/changePassword', { oldPassword, newPassword })
-    .then((r) => r.data)
+  return http.post<UserInfo>('/changePassword', { oldPassword, newPassword }).then((r) => r.data)
 }

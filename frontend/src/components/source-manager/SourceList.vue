@@ -24,11 +24,17 @@
         <button class="source-info" type="button" @click="$emit('edit', source)">
           <span class="source-name">{{ source.bookSourceName }}</span>
           <span class="source-url">{{ source.bookSourceUrl }}</span>
-          <span v-if="source.bookSourceGroup" class="source-group">{{ source.bookSourceGroup }}</span>
+          <span v-if="source.bookSourceGroup" class="source-group">{{
+            source.bookSourceGroup
+          }}</span>
         </button>
         <div class="source-actions">
           <label class="toggle" title="启用状态">
-            <input type="checkbox" :checked="source.enabled !== false" @change="$emit('toggle-enabled', source)" />
+            <input
+              type="checkbox"
+              :checked="source.enabled !== false"
+              @change="$emit('toggle-enabled', source)"
+            />
             <span class="toggle-slider"></span>
           </label>
           <button class="icon-btn small" type="button" title="编辑" @click="$emit('edit', source)">
@@ -37,9 +43,16 @@
               <path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z" />
             </svg>
           </button>
-          <button class="icon-btn small danger" type="button" title="删除" @click="$emit('delete', source)">
+          <button
+            class="icon-btn small danger"
+            type="button"
+            title="删除"
+            @click="$emit('delete', source)"
+          >
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <path d="M3 6h18M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2" />
+              <path
+                d="M3 6h18M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"
+              />
             </svg>
           </button>
         </div>
@@ -95,7 +108,9 @@ defineEmits<{
   gap: 12px;
   padding: 13px 14px;
   border-bottom: 1px solid var(--color-border-light);
-  transition: background var(--duration-fast) var(--ease-out), box-shadow var(--duration-fast) var(--ease-out);
+  transition:
+    background var(--duration-fast) var(--ease-out),
+    box-shadow var(--duration-fast) var(--ease-out);
 }
 
 .source-item.active {
@@ -257,7 +272,9 @@ defineEmits<{
 }
 
 @keyframes spin {
-  to { transform: rotate(360deg); }
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 @media (max-width: 560px) {

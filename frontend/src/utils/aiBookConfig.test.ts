@@ -90,13 +90,16 @@ describe('aiBookConfig', () => {
   })
 
   it('migrates old shared endpoint config into separated text and image config', () => {
-    localStorage.setItem(aiBookConfigStorageKey('legacy'), JSON.stringify({
-      baseUrl: 'https://old.example.test/',
-      apiKey: 'old-key',
-      textModel: 'old-text',
-      imageModel: 'old-image',
-      imageSize: '1024x1792',
-    }))
+    localStorage.setItem(
+      aiBookConfigStorageKey('legacy'),
+      JSON.stringify({
+        baseUrl: 'https://old.example.test/',
+        apiKey: 'old-key',
+        textModel: 'old-text',
+        imageModel: 'old-image',
+        imageSize: '1024x1792',
+      })
+    )
 
     expect(getAiBookConfig('legacy')).toMatchObject({
       textBaseUrl: 'https://old.example.test',

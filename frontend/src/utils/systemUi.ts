@@ -41,8 +41,16 @@ export function applySystemTheme(mode: SystemThemeMode, themeColor?: string) {
   }
 
   upsertMeta('theme-color', resolvedThemeColor)
-  upsertMeta('theme-color', mode === 'light' ? resolvedThemeColor : '#faf9f7', '(prefers-color-scheme: light)')
-  upsertMeta('theme-color', mode === 'dark' ? resolvedThemeColor : '#141414', '(prefers-color-scheme: dark)')
+  upsertMeta(
+    'theme-color',
+    mode === 'light' ? resolvedThemeColor : '#faf9f7',
+    '(prefers-color-scheme: light)'
+  )
+  upsertMeta(
+    'theme-color',
+    mode === 'dark' ? resolvedThemeColor : '#141414',
+    '(prefers-color-scheme: dark)'
+  )
   upsertMeta('msapplication-navbutton-color', resolvedThemeColor)
   upsertMeta('color-scheme', mode)
   upsertMeta('apple-mobile-web-app-status-bar-style', 'black-translucent')

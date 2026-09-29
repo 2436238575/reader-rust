@@ -13,7 +13,13 @@ import {
 import type { Book, BookGroup, SearchBook } from '../types'
 import { deleteBrowserBookCache, listBrowserCacheSummary } from '../utils/browserCache'
 import { isLocalBook } from '../utils/localBook'
-import { clearRecentReadBooks, getRecentReadBookKey, loadRecentReadBooks, removeRecentReadBook, syncRecentBooksFromBackend } from '../utils/recentBooks'
+import {
+  clearRecentReadBooks,
+  getRecentReadBookKey,
+  loadRecentReadBooks,
+  removeRecentReadBook,
+  syncRecentBooksFromBackend,
+} from '../utils/recentBooks'
 
 export const useBookshelfStore = defineStore('bookshelf', () => {
   // ─── Bookshelf ───
@@ -28,7 +34,9 @@ export const useBookshelfStore = defineStore('bookshelf', () => {
     // 与后端文档做并集合并（内部有每会话一次的节流），跨浏览器同步最近阅读
     await syncRecentBooksFromBackend().catch(() => undefined)
     const browserSummaries = await listBrowserCacheSummary().catch(() => [])
-    const browserMap = new Map(browserSummaries.map((item) => [item.bookUrl, item.cachedChapterCount]))
+    const browserMap = new Map(
+      browserSummaries.map((item) => [item.bookUrl, item.cachedChapterCount])
+    )
     const shelfMap = new Map(books.value.map((book) => [getRecentReadBookKey(book), book]))
     recentBooks.value = loadRecentReadBooks().map((entry) => {
       const shelfBook = shelfMap.get(getRecentReadBookKey(entry))
@@ -42,7 +50,9 @@ export const useBookshelfStore = defineStore('bookshelf', () => {
         : entry
       return {
         ...merged,
-        browserCachedChapterCount: isLocalBook(merged) ? 0 : browserMap.get(merged.bookUrl) || merged.browserCachedChapterCount || 0,
+        browserCachedChapterCount: isLocalBook(merged)
+          ? 0
+          : browserMap.get(merged.bookUrl) || merged.browserCachedChapterCount || 0,
       }
     })
   }
@@ -64,7 +74,9 @@ export const useBookshelfStore = defineStore('bookshelf', () => {
         getBookshelfWithCacheInfo(),
         listBrowserCacheSummary().catch(() => []),
       ])
-      const browserMap = new Map(browserSummaries.map((item) => [item.bookUrl, item.cachedChapterCount]))
+      const browserMap = new Map(
+        browserSummaries.map((item) => [item.bookUrl, item.cachedChapterCount])
+      )
       books.value = serverBooks.map((book) => ({
         ...book,
         browserCachedChapterCount: isLocalBook(book) ? 0 : browserMap.get(book.bookUrl) || 0,
@@ -94,7 +106,7 @@ export const useBookshelfStore = defineStore('bookshelf', () => {
   // 没有自定义分组且所有书都未分组（含空书架）时，「全部/未分组」两个 Tab
   // 完全等价，整个分组 Tab 行隐藏
   const showGroupTabs = computed(
-    () => groups.value.length > 0 || books.value.some((b) => b.group && b.group !== 0),
+    () => groups.value.length > 0 || books.value.some((b) => b.group && b.group !== 0)
   )
 
   const filteredBooks = computed(() => {
@@ -102,9 +114,7 @@ export const useBookshelfStore = defineStore('bookshelf', () => {
     if (activeGroupId.value === 0) {
       return books.value.filter((b) => !b.group || b.group === 0)
     }
-    return books.value.filter(
-      (b) => b.group && (b.group & activeGroupId.value) !== 0
-    )
+    return books.value.filter((b) => b.group && (b.group & activeGroupId.value) !== 0)
   })
 
   async function fetchGroups() {
@@ -144,11 +154,14 @@ export const useBookshelfStore = defineStore('bookshelf', () => {
   const searchGroup = ref('')
   const searchSourceUrl = ref('')
 
-  function startSearch(key: string, options: {
-    scope?: 'all' | 'group' | 'source'
-    group?: string
-    sourceUrl?: string
-  } = {}) {
+  function startSearch(
+    key: string,
+    options: {
+      scope?: 'all' | 'group' | 'source'
+      group?: string
+      sourceUrl?: string
+    } = {}
+  ) {
     const nextKey = key.trim()
     if (!nextKey) {
       clearSearch()
@@ -183,7 +196,7 @@ export const useBookshelfStore = defineStore('bookshelf', () => {
   }
 
   function selectAll() {
-    filteredBooks.value.forEach(b => selectedBookUrls.value.add(b.bookUrl))
+    filteredBooks.value.forEach((b) => selectedBookUrls.value.add(b.bookUrl))
   }
 
   function clearSelection() {
@@ -192,13 +205,15 @@ export const useBookshelfStore = defineStore('bookshelf', () => {
 
   async function bulkDelete() {
     const toDelete = books.value
-      .filter(b => selectedBookUrls.value.has(b.bookUrl))
-      .map(b => ({ bookUrl: b.bookUrl, origin: b.origin }))
-    
+      .filter((b) => selectedBookUrls.value.has(b.bookUrl))
+      .map((b) => ({ bookUrl: b.bookUrl, origin: b.origin }))
+
     if (toDelete.length === 0) return
     await apiDeleteBooks(toDelete as Book[])
-    await Promise.all(toDelete.map((book) => deleteBrowserBookCache(book.bookUrl).catch(() => undefined)))
-    books.value = books.value.filter(b => !selectedBookUrls.value.has(b.bookUrl))
+    await Promise.all(
+      toDelete.map((book) => deleteBrowserBookCache(book.bookUrl).catch(() => undefined))
+    )
+    books.value = books.value.filter((b) => !selectedBookUrls.value.has(b.bookUrl))
     clearSelection()
   }
 
@@ -260,15 +275,40 @@ export const useBookshelfStore = defineStore('bookshelf', () => {
   }
 
   return {
-    books, recentBooks, recentFilter, loading, sorting,
-    fetchBooks, removeBook,
-    refreshRecentBooks, removeRecentBook, clearAllRecentBooks,
-    groups, activeGroupId, displayGroups, filteredBooks, showGroupTabs,
-    fetchGroups, saveGroup, removeGroup,
-    searchResults, isSearching, searchKey,
-    searchScope, searchGroup, searchSourceUrl, startSearch, clearSearch,
+    books,
+    recentBooks,
+    recentFilter,
+    loading,
+    sorting,
+    fetchBooks,
+    removeBook,
+    refreshRecentBooks,
+    removeRecentBook,
+    clearAllRecentBooks,
+    groups,
+    activeGroupId,
+    displayGroups,
+    filteredBooks,
+    showGroupTabs,
+    fetchGroups,
+    saveGroup,
+    removeGroup,
+    searchResults,
+    isSearching,
+    searchKey,
+    searchScope,
+    searchGroup,
+    searchSourceUrl,
+    startSearch,
+    clearSearch,
     editMode,
-    selectedBookUrls, toggleSelection, selectAll, clearSelection,
-    bulkDelete, bulkSetGroup, reorderBooks, moveBookToFront,
+    selectedBookUrls,
+    toggleSelection,
+    selectAll,
+    clearSelection,
+    bulkDelete,
+    bulkSetGroup,
+    reorderBooks,
+    moveBookToFront,
   }
 })

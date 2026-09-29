@@ -10,17 +10,17 @@
 
 三个接口共用同一组参数（GET 查询串与 POST JSON 都支持）：
 
-| 参数 | 类型 | 必填 | 说明 |
-|------|------|------|------|
-| `bookUrl` | string | 是 | 书籍 URL，用作缓存归属（按书清理时用） |
-| `chapterUrl` | string | 是 | 章节 URL，评论规则以这一章的正文响应为上下文求值 |
-| `bookSourceUrl` | string | 否 | 书源 URL；省略时按 `bookUrl` 在书架里反查 |
-| `bookSource` | object | 否 | 直接内联书源对象，优先于 `bookSourceUrl` |
-| `page` | number | 否 | 页码，从 1 开始，默认 1 |
-| `count` | number | 否 | 每页条数，默认 20、上限 50 |
-| `sort` | string | 否 | `hot`（默认，站点热度序）或 `time`（按时间倒序）；认不出来的取值按 `hot` 处理 |
-| `authorOnly` | boolean | 否 | `true` 时走「只看作者」扫描（见下），忽略 `page` / `count` / `sort` |
-| `refresh` | number | 否 | `1` 表示忽略缓存重新抓取 |
+| 参数            | 类型    | 必填 | 说明                                                                          |
+| --------------- | ------- | ---- | ----------------------------------------------------------------------------- |
+| `bookUrl`       | string  | 是   | 书籍 URL，用作缓存归属（按书清理时用）                                        |
+| `chapterUrl`    | string  | 是   | 章节 URL，评论规则以这一章的正文响应为上下文求值                              |
+| `bookSourceUrl` | string  | 否   | 书源 URL；省略时按 `bookUrl` 在书架里反查                                     |
+| `bookSource`    | object  | 否   | 直接内联书源对象，优先于 `bookSourceUrl`                                      |
+| `page`          | number  | 否   | 页码，从 1 开始，默认 1                                                       |
+| `count`         | number  | 否   | 每页条数，默认 20、上限 50                                                    |
+| `sort`          | string  | 否   | `hot`（默认，站点热度序）或 `time`（按时间倒序）；认不出来的取值按 `hot` 处理 |
+| `authorOnly`    | boolean | 否   | `true` 时走「只看作者」扫描（见下），忽略 `page` / `count` / `sort`           |
+| `refresh`       | number  | 否   | `1` 表示忽略缓存重新抓取                                                      |
 
 排序说明：
 
@@ -65,12 +65,16 @@
   "author": false,
   "authorDigg": true,
   "replies": [
-    { "name": "读者乙", "content": "同感", "time": "1717597460", "replyTo": "", "author": false, "authorDigg": false }
+    {
+      "name": "读者乙",
+      "content": "同感",
+      "time": "1717597460",
+      "replyTo": "",
+      "author": false,
+      "authorDigg": false
+    }
   ],
-  "images": [
-    "https://.../a.heic?sign=1",
-    "https://.../a.jpeg?sign=2"
-  ]
+  "images": ["https://.../a.heic?sign=1", "https://.../a.jpeg?sign=2"]
 }
 ```
 
@@ -100,7 +104,7 @@ POST /reader3/getChapterComments
       "total": 67,
       "hasMore": true,
       "page": 1,
-      "items": [ /* 评论对象 */ ]
+      "items": [/* 评论对象 */]
     }
   }
 }
@@ -126,7 +130,12 @@ POST /reader3/getParaCommentIndex
     "data": {
       "paras": [
         { "paraIndex": 0, "count": 256, "authorCommented": true, "text": "此时，花臂男举起了手……" },
-        { "paraIndex": 5, "count": 192, "authorCommented": false, "text": "“那接下来轮到我讲了。”……" }
+        {
+          "paraIndex": 5,
+          "count": 192,
+          "authorCommented": false,
+          "text": "“那接下来轮到我讲了。”……"
+        }
       ]
     }
   }
@@ -146,9 +155,9 @@ GET  /reader3/getParaComments?bookUrl=&chapterUrl=&paraIndex=5&page=1&count=20
 POST /reader3/getParaComments
 ```
 
-| 参数 | 类型 | 必填 | 说明 |
-|------|------|------|------|
-| `paraIndex` | number | 是 | 段号；缺失或为负返回 400 |
+| 参数        | 类型   | 必填 | 说明                     |
+| ----------- | ------ | ---- | ------------------------ |
+| `paraIndex` | number | 是   | 段号；缺失或为负返回 400 |
 
 响应结构与章评一致（`enabled` + `total` / `hasMore` / `page` / `items`）。
 

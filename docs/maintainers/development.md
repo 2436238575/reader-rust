@@ -47,12 +47,12 @@ npm run test:e2e
 
 ### 单一来源
 
-| 文档 | 维护者须知 |
-|------|-----------|
+| 文档        | 维护者须知                                                       |
+| ----------- | ---------------------------------------------------------------- |
 | `AGENTS.md` | **工程事实的唯一权威**。配置默认值、命令、结构、测试规模以它为准 |
-| `CLAUDE.md` | 只是导入入口，指向 `AGENTS.md`。**不要在这里重复维护内容** |
-| `README.md` | 访客视角，只讲简介、特性与最快上手路径 |
-| `docs/` | 面向用户的文档站，见 [文档地图](#文档地图) |
+| `CLAUDE.md` | 只是导入入口，指向 `AGENTS.md`。**不要在这里重复维护内容**       |
+| `README.md` | 访客视角，只讲简介、特性与最快上手路径                           |
+| `docs/`     | 面向用户的文档站，见 [文档地图](#文档地图)                       |
 
 ### 未实现的功能要标注，不要删除
 
@@ -66,13 +66,13 @@ npm run test:e2e
 
 ### 改动要同步文档
 
-| 改了什么 | 要同步更新 |
-|---------|-----------|
-| 新增 / 修改 `/reader3/*` 接口 | `docs/api/` 对应页面（路由以 `src/api/router.rs` 为准） |
-| 新增 / 修改配置项 | `AGENTS.md` 的配置表 + `docs/guide/configuration.md`；注意 `app/config.rs` 里 `AppConfig`、`Default`、`set_default` 三处都要改 |
-| 修改书源规则语法 | `docs/book-source/` 与 `docs/reference/book-source-rules.md` |
-| 改动发布流程 | `docs/maintainers/release.md` |
-| 改动前端可用脚本 | `AGENTS.md` 与 `docs/guide/quickstart.md` |
+| 改了什么                      | 要同步更新                                                                                                                     |
+| ----------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| 新增 / 修改 `/reader3/*` 接口 | `docs/api/` 对应页面（路由以 `src/api/router.rs` 为准）                                                                        |
+| 新增 / 修改配置项             | `AGENTS.md` 的配置表 + `docs/guide/configuration.md`；注意 `app/config.rs` 里 `AppConfig`、`Default`、`set_default` 三处都要改 |
+| 修改书源规则语法              | `docs/book-source/` 与 `docs/reference/book-source-rules.md`                                                                   |
+| 改动发布流程                  | `docs/maintainers/release.md`                                                                                                  |
+| 改动前端可用脚本              | `AGENTS.md` 与 `docs/guide/quickstart.md`                                                                                      |
 
 写文档时的硬要求：
 
@@ -116,13 +116,13 @@ docs/
 
 ## 扩展点速查
 
-| 想做什么 | 动哪里 |
-|---------|--------|
-| 加接口 | `api/router.rs` 注册 + `api/handlers/<领域>.rs` 写 handler，业务逻辑放 `service/` |
-| 改解析行为 | `parser/rule_engine.rs`；组合规则切分在 `parser/rule_analyzer.rs` |
-| 加 URL 占位符 | `crawler/url_analyzer.rs` |
-| 加数据库表 | 在 `src/storage/db/migrations/` **新增**迁移文件，不要改历史迁移 |
-| 加配置项 | `app/config.rs` 三处 + 两份配置文档 |
-| 改前端接口封装 | `frontend/src/api/http.ts` 与对应模块 |
+| 想做什么       | 动哪里                                                                            |
+| -------------- | --------------------------------------------------------------------------------- |
+| 加接口         | `api/router.rs` 注册 + `api/handlers/<领域>.rs` 写 handler，业务逻辑放 `service/` |
+| 改解析行为     | `parser/rule_engine.rs`；组合规则切分在 `parser/rule_analyzer.rs`                 |
+| 加 URL 占位符  | `crawler/url_analyzer.rs`                                                         |
+| 加数据库表     | 在 `src/storage/db/migrations/` **新增**迁移文件，不要改历史迁移                  |
+| 加配置项       | `app/config.rs` 三处 + 两份配置文档                                               |
+| 改前端接口封装 | `frontend/src/api/http.ts` 与对应模块                                             |
 
 详见 [架构说明](./architecture)。

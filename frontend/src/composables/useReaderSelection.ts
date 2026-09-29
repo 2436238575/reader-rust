@@ -11,10 +11,10 @@ export function useReaderSelection(
   store: ReaderStore,
   appStore: AppStore,
   config: ComputedRef<{ selectAction: 'popup' | 'contextmenu' | 'ignore' }>,
-  scrollContainerRef: Ref<HTMLElement | undefined>,
+  scrollContainerRef: Ref<HTMLElement | undefined>
 ) {
-  const isTouchDevice = typeof window !== 'undefined'
-    && ('ontouchstart' in window || navigator.maxTouchPoints > 0)
+  const isTouchDevice =
+    typeof window !== 'undefined' && ('ontouchstart' in window || navigator.maxTouchPoints > 0)
   const isAndroid = typeof navigator !== 'undefined' && /Android/i.test(navigator.userAgent)
   const selectionMenu = ref({
     visible: false,
@@ -112,7 +112,10 @@ export function useReaderSelection(
     const container = scrollContainerRef.value
     const range = selection.getRangeAt(0)
     const commonAncestor = range.commonAncestorContainer
-    const targetNode = commonAncestor.nodeType === Node.TEXT_NODE ? commonAncestor.parentElement : commonAncestor as HTMLElement | null
+    const targetNode =
+      commonAncestor.nodeType === Node.TEXT_NODE
+        ? commonAncestor.parentElement
+        : (commonAncestor as HTMLElement | null)
     if (!container || !targetNode || !container.contains(targetNode)) {
       hideSelectionMenu()
       return
@@ -130,8 +133,29 @@ export function useReaderSelection(
       text: text.length > 48 ? `${text.slice(0, 48)}...` : text,
       variant: 'popup',
       top: isTouchDevice
-        ? Math.min(window.innerHeight - 76, Math.max(16 + Math.max(0, parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--safe-area-top')) || 0), rect.bottom + 12))
-        : Math.max(16 + Math.max(0, parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--safe-area-top')) || 0), rect.top - 56),
+        ? Math.min(
+            window.innerHeight - 76,
+            Math.max(
+              16 +
+                Math.max(
+                  0,
+                  parseFloat(
+                    getComputedStyle(document.documentElement).getPropertyValue('--safe-area-top')
+                  ) || 0
+                ),
+              rect.bottom + 12
+            )
+          )
+        : Math.max(
+            16 +
+              Math.max(
+                0,
+                parseFloat(
+                  getComputedStyle(document.documentElement).getPropertyValue('--safe-area-top')
+                ) || 0
+              ),
+            rect.top - 56
+          ),
       left: Math.min(window.innerWidth - 240, Math.max(16, rect.left + rect.width / 2 - 110)),
     }
   }
@@ -158,9 +182,7 @@ export function useReaderSelection(
     if (!text || !store.book) return
 
     try {
-      const scope = mode === 'source'
-        ? `source:${store.book.origin}`
-        : `book:${store.book.bookUrl}`
+      const scope = mode === 'source' ? `source:${store.book.origin}` : `book:${store.book.bookUrl}`
       await saveReplaceRule({
         id: 0,
         name: `${mode === 'source' ? '书源替换' : '本书替换'} ${store.replaceRules.length + 1}`,
@@ -192,7 +214,10 @@ export function useReaderSelection(
     const container = scrollContainerRef.value
     const range = selection.getRangeAt(0)
     const commonAncestor = range.commonAncestorContainer
-    const targetNode = commonAncestor.nodeType === Node.TEXT_NODE ? commonAncestor.parentElement : commonAncestor as HTMLElement | null
+    const targetNode =
+      commonAncestor.nodeType === Node.TEXT_NODE
+        ? commonAncestor.parentElement
+        : (commonAncestor as HTMLElement | null)
     if (!container || !targetNode || !container.contains(targetNode)) {
       return false
     }
@@ -200,7 +225,14 @@ export function useReaderSelection(
     suppressSelectionCloseUntil.value = Date.now() + 250
     activeSelectionText.value = text
     // 像原生右键菜单：以鼠标位置为左上角，视口内夹紧（菜单约 4 行高）
-    const safeTop = 8 + Math.max(0, parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--safe-area-top')) || 0)
+    const safeTop =
+      8 +
+      Math.max(
+        0,
+        parseFloat(
+          getComputedStyle(document.documentElement).getPropertyValue('--safe-area-top')
+        ) || 0
+      )
     selectionMenu.value = {
       visible: true,
       text: text.length > 48 ? `${text.slice(0, 48)}...` : text,

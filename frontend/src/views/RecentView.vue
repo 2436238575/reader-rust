@@ -29,10 +29,7 @@
       />
     </div>
 
-    <BookDetailModal
-      v-model="showDetail"
-      :book="selectedBook"
-    />
+    <BookDetailModal v-model="showDetail" :book="selectedBook" />
   </div>
 </template>
 
@@ -78,7 +75,7 @@ const filteredRecentBooks = computed(() => {
       book.durChapterTitle,
     ]
       .filter(Boolean)
-      .some((value) => String(value).toLowerCase().includes(keyword)),
+      .some((value) => String(value).toLowerCase().includes(keyword))
   )
 })
 

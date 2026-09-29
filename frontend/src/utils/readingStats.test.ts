@@ -60,7 +60,7 @@ describe('mergeReadingStats', () => {
   it('集合取并集', () => {
     const merged = mergeReadingStats(
       stats({ openedBooks: ['a', 'b'], readChapters: ['a#1'], completedBooks: ['a'] }),
-      stats({ openedBooks: ['b', 'c'], readChapters: ['a#2'], completedBooks: [] }),
+      stats({ openedBooks: ['b', 'c'], readChapters: ['a#2'], completedBooks: [] })
     )
     expect(merged.openedBooks).toEqual(['a', 'b', 'c'])
     expect(merged.readChapters).toEqual(['a#1', 'a#2'])

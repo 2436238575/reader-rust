@@ -29,8 +29,31 @@ const NON_STARTING_PUNCTUATION = new Set([
   '」',
   '』',
 ])
-const SPLIT_BACKTRACK_BREAKERS = new Set(['，', '。', '；', '！', '？', ',', '.', ';', '!', '?', ' '])
-const PUNCTUATION_ONLY_CHARS = new Set([...NON_STARTING_PUNCTUATION, '“', '‘', '（', '【', '《', '「', '『', '…', '—'])
+const SPLIT_BACKTRACK_BREAKERS = new Set([
+  '，',
+  '。',
+  '；',
+  '！',
+  '？',
+  ',',
+  '.',
+  ';',
+  '!',
+  '?',
+  ' ',
+])
+const PUNCTUATION_ONLY_CHARS = new Set([
+  ...NON_STARTING_PUNCTUATION,
+  '“',
+  '‘',
+  '（',
+  '【',
+  '《',
+  '「',
+  '『',
+  '…',
+  '—',
+])
 const MAX_PUNCTUATION_BACKTRACK = 12
 
 export function useHorizontalPaging(
@@ -39,7 +62,7 @@ export function useHorizontalPaging(
   currentFontFamily: ComputedRef<string>,
   formattedContent: ComputedRef<string>,
   isHorizontalPageMode: ComputedRef<boolean>,
-  scrollContainerRef: Ref<HTMLElement | undefined>,
+  scrollContainerRef: Ref<HTMLElement | undefined>
 ) {
   const horizontalPageIndex = ref(0)
   const horizontalPageStep = ref(1)
@@ -48,10 +71,7 @@ export function useHorizontalPaging(
   const isHorizontalAtEnd = ref(false)
 
   function escapeHtml(input: string) {
-    return input
-      .replaceAll('&', '&amp;')
-      .replaceAll('<', '&lt;')
-      .replaceAll('>', '&gt;')
+    return input.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;')
   }
 
   function parseInlineStyle(styleText: string) {
@@ -124,7 +144,11 @@ export function useHorizontalPaging(
 
   function isPunctuationOnlyText(text: string) {
     const value = text.trim()
-    return value.length > 0 && value.length <= 3 && Array.from(value).every((char) => PUNCTUATION_ONLY_CHARS.has(char))
+    return (
+      value.length > 0 &&
+      value.length <= 3 &&
+      Array.from(value).every((char) => PUNCTUATION_ONLY_CHARS.has(char))
+    )
   }
 
   function adjustFitCountForReadableStart(text: string, fitCount: number) {
@@ -174,7 +198,10 @@ export function useHorizontalPaging(
       if (isPunctuationOnlyText(text)) {
         const punctuation = text.trim()
         if (mergedPages.length) {
-          mergedPages[mergedPages.length - 1] = appendTextToLastParagraph(mergedPages[mergedPages.length - 1], punctuation)
+          mergedPages[mergedPages.length - 1] = appendTextToLastParagraph(
+            mergedPages[mergedPages.length - 1],
+            punctuation
+          )
           continue
         }
         if (idx + 1 < pendingPages.length) {
@@ -190,7 +217,9 @@ export function useHorizontalPaging(
   function buildHorizontalParagraphs() {
     const root = document.createElement('div')
     root.innerHTML = formattedContent.value
-    return Array.from(root.querySelectorAll('p')).map((node) => normalizeParagraphHtml(node.outerHTML))
+    return Array.from(root.querySelectorAll('p')).map((node) =>
+      normalizeParagraphHtml(node.outerHTML)
+    )
   }
 
   function updateHorizontalMetrics() {
@@ -203,11 +232,14 @@ export function useHorizontalPaging(
     const lineHeightPx = config.value.fontSize * config.value.lineHeight
     const bottomGuard = Math.max(
       HORIZONTAL_PAGE_MIN_BOTTOM_GUARD,
-      Math.ceil(lineHeightPx * HORIZONTAL_PAGE_BOTTOM_GUARD_LINES),
+      Math.ceil(lineHeightPx * HORIZONTAL_PAGE_BOTTOM_GUARD_LINES)
     )
     return {
       innerWidth: Math.max(120, horizontalPageStep.value - HORIZONTAL_PAGE_SIDE_PADDING * 2),
-      pageHeight: Math.max(160, container.clientHeight - HORIZONTAL_PAGE_VERTICAL_PADDING * 2 - bottomGuard),
+      pageHeight: Math.max(
+        160,
+        container.clientHeight - HORIZONTAL_PAGE_VERTICAL_PADDING * 2 - bottomGuard
+      ),
     }
   }
 
@@ -293,7 +325,7 @@ export function useHorizontalPaging(
 
     const fitParagraphSegment = (
       blockHtml: string,
-      options: { isContinuation: boolean; minRemainingLines?: number },
+      options: { isContinuation: boolean; minRemainingLines?: number }
     ) => {
       const parsed = parseParagraphHtml(blockHtml)
       if (!parsed || parsed.text.length <= 1) return null
@@ -301,7 +333,8 @@ export function useHorizontalPaging(
       const { style, text, className } = parsed
       const currentHeight = measureContentHeight(currentParts)
       const remainingHeight = measurer.clientHeight - currentHeight
-      const minRemainingHeight = (options.minRemainingLines || 0) * config.value.fontSize * config.value.lineHeight
+      const minRemainingHeight =
+        (options.minRemainingLines || 0) * config.value.fontSize * config.value.lineHeight
       if (remainingHeight < minRemainingHeight) return null
 
       const segmentClassName = options.isContinuation ? removeIndentClass(className) : className
@@ -323,7 +356,11 @@ export function useHorizontalPaging(
       if (fitCount <= 0) return null
 
       fitCount = adjustFitCountForReadableStart(text, fitCount)
-      if (fitCount <= 0 || (fitCount < text.length && isPunctuationOnlyText(text.slice(0, fitCount)))) return null
+      if (
+        fitCount <= 0 ||
+        (fitCount < text.length && isPunctuationOnlyText(text.slice(0, fitCount)))
+      )
+        return null
 
       const hasMoreText = fitCount < text.length
       const fitStyle = buildSegmentStyle(style, options.isContinuation, hasMoreText)

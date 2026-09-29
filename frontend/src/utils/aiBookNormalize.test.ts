@@ -55,6 +55,8 @@ describe('aiBookNormalize', () => {
     expect(isLowValueRelationship('认识', '见过一面', undefined)).toBe(true)
     expect(isLowValueRelationship('认识', '见过一面', '高')).toBe(false)
     expect(isLowValueRelationship('挚友', 'x', undefined)).toBe(false)
-    expect(isLowValueRelationship('认识', '从第三章起共同行动并多次互相救援，结下深厚情谊', undefined)).toBe(false)
+    expect(
+      isLowValueRelationship('认识', '从第三章起共同行动并多次互相救援，结下深厚情谊', undefined)
+    ).toBe(false)
   })
 })

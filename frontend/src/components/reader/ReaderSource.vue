@@ -3,13 +3,17 @@
     <div class="source-header">
       <div class="header-left">
         <h3>切换书源</h3>
-        <span class="source-count" v-if="preparedResults.length">{{ preparedResults.length }} 个结果</span>
+        <span class="source-count" v-if="preparedResults.length"
+          >{{ preparedResults.length }} 个结果</span
+        >
       </div>
       <button class="close-btn" @click="store.closePanel()">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6 6 18M6 6l12 12" /></svg>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M18 6 6 18M6 6l12 12" />
+        </svg>
       </button>
     </div>
-    
+
     <div class="source-list" ref="listRef">
       <!-- Current Source Header -->
       <div class="section-label" v-if="currentSource">当前书源</div>
@@ -20,33 +24,41 @@
 
       <div v-if="store.book" class="book-brief">
         <div class="book-brief-cover">
-          <img v-if="coverSrc" :src="coverSrc" :alt="store.book.name">
+          <img v-if="coverSrc" :src="coverSrc" :alt="store.book.name" />
           <div v-else class="book-brief-placeholder">{{ store.book.name.slice(0, 1) }}</div>
         </div>
         <div class="book-brief-main">
           <div class="book-brief-title">{{ store.book.name }}</div>
           <div class="book-brief-meta">{{ store.book.author || '未知作者' }}</div>
-          <div class="book-brief-meta" v-if="store.currentChapter?.title">当前章节：{{ store.currentChapter.title }}</div>
-          <div class="book-brief-meta" v-if="store.book.latestChapterTitle">最新章节：{{ store.book.latestChapterTitle }}</div>
+          <div class="book-brief-meta" v-if="store.currentChapter?.title">
+            当前章节：{{ store.currentChapter.title }}
+          </div>
+          <div class="book-brief-meta" v-if="store.book.latestChapterTitle">
+            最新章节：{{ store.book.latestChapterTitle }}
+          </div>
           <div class="book-brief-intro" v-if="store.book.intro">{{ store.book.intro }}</div>
         </div>
       </div>
 
       <div class="section-label">其他可用源</div>
-      
+
       <div v-if="searching && !preparedResults.length" class="loading">
         <div class="spinner"></div>
         正在全网搜索同名书籍...
       </div>
-      
+
       <div v-else-if="!preparedResults.length" class="empty">未找到其他书源</div>
-      
+
       <div
         v-else
         v-for="item in preparedResults"
         :key="item.book.bookUrl + item.book.origin"
         class="source-item"
-        :class="{ selected: selectedCandidate?.book.bookUrl === item.book.bookUrl && selectedCandidate?.book.origin === item.book.origin }"
+        :class="{
+          selected:
+            selectedCandidate?.book.bookUrl === item.book.bookUrl &&
+            selectedCandidate?.book.origin === item.book.origin,
+        }"
         @click="selectCandidate(item)"
       >
         <div class="source-main">
@@ -59,8 +71,12 @@
           <div class="source-book-name" v-if="item.book.name">{{ item.book.name }}</div>
           <div class="source-author">{{ item.book.author }}</div>
           <div class="source-intro" v-if="item.book.intro">{{ item.book.intro }}</div>
-          <div class="source-chapter" v-if="item.book.lastChapter">最新: {{ item.book.lastChapter }}</div>
-          <div class="source-update" v-if="item.book.updateTime">更新时间: {{ item.book.updateTime }}</div>
+          <div class="source-chapter" v-if="item.book.lastChapter">
+            最新: {{ item.book.lastChapter }}
+          </div>
+          <div class="source-update" v-if="item.book.updateTime">
+            更新时间: {{ item.book.updateTime }}
+          </div>
           <div class="source-compare-line">
             <span v-if="item.sameName" class="compare-text">书名匹配</span>
             <span v-if="item.sameAuthor" class="compare-text">作者匹配</span>
@@ -80,7 +96,13 @@
       <div v-if="selectedCandidate" class="compare-panel">
         <div class="compare-header">
           <h4>书源对照</h4>
-          <button class="switch-btn primary" :disabled="store.loading" @click="handleSwitch(selectedCandidate.book)">切换到此书源</button>
+          <button
+            class="switch-btn primary"
+            :disabled="store.loading"
+            @click="handleSwitch(selectedCandidate.book)"
+          >
+            切换到此书源
+          </button>
         </div>
         <div class="compare-grid">
           <div class="compare-card">
@@ -93,11 +115,26 @@
           </div>
           <div class="compare-card highlight">
             <div class="compare-title">目标</div>
-            <div class="compare-name">{{ candidatePreview?.name || selectedCandidate.book.name }}</div>
-            <div class="compare-meta">{{ candidatePreview?.author || selectedCandidate.book.author || '未知作者' }}</div>
-            <div class="compare-line">书源：{{ candidatePreview?.originName || selectedCandidate.book.origin }}</div>
-            <div class="compare-line">最新章节：{{ candidatePreview?.latestChapterTitle || selectedCandidate.book.lastChapter || '未知' }}</div>
-            <div class="compare-line compare-intro" v-if="candidatePreview?.intro || selectedCandidate.book.intro">{{ candidatePreview?.intro || selectedCandidate.book.intro }}</div>
+            <div class="compare-name">
+              {{ candidatePreview?.name || selectedCandidate.book.name }}
+            </div>
+            <div class="compare-meta">
+              {{ candidatePreview?.author || selectedCandidate.book.author || '未知作者' }}
+            </div>
+            <div class="compare-line">
+              书源：{{ candidatePreview?.originName || selectedCandidate.book.origin }}
+            </div>
+            <div class="compare-line">
+              最新章节：{{
+                candidatePreview?.latestChapterTitle || selectedCandidate.book.lastChapter || '未知'
+              }}
+            </div>
+            <div
+              class="compare-line compare-intro"
+              v-if="candidatePreview?.intro || selectedCandidate.book.intro"
+            >
+              {{ candidatePreview?.intro || selectedCandidate.book.intro }}
+            </div>
           </div>
         </div>
       </div>
@@ -155,7 +192,7 @@ const currentSource = computed(() => {
   if (!store.book) return null
   return {
     origin: store.book.origin,
-    originName: store.book.originName
+    originName: store.book.originName,
   }
 })
 
@@ -183,7 +220,9 @@ const preparedResults = computed<CandidateItem[]>(() => {
       const sameLatest = !!currentLatest && normalizeText(book.lastChapter) === currentLatest
       const chapterHint = sameLatest
         ? '可无缝续读'
-        : (book.lastChapter ? `目标源最新：${book.lastChapter}` : '')
+        : book.lastChapter
+          ? `目标源最新：${book.lastChapter}`
+          : ''
       const score = (sameName ? 3 : 0) + (sameAuthor ? 3 : 0) + (sameLatest ? 4 : 0)
       return { book, sameName, sameAuthor, sameLatest, chapterHint, score }
     })
@@ -254,7 +293,9 @@ function applyAvailableSourcePayload(payload: AvailableSourceSSEPayload | null) 
   if (!payload) return
   const incoming = Array.isArray(payload.data)
     ? payload.data
-    : (Array.isArray(payload.books) ? payload.books : [])
+    : Array.isArray(payload.books)
+      ? payload.books
+      : []
 
   if (typeof payload.lastIndex === 'number') {
     lastIndex.value = payload.lastIndex
@@ -305,7 +346,7 @@ function finishAvailableSourceSSE(
   stream: EventSource,
   mode: AvailableSourceMode,
   beforeCount: number,
-  failed = false,
+  failed = false
 ) {
   if (availableSourceSSE !== stream) return
   stream.close()
@@ -368,7 +409,10 @@ async function handleSwitch(res: SearchBook) {
   try {
     const nextBook = await store.switchSource(res.bookUrl, res.origin)
     store.closePanel()
-    appStore.showToast(`已切换到 ${nextBook?.originName || nextBook?.origin || res.origin}`, 'success')
+    appStore.showToast(
+      `已切换到 ${nextBook?.originName || nextBook?.origin || res.origin}`,
+      'success'
+    )
   } catch (e: any) {
     appStore.showToast(`切换失败: ${e?.message || '未知错误'}`, 'error')
   }
@@ -388,19 +432,36 @@ async function handleSwitch(res: SearchBook) {
   align-items: center;
   justify-content: space-between;
   padding: 16px 20px;
-  border-bottom: 1px solid rgba(0,0,0,0.06);
+  border-bottom: 1px solid rgba(0, 0, 0, 0.06);
   flex-shrink: 0;
 }
 
-.header-left { display: flex; align-items: baseline; gap: 8px; }
-.source-header h3 { font-size: var(--text-lg); margin: 0; }
-.source-count { font-size: var(--text-xs); opacity: 0.5; }
+.header-left {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+.source-header h3 {
+  font-size: var(--text-lg);
+  margin: 0;
+}
+.source-count {
+  font-size: var(--text-xs);
+  opacity: 0.5;
+}
 
 .close-btn {
-  width: 32px; height: 32px;
-  display: flex; align-items: center; justify-content: center;
-  border-radius: 8px; color: inherit; opacity: 0.6;
-  background: transparent; border: none; cursor: pointer;
+  width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 8px;
+  color: inherit;
+  opacity: 0.6;
+  background: transparent;
+  border: none;
+  cursor: pointer;
 }
 
 .source-list {
@@ -488,22 +549,44 @@ async function handleSwitch(res: SearchBook) {
   justify-content: space-between;
   align-items: center;
   padding: 12px 20px;
-  border-bottom: 1px solid rgba(0,0,0,0.02);
+  border-bottom: 1px solid rgba(0, 0, 0, 0.02);
   cursor: pointer;
   transition: background 0.2s;
 }
 
-.source-item:hover { background: rgba(0,0,0,0.03); }
-.source-item.current { background: rgba(201, 127, 58, 0.04); cursor: default; }
+.source-item:hover {
+  background: rgba(0, 0, 0, 0.03);
+}
+.source-item.current {
+  background: rgba(201, 127, 58, 0.04);
+  cursor: default;
+}
 .source-item.selected {
   background: rgba(201, 127, 58, 0.08);
   box-shadow: inset 3px 0 0 var(--color-primary, #c97f3a);
 }
 
-.source-main { flex: 1; min-width: 0; }
-.source-name-row { display: flex; align-items: center; gap: 8px; margin-bottom: 2px; }
-.source-name { font-weight: 600; font-size: var(--text-base); }
-.source-tag { font-size: var(--text-xs); opacity: 0.5; border: 1px solid currentColor; padding: 0 3px; border-radius: 3px; }
+.source-main {
+  flex: 1;
+  min-width: 0;
+}
+.source-name-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 2px;
+}
+.source-name {
+  font-weight: 600;
+  font-size: var(--text-base);
+}
+.source-tag {
+  font-size: var(--text-xs);
+  opacity: 0.5;
+  border: 1px solid currentColor;
+  padding: 0 3px;
+  border-radius: 3px;
+}
 .compare-badge {
   font-size: var(--text-xs);
   padding: 1px 6px;
@@ -524,9 +607,21 @@ async function handleSwitch(res: SearchBook) {
   opacity: 0.86;
 }
 
-.source-author { font-size: var(--text-xs); opacity: 0.5; margin-bottom: 4px; }
-.source-chapter { font-size: var(--text-xs); opacity: 0.7; color: var(--color-primary, #c97f3a); }
-.source-update { font-size: var(--text-xs); opacity: 0.48; margin-top: 2px; }
+.source-author {
+  font-size: var(--text-xs);
+  opacity: 0.5;
+  margin-bottom: 4px;
+}
+.source-chapter {
+  font-size: var(--text-xs);
+  opacity: 0.7;
+  color: var(--color-primary, #c97f3a);
+}
+.source-update {
+  font-size: var(--text-xs);
+  opacity: 0.48;
+  margin-top: 2px;
+}
 .source-compare-line {
   display: flex;
   flex-wrap: wrap;
@@ -555,7 +650,10 @@ async function handleSwitch(res: SearchBook) {
   overflow: hidden;
 }
 
-.source-url { font-size: var(--text-xs); opacity: 0.3; }
+.source-url {
+  font-size: var(--text-xs);
+  opacity: 0.3;
+}
 
 .switch-btn {
   padding: 4px 12px;
@@ -663,7 +761,8 @@ async function handleSwitch(res: SearchBook) {
   overflow: hidden;
 }
 
-.loading, .empty {
+.loading,
+.empty {
   padding: 40px 20px;
   text-align: center;
   opacity: 0.5;
@@ -690,7 +789,7 @@ async function handleSwitch(res: SearchBook) {
   min-width: 120px;
   padding: 10px 18px;
   border-radius: 999px;
-  border: 1px solid rgba(0,0,0,0.08);
+  border: 1px solid rgba(0, 0, 0, 0.08);
   background: transparent;
   color: inherit;
   cursor: pointer;
@@ -710,7 +809,7 @@ async function handleSwitch(res: SearchBook) {
 .spinner {
   width: 24px;
   height: 24px;
-  border: 2px solid rgba(0,0,0,0.1);
+  border: 2px solid rgba(0, 0, 0, 0.1);
   border-top-color: var(--color-primary, #c97f3a);
   border-radius: 50%;
   animation: spin 1s linear infinite;
@@ -725,17 +824,30 @@ async function handleSwitch(res: SearchBook) {
   border-width: 2px;
 }
 
-@keyframes spin { to { transform: rotate(360deg); } }
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
 
 .switch-overlay {
   position: absolute;
-  top: 0; left: 0; right: 0; bottom: 0;
-  display: flex; flex-direction: column;
-  align-items: center; justify-content: center;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
   z-index: 20;
 }
 
-.switch-overlay p { margin-top: 16px; font-size: var(--text-base); opacity: 0.8; }
+.switch-overlay p {
+  margin-top: 16px;
+  font-size: var(--text-base);
+  opacity: 0.8;
+}
 
 @media (max-width: 640px) {
   .source-item {

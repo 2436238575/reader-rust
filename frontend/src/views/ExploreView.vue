@@ -4,7 +4,11 @@
       <h2>发现</h2>
       <!-- 顶部：书源切换（与标题同行，右对齐） -->
       <div class="source-selector">
-        <select :value="store.activeSourceUrl" @change="onSourceChange" v-if="store.exploreSources.length > 0">
+        <select
+          :value="store.activeSourceUrl"
+          @change="onSourceChange"
+          v-if="store.exploreSources.length > 0"
+        >
           <option
             v-for="src in store.exploreSources"
             :key="src.bookSourceUrl"
@@ -58,15 +62,17 @@
         </div>
 
         <div class="loading-state" v-else-if="store.loading">
-          <div class="spinner"></div>加载中...
+          <div class="spinner"></div>
+          加载中...
         </div>
 
-        <div class="end-state" v-else-if="!store.hasMore && store.books.length > 0">
-          没有更多了
-        </div>
+        <div class="end-state" v-else-if="!store.hasMore && store.books.length > 0">没有更多了</div>
 
         <!-- 第一页就返回空：此前三个状态分支都不命中，页面一片空白 -->
-        <div class="empty-state" v-else-if="!store.hasMore && store.books.length === 0 && store.exploreSources.length > 0">
+        <div
+          class="empty-state"
+          v-else-if="!store.hasMore && store.books.length === 0 && store.exploreSources.length > 0"
+        >
           该分类暂时没有书籍
         </div>
 
@@ -143,7 +149,7 @@ const stopWatchers = watch(
   [() => store.loading, () => store.books.length],
   () => tryFetchMore(),
   // 必须等 DOM 渲染完再量哨兵位置，否则拿到的是上一轮布局
-  { flush: 'post' },
+  { flush: 'post' }
 )
 
 function onSourceChange(event: Event) {
@@ -310,7 +316,9 @@ async function handleRetry() {
   height: 1px;
 }
 
-.loading-state, .end-state, .error-state {
+.loading-state,
+.end-state,
+.error-state {
   text-align: center;
   padding: 20px 0;
   color: var(--color-text-tertiary);
@@ -358,7 +366,9 @@ async function handleRetry() {
 }
 
 @keyframes spin {
-  to { transform: rotate(360deg); }
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 /* 移动端适配 */
@@ -366,7 +376,7 @@ async function handleRetry() {
   .explore-body {
     flex-direction: column;
   }
-  
+
   .explore-header {
     padding: 12px 16px;
   }
@@ -393,7 +403,7 @@ async function handleRetry() {
     border: 1px solid var(--color-border);
     border-radius: 20px;
   }
-  
+
   .category-tag.active {
     background: var(--color-primary);
     color: white;

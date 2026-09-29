@@ -46,7 +46,13 @@ export function useReaderSearch(store: ReaderStore) {
     return `${start > 0 ? '...' : ''}${text.slice(start, end).trim()}${end < text.length ? '...' : ''}`
   }
 
-  function extractSearchResults(text: string, chapterIndex: number, chapterTitle: string, keyword: string, limit = Infinity) {
+  function extractSearchResults(
+    text: string,
+    chapterIndex: number,
+    chapterTitle: string,
+    keyword: string,
+    limit = Infinity
+  ) {
     if (!keyword) return [] as SearchResultItem[]
     const normalizedText = text.replace(/\s+/g, ' ').trim()
     if (!normalizedText) return [] as SearchResultItem[]
@@ -76,7 +82,7 @@ export function useReaderSearch(store: ReaderStore) {
       plainText,
       store.currentIndex,
       store.currentChapter?.title || '当前章节',
-      searchQuery.value,
+      searchQuery.value
     )
     nextTick(() => {
       if (searchResults.value.length) scrollToMatch()

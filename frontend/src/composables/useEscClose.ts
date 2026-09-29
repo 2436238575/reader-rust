@@ -11,11 +11,15 @@ const escStack: symbol[] = []
 export function useEscClose(active: Ref<boolean>, close: () => void) {
   const id = Symbol('esc-layer')
 
-  watch(active, (open) => {
-    const idx = escStack.indexOf(id)
-    if (open && idx < 0) escStack.push(id)
-    if (!open && idx >= 0) escStack.splice(idx, 1)
-  }, { immediate: true })
+  watch(
+    active,
+    (open) => {
+      const idx = escStack.indexOf(id)
+      if (open && idx < 0) escStack.push(id)
+      if (!open && idx >= 0) escStack.splice(idx, 1)
+    },
+    { immediate: true }
+  )
 
   const onKey = (e: KeyboardEvent) => {
     if (e.key !== 'Escape' || !active.value) return

@@ -1,16 +1,34 @@
 <template>
-  <div class="book-card" :class="{ 'edit-mode': editMode, 'selected': selected, 'dragging': dragging, 'search-mode': isSearch }"
-    @click="handleCardClick">
+  <div
+    class="book-card"
+    :class="{
+      'edit-mode': editMode,
+      selected: selected,
+      dragging: dragging,
+      'search-mode': isSearch,
+    }"
+    @click="handleCardClick"
+  >
     <!-- Cover -->
     <div class="card-cover" @click.stop="handleCoverClick">
-      <button v-if="showDeleteAction && !editMode" class="card-delete-btn" title="删除最近阅读"
-        @click.stop="$emit('delete', book)">
+      <button
+        v-if="showDeleteAction && !editMode"
+        class="card-delete-btn"
+        title="删除最近阅读"
+        @click.stop="$emit('delete', book)"
+      >
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
           <path d="M18 6 6 18M6 6l12 12" />
         </svg>
       </button>
-      <img v-if="coverSrc" :src="coverSrc" :alt="book.name" class="cover-img" loading="lazy"
-        @error="coverFailed = true" />
+      <img
+        v-if="coverSrc"
+        :src="coverSrc"
+        :alt="book.name"
+        class="cover-img"
+        loading="lazy"
+        @error="coverFailed = true"
+      />
       <div v-else class="cover-placeholder">
         <span class="cover-title">{{ book.name }}</span>
         <span class="cover-author">{{ book.author }}</span>
@@ -24,7 +42,13 @@
       <!-- Selection overlay -->
       <div v-if="editMode" class="selection-overlay">
         <div class="checkbox" :class="{ checked: selected }">
-          <svg v-if="selected" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3">
+          <svg
+            v-if="selected"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="3"
+          >
             <path d="M20 6 9 17l-5-5" />
           </svg>
         </div>
@@ -39,7 +63,9 @@
           <div class="book-meta">
             <span class="book-author">{{ book.author || '未知作者' }}</span>
             <span v-if="asBook.totalChapterNum" class="meta-dot">·</span>
-            <span v-if="asBook.totalChapterNum" class="book-chapters">共{{ asBook.totalChapterNum }}章</span>
+            <span v-if="asBook.totalChapterNum" class="book-chapters"
+              >共{{ asBook.totalChapterNum }}章</span
+            >
           </div>
         </div>
       </div>
@@ -52,22 +78,44 @@
         <p v-if="asBook.durChapterTitle && !isSearch" class="book-progress">
           已读：{{ asBook.durChapterTitle }}
         </p>
-        <p v-if="latestChapterText" class="book-latest">
-          最新：{{ latestChapterText }}
-        </p>
+        <p v-if="latestChapterText" class="book-latest">最新：{{ latestChapterText }}</p>
       </div>
 
       <div class="card-footer" :class="{ 'search-footer': isSearch }">
-        <div v-if="!isSearch && (browserCachedCount > 0 || serverCachedCount > 0)" class="book-cache-row">
-          <span v-if="browserCachedCount > 0" class="cache-chip primary">本地 {{ browserCachedCount }} 章</span>
-          <span v-if="serverCachedCount > 0" class="cache-chip">远程 {{ serverCachedCount }} 章</span>
+        <div
+          v-if="!isSearch && (browserCachedCount > 0 || serverCachedCount > 0)"
+          class="book-cache-row"
+        >
+          <span v-if="browserCachedCount > 0" class="cache-chip primary"
+            >本地 {{ browserCachedCount }} 章</span
+          >
+          <span v-if="serverCachedCount > 0" class="cache-chip"
+            >远程 {{ serverCachedCount }} 章</span
+          >
         </div>
         <!-- Search mode: add to shelf -->
-        <button v-if="isSearch && onShelf" class="add-shelf-btn on-shelf" disabled title="已加入书架">
+        <button
+          v-if="isSearch && onShelf"
+          class="add-shelf-btn on-shelf"
+          disabled
+          title="已加入书架"
+        >
           已在书架
         </button>
-        <button v-else-if="isSearch" class="add-shelf-btn" :disabled="adding" @click.stop="$emit('addToShelf', book)">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
+        <button
+          v-else-if="isSearch"
+          class="add-shelf-btn"
+          :disabled="adding"
+          @click.stop="$emit('addToShelf', book)"
+        >
+          <svg
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            width="14"
+            height="14"
+          >
             <path d="M12 5v14M5 12h14" />
           </svg>
           {{ adding ? '加入中...' : '加入书架' }}
@@ -138,8 +186,12 @@ const unreadCount = computed(() => {
   return Math.max(0, b.totalChapterNum - 1 - b.durChapterIndex)
 })
 
-const browserCachedCount = computed(() => isLocalBook(asBook.value) ? 0 : Math.max(0, asBook.value.browserCachedChapterCount || 0))
-const serverCachedCount = computed(() => isLocalBook(asBook.value) ? 0 : Math.max(0, asBook.value.cachedChapterCount || 0))
+const browserCachedCount = computed(() =>
+  isLocalBook(asBook.value) ? 0 : Math.max(0, asBook.value.browserCachedChapterCount || 0)
+)
+const serverCachedCount = computed(() =>
+  isLocalBook(asBook.value) ? 0 : Math.max(0, asBook.value.cachedChapterCount || 0)
+)
 const latestChapterText = computed(() => {
   if (props.isSearch) {
     return asSearchBook.value.lastChapter || asBook.value.latestChapterTitle || ''
@@ -175,7 +227,7 @@ const introText = computed(() => {
 }
 
 .book-card::before {
-  content: "";
+  content: '';
   position: absolute;
   inset: 0;
   background:
@@ -216,7 +268,7 @@ const introText = computed(() => {
 }
 
 .card-cover::after {
-  content: "";
+  content: '';
   position: absolute;
   inset: 0 auto 0 0;
   width: 13px;
@@ -292,7 +344,9 @@ const introText = computed(() => {
   background: rgba(12, 14, 18, 0.58);
   color: white;
   backdrop-filter: blur(8px);
-  transition: transform var(--duration-fast), background var(--duration-fast);
+  transition:
+    transform var(--duration-fast),
+    background var(--duration-fast);
 }
 
 .card-delete-btn:hover {

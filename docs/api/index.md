@@ -16,7 +16,7 @@ http://localhost:8080/reader3
 {
   "isSuccess": true,
   "errorMsg": "",
-  "data": { }
+  "data": {}
 }
 ```
 
@@ -32,11 +32,11 @@ http://localhost:8080/reader3
 
 需要注意字段的**实际取值**，不要按直觉推断：
 
-| 字段 | 成功时 | 失败时 |
-|------|--------|--------|
-| `isSuccess` | `true` | `false` |
-| `errorMsg` | `""`（**空字符串，不是 `null`**） | 错误描述 |
-| `data` | 业务数据 | 通常为 `null`，少数接口会带内容（见下） |
+| 字段        | 成功时                            | 失败时                                  |
+| ----------- | --------------------------------- | --------------------------------------- |
+| `isSuccess` | `true`                            | `false`                                 |
+| `errorMsg`  | `""`（**空字符串，不是 `null`**） | 错误描述                                |
+| `data`      | 业务数据                          | 通常为 `null`，少数接口会带内容（见下） |
 
 ### 两个特殊约定
 
@@ -60,12 +60,12 @@ http://localhost:8080/reader3
 
 本项目**只注册了 `GET` 与 `POST`**，没有 `PUT` / `DELETE`（依据：`src/api/router.rs`）。
 
-| 用法 | 说明 |
-|------|------|
-| `GET` | 读取类接口，参数走 query string |
-| `POST` | 写入类接口与「参数较多/含敏感字段」的读取类接口，参数走 JSON body |
-| `GET` + `POST` | 不少接口同时注册两种方法，同名参数两种传法都接受 |
-| `any` | 仅 `bookSourceProxy`、`bookSourceClientLog`、`webdav/*path` 三个路由，接受任意 HTTP 方法 |
+| 用法           | 说明                                                                                     |
+| -------------- | ---------------------------------------------------------------------------------------- |
+| `GET`          | 读取类接口，参数走 query string                                                          |
+| `POST`         | 写入类接口与「参数较多/含敏感字段」的读取类接口，参数走 JSON body                        |
+| `GET` + `POST` | 不少接口同时注册两种方法，同名参数两种传法都接受                                         |
+| `any`          | 仅 `bookSourceProxy`、`bookSourceClientLog`、`webdav/*path` 三个路由，接受任意 HTTP 方法 |
 
 因为大量接口同时支持 `GET` 与 `POST`，各接口页面会以 `GET /reader3/xxx` 或 `POST /reader3/xxx` 的形式标注实际注册的方法。
 
@@ -75,13 +75,13 @@ http://localhost:8080/reader3
 
 前端使用 hash 路由，深链接不依赖服务端回落，因此后端**不提供 SPA fallback**：
 
-| 路径 | 行为 |
-|------|------|
-| `/` | 返回 `WEB_ROOT/index.html` |
-| `/assets/*` | 先查 `WEB_ROOT/assets`，再回落到 `ASSETS_DIR` |
-| `/sw.js`、`/site.webmanifest`、favicon 等 | `WEB_ROOT` 下的真实文件按文件名直接可取 |
-| `/reader3/*` 未注册 | JSON 404 |
-| 其他不存在的路径 | 404，**不会**回落 index.html |
+| 路径                                      | 行为                                          |
+| ----------------------------------------- | --------------------------------------------- |
+| `/`                                       | 返回 `WEB_ROOT/index.html`                    |
+| `/assets/*`                               | 先查 `WEB_ROOT/assets`，再回落到 `ASSETS_DIR` |
+| `/sw.js`、`/site.webmanifest`、favicon 等 | `WEB_ROOT` 下的真实文件按文件名直接可取       |
+| `/reader3/*` 未注册                       | JSON 404                                      |
+| 其他不存在的路径                          | 404，**不会**回落 index.html                  |
 
 ## API 分类
 
@@ -95,19 +95,19 @@ http://localhost:8080/reader3
 
 鉴权基于 **JWT**。登录成功后服务端签发一个标准 JWT（HS256），载荷包含：
 
-| Claim | 含义 |
-|-------|------|
-| `sub` | 用户名 |
-| `ns` | 用户命名空间（数据隔离前缀，当前等于用户名） |
-| `iat` / `exp` | 签发时间 / 过期时间（默认 7 天） |
-| `ver` | 撤销版本号，对应 `users.token_version` |
+| Claim         | 含义                                         |
+| ------------- | -------------------------------------------- |
+| `sub`         | 用户名                                       |
+| `ns`          | 用户命名空间（数据隔离前缀，当前等于用户名） |
+| `iat` / `exp` | 签发时间 / 过期时间（默认 7 天）             |
+| `ver`         | 撤销版本号，对应 `users.token_version`       |
 
 令牌**只以两种方式传递**（依据：`src/auth/middleware.rs`）：
 
-| 传法 | 位置 | 用途 |
-|------|------|------|
-| 请求头 | `Authorization: Bearer <jwt>` | 常规请求 |
-| 查询参数 | `accessToken=<jwt>` | SSE 与 `<img>` 等无法设置请求头的场景 |
+| 传法     | 位置                          | 用途                                  |
+| -------- | ----------------------------- | ------------------------------------- |
+| 请求头   | `Authorization: Bearer <jwt>` | 常规请求                              |
+| 查询参数 | `accessToken=<jwt>`           | SSE 与 `<img>` 等无法设置请求头的场景 |
 
 请求头优先于查询参数。裸令牌（不带 `Bearer ` 前缀）也能识别，但推荐始终带上前缀。
 

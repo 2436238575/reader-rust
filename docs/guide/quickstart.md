@@ -2,12 +2,12 @@
 
 ## 环境要求
 
-| 组件 | 版本要求 | 用途 |
-|------|---------|------|
-| Rust | 最新稳定版（推荐通过 [rustup](https://rustup.rs/) 安装） | 编译后端 |
-| Node.js | 20 及以上 | 构建 / 开发前端 |
-| npm | 随 Node 附带 | 依赖管理 |
-| Docker | 可选 | 容器化部署 |
+| 组件    | 版本要求                                                 | 用途            |
+| ------- | -------------------------------------------------------- | --------------- |
+| Rust    | 最新稳定版（推荐通过 [rustup](https://rustup.rs/) 安装） | 编译后端        |
+| Node.js | 20 及以上                                                | 构建 / 开发前端 |
+| npm     | 随 Node 附带                                             | 依赖管理        |
+| Docker  | 可选                                                     | 容器化部署      |
 
 Windows 下推荐使用 **MSVC 工具链**（`x86_64-pc-windows-msvc`），需要已安装 Visual Studio Build Tools 与 Windows SDK —— 因为依赖里的 `rquickjs`、`ring`、`libsqlite3-sys` 需要编译 C 代码。
 
@@ -77,16 +77,16 @@ curl http://127.0.0.1:8080/health
 
 配置优先级：**环境变量 > `.env` 文件 > 代码默认值**。
 
-| 配置项 | 默认值 | 说明 |
-|--------|--------|------|
-| `SERVER_HOST` | `0.0.0.0` | 服务器绑定地址 |
-| `SERVER_PORT` | `8080` | 服务器端口 |
-| `DATABASE_URL` | `sqlite:storage/reader.db?mode=rwc` | SQLite 连接串 |
-| `STORAGE_DIR` | `storage` | 运行期数据根目录 |
-| `ASSETS_DIR` | `storage/assets` | 上传资源目录 |
-| `WEB_ROOT` | `frontend/dist` | 前端静态文件目录 |
-| `LOG_LEVEL` | `info` | 日志级别 |
-| `REQUEST_TIMEOUT_SECS` | `15` | 抓取上游站点的超时时间 |
+| 配置项                 | 默认值                              | 说明                   |
+| ---------------------- | ----------------------------------- | ---------------------- |
+| `SERVER_HOST`          | `0.0.0.0`                           | 服务器绑定地址         |
+| `SERVER_PORT`          | `8080`                              | 服务器端口             |
+| `DATABASE_URL`         | `sqlite:storage/reader.db?mode=rwc` | SQLite 连接串          |
+| `STORAGE_DIR`          | `storage`                           | 运行期数据根目录       |
+| `ASSETS_DIR`           | `storage/assets`                    | 上传资源目录           |
+| `WEB_ROOT`             | `frontend/dist`                     | 前端静态文件目录       |
+| `LOG_LEVEL`            | `info`                              | 日志级别               |
+| `REQUEST_TIMEOUT_SECS` | `15`                                | 抓取上游站点的超时时间 |
 
 需要改配置时：
 

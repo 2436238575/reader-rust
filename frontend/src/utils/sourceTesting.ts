@@ -2,10 +2,7 @@ import type { BookSourceTestResponse } from '../types'
 
 export const MAX_SOURCE_TEST_BATCH_SIZE = 100
 
-export function chunkBookSourceUrls(
-  urls: string[],
-  batchSize = MAX_SOURCE_TEST_BATCH_SIZE
-) {
+export function chunkBookSourceUrls(urls: string[], batchSize = MAX_SOURCE_TEST_BATCH_SIZE) {
   if (batchSize < 1) {
     throw new Error('batchSize must be greater than 0')
   }

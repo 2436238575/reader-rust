@@ -27,8 +27,9 @@ body {
   line-height: var(--leading-normal);
   color: var(--color-text);
   background-color: var(--color-bg);
-  transition: background-color var(--duration-slow) var(--ease-out),
-              color var(--duration-slow) var(--ease-out);
+  transition:
+    background-color var(--duration-slow) var(--ease-out),
+    color var(--duration-slow) var(--ease-out);
   overflow-x: hidden;
   scrollbar-width: none;
   -ms-overflow-style: none;
@@ -40,7 +41,9 @@ body::-webkit-scrollbar {
   height: 0;
 }
 
-html, body, #app {
+html,
+body,
+#app {
   min-height: 100vh;
   min-height: 100dvh;
   min-height: var(--app-height, 100dvh);
@@ -159,13 +162,16 @@ button {
   font-size: var(--text-xs);
 }
 
-input, textarea, select {
+input,
+textarea,
+select {
   font-family: inherit;
   font-size: inherit;
   color: inherit;
 }
 
-ul, ol {
+ul,
+ol {
   list-style: none;
 }
 
@@ -225,8 +231,9 @@ ul, ol {
 
 .slide-up-enter-active,
 .slide-up-leave-active {
-  transition: transform var(--duration-normal) var(--ease-out),
-              opacity var(--duration-normal) var(--ease-out);
+  transition:
+    transform var(--duration-normal) var(--ease-out),
+    opacity var(--duration-normal) var(--ease-out);
 }
 
 .slide-up-enter-from,
@@ -237,8 +244,9 @@ ul, ol {
 
 .scale-enter-active,
 .scale-leave-active {
-  transition: transform var(--duration-normal) var(--ease-out),
-              opacity var(--duration-normal) var(--ease-out);
+  transition:
+    transform var(--duration-normal) var(--ease-out),
+    opacity var(--duration-normal) var(--ease-out);
 }
 
 .scale-enter-from,

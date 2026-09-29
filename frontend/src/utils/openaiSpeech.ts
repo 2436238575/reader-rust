@@ -37,7 +37,7 @@ async function readSpeechError(response: Response) {
 
   try {
     if (contentType.includes('application/json')) {
-      const data = await response.json() as {
+      const data = (await response.json()) as {
         error?: {
           message?: string
         }
@@ -70,30 +70,31 @@ export async function requestOpenAISpeechAudio({
     response_format: format || 'mp3',
     speed,
   }
-  const response = source === 'server'
-    ? await fetch(`${API_BASE}/aiProxy`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        ...buildReaderJwtHeaders(),
-      },
-      body: JSON.stringify({
-        useServerConfig: true,
-        kind: 'speech',
-        path: '/v1/audio/speech',
-        body,
-      }),
-      signal,
-    })
-    : await fetch(buildOpenAISpeechUrl(baseUrl), {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        ...buildAuthHeaders(apiKey),
-      },
-      body: JSON.stringify(body),
-      signal,
-    })
+  const response =
+    source === 'server'
+      ? await fetch(`${API_BASE}/aiProxy`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            ...buildReaderJwtHeaders(),
+          },
+          body: JSON.stringify({
+            useServerConfig: true,
+            kind: 'speech',
+            path: '/v1/audio/speech',
+            body,
+          }),
+          signal,
+        })
+      : await fetch(buildOpenAISpeechUrl(baseUrl), {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            ...buildAuthHeaders(apiKey),
+          },
+          body: JSON.stringify(body),
+          signal,
+        })
 
   if (!response.ok) {
     throw new Error(await readSpeechError(response))

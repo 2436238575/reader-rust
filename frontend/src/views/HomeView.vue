@@ -10,14 +10,26 @@
         </h1>
         <div class="shelf-actions">
           <template v-if="shelfStore.editMode">
-            <button class="btn shelf-btn" type="button" title="全选" aria-label="全选" @click="shelfStore.selectAll()">
+            <button
+              class="btn shelf-btn"
+              type="button"
+              title="全选"
+              aria-label="全选"
+              @click="shelfStore.selectAll()"
+            >
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                 <path d="M9 11l3 3L22 4" />
                 <path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11" />
               </svg>
               <span class="shelf-btn-label">全选</span>
             </button>
-            <button class="btn shelf-btn" type="button" title="取消全选" aria-label="取消全选" @click="shelfStore.clearSelection()">
+            <button
+              class="btn shelf-btn"
+              type="button"
+              title="取消全选"
+              aria-label="取消全选"
+              @click="shelfStore.clearSelection()"
+            >
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                 <rect x="3" y="3" width="18" height="18" rx="2" />
                 <path d="M8 12h8" />
@@ -25,19 +37,45 @@
               <span class="shelf-btn-label">取消全选</span>
             </button>
           </template>
-          <button class="btn shelf-btn" type="button" title="导入本地书" aria-label="导入本地书" @click="triggerLocalBookUpload" :disabled="localBookUploading">
-            <svg v-if="!localBookUploading" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <button
+            class="btn shelf-btn"
+            type="button"
+            title="导入本地书"
+            aria-label="导入本地书"
+            @click="triggerLocalBookUpload"
+            :disabled="localBookUploading"
+          >
+            <svg
+              v-if="!localBookUploading"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+            >
               <path d="M12 3v12" />
               <path d="m7 8 5-5 5 5" />
               <path d="M5 21h14" />
             </svg>
-            <svg v-else class="spinning" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <svg
+              v-else
+              class="spinning"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+            >
               <path d="M21 12a9 9 0 0 0-15.55-6.2L3 8" />
               <path d="M3 3v5h5" />
             </svg>
             <span class="shelf-btn-label">{{ localBookUploading ? '导入中' : '导入本地书' }}</span>
           </button>
-          <button class="btn shelf-btn" type="button" title="分组管理" aria-label="分组管理" @click="showGroupManager = true">
+          <button
+            class="btn shelf-btn"
+            type="button"
+            title="分组管理"
+            aria-label="分组管理"
+            @click="showGroupManager = true"
+          >
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
               <path d="M4 7h6l2 2h8v8a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V9a2 2 0 0 1 2-2Z" />
               <path d="M8 13h8" />
@@ -52,7 +90,13 @@
             :aria-label="shelfStore.editMode ? '完成' : '编辑'"
             @click="toggleEditMode"
           >
-            <svg v-if="shelfStore.editMode" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <svg
+              v-if="shelfStore.editMode"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+            >
               <path d="M20 6 9 17l-5-5" />
             </svg>
             <svg v-else viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -96,28 +140,37 @@
           :loading="shelfStore.loading"
           :sortable="!shelfStore.editMode && !shelfStore.loading && !shelfStore.sorting"
           empty-text="书架空空如也，搜索添加新书吧"
-        @click="handleBookClick"
-        @info="handleBookInfo"
-        @delete="handleDeleteBook"
-        @ai="handleBookAi"
-        @select="shelfStore.toggleSelection($event.bookUrl)"
-        @reorder="handleReorderBooks"
+          @click="handleBookClick"
+          @info="handleBookInfo"
+          @delete="handleDeleteBook"
+          @ai="handleBookAi"
+          @select="shelfStore.toggleSelection($event.bookUrl)"
+          @reorder="handleReorderBooks"
         />
       </div>
 
       <!-- Batch Toolbar -->
       <Transition name="slide-up">
-        <div v-if="shelfStore.editMode && shelfStore.selectedBookUrls.size > 0" class="batch-toolbar">
+        <div
+          v-if="shelfStore.editMode && shelfStore.selectedBookUrls.size > 0"
+          class="batch-toolbar"
+        >
           <div class="batch-info">
             已选中 <span>{{ shelfStore.selectedBookUrls.size }}</span> 本书
           </div>
           <div class="batch-actions">
             <button class="btn" :disabled="bulkWorking" @click="handleBulkMove">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14" /></svg>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M12 5v14M5 12h14" />
+              </svg>
               移动分组
             </button>
             <button class="btn btn-danger" :disabled="bulkWorking" @click="handleBulkDelete">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M19 6v14a3 3 0 0 1-3-3H7c-1 0-2-1-2-2V6M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2" /></svg>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path
+                  d="M3 6h18M19 6v14a3 3 0 0 1-3-3H7c-1 0-2-1-2-2V6M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"
+                />
+              </svg>
               批量删除
             </button>
           </div>
@@ -126,16 +179,10 @@
     </div>
 
     <!-- Book Detail Modal -->
-    <BookDetailModal
-      v-model="showDetail"
-      :book="selectedBook"
-    />
+    <BookDetailModal v-model="showDetail" :book="selectedBook" />
 
     <!-- Group Select Modal -->
-    <GroupSelectModal
-      v-model="showGroupSelect"
-      @select="handleSetGroup"
-    />
+    <GroupSelectModal v-model="showGroupSelect" @select="handleSetGroup" />
     <GroupManagerModal v-model="showGroupManager" />
   </div>
 </template>
@@ -187,10 +234,7 @@ onMounted(async () => {
 // 从阅读器返回时进度已变，必须重拉（onMounted 在保活复用时不再触发）
 onActivated(async () => {
   // 首载失败不能静默：否则用户看到「书架空空如也」的误导性空态
-  const results = await Promise.allSettled([
-    shelfStore.fetchBooks(),
-    shelfStore.fetchGroups(),
-  ])
+  const results = await Promise.allSettled([shelfStore.fetchBooks(), shelfStore.fetchGroups()])
   const failed = results.find((r): r is PromiseRejectedResult => r.status === 'rejected')
   if (failed) {
     appStore.showToast((failed.reason as Error)?.message || '书架加载失败', 'error')
@@ -305,7 +349,8 @@ async function handleReorderBooks(payload: { draggedUrl: string; targetUrl: stri
   } catch (e: any) {
     appStore.showToast(e.message || '排序失败', 'error')
   }
-}</script>
+}
+</script>
 
 <style scoped>
 .home-view {
@@ -329,7 +374,6 @@ async function handleReorderBooks(payload: { draggedUrl: string; targetUrl: stri
   flex-direction: column;
   min-height: 0;
 }
-
 
 .hidden-input {
   display: none;
@@ -365,8 +409,12 @@ async function handleReorderBooks(payload: { draggedUrl: string; targetUrl: stri
 }
 
 @keyframes shelf-spin {
-  from { transform: rotate(0deg); }
-  to { transform: rotate(360deg); }
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .group-tabs {
@@ -525,6 +573,8 @@ async function handleReorderBooks(payload: { draggedUrl: string; targetUrl: stri
     gap: var(--space-4);
     justify-content: space-between;
   }
-  .batch-info { display: none; }
+  .batch-info {
+    display: none;
+  }
 }
 </style>

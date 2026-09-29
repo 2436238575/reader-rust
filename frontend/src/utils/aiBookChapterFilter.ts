@@ -28,15 +28,12 @@ const NON_STORY_TITLE_PATTERNS = [
   /上架/,
 ]
 
-const PROLOGUE_PATTERNS = [
-  /^序章$/,
-  /^楔子$/,
-  /^引子$/,
-  /^序$/,
-  /^前言$/,
-]
+const PROLOGUE_PATTERNS = [/^序章$/, /^楔子$/, /^引子$/, /^序$/, /^前言$/]
 
-export function shouldSkipAiBookChapter(chapter: Pick<BookChapter, 'title' | 'index'>, chapters: Pick<BookChapter, 'title' | 'index'>[] = []) {
+export function shouldSkipAiBookChapter(
+  chapter: Pick<BookChapter, 'title' | 'index'>,
+  chapters: Pick<BookChapter, 'title' | 'index'>[] = []
+) {
   const title = normalizeChapterTitle(chapter.title)
   if (!title) return true
   if (PROLOGUE_PATTERNS.some((pattern) => pattern.test(title))) return false
@@ -44,7 +41,10 @@ export function shouldSkipAiBookChapter(chapter: Pick<BookChapter, 'title' | 'in
   return isFrontLoadedLatestChapter(chapter, chapters)
 }
 
-function isFrontLoadedLatestChapter(chapter: Pick<BookChapter, 'title' | 'index'>, chapters: Pick<BookChapter, 'title' | 'index'>[]) {
+function isFrontLoadedLatestChapter(
+  chapter: Pick<BookChapter, 'title' | 'index'>,
+  chapters: Pick<BookChapter, 'title' | 'index'>[]
+) {
   if (!chapters.length || chapter.index > 30) return false
 
   const ordinal = extractChapterOrdinal(chapter.title)
@@ -74,7 +74,9 @@ function extractChapterOrdinal(title: string) {
   const arabic = normalized.match(/^(?:第)?\s*(\d{1,5})\s*(?:[章章节回话集部卷篇\.、:：\s]|$)/)
   if (arabic) return Number(arabic[1])
 
-  const chinese = normalized.match(/^第?\s*([零〇一二两三四五六七八九十百千万]+)\s*(?:章|节|回|话|集|部|卷|篇)/)
+  const chinese = normalized.match(
+    /^第?\s*([零〇一二两三四五六七八九十百千万]+)\s*(?:章|节|回|话|集|部|卷|篇)/
+  )
   if (chinese) return parseChineseNumber(chinese[1])
 
   return null
@@ -90,7 +92,7 @@ function normalizeChapterTitle(title: string) {
 function parseChineseNumber(value: string) {
   const digits: Record<string, number> = {
     零: 0,
-    '〇': 0,
+    〇: 0,
     一: 1,
     二: 2,
     两: 2,

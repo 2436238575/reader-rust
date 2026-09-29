@@ -18,54 +18,54 @@ outline: deep
   "enabled": true,
   "jsLib": "",
   "searchUrl": "/search?wd={key}&page={page}",
-  "ruleSearch": { /* 搜索规则 */ },
-  "ruleBookInfo": { /* 书籍信息规则 */ },
-  "ruleToc": { /* 目录规则 */ },
-  "ruleContent": { /* 正文规则 */ }
+  "ruleSearch": {/* 搜索规则 */},
+  "ruleBookInfo": {/* 书籍信息规则 */},
+  "ruleToc": {/* 目录规则 */},
+  "ruleContent": {/* 正文规则 */}
 }
 ```
 
 常见源级字段：
 
-| 字段 | 说明 |
-|------|------|
-| `bookSourceName` | 书源名称 |
-| `bookSourceGroup` | 分组 |
-| `bookSourceUrl` | 书源基础 URL，用于相对路径补全 |
-| `enabled` | 是否启用 |
-| `enabledExplore` | 是否启用发现页 |
-| `header` | 全局请求头，JSON 字符串 |
-| `jsLib` | 共享 JS 库，会在该书源的所有 JS 规则前执行 |
-| `searchUrl` | 搜索请求规则 |
-| `exploreUrl` | 发现页请求规则 |
-| `loginUrl` | 登录请求规则 |
-| `loginCheckJs` | 登录页返回后的校验脚本 |
-| `ruleSearch` | 搜索结果解析 |
-| `ruleBookInfo` | 详情页解析 |
-| `ruleToc` | 目录页解析 |
-| `ruleContent` | 正文页解析 |
+| 字段              | 说明                                       |
+| ----------------- | ------------------------------------------ |
+| `bookSourceName`  | 书源名称                                   |
+| `bookSourceGroup` | 分组                                       |
+| `bookSourceUrl`   | 书源基础 URL，用于相对路径补全             |
+| `enabled`         | 是否启用                                   |
+| `enabledExplore`  | 是否启用发现页                             |
+| `header`          | 全局请求头，JSON 字符串                    |
+| `jsLib`           | 共享 JS 库，会在该书源的所有 JS 规则前执行 |
+| `searchUrl`       | 搜索请求规则                               |
+| `exploreUrl`      | 发现页请求规则                             |
+| `loginUrl`        | 登录请求规则                               |
+| `loginCheckJs`    | 登录页返回后的校验脚本                     |
+| `ruleSearch`      | 搜索结果解析                               |
+| `ruleBookInfo`    | 详情页解析                                 |
+| `ruleToc`         | 目录页解析                                 |
+| `ruleContent`     | 正文页解析                                 |
 
 ## 解析方式
 
 当前解析器支持以下模式：
 
-| 方式 | 标识 | 说明 |
-|------|------|------|
-| CSS 选择器 | 默认 / `@css:` | HTML 解析默认模式 |
-| JSONPath | `@json:` 或自动检测 | 响应体是 JSON 时可直接取字段 |
-| XPath | `/`、`./` 或 `@xpath:` | XML / HTML 路径提取 |
-| 正则 | `:` 或 `@regex:` | 主要用于列表规则 |
-| JavaScript | `js:`、`@js:`、`<js>...</js>` | 复杂逻辑或预处理 |
+| 方式       | 标识                          | 说明                         |
+| ---------- | ----------------------------- | ---------------------------- |
+| CSS 选择器 | 默认 / `@css:`                | HTML 解析默认模式            |
+| JSONPath   | `@json:` 或自动检测           | 响应体是 JSON 时可直接取字段 |
+| XPath      | `/`、`./` 或 `@xpath:`        | XML / HTML 路径提取          |
+| 正则       | `:` 或 `@regex:`              | 主要用于列表规则             |
+| JavaScript | `js:`、`@js:`、`<js>...</js>` | 复杂逻辑或预处理             |
 
 当前各阶段的能力边界：
 
-| 阶段 | 当前支持 |
-|------|----------|
+| 阶段                         | 当前支持                            |
+| ---------------------------- | ----------------------------------- |
 | `ruleSearch` / `ruleExplore` | CSS / JSONPath / XPath / Regex / JS |
-| `ruleBookInfo` | CSS / JSONPath / XPath |
-| `ruleToc` | CSS / JSONPath / XPath / Regex / JS |
-| `ruleContent.content` | CSS / JSONPath / XPath / JS |
-| `ruleContent.nextContentUrl` | CSS / JSONPath / XPath |
+| `ruleBookInfo`               | CSS / JSONPath / XPath              |
+| `ruleToc`                    | CSS / JSONPath / XPath / Regex / JS |
+| `ruleContent.content`        | CSS / JSONPath / XPath / JS         |
+| `ruleContent.nextContentUrl` | CSS / JSONPath / XPath              |
 
 ## 规则流程
 

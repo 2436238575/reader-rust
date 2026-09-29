@@ -3,10 +3,7 @@ import type { Ref } from 'vue'
 import { useAiBookStore } from '../stores/aiBook'
 import { useAppStore } from '../stores/app'
 import { safeLocalSet } from '../utils/storage'
-import {
-  DEFAULT_OPENAI_BASE_URL,
-  requestOpenAISpeechAudio,
-} from '../utils/openaiSpeech'
+import { DEFAULT_OPENAI_BASE_URL, requestOpenAISpeechAudio } from '../utils/openaiSpeech'
 
 export interface TTSOptions {
   onStart?: () => void
@@ -60,7 +57,9 @@ function loadSpeechConfig(): SpeechConfig {
   try {
     const saved = localStorage.getItem('reader-speechConfig')
     if (saved) return { ...defaultSpeechConfig, ...JSON.parse(saved) }
-  } catch { /* ignore */ }
+  } catch {
+    /* ignore */
+  }
   return { ...defaultSpeechConfig }
 }
 
@@ -69,7 +68,11 @@ function isSafariSpeechFallbackMode() {
   const ua = navigator.userAgent || ''
   const vendor = navigator.vendor || ''
   const isAppleEngine = /Apple/i.test(vendor) || /iPhone|iPad|iPod/i.test(ua)
-  return isAppleEngine && /Safari/i.test(ua) && !/Chrome|Chromium|CriOS|Edg|EdgiOS|Firefox|FxiOS|OPR|OPT|SamsungBrowser|Android/i.test(ua)
+  return (
+    isAppleEngine &&
+    /Safari/i.test(ua) &&
+    !/Chrome|Chromium|CriOS|Edg|EdgiOS|Firefox|FxiOS|OPR|OPT|SamsungBrowser|Android/i.test(ua)
+  )
 }
 
 /**
@@ -90,7 +93,9 @@ export function useReaderTts(content: Ref<string>) {
     if (speechConfig.openaiSource === 'server') return true
     return !!speechConfig.openaiBaseUrl.trim()
   })
-  const speechProviderLabel = computed(() => speechConfig.provider === 'openai' ? 'OpenAI Speech' : '系统语音')
+  const speechProviderLabel = computed(() =>
+    speechConfig.provider === 'openai' ? 'OpenAI Speech' : '系统语音'
+  )
   const speechStopAt = ref(0)
   let speechStopTimer: number | null = null
   let synth: SpeechSynthesis | null = typeof window !== 'undefined' ? window.speechSynthesis : null
@@ -142,13 +147,16 @@ export function useReaderTts(content: Ref<string>) {
 
   function fetchVoices() {
     if (!synth) return
-    voiceList.value = synth.getVoices().slice().sort((a, b) => {
-      const aZh = a.lang.startsWith('zh-')
-      const bZh = b.lang.startsWith('zh-')
-      if (aZh && !bZh) return -1
-      if (!aZh && bZh) return 1
-      return a.lang.localeCompare(b.lang)
-    })
+    voiceList.value = synth
+      .getVoices()
+      .slice()
+      .sort((a, b) => {
+        const aZh = a.lang.startsWith('zh-')
+        const bZh = b.lang.startsWith('zh-')
+        if (aZh && !bZh) return -1
+        if (!aZh && bZh) return 1
+        return a.lang.localeCompare(b.lang)
+      })
     if (!speechConfig.voiceName && voiceList.value.length > 0) {
       const zhVoice = voiceList.value.find((v) => v.lang.startsWith('zh-'))
       speechConfig.voiceName = (zhVoice || voiceList.value[0]).name
@@ -277,7 +285,10 @@ export function useReaderTts(content: Ref<string>) {
     if (!normalizedTexts.length) return
     const pendingTexts = normalizedTexts.filter((item) => {
       const key = buildOpenAIAudioCacheKey(item)
-      return !preloadedOpenAIAudio.value.some((entry) => entry.key === key) && !inFlightPreloadKeys.has(key)
+      return (
+        !preloadedOpenAIAudio.value.some((entry) => entry.key === key) &&
+        !inFlightPreloadKeys.has(key)
+      )
     })
     if (!pendingTexts.length) return
 
@@ -342,13 +353,16 @@ export function useReaderTts(content: Ref<string>) {
       return
     }
     speechStopAt.value = Date.now() + normalized * 60 * 1000
-    speechStopTimer = window.setTimeout(() => {
-      stopTTS()
-      clearSpeechStopTimer(false)
-      speechConfig.stopAfterMinutes = 0
-      saveSpeechConfig()
-      appStore.showToast('朗读已按定时设置停止', 'success')
-    }, normalized * 60 * 1000)
+    speechStopTimer = window.setTimeout(
+      () => {
+        stopTTS()
+        clearSpeechStopTimer(false)
+        speechConfig.stopAfterMinutes = 0
+        saveSpeechConfig()
+        appStore.showToast('朗读已按定时设置停止', 'success')
+      },
+      normalized * 60 * 1000
+    )
   }
 
   function startSystemTTS(rawText: string, options: TTSOptions, sessionId: number) {
@@ -361,7 +375,8 @@ export function useReaderTts(content: Ref<string>) {
 
     const utterance = new SpeechSynthesisUtterance(rawText)
     currentUtterance = utterance
-    const safariSpeechFallback = isSafariSpeechFallbackMode() && !systemTtsNativeEventsReliable.value
+    const safariSpeechFallback =
+      isSafariSpeechFallbackMode() && !systemTtsNativeEventsReliable.value
 
     const selectedVoice = voiceList.value.find((voice) => voice.name === speechConfig.voiceName)
     utterance.lang = selectedVoice?.lang || 'zh-CN'
@@ -398,7 +413,10 @@ export function useReaderTts(content: Ref<string>) {
       return now - startedAt - pausedAccumulatedMs - currentPaused
     }
 
-    const finalizePlayback = (kind: 'end' | 'error' | 'interrupted', event?: SpeechSynthesisErrorEvent) => {
+    const finalizePlayback = (
+      kind: 'end' | 'error' | 'interrupted',
+      event?: SpeechSynthesisErrorEvent
+    ) => {
       if (completed) return
       completed = true
       clearFinishWatchdog()
@@ -499,7 +517,10 @@ export function useReaderTts(content: Ref<string>) {
         }
         finishWatchdog = window.setTimeout(checkFinish, 600)
       }
-      finishWatchdog = window.setTimeout(checkFinish, safariSpeechFallback ? Math.min(estimatedMs, 1200) : estimatedMs)
+      finishWatchdog = window.setTimeout(
+        checkFinish,
+        safariSpeechFallback ? Math.min(estimatedMs, 1200) : estimatedMs
+      )
     }
 
     utterance.onstart = () => {
@@ -524,7 +545,12 @@ export function useReaderTts(content: Ref<string>) {
     }
     utterance.onerror = (event) => {
       const interrupted = event.error === 'interrupted' || event.error === 'canceled'
-      logTTS('system onerror', { sessionId, error: event.error, interrupted, text: rawText.slice(0, 40) })
+      logTTS('system onerror', {
+        sessionId,
+        error: event.error,
+        interrupted,
+        text: rawText.slice(0, 40),
+      })
       finalizePlayback(interrupted ? 'interrupted' : 'error', event)
     }
 
@@ -627,7 +653,11 @@ export function useReaderTts(content: Ref<string>) {
         isSpeaking.value = false
         isPaused.value = false
         currentOpenAIAudio = null
-        logTTS('openai play catch', { sessionId, message: error.message, text: rawText.slice(0, 40) })
+        logTTS('openai play catch', {
+          sessionId,
+          message: error.message,
+          text: rawText.slice(0, 40),
+        })
         options.onError?.(error)
       })
     }
@@ -644,42 +674,57 @@ export function useReaderTts(content: Ref<string>) {
 
     const inFlight = inFlightOpenAIAudioRequests.get(key)
     if (inFlight) {
-      void inFlight.then((blob) => {
+      void inFlight
+        .then((blob) => {
+          return playBlob(blob, controller)
+        })
+        .catch((error: Error) => {
+          if (controller.signal.aborted || !isCurrentTTSSession(sessionId)) return
+          isSpeechLoading.value = false
+          isSpeaking.value = false
+          isPaused.value = false
+          currentOpenAIAbortController = null
+          currentOpenAIAudio = null
+          logTTS('openai inflight catch', {
+            sessionId,
+            message: error.message,
+            text: rawText.slice(0, 40),
+          })
+          options.onError?.(error)
+        })
+      return
+    }
+
+    const started = getOrStartOpenAIAudioRequest(rawText, controller.signal)
+    void started.promise
+      .then((blob) => {
         return playBlob(blob, controller)
-      }).catch((error: Error) => {
+      })
+      .catch((error: Error) => {
         if (controller.signal.aborted || !isCurrentTTSSession(sessionId)) return
         isSpeechLoading.value = false
         isSpeaking.value = false
         isPaused.value = false
         currentOpenAIAbortController = null
         currentOpenAIAudio = null
-        logTTS('openai inflight catch', { sessionId, message: error.message, text: rawText.slice(0, 40) })
+        logTTS('openai request catch', {
+          sessionId,
+          message: error.message,
+          text: rawText.slice(0, 40),
+        })
+        appStore.showToast(error.message || 'OpenAI Speech 请求失败', 'error')
         options.onError?.(error)
       })
-      return
-    }
-
-    const started = getOrStartOpenAIAudioRequest(rawText, controller.signal)
-    void started.promise.then((blob) => {
-      return playBlob(blob, controller)
-    }).catch((error: Error) => {
-      if (controller.signal.aborted || !isCurrentTTSSession(sessionId)) return
-      isSpeechLoading.value = false
-      isSpeaking.value = false
-      isPaused.value = false
-      currentOpenAIAbortController = null
-      currentOpenAIAudio = null
-      logTTS('openai request catch', { sessionId, message: error.message, text: rawText.slice(0, 40) })
-      appStore.showToast(error.message || 'OpenAI Speech 请求失败', 'error')
-      options.onError?.(error)
-    })
   }
 
   function startTTS(text?: string, options: TTSOptions = {}, interruptCurrent = true) {
     const hasActiveSystemSpeech = !!synth && (synth.speaking || synth.pending || !!currentUtterance)
     const hasActiveOpenAISpeech = !!currentOpenAIAudio || !!currentOpenAIAbortController
 
-    if (interruptCurrent && (hasActiveSystemSpeech || hasActiveOpenAISpeech || isSpeaking.value || isSpeechLoading.value)) {
+    if (
+      interruptCurrent &&
+      (hasActiveSystemSpeech || hasActiveOpenAISpeech || isSpeaking.value || isSpeechLoading.value)
+    ) {
       stopTTS(false)
     }
 
@@ -765,10 +810,32 @@ export function useReaderTts(content: Ref<string>) {
   }
 
   return {
-    isSpeaking, isSpeechLoading, isPaused, startTTS, pauseTTS, stopTTS,
-    voiceList, speechConfig, speechStopAt, speechProviderLabel, openAISpeechConfigured,
+    isSpeaking,
+    isSpeechLoading,
+    isPaused,
+    startTTS,
+    pauseTTS,
+    stopTTS,
+    voiceList,
+    speechConfig,
+    speechStopAt,
+    speechProviderLabel,
+    openAISpeechConfigured,
     systemTtsNativeEventsReliable,
-    fetchVoices, setVoiceName, setSpeechProvider, setSpeechRate, setSpeechPitch, setSpeechStopTimer, clearSpeechStopTimer,
-    setOpenAISpeechSource, setOpenAISpeechBaseUrl, setOpenAISpeechApiKey, setOpenAISpeechModel, setOpenAISpeechVoice, setOpenAISpeechFormat, setOpenAISpeechRequestMode, preloadOpenAITTS,
+    fetchVoices,
+    setVoiceName,
+    setSpeechProvider,
+    setSpeechRate,
+    setSpeechPitch,
+    setSpeechStopTimer,
+    clearSpeechStopTimer,
+    setOpenAISpeechSource,
+    setOpenAISpeechBaseUrl,
+    setOpenAISpeechApiKey,
+    setOpenAISpeechModel,
+    setOpenAISpeechVoice,
+    setOpenAISpeechFormat,
+    setOpenAISpeechRequestMode,
+    preloadOpenAITTS,
   }
 }

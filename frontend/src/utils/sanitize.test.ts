@@ -18,7 +18,7 @@ describe('sanitizeUntrustedHtml', () => {
 
   it('drops iframe/object/embed entirely', () => {
     const out = sanitizeUntrustedHtml(
-      '<iframe src="https://evil.example"></iframe><object data="x"></object><embed src="y">',
+      '<iframe src="https://evil.example"></iframe><object data="x"></object><embed src="y">'
     )
     expect(out).not.toContain('iframe')
     expect(out).not.toContain('<object')
@@ -27,7 +27,7 @@ describe('sanitizeUntrustedHtml', () => {
 
   it('removes javascript: URLs from links and images', () => {
     const out = sanitizeUntrustedHtml(
-      '<a href="javascript:alert(1)">x</a><img src="javascript:alert(2)">',
+      '<a href="javascript:alert(1)">x</a><img src="javascript:alert(2)">'
     )
     expect(out).not.toContain('javascript:')
   })
@@ -53,7 +53,7 @@ describe('sanitizeUntrustedHtml', () => {
   it('keeps chapter illustration markup (figure + size hints)', () => {
     const out = sanitizeUntrustedHtml(
       '<figure class="chapter-figure"><img src="https://x/2.jpg" width="1400" height="933">' +
-        '<figcaption>配图（画师：奈月Oo）</figcaption></figure>',
+        '<figcaption>配图（画师：奈月Oo）</figcaption></figure>'
     )
     expect(out).toContain('<figure')
     expect(out).toContain('<figcaption>')

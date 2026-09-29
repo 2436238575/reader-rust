@@ -24,19 +24,19 @@
 
 ## 字段说明
 
-| 字段 | 必需 | 说明 |
-|------|------|------|
-| `preUpdateJs` | 否 | 目录解析前对整页响应体做 JS 预处理 |
-| `init` | 否 | 初始化规则。XPath / JSON 可缩小作用域；HTML 模式更适合做 `@put` |
-| `chapterList` | 是 | 章节列表规则，支持 CSS / JSONPath / XPath / Regex / JS |
-| `chapterName` | 是 | 章节标题选择器 |
-| `chapterUrl` | 是 | 章节链接选择器 |
-| `formatJs` | 否 | 章节解析完成后重写标题，只影响标题 |
-| `isVolume` | 否 | 是否为卷名节点，真值时允许没有 `chapterUrl` |
-| `isVip` | 否 | 章节是否 VIP |
-| `isPay` | 否 | 章节是否付费 |
-| `nextTocUrl` | 否 | 下一页目录链接 |
-| `updateTime` | 否 | 更新时间选择器 |
+| 字段          | 必需 | 说明                                                            |
+| ------------- | ---- | --------------------------------------------------------------- |
+| `preUpdateJs` | 否   | 目录解析前对整页响应体做 JS 预处理                              |
+| `init`        | 否   | 初始化规则。XPath / JSON 可缩小作用域；HTML 模式更适合做 `@put` |
+| `chapterList` | 是   | 章节列表规则，支持 CSS / JSONPath / XPath / Regex / JS          |
+| `chapterName` | 是   | 章节标题选择器                                                  |
+| `chapterUrl`  | 是   | 章节链接选择器                                                  |
+| `formatJs`    | 否   | 章节解析完成后重写标题，只影响标题                              |
+| `isVolume`    | 否   | 是否为卷名节点，真值时允许没有 `chapterUrl`                     |
+| `isVip`       | 否   | 章节是否 VIP                                                    |
+| `isPay`       | 否   | 章节是否付费                                                    |
+| `nextTocUrl`  | 否   | 下一页目录链接                                                  |
+| `updateTime`  | 否   | 更新时间选择器                                                  |
 
 ## 示例
 
@@ -106,11 +106,11 @@
 
 `formatJs` 可用的绑定值：
 
-| 变量 | 说明 |
-|------|------|
-| `index` | 1 开始的章节序号 |
-| `title` | 当前标题 |
-| `chapter` | 当前章节对象 |
+| 变量      | 说明             |
+| --------- | ---------------- |
+| `index`   | 1 开始的章节序号 |
+| `title`   | 当前标题         |
+| `chapter` | 当前章节对象     |
 
 ## 当前实现说明
 

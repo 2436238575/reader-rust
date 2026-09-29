@@ -26,9 +26,7 @@
               <button class="btn" :disabled="working || loading" @click="loadFiles(currentPath)">
                 刷新
               </button>
-              <button class="btn" :disabled="working" @click="triggerUpload">
-                上传
-              </button>
+              <button class="btn" :disabled="working" @click="triggerUpload">上传</button>
               <input
                 ref="fileInputRef"
                 type="file"
@@ -78,7 +76,9 @@
                 <span class="file-name">{{ entry.name }}</span>
               </button>
 
-              <span class="file-meta">{{ entry.isDirectory ? '目录' : formatBytes(entry.size) }}</span>
+              <span class="file-meta">{{
+                entry.isDirectory ? '目录' : formatBytes(entry.size)
+              }}</span>
               <span class="file-meta">{{ formatDateTime(entry.lastModified) }}</span>
 
               <div class="file-actions">
@@ -172,7 +172,7 @@ watch(
       errorMessage.value = ''
       selectedPaths.value = []
     }
-  },
+  }
 )
 
 function close() {
@@ -205,20 +205,25 @@ async function loadFiles(path = '/') {
     const list = await getWebdavFileList(path)
     currentPath.value = path
     selectedPaths.value = []
-    const rows: EntryRow[] = path !== '/'
-      ? [{
-          name: '..',
-          size: 0,
-          path: toParentPath(path),
-          lastModified: 0,
-          isDirectory: true,
-          toParent: true,
-        }]
-      : []
-    rows.push(...list.sort((a, b) => {
-      if (a.isDirectory !== b.isDirectory) return a.isDirectory ? -1 : 1
-      return a.name.localeCompare(b.name)
-    }))
+    const rows: EntryRow[] =
+      path !== '/'
+        ? [
+            {
+              name: '..',
+              size: 0,
+              path: toParentPath(path),
+              lastModified: 0,
+              isDirectory: true,
+              toParent: true,
+            },
+          ]
+        : []
+    rows.push(
+      ...list.sort((a, b) => {
+        if (a.isDirectory !== b.isDirectory) return a.isDirectory ? -1 : 1
+        return a.name.localeCompare(b.name)
+      })
+    )
     entries.value = rows
   } catch (error) {
     errorMessage.value = (error as Error).message || '无法读取服务器备份文件列表'
@@ -246,7 +251,7 @@ async function handleUpload(event: Event) {
   try {
     await uploadFilesToWebdav(
       files.map((file) => ({ file, name: file.name })),
-      currentPath.value,
+      currentPath.value
     )
     appStore.showToast('文件已上传到服务器', 'success')
     await loadFiles(currentPath.value)
@@ -268,11 +273,7 @@ async function createBackup() {
   working.value = true
   try {
     const payload = await createWebdavBackupPayload()
-    await uploadTextToWebdav(
-      serializeWebdavBackup(payload),
-      buildBackupFilename(),
-      '/backups',
-    )
+    await uploadTextToWebdav(serializeWebdavBackup(payload), buildBackupFilename(), '/backups')
     appStore.showToast('备份已保存到 /backups', 'success')
     await loadFiles('/backups')
   } catch (error) {

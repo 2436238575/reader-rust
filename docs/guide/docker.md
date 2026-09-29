@@ -4,12 +4,12 @@ Reader-Rust 官方镜像发布在 Docker Hub 的 `docker.io/givenge/reader-rust`
 
 ## 镜像标签
 
-| 标签 | 架构 | 说明 |
-|------|------|------|
-| `latest` | `linux/amd64` | x86_64 滚动标签，跟随最新发布 |
-| `latest-aarch64` | `linux/arm64` | ARM64 滚动标签 |
-| `vX.Y.Z-x86_64` | `linux/amd64` | 具体版本 |
-| `vX.Y.Z-aarch64` | `linux/arm64` | 具体版本 |
+| 标签             | 架构          | 说明                          |
+| ---------------- | ------------- | ----------------------------- |
+| `latest`         | `linux/amd64` | x86_64 滚动标签，跟随最新发布 |
+| `latest-aarch64` | `linux/arm64` | ARM64 滚动标签                |
+| `vX.Y.Z-x86_64`  | `linux/amd64` | 具体版本                      |
+| `vX.Y.Z-aarch64` | `linux/arm64` | 具体版本                      |
 
 ## 直接运行
 
@@ -45,15 +45,15 @@ docker run -d \
 
 镜像里已经设好了这些值（见 `Dockerfile`），通常不用改：
 
-| 变量 | 镜像内取值 |
-|------|-----------|
-| `SERVER_HOST` | `0.0.0.0` |
-| `SERVER_PORT` | `8080` |
+| 变量           | 镜像内取值                               |
+| -------------- | ---------------------------------------- |
+| `SERVER_HOST`  | `0.0.0.0`                                |
+| `SERVER_PORT`  | `8080`                                   |
 | `DATABASE_URL` | `sqlite:/app/storage/reader.db?mode=rwc` |
-| `STORAGE_DIR` | `/app/storage` |
-| `ASSETS_DIR` | `/app/storage/assets` |
-| `WEB_ROOT` | `/app/web/dist` |
-| `LOG_LEVEL` | `info` |
+| `STORAGE_DIR`  | `/app/storage`                           |
+| `ASSETS_DIR`   | `/app/storage/assets`                    |
+| `WEB_ROOT`     | `/app/web/dist`                          |
+| `LOG_LEVEL`    | `info`                                   |
 
 因此**只需挂载 `/app/storage` 一个卷**，数据库、章节缓存、上传资源就都在里面了。
 
@@ -98,7 +98,7 @@ services:
     image: givenge/reader-rust:latest
     container_name: reader
     ports:
-      - "8080:8080"
+      - '8080:8080'
     volumes:
       - ./storage:/app/storage
     environment:

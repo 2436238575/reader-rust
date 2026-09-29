@@ -6,11 +6,11 @@
 
 ## 分组对象（BookGroup）
 
-| 字段 | 类型 | 说明 |
-|------|------|------|
-| `groupId` | number | 分组 ID |
-| `groupName` | string | 分组名 |
-| `orderNo` | number | 排序号 |
+| 字段        | 类型   | 说明    |
+| ----------- | ------ | ------- |
+| `groupId`   | number | 分组 ID |
+| `groupName` | string | 分组名  |
+| `orderNo`   | number | 排序号  |
 
 ## 获取分组列表
 
@@ -52,10 +52,10 @@ POST /reader3/saveBookGroupId
 
 请求体：
 
-| 参数 | 类型 | 必填 | 说明 |
-|------|------|------|------|
-| `bookUrl` | string | 是 | 书籍 URL |
-| `groupId` | number | 否 | 目标分组 ID，缺省为 0（未分组） |
+| 参数      | 类型   | 必填 | 说明                            |
+| --------- | ------ | ---- | ------------------------------- |
+| `bookUrl` | string | 是   | 书籍 URL                        |
+| `groupId` | number | 否   | 目标分组 ID，缺省为 0（未分组） |
 
 书籍不在书架时返回 404。响应 `data` 为 `"success"`。
 

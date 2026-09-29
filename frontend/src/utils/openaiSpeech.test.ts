@@ -36,7 +36,7 @@ describe('openaiSpeech', () => {
           Authorization: 'Bearer alice-token',
           'Content-Type': 'application/json',
         }),
-      }),
+      })
     )
     const init = fetchMock.mock.calls[0]?.[1] as unknown as RequestInit
     expect(JSON.parse(String(init.body))).toMatchObject({

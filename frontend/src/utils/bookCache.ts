@@ -23,7 +23,7 @@ export async function cacheBookToBrowser(params: {
   onProgress?: (progress: CacheProgress) => void
   signal?: { cancelled: boolean }
 }) {
-  const chapters = params.chapters || await resolveBookChapters(params.book)
+  const chapters = params.chapters || (await resolveBookChapters(params.book))
   const startIndex = Math.max(0, params.startIndex || 0)
   const sliced = chapters.slice(startIndex, params.count ? startIndex + params.count : undefined)
   let completed = 0

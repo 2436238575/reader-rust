@@ -12,7 +12,12 @@
               <p>查看并清理所有书籍的服务端缓存与浏览器缓存</p>
             </div>
             <div class="head-actions">
-              <button class="ghost-btn refresh-btn" @click="refreshData" aria-label="刷新" title="刷新">
+              <button
+                class="ghost-btn refresh-btn"
+                @click="refreshData"
+                aria-label="刷新"
+                title="刷新"
+              >
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                   <path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />
                   <path d="M3 3v5h5" />
@@ -96,7 +101,11 @@
                     <span class="layer-label">服务端缓存</span>
                     <small>服务端缓存按类型清理，清理后需重新抓取</small>
                   </div>
-                  <button class="scope-btn danger" :disabled="purging !== ''" @click="purgeAllLayers">
+                  <button
+                    class="scope-btn danger"
+                    :disabled="purging !== ''"
+                    @click="purgeAllLayers"
+                  >
                     {{ purging === 'all' ? '清理中...' : '全部清理' }}
                   </button>
                 </div>
@@ -126,7 +135,11 @@ import { useBookshelfStore } from '../stores/bookshelf'
 import { useAppStore } from '../stores/app'
 import { getBookshelfWithCacheInfo, deleteBookCache } from '../api/bookshelf'
 import type { Book } from '../types'
-import { clearAllBrowserCache, deleteBrowserBookCache, listBrowserCacheSummary } from '../utils/browserCache'
+import {
+  clearAllBrowserCache,
+  deleteBrowserBookCache,
+  listBrowserCacheSummary,
+} from '../utils/browserCache'
 import { cacheBookToBrowser } from '../utils/bookCache'
 import {
   cacheBookSSE,
@@ -225,7 +238,8 @@ async function purgeLayer(layer: CacheLayer) {
 }
 
 async function purgeAllLayers() {
-  if (!confirm('确定清理全部服务端缓存吗？正文、封面图片、目录、搜索结果与评论缓存都会被删除。')) return
+  if (!confirm('确定清理全部服务端缓存吗？正文、封面图片、目录、搜索结果与评论缓存都会被删除。'))
+    return
   purging.value = 'all'
   try {
     const result = await purgeAllUserCache()
@@ -239,8 +253,12 @@ async function purgeAllLayers() {
 }
 
 const mergedBooks = computed(() => {
-  const serverMap = new Map(serverBooks.value.map((book) => [book.bookUrl, book.cachedChapterCount || 0]))
-  const browserMap = new Map(browserSummaries.value.map((item) => [item.bookUrl, item.cachedChapterCount]))
+  const serverMap = new Map(
+    serverBooks.value.map((book) => [book.bookUrl, book.cachedChapterCount || 0])
+  )
+  const browserMap = new Map(
+    browserSummaries.value.map((item) => [item.bookUrl, item.cachedChapterCount])
+  )
 
   return shelfStore.books
     .filter((book) => !isLocalBook(book))
@@ -254,14 +272,21 @@ const mergedBooks = computed(() => {
     }))
 })
 
-const offlineReadyCount = computed(() => mergedBooks.value.filter((item) => item.browserCachedCount > 0).length)
-const totalBrowserCachedCount = computed(() => mergedBooks.value.reduce((sum, item) => sum + item.browserCachedCount, 0))
+const offlineReadyCount = computed(
+  () => mergedBooks.value.filter((item) => item.browserCachedCount > 0).length
+)
+const totalBrowserCachedCount = computed(() =>
+  mergedBooks.value.reduce((sum, item) => sum + item.browserCachedCount, 0)
+)
 
-watch(() => props.modelValue, (visible) => {
-  if (visible) {
-    refreshData()
+watch(
+  () => props.modelValue,
+  (visible) => {
+    if (visible) {
+      refreshData()
+    }
   }
-})
+)
 
 function close() {
   emit('update:modelValue', false)
@@ -636,7 +661,9 @@ async function clearBrowser(book: Book) {
 }
 
 @keyframes spin {
-  to { transform: rotate(360deg); }
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 /* 移动端与设置抽屉一样整屏铺开；遮罩被完全盖住，直接隐藏 */

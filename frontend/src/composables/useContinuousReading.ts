@@ -16,7 +16,7 @@ export function useContinuousReading(
   renderChapterHtml: (rawText: string, chapterIndex?: number) => string,
   isContinuousMode: ComputedRef<boolean>,
   hideReadChaptersMode: ComputedRef<boolean>,
-  scrollContainerRef: Ref<HTMLElement | undefined>,
+  scrollContainerRef: Ref<HTMLElement | undefined>
 ) {
   const continuousChapters = ref<ContinuousChapterItem[]>([])
   const continuousLoadingNext = ref(false)
@@ -40,7 +40,9 @@ export function useContinuousReading(
 
   function pruneReadChapters(targetIndex = store.currentIndex) {
     if (!hideReadChaptersMode.value) return
-    continuousChapters.value = continuousChapters.value.filter((chapter) => chapter.index >= targetIndex)
+    continuousChapters.value = continuousChapters.value.filter(
+      (chapter) => chapter.index >= targetIndex
+    )
   }
 
   async function buildContinuousChapter(index: number, forceRefresh = false) {
@@ -106,7 +108,13 @@ export function useContinuousReading(
   }
 
   async function syncContinuousToStoreState() {
-    if (!isContinuousMode.value || suppressContinuousSync.value || store.loading || !store.chapters[store.currentIndex]) return
+    if (
+      !isContinuousMode.value ||
+      suppressContinuousSync.value ||
+      store.loading ||
+      !store.chapters[store.currentIndex]
+    )
+      return
 
     pruneReadChapters(store.currentIndex)
     const current = getContinuousChapter(store.currentIndex)
@@ -124,7 +132,9 @@ export function useContinuousReading(
   async function loadContinuousNext() {
     if (continuousLoadingNext.value || !continuousChapters.value.length) return
     const last = continuousChapters.value[continuousChapters.value.length - 1]
-    const nextIndex = hideReadChaptersMode.value ? findNextVisibleIndex(last.index + 1, store.currentIndex) : last.index + 1
+    const nextIndex = hideReadChaptersMode.value
+      ? findNextVisibleIndex(last.index + 1, store.currentIndex)
+      : last.index + 1
     if (nextIndex >= store.chapters.length) return
 
     continuousLoadingNext.value = true
@@ -147,7 +157,9 @@ export function useContinuousReading(
   function scrollToContinuousChapter(index: number, smooth = true) {
     const container = scrollContainerRef.value
     if (!container) return
-    const section = container.querySelector(`.continuous-chapter[data-chapter-index="${index}"]`) as HTMLElement | null
+    const section = container.querySelector(
+      `.continuous-chapter[data-chapter-index="${index}"]`
+    ) as HTMLElement | null
     if (!section) return
     container.scrollTo({
       top: Math.max(0, section.offsetTop),

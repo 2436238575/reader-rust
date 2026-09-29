@@ -25,11 +25,11 @@
 
 ## 技术栈
 
-| 层 | 技术 |
-|----|------|
-| 后端 | Rust + axum + tokio + reqwest + sqlx (SQLite) + rquickjs |
-| 前端 | Vue 3 + TypeScript + Vite + Pinia |
-| 文档站 | VitePress |
+| 层     | 技术                                                     |
+| ------ | -------------------------------------------------------- |
+| 后端   | Rust + axum + tokio + reqwest + sqlx (SQLite) + rquickjs |
+| 前端   | Vue 3 + TypeScript + Vite + Pinia                        |
+| 文档站 | VitePress                                                |
 
 ## 快速开始
 
@@ -88,14 +88,14 @@ cp .env.example .env
 
 常用项：
 
-| 变量 | 默认值 | 说明 |
-|------|--------|------|
-| `SERVER_HOST` | `0.0.0.0` | 监听地址 |
-| `SERVER_PORT` | `8080` | 监听端口 |
-| `DATABASE_URL` | `sqlite:storage/reader.db?mode=rwc` | SQLite 连接串 |
-| `WEB_ROOT` | `frontend/dist` | 前端静态文件目录 |
-| `LOG_LEVEL` | `info` | 日志级别 |
-| `JWT_SECRET` | 空 | JWT 签名密钥，留空时自动生成到 `storage/jwt_secret` |
+| 变量           | 默认值                              | 说明                                                |
+| -------------- | ----------------------------------- | --------------------------------------------------- |
+| `SERVER_HOST`  | `0.0.0.0`                           | 监听地址                                            |
+| `SERVER_PORT`  | `8080`                              | 监听端口                                            |
+| `DATABASE_URL` | `sqlite:storage/reader.db?mode=rwc` | SQLite 连接串                                       |
+| `WEB_ROOT`     | `frontend/dist`                     | 前端静态文件目录                                    |
+| `LOG_LEVEL`    | `info`                              | 日志级别                                            |
+| `JWT_SECRET`   | 空                                  | JWT 签名密钥，留空时自动生成到 `storage/jwt_secret` |
 
 完整配置项与说明见 [配置文档](https://givenge.github.io/reader-rust/guide/configuration)。
 

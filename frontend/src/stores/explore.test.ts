@@ -43,13 +43,23 @@ describe('explore store source sync', () => {
     sourceStore.sources = [sourceWithExplore()]
     const store = useExploreStore()
     await store.init()
-    exploreBookMock.mockClear()  // init 自己会拉一页，清掉计数再观察竞态
+    exploreBookMock.mockClear() // init 自己会拉一页，清掉计数再观察竞态
 
     let resolveOld!: (books: SearchBook[]) => void
     let resolveNew!: (books: SearchBook[]) => void
     exploreBookMock
-      .mockImplementationOnce(() => new Promise((r) => { resolveOld = r }))
-      .mockImplementationOnce(() => new Promise((r) => { resolveNew = r }))
+      .mockImplementationOnce(
+        () =>
+          new Promise((r) => {
+            resolveOld = r
+          })
+      )
+      .mockImplementationOnce(
+        () =>
+          new Promise((r) => {
+            resolveNew = r
+          })
+      )
 
     store.setCategory('/book/ranking.html')
     await vi.waitFor(() => expect(exploreBookMock).toHaveBeenCalledTimes(1))
@@ -79,7 +89,9 @@ describe('explore store source sync', () => {
     await vi.waitFor(() => expect(store.error).toBe('网络错误'))
     expect(store.hasMore).toBe(false)
 
-    exploreBookMock.mockResolvedValueOnce([{ name: '恢复的书', author: '', bookUrl: 'b1', origin: '' }])
+    exploreBookMock.mockResolvedValueOnce([
+      { name: '恢复的书', author: '', bookUrl: 'b1', origin: '' },
+    ])
     store.retryFetch()
     await vi.waitFor(() => expect(store.books.length).toBe(1))
     expect(store.error).toBeNull()

@@ -7,14 +7,16 @@ export function getBookSources() {
 }
 
 export function loginBookSource(bookSourceUrl: string) {
-  return http.post<{
-    success: boolean
-    status: number
-    url: string
-    checkResult?: string | null
-    bodyPreview?: string
-    bodyHtml?: string
-  }>('/loginBookSource', { bookSourceUrl }).then((r) => r.data)
+  return http
+    .post<{
+      success: boolean
+      status: number
+      url: string
+      checkResult?: string | null
+      bodyPreview?: string
+      bodyHtml?: string
+    }>('/loginBookSource', { bookSourceUrl })
+    .then((r) => r.data)
 }
 
 export function saveBookSource(source: BookSource) {
@@ -22,7 +24,9 @@ export function saveBookSource(source: BookSource) {
 }
 
 export function saveBookSources(sources: BookSource[]) {
-  return http.post<{ saved: boolean; count: number }>('/saveBookSources', sources).then((r) => r.data)
+  return http
+    .post<{ saved: boolean; count: number }>('/saveBookSources', sources)
+    .then((r) => r.data)
 }
 
 export function deleteBookSource(bookSourceUrl: string) {
@@ -60,9 +64,11 @@ export function readRemoteSourceFile(url: string) {
 export function readSourceFile(file: File) {
   const formData = new FormData()
   formData.append('file', file)
-  return http.post<BookSource[]>('/readSourceFile', formData, {
-    headers: {
-      'Content-Type': 'multipart/form-data',
-    },
-  }).then((r) => r.data)
+  return http
+    .post<BookSource[]>('/readSourceFile', formData, {
+      headers: {
+        'Content-Type': 'multipart/form-data',
+      },
+    })
+    .then((r) => r.data)
 }

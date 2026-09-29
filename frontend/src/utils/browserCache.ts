@@ -84,14 +84,17 @@ function openDb(): Promise<IDBDatabase> {
   return dbPromise!
 }
 
-async function withStore<T>(mode: IDBTransactionMode, handler: (store: IDBObjectStore) => Promise<T>): Promise<T> {
+async function withStore<T>(
+  mode: IDBTransactionMode,
+  handler: (store: IDBObjectStore) => Promise<T>
+): Promise<T> {
   return withStoreIn(STORE_NAME, mode, handler)
 }
 
 async function withStoreIn<T>(
   storeName: string,
   mode: IDBTransactionMode,
-  handler: (store: IDBObjectStore) => Promise<T>,
+  handler: (store: IDBObjectStore) => Promise<T>
 ): Promise<T> {
   const db = await openDb()
   return new Promise<T>((resolve, reject) => {
@@ -115,7 +118,7 @@ async function withStoreIn<T>(
 
 async function withStores<T>(
   mode: IDBTransactionMode,
-  handler: (stores: { chapters: IDBObjectStore; summary: IDBObjectStore }) => Promise<T>,
+  handler: (stores: { chapters: IDBObjectStore; summary: IDBObjectStore }) => Promise<T>
 ): Promise<T> {
   const db = await openDb()
   return new Promise<T>((resolve, reject) => {
@@ -152,7 +155,7 @@ type SummaryMutator = (summary: BrowserBookCacheSummary) => BrowserBookCacheSumm
 function applySummaryDelta(
   current: BrowserBookCacheSummary | undefined,
   mutate: SummaryMutator,
-  bookUrl: string,
+  bookUrl: string
 ): BrowserBookCacheSummary | null {
   const base: BrowserBookCacheSummary = current || {
     bookUrl,
@@ -167,7 +170,10 @@ function applySummaryDelta(
   return next
 }
 
-async function readSummary(summary: IDBObjectStore, bookUrl: string): Promise<BrowserBookCacheSummary | undefined> {
+async function readSummary(
+  summary: IDBObjectStore,
+  bookUrl: string
+): Promise<BrowserBookCacheSummary | undefined> {
   return requestToPromise(summary.get(bookUrl)) as Promise<BrowserBookCacheSummary | undefined>
 }
 
@@ -200,7 +206,8 @@ export async function setBrowserCachedChapter(params: {
     const size = new Blob([params.content]).size
     const updatedAt = Date.now()
     // 先查旧记录拿 size：覆盖写入时汇总只记增量
-    const existing = (await requestToPromise(chapters.get(key))) as BrowserChapterCacheRecord | undefined
+    const existing = (await requestToPromise(chapters.get(key))) as
+      BrowserChapterCacheRecord | undefined
     const record: BrowserChapterCacheRecord = {
       key,
       bookUrl: params.bookUrl,
@@ -250,7 +257,7 @@ export async function listBrowserCachedChapterUrls(bookUrl: string) {
     return new Set(
       (keys as IDBValidKey[])
         .map((key) => (typeof key === 'string' ? key.slice(prefix.length) : ''))
-        .filter(Boolean),
+        .filter(Boolean)
     )
   })
 }

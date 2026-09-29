@@ -91,30 +91,30 @@ cp .env.example .env
 
 `.env` 已被 gitignore；后端即使没有 `.env` 也能用默认值启动。
 
-| 变量 | 代码默认值 | 说明 |
-|------|-----------|------|
-| `SERVER_HOST` | `0.0.0.0` | 监听地址，本地开发建议改 `127.0.0.1` |
-| `SERVER_PORT` | `8080` | 监听端口 |
-| `DATABASE_URL` | `sqlite:storage/reader.db?mode=rwc` | SQLite 连接串，`mode=rwc` 表示不存在则创建 |
-| `STORAGE_DIR` | `storage` | 运行期数据根目录 |
-| `ASSETS_DIR` | `storage/assets` | 上传资源目录 |
-| `WEB_ROOT` | `frontend/dist` | 前端静态文件目录 |
-| `LOG_LEVEL` | `info` | `trace` / `debug` / `info` / `warn` / `error` |
-| `REQUEST_TIMEOUT_SECS` | `15` | 抓取上游站点的超时时间 |
-| `JWT_SECRET` | 空 | JWT 签名密钥；留空时自动生成并持久化到 `<STORAGE_DIR>/jwt_secret` |
-| `JWT_TTL_SECS` | `604800`（7 天） | 令牌有效期 |
-| `ADMIN_USERNAME` | `admin` | 唯一账号的用户名，首次启动建号时使用；只允许小写字母/数字/下划线 |
-| `ADMIN_PASSWORD` | 空 | 唯一账号的密码；非空时每次启动强制覆盖（兼作忘记密码的找回通道），相同则 no-op；留空时首启随机生成并打印到启动日志 |
-| `USER_BOOK_LIMIT` | `2000` | 书架上限，`0` 表示不限制 |
-| `USER_LOCAL_BOOK_LIMIT` | `0` | 本地上传上限，`0` 表示不限制 |
-| `CACHE_USER_LIMIT_BYTES` | `536870912` | 正文缓存上限；`0` 表示不限制 |
-| `CACHE_COVER_LIMIT_BYTES` | `268435456` | 封面缓存目录上限；`0` 表示不限制 |
-| `REVIEW_CACHE_TTL_SECS` | `604800`（7 天） | 章评/段评缓存有效期；`0` 表示不过期 |
-| `REVIEW_CACHE_USER_LIMIT_BYTES` | `67108864` | 评论缓存上限；`0` 表示不限制 |
-| `ALLOW_PRIVATE_NETWORK` | `true` | 出站请求是否允许访问私网/内网地址；自托管单用户默认放行（局域网书源是正常用法），公网部署应设为 `false` 并配合 `PRIVATE_NETWORK_WHITELIST` |
-| `PRIVATE_NETWORK_WHITELIST` | 空 | 私网白名单（逗号分隔），仅 `ALLOW_PRIVATE_NETWORK=false` 时生效。条目支持 IP / CIDR 网段 / 域名，均可带端口（如 `192.168.100.99:9999, 192.168.100.0/24, nas.lan`）。**名单为空时全部放行**（等同 `true`）；名单非空时只有命中的目标可以出站 |
-| `CORS_ALLOWED_ORIGINS` | 空 | 跨域来源白名单；留空仅同源 |
-| `RATE_LIMIT_DISABLED` | `false` | 豁免登录限速（开发/测试用）。默认：IP 登录败 5 次封该 IP 登录 6h、用户名败 10 次封 6h。e2e 跑测试时建议后端开此项 |
+| 变量                            | 代码默认值                          | 说明                                                                                                                                                                                                                                        |
+| ------------------------------- | ----------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `SERVER_HOST`                   | `0.0.0.0`                           | 监听地址，本地开发建议改 `127.0.0.1`                                                                                                                                                                                                        |
+| `SERVER_PORT`                   | `8080`                              | 监听端口                                                                                                                                                                                                                                    |
+| `DATABASE_URL`                  | `sqlite:storage/reader.db?mode=rwc` | SQLite 连接串，`mode=rwc` 表示不存在则创建                                                                                                                                                                                                  |
+| `STORAGE_DIR`                   | `storage`                           | 运行期数据根目录                                                                                                                                                                                                                            |
+| `ASSETS_DIR`                    | `storage/assets`                    | 上传资源目录                                                                                                                                                                                                                                |
+| `WEB_ROOT`                      | `frontend/dist`                     | 前端静态文件目录                                                                                                                                                                                                                            |
+| `LOG_LEVEL`                     | `info`                              | `trace` / `debug` / `info` / `warn` / `error`                                                                                                                                                                                               |
+| `REQUEST_TIMEOUT_SECS`          | `15`                                | 抓取上游站点的超时时间                                                                                                                                                                                                                      |
+| `JWT_SECRET`                    | 空                                  | JWT 签名密钥；留空时自动生成并持久化到 `<STORAGE_DIR>/jwt_secret`                                                                                                                                                                           |
+| `JWT_TTL_SECS`                  | `604800`（7 天）                    | 令牌有效期                                                                                                                                                                                                                                  |
+| `ADMIN_USERNAME`                | `admin`                             | 唯一账号的用户名，首次启动建号时使用；只允许小写字母/数字/下划线                                                                                                                                                                            |
+| `ADMIN_PASSWORD`                | 空                                  | 唯一账号的密码；非空时每次启动强制覆盖（兼作忘记密码的找回通道），相同则 no-op；留空时首启随机生成并打印到启动日志                                                                                                                          |
+| `USER_BOOK_LIMIT`               | `2000`                              | 书架上限，`0` 表示不限制                                                                                                                                                                                                                    |
+| `USER_LOCAL_BOOK_LIMIT`         | `0`                                 | 本地上传上限，`0` 表示不限制                                                                                                                                                                                                                |
+| `CACHE_USER_LIMIT_BYTES`        | `536870912`                         | 正文缓存上限；`0` 表示不限制                                                                                                                                                                                                                |
+| `CACHE_COVER_LIMIT_BYTES`       | `268435456`                         | 封面缓存目录上限；`0` 表示不限制                                                                                                                                                                                                            |
+| `REVIEW_CACHE_TTL_SECS`         | `604800`（7 天）                    | 章评/段评缓存有效期；`0` 表示不过期                                                                                                                                                                                                         |
+| `REVIEW_CACHE_USER_LIMIT_BYTES` | `67108864`                          | 评论缓存上限；`0` 表示不限制                                                                                                                                                                                                                |
+| `ALLOW_PRIVATE_NETWORK`         | `true`                              | 出站请求是否允许访问私网/内网地址；自托管单用户默认放行（局域网书源是正常用法），公网部署应设为 `false` 并配合 `PRIVATE_NETWORK_WHITELIST`                                                                                                  |
+| `PRIVATE_NETWORK_WHITELIST`     | 空                                  | 私网白名单（逗号分隔），仅 `ALLOW_PRIVATE_NETWORK=false` 时生效。条目支持 IP / CIDR 网段 / 域名，均可带端口（如 `192.168.100.99:9999, 192.168.100.0/24, nas.lan`）。**名单为空时全部放行**（等同 `true`）；名单非空时只有命中的目标可以出站 |
+| `CORS_ALLOWED_ORIGINS`          | 空                                  | 跨域来源白名单；留空仅同源                                                                                                                                                                                                                  |
+| `RATE_LIMIT_DISABLED`           | `false`                             | 豁免登录限速（开发/测试用）。默认：IP 登录败 5 次封该 IP 登录 6h、用户名败 10 次封 6h。e2e 跑测试时建议后端开此项                                                                                                                           |
 
 两点需要注意：
 
@@ -205,14 +205,14 @@ HTTP 请求
 
 前端使用 **hash 路由**，深链接不依赖服务端回落，因此后端**不提供 SPA fallback**：
 
-| 路径 | 行为 |
-|------|------|
-| `/` | 返回 `WEB_ROOT/index.html` |
-| `/assets/*` | 先查 `WEB_ROOT/assets`，再回落到 `ASSETS_DIR`；一年 immutable |
-| `/fonts/*` | `WEB_ROOT/fonts` 下的自托管字体分片（文件名带内容 hash）；一年 immutable |
-| `WEB_ROOT` 下的真实文件（`sw.js`、`site.webmanifest`、favicon、`icons/`、`svg/`） | 按文件名直接可取；no-cache 每次重验证 |
-| `/reader3/*` 未注册 | JSON 404（不落到静态服务） |
-| 其他不存在的路径 | 404，**不会**回落 index.html |
+| 路径                                                                              | 行为                                                                     |
+| --------------------------------------------------------------------------------- | ------------------------------------------------------------------------ |
+| `/`                                                                               | 返回 `WEB_ROOT/index.html`                                               |
+| `/assets/*`                                                                       | 先查 `WEB_ROOT/assets`，再回落到 `ASSETS_DIR`；一年 immutable            |
+| `/fonts/*`                                                                        | `WEB_ROOT/fonts` 下的自托管字体分片（文件名带内容 hash）；一年 immutable |
+| `WEB_ROOT` 下的真实文件（`sw.js`、`site.webmanifest`、favicon、`icons/`、`svg/`） | 按文件名直接可取；no-cache 每次重验证                                    |
+| `/reader3/*` 未注册                                                               | JSON 404（不落到静态服务）                                               |
+| 其他不存在的路径                                                                  | 404，**不会**回落 index.html                                             |
 
 新增前端根级静态文件时无需改路由；但若引入 SPA 深链接（切到 history 路由），需要重新加回落。
 
@@ -260,12 +260,12 @@ id = `md5(去掉查询串的地址)`；抓取失败时按登记时的书籍上�
 
 ### 解析方式识别
 
-| 方式 | 识别规则 |
-|------|---------|
+| 方式       | 识别规则                                  |
+| ---------- | ----------------------------------------- |
 | CSS 选择器 | 默认，用于 HTML（`.class`、`#id`、`tag`） |
-| JSONPath | 自动识别 JSON（`$.data.list`） |
-| XPath | 以 `/` 或 `./` 开头 |
-| 正则 | 以 `:` 前缀书写（或显式 `@regex:`） |
+| JSONPath   | 自动识别 JSON（`$.data.list`）            |
+| XPath      | 以 `/` 或 `./` 开头                       |
+| 正则       | 以 `:` 前缀书写（或显式 `@regex:`）       |
 | JavaScript | `js:` / `@js:` 前缀，或 `{{表达式}}` 内联 |
 
 也可用显式前缀强制指定：`@css:`、`@json:`、`@xpath:`、`@regex:`。
@@ -286,11 +286,11 @@ id = `md5(去掉查询串的地址)`；抓取失败时按登记时的书籍上�
 
 多条规则可用分隔符组合，`rule_analyzer.rs` 在切分时会跳过引号与括号内部的同名符号，因此 `div[a="x&&y"]&&span` 不会被错误切开。需要「上一步结果作为下一步输入」的链式二次解析用 `@@`。
 
-| 分隔符 | 语义 |
-|--------|------|
-| `&&` | 结果拼接（各条规则的命中结果依次合并） |
-| `\|\|` | 取第一个非空结果 |
-| `%%` | 并列取值 |
+| 分隔符 | 语义                                   |
+| ------ | -------------------------------------- |
+| `&&`   | 结果拼接（各条规则的命中结果依次合并） |
+| `\|\|` | 取第一个非空结果                       |
+| `%%`   | 并列取值                               |
 
 组合符在 CSS、XPath、**JsonPath**、**元素级字段**（列表项里的 `name`/`author` 等）与**列表正则**上都生效；
 列表正则的 `&&` 是逐级下钻（前一段的完整匹配串喂给下一段，见规格 §9.3）。
@@ -386,13 +386,13 @@ Rust 侧共 **233 个测试**（164 个内联单元测试 + 69 个集成用例�
 
 面向不同读者的文档分工如下，改文档前先确认应该改哪一份：
 
-| 文档 | 读者 | 内容 |
-|------|------|------|
-| `README.md` | 访客 / 使用者 | 项目简介、特性、最快上手路径 |
-| `AGENTS.md`（本文件） | AI 编码代理 / 贡献者 | 工程事实权威：命令、配置、结构、约定 |
-| `docs/guide/` | 部署者 / 最终用户 | 安装部署、配置、功能说明、用户手册 |
-| `docs/api/` | 接口集成方 | `/reader3/*` 接口参考 |
-| `docs/book-source/` | 书源作者 | 书源规则编写教程 |
-| `docs/reference/book-source-rules.md` | 书源作者 / 实现者 | 阅读3.0 规则完整兼容规格 |
-| `docs/maintainers/` | 维护者 | 架构说明、发布流程 |
-| `docs/archive/` | 维护者 | 历史设计与计划快照，**不代表当前实现** |
+| 文档                                  | 读者                 | 内容                                   |
+| ------------------------------------- | -------------------- | -------------------------------------- |
+| `README.md`                           | 访客 / 使用者        | 项目简介、特性、最快上手路径           |
+| `AGENTS.md`（本文件）                 | AI 编码代理 / 贡献者 | 工程事实权威：命令、配置、结构、约定   |
+| `docs/guide/`                         | 部署者 / 最终用户    | 安装部署、配置、功能说明、用户手册     |
+| `docs/api/`                           | 接口集成方           | `/reader3/*` 接口参考                  |
+| `docs/book-source/`                   | 书源作者             | 书源规则编写教程                       |
+| `docs/reference/book-source-rules.md` | 书源作者 / 实现者    | 阅读3.0 规则完整兼容规格               |
+| `docs/maintainers/`                   | 维护者               | 架构说明、发布流程                     |
+| `docs/archive/`                       | 维护者               | 历史设计与计划快照，**不代表当前实现** |

@@ -37,7 +37,7 @@ describe('useReaderAutoPlayback', () => {
       ref(scrollContainer),
       ref(chapterText),
       vi.fn(),
-      vi.fn(),
+      vi.fn()
     )
 
     playback.startSpeech()
@@ -82,7 +82,7 @@ describe('useReaderAutoPlayback', () => {
       ref(scrollContainer),
       ref(chapterText),
       vi.fn(),
-      vi.fn(),
+      vi.fn()
     )
 
     playback.startSpeech()
@@ -143,7 +143,10 @@ describe('pixel auto-scroll', () => {
 
   it('到底翻章后由 handleContentChanged 接力恢复滚动', async () => {
     const rafQueue: FrameRequestCallback[] = []
-    vi.stubGlobal('requestAnimationFrame', (cb: FrameRequestCallback) => { rafQueue.push(cb); return rafQueue.length })
+    vi.stubGlobal('requestAnimationFrame', (cb: FrameRequestCallback) => {
+      rafQueue.push(cb)
+      return rafQueue.length
+    })
     vi.stubGlobal('cancelAnimationFrame', vi.fn())
 
     const container = makeScrollable()
@@ -155,12 +158,19 @@ describe('pixel auto-scroll', () => {
     })
     const playback = useReaderAutoPlayback(
       store,
-      computed(() => ({ autoPageMode: 'pixel', clickAction: 'none', scrollPixel: 100, pageSpeed: 1000, fontSize: 16, lineHeight: 1.5 })),
+      computed(() => ({
+        autoPageMode: 'pixel',
+        clickAction: 'none',
+        scrollPixel: 100,
+        pageSpeed: 1000,
+        fontSize: 16,
+        lineHeight: 1.5,
+      })),
       computed(() => false),
       ref(container),
       ref(undefined),
       nextChapter,
-      vi.fn(),
+      vi.fn()
     )
 
     store.isAutoScrolling = true
@@ -178,21 +188,33 @@ describe('pixel auto-scroll', () => {
 
   it('章末续翻不再绑在 clickAction 上', async () => {
     const rafQueue: FrameRequestCallback[] = []
-    vi.stubGlobal('requestAnimationFrame', (cb: FrameRequestCallback) => { rafQueue.push(cb); return rafQueue.length })
+    vi.stubGlobal('requestAnimationFrame', (cb: FrameRequestCallback) => {
+      rafQueue.push(cb)
+      return rafQueue.length
+    })
     vi.stubGlobal('cancelAnimationFrame', vi.fn())
 
     const container = makeScrollable()
     const store = makeStore()
-    const nextChapter = vi.fn(async () => { store.currentIndex = 1 })
+    const nextChapter = vi.fn(async () => {
+      store.currentIndex = 1
+    })
     const playback = useReaderAutoPlayback(
       store,
       // clickAction: 'none' 也要在章末续翻
-      computed(() => ({ autoPageMode: 'pixel', clickAction: 'none', scrollPixel: 100, pageSpeed: 1000, fontSize: 16, lineHeight: 1.5 })),
+      computed(() => ({
+        autoPageMode: 'pixel',
+        clickAction: 'none',
+        scrollPixel: 100,
+        pageSpeed: 1000,
+        fontSize: 16,
+        lineHeight: 1.5,
+      })),
       computed(() => false),
       ref(container),
       ref(undefined),
       nextChapter,
-      vi.fn(),
+      vi.fn()
     )
 
     store.isAutoScrolling = true
@@ -203,20 +225,32 @@ describe('pixel auto-scroll', () => {
 
   it('翻章失败（索引未变）时停住自动滚动', async () => {
     const rafQueue: FrameRequestCallback[] = []
-    vi.stubGlobal('requestAnimationFrame', (cb: FrameRequestCallback) => { rafQueue.push(cb); return rafQueue.length })
+    vi.stubGlobal('requestAnimationFrame', (cb: FrameRequestCallback) => {
+      rafQueue.push(cb)
+      return rafQueue.length
+    })
     vi.stubGlobal('cancelAnimationFrame', vi.fn())
 
     const container = makeScrollable()
     const store = makeStore()
-    const nextChapter = vi.fn(async () => { /* 失败：索引不动 */ })
+    const nextChapter = vi.fn(async () => {
+      /* 失败：索引不动 */
+    })
     const playback = useReaderAutoPlayback(
       store,
-      computed(() => ({ autoPageMode: 'pixel', clickAction: 'auto', scrollPixel: 100, pageSpeed: 1000, fontSize: 16, lineHeight: 1.5 })),
+      computed(() => ({
+        autoPageMode: 'pixel',
+        clickAction: 'auto',
+        scrollPixel: 100,
+        pageSpeed: 1000,
+        fontSize: 16,
+        lineHeight: 1.5,
+      })),
       computed(() => false),
       ref(container),
       ref(undefined),
       nextChapter,
-      vi.fn(),
+      vi.fn()
     )
 
     store.isAutoScrolling = true
@@ -241,7 +275,7 @@ function fakeElement(innerText: string, paragraphs: HTMLElement[] = [], innerHTM
       remove: vi.fn(),
     },
     querySelector: vi.fn(() => null),
-    querySelectorAll: vi.fn((selector: string) => selector === 'p' ? paragraphs : []),
+    querySelectorAll: vi.fn((selector: string) => (selector === 'p' ? paragraphs : [])),
     scrollTo: vi.fn(),
     // paragraphSpeakText 会 clone 后剔除评论气泡再取文本；假元素没有气泡，原样返回文本
     cloneNode: vi.fn(() => ({

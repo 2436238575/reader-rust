@@ -10,13 +10,13 @@ GET /reader3/getBookContent
 
 查询参数：
 
-| 参数 | 类型 | 必填 | 说明 |
-|------|------|------|------|
-| `chapterUrl` | string | 是 | 章节 URL（别名 `url`、`href`） |
-| `bookUrl` | string | 建议 | 章节所属书籍的 URL，用于服务端缓存归位；缺省时服务端依次按书架 URL 前缀、目录缓存反推所属书籍，都失败会把 `chapterUrl` 当缓存键（孤儿缓存，按书清理清不掉） |
-| `bookSourceUrl` | string | 否 | 书源 URL（别名 `origin`） |
-| `index` | number | 否 | 章节下标（当传入书籍 URL 时定位章节） |
-| `refresh` | number | 否 | 非 0 时强制刷新缓存 |
+| 参数            | 类型   | 必填 | 说明                                                                                                                                                        |
+| --------------- | ------ | ---- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `chapterUrl`    | string | 是   | 章节 URL（别名 `url`、`href`）                                                                                                                              |
+| `bookUrl`       | string | 建议 | 章节所属书籍的 URL，用于服务端缓存归位；缺省时服务端依次按书架 URL 前缀、目录缓存反推所属书籍，都失败会把 `chapterUrl` 当缓存键（孤儿缓存，按书清理清不掉） |
+| `bookSourceUrl` | string | 否   | 书源 URL（别名 `origin`）                                                                                                                                   |
+| `index`         | number | 否   | 章节下标（当传入书籍 URL 时定位章节）                                                                                                                       |
+| `refresh`       | number | 否   | 非 0 时强制刷新缓存                                                                                                                                         |
 
 响应：`data` 为**纯字符串**（章节正文内容），不包含标题或前后章 URL：
 
@@ -44,12 +44,12 @@ GET /reader3/getChapterImages
 
 查询参数与 `getBookContent` 同族（也支持 `POST`）：
 
-| 参数 | 类型 | 必填 | 说明 |
-|------|------|------|------|
-| `bookUrl` | string | 是 | 书籍 URL（别名 `url`） |
-| `chapterUrl` | string | 是 | 章节 URL（别名 `href`） |
-| `bookSourceUrl` | string | 否 | 书源 URL（别名 `origin`） |
-| `bookSource` | object | 否 | 直接内联书源对象，优先于 `bookSourceUrl` |
+| 参数            | 类型   | 必填 | 说明                                     |
+| --------------- | ------ | ---- | ---------------------------------------- |
+| `bookUrl`       | string | 是   | 书籍 URL（别名 `url`）                   |
+| `chapterUrl`    | string | 是   | 章节 URL（别名 `href`）                  |
+| `bookSourceUrl` | string | 否   | 书源 URL（别名 `origin`）                |
+| `bookSource`    | object | 否   | 直接内联书源对象，优先于 `bookSourceUrl` |
 
 响应：
 
@@ -90,13 +90,13 @@ GET /reader3/cacheBookSSE
 
 SSE 流式缓存指定书籍的章节正文。查询参数：
 
-| 参数 | 类型 | 必填 | 说明 |
-|------|------|------|------|
-| `url` | string | 是 | 书籍 URL（别名 `bookUrl`） |
-| `tocUrl` | string | 否 | 起始章节 URL，从该章开始缓存 |
-| `count` | number | 否 | 缓存章节数，默认 0 表示全部 |
-| `refresh` | number | 否 | 非 0 时忽略已有缓存 |
-| `concurrentCount` | number | 否 | 并发数，默认 24 |
+| 参数              | 类型   | 必填 | 说明                         |
+| ----------------- | ------ | ---- | ---------------------------- |
+| `url`             | string | 是   | 书籍 URL（别名 `bookUrl`）   |
+| `tocUrl`          | string | 否   | 起始章节 URL，从该章开始缓存 |
+| `count`           | number | 否   | 缓存章节数，默认 0 表示全部  |
+| `refresh`         | number | 否   | 非 0 时忽略已有缓存          |
+| `concurrentCount` | number | 否   | 并发数，默认 24              |
 
 也可使用 `POST /reader3/cacheBookSSE`。
 
@@ -108,11 +108,11 @@ POST /reader3/deleteBookCache
 
 查询参数或请求体：
 
-| 参数 | 类型 | 必填 | 说明 |
-|------|------|------|------|
-| `bookUrl` | string | 是 | 书籍 URL（别名 `url`） |
-| `chapterUrl` | string | 否 | 章节 URL |
-| `url` | string | 否 | 书籍 URL（与 `bookUrl` 等效） |
+| 参数         | 类型   | 必填 | 说明                          |
+| ------------ | ------ | ---- | ----------------------------- |
+| `bookUrl`    | string | 是   | 书籍 URL（别名 `url`）        |
+| `chapterUrl` | string | 否   | 章节 URL                      |
+| `url`        | string | 否   | 书籍 URL（与 `bookUrl` 等效） |
 
 响应：`data` 形如 `{ "deleted": true, "contentCache": true, "chapterListCache": true }`。
 
@@ -124,11 +124,11 @@ POST /reader3/saveBookProgress
 
 请求参数（查询或请求体）：
 
-| 参数 | 类型 | 必填 | 说明 |
-|------|------|------|------|
-| `url` | string | 是 | 书籍 URL（别名 `bookUrl`、`searchBook.bookUrl`） |
-| `index` | number | 是 | 当前章节下标 |
-| `position` | number | 否 | 正文中阅读位置 |
+| 参数       | 类型   | 必填 | 说明                                             |
+| ---------- | ------ | ---- | ------------------------------------------------ |
+| `url`      | string | 是   | 书籍 URL（别名 `bookUrl`、`searchBook.bookUrl`） |
+| `index`    | number | 是   | 当前章节下标                                     |
+| `position` | number | 否   | 正文中阅读位置                                   |
 
 响应 `data` 为空字符串。
 

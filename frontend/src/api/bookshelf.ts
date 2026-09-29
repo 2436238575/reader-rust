@@ -26,17 +26,21 @@ export function saveBooks(books: Partial<Book>[]) {
 export function uploadTxtBook(file: File) {
   const formData = new FormData()
   formData.append('file', file)
-  return http.post<Book>('/uploadTxtBook', formData, {
-    headers: { 'Content-Type': 'multipart/form-data' },
-  }).then((r) => r.data)
+  return http
+    .post<Book>('/uploadTxtBook', formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    })
+    .then((r) => r.data)
 }
 
 export function uploadEpubBook(file: File) {
   const formData = new FormData()
   formData.append('file', file)
-  return http.post<Book>('/uploadEpubBook', formData, {
-    headers: { 'Content-Type': 'multipart/form-data' },
-  }).then((r) => r.data)
+  return http
+    .post<Book>('/uploadEpubBook', formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    })
+    .then((r) => r.data)
 }
 
 export function deleteBook(book: Partial<Book>) {
@@ -79,11 +83,7 @@ export function getChapterImages(params: {
   return http.post<ChapterImages>('/getChapterImages', params).then((r) => r.data)
 }
 
-export function saveBookProgress(params: {
-  bookUrl: string
-  index: number
-  position?: number
-}) {
+export function saveBookProgress(params: { bookUrl: string; index: number; position?: number }) {
   return http.post<string>('/saveBookProgress', params).then((r) => r.data)
 }
 
@@ -108,11 +108,7 @@ export function saveBookGroupId(bookUrl: string, groupId: number) {
   return http.post<string>('/saveBookGroupId', { bookUrl, groupId }).then((r) => r.data)
 }
 
-export function setBookSource(params: {
-  bookUrl: string
-  newUrl: string
-  bookSourceUrl: string
-}) {
+export function setBookSource(params: { bookUrl: string; newUrl: string; bookSourceUrl: string }) {
   return http.post<Book>('/setBookSource', params).then((r) => r.data)
 }
 

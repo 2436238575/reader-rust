@@ -24,19 +24,19 @@
 
 ## 字段说明
 
-| 字段 | 必需 | 说明 |
-|------|------|------|
-| `checkKeyWord` | 否 | 当前主要用于调试接口默认关键词，不参与搜索结果校验 |
-| `bookList` | 是 | 书籍列表规则，支持 CSS / JSONPath / XPath / Regex / JS |
-| `name` | 是 | 书名选择器 |
-| `author` | 否 | 作者选择器 |
-| `intro` | 否 | 简介 |
-| `kind` | 否 | 分类/标签 |
-| `lastChapter` | 否 | 最新章节 |
-| `updateTime` | 否 | 更新时间 |
-| `wordCount` | 否 | 总字数 |
-| `bookUrl` | 是 | 书籍详情页链接 |
-| `coverUrl` | 否 | 封面图片 URL |
+| 字段           | 必需 | 说明                                                   |
+| -------------- | ---- | ------------------------------------------------------ |
+| `checkKeyWord` | 否   | 当前主要用于调试接口默认关键词，不参与搜索结果校验     |
+| `bookList`     | 是   | 书籍列表规则，支持 CSS / JSONPath / XPath / Regex / JS |
+| `name`         | 是   | 书名选择器                                             |
+| `author`       | 否   | 作者选择器                                             |
+| `intro`        | 否   | 简介                                                   |
+| `kind`         | 否   | 分类/标签                                              |
+| `lastChapter`  | 否   | 最新章节                                               |
+| `updateTime`   | 否   | 更新时间                                               |
+| `wordCount`    | 否   | 总字数                                                 |
+| `bookUrl`      | 是   | 书籍详情页链接                                         |
+| `coverUrl`     | 否   | 封面图片 URL                                           |
 
 ## 示例
 

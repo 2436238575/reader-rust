@@ -99,7 +99,9 @@ function loadConfig(): ReadConfig {
   try {
     const saved = localStorage.getItem('readConfig')
     if (saved) return { ...defaultConfig, ...JSON.parse(saved) }
-  } catch { /* ignore */ }
+  } catch {
+    /* ignore */
+  }
   return { ...defaultConfig }
 }
 
@@ -134,7 +136,8 @@ export const fontPresets = [
 ]
 
 export const useReaderStore = defineStore('reader', () => {
-  type ReaderPanel = 'catalog' | 'settings' | 'bookshelf' | 'source' | 'bookmark' | 'rule' | 'cache' | null
+  type ReaderPanel =
+    'catalog' | 'settings' | 'bookshelf' | 'source' | 'bookmark' | 'rule' | 'cache' | null
   const appStore = useAppStore()
   const shelfStore = useBookshelfStore()
   const aiBookStore = useAiBookStore()
@@ -172,7 +175,8 @@ export const useReaderStore = defineStore('reader', () => {
 
   const readingProgress = computed(() => {
     if (chapters.value.length === 0) return '0%'
-    const progress = ((currentIndex.value + chapterScrollProgress.value) / chapters.value.length) * 100
+    const progress =
+      ((currentIndex.value + chapterScrollProgress.value) / chapters.value.length) * 100
     const normalized = Math.max(0, Math.min(100, progress))
     return `${normalized < 10 ? normalized.toFixed(1) : Math.round(normalized)}%`
   })
@@ -289,7 +293,7 @@ export const useReaderStore = defineStore('reader', () => {
 
     // Sort by order and apply enabled rules
     const enabledRules = [...replaceRules.value]
-      .filter(r => r.isEnabled && matchRuleScope(r))
+      .filter((r) => r.isEnabled && matchRuleScope(r))
       .sort((a, b) => a.order - b.order)
 
     for (const rule of enabledRules) {
@@ -330,7 +334,7 @@ export const useReaderStore = defineStore('reader', () => {
         void ensureChineseConverterLoaded()
       }
     },
-    { immediate: true },
+    { immediate: true }
   )
 
   function saveReaderSession() {
@@ -351,7 +355,10 @@ export const useReaderStore = defineStore('reader', () => {
   function encodeServerProgress(progress = chapterScrollProgress.value) {
     return Math.max(
       0,
-      Math.min(SERVER_PROGRESS_SCALE, Math.round(Math.max(0, Math.min(1, progress)) * SERVER_PROGRESS_SCALE)),
+      Math.min(
+        SERVER_PROGRESS_SCALE,
+        Math.round(Math.max(0, Math.min(1, progress)) * SERVER_PROGRESS_SCALE)
+      )
     )
   }
 
@@ -361,7 +368,10 @@ export const useReaderStore = defineStore('reader', () => {
     return Math.max(0, Math.min(1, normalized))
   }
 
-  function currentServerProgressPayload(index = currentIndex.value, progress = chapterScrollProgress.value) {
+  function currentServerProgressPayload(
+    index = currentIndex.value,
+    progress = chapterScrollProgress.value
+  ) {
     if (!book.value) return null
     return {
       bookUrl: book.value.bookUrl,
@@ -456,7 +466,11 @@ export const useReaderStore = defineStore('reader', () => {
     return `${READER_READ_HISTORY_PREFIX}${currentBook.bookUrl}`
   }
 
-  function buildReadChapterKey(index: number, chapter?: BookChapter | null, currentBook?: Book | null) {
+  function buildReadChapterKey(
+    index: number,
+    chapter?: BookChapter | null,
+    currentBook?: Book | null
+  ) {
     if (!currentBook?.bookUrl) return ''
     const sourceKey = currentBook.origin || 'default'
     if (chapter?.url) {
@@ -478,7 +492,9 @@ export const useReaderStore = defineStore('reader', () => {
         return
       }
       const parsed = JSON.parse(raw)
-      readChapterKeys.value = new Set(Array.isArray(parsed) ? parsed.filter((item) => typeof item === 'string') : [])
+      readChapterKeys.value = new Set(
+        Array.isArray(parsed) ? parsed.filter((item) => typeof item === 'string') : []
+      )
     } catch {
       readChapterKeys.value = new Set()
     }
@@ -595,13 +611,18 @@ export const useReaderStore = defineStore('reader', () => {
     markProgressDirty()
   }
 
-  async function persistProgress(index = currentIndex.value, progress = chapterScrollProgress.value) {
+  async function persistProgress(
+    index = currentIndex.value,
+    progress = chapterScrollProgress.value
+  ) {
     const payload = currentServerProgressPayload(index, progress)
     if (!payload) return
-    await saveBookProgress(payload).then(() => {
-      progressDirty.value = false
-      lastServerProgressKey.value = `${payload.bookUrl}::${payload.index}::${payload.position}`
-    }).catch(() => undefined)
+    await saveBookProgress(payload)
+      .then(() => {
+        progressDirty.value = false
+        lastServerProgressKey.value = `${payload.bookUrl}::${payload.index}::${payload.position}`
+      })
+      .catch(() => undefined)
   }
 
   async function flushProgressToServer(force = false) {
@@ -849,16 +870,24 @@ export const useReaderStore = defineStore('reader', () => {
 
   async function preloadAroundChapter(index: number) {
     if (!book.value || !config.enablePreload) return
-    const targets = [index + 1, index + 2, index - 1]
-      .filter((target, pos, list) => target >= 0 && target < chapters.value.length && list.indexOf(target) === pos)
+    const targets = [index + 1, index + 2, index - 1].filter(
+      (target, pos, list) =>
+        target >= 0 && target < chapters.value.length && list.indexOf(target) === pos
+    )
     for (const target of targets) {
       await preloadNextChapter(target)
     }
   }
 
   async function preloadNextChapter(index: number) {
-    if (!book.value || !config.enablePreload || index >= chapters.value.length || preloadedContent.value.has(index)) return
-    
+    if (
+      !book.value ||
+      !config.enablePreload ||
+      index >= chapters.value.length ||
+      preloadedContent.value.has(index)
+    )
+      return
+
     // Keep max 3 preloaded chapters
     if (preloadedContent.value.size > 3) {
       const firstKey = preloadedContent.value.keys().next().value
@@ -869,7 +898,9 @@ export const useReaderStore = defineStore('reader', () => {
       const res = await fetchChapterContent(index)
       if (!res) return
       preloadedContent.value.set(index, res)
-    } catch { /* ignore */ }
+    } catch {
+      /* ignore */
+    }
   }
 
   function normalizeChapterTitle(title?: string) {
@@ -879,14 +910,20 @@ export const useReaderStore = defineStore('reader', () => {
       .toLowerCase()
   }
 
-  function resolveChapterIndexByTitle(list: BookChapter[], targetTitle?: string, fallbackIndex = 0) {
+  function resolveChapterIndexByTitle(
+    list: BookChapter[],
+    targetTitle?: string,
+    fallbackIndex = 0
+  ) {
     if (!list.length) return 0
     const normalizedTarget = normalizeChapterTitle(targetTitle)
     if (!normalizedTarget) {
       return Math.max(0, Math.min(list.length - 1, fallbackIndex))
     }
 
-    const exactIndex = list.findIndex((chapter) => normalizeChapterTitle(chapter.title) === normalizedTarget)
+    const exactIndex = list.findIndex(
+      (chapter) => normalizeChapterTitle(chapter.title) === normalizedTarget
+    )
     if (exactIndex >= 0) return exactIndex
 
     const partialIndex = list.findIndex((chapter) => {
@@ -917,7 +954,9 @@ export const useReaderStore = defineStore('reader', () => {
       const targetIndex = resolveChapterIndexByTitle(
         chapters.value,
         previousChapterTitle,
-        typeof updatedBook.durChapterIndex === 'number' ? updatedBook.durChapterIndex : previousIndex,
+        typeof updatedBook.durChapterIndex === 'number'
+          ? updatedBook.durChapterIndex
+          : previousIndex
       )
       await loadChapter(targetIndex)
       setChapterScrollProgress(previousProgress)
@@ -1010,7 +1049,9 @@ export const useReaderStore = defineStore('reader', () => {
   async function fetchReplaceRules() {
     try {
       replaceRules.value = await getReplaceRules()
-    } catch { /* ignore */ }
+    } catch {
+      /* ignore */
+    }
   }
 
   /* ─── Bookmarks ─── */
@@ -1019,11 +1060,15 @@ export const useReaderStore = defineStore('reader', () => {
       const all = await getBookmarks()
       // Filter for current book
       if (book.value) {
-        bookmarks.value = all.filter(b => b.bookName === book.value?.name && b.bookAuthor === book.value?.author)
+        bookmarks.value = all.filter(
+          (b) => b.bookName === book.value?.name && b.bookAuthor === book.value?.author
+        )
       } else {
         bookmarks.value = all
       }
-    } catch { /* ignore */ }
+    } catch {
+      /* ignore */
+    }
   }
 
   async function addBookmark(pos: number = 0, snippet: string = '') {
@@ -1097,27 +1142,82 @@ export const useReaderStore = defineStore('reader', () => {
   }
 
   return {
-    book, chapters, currentIndex, content, loading, chaptersLoading, loadError, serverProgressTime,
-    currentChapter, hasNext, hasPrev, readingProgress,
-      loadBook, loadChapter, retryLoad, fetchChapterContent, setActiveChapterState, refreshContent, nextChapter, prevChapter, clear,
-      chapterScrollProgress, setChapterScrollProgress, flushReaderSessionSave,
-      getPersistedReaderSession, restorePersistedSession,
-      persistProgress, flushProgressToServer, flushProgressToServerKeepalive,
-      config, updateConfig, resetConfig, saveConfig,
-    themeIndex, isNight, currentTheme, setThemeIndex, toggleNight,
-    toggleAutoReading, stopAutoReading,
-    activePanel, openPanel, togglePanel, backPanel, closePanel,
-    bookmarks, fetchBookmarks, addBookmark, removeBookmark, removeBookmarks,
-    readChapterKeys, isChapterRead, markChapterAsRead,
-    replaceRules, fetchReplaceRules,
-    switchSource, preloadNextChapter, preloadAroundChapter,
+    book,
+    chapters,
+    currentIndex,
+    content,
+    loading,
+    chaptersLoading,
+    loadError,
+    serverProgressTime,
+    currentChapter,
+    hasNext,
+    hasPrev,
+    readingProgress,
+    loadBook,
+    loadChapter,
+    retryLoad,
+    fetchChapterContent,
+    setActiveChapterState,
+    refreshContent,
+    nextChapter,
+    prevChapter,
+    clear,
+    chapterScrollProgress,
+    setChapterScrollProgress,
+    flushReaderSessionSave,
+    getPersistedReaderSession,
+    restorePersistedSession,
+    persistProgress,
+    flushProgressToServer,
+    flushProgressToServerKeepalive,
+    config,
+    updateConfig,
+    resetConfig,
+    saveConfig,
+    themeIndex,
+    isNight,
+    currentTheme,
+    setThemeIndex,
+    toggleNight,
+    toggleAutoReading,
+    stopAutoReading,
+    activePanel,
+    openPanel,
+    togglePanel,
+    backPanel,
+    closePanel,
+    bookmarks,
+    fetchBookmarks,
+    addBookmark,
+    removeBookmark,
+    removeBookmarks,
+    readChapterKeys,
+    isChapterRead,
+    markChapterAsRead,
+    replaceRules,
+    fetchReplaceRules,
+    switchSource,
+    preloadNextChapter,
+    preloadAroundChapter,
     refreshChapters,
     ...tts,
-    displayContent, processContentForDisplay,
+    displayContent,
+    processContentForDisplay,
     isAutoScrolling,
-    reviewEnabled, paraReviewEnabled, reviewAuthorMarks, paraReviewIndex, paraReviewCountByIndex,
-    chapterCommentTotal, chapterComments, reviewsLoading,
-    loadChapterReviews, resetReviews,
-    chapterImages, chapterImagesEnabled, loadChapterImages, resetChapterImages,
+    reviewEnabled,
+    paraReviewEnabled,
+    reviewAuthorMarks,
+    paraReviewIndex,
+    paraReviewCountByIndex,
+    chapterCommentTotal,
+    chapterComments,
+    reviewsLoading,
+    loadChapterReviews,
+    resetReviews,
+    chapterImages,
+    chapterImagesEnabled,
+    loadChapterImages,
+    resetChapterImages,
   }
 })

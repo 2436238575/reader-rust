@@ -10,11 +10,11 @@ GET /reader3/searchBook
 
 查询参数：
 
-| 参数 | 类型 | 必填 | 说明 |
-|------|------|------|------|
-| `key` | string | 是 | 搜索关键词 |
-| `page` | number | 否 | 页码，默认 1 |
-| `bookSourceUrl` | string | 否 | 指定书源 URL（别名 `origin`，仅 form-urlencoded POST 请求体接受别名；query 与 JSON body 请用 `bookSourceUrl`） |
+| 参数            | 类型   | 必填 | 说明                                                                                                           |
+| --------------- | ------ | ---- | -------------------------------------------------------------------------------------------------------------- |
+| `key`           | string | 是   | 搜索关键词                                                                                                     |
+| `page`          | number | 否   | 页码，默认 1                                                                                                   |
+| `bookSourceUrl` | string | 否   | 指定书源 URL（别名 `origin`，仅 form-urlencoded POST 请求体接受别名；query 与 JSON body 请用 `bookSourceUrl`） |
 
 响应：
 
@@ -48,12 +48,12 @@ GET /reader3/searchBookMulti
 
 查询参数：
 
-| 参数 | 类型 | 必填 | 说明 |
-|------|------|------|------|
-| `key` | string | 是 | 搜索关键词 |
-| `page` | number | 否 | 页码，默认 1 |
-| `bookSourceUrls` | string[] | 否 | 指定多个书源 URL |
-| `bookSourceGroup` | string | 否 | 按分组筛选书源 |
+| 参数              | 类型     | 必填 | 说明             |
+| ----------------- | -------- | ---- | ---------------- |
+| `key`             | string   | 是   | 搜索关键词       |
+| `page`            | number   | 否   | 页码，默认 1     |
+| `bookSourceUrls`  | string[] | 否   | 指定多个书源 URL |
+| `bookSourceGroup` | string   | 否   | 按分组筛选书源   |
 
 跨多书源搜索并按书名+作者合并结果。
 
@@ -65,11 +65,11 @@ GET /reader3/exploreBook
 
 查询参数：
 
-| 参数 | 类型 | 必填 | 说明 |
-|------|------|------|------|
-| `ruleFindUrl` | string | 是 | 发现页请求规则 |
-| `page` | number | 否 | 页码，默认 1 |
-| `bookSourceUrl` | string | 否 | 书源 URL（别名 `origin`） |
+| 参数            | 类型   | 必填 | 说明                      |
+| --------------- | ------ | ---- | ------------------------- |
+| `ruleFindUrl`   | string | 是   | 发现页请求规则            |
+| `page`          | number | 否   | 页码，默认 1              |
+| `bookSourceUrl` | string | 否   | 书源 URL（别名 `origin`） |
 
 ## 获取书籍详情
 
@@ -79,11 +79,11 @@ GET /reader3/getBookInfo
 
 查询参数：
 
-| 参数 | 类型 | 必填 | 说明 |
-|------|------|------|------|
-| `url` | string | 是 | 书籍详情页 URL |
-| `bookSourceUrl` | string | 否 | 书源 URL（别名 `origin`） |
-| `refresh` | number | 否 | 非 0 时绕过详情缓存强制抓取上游 |
+| 参数            | 类型   | 必填 | 说明                            |
+| --------------- | ------ | ---- | ------------------------------- |
+| `url`           | string | 是   | 书籍详情页 URL                  |
+| `bookSourceUrl` | string | 否   | 书源 URL（别名 `origin`）       |
+| `refresh`       | number | 否   | 非 0 时绕过详情缓存强制抓取上游 |
 
 详情结果按用户命名空间缓存 10 分钟（`refresh=1` 强刷；saveBook 与换源路径始终直抓上游），命中缓存时不产生上游请求。
 
@@ -116,12 +116,12 @@ GET /reader3/getChapterList
 
 查询参数：
 
-| 参数 | 类型 | 必填 | 说明 |
-|------|------|------|------|
-| `tocUrl` | string | 否 | 目录页 URL |
-| `bookUrl` | string | 否 | 书籍 URL（别名 `url`） |
-| `bookSourceUrl` | string | 否 | 书源 URL（别名 `origin`） |
-| `refresh` | number | 否 | 非 0 时强制刷新缓存 |
+| 参数            | 类型   | 必填 | 说明                      |
+| --------------- | ------ | ---- | ------------------------- |
+| `tocUrl`        | string | 否   | 目录页 URL                |
+| `bookUrl`       | string | 否   | 书籍 URL（别名 `url`）    |
+| `bookSourceUrl` | string | 否   | 书源 URL（别名 `origin`） |
+| `refresh`       | number | 否   | 非 0 时强制刷新缓存       |
 
 响应：
 
@@ -186,9 +186,9 @@ GET /reader3/getShelfBook
 
 查询参数：
 
-| 参数 | 类型 | 必填 | 说明 |
-|------|------|------|------|
-| `url` | string | 是 | 书籍 URL |
+| 参数  | 类型   | 必填 | 说明     |
+| ----- | ------ | ---- | -------- |
+| `url` | string | 是   | 书籍 URL |
 
 响应：`data` 为单个书籍对象（字段同上）。也可使用 `POST /reader3/getShelfBook`。
 
@@ -289,16 +289,16 @@ GET /reader3/getAvailableBookSource
 
 查询参数：
 
-| 参数 | 类型 | 必填 | 说明 |
-|------|------|------|------|
-| `url` | string | 否 | 书籍 URL |
-| `name` | string | 否 | 书名 |
-| `author` | string | 否 | 作者 |
-| `origin` | string | 否 | 书源 URL（别名 `bookSourceUrl`） |
-| `refresh` | number | 否 | 非 0 时强制刷新 |
-| `lastIndex` | number | 否 | 分页游标 |
-| `resultLimit` | number | 否 | 单页结果上限，默认 20，上限 100 |
-| `concurrentCount` | number | 否 | 并发数，默认 8，上限 20 |
+| 参数              | 类型   | 必填 | 说明                             |
+| ----------------- | ------ | ---- | -------------------------------- |
+| `url`             | string | 否   | 书籍 URL                         |
+| `name`            | string | 否   | 书名                             |
+| `author`          | string | 否   | 作者                             |
+| `origin`          | string | 否   | 书源 URL（别名 `bookSourceUrl`） |
+| `refresh`         | number | 否   | 非 0 时强制刷新                  |
+| `lastIndex`       | number | 否   | 分页游标                         |
+| `resultLimit`     | number | 否   | 单页结果上限，默认 20，上限 100  |
+| `concurrentCount` | number | 否   | 并发数，默认 8，上限 20          |
 
 响应：两种形态——带 `refresh`/`resultLimit`/`lastIndex` 任一分页参数时 `data` 为 `{ "books": [ ... ], "lastIndex": 0, "hasMore": true }`；均不带时 `data` 为裸数组 `[ ... ]`（全量结果）。
 

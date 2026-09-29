@@ -13,7 +13,10 @@ export interface AiBookLocationRow {
   hasChildren: boolean
 }
 
-export function groupAiBookWorldview(notes: AiBookNote[], collapsedCategories: Set<string> = new Set()): AiBookWorldviewGroup[] {
+export function groupAiBookWorldview(
+  notes: AiBookNote[],
+  collapsedCategories: Set<string> = new Set()
+): AiBookWorldviewGroup[] {
   const groups = new Map<string, AiBookNote[]>()
   for (const note of notes) {
     if (isLowImportance(note.importance)) continue
@@ -25,7 +28,16 @@ export function groupAiBookWorldview(notes: AiBookNote[], collapsedCategories: S
     groups.set(category, items)
   }
 
-  const order = ['基础设定', '基础规则', '势力制度', '历史传说', '技术/魔法', '社会文化', '当前事件', '未确认信息']
+  const order = [
+    '基础设定',
+    '基础规则',
+    '势力制度',
+    '历史传说',
+    '技术/魔法',
+    '社会文化',
+    '当前事件',
+    '未确认信息',
+  ]
   return [...groups.entries()]
     .map(([category, items]) => ({
       category,
@@ -42,9 +54,14 @@ export function groupAiBookWorldview(notes: AiBookNote[], collapsedCategories: S
     })
 }
 
-export function buildAiBookLocationRows(locations: AiBookLocation[], collapsedLocations: Set<string> = new Set()): AiBookLocationRow[] {
+export function buildAiBookLocationRows(
+  locations: AiBookLocation[],
+  collapsedLocations: Set<string> = new Set()
+): AiBookLocationRow[] {
   const resolvedLocations = inferLocationParents(locations)
-  const byKey = new Map(resolvedLocations.map((location) => [normalizeKey(location.name), location]))
+  const byKey = new Map(
+    resolvedLocations.map((location) => [normalizeKey(location.name), location])
+  )
   const childrenByParent = new Map<string, AiBookLocation[]>()
   const roots: AiBookLocation[] = []
 
@@ -89,9 +106,10 @@ function inferLocationParents(locations: AiBookLocation[]) {
   for (const location of locations) {
     if (!location.name || isLowImportance(location.importance)) continue
     const key = normalizeKey(location.name)
-    const normalizedParent = location.parentName && normalizeKey(location.parentName) !== key
-      ? location.parentName
-      : undefined
+    const normalizedParent =
+      location.parentName && normalizeKey(location.parentName) !== key
+        ? location.parentName
+        : undefined
     unique.set(key, {
       ...location,
       parentName: normalizedParent,
@@ -100,11 +118,17 @@ function inferLocationParents(locations: AiBookLocation[]) {
 
   const values = [...unique.values()]
   const byKey = new Map(values.map((location) => [normalizeKey(location.name), location]))
-  const parentCandidates = values.filter((location) => isParentLikeKind(location.kind) || !isChildLikeKind(location.kind))
-  const defaultParentCandidates = parentCandidates.filter((location) => isStrongParentKind(location.kind))
+  const parentCandidates = values.filter(
+    (location) => isParentLikeKind(location.kind) || !isChildLikeKind(location.kind)
+  )
+  const defaultParentCandidates = parentCandidates.filter((location) =>
+    isStrongParentKind(location.kind)
+  )
 
   return values.map((location) => {
-    const explicitParent = location.parentName ? byKey.get(normalizeKey(location.parentName)) : undefined
+    const explicitParent = location.parentName
+      ? byKey.get(normalizeKey(location.parentName))
+      : undefined
     if (explicitParent && isValidLocationParent(explicitParent, location)) {
       return location
     }
@@ -131,17 +155,18 @@ function inferLocationParents(locations: AiBookLocation[]) {
 
 function findParentMention(location: AiBookLocation, candidates: AiBookLocation[]) {
   const ownKey = normalizeKey(location.name)
-  const text = normalizeKey([
-    location.description,
-    location.status,
-    location.parentName,
-  ].filter(Boolean).join(' '))
+  const text = normalizeKey(
+    [location.description, location.status, location.parentName].filter(Boolean).join(' ')
+  )
 
   return candidates
     .filter((candidate) => normalizeKey(candidate.name) !== ownKey)
     .filter((candidate) => isValidLocationParent(candidate, location))
     .filter((candidate) => text.includes(normalizeKey(candidate.name)))
-    .sort((left, right) => parentScore(right) - parentScore(left) || right.name.length - left.name.length)[0]
+    .sort(
+      (left, right) =>
+        parentScore(right) - parentScore(left) || right.name.length - left.name.length
+    )[0]
 }
 
 function findContainerMention(location: AiBookLocation, candidates: AiBookLocation[]) {
@@ -149,12 +174,15 @@ function findContainerMention(location: AiBookLocation, candidates: AiBookLocati
   return candidates
     .filter((candidate) => normalizeKey(candidate.name) !== ownKey)
     .filter((candidate) => isValidLocationParent(candidate, location))
-    .filter((candidate) => normalizeKey([
-      candidate.description,
-      candidate.status,
-      candidate.parentName,
-    ].filter(Boolean).join(' ')).includes(ownKey))
-    .sort((left, right) => parentScore(right) - parentScore(left) || right.name.length - left.name.length)[0]
+    .filter((candidate) =>
+      normalizeKey(
+        [candidate.description, candidate.status, candidate.parentName].filter(Boolean).join(' ')
+      ).includes(ownKey)
+    )
+    .sort(
+      (left, right) =>
+        parentScore(right) - parentScore(left) || right.name.length - left.name.length
+    )[0]
 }
 
 function findDefaultParent(location: AiBookLocation, candidates: AiBookLocation[]) {
@@ -174,10 +202,12 @@ function findDefaultParent(location: AiBookLocation, candidates: AiBookLocation[
 }
 
 function compareLocations(left: AiBookLocation, right: AiBookLocation) {
-  return locationRank(right) - locationRank(left)
-    || importanceRank(right.importance) - importanceRank(left.importance)
-    || (left.kind || '').localeCompare(right.kind || '', 'zh-CN')
-    || left.name.localeCompare(right.name, 'zh-CN')
+  return (
+    locationRank(right) - locationRank(left) ||
+    importanceRank(right.importance) - importanceRank(left.importance) ||
+    (left.kind || '').localeCompare(right.kind || '', 'zh-CN') ||
+    left.name.localeCompare(right.name, 'zh-CN')
+  )
 }
 
 function locationRank(location: AiBookLocation) {
@@ -195,19 +225,57 @@ function parentScore(location: AiBookLocation) {
 
 function isStrongParentKind(kind: string | undefined) {
   const key = normalizeKey(kind)
-  return ['大陆', '世界', '国家', '王国', '帝国', '区域', '地区', '省', '州', '郡', '城市', '城镇', '市', '城', '村落', '村', '街区', '社区']
-    .some((item) => key.includes(item))
+  return [
+    '大陆',
+    '世界',
+    '国家',
+    '王国',
+    '帝国',
+    '区域',
+    '地区',
+    '省',
+    '州',
+    '郡',
+    '城市',
+    '城镇',
+    '市',
+    '城',
+    '村落',
+    '村',
+    '街区',
+    '社区',
+  ].some((item) => key.includes(item))
 }
 
 function isParentLikeKind(kind: string | undefined) {
   const key = normalizeKey(kind)
-  return isStrongParentKind(kind) || ['教会', '组织', '庄园', '营地'].some((item) => key.includes(item))
+  return (
+    isStrongParentKind(kind) || ['教会', '组织', '庄园', '营地'].some((item) => key.includes(item))
+  )
 }
 
 function isChildLikeKind(kind: string | undefined) {
   const key = normalizeKey(kind)
-  return ['住宅', '公寓', '住处', '房间', '建筑', '机构', '学校', '学院', '大学', '教室', '书房', '酒馆', '店铺', '商店', '机房', '实验室', '避难所', '设施']
-    .some((item) => key.includes(item))
+  return [
+    '住宅',
+    '公寓',
+    '住处',
+    '房间',
+    '建筑',
+    '机构',
+    '学校',
+    '学院',
+    '大学',
+    '教室',
+    '书房',
+    '酒馆',
+    '店铺',
+    '商店',
+    '机房',
+    '实验室',
+    '避难所',
+    '设施',
+  ].some((item) => key.includes(item))
 }
 
 function isValidLocationParent(parent: AiBookLocation, child: AiBookLocation) {
@@ -224,8 +292,25 @@ function locationHierarchyLevel(kind: string | undefined) {
   if (isCityLikeKind(kind)) return 50
   if (isTownLikeKind(kind)) return 40
   if (['庄园', '营地', '教会', '组织'].some((item) => key.includes(item))) return 35
-  if (['学校', '学院', '大学', '建筑', '机构', '住宅', '公寓', '住处', '酒馆', '店铺', '商店', '避难所'].some((item) => key.includes(item))) return 30
-  if (['房间', '教室', '书房', '机房', '实验室', '设施'].some((item) => key.includes(item))) return 20
+  if (
+    [
+      '学校',
+      '学院',
+      '大学',
+      '建筑',
+      '机构',
+      '住宅',
+      '公寓',
+      '住处',
+      '酒馆',
+      '店铺',
+      '商店',
+      '避难所',
+    ].some((item) => key.includes(item))
+  )
+    return 30
+  if (['房间', '教室', '书房', '机房', '实验室', '设施'].some((item) => key.includes(item)))
+    return 20
   return 35
 }
 

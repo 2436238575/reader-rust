@@ -36,7 +36,7 @@
         </div>
         <div class="rule-ops">
           <label class="switch">
-            <input type="checkbox" v-model="rule.isEnabled" @change="toggleRule(rule)">
+            <input type="checkbox" v-model="rule.isEnabled" @change="toggleRule(rule)" />
             <span class="slider"></span>
           </label>
           <button class="op-btn" @click="openEditModal(rule)">编辑</button>
@@ -67,15 +67,38 @@
           <div class="form-item">
             <label>生效范围</label>
             <div class="scope-group">
-              <button type="button" class="scope-btn" :class="{ active: getScopeMode(editingRule) === 'global' }" @click="setScopeMode('global')">全部书籍</button>
-              <button type="button" class="scope-btn" :class="{ active: getScopeMode(editingRule) === 'book' }" @click="setScopeMode('book')">当前书籍</button>
-              <button type="button" class="scope-btn" :class="{ active: getScopeMode(editingRule) === 'source' }" @click="setScopeMode('source')">当前书源</button>
+              <button
+                type="button"
+                class="scope-btn"
+                :class="{ active: getScopeMode(editingRule) === 'global' }"
+                @click="setScopeMode('global')"
+              >
+                全部书籍
+              </button>
+              <button
+                type="button"
+                class="scope-btn"
+                :class="{ active: getScopeMode(editingRule) === 'book' }"
+                @click="setScopeMode('book')"
+              >
+                当前书籍
+              </button>
+              <button
+                type="button"
+                class="scope-btn"
+                :class="{ active: getScopeMode(editingRule) === 'source' }"
+                @click="setScopeMode('source')"
+              >
+                当前书源
+              </button>
             </div>
             <div class="scope-preview">{{ describeScope(editingRule.scope) }}</div>
           </div>
           <div class="form-row">
-            <label><input type="checkbox" v-model="editingRule.isRegex"> 正则模式</label>
-            <label>排序: <input type="number" v-model="editingRule.order" style="width: 60px"></label>
+            <label><input type="checkbox" v-model="editingRule.isRegex" /> 正则模式</label>
+            <label
+              >排序: <input type="number" v-model="editingRule.order" style="width: 60px"
+            /></label>
           </div>
         </div>
         <div class="edit-footer">
@@ -140,7 +163,7 @@ function openEditModal(rule?: ReplaceRule) {
       scope: '*',
       isEnabled: true,
       isRegex: false,
-      order: store.replaceRules.length + 1
+      order: store.replaceRules.length + 1,
     }
   }
 }
@@ -152,9 +175,8 @@ function setScopeMode(mode: 'global' | 'book' | 'source') {
     return
   }
   if (!store.book) return
-  editingRule.value.scope = mode === 'source'
-    ? `source:${store.book.origin}`
-    : `book:${store.book.bookUrl}`
+  editingRule.value.scope =
+    mode === 'source' ? `source:${store.book.origin}` : `book:${store.book.bookUrl}`
 }
 
 async function handleSave() {
@@ -205,13 +227,20 @@ async function handleDelete(rule: ReplaceRule) {
   align-items: center;
   justify-content: space-between;
   padding: 16px 20px;
-  border-bottom: 1px solid rgba(0,0,0,0.06);
+  border-bottom: 1px solid rgba(0, 0, 0, 0.06);
   flex-shrink: 0;
 }
 
-.rule-header h3 { margin: 0; font-size: var(--text-lg); }
+.rule-header h3 {
+  margin: 0;
+  font-size: var(--text-lg);
+}
 
-.header-actions { display: flex; gap: 12px; align-items: center; }
+.header-actions {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+}
 
 .add-btn {
   background: var(--color-primary);
@@ -248,7 +277,8 @@ async function handleDelete(rule: ReplaceRule) {
   overscroll-behavior: contain;
 }
 
-.loading, .empty {
+.loading,
+.empty {
   padding: 40px;
   text-align: center;
   opacity: 0.5;
@@ -258,24 +288,49 @@ async function handleDelete(rule: ReplaceRule) {
 .rule-item {
   padding: 12px;
   border-radius: 12px;
-  background: rgba(0,0,0,0.03);
-  border: 1px solid rgba(0,0,0,0.05);
+  background: rgba(0, 0, 0, 0.03);
+  border: 1px solid rgba(0, 0, 0, 0.05);
   display: flex;
   justify-content: space-between;
   align-items: flex-start;
   transition: opacity 0.2s;
 }
 
-.rule-item.disabled { opacity: 0.5; }
+.rule-item.disabled {
+  opacity: 0.5;
+}
 
-.rule-info { flex: 1; min-width: 0; }
+.rule-info {
+  flex: 1;
+  min-width: 0;
+}
 
-.rule-name-row { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; }
-.rule-name { font-weight: 600; font-size: var(--text-base); }
-.rule-badge { font-size: var(--text-xs); background: var(--color-primary); color: white; padding: 1px 4px; border-radius: 3px; }
-.rule-scope { font-size: var(--text-xs); color: var(--color-primary); opacity: 0.9; margin-bottom: 4px; }
+.rule-name-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+.rule-name {
+  font-weight: 600;
+  font-size: var(--text-base);
+}
+.rule-badge {
+  font-size: var(--text-xs);
+  background: var(--color-primary);
+  color: white;
+  padding: 1px 4px;
+  border-radius: 3px;
+}
+.rule-scope {
+  font-size: var(--text-xs);
+  color: var(--color-primary);
+  opacity: 0.9;
+  margin-bottom: 4px;
+}
 
-.rule-pattern, .rule-replace {
+.rule-pattern,
+.rule-replace {
   font-size: var(--text-xs);
   opacity: 0.6;
   white-space: nowrap;
@@ -284,7 +339,12 @@ async function handleDelete(rule: ReplaceRule) {
   margin-top: 2px;
 }
 
-.rule-ops { display: flex; flex-direction: column; align-items: flex-end; gap: 8px; }
+.rule-ops {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 8px;
+}
 
 .op-btn {
   font-size: var(--text-xs);
@@ -296,15 +356,51 @@ async function handleDelete(rule: ReplaceRule) {
   color: inherit;
 }
 
-.op-btn.delete { color: #ef4444; border-color: rgba(239, 68, 68, 0.2); }
+.op-btn.delete {
+  color: #ef4444;
+  border-color: rgba(239, 68, 68, 0.2);
+}
 
 /* Switch style */
-.switch { position: relative; display: inline-block; width: 34px; height: 18px; }
-.switch input { opacity: 0; width: 0; height: 0; }
-.slider { position: absolute; cursor: pointer; top: 0; left: 0; right: 0; bottom: 0; background-color: #ccc; transition: .4s; border-radius: 18px; }
-.slider:before { position: absolute; content: ""; height: 14px; width: 14px; left: 2px; bottom: 2px; background-color: white; transition: .4s; border-radius: 50%; }
-input:checked + .slider { background-color: var(--color-primary); }
-input:checked + .slider:before { transform: translateX(16px); }
+.switch {
+  position: relative;
+  display: inline-block;
+  width: 34px;
+  height: 18px;
+}
+.switch input {
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+.slider {
+  position: absolute;
+  cursor: pointer;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background-color: #ccc;
+  transition: 0.4s;
+  border-radius: 18px;
+}
+.slider:before {
+  position: absolute;
+  content: '';
+  height: 14px;
+  width: 14px;
+  left: 2px;
+  bottom: 2px;
+  background-color: white;
+  transition: 0.4s;
+  border-radius: 50%;
+}
+input:checked + .slider {
+  background-color: var(--color-primary);
+}
+input:checked + .slider:before {
+  transform: translateX(16px);
+}
 
 /* Edit Overlay */
 .edit-overlay {
@@ -321,22 +417,40 @@ input:checked + .slider:before { transform: translateX(16px); }
   -webkit-overflow-scrolling: touch;
 }
 
-.edit-header h4 { margin: 0 0 16px 0; }
+.edit-header h4 {
+  margin: 0 0 16px 0;
+}
 
-.edit-body { flex: 1; display: flex; flex-direction: column; gap: 16px; }
+.edit-body {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
 
-.form-item { display: flex; flex-direction: column; gap: 6px; }
-.form-item label { font-size: var(--text-xs); opacity: 0.7; }
-.form-item input, .form-item textarea {
-  background: rgba(0,0,0,0.05);
-  border: 1px solid rgba(0,0,0,0.05);
+.form-item {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.form-item label {
+  font-size: var(--text-xs);
+  opacity: 0.7;
+}
+.form-item input,
+.form-item textarea {
+  background: rgba(0, 0, 0, 0.05);
+  border: 1px solid rgba(0, 0, 0, 0.05);
   padding: 8px 12px;
   border-radius: 8px;
   color: inherit;
   outline: none;
   font-size: var(--text-base);
 }
-.form-item textarea { height: 80px; resize: none; }
+.form-item textarea {
+  height: 80px;
+  resize: none;
+}
 
 .scope-group {
   display: flex;
@@ -345,7 +459,7 @@ input:checked + .slider:before { transform: translateX(16px); }
 }
 
 .scope-btn {
-  border: 1px solid rgba(0,0,0,0.1);
+  border: 1px solid rgba(0, 0, 0, 0.1);
   background: transparent;
   color: inherit;
   padding: 8px 12px;
@@ -365,9 +479,30 @@ input:checked + .slider:before { transform: translateX(16px); }
   opacity: 0.65;
 }
 
-.form-row { display: flex; align-items: center; gap: 20px; font-size: var(--text-sm); }
+.form-row {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  font-size: var(--text-sm);
+}
 
-.edit-footer { display: flex; justify-content: flex-end; gap: 12px; margin-top: 20px; }
-.edit-footer button { padding: 8px 20px; border-radius: 8px; border: 1px solid var(--color-border); background: transparent; color: inherit; cursor: pointer; }
-.edit-footer button.primary { background: var(--color-primary); color: white; border: none; }
+.edit-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 12px;
+  margin-top: 20px;
+}
+.edit-footer button {
+  padding: 8px 20px;
+  border-radius: 8px;
+  border: 1px solid var(--color-border);
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}
+.edit-footer button.primary {
+  background: var(--color-primary);
+  color: white;
+  border: none;
+}
 </style>

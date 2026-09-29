@@ -52,9 +52,30 @@ POST /reader3/saveAiModelConfig
 
 ```json
 {
-  "text":   { "enabled": true, "baseUrl": "https://api.openai.com", "apiKey": "sk-...", "model": "gpt-4o-mini", "useFullUrl": false },
-  "image":  { "enabled": false, "baseUrl": "", "apiKey": "", "model": "gpt-image-1", "useFullUrl": false, "imageSize": "1024x1024" },
-  "speech": { "enabled": false, "baseUrl": "", "apiKey": "", "model": "gpt-4o-mini-tts", "useFullUrl": false, "voice": "alloy", "responseFormat": "mp3" }
+  "text": {
+    "enabled": true,
+    "baseUrl": "https://api.openai.com",
+    "apiKey": "sk-...",
+    "model": "gpt-4o-mini",
+    "useFullUrl": false
+  },
+  "image": {
+    "enabled": false,
+    "baseUrl": "",
+    "apiKey": "",
+    "model": "gpt-image-1",
+    "useFullUrl": false,
+    "imageSize": "1024x1024"
+  },
+  "speech": {
+    "enabled": false,
+    "baseUrl": "",
+    "apiKey": "",
+    "model": "gpt-4o-mini-tts",
+    "useFullUrl": false,
+    "voice": "alloy",
+    "responseFormat": "mp3"
+  }
 }
 ```
 
@@ -68,15 +89,15 @@ POST /reader3/aiProxy
 
 请求体（`AiProxyRequest`）：
 
-| 参数 | 类型 | 说明 |
-|------|------|------|
-| `useServerConfig` | boolean | true 时使用服务端配置的模型，忽略下面的 baseUrl/apiKey |
-| `baseUrl` | string | 客户端自定的上游地址（`useServerConfig=false` 时必填） |
-| `apiKey` | string? | 客户端自带密钥，仅加入出站请求头，不回传 |
-| `path` | string | API 路径；`fullUrl=false` 时仅允许 `/v1/chat/completions`、`/v1/images/generations`、`/v1/audio/speech` |
-| `fullUrl` | boolean | true 时 `baseUrl` 即完整请求地址（跳过路径白名单） |
-| `kind` | string? | `text`/`image`/`speech`，用于服务端配置的默认值补全 |
-| `body` | object | 透传给上游的请求体 |
+| 参数              | 类型    | 说明                                                                                                    |
+| ----------------- | ------- | ------------------------------------------------------------------------------------------------------- |
+| `useServerConfig` | boolean | true 时使用服务端配置的模型，忽略下面的 baseUrl/apiKey                                                  |
+| `baseUrl`         | string  | 客户端自定的上游地址（`useServerConfig=false` 时必填）                                                  |
+| `apiKey`          | string? | 客户端自带密钥，仅加入出站请求头，不回传                                                                |
+| `path`            | string  | API 路径；`fullUrl=false` 时仅允许 `/v1/chat/completions`、`/v1/images/generations`、`/v1/audio/speech` |
+| `fullUrl`         | boolean | true 时 `baseUrl` 即完整请求地址（跳过路径白名单）                                                      |
+| `kind`            | string? | `text`/`image`/`speech`，用于服务端配置的默认值补全                                                     |
+| `body`            | object  | 透传给上游的请求体                                                                                      |
 
 > **注意**：`useServerConfig=false`（客户端自带端点，含 `fullUrl=true` 任意路径）等价于向任意地址发 POST 的通用代理——单用户下登录者即所有者，不再收敛；公网暴露时请配合 `ALLOW_PRIVATE_NETWORK=false`。
 

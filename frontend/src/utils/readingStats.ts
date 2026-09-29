@@ -28,7 +28,10 @@ export function sanitizeReadingStats(value: unknown): ReadingStats {
   const dedupe = (list: unknown): string[] =>
     Array.isArray(list) ? [...new Set(list.filter((x): x is string => typeof x === 'string'))] : []
   return {
-    totalSeconds: typeof raw.totalSeconds === 'number' && raw.totalSeconds > 0 ? Math.floor(raw.totalSeconds) : 0,
+    totalSeconds:
+      typeof raw.totalSeconds === 'number' && raw.totalSeconds > 0
+        ? Math.floor(raw.totalSeconds)
+        : 0,
     openedBooks: dedupe(raw.openedBooks),
     readChapters: dedupe(raw.readChapters),
     completedBooks: dedupe(raw.completedBooks),
@@ -66,9 +69,7 @@ export function persistLocalReadingStats(stats: ReadingStats) {
 }
 
 /** 拉取后端文档并与本地合并；合并结果与后端不一致时推回。失败时静默保持本地 */
-export async function syncReadingStatsFromBackend(
-  local: ReadingStats,
-): Promise<ReadingStats> {
+export async function syncReadingStatsFromBackend(local: ReadingStats): Promise<ReadingStats> {
   let remote: unknown
   try {
     remote = await getUserdata(READING_STATS_DOC_NAME)

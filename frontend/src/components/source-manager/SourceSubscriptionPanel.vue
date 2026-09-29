@@ -29,11 +29,25 @@
           <article v-for="item in subscriptions" :key="item.url" class="subscription-item">
             <div class="subscription-main">
               <span class="subscription-url">{{ item.url }}</span>
-              <span v-if="item.lastSyncedAt" class="subscription-time">上次同步 {{ formatDateTime(item.lastSyncedAt) }}</span>
+              <span v-if="item.lastSyncedAt" class="subscription-time"
+                >上次同步 {{ formatDateTime(item.lastSyncedAt) }}</span
+              >
             </div>
             <div class="subscription-actions">
-              <button class="btn btn-sm" type="button" @click="$emit('sync-subscription', item.url)">同步</button>
-              <button class="btn btn-sm btn-danger" type="button" @click="$emit('remove-subscription', item.url)">删除</button>
+              <button
+                class="btn btn-sm"
+                type="button"
+                @click="$emit('sync-subscription', item.url)"
+              >
+                同步
+              </button>
+              <button
+                class="btn btn-sm btn-danger"
+                type="button"
+                @click="$emit('remove-subscription', item.url)"
+              >
+                删除
+              </button>
             </div>
           </article>
         </div>

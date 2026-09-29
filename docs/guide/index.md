@@ -39,17 +39,17 @@ HTTP 请求 → 路由匹配 → 提取鉴权与参数 → 业务编排 → 抓�
 
 ## 模块结构
 
-| 目录 | 职责 |
-|------|------|
-| `src/api/` | 路由定义与 HTTP 处理（axum），业务路由统一挂在 `/reader3` 下 |
-| `src/service/` | 业务编排：缓存命中判断、书源选择、书架与用户逻辑 |
-| `src/parser/` | 规则解析引擎，含组合规则拆分与 JS 求值 |
-| `src/crawler/` | 基于 reqwest 的 HTTP 抓取与 URL 占位符处理 |
-| `src/model/` | `BookSource` 等数据结构 |
-| `src/storage/` | SQLite（sqlx）迁移与文件缓存 |
-| `src/app/` | 配置加载与启动引导 |
-| `frontend/` | Vue 3 + TypeScript + Vite + Pinia 前端 |
-| `docs/` | 本 VitePress 文档站 |
+| 目录           | 职责                                                         |
+| -------------- | ------------------------------------------------------------ |
+| `src/api/`     | 路由定义与 HTTP 处理（axum），业务路由统一挂在 `/reader3` 下 |
+| `src/service/` | 业务编排：缓存命中判断、书源选择、书架与用户逻辑             |
+| `src/parser/`  | 规则解析引擎，含组合规则拆分与 JS 求值                       |
+| `src/crawler/` | 基于 reqwest 的 HTTP 抓取与 URL 占位符处理                   |
+| `src/model/`   | `BookSource` 等数据结构                                      |
+| `src/storage/` | SQLite（sqlx）迁移与文件缓存                                 |
+| `src/app/`     | 配置加载与启动引导                                           |
+| `frontend/`    | Vue 3 + TypeScript + Vite + Pinia 前端                       |
+| `docs/`        | 本 VitePress 文档站                                          |
 
 ## 下一步
 

@@ -20,11 +20,11 @@
 
 实现者可以按三层交付：
 
-| 级别 | 要求 |
-| --- | --- |
-| L1 Parser | 能解析书源 JSON、URL 字符串和内容规则字符串，输出可执行中间表示。 |
-| L2 Evaluator | 在给定 HTML/JSON/文本和上下文对象时，能得到与当前项目一致的字符串、列表、元素和 URL 结果。 |
-| L3 Engine | 能执行完整搜索、发现、详情、目录、正文流水线，包含网络请求、Cookie、登录检测、JS、WebView 或等价能力。 |
+| 级别         | 要求                                                                                                   |
+| ------------ | ------------------------------------------------------------------------------------------------------ |
+| L1 Parser    | 能解析书源 JSON、URL 字符串和内容规则字符串，输出可执行中间表示。                                      |
+| L2 Evaluator | 在给定 HTML/JSON/文本和上下文对象时，能得到与当前项目一致的字符串、列表、元素和 URL 结果。             |
+| L3 Engine    | 能执行完整搜索、发现、详情、目录、正文流水线，包含网络请求、Cookie、登录检测、JS、WebView 或等价能力。 |
 
 若目标是“兼容当前项目书源规则”，至少需要 L2。若目标是替代当前书源运行时，需要 L3。
 
@@ -40,39 +40,39 @@
 
 `BookSource` 是书源顶层对象。JSON 导入时字段名必须保持一致。
 
-| 字段 | 类型 | 默认值 | 运行时语义 |
-| --- | --- | --- | --- |
-| `bookSourceUrl` | String | `""` | 主键和基础地址。用于相对 URL 补全、Cookie 域、缓存 key、书源变量命名。必填。 |
-| `bookSourceName` | String | `""` | 显示名。必填。 |
-| `bookSourceGroup` | String? | `null` | 分组。项目用 `[,;，；]` 拆分。 |
-| `bookSourceType` | Int | `0` | `0` 文本，`1` 音频，`2` 图片，`3` 文件。 |
-| `bookUrlPattern` | String? | `null` | 详情页 URL 正则。搜索响应 URL 命中时直接按详情页解析；URL 入库匹配也使用它。`NONE` 表示不参与 URL 匹配。 |
-| `customOrder` | Int | `0` | 排序编号。 |
-| `enabled` | Boolean | `true` | 是否启用搜索。 |
-| `enabledExplore` | Boolean | `true` | 是否启用发现。 |
-| `jsLib` | String? | `null` | 共享 JS 库，见 12.3。 |
-| `enabledCookieJar` | Boolean? | `true` | 是否启用自动 CookieJar 标记。 |
-| `concurrentRate` | String? | `null` | 请求频率限制，见 11.3。 |
-| `header` | String? | `null` | 书源级请求头规则，见 11.1。 |
-| `loginUrl` | String? | `null` | 登录 URL 或登录 JS，见 12.1。 |
-| `loginUi` | String? | `null` | 登录表单 JSON，见 12.1。 |
-| `loginCheckJs` | String? | `null` | 每次主要网络请求后执行，输入 `StrResponse`，输出新的 `StrResponse`。 |
-| `coverDecodeJs` | String? | `null` | 封面图片解密 JS。 |
-| `bookSourceComment` | String? | `null` | 注释。 |
-| `variableComment` | String? | `null` | 书源变量说明，仅展示。 |
-| `lastUpdateTime` | Long | `0` | 更新时间。 |
-| `respondTime` | Long | `180000` | 响应时间。 |
-| `weight` | Int | `0` | 搜索权重。 |
-| `exploreUrl` | String? | `null` | 发现分类入口，见 7。 |
-| `exploreScreen` | String? | `null` | 当前执行代码未读取。实现 MAY 保留字段。 |
-| `ruleExplore` | ExploreRule? | `null` | 发现列表规则。 |
-| `searchUrl` | String? | `null` | 搜索入口 URL 规则。 |
-| `ruleSearch` | SearchRule? | `null` | 搜索列表规则。 |
-| `ruleBookInfo` | BookInfoRule? | `null` | 详情页规则。 |
-| `ruleToc` | TocRule? | `null` | 目录页规则。 |
-| `ruleContent` | ContentRule? | `null` | 正文页规则。 |
-| `ruleReview` | ReviewRule? | `null` | 章评规则，见 17.2。阅读3.0 中为预留字段，本项目接上了。 |
-| `ruleParaReview` | ParaReviewRule? | `null` | 段评规则（本项目扩展，阅读3.0 无此字段），见 17.3。 |
+| 字段                | 类型            | 默认值   | 运行时语义                                                                                               |
+| ------------------- | --------------- | -------- | -------------------------------------------------------------------------------------------------------- |
+| `bookSourceUrl`     | String          | `""`     | 主键和基础地址。用于相对 URL 补全、Cookie 域、缓存 key、书源变量命名。必填。                             |
+| `bookSourceName`    | String          | `""`     | 显示名。必填。                                                                                           |
+| `bookSourceGroup`   | String?         | `null`   | 分组。项目用 `[,;，；]` 拆分。                                                                           |
+| `bookSourceType`    | Int             | `0`      | `0` 文本，`1` 音频，`2` 图片，`3` 文件。                                                                 |
+| `bookUrlPattern`    | String?         | `null`   | 详情页 URL 正则。搜索响应 URL 命中时直接按详情页解析；URL 入库匹配也使用它。`NONE` 表示不参与 URL 匹配。 |
+| `customOrder`       | Int             | `0`      | 排序编号。                                                                                               |
+| `enabled`           | Boolean         | `true`   | 是否启用搜索。                                                                                           |
+| `enabledExplore`    | Boolean         | `true`   | 是否启用发现。                                                                                           |
+| `jsLib`             | String?         | `null`   | 共享 JS 库，见 12.3。                                                                                    |
+| `enabledCookieJar`  | Boolean?        | `true`   | 是否启用自动 CookieJar 标记。                                                                            |
+| `concurrentRate`    | String?         | `null`   | 请求频率限制，见 11.3。                                                                                  |
+| `header`            | String?         | `null`   | 书源级请求头规则，见 11.1。                                                                              |
+| `loginUrl`          | String?         | `null`   | 登录 URL 或登录 JS，见 12.1。                                                                            |
+| `loginUi`           | String?         | `null`   | 登录表单 JSON，见 12.1。                                                                                 |
+| `loginCheckJs`      | String?         | `null`   | 每次主要网络请求后执行，输入 `StrResponse`，输出新的 `StrResponse`。                                     |
+| `coverDecodeJs`     | String?         | `null`   | 封面图片解密 JS。                                                                                        |
+| `bookSourceComment` | String?         | `null`   | 注释。                                                                                                   |
+| `variableComment`   | String?         | `null`   | 书源变量说明，仅展示。                                                                                   |
+| `lastUpdateTime`    | Long            | `0`      | 更新时间。                                                                                               |
+| `respondTime`       | Long            | `180000` | 响应时间。                                                                                               |
+| `weight`            | Int             | `0`      | 搜索权重。                                                                                               |
+| `exploreUrl`        | String?         | `null`   | 发现分类入口，见 7。                                                                                     |
+| `exploreScreen`     | String?         | `null`   | 当前执行代码未读取。实现 MAY 保留字段。                                                                  |
+| `ruleExplore`       | ExploreRule?    | `null`   | 发现列表规则。                                                                                           |
+| `searchUrl`         | String?         | `null`   | 搜索入口 URL 规则。                                                                                      |
+| `ruleSearch`        | SearchRule?     | `null`   | 搜索列表规则。                                                                                           |
+| `ruleBookInfo`      | BookInfoRule?   | `null`   | 详情页规则。                                                                                             |
+| `ruleToc`           | TocRule?        | `null`   | 目录页规则。                                                                                             |
+| `ruleContent`       | ContentRule?    | `null`   | 正文页规则。                                                                                             |
+| `ruleReview`        | ReviewRule?     | `null`   | 章评规则，见 17.2。阅读3.0 中为预留字段，本项目接上了。                                                  |
+| `ruleParaReview`    | ParaReviewRule? | `null`   | 段评规则（本项目扩展，阅读3.0 无此字段），见 17.3。                                                      |
 
 实现 MUST 对空规则对象提供默认空对象。例如 `getSearchRule()` 在字段为空时返回新的 `SearchRule()`。
 
@@ -228,7 +228,7 @@ data class ParaReviewRule(
 1. 正常对象：
 
 ```json
-{"bookList":".item","name":".title@text"}
+{ "bookList": ".item", "name": ".title@text" }
 ```
 
 1. JSON 字符串，字符串内容再解析成对象：
@@ -243,13 +243,13 @@ data class ParaReviewRule(
 
 完整引擎至少需要以下运行时数据：
 
-| 对象 | 必要字段 |
-| --- | --- |
-| `SearchBook` | `name`、`author`、`kind`、`wordCount`、`latestChapterTitle`、`intro`、`coverUrl`、`bookUrl`、`origin`、`originName`、`originOrder`、`type`、`variable`、`infoHtml`。 |
-| `Book` | `name`、`author`、`kind`、`wordCount`、`latestChapterTitle`、`intro`、`coverUrl`、`bookUrl`、`tocUrl`、`tocHtml`、`downloadUrls`、`origin`、`originName`、`originOrder`、`type`、`variableMap`。 |
-| `BookChapter` | `bookUrl`、`baseUrl`、`title`、`url`、`tag`、`isVolume`、`isVip`、`isPay`、`index`、变量 map。 |
-| `StrResponse` | `raw`、`body`、`url`、`code`、`headers`、`isSuccessful`。 |
-| `RuleData` | 临时 `variableMap`。搜索/发现列表阶段使用。 |
+| 对象          | 必要字段                                                                                                                                                                                         |
+| ------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `SearchBook`  | `name`、`author`、`kind`、`wordCount`、`latestChapterTitle`、`intro`、`coverUrl`、`bookUrl`、`origin`、`originName`、`originOrder`、`type`、`variable`、`infoHtml`。                             |
+| `Book`        | `name`、`author`、`kind`、`wordCount`、`latestChapterTitle`、`intro`、`coverUrl`、`bookUrl`、`tocUrl`、`tocHtml`、`downloadUrls`、`origin`、`originName`、`originOrder`、`type`、`variableMap`。 |
+| `BookChapter` | `bookUrl`、`baseUrl`、`title`、`url`、`tag`、`isVolume`、`isVip`、`isPay`、`index`、变量 map。                                                                                                   |
+| `StrResponse` | `raw`、`body`、`url`、`code`、`headers`、`isSuccessful`。                                                                                                                                        |
+| `RuleData`    | 临时 `variableMap`。搜索/发现列表阶段使用。                                                                                                                                                      |
 
 `StrResponse.url` MUST 返回最终响应 URL。当前实现优先取 `raw.networkResponse.request.url`，否则取 `raw.request.url`。
 
@@ -275,19 +275,19 @@ data class ParaReviewRule(
 
 `UrlAnalyzer` 构造时接收：
 
-| 参数 | 含义 |
-| --- | --- |
-| `mUrl` | 原始 URL 规则。 |
-| `key` | 搜索关键字。 |
-| `page` | 当前页码。 |
-| `speakText` / `speakSpeed` | 朗读场景参数。书源普通解析可保留但不使用。 |
-| `baseUrl` | 基准 URL。 |
-| `source` | 当前书源。 |
-| `ruleData` | 当前书籍、章节或临时 RuleData。 |
-| `chapter` | 当前章节。 |
-| `readTimeout` / `callTimeout` | 请求超时。 |
-| `headerMapF` | 调用方直接传入的请求头。为空则取书源请求头。 |
-| `hasLoginHeader` | 是否合并登录头。当前主要请求默认为 `true`。 |
+| 参数                          | 含义                                         |
+| ----------------------------- | -------------------------------------------- |
+| `mUrl`                        | 原始 URL 规则。                              |
+| `key`                         | 搜索关键字。                                 |
+| `page`                        | 当前页码。                                   |
+| `speakText` / `speakSpeed`    | 朗读场景参数。书源普通解析可保留但不使用。   |
+| `baseUrl`                     | 基准 URL。                                   |
+| `source`                      | 当前书源。                                   |
+| `ruleData`                    | 当前书籍、章节或临时 RuleData。              |
+| `chapter`                     | 当前章节。                                   |
+| `readTimeout` / `callTimeout` | 请求超时。                                   |
+| `headerMapF`                  | 调用方直接传入的请求头。为空则取书源请求头。 |
+| `hasLoginHeader`              | 是否合并登录头。当前主要请求默认为 `true`。  |
 
 构造时 MUST 从 `baseUrl` 去除 URL 参数 JSON。当前项目用 `,\s*(?=\{)` 找到第一个参数分隔点，然后截断。
 
@@ -354,18 +354,18 @@ ruleUrl = result
 
 URL JS 绑定变量 MUST 包含：
 
-| 变量 | 值 |
-| --- | --- |
-| `java` | 当前 `UrlAnalyzer`。 |
-| `baseUrl` | 当前基准 URL。 |
-| `cookie` | CookieStore 等价对象。 |
-| `cache` | CacheManager 等价对象。 |
-| `page` | 当前页码。 |
-| `key` | 搜索关键字。 |
-| `speakText` / `speakSpeed` | 构造参数。 |
-| `book` | `ruleData` 为 `Book` 时的书籍对象。 |
-| `source` | 当前书源。 |
-| `result` | 上一步结果。 |
+| 变量                       | 值                                  |
+| -------------------------- | ----------------------------------- |
+| `java`                     | 当前 `UrlAnalyzer`。                |
+| `baseUrl`                  | 当前基准 URL。                      |
+| `cookie`                   | CookieStore 等价对象。              |
+| `cache`                    | CacheManager 等价对象。             |
+| `page`                     | 当前页码。                          |
+| `key`                      | 搜索关键字。                        |
+| `speakText` / `speakSpeed` | 构造参数。                          |
+| `book`                     | `ruleData` 为 `Book` 时的书籍对象。 |
+| `source`                   | 当前书源。                          |
+| `result`                   | 上一步结果。                        |
 
 ### 5.5 <code v-pre>{{...}}</code> 替换
 
@@ -421,20 +421,20 @@ URL 主体通过 `getAbsoluteURL(baseUrl, urlNoOption)` 转成绝对 URL。规�
 
 参数 JSON 支持字段：
 
-| 字段 | 类型 | 行为 |
-| --- | --- | --- |
-| `method` | String? | 等于 `POST` 忽略大小写时使用 POST，否则 GET。 |
-| `charset` | String? | 参数编码字符集。空值默认 UTF-8；`escape` 表示使用 escape 编码。 |
-| `headers` | Object/String? | 合并到请求头。 |
-| `body` | Any? | POST 请求体。对象或数组序列化成 JSON 字符串。 |
-| `origin` | String? | 当前请求流程未使用，保留。 |
-| `retry` | Int/String? | 请求重试次数，非法值视为 0。 |
-| `type` | String? | 非空时 `getStrResponse()` 读取 bytes 并返回十六进制 body。 |
-| `webView` | Any? | `null`、空字符串、`false`、`"false"` 为 false，其他值为 true。**reader-rust 仅解析不执行**：服务端无 WebView，依赖渲染的书源拿到的是未渲染的原始 HTML。 |
-| `webJs` | String? | WebView 注入 JS。**reader-rust 未实现**（同上）。 |
-| `js` | String? | 参数解析后执行，返回值替换最终 URL。 |
-| `serverID` | Long/String? | 保存到请求描述中。 |
-| `webViewDelayTime` | Long/String? | WebView 延迟，负数按 0。 |
+| 字段               | 类型           | 行为                                                                                                                                                    |
+| ------------------ | -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `method`           | String?        | 等于 `POST` 忽略大小写时使用 POST，否则 GET。                                                                                                           |
+| `charset`          | String?        | 参数编码字符集。空值默认 UTF-8；`escape` 表示使用 escape 编码。                                                                                         |
+| `headers`          | Object/String? | 合并到请求头。                                                                                                                                          |
+| `body`             | Any?           | POST 请求体。对象或数组序列化成 JSON 字符串。                                                                                                           |
+| `origin`           | String?        | 当前请求流程未使用，保留。                                                                                                                              |
+| `retry`            | Int/String?    | 请求重试次数，非法值视为 0。                                                                                                                            |
+| `type`             | String?        | 非空时 `getStrResponse()` 读取 bytes 并返回十六进制 body。                                                                                              |
+| `webView`          | Any?           | `null`、空字符串、`false`、`"false"` 为 false，其他值为 true。**reader-rust 仅解析不执行**：服务端无 WebView，依赖渲染的书源拿到的是未渲染的原始 HTML。 |
+| `webJs`            | String?        | WebView 注入 JS。**reader-rust 未实现**（同上）。                                                                                                       |
+| `js`               | String?        | 参数解析后执行，返回值替换最终 URL。                                                                                                                    |
+| `serverID`         | Long/String?   | 保存到请求描述中。                                                                                                                                      |
+| `webViewDelayTime` | Long/String?   | WebView 延迟，负数按 0。                                                                                                                                |
 
 ### 5.8 Query 和表单编码
 
@@ -479,17 +479,17 @@ L3 实现 MUST 提供等价请求能力：
 
 `RuleEvaluator` 持有：
 
-| 状态 | 含义 |
-| --- | --- |
-| `ruleData` | 当前 `Book`、`SearchBook`、`BookChapter` 或 `RuleData`。 |
-| `source` | 当前书源。 |
-| `content` | 当前待解析内容。可以是 HTML 字符串、JSON 字符串、DOM 节点、JsonPath 对象、XPath 节点、正则捕获列表等。 |
-| `baseUrl` | 当前页面基准 URL。 |
-| `redirectUrl` | 响应 URL，用于 URL 补全。 |
-| `isJSON` | `content` 不是 DOM Node 且 `content.toString().trim()` 以 `{...}` 或 `[...]` 包裹。 |
-| `isRegex` | 曾以 AllInOne 正则模式解析列表。影响后续字段规则默认模式。 |
-| `chapter` | 当前章节。 |
-| `nextChapterUrl` | 下一章 URL。 |
+| 状态             | 含义                                                                                                   |
+| ---------------- | ------------------------------------------------------------------------------------------------------ |
+| `ruleData`       | 当前 `Book`、`SearchBook`、`BookChapter` 或 `RuleData`。                                               |
+| `source`         | 当前书源。                                                                                             |
+| `content`        | 当前待解析内容。可以是 HTML 字符串、JSON 字符串、DOM 节点、JsonPath 对象、XPath 节点、正则捕获列表等。 |
+| `baseUrl`        | 当前页面基准 URL。                                                                                     |
+| `redirectUrl`    | 响应 URL，用于 URL 补全。                                                                              |
+| `isJSON`         | `content` 不是 DOM Node 且 `content.toString().trim()` 以 `{...}` 或 `[...]` 包裹。                    |
+| `isRegex`        | 曾以 AllInOne 正则模式解析列表。影响后续字段规则默认模式。                                             |
+| `chapter`        | 当前章节。                                                                                             |
+| `nextChapterUrl` | 下一章 URL。                                                                                           |
 
 `setContent(null)` MUST 抛错。`setContent(content, baseUrl)` 会更新 `content`、`isJSON`、`baseUrl`，并清空内部 HTML/JSON/XPath 解析缓存。
 
@@ -536,14 +536,14 @@ get(key: String): String
 
 `SourceRule` 字段：
 
-| 字段 | 含义 |
-| --- | --- |
-| `mode` | `XPath`、`Json`、`Default`、`Js`、`Regex`。 |
-| `rule` | 当前实际规则文本。 |
-| `replaceRegex` | `##` 后的替换正则。 |
-| `replacement` | 第二个 `##` 后的替换内容。 |
-| `replaceFirst` | 存在第四段 `##` 时为 true。 |
-| `putMap` | `@put:{...}` 解析出的变量保存规则。 |
+| 字段                     | 含义                                                 |
+| ------------------------ | ---------------------------------------------------- |
+| `mode`                   | `XPath`、`Json`、`Default`、`Js`、`Regex`。          |
+| `rule`                   | 当前实际规则文本。                                   |
+| `replaceRegex`           | `##` 后的替换正则。                                  |
+| `replacement`            | 第二个 `##` 后的替换内容。                           |
+| `replaceFirst`           | 存在第四段 `##` 时为 true。                          |
+| `putMap`                 | `@put:{...}` 解析出的变量保存规则。                  |
 | `ruleParam` / `ruleType` | 内嵌 `@get`、<code v-pre>{{}}</code>、正则分组引用。 |
 
 模式识别顺序 MUST 一致：
@@ -656,25 +656,25 @@ return str
 
 `evalByMode`：
 
-| 模式 | 行为 |
-| --- | --- |
-| `Js` | 执行 JS，传入当前 `result`。 |
-| `Json` | `AnalyzeByJSonPath(result).getString(rule)`。 |
-| `XPath` | `AnalyzeByXPath(result).getString(rule)`。 |
-| `Default` | `AnalyzeByJSoup(result).getString(rule)`；若 `isUrl=true` 使用 `getString0()` 只取第一个结果。 |
-| `Regex` | 不再执行正则匹配，直接返回 `makeUpRule()` 后的 `rule` 文本。典型用法是 `getElement/getElements` 先产生捕获组列表，字段规则再用 `$1` 等改写成目标文本。 |
+| 模式      | 行为                                                                                                                                                   |
+| --------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `Js`      | 执行 JS，传入当前 `result`。                                                                                                                           |
+| `Json`    | `AnalyzeByJSonPath(result).getString(rule)`。                                                                                                          |
+| `XPath`   | `AnalyzeByXPath(result).getString(rule)`。                                                                                                             |
+| `Default` | `AnalyzeByJSoup(result).getString(rule)`；若 `isUrl=true` 使用 `getString0()` 只取第一个结果。                                                         |
+| `Regex`   | 不再执行正则匹配，直接返回 `makeUpRule()` 后的 `rule` 文本。典型用法是 `getElement/getElements` 先产生捕获组列表，字段规则再用 `$1` 等改写成目标文本。 |
 
 ### 6.9 getStringList
 
 与 `getString` 类似，但每步使用列表方法：
 
-| 模式 | 行为 |
-| --- | --- |
-| `Js` | 执行 JS。 |
-| `Json` | `getStringList(rule)`。 |
-| `XPath` | `getStringList(rule)`。 |
+| 模式      | 行为                                   |
+| --------- | -------------------------------------- |
+| `Js`      | 执行 JS。                              |
+| `Json`    | `getStringList(rule)`。                |
+| `XPath`   | `getStringList(rule)`。                |
 | `Default` | `AnalyzeByJSoup.getStringList(rule)`。 |
-| 其他 | 返回规则文本。 |
+| 其他      | 返回规则文本。                         |
 
 结束时：
 
@@ -729,6 +729,7 @@ splitRule("&&", "||")
 4. JSON/JS 代码模式下，额外处理反斜杠转义。
 5. 一旦确定第一个有效分隔符，后续只按同一种分隔符继续切分。
 6. `elementsType` 保存实际使用的分隔符。
+
 > **reader-rust 实现差异**：切分器把 `{}` 也当作平衡组（`{{内联 JS}}` 里的 `&&` 因此不会被切开），
 > 且引号内的 `\` 视为转义——都比规格更宽容。改回规格会破坏 `{{...}}` 模板与带反斜杠的 JS 正则，
 > 因此这里接受分叉。
@@ -800,27 +801,27 @@ CSS 模式下，直接对当前元素执行 `select(rule)`。
 
 最后一段取值：
 
-| 规则 | 输出 |
-| --- | --- |
-| `text` | `element.text()`，空值跳过。 |
-| `textNodes` | 直接文本节点 trim 后按 `\n` 连接。 |
-| `ownText` | `element.ownText()`，空值跳过。 |
-| `html` | 移除结果元素里的 `script` 和 `style` 后，返回 `outerHtml()`。 |
-| `all` | 返回元素集合 `outerHtml()`。 |
-| 其他 | 作为属性名 `element.attr(lastRule)`，空值跳过，并对同一结果列表去重。 |
+| 规则        | 输出                                                                  |
+| ----------- | --------------------------------------------------------------------- |
+| `text`      | `element.text()`，空值跳过。                                          |
+| `textNodes` | 直接文本节点 trim 后按 `\n` 连接。                                    |
+| `ownText`   | `element.ownText()`，空值跳过。                                       |
+| `html`      | 移除结果元素里的 `script` 和 `style` 后，返回 `outerHtml()`。         |
+| `all`       | 返回元素集合 `outerHtml()`。                                          |
+| 其他        | 作为属性名 `element.attr(lastRule)`，空值跳过，并对同一结果列表去重。 |
 
 ### 8.5 ElementsSingle 选择器
 
 单层选择规则支持：
 
-| 写法 | 行为 |
-| --- | --- |
-| 空前缀或 `children` | 当前元素直接子元素。 |
-| `class.xxx` | `getElementsByClass("xxx")`。 |
-| `tag.xxx` | `getElementsByTag("xxx")`。 |
-| `id.xxx` | ID evaluator。 |
-| `text.xxx` | `getElementsContainingOwnText("xxx")`。 |
-| 其他 | JSoup CSS selector。 |
+| 写法                | 行为                                    |
+| ------------------- | --------------------------------------- |
+| 空前缀或 `children` | 当前元素直接子元素。                    |
+| `class.xxx`         | `getElementsByClass("xxx")`。           |
+| `tag.xxx`           | `getElementsByTag("xxx")`。             |
+| `id.xxx`            | ID evaluator。                          |
+| `text.xxx`          | `getElementsContainingOwnText("xxx")`。 |
+| 其他                | JSoup CSS selector。                    |
 
 索引写法：
 
@@ -901,20 +902,20 @@ div.book[!0,-1]
 
 `RuleEvaluator.evalJS()` MUST 绑定：
 
-| 变量 | 值 |
-| --- | --- |
-| `java` | 当前 `RuleEvaluator`。 |
-| `cookie` | CookieStore。 |
-| `cache` | CacheManager。 |
-| `source` | 当前书源。 |
-| `book` | 当前 `ruleData` 是书籍时的 `Book`。 |
-| `result` | 上一步规则结果。 |
-| `baseUrl` | 当前页面基准 URL。 |
-| `chapter` | 当前章节。 |
-| `title` | `chapter?.title`。 |
-| `src` | 当前原始 `content`。 |
-| `nextChapterUrl` | 当前下一章 URL。 |
-| `rssArticle` | RSS 场景对象；书源实现可置空。 |
+| 变量             | 值                                  |
+| ---------------- | ----------------------------------- |
+| `java`           | 当前 `RuleEvaluator`。              |
+| `cookie`         | CookieStore。                       |
+| `cache`          | CacheManager。                      |
+| `source`         | 当前书源。                          |
+| `book`           | 当前 `ruleData` 是书籍时的 `Book`。 |
+| `result`         | 上一步规则结果。                    |
+| `baseUrl`        | 当前页面基准 URL。                  |
+| `chapter`        | 当前章节。                          |
+| `title`          | `chapter?.title`。                  |
+| `src`            | 当前原始 `content`。                |
+| `nextChapterUrl` | 当前下一章 URL。                    |
+| `rssArticle`     | RSS 场景对象；书源实现可置空。      |
 
 JS 运行时 SHOULD 提供 `JsExtensions` 等价能力，至少包括：
 
@@ -999,6 +1000,7 @@ JS 运行时 SHOULD 提供 `JsExtensions` 等价能力，至少包括：
 - 当前项目判断为 `frequency > limit` 时等待，因此边界上可能允许 `limit + 1` 次；完全兼容实现需复刻此行为。
 
 解析异常时视为不限制。
+
 > **reader-rust 实现差异**：窗口内严格限制为 `limit` 次（不复刻 `limit + 1` 的边界行为）。
 
 ## 12. 登录、共享 JS、变量
@@ -1159,20 +1161,21 @@ title::url
 
 字段解析：
 
-| 字段 | 行为 |
-| --- | --- |
-| `name` | `formatBookName(getString(nameRule))`；为空则丢弃该项。 |
-| `author` | `formatBookAuthor(getString(authorRule))`。 |
-| `kind` | `getStringList(kindRule)?.joinToString(",")`。 |
-| `wordCount` | `wordCountFormat(getString(wordCountRule))`。 |
+| 字段        | 行为                                                    |
+| ----------- | ------------------------------------------------------- |
+| `name`      | `formatBookName(getString(nameRule))`；为空则丢弃该项。 |
+| `author`    | `formatBookAuthor(getString(authorRule))`。             |
+| `kind`      | `getStringList(kindRule)?.joinToString(",")`。          |
+| `wordCount` | `wordCountFormat(getString(wordCountRule))`。           |
+
 > **reader-rust 实现差异**：`formatBookName` / `formatBookAuthor` / `wordCountFormat` **未实现**——
 > 本项目 `BookSource` 里没有这三个字段（依据：`src/model/book_source.rs`）。
 > `kind` 按规格取全部命中并用 `,` 连接；规则里含 JS、`{{}}` 或 `@put`/`@get` 时退回单值求值
 > （依据：`eval_kind_*`）。
-| `lastChapter` | 写入 `latestChapterTitle`。 |
-| `intro` | HTML 格式化后写入。 |
-| `coverUrl` | `getString(coverUrlRule)` 后按当前 `baseUrl` 补绝对 URL。 |
-| `bookUrl` | `getString(bookUrlRule, isUrl=true)`；为空则用当前 `baseUrl`。 |
+> | `lastChapter` | 写入 `latestChapterTitle`。 |
+> | `intro` | HTML 格式化后写入。 |
+> | `coverUrl` | `getString(coverUrlRule)` 后按当前 `baseUrl` 补绝对 URL。 |
+> | `bookUrl` | `getString(bookUrlRule, isUrl=true)`；为空则用当前 `baseUrl`。 |
 
 ## 14. 详情页流水线
 
@@ -1198,17 +1201,17 @@ getBookInfoAwait(source, book, canReName=true):
 4. `mCanReName = canReName && !canReNameRule.isNullOrBlank()`。
 5. 字段：
 
-| 字段 | 行为 |
-| --- | --- |
-| `name` | 格式化后，若非空且 `mCanReName` 或原书名为空，则写入。 |
-| `author` | 同 name。 |
-| `kind` | `getStringList()?.joinToString(",")`，非空写入。 |
-| `wordCount` | 格式化后非空写入。 |
-| `lastChapter` | 非空写入。 |
-| `intro` | HTML 格式化后非空写入。 |
-| `coverUrl` | 非空时按 `redirectUrl` 补绝对 URL。 |
-| `tocUrl` | 非文件类书源解析。为空则用详情页 `baseUrl`；若等于 `baseUrl`，缓存 `tocHtml=body`。 |
-| `downloadUrls` | 文件类书源解析。用 `getStringList(isUrl=true)`；空则抛“下载链接为空”。 |
+| 字段           | 行为                                                                                |
+| -------------- | ----------------------------------------------------------------------------------- |
+| `name`         | 格式化后，若非空且 `mCanReName` 或原书名为空，则写入。                              |
+| `author`       | 同 name。                                                                           |
+| `kind`         | `getStringList()?.joinToString(",")`，非空写入。                                    |
+| `wordCount`    | 格式化后非空写入。                                                                  |
+| `lastChapter`  | 非空写入。                                                                          |
+| `intro`        | HTML 格式化后非空写入。                                                             |
+| `coverUrl`     | 非空时按 `redirectUrl` 补绝对 URL。                                                 |
+| `tocUrl`       | 非文件类书源解析。为空则用详情页 `baseUrl`；若等于 `baseUrl`，缓存 `tocHtml=body`。 |
+| `downloadUrls` | 文件类书源解析。用 `getStringList(isUrl=true)`；空则抛“下载链接为空”。              |
 
 注意：`canReName` 当前只判断非空，不解析真假。
 
@@ -1218,6 +1221,7 @@ getBookInfoAwait(source, book, canReName=true):
 
 - 只有调用方传 `runPerJs=true` 时执行。
 - JS 中允许调用 `java.reGetBook()` 和 `java.refreshTocUrl()`；其他上下文调用这两个方法必须抛错。
+
 > **reader-rust 实现差异**：`preUpdateJs` 总是执行（不看 `runPerJs`，本项目也没有该字段），
 > 语义是「目录解析前的 body 预处理」；`java.reGetBook()` / `java.refreshTocUrl()` 未实现。
 
@@ -1249,29 +1253,32 @@ else:
 7. 若 `reverse == false`，先反转 `chapterList`。
 8. 用 `LinkedHashSet` 去重保序。
 9. 若 `book.getReverseToc() == false`，再次反转。
+
 > **reader-rust 实现差异**：去重在**逐页解析时**进行并保留首个重复项，不实现按书反转的 `reverseToc`
 > （依据：`parse_chapter_list_*`、`normalize_list_rule`）。
+
 10. 重新写入每章 `index`。
 11. 若 `formatJs` 非空，遍历章节执行 JS，返回值替换标题。
 
 单页章节解析：
 
-| 字段 | 行为 |
-| --- | --- |
-| `chapterList` | `getElements(listRule)`。 |
-| `nextTocUrl` | `getStringList(nextTocUrl, isUrl=true)`，过滤等于当前 redirectUrl 的 URL。 |
-| `chapterName` | `getString(nameRule)`。非空才加入列表。 |
-| `chapterUrl` | `getString(urlRule)`，不立即补绝对 URL；章节对象后续通过 `getAbsoluteURL()` 使用 `baseUrl` 补。 |
-| `updateTime` | `getString(updateTimeRule)` 写入 `BookChapter.tag`。 |
-| `isVolume` | `getString(isVolumeRule).isTrue()`。 |
-| `isVip` | `getString(isVipRule).isTrue()`。 |
-| `isPay` | `getString(isPayRule).isTrue()`。 |
+| 字段          | 行为                                                                                            |
+| ------------- | ----------------------------------------------------------------------------------------------- |
+| `chapterList` | `getElements(listRule)`。                                                                       |
+| `nextTocUrl`  | `getStringList(nextTocUrl, isUrl=true)`，过滤等于当前 redirectUrl 的 URL。                      |
+| `chapterName` | `getString(nameRule)`。非空才加入列表。                                                         |
+| `chapterUrl`  | `getString(urlRule)`，不立即补绝对 URL；章节对象后续通过 `getAbsoluteURL()` 使用 `baseUrl` 补。 |
+| `updateTime`  | `getString(updateTimeRule)` 写入 `BookChapter.tag`。                                            |
+| `isVolume`    | `getString(isVolumeRule).isTrue()`。                                                            |
+| `isVip`       | `getString(isVipRule).isTrue()`。                                                               |
+| `isPay`       | `getString(isPayRule).isTrue()`。                                                               |
 
 `isTrue()` 行为：
 
 - 空、blank 或 `"null"`：false。
 - 忽略大小写匹配 `false|no|not|0`：false。
 - 其他非空字符串：true。
+
 > **reader-rust 实现差异**：词表是规格的超集——`not` 已按规格计入假值，另额外把 `none` / `off`
 > 也当假值（依据：`is_truthy`）。
 
@@ -1282,12 +1289,12 @@ else:
 
 `formatJs` 绑定：
 
-| 变量 | 值 |
-| --- | --- |
-| `gInt` | 初始为 0，同一个 format 流程中复用。 |
-| `index` | 章节序号，从 1 开始。 |
-| `chapter` | 当前章节对象。 |
-| `title` | 当前章节标题。 |
+| 变量      | 值                                   |
+| --------- | ------------------------------------ |
+| `gInt`    | 初始为 0，同一个 format 流程中复用。 |
+| `index`   | 章节序号，从 1 开始。                |
+| `chapter` | 当前章节对象。                       |
+| `title`   | 当前章节标题。                       |
 
 ## 16. 正文流水线
 
@@ -1314,8 +1321,10 @@ getContentAwait(source, book, chapter, nextChapterUrl=null, needSave=true):
 4. `nextContentUrl`：
    - 1 个 URL：顺序循环请求，直到空、重复、或等于下一章 URL。
    - 多个 URL：并发请求，不再递归获取下一页。
+
 > **reader-rust 实现差异**：`nextContentUrl` 只取第一条 URL 顺序跟随（单链），不做多 URL 并发；
 > 跟随过程有环检测与跨站/下一章启发式拦截（依据：`RuleEngine::next_content_url`、`should_follow_content_page`）。
+
 5. 多页正文用 `\n` 连接。
 6. 若 `replaceRegex` 非空：
    - 对正文按换行拆行，每行 trim，再用 `\n` 连接。
@@ -1326,11 +1335,11 @@ getContentAwait(source, book, chapter, nextChapterUrl=null, needSave=true):
 
 单页正文：
 
-| 字段 | 行为 |
-| --- | --- |
-| `content` | `getString(contentRule.content, unescape=false)`。 |
-| 内容格式化 | 经过 `HtmlFormatter.formatKeepImg(content, redirectUrl)`，保留图片并补 URL。若含 `&`，再 HTML-unescape。 |
-| `nextContentUrl` | `getStringList(nextContentUrl, isUrl=true)`。 |
+| 字段             | 行为                                                                                                     |
+| ---------------- | -------------------------------------------------------------------------------------------------------- |
+| `content`        | `getString(contentRule.content, unescape=false)`。                                                       |
+| 内容格式化       | 经过 `HtmlFormatter.formatKeepImg(content, redirectUrl)`，保留图片并补 URL。若含 `&`，再 HTML-unescape。 |
+| `nextContentUrl` | `getStringList(nextContentUrl, isUrl=true)`。                                                            |
 
 `webJs` 和 `sourceRegex` 只有在章节 URL 参数启用 `{"webView":true}` 时参与 WebView 请求。
 
@@ -1372,14 +1381,14 @@ getContentAwait(source, book, chapter, nextChapterUrl=null, needSave=true):
 
 模板里可用的占位符：
 
-| 占位符 | 来源 |
-| --- | --- |
-| `{{$.a.b}}` | 正文响应的 JSONPath |
-| `{{表达式}}` | JS，`result` 为正文响应体、`baseUrl` 为章节 URL；上表其余键也作为同名 JS 变量可用 |
-| `@get:{key}` | 上游步骤存入的上下文 |
-| `{{page}}` / `{{count}}` | 页码 / 每页条数 |
-| `{{paraIndex}}` | 段号（仅段评列表 URL） |
-| `{{sort}}` | 排序方式：`hot` / `time`。站点取值不同时可用 JS 映射，如 `{{sort === 'hot' ? 'Hot' : 'TimeDesc'}}` |
+| 占位符                   | 来源                                                                                               |
+| ------------------------ | -------------------------------------------------------------------------------------------------- |
+| `{{$.a.b}}`              | 正文响应的 JSONPath                                                                                |
+| `{{表达式}}`             | JS，`result` 为正文响应体、`baseUrl` 为章节 URL；上表其余键也作为同名 JS 变量可用                  |
+| `@get:{key}`             | 上游步骤存入的上下文                                                                               |
+| `{{page}}` / `{{count}}` | 页码 / 每页条数                                                                                    |
+| `{{paraIndex}}`          | 段号（仅段评列表 URL）                                                                             |
+| `{{sort}}`               | 排序方式：`hot` / `time`。站点取值不同时可用 JS 映射，如 `{{sort === 'hot' ? 'Hot' : 'TimeDesc'}}` |
 
 番茄书源（FQWeb）的实际取值：章评 `smart_hot` / `time`，段评 `hot` / `time_desc`。
 注意 `sort=`（空串）会被 FQWeb 直接拒绝，省略整个参数才是默认值；后端会自动剔除
@@ -1393,24 +1402,24 @@ getContentAwait(source, book, chapter, nextChapterUrl=null, needSave=true):
 
 在阅读3.0 的 `ReviewRule` 之上补齐解析字段（前四个字段沿用原命名）：
 
-| 字段 | 说明 |
-| --- | --- |
-| `reviewUrl` | 章评列表 URL 模板 |
-| `listRule` | 列表项选择规则（JSONPath / CSS / XPath / 正则） |
-| `idRule` | 评论 ID |
-| `nameRule` | 用户名 |
-| `avatarRule` | 头像 |
-| `contentRule` | 评论正文 |
-| `postTimeRule` | 发布时间（原样返回，不归一化） |
-| `diggRule` | 点赞数 |
-| `replyCountRule` | 回复数 |
-| `totalRule` | 评论总数（对**整个响应**求值，不是单条） |
-| `hasMoreRule` | 是否还有下一页（对**整个响应**求值） |
-| `replyListRule` | 内联回复列表 |
-| `replyNameRule` / `replyContentRule` / `replyPostTimeRule` / `replyToRule` | 单条回复的字段 |
-| `authorRule` / `authorDiggRule` | 评论者是作者本人 / 作者赞过这条评论（真值词表同 §15，如 `1`/`true`） |
-| `replyAuthorRule` / `replyAuthorDiggRule` | 回复者是作者本人 / 作者赞过这条回复 |
-| `imageRule` | 评论配图，**列表规则**（见 17.5） |
+| 字段                                                                       | 说明                                                                 |
+| -------------------------------------------------------------------------- | -------------------------------------------------------------------- |
+| `reviewUrl`                                                                | 章评列表 URL 模板                                                    |
+| `listRule`                                                                 | 列表项选择规则（JSONPath / CSS / XPath / 正则）                      |
+| `idRule`                                                                   | 评论 ID                                                              |
+| `nameRule`                                                                 | 用户名                                                               |
+| `avatarRule`                                                               | 头像                                                                 |
+| `contentRule`                                                              | 评论正文                                                             |
+| `postTimeRule`                                                             | 发布时间（原样返回，不归一化）                                       |
+| `diggRule`                                                                 | 点赞数                                                               |
+| `replyCountRule`                                                           | 回复数                                                               |
+| `totalRule`                                                                | 评论总数（对**整个响应**求值，不是单条）                             |
+| `hasMoreRule`                                                              | 是否还有下一页（对**整个响应**求值）                                 |
+| `replyListRule`                                                            | 内联回复列表                                                         |
+| `replyNameRule` / `replyContentRule` / `replyPostTimeRule` / `replyToRule` | 单条回复的字段                                                       |
+| `authorRule` / `authorDiggRule`                                            | 评论者是作者本人 / 作者赞过这条评论（真值词表同 §15，如 `1`/`true`） |
+| `replyAuthorRule` / `replyAuthorDiggRule`                                  | 回复者是作者本人 / 作者赞过这条回复                                  |
+| `imageRule`                                                                | 评论配图，**列表规则**（见 17.5）                                    |
 
 `voteUpUrl` / `voteDownUrl` / `postReviewUrl` / `postQuoteUrl` / `deleteUrl` /
 `reviewQuoteUrl` 保留字段，本项目不执行（不提供点赞、发评论、删评论）。
@@ -1420,17 +1429,17 @@ getContentAwait(source, book, chapter, nextChapterUrl=null, needSave=true):
 本项目扩展，阅读3.0 无此字段。段评分两步：先取概览（哪些段落有评论、各多少条），
 再按段取评论列表。
 
-| 字段 | 说明 |
-| --- | --- |
-| `indexUrl` | 概览 URL 模板 |
-| `indexListRule` | 概览里「段号 → 该段数据」的映射；通常是一个对象，也可以是数组 |
-| `indexCountRule` | 从单段数据里取条数 |
-| `indexAuthorCommentedRule` | 从单段数据里取「作者评论/点赞过」标记（`true`/`1`/非零数字为真）；缺省时恒为 false，前端气泡不显示作者标记 |
-| `reviewUrl` | 段评列表 URL 模板（可用 `{{paraIndex}}`） |
-| `listRule` / `idRule` / `nameRule` / `avatarRule` / `contentRule` / `postTimeRule` / `diggRule` / `totalRule` / `hasMoreRule` | 同章评 |
-| `replyCountRule` / `replyListRule` / `replyNameRule` / `replyContentRule` / `replyPostTimeRule` / `replyToRule` | 同章评（段评同样可能有内联回复） |
-| `authorRule` / `authorDiggRule` / `replyAuthorRule` / `replyAuthorDiggRule` | 同章评 |
-| `imageRule` | 同章评 |
+| 字段                                                                                                                          | 说明                                                                                                       |
+| ----------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
+| `indexUrl`                                                                                                                    | 概览 URL 模板                                                                                              |
+| `indexListRule`                                                                                                               | 概览里「段号 → 该段数据」的映射；通常是一个对象，也可以是数组                                              |
+| `indexCountRule`                                                                                                              | 从单段数据里取条数                                                                                         |
+| `indexAuthorCommentedRule`                                                                                                    | 从单段数据里取「作者评论/点赞过」标记（`true`/`1`/非零数字为真）；缺省时恒为 false，前端气泡不显示作者标记 |
+| `reviewUrl`                                                                                                                   | 段评列表 URL 模板（可用 `{{paraIndex}}`）                                                                  |
+| `listRule` / `idRule` / `nameRule` / `avatarRule` / `contentRule` / `postTimeRule` / `diggRule` / `totalRule` / `hasMoreRule` | 同章评                                                                                                     |
+| `replyCountRule` / `replyListRule` / `replyNameRule` / `replyContentRule` / `replyPostTimeRule` / `replyToRule`               | 同章评（段评同样可能有内联回复）                                                                           |
+| `authorRule` / `authorDiggRule` / `replyAuthorRule` / `replyAuthorDiggRule`                                                   | 同章评                                                                                                     |
+| `imageRule`                                                                                                                   | 同章评                                                                                                     |
 
 段号按定义是**正文按 `
 ` 切分后的下标，从 0 开始**。概览里的负段号（部分站点的整章
@@ -1446,11 +1455,11 @@ getContentAwait(source, book, chapter, nextChapterUrl=null, needSave=true):
 
 `imageRule` 与普通字段规则不同：图片天然是多个值，因此按**列表规则**求值，返回数组。
 
-| 写法 | 含义 |
-| --- | --- |
-| `$.image_url[*]` | JSONPath 列表 |
-| `image_url` | 字段名；是数组就展开，是字符串就取一个 |
-| `js:...` / `@js:...` | JS 规则，返回多行文本，逐行当作一个地址 |
+| 写法                              | 含义                                           |
+| --------------------------------- | ---------------------------------------------- |
+| `$.image_url[*]`                  | JSONPath 列表                                  |
+| `image_url`                       | 字段名；是数组就展开，是字符串就取一个         |
+| `js:...` / `@js:...`              | JS 规则，返回多行文本，逐行当作一个地址        |
 | `img@src` / `.cover img@data-src` | HTML 分支：选择器 `@` 属性，省略属性时取 `src` |
 
 返回的地址按规则给出的顺序原样保留，**后端不做格式过滤**：站点常为同一张图给出多个
@@ -1513,21 +1522,21 @@ getContentAwait(source, book, chapter, nextChapterUrl=null, needSave=true):
 
 阅读3.0 没有「章节配图」概念，这是本项目新增的扩展规则。配图有两条来源：
 
-| 来源 | 需要规则吗 | 说明 |
-| --- | --- | --- |
-| 正文 HTML 内嵌 `<img>` | 不需要 | 书源的正文规则吐出 HTML 时 `<img>` 原样保留，渲染端直接显示（漫画/图集源、出版书插图、富文本正文都属于这一类） |
-| 独立配图接口 | 需要 `ruleContentImage` | 站点把配图放在另一个接口里（番茄系 FQWeb 的 `/content/image`），位置与说明都由该接口给出 |
+| 来源                   | 需要规则吗              | 说明                                                                                                           |
+| ---------------------- | ----------------------- | -------------------------------------------------------------------------------------------------------------- |
+| 正文 HTML 内嵌 `<img>` | 不需要                  | 书源的正文规则吐出 HTML 时 `<img>` 原样保留，渲染端直接显示（漫画/图集源、出版书插图、富文本正文都属于这一类） |
+| 独立配图接口           | 需要 `ruleContentImage` | 站点把配图放在另一个接口里（番茄系 FQWeb 的 `/content/image`），位置与说明都由该接口给出                       |
 
 `ruleContentImage` 字段：
 
-| 字段 | 必填 | 默认 | 说明 |
-| --- | --- | --- | --- |
-| `imageUrl` | 是 | — | 配图接口 URL 模板，对**章节正文响应**求值（与 `reviewUrl` 同理），模板里可引用正文响应里的字段 |
-| `listRule` | 是 | — | 配图列表规则（JSON 站点写 JSONPath，HTML 站点写 CSS 选择器） |
-| `urlRule` | 否 | `url`（HTML 分支取 `img` 的 `src`） | 单张图的地址 |
-| `captionRule` | 否 | `caption`（HTML 分支 `figcaption@text`） | 图片说明文字 |
-| `paraIndexRule` | 否 | `para_index` | 插入位置：正文按 `\n` 切分后的行号（从 0 开始，插在该行之前）。取不到位置的图排在章末 |
-| `widthRule` / `heightRule` | 否 | `width` / `height` | 原始宽高，用于给图片占位，避免加载时正文跳动 |
+| 字段                       | 必填 | 默认                                     | 说明                                                                                           |
+| -------------------------- | ---- | ---------------------------------------- | ---------------------------------------------------------------------------------------------- |
+| `imageUrl`                 | 是   | —                                        | 配图接口 URL 模板，对**章节正文响应**求值（与 `reviewUrl` 同理），模板里可引用正文响应里的字段 |
+| `listRule`                 | 是   | —                                        | 配图列表规则（JSON 站点写 JSONPath，HTML 站点写 CSS 选择器）                                   |
+| `urlRule`                  | 否   | `url`（HTML 分支取 `img` 的 `src`）      | 单张图的地址                                                                                   |
+| `captionRule`              | 否   | `caption`（HTML 分支 `figcaption@text`） | 图片说明文字                                                                                   |
+| `paraIndexRule`            | 否   | `para_index`                             | 插入位置：正文按 `\n` 切分后的行号（从 0 开始，插在该行之前）。取不到位置的图排在章末          |
+| `widthRule` / `heightRule` | 否   | `width` / `height`                       | 原始宽高，用于给图片占位，避免加载时正文跳动                                                   |
 
 约定与行为：
 
@@ -1556,25 +1565,25 @@ getContentAwait(source, book, chapter, nextChapterUrl=null, needSave=true):
 
 当前项目在 `ImportOldData` 中支持旧格式迁移。若目标支持旧书源导入，需实现：
 
-| 旧字段 | 新字段 |
-| --- | --- |
-| `bookSourceUrl` | `bookSourceUrl` |
-| `bookSourceName` | `bookSourceName` |
-| `bookSourceGroup` | `bookSourceGroup` |
-| `loginUrl` / `loginUi` / `loginCheckJs` / `coverDecodeJs` | 同名字段 |
-| `bookSourceComment` | `bookSourceComment` |
-| `ruleBookUrlPattern` | `bookUrlPattern` |
-| `serialNumber` | `customOrder` |
-| `httpUserAgent` | `header = {"User-Agent": ua}` |
-| `ruleSearchUrl` | `searchUrl` |
-| `ruleFindUrl` | `exploreUrl` |
-| `bookSourceType == "AUDIO"` | `bookSourceType = 1`，其他为 0 |
-| `enable` | `enabled` |
-| `ruleSearchList`、`ruleSearchName` 等 | `ruleSearch` |
-| `ruleFindList`、`ruleFindName` 等 | `ruleExplore` |
-| `ruleBookInfoInit`、`ruleBookName` 等 | `ruleBookInfo` |
-| `ruleChapterList`、`ruleChapterName`、`ruleContentUrl`、`ruleChapterUrlNext` | `ruleToc` |
-| `ruleBookContent`、`ruleBookContentReplace`、`ruleContentUrlNext` | `ruleContent` |
+| 旧字段                                                                       | 新字段                         |
+| ---------------------------------------------------------------------------- | ------------------------------ |
+| `bookSourceUrl`                                                              | `bookSourceUrl`                |
+| `bookSourceName`                                                             | `bookSourceName`               |
+| `bookSourceGroup`                                                            | `bookSourceGroup`              |
+| `loginUrl` / `loginUi` / `loginCheckJs` / `coverDecodeJs`                    | 同名字段                       |
+| `bookSourceComment`                                                          | `bookSourceComment`            |
+| `ruleBookUrlPattern`                                                         | `bookUrlPattern`               |
+| `serialNumber`                                                               | `customOrder`                  |
+| `httpUserAgent`                                                              | `header = {"User-Agent": ua}`  |
+| `ruleSearchUrl`                                                              | `searchUrl`                    |
+| `ruleFindUrl`                                                                | `exploreUrl`                   |
+| `bookSourceType == "AUDIO"`                                                  | `bookSourceType = 1`，其他为 0 |
+| `enable`                                                                     | `enabled`                      |
+| `ruleSearchList`、`ruleSearchName` 等                                        | `ruleSearch`                   |
+| `ruleFindList`、`ruleFindName` 等                                            | `ruleExplore`                  |
+| `ruleBookInfoInit`、`ruleBookName` 等                                        | `ruleBookInfo`                 |
+| `ruleChapterList`、`ruleChapterName`、`ruleContentUrl`、`ruleChapterUrlNext` | `ruleToc`                      |
+| `ruleBookContent`、`ruleBookContentReplace`、`ruleContentUrlNext`            | `ruleContent`                  |
 
 旧 URL 转换：
 
@@ -1612,7 +1621,9 @@ getContentAwait(source, book, chapter, nextChapterUrl=null, needSave=true):
 HTML：
 
 ```html
-<ul><li><a href="/b/1">书名</a><span>作者</span></li></ul>
+<ul>
+  <li><a href="/b/1">书名</a><span>作者</span></li>
+</ul>
 ```
 
 规则：
@@ -1634,7 +1645,8 @@ tag.span.0@text -> 作者
 HTML：
 
 ```html
-<h1></h1><div class="title">标题</div>
+<h1></h1>
+<div class="title">标题</div>
 ```
 
 规则：
@@ -1650,7 +1662,8 @@ h1@text||.title@text
 文本：
 
 ```html
-<li><a href="/1">第一章</a></li><li><a href="/2">第二章</a></li>
+<li><a href="/1">第一章</a></li>
+<li><a href="/2">第二章</a></li>
 ```
 
 列表规则：
@@ -1672,7 +1685,7 @@ $0 -> 字面量 $0
 JSON：
 
 ```json
-{"data":{"name":"书名","author":"作者"}}
+{ "data": { "name": "书名", "author": "作者" } }
 ```
 
 规则：
@@ -1686,17 +1699,17 @@ $.data.name -> 书名
 
 输入字符串：
 
-| 输入 | `isTrue()` |
-| --- | --- |
-| `""` | false |
-| `"null"` | false |
-| `"false"` | false |
-| `"no"` | false |
-| `"not"` | false |
-| `"0"` | false |
-| `"true"` | true |
-| `"1"` | true |
-| `"VIP"` | true |
+| 输入      | `isTrue()` |
+| --------- | ---------- |
+| `""`      | false      |
+| `"null"`  | false      |
+| `"false"` | false      |
+| `"no"`    | false      |
+| `"not"`   | false      |
+| `"0"`     | false      |
+| `"true"`  | true       |
+| `"1"`     | true       |
+| `"VIP"`   | true       |
 
 ## 20. 已知兼容陷阱
 

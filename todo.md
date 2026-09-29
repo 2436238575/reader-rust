@@ -23,44 +23,44 @@
 
 ## 本轮（2026-09-24）补齐的规格差异
 
-| 项 | 结论 | 代码锚点 |
-|----|------|---------|
-| JsonPath 组合符 | 补齐：列表与字段两条路径都支持 `&&`/`||`/`%%` | `jsonpath_query_combined`、`combine_strings` |
-| 列表项字段组合符 | 补齐：CSS 与 JSON 元素级字段都能组合 | `eval_field_json_with_ctx`、`eval_field_html_with_ctx` |
-| 字段级模式切换 | 补齐：元素级新增 `@xpath:`/`@json:`/`@regex:`；文档级 `@json:` 生效 | 同上、`eval_literal_field` |
-| 列表正则 `&&` 下钻 | 补齐：多段逐级下钻，最后一段产出捕获组 | `regex_list_captures` |
-| 旧式索引区间 | 补齐：`!0:2`、`.1:5:2` 按区间与步长处理 | `parse_legacy_index_item` |
-| `##` 第四段 | 补齐：第四段即 replaceFirst（取首个匹配片段）；缺 replacement 时删除匹配 | `apply_legado_regex` |
-| `isTrue()` 词表 | 补齐：加入 `not`（`none`/`off` 作为超集保留） | `is_truthy` |
-| `bookUrlPattern` | 补齐：真正参与匹配，命中即按详情页解析 | `book_url_pattern_matches` |
-| 取值后缀 | 补齐：`html`/`all` 先移除 script/style 再取 outer HTML；`textNodes` 只取直接文本节点 | `strip_script_style`、`direct_text_nodes` |
-| `kind` 多值 | 补齐：全部命中按 `,` 连接（规则含 JS/模板时退回单值） | `eval_kind_*`、`join_multi_values` |
-| 搜索结果去重 | 补齐：按「书名\|作者」去重保序，先于反转 | `dedupe_books` |
-| JSON 搜索 `bookUrl` 回退 | 补齐：为空时回退 `baseUrl` | `search_books_json` |
-| `formatJs` 的 `gInt` | 补齐：初值 0，同一轮格式化的章节之间复用 | `eval_js_with_bindings_and_globals`、`apply_toc_format_js` |
-| `@put` 值切分 | 补齐：顶层 `,`/`:` 才切分，引号括号内的保留 | `split_put_map` |
-| `java.*` 缺口 | 补齐：`log`/`toast`/`openUrl` 注册为空操作，避免整条规则抛错 | `src/parser/js.rs` 注册表 |
-| `exploreUrl` JS 缓存 | 补齐：按 `MD5(bookSourceUrl + exploreUrl)` 缓存 1 小时；2026-09-25 起键另加用户命名空间（求值结果可能含用户相关值，不能跨用户共享） | `cached_explore_script` |
-| 书源正则编译缓存 | 补齐：编译结果（含失败）缓存，带条目上限 | `compiled_regex` |
-| JS KV / jsLib 缓存上限 | 补齐：超上限整表清空，避免无界增长 | `kv_put_scoped`、`js_lib_script` |
-| `retry` 非法值 | 补齐：解析失败时保留默认次数，不再退化成 0 | `src/crawler/url_analyzer.rs` |
-| JS 顶层 `return` | 补齐：首次求值报 `return not in a function` 时包成 IIFE 重试，表达式风格不受影响 | `eval_script` |
-| `source` 绑定 | 补齐：`source` 是真实书源对象（`bookSourceUrl`/`bookSourceName`/`header`…），`{{source.bookSourceUrl}}` 可正常拼 URL | `with_book_source`、`src/parser/js.rs` |
-| `<js>` 链式求值 | 补齐：`</js>` 之后的片段继续对 JS 结果求值（JSON 按 JSON 规则、否则按 HTML 文档规则）；`@js:` 仍吞掉后续 | `extract_js`、`eval_rule_on_text` |
+| 项                       | 结论                                                                                                                                | 代码锚点                                                   |
+| ------------------------ | ----------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------- |
+| JsonPath 组合符          | 补齐：列表与字段两条路径都支持 `&&`/`                                                                                               |                                                            | `/`%%` | `jsonpath_query_combined`、`combine_strings` |
+| 列表项字段组合符         | 补齐：CSS 与 JSON 元素级字段都能组合                                                                                                | `eval_field_json_with_ctx`、`eval_field_html_with_ctx`     |
+| 字段级模式切换           | 补齐：元素级新增 `@xpath:`/`@json:`/`@regex:`；文档级 `@json:` 生效                                                                 | 同上、`eval_literal_field`                                 |
+| 列表正则 `&&` 下钻       | 补齐：多段逐级下钻，最后一段产出捕获组                                                                                              | `regex_list_captures`                                      |
+| 旧式索引区间             | 补齐：`!0:2`、`.1:5:2` 按区间与步长处理                                                                                             | `parse_legacy_index_item`                                  |
+| `##` 第四段              | 补齐：第四段即 replaceFirst（取首个匹配片段）；缺 replacement 时删除匹配                                                            | `apply_legado_regex`                                       |
+| `isTrue()` 词表          | 补齐：加入 `not`（`none`/`off` 作为超集保留）                                                                                       | `is_truthy`                                                |
+| `bookUrlPattern`         | 补齐：真正参与匹配，命中即按详情页解析                                                                                              | `book_url_pattern_matches`                                 |
+| 取值后缀                 | 补齐：`html`/`all` 先移除 script/style 再取 outer HTML；`textNodes` 只取直接文本节点                                                | `strip_script_style`、`direct_text_nodes`                  |
+| `kind` 多值              | 补齐：全部命中按 `,` 连接（规则含 JS/模板时退回单值）                                                                               | `eval_kind_*`、`join_multi_values`                         |
+| 搜索结果去重             | 补齐：按「书名\|作者」去重保序，先于反转                                                                                            | `dedupe_books`                                             |
+| JSON 搜索 `bookUrl` 回退 | 补齐：为空时回退 `baseUrl`                                                                                                          | `search_books_json`                                        |
+| `formatJs` 的 `gInt`     | 补齐：初值 0，同一轮格式化的章节之间复用                                                                                            | `eval_js_with_bindings_and_globals`、`apply_toc_format_js` |
+| `@put` 值切分            | 补齐：顶层 `,`/`:` 才切分，引号括号内的保留                                                                                         | `split_put_map`                                            |
+| `java.*` 缺口            | 补齐：`log`/`toast`/`openUrl` 注册为空操作，避免整条规则抛错                                                                        | `src/parser/js.rs` 注册表                                  |
+| `exploreUrl` JS 缓存     | 补齐：按 `MD5(bookSourceUrl + exploreUrl)` 缓存 1 小时；2026-09-25 起键另加用户命名空间（求值结果可能含用户相关值，不能跨用户共享） | `cached_explore_script`                                    |
+| 书源正则编译缓存         | 补齐：编译结果（含失败）缓存，带条目上限                                                                                            | `compiled_regex`                                           |
+| JS KV / jsLib 缓存上限   | 补齐：超上限整表清空，避免无界增长                                                                                                  | `kv_put_scoped`、`js_lib_script`                           |
+| `retry` 非法值           | 补齐：解析失败时保留默认次数，不再退化成 0                                                                                          | `src/crawler/url_analyzer.rs`                              |
+| JS 顶层 `return`         | 补齐：首次求值报 `return not in a function` 时包成 IIFE 重试，表达式风格不受影响                                                    | `eval_script`                                              |
+| `source` 绑定            | 补齐：`source` 是真实书源对象（`bookSourceUrl`/`bookSourceName`/`header`…），`{{source.bookSourceUrl}}` 可正常拼 URL                | `with_book_source`、`src/parser/js.rs`                     |
+| `<js>` 链式求值          | 补齐：`</js>` 之后的片段继续对 JS 结果求值（JSON 按 JSON 规则、否则按 HTML 文档规则）；`@js:` 仍吞掉后续                            | `extract_js`、`eval_rule_on_text`                          |
 
 ## 接受分叉（已在规格 `docs/reference/book-source-rules.md` 标注）
 
-| 项 | 分叉内容 |
-|----|---------|
-| 切分器细节 | `{}` 计入平衡组、引号内 `\` 视为转义（比规格宽容，改动会破坏 `{{}}` 模板与 JS 正则） |
-| `concurrentRate` | 严格 `limit` 次/窗口，不复刻 `limit + 1` 边界 |
-| `formatBookName` / `formatBookAuthor` / `wordCountFormat` | 未实现：模型里没有这三个字段 |
-| `preUpdateJs` | 总是执行（无 `runPerJs` 字段），语义是目录解析前的 body 预处理；无 `java.reGetBook()`/`refreshTocUrl()` |
-| 目录排序去重 | 逐页解析时去重并保留首个，不实现按书反转的 `reverseToc` |
-| `nextContentUrl` | 单链顺序跟随（取第一条），不做多 URL 并发；有环检测与跨站/下一章拦截 |
-| `java.*` 方法面 | 缺 `ajaxAll`/`connect`/`importScript`/`cacheFile`/`getCookie`/`downloadFile`/`hex`/`htmlFormat`/简繁/`queryTTF`/`toNumChapter`/`toURL` 等，调用会抛错 |
-| `book` / `chapter` 绑定 | 仅 `formatJs` 提供真实对象，其余规则上下文是空对象占位（`source` 已是真实书源） |
-| `webJs` | 无 WebView，直接在抓取到的 body 上执行 |
+| 项                                                        | 分叉内容                                                                                                                                              |
+| --------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 切分器细节                                                | `{}` 计入平衡组、引号内 `\` 视为转义（比规格宽容，改动会破坏 `{{}}` 模板与 JS 正则）                                                                  |
+| `concurrentRate`                                          | 严格 `limit` 次/窗口，不复刻 `limit + 1` 边界                                                                                                         |
+| `formatBookName` / `formatBookAuthor` / `wordCountFormat` | 未实现：模型里没有这三个字段                                                                                                                          |
+| `preUpdateJs`                                             | 总是执行（无 `runPerJs` 字段），语义是目录解析前的 body 预处理；无 `java.reGetBook()`/`refreshTocUrl()`                                               |
+| 目录排序去重                                              | 逐页解析时去重并保留首个，不实现按书反转的 `reverseToc`                                                                                               |
+| `nextContentUrl`                                          | 单链顺序跟随（取第一条），不做多 URL 并发；有环检测与跨站/下一章拦截                                                                                  |
+| `java.*` 方法面                                           | 缺 `ajaxAll`/`connect`/`importScript`/`cacheFile`/`getCookie`/`downloadFile`/`hex`/`htmlFormat`/简繁/`queryTTF`/`toNumChapter`/`toURL` 等，调用会抛错 |
+| `book` / `chapter` 绑定                                   | 仅 `formatJs` 提供真实对象，其余规则上下文是空对象占位（`source` 已是真实书源）                                                                       |
+| `webJs`                                                   | 无 WebView，直接在抓取到的 body 上执行                                                                                                                |
 
 ## 未实现（文档已按约定标注「未实现」）
 
@@ -81,11 +81,13 @@
 > 2026-09-25 第四轮全仓审查后更新，详见 `.zcode/audit/full-audit-2026-09-25.md`（本轮修复 13 项 + 依赖升级）。
 
 **待拍板**：
+
 - `bookSourceProxy` 把用户真实 JWT 注入第三方书源页面，前端又同源渲染进 iframe（登录预览功能）；缓解方向见审计报告（短期 scoped token / sandbox / 接受）
 
 **已处理（2026-09-25 晚）**：登录限速已实现——IP 登录败 5 次封登录 6h、用户名败 10 次封 6h，`RATE_LIMIT_DISABLED=true` 供开发/测试豁免。（注册功能后随单用户化整体移除，注册限速一并消失。）
 
 **接受 / 部署卫生**：
+
 - 出站守卫 DNS 校验与实际连接分离（TOCTOU），理论可 DNS rebinding；需连接层 IP 钉扎，reqwest 未暴露
 - 登录限速为进程内状态（多实例部署需共享存储）
 - token 进 URL 查询串（SSE/`<img>` 的结构约束；访问日志已只记 path 不记 query）
@@ -100,8 +102,8 @@
 
 ## 配额默认值
 
-| 配置 | 默认 | 状态 |
-|------|------|------|
-| `USER_LIMIT` | 50 | 已实现 |
-| `USER_BOOK_LIMIT` | 2000 | 已实现（2026-09-23 接入 saveBook/saveBooks） |
+| 配置                    | 默认      | 状态                                                    |
+| ----------------------- | --------- | ------------------------------------------------------- |
+| `USER_LIMIT`            | 50        | 已实现                                                  |
+| `USER_BOOK_LIMIT`       | 2000      | 已实现（2026-09-23 接入 saveBook/saveBooks）            |
 | `USER_LOCAL_BOOK_LIMIT` | 0（不限） | 已实现（2026-09-25 起覆盖 saveBook/saveBooks 直构路径） |

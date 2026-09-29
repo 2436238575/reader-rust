@@ -56,7 +56,11 @@ describe('sourceSelection', () => {
 
   it('filters book sources by text and group', () => {
     const grouped: BookSource[] = [
-      { bookSourceName: '猫眼看书', bookSourceUrl: 'https://maoyan.example', bookSourceGroup: 'API' },
+      {
+        bookSourceName: '猫眼看书',
+        bookSourceUrl: 'https://maoyan.example',
+        bookSourceGroup: 'API',
+      },
       { bookSourceName: '笔趣阁', bookSourceUrl: 'https://biqu.example', bookSourceGroup: '网页' },
     ]
 
@@ -104,7 +108,7 @@ describe('sourceSelection', () => {
         bookSourceName: 'ParaOnly',
         bookSourceUrl: 'para',
         ruleParaReview: {},
-      }),
+      })
     ).toMatchObject({ hasReview: true })
     expect(getBookSourceOverview(list[1])).toMatchObject({ hasReview: false })
   })

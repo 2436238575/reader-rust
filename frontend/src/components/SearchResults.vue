@@ -10,7 +10,14 @@
         <span v-else class="result-count">({{ displayResults.length }} 个结果)</span>
       </h2>
       <button class="back-btn" @click="$emit('back')">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18">
+        <svg
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="2"
+          width="18"
+          height="18"
+        >
           <path d="M19 12H5" />
           <path d="m12 19-7-7 7-7" />
         </svg>
@@ -56,7 +63,11 @@
 
       <div v-else-if="searchScope === 'source'" class="filter-select-wrap">
         <select v-model="selectedSourceUrl" class="filter-select">
-          <option v-for="source in sourceOptions" :key="source.bookSourceUrl" :value="source.bookSourceUrl">
+          <option
+            v-for="source in sourceOptions"
+            :key="source.bookSourceUrl"
+            :value="source.bookSourceUrl"
+          >
             {{ source.bookSourceName }}
           </option>
         </select>
@@ -82,10 +93,7 @@
       @addToShelf="handleAddToShelf"
     />
 
-    <BookDetailModal
-      v-model="showBookDetail"
-      :book="selectedBook"
-    />
+    <BookDetailModal v-model="showBookDetail" :book="selectedBook" />
   </div>
 </template>
 
@@ -183,13 +191,16 @@ function closeEventSource() {
 
 function ensureSearchSelection() {
   if (searchScope.value === 'group') {
-    const selectedGroupStillValid = selectedGroup.value && sourceGroups.value.includes(selectedGroup.value)
+    const selectedGroupStillValid =
+      selectedGroup.value && sourceGroups.value.includes(selectedGroup.value)
     if (!selectedGroupStillValid && sourceGroups.value.length > 0) {
       selectedGroup.value = sourceGroups.value[0]
     }
   }
   if (searchScope.value === 'source') {
-    const selectedSourceStillValid = sourceOptions.value.some((source) => source.bookSourceUrl === selectedSourceUrl.value)
+    const selectedSourceStillValid = sourceOptions.value.some(
+      (source) => source.bookSourceUrl === selectedSourceUrl.value
+    )
     if (!selectedSourceStillValid && sourceOptions.value.length > 0) {
       selectedSourceUrl.value = sourceOptions.value[0].bookSourceUrl
     }
@@ -248,7 +259,9 @@ function doSearch(key: string) {
           shelfStore.searchResults = shelfStore.searchResults.concat(newBooks)
         }
       }
-    } catch { /* skip */ }
+    } catch {
+      /* skip */
+    }
   }
 
   eventSource.addEventListener('end', () => {
@@ -289,9 +302,13 @@ watch(
   { immediate: true }
 )
 
-watch([searchScope, sourceGroups, sourceOptions], () => {
-  ensureSearchSelection()
-}, { immediate: true })
+watch(
+  [searchScope, sourceGroups, sourceOptions],
+  () => {
+    ensureSearchSelection()
+  },
+  { immediate: true }
+)
 
 onMounted(async () => {
   if (sourceStore.sources.length === 0) {
@@ -408,7 +425,9 @@ defineEmits<{
 }
 
 @keyframes pulse {
-  0%, 80%, 100% {
+  0%,
+  80%,
+  100% {
     transform: scale(0.6);
     opacity: 0.5;
   }

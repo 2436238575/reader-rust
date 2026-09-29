@@ -46,7 +46,6 @@ describe('bookshelf search state', () => {
     expect(store.searchGroup).toBe('')
   })
 
-
   it('does not display browser cache counts for uploaded local txt books', async () => {
     vi.mocked(getBookshelfWithCacheInfo).mockResolvedValue([
       {
@@ -71,8 +70,13 @@ describe('bookshelf search state', () => {
 
     await store.fetchBooks()
 
-    expect(store.books.find((book) => book.bookUrl === 'local-txt:abc')?.browserCachedChapterCount).toBe(0)
-    expect(store.books.find((book) => book.bookUrl === 'https://book.example/1')?.browserCachedChapterCount).toBe(3)
+    expect(
+      store.books.find((book) => book.bookUrl === 'local-txt:abc')?.browserCachedChapterCount
+    ).toBe(0)
+    expect(
+      store.books.find((book) => book.bookUrl === 'https://book.example/1')
+        ?.browserCachedChapterCount
+    ).toBe(3)
   })
 
   it('can start a search with the active explore source selected', () => {

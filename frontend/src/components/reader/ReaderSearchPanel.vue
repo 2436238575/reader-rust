@@ -1,6 +1,10 @@
 <template>
   <Transition name="fade">
-    <div v-if="show" class="reader-search-panel" :style="{ background: theme.popup, color: theme.fontColor }">
+    <div
+      v-if="show"
+      class="reader-search-panel"
+      :style="{ background: theme.popup, color: theme.fontColor }"
+    >
       <div class="reader-search-header">
         <div class="reader-search-title">章节搜索</div>
         <button @click="$emit('close')" class="close-search">×</button>
@@ -13,9 +17,7 @@
           @input="$emit('update:query', ($event.target as HTMLInputElement).value)"
           @keyup.enter="$emit('search')"
         />
-        <button class="search-submit" @click="$emit('search')" :disabled="!query">
-          搜索
-        </button>
+        <button class="search-submit" @click="$emit('search')" :disabled="!query">搜索</button>
       </div>
       <div class="search-status-row">
         <span v-if="count">{{ activeIndex + 1 }} / {{ count }}</span>
@@ -69,11 +71,14 @@ const emit = defineEmits<{
 
 const inputRef = ref<HTMLInputElement>()
 
-watch(() => props.show, (visible) => {
-  if (visible) {
-    setTimeout(() => inputRef.value?.focus(), 0)
+watch(
+  () => props.show,
+  (visible) => {
+    if (visible) {
+      setTimeout(() => inputRef.value?.focus(), 0)
+    }
   }
-})
+)
 </script>
 
 <style scoped>
@@ -84,12 +89,12 @@ watch(() => props.show, (visible) => {
   width: min(420px, calc(100vw - 120px));
   padding: 14px 16px;
   border-radius: 16px;
-  box-shadow: 0 4px 20px rgba(0,0,0,0.15);
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.15);
   display: flex;
   flex-direction: column;
   gap: 12px;
   z-index: 30;
-  border: 1px solid rgba(0,0,0,0.05);
+  border: 1px solid rgba(0, 0, 0, 0.05);
 }
 
 .reader-search-header,
@@ -150,8 +155,8 @@ watch(() => props.show, (visible) => {
 }
 
 .search-result-item {
-  border: 1px solid rgba(0,0,0,0.06);
-  background: rgba(0,0,0,0.02);
+  border: 1px solid rgba(0, 0, 0, 0.06);
+  background: rgba(0, 0, 0, 0.02);
   color: inherit;
   border-radius: 12px;
   padding: 10px 12px;
@@ -193,7 +198,7 @@ watch(() => props.show, (visible) => {
 }
 
 .search-actions button {
-  background: rgba(0,0,0,0.05);
+  background: rgba(0, 0, 0, 0.05);
   border: none;
   width: 24px;
   height: 24px;

@@ -18,9 +18,7 @@ export const useAppStore = defineStore('app', () => {
   // ─── Theme ───
   const savedTheme = localStorage.getItem('theme') as 'light' | 'dark' | null
   const legacyReaderNight = localStorage.getItem('reader-isNight') === 'true'
-  const theme = ref<'light' | 'dark'>(
-    savedTheme || (legacyReaderNight ? 'dark' : 'light')
-  )
+  const theme = ref<'light' | 'dark'>(savedTheme || (legacyReaderNight ? 'dark' : 'light'))
 
   function setTheme(value: 'light' | 'dark') {
     theme.value = value
@@ -32,10 +30,14 @@ export const useAppStore = defineStore('app', () => {
     setTheme(theme.value === 'light' ? 'dark' : 'light')
   }
 
-  watch(theme, (val) => {
-    localStorage.setItem('theme', val)
-    applySystemTheme(val)
-  }, { immediate: true })
+  watch(
+    theme,
+    (val) => {
+      localStorage.setItem('theme', val)
+      applySystemTheme(val)
+    },
+    { immediate: true }
+  )
 
   // ─── User ───
   const userInfo = ref<UserInfo | null>(null)
@@ -150,10 +152,17 @@ export const useAppStore = defineStore('app', () => {
       readingStats.value.readChapters.push(key)
       // 无上限会随使用年限膨胀到数万条且每章全量 stringify；只统计总数，裁掉最旧的
       if (readingStats.value.readChapters.length > MAX_READ_CHAPTER_ENTRIES) {
-        readingStats.value.readChapters.splice(0, readingStats.value.readChapters.length - MAX_READ_CHAPTER_ENTRIES)
+        readingStats.value.readChapters.splice(
+          0,
+          readingStats.value.readChapters.length - MAX_READ_CHAPTER_ENTRIES
+        )
       }
     }
-    if (totalChapters > 0 && index >= totalChapters - 1 && !readingStats.value.completedBooks.includes(bookUrl)) {
+    if (
+      totalChapters > 0 &&
+      index >= totalChapters - 1 &&
+      !readingStats.value.completedBooks.includes(bookUrl)
+    ) {
       readingStats.value.completedBooks.push(bookUrl)
     }
     persistStats()
@@ -218,13 +227,39 @@ export const useAppStore = defineStore('app', () => {
   }
 
   return {
-    theme, setTheme, toggleTheme,
-    userInfo, isLoggedIn,
-    fetchUserInfo, setUser, setAccessToken, clearUser, updateUserInfo,
-    showSettingsDrawer, showSourceManager, showWebdavManager, showCacheLibrary,
-    isOnline, pwaReady, pwaUpdateAvailable, deferredInstallPrompt, waitingServiceWorker,
-    setOnlineStatus, setPwaReady, setPwaUpdateAvailable, setDeferredInstallPrompt, setWaitingServiceWorker, installPwa, applyPwaUpdate,
-    readingStats, readingStatsSummary, startReadingSession, stopReadingSession, markBookOpened, markChapterRead,
-    toasts, showToast,
+    theme,
+    setTheme,
+    toggleTheme,
+    userInfo,
+    isLoggedIn,
+    fetchUserInfo,
+    setUser,
+    setAccessToken,
+    clearUser,
+    updateUserInfo,
+    showSettingsDrawer,
+    showSourceManager,
+    showWebdavManager,
+    showCacheLibrary,
+    isOnline,
+    pwaReady,
+    pwaUpdateAvailable,
+    deferredInstallPrompt,
+    waitingServiceWorker,
+    setOnlineStatus,
+    setPwaReady,
+    setPwaUpdateAvailable,
+    setDeferredInstallPrompt,
+    setWaitingServiceWorker,
+    installPwa,
+    applyPwaUpdate,
+    readingStats,
+    readingStatsSummary,
+    startReadingSession,
+    stopReadingSession,
+    markBookOpened,
+    markChapterRead,
+    toasts,
+    showToast,
   }
 })

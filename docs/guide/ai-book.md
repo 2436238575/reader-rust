@@ -62,14 +62,14 @@ AI资料支持两种模型来源。
 
 需要配置：
 
-| 项目 | 说明 |
-|------|------|
-| 文本模型 Base URL | OpenAI 兼容聊天接口服务地址 |
-| 文本模型 | 用于整理世界观、角色、关系和地点 |
-| 文本模型 API Key | 按服务要求填写，可为空 |
-| 图片模型 Base URL | OpenAI 兼容图片生成接口服务地址 |
-| 图片模型 | 用于重绘世界地图 |
-| 图片尺寸 | 支持 `1024x1024`、`1792x1024`、`1024x1792` |
+| 项目                 | 说明                                                      |
+| -------------------- | --------------------------------------------------------- |
+| 文本模型 Base URL    | OpenAI 兼容聊天接口服务地址                               |
+| 文本模型             | 用于整理世界观、角色、关系和地点                          |
+| 文本模型 API Key     | 按服务要求填写，可为空                                    |
+| 图片模型 Base URL    | OpenAI 兼容图片生成接口服务地址                           |
+| 图片模型             | 用于重绘世界地图                                          |
+| 图片尺寸             | 支持 `1024x1024`、`1792x1024`、`1024x1792`                |
 | 使用后端代理调用模型 | 开启后由 Reader-Rust 后端转发请求，避免浏览器直接跨域调用 |
 
 如果你的模型服务已经提供完整接口地址，可以打开 **完整链接**，让 Base URL 按完整 URL 使用。
@@ -102,15 +102,15 @@ AI资料支持两种模型来源。
 
 AI资料页面主要使用这些后端接口：
 
-| 接口 | 用途 |
-|------|------|
-| `GET/POST /reader3/getAiBookMemory` | 获取当前书籍 AI资料 |
-| `POST /reader3/saveAiBookMemory` | 保存当前书籍 AI资料 |
-| `POST /reader3/deleteAiBookMemory` | 重置当前书籍 AI资料 |
-| `GET /reader3/getAiModelConfig` | 获取后端模型配置可见信息与权限状态 |
-| `POST /reader3/saveAiModelConfig` | 保存后端模型配置 |
-| `POST /reader3/aiProxy` | 后端代理文本、图片、语音模型请求 |
-| `POST /reader3/aiProxyImage` | 后端代理图片下载 |
+| 接口                                | 用途                               |
+| ----------------------------------- | ---------------------------------- |
+| `GET/POST /reader3/getAiBookMemory` | 获取当前书籍 AI资料                |
+| `POST /reader3/saveAiBookMemory`    | 保存当前书籍 AI资料                |
+| `POST /reader3/deleteAiBookMemory`  | 重置当前书籍 AI资料                |
+| `GET /reader3/getAiModelConfig`     | 获取后端模型配置可见信息与权限状态 |
+| `POST /reader3/saveAiModelConfig`   | 保存后端模型配置                   |
+| `POST /reader3/aiProxy`             | 后端代理文本、图片、语音模型请求   |
+| `POST /reader3/aiProxyImage`        | 后端代理图片下载                   |
 
 ## 常见问题
 

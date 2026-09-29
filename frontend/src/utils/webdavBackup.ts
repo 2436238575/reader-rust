@@ -8,11 +8,7 @@ import {
   saveBookGroup,
 } from '../api/bookshelf'
 import { getReplaceRules, deleteReplaceRules, saveReplaceRules } from '../api/replaceRule'
-import {
-  deleteAllBookSources,
-  getBookSources,
-  saveBookSources,
-} from '../api/source'
+import { deleteAllBookSources, getBookSources, saveBookSources } from '../api/source'
 import type { Book, BookGroup, Bookmark, BookSource, ReplaceRule } from '../types'
 
 const BACKUP_VERSION = 1
@@ -125,7 +121,9 @@ export async function restoreWebdavBackup(payload: WebdavBackupPayload) {
       ? Promise.all(currentGroups.map((group) => deleteBookGroup(group.groupId)))
       : Promise.resolve(),
     currentBooks.length
-      ? deleteBooks(currentBooks.map((book) => ({ bookUrl: book.bookUrl, origin: book.origin })) as Book[])
+      ? deleteBooks(
+          currentBooks.map((book) => ({ bookUrl: book.bookUrl, origin: book.origin })) as Book[]
+        )
       : Promise.resolve(),
     currentBookmarks.length ? deleteBookmarks(currentBookmarks) : Promise.resolve(),
     currentReplaceRules.length ? deleteReplaceRules(currentReplaceRules) : Promise.resolve(),

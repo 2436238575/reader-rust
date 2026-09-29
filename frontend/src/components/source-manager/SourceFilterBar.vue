@@ -11,7 +11,14 @@
       <span>{{ allSelected ? '取消全选' : '全选当前' }}</span>
     </label>
     <div class="search-field">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
+      <svg
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        stroke-width="2"
+        width="16"
+        height="16"
+      >
         <circle cx="11" cy="11" r="8" />
         <path d="m21 21-4.3-4.3" />
       </svg>
@@ -33,7 +40,9 @@
     <div v-if="selectedCount > 0" class="selection-tools">
       <span>已选 {{ selectedCount }}</span>
       <button class="btn btn-sm" type="button" @click="$emit('clear-selection')">清空</button>
-      <button class="btn btn-sm btn-danger" type="button" @click="$emit('delete-selection')">删除选中</button>
+      <button class="btn btn-sm btn-danger" type="button" @click="$emit('delete-selection')">
+        删除选中
+      </button>
     </div>
   </section>
 </template>

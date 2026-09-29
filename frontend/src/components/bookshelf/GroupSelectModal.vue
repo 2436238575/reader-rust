@@ -6,7 +6,9 @@
           <div class="modal-header">
             <h3>选择分组</h3>
             <button class="close-btn" @click="$emit('update:modelValue', false)">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6 6 18M6 6l12 12" /></svg>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M18 6 6 18M6 6l12 12" />
+              </svg>
             </button>
           </div>
 
@@ -94,11 +96,8 @@ async function handleCreate() {
   display: flex;
   align-items: center;
   justify-content: center;
-  padding:
-    calc(16px + var(--safe-area-top))
-    calc(16px + var(--safe-area-right))
-    calc(16px + var(--safe-area-bottom))
-    calc(16px + var(--safe-area-left));
+  padding: calc(16px + var(--safe-area-top)) calc(16px + var(--safe-area-right))
+    calc(16px + var(--safe-area-bottom)) calc(16px + var(--safe-area-left));
   /* 叠在分组管理弹窗（--z-modal）之上 */
   z-index: calc(var(--z-modal) + 1);
 }
@@ -110,7 +109,9 @@ async function handleCreate() {
   border-radius: var(--radius-2xl);
   box-shadow: var(--shadow-2xl);
   overflow: hidden;
-  max-height: calc(var(--app-height, 100dvh) - var(--safe-area-top) - var(--safe-area-bottom) - 32px);
+  max-height: calc(
+    var(--app-height, 100dvh) - var(--safe-area-top) - var(--safe-area-bottom) - 32px
+  );
   display: flex;
   flex-direction: column;
 }
@@ -123,13 +124,23 @@ async function handleCreate() {
   border-bottom: 1px solid var(--color-border-light);
 }
 
-.modal-header h3 { margin: 0; font-size: var(--text-lg); font-weight: 600; }
+.modal-header h3 {
+  margin: 0;
+  font-size: var(--text-lg);
+  font-weight: 600;
+}
 
 .close-btn {
-  width: 32px; height: 32px;
-  display: flex; align-items: center; justify-content: center;
-  border-radius: var(--radius-md); color: var(--color-text-secondary);
-  background: transparent; border: none; cursor: pointer;
+  width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-md);
+  color: var(--color-text-secondary);
+  background: transparent;
+  border: none;
+  cursor: pointer;
 }
 
 .modal-body {
@@ -139,15 +150,23 @@ async function handleCreate() {
 }
 
 .group-list {
-  display: flex; flex-direction: column; gap: 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
 }
 
 .group-item {
-  display: flex; align-items: center; gap: var(--space-3);
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
   padding: var(--space-3) var(--space-4);
   border-radius: var(--radius-lg);
-  border: none; background: transparent; color: var(--color-text);
-  cursor: pointer; text-align: left; transition: all 0.2s;
+  border: none;
+  background: transparent;
+  color: var(--color-text);
+  cursor: pointer;
+  text-align: left;
+  transition: all 0.2s;
 }
 
 .group-item:hover {
@@ -155,28 +174,46 @@ async function handleCreate() {
   color: var(--color-primary);
 }
 
-.group-icon { opacity: 0.4; font-weight: 700; }
-.group-name { font-weight: 500; font-size: var(--text-base); }
+.group-icon {
+  opacity: 0.4;
+  font-weight: 700;
+}
+.group-name {
+  font-weight: 500;
+  font-size: var(--text-base);
+}
 
 .new-group {
   margin-top: var(--space-2);
   padding: var(--space-3);
   border-top: 1px solid var(--color-border-light);
-  display: flex; gap: var(--space-2);
+  display: flex;
+  gap: var(--space-2);
 }
 
 .group-input {
-  flex: 1; padding: var(--space-2) var(--space-3);
-  border-radius: var(--radius-md); border: 1px solid var(--color-border);
-  background: var(--color-bg-sunken); color: var(--color-text);
+  flex: 1;
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-md);
+  border: 1px solid var(--color-border);
+  background: var(--color-bg-sunken);
+  color: var(--color-text);
   font-size: var(--text-sm);
 }
 
 .add-btn {
-  padding: 0 var(--space-3); border-radius: var(--radius-md);
-  background: var(--color-primary); color: white;
-  border: none; font-size: var(--text-sm); font-weight: 500; cursor: pointer;
+  padding: 0 var(--space-3);
+  border-radius: var(--radius-md);
+  background: var(--color-primary);
+  color: white;
+  border: none;
+  font-size: var(--text-sm);
+  font-weight: 500;
+  cursor: pointer;
 }
 
-.add-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+.add-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
 </style>

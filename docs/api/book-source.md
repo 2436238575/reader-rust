@@ -37,9 +37,9 @@ GET /reader3/getBookSource
 
 请求参数：
 
-| 参数 | 类型 | 必填 | 说明 |
-|------|------|------|------|
-| `bookSourceUrl` | string | 是 | 书源 URL，可放在查询参数或请求体 |
+| 参数            | 类型   | 必填 | 说明                             |
+| --------------- | ------ | ---- | -------------------------------- |
+| `bookSourceUrl` | string | 是   | 书源 URL，可放在查询参数或请求体 |
 
 响应：`data` 为该书源对象。
 
@@ -51,9 +51,9 @@ POST /reader3/loginBookSource
 
 请求参数：
 
-| 参数 | 类型 | 必填 | 说明 |
-|------|------|------|------|
-| `bookSourceUrl` | string | 是 | 需要登录的书源 URL |
+| 参数            | 类型   | 必填 | 说明               |
+| --------------- | ------ | ---- | ------------------ |
+| `bookSourceUrl` | string | 是   | 需要登录的书源 URL |
 
 ## 获取发现页分类
 
@@ -63,10 +63,10 @@ POST /reader3/getExploreKinds
 
 请求参数：
 
-| 参数 | 类型 | 必填 | 说明 |
-|------|------|------|------|
-| `bookSourceUrl` | string | 否 | 书源 URL |
-| `bookSource` | object | 否 | 完整的书源对象（与 `bookSourceUrl` 二选一） |
+| 参数            | 类型   | 必填 | 说明                                        |
+| --------------- | ------ | ---- | ------------------------------------------- |
+| `bookSourceUrl` | string | 否   | 书源 URL                                    |
+| `bookSource`    | object | 否   | 完整的书源对象（与 `bookSourceUrl` 二选一） |
 
 ## 添加/更新书源
 
@@ -150,12 +150,12 @@ POST /reader3/testBookSources
 
 请求参数：
 
-| 参数 | 类型 | 必填 | 说明 |
-|------|------|------|------|
-| `bookSourceUrls` | string[] | 否 | 要测试的书源 URL 列表，最多 100 条；为空则测试全部 |
-| `keyword` | string | 否 | 测试用搜索关键词 |
-| `markInvalid` | boolean | 否 | 是否将被测失效的书源标记为失效分组，默认 true |
-| `concurrent` | number | 否 | 并发数，默认 12，范围 1–12 |
+| 参数             | 类型     | 必填 | 说明                                               |
+| ---------------- | -------- | ---- | -------------------------------------------------- |
+| `bookSourceUrls` | string[] | 否   | 要测试的书源 URL 列表，最多 100 条；为空则测试全部 |
+| `keyword`        | string   | 否   | 测试用搜索关键词                                   |
+| `markInvalid`    | boolean  | 否   | 是否将被测失效的书源标记为失效分组，默认 true      |
+| `concurrent`     | number   | 否   | 并发数，默认 12，范围 1–12                         |
 
 响应：`data` 形如 `{ "total": 10, "valid": 8, "invalid": 2, "markedInvalid": 2, "results": [ ... ] }`。
 
@@ -183,10 +183,10 @@ ANY /reader3/bookSourceProxy
 
 查询参数：
 
-| 参数 | 类型 | 必填 | 说明 |
-|------|------|------|------|
-| `bookSourceUrl` | string | 是 | 书源 URL |
-| `url` | string | 是 | 需要代理请求的完整或部分 URL |
+| 参数            | 类型   | 必填 | 说明                         |
+| --------------- | ------ | ---- | ---------------------------- |
+| `bookSourceUrl` | string | 是   | 书源 URL                     |
+| `url`           | string | 是   | 需要代理请求的完整或部分 URL |
 
 将目标站点的 HTML 页面注入代理脚本后返回，使页面内相对链接、表单、脚本自动走本代理。支持 GET/POST。
 
@@ -208,10 +208,10 @@ GET /reader3/bookSourceDebugSSE
 
 调试搜索规则的 SSE 流式接口。查询参数：
 
-| 参数 | 类型 | 必填 | 说明 |
-|------|------|------|------|
-| `bookSourceUrl` | string | 是 | 书源 URL |
-| `keyword` | string | 否 | 调试用搜索关键词 |
+| 参数            | 类型   | 必填 | 说明             |
+| --------------- | ------ | ---- | ---------------- |
+| `bookSourceUrl` | string | 是   | 书源 URL         |
+| `keyword`       | string | 否   | 调试用搜索关键词 |
 
 ## 导入书源
 

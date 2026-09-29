@@ -37,7 +37,10 @@ describe('mergeRecentLists', () => {
   it('取并集，同一本书保留较新的记录并按时间降序', () => {
     const merged = mergeRecentLists(
       [book({ bookUrl: '/1', recentReadAt: 100 }), book({ bookUrl: '/2', recentReadAt: 300 })],
-      [book({ bookUrl: '/1', recentReadAt: 200, name: '新版' }), book({ bookUrl: '/3', recentReadAt: 50 })],
+      [
+        book({ bookUrl: '/1', recentReadAt: 200, name: '新版' }),
+        book({ bookUrl: '/3', recentReadAt: 50 }),
+      ]
     )
 
     expect(merged.map((item) => item.bookUrl)).toEqual(['/2', '/1', '/3'])
@@ -46,9 +49,12 @@ describe('mergeRecentLists', () => {
 
   it('过滤掉 RSS 旧记录并截断到上限', () => {
     const many: RecentReadBook[] = Array.from({ length: 150 }, (_, i) =>
-      book({ bookUrl: `/b${i}`, recentReadAt: i }),
+      book({ bookUrl: `/b${i}`, recentReadAt: i })
     )
-    const withRss = [...many, book({ bookUrl: '/rss', recentReadAt: 999, recentKind: 'rss' } as never)]
+    const withRss = [
+      ...many,
+      book({ bookUrl: '/rss', recentReadAt: 999, recentKind: 'rss' } as never),
+    ]
 
     const merged = mergeRecentLists(withRss, [])
     expect(merged).toHaveLength(100)
@@ -102,7 +108,7 @@ describe('syncRecentBooksFromBackend', () => {
   it('与后端并集合并并写回两端', async () => {
     localStorage.setItem(
       'reader-recent-books',
-      JSON.stringify([book({ bookUrl: '/1', recentReadAt: 100 })]),
+      JSON.stringify([book({ bookUrl: '/1', recentReadAt: 100 })])
     )
     getUserdata.mockResolvedValue([book({ bookUrl: '/2', recentReadAt: 200 })])
 
@@ -127,7 +133,7 @@ describe('syncRecentBooksFromBackend', () => {
   it('后端不可达时保持本地不变', async () => {
     localStorage.setItem(
       'reader-recent-books',
-      JSON.stringify([book({ bookUrl: '/1', recentReadAt: 100 })]),
+      JSON.stringify([book({ bookUrl: '/1', recentReadAt: 100 })])
     )
     getUserdata.mockRejectedValue(new Error('offline'))
 

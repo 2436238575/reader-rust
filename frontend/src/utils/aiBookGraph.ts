@@ -117,7 +117,7 @@ export function buildAiBookRelationshipGraph(memory: AiBookMemory): AiBookRelati
 
 export function layoutAiBookRelationshipGraph(
   graph: AiBookRelationshipGraph,
-  selectedId = '',
+  selectedId = ''
 ): AiBookGraphLayout {
   const width = 920
   const nodeMap = new Map(graph.nodes.map((node) => [node.id, node]))
@@ -137,8 +137,14 @@ export function layoutAiBookRelationshipGraph(
     }
   }
 
-  const locations = sortNodesForLayout(graph.nodes.filter((node) => node.kind === 'location'), degreeMap)
-  const characters = sortNodesForLayout(graph.nodes.filter((node) => node.kind === 'character'), degreeMap)
+  const locations = sortNodesForLayout(
+    graph.nodes.filter((node) => node.kind === 'location'),
+    degreeMap
+  )
+  const characters = sortNodesForLayout(
+    graph.nodes.filter((node) => node.kind === 'character'),
+    degreeMap
+  )
   const densestLaneCount = Math.max(1, locations.length, characters.length)
   const height = Math.max(520, densestLaneCount * 56 + 118)
   const allLocationsOnly = locations.length > 0 && characters.length === 0
@@ -147,25 +153,47 @@ export function layoutAiBookRelationshipGraph(
   const positioned = new Map<string, AiBookGraphLayoutNode>()
   const leftX = allCharactersOnly ? width * 0.34 : width * 0.26
   const rightX = allLocationsOnly ? width * 0.66 : width * 0.72
-  placeColumn(locations, allLocationsOnly ? 'center' : 'left', allLocationsOnly ? width / 2 : leftX, height, positioned, degreeMap, connectedIds, activeSelectedId)
-  placeColumn(characters, allCharactersOnly ? 'center' : 'right', allCharactersOnly ? width / 2 : rightX, height, positioned, degreeMap, connectedIds, activeSelectedId)
+  placeColumn(
+    locations,
+    allLocationsOnly ? 'center' : 'left',
+    allLocationsOnly ? width / 2 : leftX,
+    height,
+    positioned,
+    degreeMap,
+    connectedIds,
+    activeSelectedId
+  )
+  placeColumn(
+    characters,
+    allCharactersOnly ? 'center' : 'right',
+    allCharactersOnly ? width / 2 : rightX,
+    height,
+    positioned,
+    degreeMap,
+    connectedIds,
+    activeSelectedId
+  )
 
   const links = graph.links.flatMap((link): AiBookGraphLayoutLink[] => {
     const source = positioned.get(link.source)
     const target = positioned.get(link.target)
     if (!source || !target) return []
-    const highlighted = Boolean(activeSelectedId && (link.source === activeSelectedId || link.target === activeSelectedId))
+    const highlighted = Boolean(
+      activeSelectedId && (link.source === activeSelectedId || link.target === activeSelectedId)
+    )
     const dimmed = Boolean(activeSelectedId && !highlighted)
     const { path, labelX, labelY } = buildLinkPath(source, target)
-    return [{
-      ...link,
-      path,
-      labelX,
-      labelY,
-      highlighted,
-      dimmed,
-      showLabel: highlighted || (graph.links.length <= 10 && link.label !== '位于'),
-    }]
+    return [
+      {
+        ...link,
+        path,
+        labelX,
+        labelY,
+        highlighted,
+        dimmed,
+        showLabel: highlighted || (graph.links.length <= 10 && link.label !== '位于'),
+      },
+    ]
   })
 
   return {
@@ -192,7 +220,7 @@ function placeColumn(
   positioned: Map<string, AiBookGraphLayoutNode>,
   degreeMap: Map<string, number>,
   connectedIds: Set<string>,
-  selectedId: string,
+  selectedId: string
 ) {
   const top = 62
   const bottom = layoutHeight - 62
@@ -201,9 +229,10 @@ function placeColumn(
   const centerY = (top + bottom) / 2
 
   nodes.forEach((node, index) => {
-    const width = node.kind === 'location'
-      ? clamp(node.label.length * 15 + 42, 126, 192)
-      : clamp(node.label.length * 14 + 36, 104, 176)
+    const width =
+      node.kind === 'location'
+        ? clamp(node.label.length * 15 + 42, 126, 192)
+        : clamp(node.label.length * 14 + 36, 104, 176)
     const height = selectedId === node.id ? 48 : 42
     const y = count === 1 ? centerY : Math.round(top + step * index)
     const dimmed = Boolean(selectedId && !connectedIds.has(node.id))
@@ -215,7 +244,9 @@ function placeColumn(
       height,
       lane,
       dimmed,
-      connectedToSelected: Boolean(selectedId && connectedIds.has(node.id) && selectedId !== node.id),
+      connectedToSelected: Boolean(
+        selectedId && connectedIds.has(node.id) && selectedId !== node.id
+      ),
       detail: node.detail || `关联 ${degreeMap.get(node.id) || 0} 条线索`,
     })
   })
@@ -233,7 +264,9 @@ function buildLinkPath(source: AiBookGraphLayoutNode, target: AiBookGraphLayoutN
   const endY = targetY
   const sameLane = source.lane === target.lane
   const bend = sameLane
-    ? (source.lane === 'left' ? -86 : 86)
+    ? source.lane === 'left'
+      ? -86
+      : 86
     : Math.max(96, Math.abs(endX - startX) * 0.42)
   const c1x = sameLane ? startX + bend : startX + (leftToRight ? bend : -bend)
   const c2x = sameLane ? endX + bend : endX + (leftToRight ? -bend : bend)

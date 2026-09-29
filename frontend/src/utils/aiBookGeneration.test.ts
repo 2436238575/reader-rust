@@ -93,58 +93,62 @@ describe('aiBookGeneration', () => {
       .mockResolvedValueOnce({
         ok: true,
         json: async () => ({
-          choices: [{
-            message: {
-              tool_calls: [
-                {
-                  id: 'call-memory',
-                  type: 'function',
-                  function: { name: 'get_current_memory', arguments: '{}' },
-                },
-                {
-                  id: 'call-chapter',
-                  type: 'function',
-                  function: { name: 'get_completed_chapter', arguments: '{}' },
-                },
-              ],
+          choices: [
+            {
+              message: {
+                tool_calls: [
+                  {
+                    id: 'call-memory',
+                    type: 'function',
+                    function: { name: 'get_current_memory', arguments: '{}' },
+                  },
+                  {
+                    id: 'call-chapter',
+                    type: 'function',
+                    function: { name: 'get_completed_chapter', arguments: '{}' },
+                  },
+                ],
+              },
             },
-          }],
+          ],
         }),
       })
       .mockResolvedValueOnce({
         ok: true,
         json: async () => ({
-          choices: [{
-            message: {
-              tool_calls: [
-                {
-                  id: 'call-save',
-                  type: 'function',
-                  function: {
-                    name: 'save_memory_patch',
-                    arguments: JSON.stringify({
-                      memory: {
-                        summary: '主角确认超凡领域存在。',
-                        worldview: [
-                          {
-                            category: '基础规则',
-                            title: '超凡领域',
-                            content: '存在以特殊能力影响现实的超凡领域，细节仍未公开。',
-                            confidence: '已知',
-                            importance: 'high',
-                          },
-                        ],
-                        characters: [],
-                        relationships: [],
-                        locations: [],
-                      },
-                      shouldRegenerateMap: false,
-                    }),
+          choices: [
+            {
+              message: {
+                tool_calls: [
+                  {
+                    id: 'call-save',
+                    type: 'function',
+                    function: {
+                      name: 'save_memory_patch',
+                      arguments: JSON.stringify({
+                        memory: {
+                          summary: '主角确认超凡领域存在。',
+                          worldview: [
+                            {
+                              category: '基础规则',
+                              title: '超凡领域',
+                              content: '存在以特殊能力影响现实的超凡领域，细节仍未公开。',
+                              confidence: '已知',
+                              importance: 'high',
+                            },
+                          ],
+                          characters: [],
+                          relationships: [],
+                          locations: [],
+                        },
+                        shouldRegenerateMap: false,
+                      }),
+                    },
                   },
-                },
-              ],
+                ],
+              },
             },
-          }],
+          ],
         }),
       })
 
@@ -168,11 +172,9 @@ describe('aiBookGeneration', () => {
 
     expect(fetchMock).toHaveBeenCalledTimes(2)
     const firstBody = JSON.parse(String((fetchMock.mock.calls[0]?.[1] as RequestInit).body))
-    expect(firstBody.tools.map((tool: { function: { name: string } }) => tool.function.name)).toEqual([
-      'get_current_memory',
-      'get_completed_chapter',
-      'save_memory_patch',
-    ])
+    expect(
+      firstBody.tools.map((tool: { function: { name: string } }) => tool.function.name)
+    ).toEqual(['get_current_memory', 'get_completed_chapter', 'save_memory_patch'])
     expect(JSON.stringify(firstBody.messages)).not.toContain('旧资料摘要')
     expect(JSON.stringify(firstBody.messages)).not.toContain('刘隆指出李皓已经接触超凡领域')
 
@@ -200,11 +202,13 @@ describe('aiBookGeneration', () => {
     const fetchMock = vi.fn(async (_url: RequestInfo | URL, _init?: RequestInit) => ({
       ok: true,
       json: async () => ({
-        choices: [{
-          message: {
-            content: `${JSON.stringify(modelPayload, null, 2)}\n\n说明：已按当前章节更新。`,
+        choices: [
+          {
+            message: {
+              content: `${JSON.stringify(modelPayload, null, 2)}\n\n说明：已按当前章节更新。`,
+            },
           },
-        }],
+        ],
       }),
     }))
 
@@ -235,22 +239,62 @@ describe('aiBookGeneration', () => {
         summary: '克莱恩开始熟悉廷根。',
         worldview: [
           { title: '非凡力量', content: '存在超凡能力但细节未明。', confidence: '已知' },
-          { category: '基础规则', title: '非凡力量', content: '存在超凡能力，来源仍未确认。', confidence: '推断' },
+          {
+            category: '基础规则',
+            title: '非凡力量',
+            content: '存在超凡能力，来源仍未确认。',
+            confidence: '推断',
+          },
         ],
         characters: [
           { name: '克莱恩', status: '正在适应新身份', description: '主角', importance: 'high' },
-          { name: '克莱恩', status: '正在适应新身份并调查线索', aliases: ['周明瑞'], importance: 'high' },
+          {
+            name: '克莱恩',
+            status: '正在适应新身份并调查线索',
+            aliases: ['周明瑞'],
+            importance: 'high',
+          },
           { name: '路人店员', status: '卖过面包', importance: 'low' },
         ],
         relationships: [
-          { source: '克莱恩', target: '梅丽莎', relation: '兄妹', description: '共同生活，互相关心。', importance: 'high' },
-          { source: '梅丽莎', target: '克莱恩', relation: '兄妹', description: '梅丽莎关心哥哥的异常。', importance: 'high' },
-          { source: '克莱恩', target: '路人店员', relation: '认识', description: '买过东西', importance: 'low' },
+          {
+            source: '克莱恩',
+            target: '梅丽莎',
+            relation: '兄妹',
+            description: '共同生活，互相关心。',
+            importance: 'high',
+          },
+          {
+            source: '梅丽莎',
+            target: '克莱恩',
+            relation: '兄妹',
+            description: '梅丽莎关心哥哥的异常。',
+            importance: 'high',
+          },
+          {
+            source: '克莱恩',
+            target: '路人店员',
+            relation: '认识',
+            description: '买过东西',
+            importance: 'low',
+          },
         ],
         locations: [
           { name: '廷根市', kind: '城市', description: '北大陆城市。', importance: 'high' },
-          { name: '莫雷蒂公寓', parentName: '廷根市', kind: '住宅', description: '莫雷蒂一家居住地。', relatedCharacters: ['克莱恩'] },
-          { name: '莫雷蒂公寓', parentName: '廷根市', kind: '住宅', description: '包含书桌和卧室的两居室公寓。', relatedCharacters: ['梅丽莎'] },
+          {
+            name: '莫雷蒂公寓',
+            parentName: '廷根市',
+            kind: '住宅',
+            description: '莫雷蒂一家居住地。',
+            relatedCharacters: ['克莱恩'],
+          },
+          {
+            name: '莫雷蒂公寓',
+            parentName: '廷根市',
+            kind: '住宅',
+            description: '包含书桌和卧室的两居室公寓。',
+            relatedCharacters: ['梅丽莎'],
+          },
         ],
       },
       shouldRegenerateMap: false,
@@ -258,11 +302,13 @@ describe('aiBookGeneration', () => {
     const fetchMock = vi.fn(async (_url: RequestInfo | URL, _init?: RequestInit) => ({
       ok: true,
       json: async () => ({
-        choices: [{
-          message: {
-            content: JSON.stringify(modelPayload),
+        choices: [
+          {
+            message: {
+              content: JSON.stringify(modelPayload),
+            },
           },
-        }],
+        ],
       }),
     }))
 
@@ -305,42 +351,45 @@ describe('aiBookGeneration', () => {
     const fetchMock = vi.fn(async (_url: RequestInfo | URL, _init?: RequestInit) => ({
       ok: true,
       json: async () => ({
-        choices: [{
-          message: {
-            content: JSON.stringify({
-              memory: {
-                summary: '执法队搜查无果，李皓开始接触超凡线索。',
-                worldview: [
-                  {
-                    category: '基础设定',
-                    title: '本章（第11章）执法队搜查',
-                    content: '本章执法队搜查张家老屋一无所获，刘隆下令拆屋烧屋以引出幕后势力。',
-                    confidence: '已知',
-                    importance: 'high',
-                  },
-                  {
-                    category: '基础设定',
-                    title: '梦境与巫师线索',
-                    content: '卢米安坐在屋顶沉思，他一直渴望获得超凡力量但奥萝尔拒绝教他，称这条路危险痛苦。回到房间后看到奥萝尔在用香槟金色钢笔给笔友写信，奥萝尔解释笔友是通过报纸专栏等认识的书信朋友，其中有厉害的人，电池灯就是笔友送的。卢米安躺在床上担心奥萝尔的秘密带来危险。随后卢米安反复做灰色雾气的梦，无论往哪走都会回到自己的卧室，频率越来越高几乎每天都会做。清晨卢米安告诉奥萝尔又做那个梦了，奥萝尔说之前的方案没用，考虑给他找一个真正的催眠师。卢米安想成为巫师解开梦境秘密，奥萝尔拒绝并说这个世界变得越来越危险，催促他准备考试。',
-                    confidence: '已知',
-                    importance: 'high',
-                  },
-                  {
-                    category: '基础规则',
-                    title: '超凡领域',
-                    content: '存在普通执法体系之外的超凡领域，接触者可能成为重点目标。',
-                    confidence: '推断',
-                    importance: 'high',
-                  },
-                ],
-                characters: [],
-                relationships: [],
-                locations: [],
-              },
-              shouldRegenerateMap: false,
-            }),
+        choices: [
+          {
+            message: {
+              content: JSON.stringify({
+                memory: {
+                  summary: '执法队搜查无果，李皓开始接触超凡线索。',
+                  worldview: [
+                    {
+                      category: '基础设定',
+                      title: '本章（第11章）执法队搜查',
+                      content: '本章执法队搜查张家老屋一无所获，刘隆下令拆屋烧屋以引出幕后势力。',
+                      confidence: '已知',
+                      importance: 'high',
+                    },
+                    {
+                      category: '基础设定',
+                      title: '梦境与巫师线索',
+                      content:
+                        '卢米安坐在屋顶沉思，他一直渴望获得超凡力量但奥萝尔拒绝教他，称这条路危险痛苦。回到房间后看到奥萝尔在用香槟金色钢笔给笔友写信，奥萝尔解释笔友是通过报纸专栏等认识的书信朋友，其中有厉害的人，电池灯就是笔友送的。卢米安躺在床上担心奥萝尔的秘密带来危险。随后卢米安反复做灰色雾气的梦，无论往哪走都会回到自己的卧室，频率越来越高几乎每天都会做。清晨卢米安告诉奥萝尔又做那个梦了，奥萝尔说之前的方案没用，考虑给他找一个真正的催眠师。卢米安想成为巫师解开梦境秘密，奥萝尔拒绝并说这个世界变得越来越危险，催促他准备考试。',
+                      confidence: '已知',
+                      importance: 'high',
+                    },
+                    {
+                      category: '基础规则',
+                      title: '超凡领域',
+                      content: '存在普通执法体系之外的超凡领域，接触者可能成为重点目标。',
+                      confidence: '推断',
+                      importance: 'high',
+                    },
+                  ],
+                  characters: [],
+                  relationships: [],
+                  locations: [],
+                },
+                shouldRegenerateMap: false,
+              }),
+            },
           },
-        }],
+        ],
       }),
     }))
 
@@ -369,29 +418,42 @@ describe('aiBookGeneration', () => {
     const fetchMock = vi.fn(async (_url: RequestInfo | URL, _init?: RequestInit) => ({
       ok: true,
       json: async () => ({
-        choices: [{
-          message: {
-            content: JSON.stringify({
-              memory: {
-                summary: '第十章「北境」：林舟离开旧村，抵达北境。',
-                worldview: [
-                  { category: '地理环境', title: '北境', content: '北境是寒冷边境区域，已出现新的线索。', confidence: '已知' },
-                ],
-                characters: [
-                  { name: '林舟', status: '已离开旧村', location: '北境', importance: 'high' },
-                  { name: '沈月', status: '在北境提供帮助', importance: 'medium' },
-                ],
-                relationships: [
-                  { source: '林舟', target: '沈月', relation: '临时同伴', description: '两人在北境同行。', importance: 'medium' },
-                ],
-                locations: [
-                  { name: '北境', kind: '区域', description: '寒冷边境。', importance: 'high' },
-                ],
-              },
-              shouldRegenerateMap: false,
-            }),
+        choices: [
+          {
+            message: {
+              content: JSON.stringify({
+                memory: {
+                  summary: '第十章「北境」：林舟离开旧村，抵达北境。',
+                  worldview: [
+                    {
+                      category: '地理环境',
+                      title: '北境',
+                      content: '北境是寒冷边境区域，已出现新的线索。',
+                      confidence: '已知',
+                    },
+                  ],
+                  characters: [
+                    { name: '林舟', status: '已离开旧村', location: '北境', importance: 'high' },
+                    { name: '沈月', status: '在北境提供帮助', importance: 'medium' },
+                  ],
+                  relationships: [
+                    {
+                      source: '林舟',
+                      target: '沈月',
+                      relation: '临时同伴',
+                      description: '两人在北境同行。',
+                      importance: 'medium',
+                    },
+                  ],
+                  locations: [
+                    { name: '北境', kind: '区域', description: '寒冷边境。', importance: 'high' },
+                  ],
+                },
+                shouldRegenerateMap: false,
+              }),
+            },
           },
-        }],
+        ],
       }),
     }))
 
@@ -408,11 +470,15 @@ describe('aiBookGeneration', () => {
         worldview: [
           { category: '基础设定', title: '灵脉', content: '灵脉会影响修行。', confidence: '已知' },
         ],
-        characters: [
-          { name: '林舟', status: '停留在旧村', location: '旧村', importance: 'high' },
-        ],
+        characters: [{ name: '林舟', status: '停留在旧村', location: '旧村', importance: 'high' }],
         relationships: [
-          { source: '林舟', target: '村长', relation: '师徒', description: '村长曾指导林舟。', importance: 'medium' },
+          {
+            source: '林舟',
+            target: '村长',
+            relation: '师徒',
+            description: '村长曾指导林舟。',
+            importance: 'medium',
+          },
         ],
         locations: [
           { name: '旧村', kind: '村落', description: '故事开始的村落。', importance: 'high' },
@@ -428,10 +494,9 @@ describe('aiBookGeneration', () => {
       status: '已离开旧村',
       location: '北境',
     })
-    expect(update.memory.relationships.map((item) => `${item.source}-${item.relation}-${item.target}`)).toEqual([
-      '林舟-师徒-村长',
-      '林舟-临时同伴-沈月',
-    ])
+    expect(
+      update.memory.relationships.map((item) => `${item.source}-${item.relation}-${item.target}`)
+    ).toEqual(['林舟-师徒-村长', '林舟-临时同伴-沈月'])
     expect(update.memory.locations.map((item) => item.name)).toEqual(['旧村', '北境'])
   })
 
@@ -440,20 +505,22 @@ describe('aiBookGeneration', () => {
     const fetchMock = vi.fn(async (_url: RequestInfo | URL, _init?: RequestInit) => ({
       ok: true,
       json: async () => ({
-        choices: [{
-          message: {
-            content: JSON.stringify({
-              memory: {
-                summary: longSummary,
-                worldview: [],
-                characters: [],
-                relationships: [],
-                locations: [],
-              },
-              shouldRegenerateMap: false,
-            }),
+        choices: [
+          {
+            message: {
+              content: JSON.stringify({
+                memory: {
+                  summary: longSummary,
+                  worldview: [],
+                  characters: [],
+                  relationships: [],
+                  locations: [],
+                },
+                shouldRegenerateMap: false,
+              }),
+            },
           },
-        }],
+        ],
       }),
     }))
 
@@ -475,7 +542,7 @@ describe('aiBookGeneration', () => {
       fetchImpl: fetchMock as unknown as typeof fetch,
     })
 
-    expect([...update.memory.summary || '']).toHaveLength(1200)
+    expect([...(update.memory.summary || '')]).toHaveLength(1200)
     expect(update.memory.summary).toContain('……')
     expect(update.memory.summary).toContain('主线开端')
     expect(update.memory.summary).toContain('当前进展仍集中在北境')
@@ -485,27 +552,38 @@ describe('aiBookGeneration', () => {
     const fetchMock = vi.fn(async (_url: RequestInfo | URL, _init?: RequestInit) => ({
       ok: true,
       json: async () => ({
-        choices: [{
-          message: {
-            content: JSON.stringify({
-              memory: {
-                summary: '角色关系发生变化，但地点没有变化。',
-                worldview: [],
-                characters: [
-                  { name: '林舟', status: '继续调查', importance: 'high' },
-                ],
-                relationships: [
-                  { source: '林舟', target: '沈月', relation: '同伴', description: '关系更稳定。', importance: 'medium' },
-                ],
-                locations: [
-                  { name: '旧村', kind: '村落', description: '故事开始的村落。', importance: 'high' },
-                ],
-              },
-              shouldRegenerateMap: true,
-              mapPrompt: '重新绘制旧村地图。',
-            }),
+        choices: [
+          {
+            message: {
+              content: JSON.stringify({
+                memory: {
+                  summary: '角色关系发生变化，但地点没有变化。',
+                  worldview: [],
+                  characters: [{ name: '林舟', status: '继续调查', importance: 'high' }],
+                  relationships: [
+                    {
+                      source: '林舟',
+                      target: '沈月',
+                      relation: '同伴',
+                      description: '关系更稳定。',
+                      importance: 'medium',
+                    },
+                  ],
+                  locations: [
+                    {
+                      name: '旧村',
+                      kind: '村落',
+                      description: '故事开始的村落。',
+                      importance: 'high',
+                    },
+                  ],
+                },
+                shouldRegenerateMap: true,
+                mapPrompt: '重新绘制旧村地图。',
+              }),
+            },
           },
-        }],
+        ],
       }),
     }))
 
@@ -519,9 +597,7 @@ describe('aiBookGeneration', () => {
         enabled: true,
         updatedAt: 0,
         worldview: [],
-        characters: [
-          { name: '林舟', status: '调查中', importance: 'high' },
-        ],
+        characters: [{ name: '林舟', status: '调查中', importance: 'high' }],
         relationships: [],
         locations: [
           { name: '旧村', kind: '村落', description: '故事开始的村落。', importance: 'high' },
@@ -545,24 +621,36 @@ describe('aiBookGeneration', () => {
     const fetchMock = vi.fn(async (_url: RequestInfo | URL, _init?: RequestInit) => ({
       ok: true,
       json: async () => ({
-        choices: [{
-          message: {
-            content: JSON.stringify({
-              memory: {
-                summary: '主角发现北境。',
-                worldview: [],
-                characters: [],
-                relationships: [],
-                locations: [
-                  { name: '旧村', kind: '村落', description: '故事开始的村落。', importance: 'high' },
-                  { name: '北境', kind: '区域', description: '新出现的寒冷边境。', importance: 'high' },
-                ],
-              },
-              shouldRegenerateMap: true,
-              mapPrompt: '把旧村与北境画在同一张区域地图上。',
-            }),
+        choices: [
+          {
+            message: {
+              content: JSON.stringify({
+                memory: {
+                  summary: '主角发现北境。',
+                  worldview: [],
+                  characters: [],
+                  relationships: [],
+                  locations: [
+                    {
+                      name: '旧村',
+                      kind: '村落',
+                      description: '故事开始的村落。',
+                      importance: 'high',
+                    },
+                    {
+                      name: '北境',
+                      kind: '区域',
+                      description: '新出现的寒冷边境。',
+                      importance: 'high',
+                    },
+                  ],
+                },
+                shouldRegenerateMap: true,
+                mapPrompt: '把旧村与北境画在同一张区域地图上。',
+              }),
+            },
           },
-        }],
+        ],
       }),
     }))
 
@@ -617,7 +705,7 @@ describe('aiBookGeneration', () => {
       expect.objectContaining({
         method: 'POST',
         body: expect.any(FormData),
-      }),
+      })
     )
   })
 
@@ -656,7 +744,7 @@ describe('aiBookGeneration', () => {
           Authorization: 'Bearer alice-token',
         }),
         body: JSON.stringify({ url: 'https://cdn.example.test/map.png' }),
-      }),
+      })
     )
   })
 
@@ -693,7 +781,7 @@ describe('aiBookGeneration', () => {
           Authorization: 'Bearer alice-token',
         }),
         body: expect.any(FormData),
-      }),
+      })
     )
     expect(fetchMock).not.toHaveBeenCalledWith('/reader3/aiProxyImage', expect.anything())
   })
@@ -704,19 +792,21 @@ describe('aiBookGeneration', () => {
     const fetchMock = vi.fn(async (_url: RequestInfo | URL, _init?: RequestInit) => ({
       ok: true,
       json: async () => ({
-        choices: [{
-          message: {
-            content: JSON.stringify({
-              memory: {
-                summary: '主角抵达北境。',
-                worldview: [],
-                characters: [],
-                relationships: [],
-                locations: [],
-              },
-            }),
+        choices: [
+          {
+            message: {
+              content: JSON.stringify({
+                memory: {
+                  summary: '主角抵达北境。',
+                  worldview: [],
+                  characters: [],
+                  relationships: [],
+                  locations: [],
+                },
+              }),
+            },
           },
-        }],
+        ],
       }),
     }))
 
@@ -745,7 +835,7 @@ describe('aiBookGeneration', () => {
           Authorization: 'Bearer alice-token',
         }),
         body: expect.stringContaining('"path":"/v1/chat/completions"'),
-      }),
+      })
     )
     const proxyRequest = fetchMock.mock.calls[0]?.[1] as RequestInit
     expect(JSON.parse(String(proxyRequest.body))).toMatchObject({
@@ -761,19 +851,21 @@ describe('aiBookGeneration', () => {
     const fetchMock = vi.fn(async (_url: RequestInfo | URL, _init?: RequestInit) => ({
       ok: true,
       json: async () => ({
-        choices: [{
-          message: {
-            content: JSON.stringify({
-              memory: {
-                summary: '主角抵达北境。',
-                worldview: [],
-                characters: [],
-                relationships: [],
-                locations: [],
-              },
-            }),
+        choices: [
+          {
+            message: {
+              content: JSON.stringify({
+                memory: {
+                  summary: '主角抵达北境。',
+                  worldview: [],
+                  characters: [],
+                  relationships: [],
+                  locations: [],
+                },
+              }),
+            },
           },
-        }],
+        ],
       }),
     }))
 
@@ -807,7 +899,7 @@ describe('aiBookGeneration', () => {
         headers: expect.objectContaining({
           Authorization: 'Bearer alice-token',
         }),
-      }),
+      })
     )
     expect(JSON.parse(String(proxyRequest.body))).toMatchObject({
       useServerConfig: true,
@@ -821,19 +913,21 @@ describe('aiBookGeneration', () => {
     const fetchMock = vi.fn(async (_url: RequestInfo | URL, _init?: RequestInit) => ({
       ok: true,
       json: async () => ({
-        choices: [{
-          message: {
-            content: JSON.stringify({
-              memory: {
-                summary: '主角抵达北境。',
-                worldview: [],
-                characters: [],
-                relationships: [],
-                locations: [],
-              },
-            }),
+        choices: [
+          {
+            message: {
+              content: JSON.stringify({
+                memory: {
+                  summary: '主角抵达北境。',
+                  worldview: [],
+                  characters: [],
+                  relationships: [],
+                  locations: [],
+                },
+              }),
+            },
           },
-        }],
+        ],
       }),
     }))
 
@@ -860,7 +954,7 @@ describe('aiBookGeneration', () => {
 
     expect(fetchMock).toHaveBeenCalledWith(
       'https://gateway.example.test/custom/chat',
-      expect.objectContaining({ method: 'POST' }),
+      expect.objectContaining({ method: 'POST' })
     )
   })
 
@@ -885,12 +979,13 @@ describe('aiBookGeneration', () => {
         headers: expect.objectContaining({
           Authorization: 'Bearer image-key',
         }),
-      }),
+      })
     )
   })
 
   it('wraps image prompts with cartographic constraints before map generation', async () => {
-    const rawPrompt = '绘制一张包含两个独立区域的地图：左侧为现代化的地球大学机房，右侧为荒凉废土中的404号避难所，两者之间以虚线连接。'
+    const rawPrompt =
+      '绘制一张包含两个独立区域的地图：左侧为现代化的地球大学机房，右侧为荒凉废土中的404号避难所，两者之间以虚线连接。'
     const fetchMock = vi.fn(async (_url: RequestInfo | URL, _init?: RequestInit) => ({
       ok: true,
       json: async () => ({
@@ -934,7 +1029,7 @@ describe('aiBookGeneration', () => {
       expect.objectContaining({
         method: 'POST',
         body: expect.stringContaining('"path":"/v1/images/generations"'),
-      }),
+      })
     )
   })
 
@@ -963,7 +1058,7 @@ describe('aiBookGeneration', () => {
       expect.objectContaining({
         method: 'POST',
         body: expect.stringContaining('"kind":"image"'),
-      }),
+      })
     )
     expect(JSON.parse(String(proxyRequest.body))).toMatchObject({
       useServerConfig: true,
@@ -997,7 +1092,7 @@ describe('aiBookGeneration', () => {
       expect.objectContaining({
         method: 'POST',
         body: expect.stringContaining('"fullUrl":true'),
-      }),
+      })
     )
     expect(JSON.parse(String(proxyRequest.body))).toMatchObject({
       baseUrl: 'https://gateway.example.test/custom/image',

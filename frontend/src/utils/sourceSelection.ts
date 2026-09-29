@@ -3,7 +3,7 @@ import type { BookSource } from '../types'
 export function getVisibleSelection<T>(
   visibleItems: T[],
   selectedKeys: ReadonlySet<string>,
-  keyOf: (item: T) => string,
+  keyOf: (item: T) => string
 ) {
   return visibleItems.filter((item) => selectedKeys.has(keyOf(item)))
 }
@@ -28,16 +28,13 @@ export function getBookSourceGroups(sources: Pick<BookSource, 'bookSourceGroup'>
   return Array.from(groups).sort()
 }
 
-export function filterBookSources(
-  sources: BookSource[],
-  filterText: string,
-  filterGroup: string,
-) {
+export function filterBookSources(sources: BookSource[], filterText: string, filterGroup: string) {
   const keyword = filterText.trim().toLowerCase()
   return sources.filter((source) => {
-    const matchesText = !keyword
-      || source.bookSourceName.toLowerCase().includes(keyword)
-      || source.bookSourceUrl.toLowerCase().includes(keyword)
+    const matchesText =
+      !keyword ||
+      source.bookSourceName.toLowerCase().includes(keyword) ||
+      source.bookSourceUrl.toLowerCase().includes(keyword)
     // 分组过滤走拆分后的精确匹配（选项本就来自 getBookSourceGroups 的精确组名），
     // 避免子串匹配把「新发现」命中成「新」
     const matchesGroup =

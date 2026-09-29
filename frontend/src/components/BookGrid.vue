@@ -44,11 +44,7 @@
         />
       </div>
     </TransitionGroup>
-    <div
-      v-if="touchDragState.started && draggedBook"
-      class="touch-drag-ghost"
-      :style="ghostStyle"
-    >
+    <div v-if="touchDragState.started && draggedBook" class="touch-drag-ghost" :style="ghostStyle">
       <BookCard
         :book="draggedBook"
         :edit-mode="editMode"
@@ -188,11 +184,12 @@ function handleDragEnd() {
 
 function setItemRef(el: Element | { $el?: Element } | null, bookUrl: string) {
   if (!bookUrl) return
-  const resolved = el instanceof HTMLElement
-    ? el
-    : el && '$el' in el && el.$el instanceof HTMLElement
-      ? el.$el
-      : null
+  const resolved =
+    el instanceof HTMLElement
+      ? el
+      : el && '$el' in el && el.$el instanceof HTMLElement
+        ? el.$el
+        : null
   if (resolved) {
     itemRefs.value[bookUrl] = resolved
   } else {
@@ -267,19 +264,19 @@ function resolveTouchDropIndex(clientX: number, clientY: number) {
     })
     .filter((entry): entry is { index: number; rect: DOMRect; bookUrl: string } => Boolean(entry))
 
-  const containing = entries.find(({ rect }) => (
-    clientX >= rect.left &&
-    clientX <= rect.right &&
-    clientY >= rect.top &&
-    clientY <= rect.bottom
-  ))
+  const containing = entries.find(
+    ({ rect }) =>
+      clientX >= rect.left && clientX <= rect.right && clientY >= rect.top && clientY <= rect.bottom
+  )
   if (containing) {
     const rect = containing.rect
     const beforeByAxis = clientX < rect.left + rect.width * 0.56
     return beforeByAxis ? containing.index : containing.index + 1
   }
 
-  const sortedByTop = entries.slice().sort((a, b) => a.rect.top - b.rect.top || a.rect.left - b.rect.left)
+  const sortedByTop = entries
+    .slice()
+    .sort((a, b) => a.rect.top - b.rect.top || a.rect.left - b.rect.left)
   const rowGroups: Array<Array<{ index: number; rect: DOMRect; bookUrl: string }>> = []
   for (const entry of sortedByTop) {
     const lastRow = rowGroups[rowGroups.length - 1]
@@ -357,16 +354,14 @@ function handleTouchEnd() {
   const fromIndex = props.books.findIndex((item) => getBookUrl(item) === sourceUrl)
   const insertIndex = touchDropIndex.value
   const remainingBooks = getRemainingBooks()
-  const targetUrl = (
-    insertIndex !== -1 &&
-    remainingBooks.length > 0 &&
-    insertIndex !== fromIndex
-  )
-    ? (insertIndex > fromIndex
-      ? getBookUrl(remainingBooks[Math.min(insertIndex - 1, remainingBooks.length - 1)]!)
-      : getBookUrl(remainingBooks[Math.min(insertIndex, remainingBooks.length - 1)]!))
-    : ''
-  const shouldEmit = touchDragState.value.started && sourceUrl && targetUrl && sourceUrl !== targetUrl
+  const targetUrl =
+    insertIndex !== -1 && remainingBooks.length > 0 && insertIndex !== fromIndex
+      ? insertIndex > fromIndex
+        ? getBookUrl(remainingBooks[Math.min(insertIndex - 1, remainingBooks.length - 1)]!)
+        : getBookUrl(remainingBooks[Math.min(insertIndex, remainingBooks.length - 1)]!)
+      : ''
+  const shouldEmit =
+    touchDragState.value.started && sourceUrl && targetUrl && sourceUrl !== targetUrl
   handleTouchCancel()
   if (shouldEmit) {
     emit('reorder', { draggedUrl: sourceUrl, targetUrl })
@@ -458,7 +453,12 @@ const draggedBook = computed(() => {
 })
 
 const displayItems = computed<DisplayItem[]>(() => {
-  if (!(props.sortable && touchDragState.value.started && draggedUrl.value && touchDropIndex.value !== -1)) {
+  if (!(
+    props.sortable &&
+    touchDragState.value.started &&
+    draggedUrl.value &&
+    touchDropIndex.value !== -1
+  )) {
     return props.books
   }
   const remainingBooks = getRemainingBooks()
@@ -531,7 +531,11 @@ const ghostStyle = computed(() => {
   border-style: dashed;
   border-color: rgba(var(--color-primary-rgb), 0.7);
   background:
-    linear-gradient(135deg, rgba(var(--color-primary-rgb), 0.08), rgba(var(--color-primary-rgb), 0.02)),
+    linear-gradient(
+      135deg,
+      rgba(var(--color-primary-rgb), 0.08),
+      rgba(var(--color-primary-rgb), 0.02)
+    ),
     var(--color-surface);
   box-shadow:
     inset 0 0 0 2px rgba(var(--color-primary-rgb), 0.16),
@@ -592,7 +596,9 @@ const ghostStyle = computed(() => {
 }
 
 @keyframes spin {
-  to { transform: rotate(360deg); }
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 /* Card transition group */

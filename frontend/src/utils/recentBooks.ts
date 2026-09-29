@@ -38,7 +38,7 @@ function readLocal(): RecentReadBook[] {
     const parsed = JSON.parse(raw)
     if (!Array.isArray(parsed)) return []
     return parsed.filter(
-      (item): item is RecentReadBook => !!item?.bookUrl && !!item?.origin && !isRssEntry(item),
+      (item): item is RecentReadBook => !!item?.bookUrl && !!item?.origin && !isRssEntry(item)
     )
   } catch {
     return []
@@ -51,14 +51,14 @@ function writeLocal(list: RecentReadBook[]) {
 
 function sortByRecency(list: RecentReadBook[]) {
   return list.sort(
-    (a, b) => (b.recentReadAt || b.durChapterTime || 0) - (a.recentReadAt || a.durChapterTime || 0),
+    (a, b) => (b.recentReadAt || b.durChapterTime || 0) - (a.recentReadAt || a.durChapterTime || 0)
   )
 }
 
 /** 并集合并：同一本书取 recentReadAt 较新的一条，按时间降序，截断到上限 */
 export function mergeRecentLists(
   local: RecentReadBook[],
-  remote: RecentReadBook[],
+  remote: RecentReadBook[]
 ): RecentReadBook[] {
   const byKey = new Map<string, RecentReadBook>()
   const consider = (item: RecentReadBook) => {

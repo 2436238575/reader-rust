@@ -27,9 +27,11 @@ describe('aiBookChapterFilter', () => {
   })
 
   it('keeps prologue-like story chapters', () => {
-    expect(shouldSkipAiBookChapter({ index: 0, title: '序章' }, [
-      { index: 0, title: '序章' },
-      { index: 1, title: '第一章 风起' },
-    ])).toBe(false)
+    expect(
+      shouldSkipAiBookChapter({ index: 0, title: '序章' }, [
+        { index: 0, title: '序章' },
+        { index: 1, title: '第一章 风起' },
+      ])
+    ).toBe(false)
   })
 })

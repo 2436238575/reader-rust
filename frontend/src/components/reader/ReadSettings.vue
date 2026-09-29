@@ -19,7 +19,15 @@
             :style="{ background: t.body }"
             @click="store.setThemeIndex(i)"
           >
-            <svg v-if="store.themeIndex === i && !store.isNight" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M20 6 9 17l-5-5" /></svg>
+            <svg
+              v-if="store.themeIndex === i && !store.isNight"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="3"
+            >
+              <path d="M20 6 9 17l-5-5" />
+            </svg>
           </button>
         </div>
       </div>
@@ -34,7 +42,9 @@
             class="opt-btn"
             :class="{ active: config.fontFamily === f.value }"
             @click="store.updateConfig('fontFamily', f.value)"
-          >{{ f.label }}</button>
+          >
+            {{ f.label }}
+          </button>
         </div>
       </div>
 
@@ -42,8 +52,20 @@
       <div class="setting-row">
         <label>简繁转换</label>
         <div class="btn-group">
-          <button class="opt-btn" :class="{ active: config.chineseMode === 'simplified' }" @click="store.updateConfig('chineseMode', 'simplified')">简体</button>
-          <button class="opt-btn" :class="{ active: config.chineseMode === 'traditional' }" @click="store.updateConfig('chineseMode', 'traditional')">繁体</button>
+          <button
+            class="opt-btn"
+            :class="{ active: config.chineseMode === 'simplified' }"
+            @click="store.updateConfig('chineseMode', 'simplified')"
+          >
+            简体
+          </button>
+          <button
+            class="opt-btn"
+            :class="{ active: config.chineseMode === 'traditional' }"
+            @click="store.updateConfig('chineseMode', 'traditional')"
+          >
+            繁体
+          </button>
         </div>
       </div>
 
@@ -52,8 +74,20 @@
       <div class="setting-row">
         <label>&#x9884;&#x52A0;&#x8F7D;</label>
         <div class="btn-group">
-          <button class="opt-btn" :class="{ active: config.enablePreload }" @click="store.updateConfig('enablePreload', true)">&#x5F00;&#x542F;</button>
-          <button class="opt-btn" :class="{ active: !config.enablePreload }" @click="store.updateConfig('enablePreload', false)">&#x5173;&#x95ED;</button>
+          <button
+            class="opt-btn"
+            :class="{ active: config.enablePreload }"
+            @click="store.updateConfig('enablePreload', true)"
+          >
+            &#x5F00;&#x542F;
+          </button>
+          <button
+            class="opt-btn"
+            :class="{ active: !config.enablePreload }"
+            @click="store.updateConfig('enablePreload', false)"
+          >
+            &#x5173;&#x95ED;
+          </button>
         </div>
       </div>
       <!-- 字体大小 -->
@@ -99,8 +133,20 @@
       <div class="setting-row">
         <label>首行缩进</label>
         <div class="btn-group">
-          <button class="opt-btn" :class="{ active: config.firstLineIndent }" @click="store.updateConfig('firstLineIndent', true)">开启</button>
-          <button class="opt-btn" :class="{ active: !config.firstLineIndent }" @click="store.updateConfig('firstLineIndent', false)">关闭</button>
+          <button
+            class="opt-btn"
+            :class="{ active: config.firstLineIndent }"
+            @click="store.updateConfig('firstLineIndent', true)"
+          >
+            开启
+          </button>
+          <button
+            class="opt-btn"
+            :class="{ active: !config.firstLineIndent }"
+            @click="store.updateConfig('firstLineIndent', false)"
+          >
+            关闭
+          </button>
         </div>
       </div>
 
@@ -108,8 +154,20 @@
       <div class="setting-row">
         <label>章节配图</label>
         <div class="btn-group">
-          <button class="opt-btn" :class="{ active: config.showChapterImages }" @click="store.updateConfig('showChapterImages', true)">显示</button>
-          <button class="opt-btn" :class="{ active: !config.showChapterImages }" @click="store.updateConfig('showChapterImages', false)">隐藏</button>
+          <button
+            class="opt-btn"
+            :class="{ active: config.showChapterImages }"
+            @click="store.updateConfig('showChapterImages', true)"
+          >
+            显示
+          </button>
+          <button
+            class="opt-btn"
+            :class="{ active: !config.showChapterImages }"
+            @click="store.updateConfig('showChapterImages', false)"
+          >
+            隐藏
+          </button>
         </div>
       </div>
 
@@ -117,8 +175,20 @@
       <div class="setting-row">
         <label>页面模式</label>
         <div class="btn-group">
-          <button class="opt-btn" :class="{ active: config.pageMode === 'auto' }" @click="store.updateConfig('pageMode', 'auto')">自适应</button>
-          <button class="opt-btn" :class="{ active: config.pageMode === 'mobile' }" @click="store.updateConfig('pageMode', 'mobile')">手机模式</button>
+          <button
+            class="opt-btn"
+            :class="{ active: config.pageMode === 'auto' }"
+            @click="store.updateConfig('pageMode', 'auto')"
+          >
+            自适应
+          </button>
+          <button
+            class="opt-btn"
+            :class="{ active: config.pageMode === 'mobile' }"
+            @click="store.updateConfig('pageMode', 'mobile')"
+          >
+            手机模式
+          </button>
         </div>
       </div>
 
@@ -138,10 +208,34 @@
       <div class="setting-row">
         <label>翻页方式</label>
         <div class="btn-group">
-          <button class="opt-btn" :class="{ active: config.readMethod === '上下滑动' }" @click="store.updateConfig('readMethod', '上下滑动')">上下滑动</button>
-          <button class="opt-btn" :class="{ active: config.readMethod === '左右翻页' }" @click="store.updateConfig('readMethod', '左右翻页')">左右翻页</button>
-          <button class="opt-btn" :class="{ active: config.readMethod === '上下滚动' }" @click="store.updateConfig('readMethod', '上下滚动')">上下滚动</button>
-          <button class="opt-btn" :class="{ active: config.readMethod === '上下滚动2' }" @click="store.updateConfig('readMethod', '上下滚动2')">上下滚动2</button>
+          <button
+            class="opt-btn"
+            :class="{ active: config.readMethod === '上下滑动' }"
+            @click="store.updateConfig('readMethod', '上下滑动')"
+          >
+            上下滑动
+          </button>
+          <button
+            class="opt-btn"
+            :class="{ active: config.readMethod === '左右翻页' }"
+            @click="store.updateConfig('readMethod', '左右翻页')"
+          >
+            左右翻页
+          </button>
+          <button
+            class="opt-btn"
+            :class="{ active: config.readMethod === '上下滚动' }"
+            @click="store.updateConfig('readMethod', '上下滚动')"
+          >
+            上下滚动
+          </button>
+          <button
+            class="opt-btn"
+            :class="{ active: config.readMethod === '上下滚动2' }"
+            @click="store.updateConfig('readMethod', '上下滚动2')"
+          >
+            上下滚动2
+          </button>
         </div>
       </div>
 
@@ -158,8 +252,8 @@
       <!-- 自动阅读 -->
       <div class="setting-row">
         <label>自动阅读</label>
-        <button 
-          class="opt-btn wide" 
+        <button
+          class="opt-btn wide"
           :class="{ active: store.isAutoScrolling }"
           @click="store.isAutoScrolling = !store.isAutoScrolling"
         >
@@ -171,8 +265,20 @@
       <div class="setting-row">
         <label>滚动方式</label>
         <div class="btn-group">
-          <button class="opt-btn" :class="{ active: config.autoPageMode === 'pixel' }" @click="store.updateConfig('autoPageMode', 'pixel')">像素滚动</button>
-          <button class="opt-btn" :class="{ active: config.autoPageMode === 'paragraph' }" @click="store.updateConfig('autoPageMode', 'paragraph')">段落滚动</button>
+          <button
+            class="opt-btn"
+            :class="{ active: config.autoPageMode === 'pixel' }"
+            @click="store.updateConfig('autoPageMode', 'pixel')"
+          >
+            像素滚动
+          </button>
+          <button
+            class="opt-btn"
+            :class="{ active: config.autoPageMode === 'paragraph' }"
+            @click="store.updateConfig('autoPageMode', 'paragraph')"
+          >
+            段落滚动
+          </button>
         </div>
       </div>
 
@@ -200,9 +306,27 @@
       <div class="setting-row">
         <label>点击翻页</label>
         <div class="btn-group">
-          <button class="opt-btn" :class="{ active: config.clickAction === 'auto' }" @click="store.updateConfig('clickAction', 'auto')">自动翻页</button>
-          <button class="opt-btn" :class="{ active: config.clickAction === 'next' }" @click="store.updateConfig('clickAction', 'next')">仅下滚</button>
-          <button class="opt-btn" :class="{ active: config.clickAction === 'none' }" @click="store.updateConfig('clickAction', 'none')">禁用</button>
+          <button
+            class="opt-btn"
+            :class="{ active: config.clickAction === 'auto' }"
+            @click="store.updateConfig('clickAction', 'auto')"
+          >
+            自动翻页
+          </button>
+          <button
+            class="opt-btn"
+            :class="{ active: config.clickAction === 'next' }"
+            @click="store.updateConfig('clickAction', 'next')"
+          >
+            仅下滚
+          </button>
+          <button
+            class="opt-btn"
+            :class="{ active: config.clickAction === 'none' }"
+            @click="store.updateConfig('clickAction', 'none')"
+          >
+            禁用
+          </button>
         </div>
       </div>
 
@@ -210,9 +334,27 @@
       <div class="setting-row">
         <label>选择文字</label>
         <div class="btn-group">
-          <button class="opt-btn" :class="{ active: config.selectAction === 'popup' }" @click="store.updateConfig('selectAction', 'popup')">操作弹窗</button>
-          <button class="opt-btn" :class="{ active: config.selectAction === 'contextmenu' }" @click="store.updateConfig('selectAction', 'contextmenu')">右键菜单</button>
-          <button class="opt-btn" :class="{ active: config.selectAction === 'ignore' }" @click="store.updateConfig('selectAction', 'ignore')">忽略</button>
+          <button
+            class="opt-btn"
+            :class="{ active: config.selectAction === 'popup' }"
+            @click="store.updateConfig('selectAction', 'popup')"
+          >
+            操作弹窗
+          </button>
+          <button
+            class="opt-btn"
+            :class="{ active: config.selectAction === 'contextmenu' }"
+            @click="store.updateConfig('selectAction', 'contextmenu')"
+          >
+            右键菜单
+          </button>
+          <button
+            class="opt-btn"
+            :class="{ active: config.selectAction === 'ignore' }"
+            @click="store.updateConfig('selectAction', 'ignore')"
+          >
+            忽略
+          </button>
         </div>
       </div>
 
@@ -222,14 +364,30 @@
       <div class="setting-row">
         <label>朗读引擎</label>
         <div class="btn-group">
-          <button class="opt-btn" :class="{ active: store.speechConfig.provider === 'system' }" @click="store.setSpeechProvider('system')">系统语音</button>
-          <button class="opt-btn" :class="{ active: store.speechConfig.provider === 'openai' }" @click="store.setSpeechProvider('openai')">OpenAI Speech</button>
+          <button
+            class="opt-btn"
+            :class="{ active: store.speechConfig.provider === 'system' }"
+            @click="store.setSpeechProvider('system')"
+          >
+            系统语音
+          </button>
+          <button
+            class="opt-btn"
+            :class="{ active: store.speechConfig.provider === 'openai' }"
+            @click="store.setSpeechProvider('openai')"
+          >
+            OpenAI Speech
+          </button>
         </div>
       </div>
 
       <div v-if="store.speechConfig.provider === 'system'" class="setting-row setting-row-top">
         <label>朗读音源</label>
-        <select class="voice-select" :value="store.speechConfig.voiceName" @change="handleVoiceChange">
+        <select
+          class="voice-select"
+          :value="store.speechConfig.voiceName"
+          @change="handleVoiceChange"
+        >
           <option value="">系统默认</option>
           <option v-for="voice in store.voiceList" :key="voice.name" :value="voice.name">
             {{ voice.name }} ({{ voice.lang }})
@@ -260,70 +418,76 @@
         </div>
 
         <template v-if="store.speechConfig.openaiSource === 'browser'">
-        <div class="setting-row setting-row-top">
-          <label>服务地址</label>
-          <input
-            class="voice-select"
-            type="url"
-            :value="store.speechConfig.openaiBaseUrl"
-            placeholder="http://localhost:8825"
-            @input="store.setOpenAISpeechBaseUrl(($event.target as HTMLInputElement).value)"
-          >
-        </div>
+          <div class="setting-row setting-row-top">
+            <label>服务地址</label>
+            <input
+              class="voice-select"
+              type="url"
+              :value="store.speechConfig.openaiBaseUrl"
+              placeholder="http://localhost:8825"
+              @input="store.setOpenAISpeechBaseUrl(($event.target as HTMLInputElement).value)"
+            />
+          </div>
 
-        <div class="setting-row setting-row-top">
-          <label>API Key</label>
-          <input
-            class="voice-select"
-            type="password"
-            :value="store.speechConfig.openaiApiKey"
-            placeholder="sk-..."
-            autocomplete="off"
-            @input="store.setOpenAISpeechApiKey(($event.target as HTMLInputElement).value)"
-          >
-        </div>
+          <div class="setting-row setting-row-top">
+            <label>API Key</label>
+            <input
+              class="voice-select"
+              type="password"
+              :value="store.speechConfig.openaiApiKey"
+              placeholder="sk-..."
+              autocomplete="off"
+              @input="store.setOpenAISpeechApiKey(($event.target as HTMLInputElement).value)"
+            />
+          </div>
 
-        <div class="setting-row setting-row-top">
-          <label>语音模型</label>
-          <input
-            class="voice-select"
-            type="text"
-            :value="store.speechConfig.openaiModel"
-            placeholder="gpt-4o-mini-tts"
-            @input="store.setOpenAISpeechModel(($event.target as HTMLInputElement).value)"
-          >
-        </div>
+          <div class="setting-row setting-row-top">
+            <label>语音模型</label>
+            <input
+              class="voice-select"
+              type="text"
+              :value="store.speechConfig.openaiModel"
+              placeholder="gpt-4o-mini-tts"
+              @input="store.setOpenAISpeechModel(($event.target as HTMLInputElement).value)"
+            />
+          </div>
 
-        <div class="setting-row setting-row-top">
-          <label>语音音色</label>
-          <input
-            class="voice-select"
-            type="text"
-            :value="store.speechConfig.openaiVoice"
-            placeholder="alloy"
-            @input="store.setOpenAISpeechVoice(($event.target as HTMLInputElement).value)"
-          >
-        </div>
+          <div class="setting-row setting-row-top">
+            <label>语音音色</label>
+            <input
+              class="voice-select"
+              type="text"
+              :value="store.speechConfig.openaiVoice"
+              placeholder="alloy"
+              @input="store.setOpenAISpeechVoice(($event.target as HTMLInputElement).value)"
+            />
+          </div>
 
-        <div class="setting-row setting-row-top">
-          <label>音频格式</label>
-          <select
-            class="voice-select"
-            :value="store.speechConfig.openaiFormat"
-            @change="store.setOpenAISpeechFormat(($event.target as HTMLSelectElement).value as 'mp3' | 'wav' | 'opus' | 'flac' | 'pcm')"
-          >
-            <option value="mp3">mp3</option>
-            <option value="wav">wav</option>
-            <option value="opus">opus</option>
-            <option value="flac">flac</option>
-            <option value="pcm">pcm</option>
-          </select>
-        </div>
+          <div class="setting-row setting-row-top">
+            <label>音频格式</label>
+            <select
+              class="voice-select"
+              :value="store.speechConfig.openaiFormat"
+              @change="
+                store.setOpenAISpeechFormat(
+                  ($event.target as HTMLSelectElement).value as
+                    'mp3' | 'wav' | 'opus' | 'flac' | 'pcm'
+                )
+              "
+            >
+              <option value="mp3">mp3</option>
+              <option value="wav">wav</option>
+              <option value="opus">opus</option>
+              <option value="flac">flac</option>
+              <option value="pcm">pcm</option>
+            </select>
+          </div>
         </template>
 
         <div v-else class="server-speech-note">
           <template v-if="canUseServerModel">
-            使用后端配置的 OpenAI Speech 模型、音色和音频格式。请求通过后端代理转发，浏览器不会保存后端 API Key。
+            使用后端配置的 OpenAI Speech
+            模型、音色和音频格式。请求通过后端代理转发，浏览器不会保存后端 API Key。
           </template>
           <template v-else>
             后端模型配置暂不可用（未登录或服务端未启用），或切回自己配置。
@@ -352,7 +516,9 @@
 
         <div class="setting-hint">
           少字多请求会按短句细分并预加载更多片段；多字少请求会合并较短段落，只预加载下一段。
-          <template v-if="store.speechConfig.openaiSource === 'browser'">URL 和 Key 仅保存在当前浏览器。</template>
+          <template v-if="store.speechConfig.openaiSource === 'browser'"
+            >URL 和 Key 仅保存在当前浏览器。</template
+          >
           <template v-else>后端配置由管理员维护，权限不足时朗读请求会失败。</template>
         </div>
       </template>
@@ -378,11 +544,41 @@
       <div class="setting-row setting-row-top">
         <label>定时停止</label>
         <div class="btn-group">
-          <button class="opt-btn" :class="{ active: store.speechConfig.stopAfterMinutes === 0 }" @click="store.setSpeechStopTimer(0)">关闭</button>
-          <button class="opt-btn" :class="{ active: store.speechConfig.stopAfterMinutes === 15 }" @click="store.setSpeechStopTimer(15)">15分钟</button>
-          <button class="opt-btn" :class="{ active: store.speechConfig.stopAfterMinutes === 30 }" @click="store.setSpeechStopTimer(30)">30分钟</button>
-          <button class="opt-btn" :class="{ active: store.speechConfig.stopAfterMinutes === 60 }" @click="store.setSpeechStopTimer(60)">60分钟</button>
-          <button class="opt-btn" :class="{ active: store.speechConfig.stopAfterMinutes === 120 }" @click="store.setSpeechStopTimer(120)">120分钟</button>
+          <button
+            class="opt-btn"
+            :class="{ active: store.speechConfig.stopAfterMinutes === 0 }"
+            @click="store.setSpeechStopTimer(0)"
+          >
+            关闭
+          </button>
+          <button
+            class="opt-btn"
+            :class="{ active: store.speechConfig.stopAfterMinutes === 15 }"
+            @click="store.setSpeechStopTimer(15)"
+          >
+            15分钟
+          </button>
+          <button
+            class="opt-btn"
+            :class="{ active: store.speechConfig.stopAfterMinutes === 30 }"
+            @click="store.setSpeechStopTimer(30)"
+          >
+            30分钟
+          </button>
+          <button
+            class="opt-btn"
+            :class="{ active: store.speechConfig.stopAfterMinutes === 60 }"
+            @click="store.setSpeechStopTimer(60)"
+          >
+            60分钟
+          </button>
+          <button
+            class="opt-btn"
+            :class="{ active: store.speechConfig.stopAfterMinutes === 120 }"
+            @click="store.setSpeechStopTimer(120)"
+          >
+            120分钟
+          </button>
         </div>
       </div>
 
@@ -391,12 +587,16 @@
       <!-- 更多操作 -->
       <div class="setting-row">
         <label>离线缓存</label>
-        <button class="opt-btn wide" @click="store.openPanel('cache', 'settings')">批量缓存章节</button>
+        <button class="opt-btn wide" @click="store.openPanel('cache', 'settings')">
+          批量缓存章节
+        </button>
       </div>
 
       <div class="setting-row">
         <label>内容净化</label>
-        <button class="opt-btn wide" @click="store.openPanel('rule', 'settings')">管理净化规则</button>
+        <button class="opt-btn wide" @click="store.openPanel('rule', 'settings')">
+          管理净化规则
+        </button>
       </div>
     </div>
   </div>
@@ -416,23 +616,42 @@ const theme = computed(() => store.currentTheme)
 const serverModelLoaded = ref(false)
 const canUseServerModel = computed(() => Boolean(aiBookStore.serverModelConfig?.canUseServerModel))
 
-function step(key: 'fontSize' | 'fontWeight' | 'pageWidth' | 'animateDuration' | 'scrollPixel' | 'pageSpeed', delta: number, min: number, max: number) {
+function step(
+  key: 'fontSize' | 'fontWeight' | 'pageWidth' | 'animateDuration' | 'scrollPixel' | 'pageSpeed',
+  delta: number,
+  min: number,
+  max: number
+) {
   const val = Math.max(min, Math.min(max, (config.value[key] as number) + delta))
   store.updateConfig(key, val)
 }
 
-function stepFloat(key: 'lineHeight' | 'paragraphSpacing', delta: number, min: number, max: number) {
-  const val = Math.max(min, Math.min(max, parseFloat(((config.value[key] as number) + delta).toFixed(1))))
+function stepFloat(
+  key: 'lineHeight' | 'paragraphSpacing',
+  delta: number,
+  min: number,
+  max: number
+) {
+  const val = Math.max(
+    min,
+    Math.min(max, parseFloat(((config.value[key] as number) + delta).toFixed(1)))
+  )
   store.updateConfig(key, val)
 }
 
 function adjustSpeechRate(delta: number) {
-  const val = Math.max(0.5, Math.min(3, parseFloat((store.speechConfig.speechRate + delta).toFixed(1))))
+  const val = Math.max(
+    0.5,
+    Math.min(3, parseFloat((store.speechConfig.speechRate + delta).toFixed(1)))
+  )
   store.setSpeechRate(val)
 }
 
 function adjustSpeechPitch(delta: number) {
-  const val = Math.max(0.5, Math.min(2, parseFloat((store.speechConfig.speechPitch + delta).toFixed(1))))
+  const val = Math.max(
+    0.5,
+    Math.min(2, parseFloat((store.speechConfig.speechPitch + delta).toFixed(1)))
+  )
   store.setSpeechPitch(val)
 }
 
@@ -474,7 +693,9 @@ onMounted(async () => {
   height: 100%;
   overflow-y: auto;
   padding: 24px;
-  transition: background 0.3s, color 0.3s;
+  transition:
+    background 0.3s,
+    color 0.3s;
   -webkit-overflow-scrolling: touch;
 }
 
@@ -591,7 +812,7 @@ onMounted(async () => {
   display: flex;
   align-items: center;
   justify-content: center;
-  box-shadow: 0 1px 3px rgba(0,0,0,0.12);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.12);
 }
 
 .swatch:hover {
@@ -620,7 +841,7 @@ onMounted(async () => {
   border-radius: 20px;
   font-size: var(--text-sm);
   font-weight: 500;
-  border: 1px solid rgba(0,0,0,0.12);
+  border: 1px solid rgba(0, 0, 0, 0.12);
   background: transparent;
   color: inherit;
   cursor: pointer;
@@ -648,7 +869,7 @@ onMounted(async () => {
   display: flex;
   align-items: center;
   border-radius: 20px;
-  border: 1px solid rgba(0,0,0,0.12);
+  border: 1px solid rgba(0, 0, 0, 0.12);
   overflow: hidden;
 }
 
@@ -665,11 +886,11 @@ onMounted(async () => {
 }
 
 .step-btn:hover {
-  background: rgba(0,0,0,0.06);
+  background: rgba(0, 0, 0, 0.06);
 }
 
 .step-btn:active {
-  background: rgba(0,0,0,0.1);
+  background: rgba(0, 0, 0, 0.1);
 }
 
 .step-val {
@@ -677,8 +898,8 @@ onMounted(async () => {
   text-align: center;
   font-size: var(--text-base);
   font-variant-numeric: tabular-nums;
-  border-left: 1px solid rgba(0,0,0,0.08);
-  border-right: 1px solid rgba(0,0,0,0.08);
+  border-left: 1px solid rgba(0, 0, 0, 0.08);
+  border-right: 1px solid rgba(0, 0, 0, 0.08);
   padding: 6px 0;
 }
 

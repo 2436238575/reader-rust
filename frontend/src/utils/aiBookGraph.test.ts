@@ -13,12 +13,8 @@ describe('aiBookGraph', () => {
         { name: '林舟', status: '受伤', location: '北境' },
         { name: '沈月', status: '失踪' },
       ],
-      relationships: [
-        { source: '林舟', target: '沈月', relation: '盟友' },
-      ],
-      locations: [
-        { name: '北境', description: '寒冷边地', relatedCharacters: ['林舟'] },
-      ],
+      relationships: [{ source: '林舟', target: '沈月', relation: '盟友' }],
+      locations: [{ name: '北境', description: '寒冷边地', relatedCharacters: ['林舟'] }],
     }
 
     const graph = buildAiBookRelationshipGraph(memory)
@@ -41,9 +37,7 @@ describe('aiBookGraph', () => {
         { name: '沈月', status: '失踪' },
         { name: '韩青', status: '旁观' },
       ],
-      relationships: [
-        { source: '林舟', target: '沈月', relation: '盟友' },
-      ],
+      relationships: [{ source: '林舟', target: '沈月', relation: '盟友' }],
       locations: [
         { name: '北境', description: '寒冷边地', relatedCharacters: ['林舟'] },
         { name: '帝都', description: '权力中心', relatedCharacters: ['韩青'] },
@@ -55,8 +49,12 @@ describe('aiBookGraph', () => {
     const north = layout.nodes.find((node) => node.id === '北境')!
     const lin = layout.nodes.find((node) => node.id === '林舟')!
     const han = layout.nodes.find((node) => node.id === '韩青')!
-    const locatedLink = layout.links.find((link) => link.source === '林舟' && link.target === '北境')!
-    const unrelatedLink = layout.links.find((link) => link.source === '韩青' && link.target === '帝都')!
+    const locatedLink = layout.links.find(
+      (link) => link.source === '林舟' && link.target === '北境'
+    )!
+    const unrelatedLink = layout.links.find(
+      (link) => link.source === '韩青' && link.target === '帝都'
+    )!
 
     expect(north.lane).toBe('left')
     expect(lin.lane).toBe('right')
@@ -81,11 +79,13 @@ describe('aiBookGraph', () => {
         status: '活跃',
       })),
       relationships: [],
-      locations: [{
-        name: '中心城',
-        description: '主舞台',
-        relatedCharacters: Array.from({ length: 14 }, (_, index) => `角色${index + 1}`),
-      }],
+      locations: [
+        {
+          name: '中心城',
+          description: '主舞台',
+          relatedCharacters: Array.from({ length: 14 }, (_, index) => `角色${index + 1}`),
+        },
+      ],
     }
 
     const layout = layoutAiBookRelationshipGraph(buildAiBookRelationshipGraph(memory), '角色1')

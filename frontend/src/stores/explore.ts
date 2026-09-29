@@ -14,7 +14,7 @@ export const useExploreStore = defineStore('explore', () => {
 
   const activeSourceUrl = ref<string>('')
   const activeCategoryUrl = ref<string>('')
-  
+
   const books = ref<SearchBook[]>([])
   const loading = ref(false)
   const page = ref(1)
@@ -45,7 +45,9 @@ export const useExploreStore = defineStore('explore', () => {
       return
     }
 
-    const activeSourceStillValid = exploreSources.value.some((source) => source.bookSourceUrl === activeSourceUrl.value)
+    const activeSourceStillValid = exploreSources.value.some(
+      (source) => source.bookSourceUrl === activeSourceUrl.value
+    )
     if (!activeSourceUrl.value || !activeSourceStillValid) {
       setSource(exploreSources.value[0].bookSourceUrl)
       return
@@ -73,7 +75,9 @@ export const useExploreStore = defineStore('explore', () => {
       return
     }
 
-    const activeCategoryStillValid = categories.value.some((category) => category.url === activeCategoryUrl.value)
+    const activeCategoryStillValid = categories.value.some(
+      (category) => category.url === activeCategoryUrl.value
+    )
     if (sourceChanged || !activeCategoryStillValid) {
       setCategory(firstCategoryUrl)
     }
@@ -102,7 +106,13 @@ export const useExploreStore = defineStore('explore', () => {
   let fetchSeq = 0
 
   async function fetchMore(force = false) {
-    if ((!force && loading.value) || !hasMore.value || !activeSourceUrl.value || !activeCategoryUrl.value) return
+    if (
+      (!force && loading.value) ||
+      !hasMore.value ||
+      !activeSourceUrl.value ||
+      !activeCategoryUrl.value
+    )
+      return
 
     const seq = ++fetchSeq
     const sourceUrl = activeSourceUrl.value

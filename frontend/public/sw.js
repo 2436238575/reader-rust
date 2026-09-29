@@ -16,17 +16,25 @@ const SHELL_ASSETS = [
 
 self.addEventListener('install', (event) => {
   event.waitUntil(
-    caches.open(SHELL_CACHE)
+    caches
+      .open(SHELL_CACHE)
       .then((cache) => cache.addAll(SHELL_ASSETS))
-      .then(() => self.skipWaiting()),
+      .then(() => self.skipWaiting())
   )
 })
 
 self.addEventListener('activate', (event) => {
   event.waitUntil(
-    caches.keys().then((keys) =>
-      Promise.all(keys.filter((key) => key !== SHELL_CACHE && key !== RUNTIME_CACHE).map((key) => caches.delete(key))),
-    ).then(() => self.clients.claim()),
+    caches
+      .keys()
+      .then((keys) =>
+        Promise.all(
+          keys
+            .filter((key) => key !== SHELL_CACHE && key !== RUNTIME_CACHE)
+            .map((key) => caches.delete(key))
+        )
+      )
+      .then(() => self.clients.claim())
   )
 })
 
@@ -51,21 +59,22 @@ self.addEventListener('fetch', (event) => {
           caches.open(RUNTIME_CACHE).then((cache) => cache.put(request, copy))
           return response
         })
-        .catch(async () =>
-          (await caches.match(request))
-          || caches.match(`${BASE}offline.html`)
-          || caches.match(`${BASE}index.html`),
-        ),
+        .catch(
+          async () =>
+            (await caches.match(request)) ||
+            caches.match(`${BASE}offline.html`) ||
+            caches.match(`${BASE}index.html`)
+        )
     )
     return
   }
 
   if (
-    url.pathname.startsWith(`${BASE}assets/`)
-    || url.pathname.startsWith(`${BASE}icons/`)
+    url.pathname.startsWith(`${BASE}assets/`) ||
+    url.pathname.startsWith(`${BASE}icons/`) ||
     // 字体分片文件名带内容 hash（MiSansVF.<hash>.<n>.woff2），可以安全 cache-first
-    || url.pathname.startsWith(`${BASE}fonts/`)
-    || /\.(png|svg|css|js|ico)$/.test(url.pathname)
+    url.pathname.startsWith(`${BASE}fonts/`) ||
+    /\.(png|svg|css|js|ico)$/.test(url.pathname)
   ) {
     event.respondWith(
       caches.match(request).then((cached) => {
@@ -75,7 +84,7 @@ self.addEventListener('fetch', (event) => {
           caches.open(RUNTIME_CACHE).then((cache) => cache.put(request, copy))
           return response
         })
-      }),
+      })
     )
   }
 })

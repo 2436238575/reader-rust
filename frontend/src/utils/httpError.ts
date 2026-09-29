@@ -4,11 +4,10 @@ export interface HttpErrorSummaryOptions {
   maxLength?: number
 }
 
-export function summarizeHttpErrorBody(raw: string, {
-  fallback,
-  status,
-  maxLength = 260,
-}: HttpErrorSummaryOptions) {
+export function summarizeHttpErrorBody(
+  raw: string,
+  { fallback, status, maxLength = 260 }: HttpErrorSummaryOptions
+) {
   const statusText = status ? ` (${status})` : ''
   const trimmed = raw.trim()
   if (!trimmed) return `${fallback}${statusText}`
@@ -48,9 +47,11 @@ export function collapseWhitespace(value: string) {
 }
 
 function looksLikeHtml(value: string) {
-  return /^\s*<(?:!doctype\s+html|html|head|body|div|span|p|h1)\b/i.test(value)
-    || /<html[\s>]/i.test(value)
-    || /<\/(?:html|body|head)>/i.test(value)
+  return (
+    /^\s*<(?:!doctype\s+html|html|head|body|div|span|p|h1)\b/i.test(value) ||
+    /<html[\s>]/i.test(value) ||
+    /<\/(?:html|body|head)>/i.test(value)
+  )
 }
 
 function extractHtmlTitle(value: string) {
@@ -59,8 +60,8 @@ function extractHtmlTitle(value: string) {
 }
 
 function extractHtmlErrorCode(value: string) {
-  const match = value.match(/(?:Error code|errorcode[_-])\s*(\d{3})/i)
-    || value.match(/\b([45]\d{2})\b/)
+  const match =
+    value.match(/(?:Error code|errorcode[_-])\s*(\d{3})/i) || value.match(/\b([45]\d{2})\b/)
   return match?.[1] || ''
 }
 

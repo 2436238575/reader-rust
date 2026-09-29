@@ -45,9 +45,7 @@ export function getCacheStats() {
 
 /** 清理当前用户某一层缓存 */
 export function purgeCacheByKind(kind: ServerCacheKind) {
-  return http
-    .post<CachePurgeResult>('/purgeCache', { scope: 'kind', kind })
-    .then((r) => r.data)
+  return http.post<CachePurgeResult>('/purgeCache', { scope: 'kind', kind }).then((r) => r.data)
 }
 
 /** 清理当前用户的全部缓存 */

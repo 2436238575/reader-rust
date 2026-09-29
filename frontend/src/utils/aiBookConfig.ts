@@ -44,12 +44,20 @@ export function getAiBookConfig(username?: string | null): AiBookConfig {
     return {
       ...DEFAULT_AI_BOOK_CONFIG,
       modelSource: parsed.modelSource === 'server' ? 'server' : 'browser',
-      textBaseUrl: normalizeBaseUrl(parsed.textBaseUrl || legacyBaseUrl || DEFAULT_AI_BOOK_CONFIG.textBaseUrl),
+      textBaseUrl: normalizeBaseUrl(
+        parsed.textBaseUrl || legacyBaseUrl || DEFAULT_AI_BOOK_CONFIG.textBaseUrl
+      ),
       textApiKey: (parsed.textApiKey || legacyApiKey || DEFAULT_AI_BOOK_CONFIG.textApiKey).trim(),
       textModel: (parsed.textModel || DEFAULT_AI_BOOK_CONFIG.textModel).trim(),
       textUseFullUrl: Boolean(parsed.textUseFullUrl),
-      imageBaseUrl: normalizeBaseUrl(parsed.imageBaseUrl || legacyBaseUrl || DEFAULT_AI_BOOK_CONFIG.imageBaseUrl),
-      imageApiKey: (parsed.imageApiKey || legacyApiKey || DEFAULT_AI_BOOK_CONFIG.imageApiKey).trim(),
+      imageBaseUrl: normalizeBaseUrl(
+        parsed.imageBaseUrl || legacyBaseUrl || DEFAULT_AI_BOOK_CONFIG.imageBaseUrl
+      ),
+      imageApiKey: (
+        parsed.imageApiKey ||
+        legacyApiKey ||
+        DEFAULT_AI_BOOK_CONFIG.imageApiKey
+      ).trim(),
       imageModel: (parsed.imageModel || DEFAULT_AI_BOOK_CONFIG.imageModel).trim(),
       imageSize: (parsed.imageSize || DEFAULT_AI_BOOK_CONFIG.imageSize).trim(),
       imageUseFullUrl: Boolean(parsed.imageUseFullUrl),

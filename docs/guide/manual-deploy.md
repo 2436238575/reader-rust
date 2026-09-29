@@ -50,12 +50,12 @@ cp -r frontend/dist/. /opt/reader/web/dist/
 
 目录规划：
 
-| 路径 | 内容 |
-|------|------|
-| `/opt/reader/reader-rust` | 可执行文件 |
-| `/opt/reader/web/dist/` | 前端静态文件 |
-| `/opt/reader/storage/` | 运行期数据（数据库、章节缓存） |
-| `/opt/reader/storage/assets/` | 上传资源与本地书籍 |
+| 路径                          | 内容                           |
+| ----------------------------- | ------------------------------ |
+| `/opt/reader/reader-rust`     | 可执行文件                     |
+| `/opt/reader/web/dist/`       | 前端静态文件                   |
+| `/opt/reader/storage/`        | 运行期数据（数据库、章节缓存） |
+| `/opt/reader/storage/assets/` | 上传资源与本地书籍             |
 
 ## 4. 创建 `.env`
 

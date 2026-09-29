@@ -22,17 +22,17 @@
 
 ## 字段说明
 
-| 字段 | 必需 | 说明 |
-|------|------|------|
-| `content` | 是 | 正文规则，支持 CSS / JSONPath / XPath / JS |
-| `nextContentUrl` | 否 | 下一页正文链接，当前支持 CSS / JSONPath / XPath 直接取值 |
-| `title` | 否 | 当前模型字段存在，但正文主流程不会单独消费 |
-| `webJs` | 否 | 在 `content` 之前，对整页响应体做 JS 预处理 |
-| `sourceRegex` | 否 | 在 `content` 之前，对整页响应体做正则替换 |
-| `replaceRegex` | 否 | 在 `content` 之后，对提取结果做正则替换 |
-| `imageStyle` | 否 | 当前仅保留字段，正文主流程未执行 |
-| `imageDecode` | 否 | 当前仅保留字段，正文主流程未执行 |
-| `payAction` | 否 | 当前仅保留字段，正文主流程未执行 |
+| 字段             | 必需 | 说明                                                     |
+| ---------------- | ---- | -------------------------------------------------------- |
+| `content`        | 是   | 正文规则，支持 CSS / JSONPath / XPath / JS               |
+| `nextContentUrl` | 否   | 下一页正文链接，当前支持 CSS / JSONPath / XPath 直接取值 |
+| `title`          | 否   | 当前模型字段存在，但正文主流程不会单独消费               |
+| `webJs`          | 否   | 在 `content` 之前，对整页响应体做 JS 预处理              |
+| `sourceRegex`    | 否   | 在 `content` 之前，对整页响应体做正则替换                |
+| `replaceRegex`   | 否   | 在 `content` 之后，对提取结果做正则替换                  |
+| `imageStyle`     | 否   | 当前仅保留字段，正文主流程未执行                         |
+| `imageDecode`    | 否   | 当前仅保留字段，正文主流程未执行                         |
+| `payAction`      | 否   | 当前仅保留字段，正文主流程未执行                         |
 
 ## 执行顺序
 

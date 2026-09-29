@@ -77,40 +77,46 @@ export function registerPwa(appStore: AppStore) {
   }
 
   window.addEventListener('load', () => {
-    navigator.serviceWorker.register(`${import.meta.env.BASE_URL}sw.js`).then((registration) => {
-      appStore.setPwaReady(true)
+    navigator.serviceWorker
+      .register(`${import.meta.env.BASE_URL}sw.js`)
+      .then((registration) => {
+        appStore.setPwaReady(true)
 
-      if (registration.waiting) {
-        bindWaitingWorker(registration.waiting)
-      }
+        if (registration.waiting) {
+          bindWaitingWorker(registration.waiting)
+        }
 
-      void checkForUpdates(registration)
-
-      registration.addEventListener('updatefound', () => {
-        const installing = registration.installing
-        if (!installing) return
-        installing.addEventListener('statechange', () => {
-          if (installing.state === 'installed' && navigator.serviceWorker.controller) {
-            bindWaitingWorker(registration.waiting || installing)
-          }
-        })
-      })
-
-      let refreshing = false
-      navigator.serviceWorker.addEventListener('controllerchange', () => {
-        if (refreshing) return
-        refreshing = true
-        appStore.setPwaUpdateAvailable(false)
-        appStore.setWaitingServiceWorker(null)
-        window.location.reload()
-      })
-
-      window.setInterval(() => {
-        if (!navigator.onLine) return
         void checkForUpdates(registration)
-      }, 5 * 60 * 1000)
-    }).catch(() => {
-      appStore.setPwaReady(false)
-    })
+
+        registration.addEventListener('updatefound', () => {
+          const installing = registration.installing
+          if (!installing) return
+          installing.addEventListener('statechange', () => {
+            if (installing.state === 'installed' && navigator.serviceWorker.controller) {
+              bindWaitingWorker(registration.waiting || installing)
+            }
+          })
+        })
+
+        let refreshing = false
+        navigator.serviceWorker.addEventListener('controllerchange', () => {
+          if (refreshing) return
+          refreshing = true
+          appStore.setPwaUpdateAvailable(false)
+          appStore.setWaitingServiceWorker(null)
+          window.location.reload()
+        })
+
+        window.setInterval(
+          () => {
+            if (!navigator.onLine) return
+            void checkForUpdates(registration)
+          },
+          5 * 60 * 1000
+        )
+      })
+      .catch(() => {
+        appStore.setPwaReady(false)
+      })
   })
 }

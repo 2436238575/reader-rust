@@ -124,9 +124,10 @@ export const useAiBookStore = defineStore('aiBook', () => {
     chapterContent: string
     chapters?: BookChapter[]
   }) {
-    const current = memory.value?.bookUrl === params.book.bookUrl
-      ? memory.value
-      : await getAiBookMemory(params.book.bookUrl).catch(() => null)
+    const current =
+      memory.value?.bookUrl === params.book.bookUrl
+        ? memory.value
+        : await getAiBookMemory(params.book.bookUrl).catch(() => null)
     if (!current?.enabled) return null
 
     const currentConfig = refreshConfig()
@@ -145,8 +146,13 @@ export const useAiBookStore = defineStore('aiBook', () => {
     chapters?: BookChapter[]
   }) {
     const currentConfig = refreshConfig()
-    const current = params.current || (memory.value?.bookUrl === params.book.bookUrl ? memory.value : await load(params.book))
-    if (params.allowSkip && !shouldRunAiBookAutoUpdate(current, params.chapter.index, currentConfig)) {
+    const current =
+      params.current ||
+      (memory.value?.bookUrl === params.book.bookUrl ? memory.value : await load(params.book))
+    if (
+      params.allowSkip &&
+      !shouldRunAiBookAutoUpdate(current, params.chapter.index, currentConfig)
+    ) {
       return current
     }
 
@@ -220,9 +226,14 @@ export const useAiBookStore = defineStore('aiBook', () => {
     return memory.value
   }
 
-  async function redrawMap(book: Book, prompt?: string, sourceChapterIndex?: number, currentMemory?: AiBookMemory) {
+  async function redrawMap(
+    book: Book,
+    prompt?: string,
+    sourceChapterIndex?: number,
+    currentMemory?: AiBookMemory
+  ) {
     const currentConfig = refreshConfig()
-    const current = currentMemory || memory.value || await load(book)
+    const current = currentMemory || memory.value || (await load(book))
     const resolvedPrompt = prompt || current.map?.prompt || buildFallbackMapPrompt(current, book)
     phase.value = 'map'
     statusText.value = '生成世界地图...'
@@ -291,7 +302,10 @@ export const useAiBookStore = defineStore('aiBook', () => {
 
 function buildFallbackMapPrompt(memory: AiBookMemory, book: Book) {
   const locations = memory.locations
-    .map((item) => `${item.parentName ? `${item.parentName} > ` : ''}${item.name}${item.kind ? `（${item.kind}）` : ''}: ${item.description}`)
+    .map(
+      (item) =>
+        `${item.parentName ? `${item.parentName} > ` : ''}${item.name}${item.kind ? `（${item.kind}）` : ''}: ${item.description}`
+    )
     .join('\n')
   return [
     `为小说《${book.name}》绘制一张不剧透的世界地图。`,

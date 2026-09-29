@@ -56,7 +56,11 @@
               :selected-urls="selectedSourceUrls"
               :active-url="editingSource?.bookSourceUrl"
               :empty-title="sources.length ? '没有匹配的书源' : '暂无书源'"
-              :empty-description="sources.length ? '调整搜索关键词或分组筛选后再试' : '可以本地导入、远程同步或手动新增'"
+              :empty-description="
+                sources.length
+                  ? '调整搜索关键词或分组筛选后再试'
+                  : '可以本地导入、远程同步或手动新增'
+              "
               @edit="editSource"
               @toggle-enabled="toggleSource"
               @toggle-selection="toggleSourceSelection"
@@ -97,14 +101,23 @@
     />
 
     <Transition name="scale">
-      <div v-if="loginPreviewVisible" class="login-preview-container" @click.self="loginPreviewVisible = false">
+      <div
+        v-if="loginPreviewVisible"
+        class="login-preview-container"
+        @click.self="loginPreviewVisible = false"
+      >
         <div class="login-preview-modal">
           <div class="login-preview-header">
             <div>
               <h3>书源登录页</h3>
               <p>{{ loginPreviewUrl }}</p>
             </div>
-            <button class="icon-btn" type="button" @click="loginPreviewVisible = false" title="关闭">
+            <button
+              class="icon-btn"
+              type="button"
+              @click="loginPreviewVisible = false"
+              title="关闭"
+            >
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                 <path d="M18 6 6 18M6 6l12 12" />
               </svg>
@@ -211,19 +224,25 @@ const filteredSources = computed(() =>
 const sourceStats = computed(() => getBookSourceStats(sources.value, filteredSources.value))
 
 const selectedFilteredSources = computed(() =>
-  getVisibleSelection(filteredSources.value, selectedSourceUrls.value, (source) => source.bookSourceUrl)
+  getVisibleSelection(
+    filteredSources.value,
+    selectedSourceUrls.value,
+    (source) => source.bookSourceUrl
+  )
 )
 
 const invalidSources = computed(() =>
   sources.value.filter((source) => splitBookSourceGroups(source.bookSourceGroup).includes('失效'))
 )
 
-const allFilteredSelected = computed(() =>
-  filteredSources.value.length > 0 && selectedFilteredSources.value.length === filteredSources.value.length
+const allFilteredSelected = computed(
+  () =>
+    filteredSources.value.length > 0 &&
+    selectedFilteredSources.value.length === filteredSources.value.length
 )
 
-const partiallyFilteredSelected = computed(() =>
-  selectedFilteredSources.value.length > 0 && !allFilteredSelected.value
+const partiallyFilteredSelected = computed(
+  () => selectedFilteredSources.value.length > 0 && !allFilteredSelected.value
 )
 
 const canLoginSource = computed(() => {
@@ -316,12 +335,16 @@ async function removeSelectedSources() {
 }
 
 async function testSources() {
-  const targets = selectedFilteredSources.value.length ? selectedFilteredSources.value : sources.value
+  const targets = selectedFilteredSources.value.length
+    ? selectedFilteredSources.value
+    : sources.value
   if (!targets.length) {
     appStore.showToast('没有可测试的书源', 'warning')
     return
   }
-  const scopeText = selectedFilteredSources.value.length ? `选中的 ${targets.length}` : `全部 ${targets.length}`
+  const scopeText = selectedFilteredSources.value.length
+    ? `选中的 ${targets.length}`
+    : `全部 ${targets.length}`
   if (!confirm(`将测试${scopeText} 个书源。测试会请求外部站点，耗时可能较长，是否继续？`)) return
 
   testingSources.value = true
@@ -469,9 +492,10 @@ async function handleSourceLogin() {
     }
 
     const result = await loginBookSource(parsed.bookSourceUrl)
-    const check = typeof result.checkResult === 'string' && result.checkResult.trim()
-      ? `，校验结果：${result.checkResult}`
-      : ''
+    const check =
+      typeof result.checkResult === 'string' && result.checkResult.trim()
+        ? `，校验结果：${result.checkResult}`
+        : ''
     if (result.url?.trim()) {
       loginPreviewUrl.value = result.url
       loginPreviewFrameUrl.value = buildLoginProxyUrl(parsed.bookSourceUrl, result.url)
@@ -583,7 +607,9 @@ function touchSubscription(url: string) {
 }
 
 function exportSources() {
-  const blob = new Blob([JSON.stringify(sources.value, null, 2)], { type: 'application/json;charset=utf-8' })
+  const blob = new Blob([JSON.stringify(sources.value, null, 2)], {
+    type: 'application/json;charset=utf-8',
+  })
   const url = URL.createObjectURL(blob)
   const anchor = document.createElement('a')
   anchor.href = url
@@ -602,16 +628,20 @@ function close() {
   emit('update:modelValue', false)
 }
 
-watch(() => props.modelValue, (v) => {
-  if (v) {
-    // 每次打开都重拉：书源可能在别处变动过（阅读器内换源/订阅同步），
-    // 只在空列表时加载会让重开看到旧列表
-    loadSources()
-    if (!editingSource.value && !editorText.value.trim()) {
-      createSource()
+watch(
+  () => props.modelValue,
+  (v) => {
+    if (v) {
+      // 每次打开都重拉：书源可能在别处变动过（阅读器内换源/订阅同步），
+      // 只在空列表时加载会让重开看到旧列表
+      loadSources()
+      if (!editingSource.value && !editorText.value.trim()) {
+        createSource()
+      }
     }
-  }
-}, { immediate: true })
+  },
+  { immediate: true }
+)
 </script>
 
 <style scoped>
@@ -631,17 +661,20 @@ watch(() => props.modelValue, (v) => {
   display: flex;
   align-items: center;
   justify-content: center;
-  padding:
-    calc(var(--space-6) + var(--safe-area-top))
-    calc(var(--space-6) + var(--safe-area-right))
-    calc(var(--space-6) + var(--safe-area-bottom))
-    calc(var(--space-6) + var(--safe-area-left));
+  padding: calc(var(--space-6) + var(--safe-area-top)) calc(var(--space-6) + var(--safe-area-right))
+    calc(var(--space-6) + var(--safe-area-bottom)) calc(var(--space-6) + var(--safe-area-left));
 }
 
 .source-modal {
   width: min(1180px, 100%);
-  height: min(780px, calc(var(--app-height, 100dvh) - var(--safe-area-top) - var(--safe-area-bottom) - 32px));
-  max-height: min(88vh, calc(var(--app-height, 100dvh) - var(--safe-area-top) - var(--safe-area-bottom) - 32px));
+  height: min(
+    780px,
+    calc(var(--app-height, 100dvh) - var(--safe-area-top) - var(--safe-area-bottom) - 32px)
+  );
+  max-height: min(
+    88vh,
+    calc(var(--app-height, 100dvh) - var(--safe-area-top) - var(--safe-area-bottom) - 32px)
+  );
   background: var(--color-bg-elevated);
   border-radius: var(--radius-xl);
   display: flex;

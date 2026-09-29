@@ -9,10 +9,18 @@ const emit = defineEmits<{ (e: 'close'): void }>()
 const loading = ref(true)
 const failed = ref(false)
 
-watch(() => props.src, () => {
-  loading.value = true
-  failed.value = false
-})
+function onImgError() {
+  loading.value = false
+  failed.value = true
+}
+
+watch(
+  () => props.src,
+  () => {
+    loading.value = true
+    failed.value = false
+  }
+)
 </script>
 
 <template>
@@ -28,7 +36,7 @@ watch(() => props.src, () => {
         referrerpolicy="no-referrer"
         :class="{ 'is-ready': !loading && !failed }"
         @load="loading = false"
-        @error="loading = false; failed = true"
+        @error="onImgError"
       />
     </div>
   </Teleport>
@@ -78,6 +86,8 @@ watch(() => props.src, () => {
 }
 
 @keyframes lightbox-spin {
-  to { transform: rotate(360deg); }
+  to {
+    transform: rotate(360deg);
+  }
 }
 </style>

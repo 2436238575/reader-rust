@@ -45,10 +45,13 @@ export function createReaderProgressAutoSaveScheduler({
   return {
     schedule() {
       if (timer != null) return
-      timer = setTimer(() => {
-        timer = null
-        void runFlush()
-      }, Math.max(0, intervalMs))
+      timer = setTimer(
+        () => {
+          timer = null
+          void runFlush()
+        },
+        Math.max(0, intervalMs)
+      )
     },
 
     async flushNow() {

@@ -6,17 +6,17 @@
 
 ## 规则对象（ReplaceRule）
 
-| 字段 | 类型 | 说明 |
-|------|------|------|
-| `id` | number | 规则 ID |
-| `name` | string | 规则名（唯一键） |
-| `group` | string? | 分组名 |
-| `pattern` | string | 匹配内容（普通文本或正则） |
-| `replacement` | string | 替换为 |
-| `scope` | string? | 作用范围 |
-| `isEnabled` | boolean | 是否启用 |
-| `isRegex` | boolean | 是否正则 |
-| `order` | number | 执行顺序 |
+| 字段          | 类型    | 说明                       |
+| ------------- | ------- | -------------------------- |
+| `id`          | number  | 规则 ID                    |
+| `name`        | string  | 规则名（唯一键）           |
+| `group`       | string? | 分组名                     |
+| `pattern`     | string  | 匹配内容（普通文本或正则） |
+| `replacement` | string  | 替换为                     |
+| `scope`       | string? | 作用范围                   |
+| `isEnabled`   | boolean | 是否启用                   |
+| `isRegex`     | boolean | 是否正则                   |
+| `order`       | number  | 执行顺序                   |
 
 ## 获取替换规则列表
 

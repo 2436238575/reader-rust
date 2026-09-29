@@ -4,27 +4,49 @@
       <div v-if="modelValue" class="modal-overlay" @click="$emit('update:modelValue', false)"></div>
     </Transition>
     <Transition name="scale">
-      <div v-if="modelValue" class="modal-container" @click.self="$emit('update:modelValue', false)">
+      <div
+        v-if="modelValue"
+        class="modal-container"
+        @click.self="$emit('update:modelValue', false)"
+      >
         <div class="modal-card">
           <div class="modal-header">
             <h3>分组管理</h3>
             <button class="close-btn" @click="$emit('update:modelValue', false)">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6 6 18M6 6l12 12" /></svg>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M18 6 6 18M6 6l12 12" />
+              </svg>
             </button>
           </div>
 
           <div class="modal-body">
             <div class="create-row">
-              <input v-model.trim="newGroupName" class="group-input" placeholder="新建分组名称" @keyup.enter="createGroup" />
-              <button class="btn btn-primary" :disabled="!newGroupName" @click="createGroup">新建</button>
+              <input
+                v-model.trim="newGroupName"
+                class="group-input"
+                placeholder="新建分组名称"
+                @keyup.enter="createGroup"
+              />
+              <button class="btn btn-primary" :disabled="!newGroupName" @click="createGroup">
+                新建
+              </button>
             </div>
 
             <div class="group-list">
               <div v-for="group in shelfStore.groups" :key="group.groupId" class="group-item">
-                <input v-model.trim="editingNames[group.groupId]" class="group-input" @keyup.enter="renameGroup(group.groupId)" />
+                <input
+                  v-model.trim="editingNames[group.groupId]"
+                  class="group-input"
+                  @keyup.enter="renameGroup(group.groupId)"
+                />
                 <div class="group-actions">
                   <button class="btn btn-sm" @click="renameGroup(group.groupId)">保存</button>
-                  <button class="btn btn-sm btn-danger" @click="deleteGroup(group.groupId, group.groupName)">删除</button>
+                  <button
+                    class="btn btn-sm btn-danger"
+                    @click="deleteGroup(group.groupId, group.groupName)"
+                  >
+                    删除
+                  </button>
                 </div>
               </div>
             </div>
@@ -56,11 +78,15 @@ const appStore = useAppStore()
 const newGroupName = ref('')
 const editingNames = reactive<Record<number, string>>({})
 
-watch(() => shelfStore.groups, (groups) => {
-  groups.forEach((group) => {
-    editingNames[group.groupId] = group.groupName
-  })
-}, { immediate: true, deep: true })
+watch(
+  () => shelfStore.groups,
+  (groups) => {
+    groups.forEach((group) => {
+      editingNames[group.groupId] = group.groupName
+    })
+  },
+  { immediate: true, deep: true }
+)
 
 // 增改删都会整表刷新：请求未落地前挡住连点（连点可重复创建同名分组）
 const groupWorking = ref(false)
@@ -124,11 +150,8 @@ async function deleteGroup(groupId: number, groupName: string) {
   display: flex;
   align-items: center;
   justify-content: center;
-  padding:
-    calc(24px + var(--safe-area-top))
-    calc(24px + var(--safe-area-right))
-    calc(24px + var(--safe-area-bottom))
-    calc(24px + var(--safe-area-left));
+  padding: calc(24px + var(--safe-area-top)) calc(24px + var(--safe-area-right))
+    calc(24px + var(--safe-area-bottom)) calc(24px + var(--safe-area-left));
   z-index: var(--z-modal);
 }
 
@@ -138,7 +161,9 @@ async function deleteGroup(groupId: number, groupName: string) {
   border-radius: 24px;
   box-shadow: var(--shadow-xl);
   overflow: hidden;
-  max-height: calc(var(--app-height, 100dvh) - var(--safe-area-top) - var(--safe-area-bottom) - 32px);
+  max-height: calc(
+    var(--app-height, 100dvh) - var(--safe-area-top) - var(--safe-area-bottom) - 32px
+  );
   display: flex;
   flex-direction: column;
 }
@@ -203,5 +228,4 @@ async function deleteGroup(groupId: number, groupName: string) {
   display: flex;
   gap: 8px;
 }
-
 </style>

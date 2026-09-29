@@ -3,7 +3,14 @@
     <div class="login-card">
       <div class="login-header">
         <div class="login-logo">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="32" height="32">
+          <svg
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            width="32"
+            height="32"
+          >
             <path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z" />
             <path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z" />
           </svg>
@@ -67,7 +74,12 @@ const form = reactive({
 function redirectTarget(): string {
   const r = route.query.redirect
   // `//evil.com` 会被当成跨域跳转，只允许站内绝对路径
-  return typeof r === 'string' && r.startsWith('/') && !r.startsWith('//') && !r.startsWith('/login') ? r : '/'
+  return typeof r === 'string' &&
+    r.startsWith('/') &&
+    !r.startsWith('//') &&
+    !r.startsWith('/login')
+    ? r
+    : '/'
 }
 
 // 已登录用户访问登录页时直接送走；fetchUserInfo 可能尚未返回，用 watch 覆盖
@@ -76,7 +88,7 @@ watch(
   (loggedIn) => {
     if (loggedIn) router.replace(redirectTarget())
   },
-  { immediate: true },
+  { immediate: true }
 )
 
 async function handleSubmit() {
@@ -104,11 +116,8 @@ async function handleSubmit() {
   display: flex;
   align-items: center;
   justify-content: center;
-  padding:
-    calc(var(--space-6) + var(--safe-area-top))
-    calc(var(--space-6) + var(--safe-area-right))
-    calc(var(--space-6) + var(--safe-area-bottom))
-    calc(var(--space-6) + var(--safe-area-left));
+  padding: calc(var(--space-6) + var(--safe-area-top)) calc(var(--space-6) + var(--safe-area-right))
+    calc(var(--space-6) + var(--safe-area-bottom)) calc(var(--space-6) + var(--safe-area-left));
 }
 
 .login-card {
@@ -197,7 +206,9 @@ async function handleSubmit() {
 }
 
 @keyframes spin {
-  to { transform: rotate(360deg); }
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 @media (max-width: 767px) {

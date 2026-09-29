@@ -5,9 +5,21 @@
         <span class="legend-location">地点</span>
         <span class="legend-character">角色</span>
       </div>
-      <svg :viewBox="`0 0 ${graphLayout.width} ${graphLayout.height}`" role="img" aria-label="人物关系图">
+      <svg
+        :viewBox="`0 0 ${graphLayout.width} ${graphLayout.height}`"
+        role="img"
+        aria-label="人物关系图"
+      >
         <defs>
-          <marker id="graph-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse">
+          <marker
+            id="graph-arrow"
+            viewBox="0 0 10 10"
+            refX="8"
+            refY="5"
+            markerWidth="5"
+            markerHeight="5"
+            orient="auto-start-reverse"
+          >
             <path d="M 0 0 L 10 5 L 0 10 z" />
           </marker>
         </defs>
@@ -16,7 +28,11 @@
             v-for="link in graphLayout.links"
             :key="`${link.source}-${link.target}-${link.label}`"
             class="graph-link"
-            :class="{ highlighted: link.highlighted, dimmed: link.dimmed, located: link.label === '位于' }"
+            :class="{
+              highlighted: link.highlighted,
+              dimmed: link.dimmed,
+              located: link.label === '位于',
+            }"
           >
             <path :d="link.path" />
             <g v-if="link.showLabel" class="graph-link-label">
@@ -78,7 +94,10 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import type { AiBookMemory } from '../../types'
-import { buildAiBookRelationshipGraph, layoutAiBookRelationshipGraph } from '../../utils/aiBookGraph'
+import {
+  buildAiBookRelationshipGraph,
+  layoutAiBookRelationshipGraph,
+} from '../../utils/aiBookGraph'
 
 const props = defineProps<{
   memory: AiBookMemory | null
@@ -87,9 +106,9 @@ const props = defineProps<{
 
 const selectedGraphNodeId = ref('')
 
-const relationshipGraph = computed(() => props.memory
-  ? buildAiBookRelationshipGraph(props.memory)
-  : { nodes: [], links: [] })
+const relationshipGraph = computed(() =>
+  props.memory ? buildAiBookRelationshipGraph(props.memory) : { nodes: [], links: [] }
+)
 const activeGraphNodeId = computed(() => {
   const selected = selectedGraphNodeId.value
   if (selected && relationshipGraph.value.nodes.some((node) => node.id === selected)) {
@@ -97,11 +116,15 @@ const activeGraphNodeId = computed(() => {
   }
   return relationshipGraph.value.nodes[0]?.id || ''
 })
-const graphLayout = computed(() => layoutAiBookRelationshipGraph(relationshipGraph.value, activeGraphNodeId.value))
+const graphLayout = computed(() =>
+  layoutAiBookRelationshipGraph(relationshipGraph.value, activeGraphNodeId.value)
+)
 const selectedGraphNode = computed(() => {
-  return graphLayout.value.nodes.find((node) => node.id === activeGraphNodeId.value)
-    || graphLayout.value.nodes[0]
-    || null
+  return (
+    graphLayout.value.nodes.find((node) => node.id === activeGraphNodeId.value) ||
+    graphLayout.value.nodes[0] ||
+    null
+  )
 })
 const selectedGraphConnections = computed(() => {
   const current = selectedGraphNode.value
@@ -144,7 +167,11 @@ function graphLabelWidth(label: string) {
     linear-gradient(90deg, rgba(70, 134, 121, 0.045) 1px, transparent 1px),
     radial-gradient(circle at 50% 50%, rgba(212, 129, 42, 0.07), transparent 38%),
     var(--color-bg-elevated);
-  background-size: 28px 28px, 28px 28px, 100% 100%, auto;
+  background-size:
+    28px 28px,
+    28px 28px,
+    100% 100%,
+    auto;
 }
 
 .graph-legend {
@@ -174,7 +201,7 @@ function graphLabelWidth(label: string) {
 }
 
 .graph-legend span::before {
-  content: "";
+  content: '';
   width: 8px;
   height: 8px;
   border-radius: 999px;
@@ -199,7 +226,10 @@ function graphLabelWidth(label: string) {
   stroke: rgba(52, 61, 56, 0.18);
   stroke-width: 2;
   marker-end: url(#graph-arrow);
-  transition: opacity var(--duration-fast), stroke var(--duration-fast), stroke-width var(--duration-fast);
+  transition:
+    opacity var(--duration-fast),
+    stroke var(--duration-fast),
+    stroke-width var(--duration-fast);
 }
 
 .graph-link.located path {
@@ -316,8 +346,7 @@ marker#graph-arrow path {
   justify-content: center;
   gap: 14px;
   background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.7), rgba(255, 255, 255, 0)),
-    var(--color-bg);
+    linear-gradient(180deg, rgba(255, 255, 255, 0.7), rgba(255, 255, 255, 0)), var(--color-bg);
 }
 
 .graph-detail-head {
@@ -363,7 +392,9 @@ marker#graph-arrow path {
   border-radius: 8px;
   background: var(--color-bg-elevated);
   text-align: left;
-  transition: border-color var(--duration-fast), background var(--duration-fast);
+  transition:
+    border-color var(--duration-fast),
+    background var(--duration-fast);
 }
 
 .graph-connection-list button:hover {

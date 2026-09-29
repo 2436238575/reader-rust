@@ -26,11 +26,7 @@ export default defineConfig({
         ...devices['Desktop Chrome'],
         channel: 'chrome',
         launchOptions: {
-          args: [
-            '--disable-crash-reporter',
-            '--disable-crashpad',
-            '--disable-breakpad',
-          ],
+          args: ['--disable-crash-reporter', '--disable-crashpad', '--disable-breakpad'],
         },
       },
     },

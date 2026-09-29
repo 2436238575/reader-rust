@@ -14,18 +14,24 @@
                   type="button"
                   :class="{ active: !authorOnly && sort === 'hot' }"
                   @click="changeSort('hot')"
-                >最热</button>
+                >
+                  最热
+                </button>
                 <button
                   type="button"
                   :class="{ active: !authorOnly && sort === 'time' }"
                   @click="changeSort('time')"
-                >最新</button>
+                >
+                  最新
+                </button>
                 <button
                   v-if="authorMarksAvailable"
                   type="button"
                   :class="{ active: authorOnly }"
                   @click="changeAuthorOnly()"
-                >只看作者</button>
+                >
+                  只看作者
+                </button>
               </div>
               <button class="comment-close" aria-label="关闭" @click="$emit('close')">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -64,21 +70,30 @@
                   class="comment-toggle"
                   type="button"
                   @click="toggleExpand(itemKey(item, index))"
-                >折叠</button>
+                >
+                  折叠
+                </button>
               </div>
               <p
                 v-if="item.content"
                 class="comment-text"
                 :class="{
                   clamped: !isExpanded(itemKey(item, index)),
-                  'has-toggle': collapsibleKeys.has(itemKey(item, index)) && !isExpanded(itemKey(item, index)),
+                  'has-toggle':
+                    collapsibleKeys.has(itemKey(item, index)) && !isExpanded(itemKey(item, index)),
                 }"
-              ><button
-                  v-if="collapsibleKeys.has(itemKey(item, index)) && !isExpanded(itemKey(item, index))"
+              >
+                <button
+                  v-if="
+                    collapsibleKeys.has(itemKey(item, index)) && !isExpanded(itemKey(item, index))
+                  "
                   class="comment-toggle comment-expand-inline"
                   type="button"
                   @click="toggleExpand(itemKey(item, index))"
-                >展开</button>{{ item.content }}</p>
+                >
+                  展开</button
+                >{{ item.content }}
+              </p>
               <div v-if="item.images.length" class="comment-images">
                 <img
                   v-for="(url, imageIndex) in item.images"
@@ -88,13 +103,19 @@
                   loading="lazy"
                   referrerpolicy="no-referrer"
                   @click="preview = url"
-                >
+                />
               </div>
               <div v-if="item.replies.length" class="comment-replies">
-                <p v-for="(reply, replyIndex) in item.replies" :key="replyIndex" class="comment-reply">
+                <p
+                  v-for="(reply, replyIndex) in item.replies"
+                  :key="replyIndex"
+                  class="comment-reply"
+                >
                   <span class="comment-reply-name">{{ reply.name || '匿名读者' }}</span>
                   <span v-if="reply.author" class="comment-badge-author">作者</span>
-                  <span v-if="reply.replyTo" class="comment-reply-to">回复 {{ reply.replyTo }}</span>
+                  <span v-if="reply.replyTo" class="comment-reply-to"
+                    >回复 {{ reply.replyTo }}</span
+                  >
                   ：{{ reply.content }}
                   <span v-if="reply.authorDigg" class="comment-author-digg">作者赞过</span>
                 </p>
@@ -105,13 +126,17 @@
               <div class="comment-actions">
                 <span v-if="item.authorDigg" class="comment-author-digg">
                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                    <path d="M7 22V11l5-9a2 2 0 0 1 2 2v5h5.5a2 2 0 0 1 2 2.3l-1.4 8A2 2 0 0 1 18 22H7z" />
+                    <path
+                      d="M7 22V11l5-9a2 2 0 0 1 2 2v5h5.5a2 2 0 0 1 2 2.3l-1.4 8A2 2 0 0 1 18 22H7z"
+                    />
                   </svg>
                   作者赞过
                 </span>
                 <span class="comment-digg">
                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                    <path d="M7 22V11l5-9a2 2 0 0 1 2 2v5h5.5a2 2 0 0 1 2 2.3l-1.4 8A2 2 0 0 1 18 22H7z" />
+                    <path
+                      d="M7 22V11l5-9a2 2 0 0 1 2 2v5h5.5a2 2 0 0 1 2 2.3l-1.4 8A2 2 0 0 1 18 22H7z"
+                    />
                   </svg>
                   {{ item.digg }}
                 </span>
@@ -120,7 +145,9 @@
                   class="comment-toggle"
                   type="button"
                   @click="toggleExpand(itemKey(item, index))"
-                >折叠</button>
+                >
+                  折叠
+                </button>
               </div>
             </article>
 
@@ -250,9 +277,13 @@ async function measureCollapsible() {
   collapsibleKeys.value = next
 }
 
-watch(items, () => {
-  void measureCollapsible()
-}, { flush: 'post' })
+watch(
+  items,
+  () => {
+    void measureCollapsible()
+  },
+  { flush: 'post' }
+)
 
 /**
  * 展示顺序。
@@ -272,7 +303,9 @@ const visibleItems = computed(() => {
 })
 
 /** 站点不支持服务端排序时，「最新」只对已加载的条目生效 */
-const clientSideSortOnly = computed(() => sort.value === 'time' && !serverSort.value && !authorOnly.value)
+const clientSideSortOnly = computed(
+  () => sort.value === 'time' && !serverSort.value && !authorOnly.value
+)
 
 /** 每次打开都重新装载：评论会变，缓存里的旧数据不该拦住刷新 */
 watch(
@@ -281,7 +314,7 @@ watch(
     if (!props.show) return
     void reload()
   },
-  { immediate: true },
+  { immediate: true }
 )
 
 async function reload() {
@@ -405,7 +438,7 @@ function captureScrollAnchor(): ScrollAnchor | null {
   if (!list) return null
   const listTop = list.getBoundingClientRect().top
   const anchor = Array.from(list.querySelectorAll<HTMLElement>('.comment-item')).find(
-    (item) => item.getBoundingClientRect().bottom > listTop + 1,
+    (item) => item.getBoundingClientRect().bottom > listTop + 1
   )
   if (!anchor) return { key: '', offset: 0, scrollTop: list.scrollTop }
   return {
@@ -421,7 +454,7 @@ function restoreScrollAnchor(anchor: ScrollAnchor | null) {
   if (!list || !anchor) return
   const target = anchor.key
     ? Array.from(list.querySelectorAll<HTMLElement>('.comment-item')).find(
-        (item) => item.dataset.reviewKey === anchor.key,
+        (item) => item.dataset.reviewKey === anchor.key
       )
     : undefined
   if (!target) {
@@ -566,7 +599,9 @@ function formatReviewTime(raw: string) {
   font-size: 12px;
   line-height: 1.5;
   cursor: pointer;
-  transition: background 0.15s ease, color 0.15s ease;
+  transition:
+    background 0.15s ease,
+    color 0.15s ease;
 }
 
 .comment-sort button.active {

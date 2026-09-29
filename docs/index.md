@@ -2,8 +2,8 @@
 layout: home
 
 hero:
-  name: "Reader-Rust"
-  text: "阅读服务端 · Rust 版"
+  name: 'Reader-Rust'
+  text: '阅读服务端 · Rust 版'
   tagline: 高性能书源阅读服务器，支持自定义书源与五种规则解析方式
   actions:
     - theme: brand
@@ -39,15 +39,15 @@ features:
 
 ## 从这里开始
 
-| 我想… | 去哪 |
-|-------|------|
-| 把服务跑起来 | [快速开始](/guide/quickstart) · [Docker 部署](/guide/docker) · [手动部署](/guide/manual-deploy) |
-| 搞清楚配置项 | [配置](/guide/configuration) |
-| 学着用界面 | [用户手册](/guide/user-manual) · [AI 资料](/guide/ai-book) |
-| 对接 `/reader3/*` 接口 | [API 参考](/api/) |
-| 自己写书源 | [书源开发](/book-source/) · [书源规则兼容规格](/reference/book-source-rules) |
-| 改这个项目的代码 | 仓库根目录的 `AGENTS.md` · [架构说明](/maintainers/architecture) · [开发约定](/maintainers/development) |
-| 发一个版本 | [发布流程](/maintainers/release) |
+| 我想…                  | 去哪                                                                                                    |
+| ---------------------- | ------------------------------------------------------------------------------------------------------- |
+| 把服务跑起来           | [快速开始](/guide/quickstart) · [Docker 部署](/guide/docker) · [手动部署](/guide/manual-deploy)         |
+| 搞清楚配置项           | [配置](/guide/configuration)                                                                            |
+| 学着用界面             | [用户手册](/guide/user-manual) · [AI 资料](/guide/ai-book)                                              |
+| 对接 `/reader3/*` 接口 | [API 参考](/api/)                                                                                       |
+| 自己写书源             | [书源开发](/book-source/) · [书源规则兼容规格](/reference/book-source-rules)                            |
+| 改这个项目的代码       | 仓库根目录的 `AGENTS.md` · [架构说明](/maintainers/architecture) · [开发约定](/maintainers/development) |
+| 发一个版本             | [发布流程](/maintainers/release)                                                                        |
 
 ## 它是什么
 

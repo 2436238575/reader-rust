@@ -10,14 +10,14 @@
 
 脚本开头会逐个校验，缺任何一个直接退出：
 
-| 命令 | 用途 |
-|------|------|
-| `git` | 提交与打 tag |
-| `cargo` | 交叉编译后端 |
-| `npm` | 同步版本号、构建前端（`node` 随 npm 提供，无 tag 时的版本回退也用到它） |
-| `podman` | 构建与推送镜像 |
-| `gh` | 创建 GitHub Release |
-| `awk` | 改写 `Cargo.toml` 里的版本号 |
+| 命令     | 用途                                                                    |
+| -------- | ----------------------------------------------------------------------- |
+| `git`    | 提交与打 tag                                                            |
+| `cargo`  | 交叉编译后端                                                            |
+| `npm`    | 同步版本号、构建前端（`node` 随 npm 提供，无 tag 时的版本回退也用到它） |
+| `podman` | 构建与推送镜像                                                          |
+| `gh`     | 创建 GitHub Release                                                     |
+| `awk`    | 改写 `Cargo.toml` 里的版本号                                            |
 
 另外：
 
@@ -73,12 +73,12 @@
 
 ## 镜像标签规则
 
-| 标签 | 架构 | 类型 |
-|------|------|------|
-| `latest` | `linux/amd64` | 滚动，跟随最新发布 |
-| `latest-aarch64` | `linux/arm64` | 滚动 |
-| `vX.Y.Z-x86_64` | `linux/amd64` | 版本化，不可变 |
-| `vX.Y.Z-aarch64` | `linux/arm64` | 版本化，不可变 |
+| 标签             | 架构          | 类型               |
+| ---------------- | ------------- | ------------------ |
+| `latest`         | `linux/amd64` | 滚动，跟随最新发布 |
+| `latest-aarch64` | `linux/arm64` | 滚动               |
+| `vX.Y.Z-x86_64`  | `linux/amd64` | 版本化，不可变     |
+| `vX.Y.Z-aarch64` | `linux/arm64` | 版本化，不可变     |
 
 仓库默认是 `docker.io/givenge/reader-rust`，可用环境变量覆盖（例如发布到自己的 fork）：
 
@@ -127,13 +127,13 @@ podman manifest push --all docker.io/givenge/reader-rust:${TAG}
 
 ## 常见失败
 
-| 现象 | 原因 |
-|------|------|
-| `Working tree is not clean` | 有未提交改动 —— 先 commit 或 stash |
-| `Untracked files exist` | 有未跟踪文件（如临时产物）—— 清理或加进 `.gitignore` |
-| `GitHub CLI is not authenticated` | 没跑 `gh auth login` |
-| `Missing required command: podman` | Podman 未安装或不在 PATH |
-| `Tag vX.Y.Z already exists locally` | 重复发布同一版本；要重发必须先删本地 tag，且确认远端也要处理 |
-| 镜像架构校验失败 | 构建时 `--platform` 与 Dockerfile 不匹配；检查 `podman build` 是否用了正确的 `-f` |
+| 现象                                | 原因                                                                              |
+| ----------------------------------- | --------------------------------------------------------------------------------- |
+| `Working tree is not clean`         | 有未提交改动 —— 先 commit 或 stash                                                |
+| `Untracked files exist`             | 有未跟踪文件（如临时产物）—— 清理或加进 `.gitignore`                              |
+| `GitHub CLI is not authenticated`   | 没跑 `gh auth login`                                                              |
+| `Missing required command: podman`  | Podman 未安装或不在 PATH                                                          |
+| `Tag vX.Y.Z already exists locally` | 重复发布同一版本；要重发必须先删本地 tag，且确认远端也要处理                      |
+| 镜像架构校验失败                    | 构建时 `--platform` 与 Dockerfile 不匹配；检查 `podman build` 是否用了正确的 `-f` |
 
 `Dockerfile` 与 `Dockerfile.x86` **都不编译 Rust**，只负责把宿主机编译好的二进制与 `frontend/dist` 拷进镜像 —— 所以脚本必须先在宿主机完成第 5、6 步。

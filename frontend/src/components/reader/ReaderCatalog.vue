@@ -2,16 +2,16 @@
   <div class="reader-catalog" :style="{ background: theme.popup, color: theme.fontColor }">
     <div class="catalog-header">
       <div class="tabs">
-        <div 
-          class="tab" 
-          :class="{ active: activeTab === 'chapters' }" 
+        <div
+          class="tab"
+          :class="{ active: activeTab === 'chapters' }"
           @click="activeTab = 'chapters'"
         >
           目录
         </div>
-        <div 
-          class="tab" 
-          :class="{ active: activeTab === 'bookmarks' }" 
+        <div
+          class="tab"
+          :class="{ active: activeTab === 'bookmarks' }"
           @click="activeTab = 'bookmarks'"
         >
           书签
@@ -24,10 +24,14 @@
           :disabled="store.chaptersLoading"
           @click="refreshCatalog"
         >
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12a9 9 0 1 1-2.64-6.36M21 3v6h-6" /></svg>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M21 12a9 9 0 1 1-2.64-6.36M21 3v6h-6" />
+          </svg>
         </button>
         <button class="close-btn" @click="store.closePanel()">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6 6 18M6 6l12 12" /></svg>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M18 6 6 18M6 6l12 12" />
+          </svg>
         </button>
       </div>
     </div>
@@ -39,7 +43,13 @@
         :class="{ danger: bookmarkEditMode && selectedBookmarkKeys.size > 0 }"
         @click="handleBatchAction"
       >
-        {{ bookmarkEditMode ? (selectedBookmarkKeys.size ? `删除选中(${selectedBookmarkKeys.size})` : '完成') : '批量管理' }}
+        {{
+          bookmarkEditMode
+            ? selectedBookmarkKeys.size
+              ? `删除选中(${selectedBookmarkKeys.size})`
+              : '完成'
+            : '批量管理'
+        }}
       </button>
     </div>
 
@@ -51,8 +61,14 @@
           placeholder="搜索章节..."
           class="search-input"
         />
-        <button v-if="chapterSearchInput" class="search-clear" @click="chapterSearchInput = ''; chapterSearch = ''">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6 6 18M6 6l12 12" /></svg>
+        <button
+          v-if="chapterSearchInput"
+          class="search-clear"
+          @click="clearChapterSearch"
+        >
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M18 6 6 18M6 6l12 12" />
+          </svg>
         </button>
       </div>
       <div class="chapter-jump-actions">
@@ -104,7 +120,10 @@
         v-for="chapter in filteredChapters"
         :key="chapter.index"
         class="list-item"
-        :class="{ active: chapter.index === store.currentIndex, read: store.isChapterRead(chapter.index) }"
+        :class="{
+          active: chapter.index === store.currentIndex,
+          read: store.isChapterRead(chapter.index),
+        }"
         @click="goToChapter(chapter.index)"
       >
         <span class="item-index">{{ chapter.index + 1 }}</span>
@@ -142,7 +161,11 @@
         </div>
         <div class="bm-snippet">{{ bm.bookText }}</div>
         <button v-if="!bookmarkEditMode" class="bm-delete" @click.stop="store.removeBookmark(bm)">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" /></svg>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path
+              d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"
+            />
+          </svg>
         </button>
       </div>
     </div>
@@ -158,11 +181,14 @@ import { listBrowserCachedChapterUrls } from '../../utils/browserCache'
 import { isLocalBook } from '../../utils/localBook'
 import { formatMonthDayTime } from '../../utils/format'
 
-const props = withDefaults(defineProps<{
-  initialTab?: 'chapters' | 'bookmarks'
-}>(), {
-  initialTab: 'chapters',
-})
+const props = withDefaults(
+  defineProps<{
+    initialTab?: 'chapters' | 'bookmarks'
+  }>(),
+  {
+    initialTab: 'chapters',
+  }
+)
 const emit = defineEmits<{
   jumpChapter: [index: number]
   jumpBookmark: [bookmark: Bookmark]
@@ -180,6 +206,10 @@ const chapterSearchInput = ref('')
 // 目录可上千章：每个键都全量 filter + 重渲染太贵，200ms 防抖后再进 computed
 const chapterSearch = ref('')
 let chapterSearchTimer: number | null = null
+function clearChapterSearch() {
+  chapterSearchInput.value = ''
+  chapterSearch.value = ''
+}
 watch(chapterSearchInput, (value) => {
   if (chapterSearchTimer) clearTimeout(chapterSearchTimer)
   chapterSearchTimer = window.setTimeout(() => {
@@ -200,12 +230,12 @@ const filteredChapters = computed(() => {
   }
   return chapters
     .map((chapter, index) => ({ ...chapter, index }))
-    .filter(chapter => chapter.title.toLowerCase().includes(searchTerm))
+    .filter((chapter) => chapter.title.toLowerCase().includes(searchTerm))
 })
 
 // 搜索过滤后当前章可能不在列表里，此时定位按钮不可点
 const currentChapterInList = computed(() =>
-  filteredChapters.value.some(chapter => chapter.index === store.currentIndex)
+  filteredChapters.value.some((chapter) => chapter.index === store.currentIndex)
 )
 
 onMounted(() => {
@@ -215,24 +245,33 @@ onMounted(() => {
   void refreshCachedChapterState()
 })
 
-watch(() => props.initialTab, (tab) => {
-  activeTab.value = tab
-  if (tab !== 'bookmarks') {
-    bookmarkEditMode.value = false
-    selectedBookmarkKeys.value.clear()
+watch(
+  () => props.initialTab,
+  (tab) => {
+    activeTab.value = tab
+    if (tab !== 'bookmarks') {
+      bookmarkEditMode.value = false
+      selectedBookmarkKeys.value.clear()
+    }
+    if (tab === 'chapters') {
+      void refreshCachedChapterState()
+    }
   }
-  if (tab === 'chapters') {
+)
+
+watch(
+  () => store.book?.bookUrl,
+  () => {
     void refreshCachedChapterState()
   }
-})
+)
 
-watch(() => store.book?.bookUrl, () => {
-  void refreshCachedChapterState()
-})
-
-watch(() => store.chapters, () => {
-  void refreshCachedChapterState()
-})
+watch(
+  () => store.chapters,
+  () => {
+    void refreshCachedChapterState()
+  }
+)
 
 function scrollToCurrent() {
   // 长目录渲染需要时间（content-visibility 懒绘制）：一次 nextTick 可能还找不到
@@ -273,7 +312,9 @@ async function refreshCachedChapterState() {
     cachedChapterUrls.value = new Set()
     return
   }
-  cachedChapterUrls.value = await listBrowserCachedChapterUrls(store.book.bookUrl).catch(() => new Set())
+  cachedChapterUrls.value = await listBrowserCachedChapterUrls(store.book.bookUrl).catch(
+    () => new Set()
+  )
 }
 
 function isChapterCached(chapterUrl?: string) {
@@ -326,7 +367,9 @@ async function handleBatchAction() {
     bookmarkEditMode.value = false
     return
   }
-  const items = store.bookmarks.filter((bookmark) => selectedBookmarkKeys.value.has(getBookmarkKey(bookmark)))
+  const items = store.bookmarks.filter((bookmark) =>
+    selectedBookmarkKeys.value.has(getBookmarkKey(bookmark))
+  )
   if (!confirm(`确定删除选中的 ${items.length} 条书签吗？`)) return
   try {
     await store.removeBookmarks(items)
@@ -353,7 +396,7 @@ const formatDate = formatMonthDayTime
   align-items: center;
   justify-content: space-between;
   padding: 0 12px;
-  border-bottom: 1px solid rgba(0,0,0,0.06);
+  border-bottom: 1px solid rgba(0, 0, 0, 0.06);
   flex-shrink: 0;
   height: 56px;
 }
@@ -422,7 +465,7 @@ const formatDate = formatMonthDayTime
   align-items: center;
   gap: 10px;
   padding: 12px 16px;
-  border-bottom: 1px solid rgba(0,0,0,0.06);
+  border-bottom: 1px solid rgba(0, 0, 0, 0.06);
 }
 
 .search-box {
@@ -434,9 +477,9 @@ const formatDate = formatMonthDayTime
 .search-input {
   width: 100%;
   padding: 8px 32px 8px 12px;
-  border: 1px solid rgba(0,0,0,0.1);
+  border: 1px solid rgba(0, 0, 0, 0.1);
   border-radius: 8px;
-  background: rgba(0,0,0,0.03);
+  background: rgba(0, 0, 0, 0.03);
   color: inherit;
   font-size: var(--text-base);
   outline: none;
@@ -445,7 +488,7 @@ const formatDate = formatMonthDayTime
 
 .search-input:focus {
   border-color: var(--color-primary, #c97f3a);
-  background: rgba(0,0,0,0.02);
+  background: rgba(0, 0, 0, 0.02);
 }
 
 .search-clear {
@@ -459,7 +502,7 @@ const formatDate = formatMonthDayTime
   align-items: center;
   justify-content: center;
   border-radius: 50%;
-  background: rgba(0,0,0,0.1);
+  background: rgba(0, 0, 0, 0.1);
   color: inherit;
   border: none;
   cursor: pointer;
@@ -490,8 +533,8 @@ const formatDate = formatMonthDayTime
   align-items: center;
   justify-content: center;
   border-radius: 8px;
-  border: 1px solid rgba(0,0,0,0.08);
-  background: rgba(0,0,0,0.025);
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  background: rgba(0, 0, 0, 0.025);
   color: inherit;
   opacity: 0.7;
   cursor: pointer;
@@ -523,7 +566,7 @@ const formatDate = formatMonthDayTime
 }
 
 .bookmark-action {
-  border: 1px solid rgba(0,0,0,0.08);
+  border: 1px solid rgba(0, 0, 0, 0.08);
   border-radius: 999px;
   background: transparent;
   color: inherit;
@@ -542,7 +585,8 @@ const formatDate = formatMonthDayTime
   color: #ef4444;
 }
 
-.loading, .empty {
+.loading,
+.empty {
   padding: 40px;
   text-align: center;
   opacity: 0.5;
@@ -559,11 +603,11 @@ const formatDate = formatMonthDayTime
   content-visibility: auto;
   contain-intrinsic-size: auto 46px;
   transition: all 0.2s;
-  border-bottom: 1px solid rgba(0,0,0,0.02);
+  border-bottom: 1px solid rgba(0, 0, 0, 0.02);
 }
 
 .list-item:hover {
-  background: rgba(0,0,0,0.03);
+  background: rgba(0, 0, 0, 0.03);
 }
 
 .list-item.active {
@@ -619,8 +663,8 @@ const formatDate = formatMonthDayTime
 }
 
 .status-badge.read {
-  color: rgba(0,0,0,0.5);
-  background: rgba(0,0,0,0.05);
+  color: rgba(0, 0, 0, 0.5);
+  background: rgba(0, 0, 0, 0.05);
 }
 
 .status-badge.cached {
@@ -648,7 +692,7 @@ const formatDate = formatMonthDayTime
   width: 22px;
   height: 22px;
   border-radius: 50%;
-  border: 1px solid rgba(0,0,0,0.15);
+  border: 1px solid rgba(0, 0, 0, 0.15);
   background: transparent;
   color: transparent;
   cursor: pointer;
@@ -698,7 +742,7 @@ const formatDate = formatMonthDayTime
   align-items: center;
   justify-content: center;
   opacity: 0;
-  background: rgba(255,0,0,0.05);
+  background: rgba(255, 0, 0, 0.05);
   color: #ef4444;
   border: none;
   border-radius: 4px;

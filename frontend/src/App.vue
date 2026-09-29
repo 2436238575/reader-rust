@@ -18,12 +18,7 @@
     <!-- Toast notifications -->
     <div class="toast-container">
       <TransitionGroup name="slide-up">
-        <div
-          v-for="toast in appStore.toasts"
-          :key="toast.id"
-          class="toast"
-          :class="toast.type"
-        >
+        <div v-for="toast in appStore.toasts" :key="toast.id" class="toast" :class="toast.type">
           {{ toast.message }}
         </div>
       </TransitionGroup>
@@ -88,5 +83,4 @@ body {
 .app-main.without-header {
   height: var(--app-height, 100dvh);
 }
-
 </style>

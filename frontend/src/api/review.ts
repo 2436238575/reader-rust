@@ -24,9 +24,7 @@ export interface ReviewParams {
 export type ReviewSort = 'hot' | 'time'
 
 export function getChapterComments(params: ReviewParams) {
-  return http
-    .post<ReviewResponse<ReviewPage>>('/getChapterComments', params)
-    .then((r) => r.data)
+  return http.post<ReviewResponse<ReviewPage>>('/getChapterComments', params).then((r) => r.data)
 }
 
 export function getParaCommentIndex(params: Omit<ReviewParams, 'page' | 'count'>) {
@@ -36,7 +34,5 @@ export function getParaCommentIndex(params: Omit<ReviewParams, 'page' | 'count'>
 }
 
 export function getParaComments(params: ReviewParams & { paraIndex: number }) {
-  return http
-    .post<ReviewResponse<ReviewPage>>('/getParaComments', params)
-    .then((r) => r.data)
+  return http.post<ReviewResponse<ReviewPage>>('/getParaComments', params).then((r) => r.data)
 }

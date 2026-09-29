@@ -51,7 +51,7 @@ export function appendAuthQueryParams(
  */
 export function createAuthedEventSource(
   path: string,
-  params: Record<string, string | number | undefined>,
+  params: Record<string, string | number | undefined>
 ): EventSource {
   const query = new URLSearchParams()
   for (const [key, value] of Object.entries(params)) {

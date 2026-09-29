@@ -6,16 +6,16 @@
 
 ## 书签对象（Bookmark）
 
-| 字段 | 类型 | 说明 |
-|------|------|------|
-| `time` | number | 创建时间戳（毫秒） |
-| `bookName` | string | 书名（与 `bookAuthor` 共同构成唯一键） |
-| `bookAuthor` | string | 作者 |
-| `chapterIndex` | number | 章节下标 |
-| `chapterPos` | number | 章节内位置 |
-| `chapterName` | string | 章节名 |
-| `bookText` | string | 书籍摘要文本 |
-| `content` | string | 书签内容 |
+| 字段           | 类型   | 说明                                   |
+| -------------- | ------ | -------------------------------------- |
+| `time`         | number | 创建时间戳（毫秒）                     |
+| `bookName`     | string | 书名（与 `bookAuthor` 共同构成唯一键） |
+| `bookAuthor`   | string | 作者                                   |
+| `chapterIndex` | number | 章节下标                               |
+| `chapterPos`   | number | 章节内位置                             |
+| `chapterName`  | string | 章节名                                 |
+| `bookText`     | string | 书籍摘要文本                           |
+| `content`      | string | 书签内容                               |
 
 ## 获取书签列表
 

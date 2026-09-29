@@ -7,10 +7,14 @@ const cloudflareTimeoutHtml = `<!DOCTYPE html>
 
 describe('httpError', () => {
   it('summarizes HTML error pages for model requests', () => {
-    expect(summarizeHttpErrorBody(cloudflareTimeoutHtml, {
-      fallback: 'AI 资料生成失败',
-      status: 524,
-    })).toBe('AI 资料生成失败 (524)，服务返回 HTML 错误页，错误码 524：grandy.fun | 524: A timeout occurred')
+    expect(
+      summarizeHttpErrorBody(cloudflareTimeoutHtml, {
+        fallback: 'AI 资料生成失败',
+        status: 524,
+      })
+    ).toBe(
+      'AI 资料生成失败 (524)，服务返回 HTML 错误页，错误码 524：grandy.fun | 524: A timeout occurred'
+    )
   })
 
   it('summarizes saved display errors without leaking full HTML into the page', () => {

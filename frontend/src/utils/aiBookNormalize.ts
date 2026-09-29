@@ -21,8 +21,18 @@ export function normalizeKey(value: string | undefined) {
 export function isLowImportance(value: string | undefined) {
   const key = normalizeKey(value)
   if (!key) return false
-  return ['low', '低', '低重要性', '不重要', '路人', '背景', 'minor', 'background', 'oneoff', '一次性']
-    .some((term) => key.includes(term))
+  return [
+    'low',
+    '低',
+    '低重要性',
+    '不重要',
+    '路人',
+    '背景',
+    'minor',
+    'background',
+    'oneoff',
+    '一次性',
+  ].some((term) => key.includes(term))
 }
 
 /** 0=未标注/未知 1=低 2=中 3=高 */
@@ -66,7 +76,7 @@ export function relationshipKey(source: string, target: string, relation: string
 export function isLowValueRelationship(
   relation: string,
   detail: string,
-  importance: string | undefined,
+  importance: string | undefined
 ) {
   const key = normalizeKey(importance)
   if (key.includes('high') || key.includes('medium') || key.includes('高') || key.includes('中')) {

@@ -8,7 +8,13 @@
       </p>
     </div>
     <div class="header-actions">
-      <button class="icon-btn" :class="{ spinning: loading }" type="button" title="刷新" @click="$emit('refresh')">
+      <button
+        class="icon-btn"
+        :class="{ spinning: loading }"
+        type="button"
+        title="刷新"
+        @click="$emit('refresh')"
+      >
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
           <path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />
           <path d="M3 3v5h5" />
@@ -19,7 +25,12 @@
       <button class="btn" type="button" @click="$emit('import-local')">本地导入</button>
       <button class="btn" type="button" @click="$emit('open-subscriptions')">远程同步</button>
       <button class="btn" type="button" @click="$emit('export')">导出</button>
-      <button class="btn" :disabled="testing || total === 0" type="button" @click="$emit('test-sources')">
+      <button
+        class="btn"
+        :disabled="testing || total === 0"
+        type="button"
+        @click="$emit('test-sources')"
+      >
         {{ testing ? '测试中...' : '测试书源' }}
       </button>
       <button
@@ -120,7 +131,6 @@ defineEmits<{
   height: 18px;
 }
 
-
 .icon-btn:hover {
   background: var(--color-bg-hover);
 }
@@ -130,7 +140,9 @@ defineEmits<{
 }
 
 @keyframes spin {
-  to { transform: rotate(360deg); }
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 @media (max-width: 640px) {

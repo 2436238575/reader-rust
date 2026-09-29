@@ -32,8 +32,12 @@
                   <p class="author">{{ book.author || '未知作者' }}</p>
                   <div class="book-tags">
                     <span v-if="book.kind" class="tag">{{ book.kind }}</span>
-                    <span v-if="(book as Book).totalChapterNum" class="tag">共{{ (book as Book).totalChapterNum }}章</span>
-                    <span v-if="(book as Book).originName" class="tag origin">{{ (book as Book).originName }}</span>
+                    <span v-if="(book as Book).totalChapterNum" class="tag"
+                      >共{{ (book as Book).totalChapterNum }}章</span
+                    >
+                    <span v-if="(book as Book).originName" class="tag origin">{{
+                      (book as Book).originName
+                    }}</span>
                   </div>
                   <p v-if="(book as Book).durChapterTitle" class="progress">
                     已读至：{{ (book as Book).durChapterTitle }}
@@ -87,7 +91,14 @@
           <div class="modal-actions">
             <div class="actions-left">
               <button class="btn detail-btn" @click="openAiBook">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18">
+                <svg
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  width="18"
+                  height="18"
+                >
                   <path d="M12 2v4" />
                   <path d="M12 18v4" />
                   <path d="M2 12h4" />
@@ -97,7 +108,14 @@
                 AI资料
               </button>
               <button class="btn btn-primary detail-btn" @click="startReading">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18">
+                <svg
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  width="18"
+                  height="18"
+                >
                   <path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z" />
                   <path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z" />
                 </svg>
@@ -177,14 +195,17 @@ async function loadChapters() {
   }
 }
 
-watch(() => props.modelValue, async (visible) => {
-  if (visible && props.book) {
-    coverFailed.value = false
-    showAllChapters.value = false
-    chapters.value = []
-    await loadChapters()
+watch(
+  () => props.modelValue,
+  async (visible) => {
+    if (visible && props.book) {
+      coverFailed.value = false
+      showAllChapters.value = false
+      chapters.value = []
+      await loadChapters()
+    }
   }
-})
+)
 
 function close() {
   emit('update:modelValue', false)
@@ -232,11 +253,8 @@ function openAiBook() {
   display: flex;
   align-items: center;
   justify-content: center;
-  padding:
-    calc(var(--space-6) + var(--safe-area-top))
-    calc(var(--space-6) + var(--safe-area-right))
-    calc(var(--space-6) + var(--safe-area-bottom))
-    calc(var(--space-6) + var(--safe-area-left));
+  padding: calc(var(--space-6) + var(--safe-area-top)) calc(var(--space-6) + var(--safe-area-right))
+    calc(var(--space-6) + var(--safe-area-bottom)) calc(var(--space-6) + var(--safe-area-left));
   overflow-y: auto;
   -webkit-overflow-scrolling: touch;
 }
@@ -244,7 +262,10 @@ function openAiBook() {
 .detail-modal {
   width: 100%;
   max-width: 880px;
-  max-height: min(85vh, calc(var(--app-height, 100dvh) - var(--safe-area-top) - var(--safe-area-bottom) - 32px));
+  max-height: min(
+    85vh,
+    calc(var(--app-height, 100dvh) - var(--safe-area-top) - var(--safe-area-bottom) - 32px)
+  );
   display: flex;
   flex-direction: column;
   background: var(--color-bg-elevated);
@@ -498,7 +519,9 @@ function openAiBook() {
 }
 
 @keyframes spin {
-  to { transform: rotate(360deg); }
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .modal-actions {
@@ -621,11 +644,7 @@ function openAiBook() {
   }
 
   .modal-container {
-    padding:
-      var(--safe-area-top)
-      0
-      var(--safe-area-bottom)
-      0;
+    padding: var(--safe-area-top) 0 var(--safe-area-bottom) 0;
   }
 
   .detail-modal {

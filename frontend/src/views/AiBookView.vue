@@ -26,7 +26,11 @@
             <span></span>
             自动更新
           </label>
-          <button class="primary-btn" :disabled="aiStore.isBusy || updatingToCurrent" @click="updateToCurrent">
+          <button
+            class="primary-btn"
+            :disabled="aiStore.isBusy || updatingToCurrent"
+            @click="updateToCurrent"
+          >
             {{ aiStore.phase === 'text' || updatingToCurrent ? '更新中...' : '更新到当前进度' }}
           </button>
         </div>
@@ -44,7 +48,12 @@
       </div>
 
       <nav class="tabs">
-        <button v-for="tab in tabs" :key="tab.key" :class="{ active: activeTab === tab.key }" @click="activeTab = tab.key">
+        <button
+          v-for="tab in tabs"
+          :key="tab.key"
+          :class="{ active: activeTab === tab.key }"
+          @click="activeTab = tab.key"
+        >
           {{ tab.label }}
         </button>
       </nav>
@@ -60,7 +69,11 @@
             <section class="overview-section">
               <h3>世界观资料</h3>
               <div class="worldview-groups">
-                <section v-for="group in worldviewGroups" :key="group.category" class="worldview-group">
+                <section
+                  v-for="group in worldviewGroups"
+                  :key="group.category"
+                  class="worldview-group"
+                >
                   <div class="group-head">
                     <button class="group-toggle" @click="toggleWorldviewGroup(group.category)">
                       <span>{{ group.collapsed ? '+' : '-' }}</span>
@@ -69,7 +82,11 @@
                     <span>{{ group.items.length }}</span>
                   </div>
                   <div v-if="!group.collapsed" class="group-items">
-                    <article v-for="note in group.items" :key="`${group.category}-${note.title}`" class="note-item">
+                    <article
+                      v-for="note in group.items"
+                      :key="`${group.category}-${note.title}`"
+                      class="note-item"
+                    >
                       <div class="item-title">
                         <h4>{{ note.title }}</h4>
                         <span v-if="note.confidence">{{ note.confidence }}</span>
@@ -98,7 +115,9 @@
             </div>
             <div class="metric">
               <span>最近章节</span>
-              <strong>{{ memory.processedChapterIndex != null ? memory.processedChapterIndex + 1 : '-' }}</strong>
+              <strong>{{
+                memory.processedChapterIndex != null ? memory.processedChapterIndex + 1 : '-'
+              }}</strong>
             </div>
           </aside>
         </section>
@@ -112,7 +131,9 @@
               </svg>
               <input v-model="characterSearch" placeholder="搜索角色、别名、势力、位置" />
             </label>
-            <span class="result-count">{{ filteredCharacters.length }} / {{ importantCharacters.length }}</span>
+            <span class="result-count"
+              >{{ filteredCharacters.length }} / {{ importantCharacters.length }}</span
+            >
           </div>
           <article v-for="character in filteredCharacters" :key="character.name" class="list-item">
             <div class="item-title">
@@ -126,11 +147,18 @@
               <span v-if="character.aliases?.length">别名：{{ character.aliases.join('、') }}</span>
             </div>
           </article>
-          <EmptyState v-if="!filteredCharacters.length" :text="importantCharacters.length ? '没有匹配的角色' : '暂无重要角色资料'" />
+          <EmptyState
+            v-if="!filteredCharacters.length"
+            :text="importantCharacters.length ? '没有匹配的角色' : '暂无重要角色资料'"
+          />
         </section>
 
         <section v-else-if="activeTab === 'relationships'" class="relation-grid">
-          <article v-for="relationship in displayRelationships" :key="`${relationship.source}-${relationship.target}-${relationship.relation}`" class="relation-item">
+          <article
+            v-for="relationship in displayRelationships"
+            :key="`${relationship.source}-${relationship.target}-${relationship.relation}`"
+            class="relation-item"
+          >
             <div class="relation-head">
               <strong>{{ relationship.source }}</strong>
               <span>{{ relationship.relation }}</span>
@@ -187,7 +215,9 @@
               <div class="meta-line">
                 <span v-if="row.location.status">状态：{{ row.location.status }}</span>
                 <span v-if="row.location.parentName">上级：{{ row.location.parentName }}</span>
-                <span v-if="row.location.relatedCharacters?.length">相关：{{ row.location.relatedCharacters.join('、') }}</span>
+                <span v-if="row.location.relatedCharacters?.length"
+                  >相关：{{ row.location.relatedCharacters.join('、') }}</span
+                >
               </div>
             </article>
             <EmptyState v-if="!visibleLocationRows.length" text="暂无地点资料" />
@@ -203,7 +233,11 @@
               </span>
             </div>
             <div class="source-options">
-              <button class="source-option" :class="{ active: configDraft.modelSource === 'browser' }" @click="configDraft.modelSource = 'browser'">
+              <button
+                class="source-option"
+                :class="{ active: configDraft.modelSource === 'browser' }"
+                @click="configDraft.modelSource = 'browser'"
+              >
                 自己配置模型
               </button>
               <button
@@ -224,23 +258,37 @@
             <article class="settings-card">
               <div class="settings-card-head">
                 <h2>后端文本模型</h2>
-                <span class="server-status" :class="{ active: serverTextReady }">{{ serverTextReady ? '已启用' : '未配置' }}</span>
+                <span class="server-status" :class="{ active: serverTextReady }">{{
+                  serverTextReady ? '已启用' : '未配置'
+                }}</span>
               </div>
-              <p class="settings-hint">{{ serverConfig?.text.model || '管理员尚未配置文本模型' }}</p>
+              <p class="settings-hint">
+                {{ serverConfig?.text.model || '管理员尚未配置文本模型' }}
+              </p>
             </article>
             <article class="settings-card">
               <div class="settings-card-head">
                 <h2>后端图片模型</h2>
-                <span class="server-status" :class="{ active: serverImageReady }">{{ serverImageReady ? '已启用' : '未配置' }}</span>
+                <span class="server-status" :class="{ active: serverImageReady }">{{
+                  serverImageReady ? '已启用' : '未配置'
+                }}</span>
               </div>
-              <p class="settings-hint">{{ serverConfig?.image.model || '管理员尚未配置图片模型' }} · {{ serverConfig?.image.imageSize || '1024x1024' }}</p>
+              <p class="settings-hint">
+                {{ serverConfig?.image.model || '管理员尚未配置图片模型' }} ·
+                {{ serverConfig?.image.imageSize || '1024x1024' }}
+              </p>
             </article>
             <article class="settings-card">
               <div class="settings-card-head">
                 <h2>后端语音模型</h2>
-                <span class="server-status" :class="{ active: serverSpeechReady }">{{ serverSpeechReady ? '已启用' : '未配置' }}</span>
+                <span class="server-status" :class="{ active: serverSpeechReady }">{{
+                  serverSpeechReady ? '已启用' : '未配置'
+                }}</span>
               </div>
-              <p class="settings-hint">{{ serverConfig?.speech.model || '管理员尚未配置 OpenAI Speech' }} · {{ serverConfig?.speech.voice || 'alloy' }}</p>
+              <p class="settings-hint">
+                {{ serverConfig?.speech.model || '管理员尚未配置 OpenAI Speech' }} ·
+                {{ serverConfig?.speech.voice || 'alloy' }}
+              </p>
             </article>
           </div>
 
@@ -334,7 +382,10 @@
                 <div class="settings-grid">
                   <label class="field span-2">
                     <span>Base URL</span>
-                    <input v-model="serverConfigDraft.text.baseUrl" placeholder="https://api.openai.com" />
+                    <input
+                      v-model="serverConfigDraft.text.baseUrl"
+                      placeholder="https://api.openai.com"
+                    />
                   </label>
                   <label class="field">
                     <span>模型</span>
@@ -342,7 +393,11 @@
                   </label>
                   <label class="field">
                     <span>API Key</span>
-                    <input v-model="serverConfigDraft.text.apiKey" type="password" autocomplete="off" />
+                    <input
+                      v-model="serverConfigDraft.text.apiKey"
+                      type="password"
+                      autocomplete="off"
+                    />
                   </label>
                   <label class="switch-line compact">
                     <input v-model="serverConfigDraft.text.useFullUrl" type="checkbox" />
@@ -364,7 +419,10 @@
                 <div class="settings-grid">
                   <label class="field span-2">
                     <span>Base URL</span>
-                    <input v-model="serverConfigDraft.image.baseUrl" placeholder="https://api.openai.com" />
+                    <input
+                      v-model="serverConfigDraft.image.baseUrl"
+                      placeholder="https://api.openai.com"
+                    />
                   </label>
                   <label class="field">
                     <span>模型</span>
@@ -380,7 +438,11 @@
                   </label>
                   <label class="field span-2">
                     <span>API Key</span>
-                    <input v-model="serverConfigDraft.image.apiKey" type="password" autocomplete="off" />
+                    <input
+                      v-model="serverConfigDraft.image.apiKey"
+                      type="password"
+                      autocomplete="off"
+                    />
                   </label>
                   <label class="switch-line compact">
                     <input v-model="serverConfigDraft.image.useFullUrl" type="checkbox" />
@@ -402,7 +464,10 @@
                 <div class="settings-grid">
                   <label class="field span-2">
                     <span>Base URL</span>
-                    <input v-model="serverConfigDraft.speech.baseUrl" placeholder="https://api.openai.com" />
+                    <input
+                      v-model="serverConfigDraft.speech.baseUrl"
+                      placeholder="https://api.openai.com"
+                    />
                   </label>
                   <label class="field">
                     <span>模型</span>
@@ -424,7 +489,11 @@
                   </label>
                   <label class="field">
                     <span>API Key</span>
-                    <input v-model="serverConfigDraft.speech.apiKey" type="password" autocomplete="off" />
+                    <input
+                      v-model="serverConfigDraft.speech.apiKey"
+                      type="password"
+                      autocomplete="off"
+                    />
                   </label>
                   <label class="switch-line compact">
                     <input v-model="serverConfigDraft.speech.useFullUrl" type="checkbox" />
@@ -510,23 +579,53 @@ const memory = computed(() => aiStore.memory)
 const canUseServerModel = computed(() => aiStore.canUseServerModel || aiStore.isServerModelAdmin)
 const isServerModelAdmin = computed(() => aiStore.isServerModelAdmin)
 const serverConfig = computed(() => aiStore.serverModelConfig?.config || null)
-const serverTextReady = computed(() => Boolean(serverConfig.value?.text.enabled && serverConfig.value.text.baseUrl && serverConfig.value.text.model))
-const serverImageReady = computed(() => Boolean(serverConfig.value?.image.enabled && serverConfig.value.image.baseUrl && serverConfig.value.image.model))
-const serverSpeechReady = computed(() => Boolean(serverConfig.value?.speech.enabled && serverConfig.value.speech.baseUrl && serverConfig.value.speech.model))
-const worldviewGroups = computed(() => groupAiBookWorldview(memory.value?.worldview || [], collapsedWorldviewCategories.value))
-const importantCharacters = computed(() => normalizeDisplayCharacters(memory.value?.characters || []))
-const filteredCharacters = computed(() => filterCharacters(importantCharacters.value, characterSearch.value))
-const displayRelationships = computed(() => normalizeDisplayRelationships(memory.value?.relationships || []))
+const serverTextReady = computed(() =>
+  Boolean(
+    serverConfig.value?.text.enabled &&
+    serverConfig.value.text.baseUrl &&
+    serverConfig.value.text.model
+  )
+)
+const serverImageReady = computed(() =>
+  Boolean(
+    serverConfig.value?.image.enabled &&
+    serverConfig.value.image.baseUrl &&
+    serverConfig.value.image.model
+  )
+)
+const serverSpeechReady = computed(() =>
+  Boolean(
+    serverConfig.value?.speech.enabled &&
+    serverConfig.value.speech.baseUrl &&
+    serverConfig.value.speech.model
+  )
+)
+const worldviewGroups = computed(() =>
+  groupAiBookWorldview(memory.value?.worldview || [], collapsedWorldviewCategories.value)
+)
+const importantCharacters = computed(() =>
+  normalizeDisplayCharacters(memory.value?.characters || [])
+)
+const filteredCharacters = computed(() =>
+  filterCharacters(importantCharacters.value, characterSearch.value)
+)
+const displayRelationships = computed(() =>
+  normalizeDisplayRelationships(memory.value?.relationships || [])
+)
 const displayLocations = computed(() => normalizeDisplayLocations(memory.value?.locations || []))
-const visibleLocationRows = computed(() => buildAiBookLocationRows(displayLocations.value, collapsedLocationIds.value))
-const displayMemory = computed<AiBookMemory | null>(() => memory.value
-  ? {
-      ...memory.value,
-      characters: importantCharacters.value,
-      relationships: displayRelationships.value,
-      locations: displayLocations.value,
-    }
-  : null)
+const visibleLocationRows = computed(() =>
+  buildAiBookLocationRows(displayLocations.value, collapsedLocationIds.value)
+)
+const displayMemory = computed<AiBookMemory | null>(() =>
+  memory.value
+    ? {
+        ...memory.value,
+        characters: importantCharacters.value,
+        relationships: displayRelationships.value,
+        locations: displayLocations.value,
+      }
+    : null
+)
 const progressText = computed(() => {
   const index = memory.value?.processedChapterIndex
   if (index == null) return '尚未生成'
@@ -549,7 +648,7 @@ const statusNotice = computed(() => {
 watch(
   () => aiStore.config,
   (next) => Object.assign(configDraft, next),
-  { deep: true },
+  { deep: true }
 )
 
 watch(
@@ -557,7 +656,7 @@ watch(
   (next) => {
     if (next) Object.assign(serverConfigDraft, cloneServerModelConfig(next))
   },
-  { deep: true },
+  { deep: true }
 )
 
 onMounted(async () => {
@@ -743,29 +842,35 @@ function normalizeDisplayCharacters(characters: AiBookCharacter[]) {
 function filterCharacters(characters: AiBookCharacter[], query: string) {
   const normalizedQuery = normalizeSearch(query)
   if (!normalizedQuery) return characters
-  return characters.filter((character) => normalizeSearch([
-    character.name,
-    character.aliases?.join(' '),
-    character.status,
-    character.faction,
-    character.location,
-    character.description,
-  ].filter(Boolean).join(' ')).includes(normalizedQuery))
+  return characters.filter((character) =>
+    normalizeSearch(
+      [
+        character.name,
+        character.aliases?.join(' '),
+        character.status,
+        character.faction,
+        character.location,
+        character.description,
+      ]
+        .filter(Boolean)
+        .join(' ')
+    ).includes(normalizedQuery)
+  )
 }
 
 function normalizeDisplayRelationships(relationships: AiBookRelationship[]) {
   const byPair = new Map<string, AiBookRelationship>()
   for (const relationship of relationships) {
     if (
-      !relationship.source
-      || !relationship.target
-      || !relationship.relation
-      || normalizeKey(relationship.source) === normalizeKey(relationship.target)
-      || isLowImportance(relationship.importance)
-      || isLowValueRelationship(
+      !relationship.source ||
+      !relationship.target ||
+      !relationship.relation ||
+      normalizeKey(relationship.source) === normalizeKey(relationship.target) ||
+      isLowImportance(relationship.importance) ||
+      isLowValueRelationship(
         relationship.relation,
         relationship.description || relationship.status || '',
-        relationship.importance,
+        relationship.importance
       )
     ) {
       continue
@@ -781,9 +886,10 @@ function normalizeDisplayLocations(locations: AiBookLocation[]) {
   const byName = new Map<string, AiBookLocation>()
   for (const location of locations) {
     if (!location.name || isLowImportance(location.importance)) continue
-    const parentName = location.parentName && normalizeKey(location.parentName) !== normalizeKey(location.name)
-      ? location.parentName
-      : undefined
+    const parentName =
+      location.parentName && normalizeKey(location.parentName) !== normalizeKey(location.name)
+        ? location.parentName
+        : undefined
     const normalized = { ...location, parentName }
     const key = normalizeKey(location.name)
     const existing = byName.get(key)
@@ -805,7 +911,10 @@ function mergeDisplayCharacter(current: AiBookCharacter, next: AiBookCharacter):
   }
 }
 
-function mergeDisplayRelationship(current: AiBookRelationship, next: AiBookRelationship): AiBookRelationship {
+function mergeDisplayRelationship(
+  current: AiBookRelationship,
+  next: AiBookRelationship
+): AiBookRelationship {
   return {
     ...current,
     status: richerString(current.status, next.status),
@@ -821,7 +930,10 @@ function mergeDisplayLocation(current: AiBookLocation, next: AiBookLocation): Ai
     parentName: current.parentName || next.parentName,
     description: richerString(current.description, next.description),
     status: richerString(current.status, next.status),
-    relatedCharacters: uniqueStrings([...(current.relatedCharacters || []), ...(next.relatedCharacters || [])]),
+    relatedCharacters: uniqueStrings([
+      ...(current.relatedCharacters || []),
+      ...(next.relatedCharacters || []),
+    ]),
     firstSeenChapter: current.firstSeenChapter || next.firstSeenChapter,
     importance: preferImportance(current.importance, next.importance),
   }
@@ -1005,7 +1117,7 @@ function cloneServerModelConfig(config: AiServerModelConfig): AiServerModelConfi
 }
 
 .enable-switch span::after {
-  content: "";
+  content: '';
   position: absolute;
   width: 16px;
   height: 16px;
@@ -1384,7 +1496,7 @@ function cloneServerModelConfig(config: AiServerModelConfig): AiServerModelConfi
 }
 
 .tree-location::before {
-  content: "";
+  content: '';
   position: absolute;
   left: -12px;
   top: -10px;
@@ -1394,7 +1506,7 @@ function cloneServerModelConfig(config: AiServerModelConfig): AiServerModelConfi
   opacity: 0.55;
 }
 
-.tree-location[style*="--depth-offset: 0px"]::before {
+.tree-location[style*='--depth-offset: 0px']::before {
   display: none;
 }
 
@@ -1602,11 +1714,13 @@ function cloneServerModelConfig(config: AiServerModelConfig): AiServerModelConfi
   background: var(--color-bg-sunken);
   border: 1px solid var(--color-border);
   position: relative;
-  transition: background var(--duration-fast), border-color var(--duration-fast);
+  transition:
+    background var(--duration-fast),
+    border-color var(--duration-fast);
 }
 
 .switch-ui::after {
-  content: "";
+  content: '';
   position: absolute;
   width: 14px;
   height: 14px;

@@ -26,6 +26,6 @@ export const useSourceStore = defineStore('source', () => {
   return {
     sources,
     loading,
-    fetchSources
+    fetchSources,
   }
 })

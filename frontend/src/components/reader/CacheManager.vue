@@ -29,8 +29,15 @@
       <div v-if="working" class="caching-status">
         <div class="progress-circle">
           <svg viewBox="0 0 36 36">
-            <path class="circle-bg" d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" />
-            <path class="circle" :stroke-dasharray="`${progress}, 100`" d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" />
+            <path
+              class="circle-bg"
+              d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831"
+            />
+            <path
+              class="circle"
+              :stroke-dasharray="`${progress}, 100`"
+              d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831"
+            />
           </svg>
           <div class="percentage">{{ progress }}%</div>
         </div>
@@ -48,7 +55,10 @@
 
         <template v-else>
           <div class="info-card">
-            <p>服务端缓存保存在后端存储目录；浏览器缓存保存在当前设备的 IndexedDB。断网时阅读页会优先读取浏览器已缓存章节。</p>
+            <p>
+              服务端缓存保存在后端存储目录；浏览器缓存保存在当前设备的
+              IndexedDB。断网时阅读页会优先读取浏览器已缓存章节。
+            </p>
           </div>
 
           <section class="cache-section">
@@ -162,9 +172,10 @@ function startServerCaching(count: number) {
   currentStatus.value = '连接服务端缓存任务...'
   currentChapterName.value = ''
 
-  const total = count === 0
-    ? Math.max(0, store.chapters.length - store.currentIndex)
-    : Math.min(count, Math.max(0, store.chapters.length - store.currentIndex))
+  const total =
+    count === 0
+      ? Math.max(0, store.chapters.length - store.currentIndex)
+      : Math.min(count, Math.max(0, store.chapters.length - store.currentIndex))
 
   sse = cacheBookSSE({
     bookUrl: store.book.bookUrl,
@@ -221,9 +232,10 @@ async function startBrowserCaching(count: number) {
 
   try {
     const chapters = store.chapters.length ? store.chapters : await resolveBookChapters(store.book)
-    const total = count === 0
-      ? Math.max(0, chapters.length - store.currentIndex)
-      : Math.min(count, Math.max(0, chapters.length - store.currentIndex))
+    const total =
+      count === 0
+        ? Math.max(0, chapters.length - store.currentIndex)
+        : Math.min(count, Math.max(0, chapters.length - store.currentIndex))
     await cacheBookToBrowser({
       book: store.book,
       chapters,
@@ -304,17 +316,31 @@ function stopWorking() {
   align-items: center;
   justify-content: space-between;
   padding: 16px 20px;
-  border-bottom: 1px solid rgba(0,0,0,0.06);
+  border-bottom: 1px solid rgba(0, 0, 0, 0.06);
 }
 
-.cache-header h3 { margin: 0; font-size: var(--text-lg); }
-.cache-subtitle { margin: 4px 0 0; font-size: var(--text-xs); opacity: 0.55; }
+.cache-header h3 {
+  margin: 0;
+  font-size: var(--text-lg);
+}
+.cache-subtitle {
+  margin: 4px 0 0;
+  font-size: var(--text-xs);
+  opacity: 0.55;
+}
 
 .close-btn {
-  width: 32px; height: 32px;
-  display: flex; align-items: center; justify-content: center;
-  border-radius: 8px; color: inherit; opacity: 0.6;
-  background: transparent; border: none; cursor: pointer;
+  width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 8px;
+  color: inherit;
+  opacity: 0.6;
+  background: transparent;
+  border: none;
+  cursor: pointer;
 }
 
 .cache-body {
@@ -341,9 +367,18 @@ function stopWorking() {
   gap: 6px;
 }
 
-.summary-label { font-size: var(--text-xs); opacity: 0.65; }
-.summary-card strong { font-size: var(--text-xl); line-height: 1; }
-.summary-card small { font-size: var(--text-xs); opacity: 0.5; }
+.summary-label {
+  font-size: var(--text-xs);
+  opacity: 0.65;
+}
+.summary-card strong {
+  font-size: var(--text-xl);
+  line-height: 1;
+}
+.summary-card small {
+  font-size: var(--text-xs);
+  opacity: 0.5;
+}
 
 .cache-sections {
   display: flex;
@@ -382,9 +417,18 @@ function stopWorking() {
   border-left: 4px solid var(--color-primary, #c97f3a);
 }
 
-.info-card p { margin: 0; font-size: var(--text-sm); line-height: 1.6; opacity: 0.8; }
+.info-card p {
+  margin: 0;
+  font-size: var(--text-sm);
+  line-height: 1.6;
+  opacity: 0.8;
+}
 
-.option-list { display: flex; flex-direction: column; gap: 12px; }
+.option-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
 
 .cache-opt {
   display: flex;
@@ -392,7 +436,7 @@ function stopWorking() {
   align-items: flex-start;
   padding: 16px 20px;
   border-radius: 16px;
-  border: 1px solid rgba(0,0,0,0.1);
+  border: 1px solid rgba(0, 0, 0, 0.1);
   background: transparent;
   color: inherit;
   cursor: pointer;
@@ -416,8 +460,15 @@ function stopWorking() {
   color: #dc2626;
 }
 
-.cache-opt .label { font-weight: 600; font-size: var(--text-base); margin-bottom: 4px; }
-.cache-opt .sub { font-size: var(--text-xs); opacity: 0.6; }
+.cache-opt .label {
+  font-weight: 600;
+  font-size: var(--text-base);
+  margin-bottom: 4px;
+}
+.cache-opt .sub {
+  font-size: var(--text-xs);
+  opacity: 0.6;
+}
 
 .caching-status {
   min-height: 360px;
@@ -435,20 +486,47 @@ function stopWorking() {
   margin-bottom: 24px;
 }
 
-.progress-circle svg { transform: rotate(-90deg); width: 100%; height: 100%; }
-.circle-bg { fill: none; stroke: rgba(0,0,0,0.05); stroke-width: 2.8; }
-.circle { fill: none; stroke: var(--color-primary, #c97f3a); stroke-width: 2.8; stroke-linecap: round; transition: stroke-dasharray 0.3s; }
+.progress-circle svg {
+  transform: rotate(-90deg);
+  width: 100%;
+  height: 100%;
+}
+.circle-bg {
+  fill: none;
+  stroke: rgba(0, 0, 0, 0.05);
+  stroke-width: 2.8;
+}
+.circle {
+  fill: none;
+  stroke: var(--color-primary, #c97f3a);
+  stroke-width: 2.8;
+  stroke-linecap: round;
+  transition: stroke-dasharray 0.3s;
+}
 
 .percentage {
   position: absolute;
-  top: 50%; left: 50%;
+  top: 50%;
+  left: 50%;
   transform: translate(-50%, -50%);
-  font-size: var(--text-xl); font-weight: 700;
+  font-size: var(--text-xl);
+  font-weight: 700;
 }
 
-.status-text { text-align: center; margin-bottom: 32px; }
-.main-status { font-weight: 600; font-size: var(--text-lg); margin: 0 0 8px 0; }
-.sub-status { font-size: var(--text-sm); opacity: 0.5; margin: 0; }
+.status-text {
+  text-align: center;
+  margin-bottom: 32px;
+}
+.main-status {
+  font-weight: 600;
+  font-size: var(--text-lg);
+  margin: 0 0 8px 0;
+}
+.sub-status {
+  font-size: var(--text-sm);
+  opacity: 0.5;
+  margin: 0;
+}
 
 .stop-btn {
   padding: 8px 24px;

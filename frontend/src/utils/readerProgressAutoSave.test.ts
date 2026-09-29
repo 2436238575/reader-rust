@@ -1,5 +1,8 @@
 import { describe, expect, it, vi } from 'vitest'
-import { createReaderProgressAutoSaveScheduler, createReaderProgressExitSaver } from './readerProgressAutoSave'
+import {
+  createReaderProgressAutoSaveScheduler,
+  createReaderProgressExitSaver,
+} from './readerProgressAutoSave'
 
 describe('readerProgressAutoSave', () => {
   it('coalesces repeated schedule calls into one timed flush', () => {

@@ -161,7 +161,8 @@ const AI_BOOK_AGENT_TOOLS = [
     type: 'function',
     function: {
       name: AI_BOOK_TOOL_SAVE_PATCH,
-      description: '提交本章带来的结构化资料增量。必须在已读取当前资料和章节后调用一次作为最终结果。',
+      description:
+        '提交本章带来的结构化资料增量。必须在已读取当前资料和章节后调用一次作为最终结果。',
       parameters: {
         type: 'object',
         additionalProperties: false,
@@ -169,7 +170,8 @@ const AI_BOOK_AGENT_TOOLS = [
           memory: {
             type: 'object',
             additionalProperties: true,
-            description: '增量资料，不要整包覆盖。可包含 summary、worldview、characters、relationships、locations。',
+            description:
+              '增量资料，不要整包覆盖。可包含 summary、worldview、characters、relationships、locations。',
           },
           shouldRegenerateMap: {
             type: 'boolean',
@@ -189,11 +191,14 @@ const AI_BOOK_AGENT_TOOLS = [
 export function shouldRunAiBookAutoUpdate(
   memory: AiBookMemory | null | undefined,
   completedChapterIndex: number,
-  config: AiBookConfig,
+  config: AiBookConfig
 ) {
   if (!memory?.enabled) return false
   if (!isAiBookConfigReady(config)) return false
-  if (typeof memory.processedChapterIndex === 'number' && memory.processedChapterIndex >= completedChapterIndex) {
+  if (
+    typeof memory.processedChapterIndex === 'number' &&
+    memory.processedChapterIndex >= completedChapterIndex
+  ) {
     return false
   }
   return true
@@ -238,44 +243,56 @@ export function buildAiBookPromptMessages({
         task: 'tool-calling-ai-book-memory-update',
         finalTool: AI_BOOK_TOOL_SAVE_PATCH,
         patchSchema: {
-          summary: 'string，300-800 字累计已读剧情摘要，必须压缩旧 summary + 当前章节新增进展；禁止写成单章摘要或逐章流水账',
-          worldview: [{
-            category: '基础规则|势力制度|历史传说|技术/魔法|社会文化|地理环境|组织体系|未确认信息',
-            title: 'string，设定名，只能是概念/规则/组织/地点体系名，不要写“本章/第X章/剧情/章节名”',
-            content: 'string，稳定设定说明；禁止以章节号、章节名、时间顺序或角色行动复述开头',
-            confidence: '已知|推断|未知',
-            importance: 'high|medium|low',
-          }],
-          characters: [{
-            name: 'string',
-            aliases: ['string'],
-            status: 'string',
-            faction: 'string',
-            location: 'string',
-            description: 'string',
-            lastSeenChapter: 'string',
-            importance: 'high|medium|low',
-          }],
-          relationships: [{
-            source: 'string',
-            target: 'string',
-            relation: 'string',
-            status: 'string',
-            description: 'string',
-            importance: 'high|medium|low',
-          }],
-          locations: [{
-            name: 'string',
-            parentName: 'string or empty for top-level places',
-            kind: 'string',
-            description: 'string',
-            status: 'string',
-            relatedCharacters: ['string'],
-            firstSeenChapter: 'string',
-            importance: 'high|medium|low',
-          }],
+          summary:
+            'string，300-800 字累计已读剧情摘要，必须压缩旧 summary + 当前章节新增进展；禁止写成单章摘要或逐章流水账',
+          worldview: [
+            {
+              category:
+                '基础规则|势力制度|历史传说|技术/魔法|社会文化|地理环境|组织体系|未确认信息',
+              title:
+                'string，设定名，只能是概念/规则/组织/地点体系名，不要写“本章/第X章/剧情/章节名”',
+              content: 'string，稳定设定说明；禁止以章节号、章节名、时间顺序或角色行动复述开头',
+              confidence: '已知|推断|未知',
+              importance: 'high|medium|low',
+            },
+          ],
+          characters: [
+            {
+              name: 'string',
+              aliases: ['string'],
+              status: 'string',
+              faction: 'string',
+              location: 'string',
+              description: 'string',
+              lastSeenChapter: 'string',
+              importance: 'high|medium|low',
+            },
+          ],
+          relationships: [
+            {
+              source: 'string',
+              target: 'string',
+              relation: 'string',
+              status: 'string',
+              description: 'string',
+              importance: 'high|medium|low',
+            },
+          ],
+          locations: [
+            {
+              name: 'string',
+              parentName: 'string or empty for top-level places',
+              kind: 'string',
+              description: 'string',
+              status: 'string',
+              relatedCharacters: ['string'],
+              firstSeenChapter: 'string',
+              importance: 'high|medium|low',
+            },
+          ],
           shouldRegenerateMap: 'boolean',
-          mapPrompt: 'string when map should be regenerated; must describe a top-down cartographic world map, not a scene/photo/building illustration',
+          mapPrompt:
+            'string when map should be regenerated; must describe a top-down cartographic world map, not a scene/photo/building illustration',
         },
         qualityRules: [
           'worldview 必须有 category；同一 category 下不要重复 title；只写设定，不写本章简介。',
@@ -335,7 +352,7 @@ export async function requestAiBookMemoryUpdate({
       throw new Error(await readModelError(response, 'AI 资料生成失败'))
     }
 
-    const data = await response.json() as OpenAIChatResponse
+    const data = (await response.json()) as OpenAIChatResponse
     const message = data.choices?.[0]?.message
     const toolCalls = Array.isArray(message?.tool_calls) ? message.tool_calls : []
     if (toolCalls.length) {
@@ -388,7 +405,7 @@ function executeAiBookToolCall(
     chapter: BookChapter
     chapterContent: string
     memory: AiBookMemory
-  },
+  }
 ): AiBookToolResult {
   const name = toolCall.function?.name || ''
   const args = parseToolArguments(toolCall.function?.arguments || '{}')
@@ -462,17 +479,19 @@ function buildAgentMemoryContext(memory: AiBookMemory) {
     locations: normalizeLocations(memory.locations || []),
     map: memory.map
       ? {
-        prompt: memory.map.prompt,
-        sourceChapterIndex: memory.map.sourceChapterIndex,
-        fallback: memory.map.fallback,
-        fallbackReason: memory.map.fallbackReason,
-      }
+          prompt: memory.map.prompt,
+          sourceChapterIndex: memory.map.sourceChapterIndex,
+          fallback: memory.map.fallback,
+          fallbackReason: memory.map.fallbackReason,
+        }
       : null,
     mapDirty: Boolean(memory.mapDirty),
   }
 }
 
-function parseToolArguments(input: string): { ok: true; value: UnknownRecord } | { ok: false; error: string } {
+function parseToolArguments(
+  input: string
+): { ok: true; value: UnknownRecord } | { ok: false; error: string } {
   try {
     const parsed = JSON.parse(input || '{}')
     if (!isRecord(parsed)) {
@@ -529,7 +548,7 @@ export async function requestAiBookMapImage({
     throw new Error(await readModelError(response, '地图生成失败'))
   }
 
-  const data = await response.json() as OpenAIImageResponse
+  const data = (await response.json()) as OpenAIImageResponse
   const first = data.data?.[0]
   if (!first?.b64_json && !first?.url) {
     throw new Error('地图生成结果为空')
@@ -571,7 +590,7 @@ export async function uploadGeneratedMap({
     throw new Error(await readModelError(response, '地图上传失败'))
   }
 
-  const data = await response.json() as {
+  const data = (await response.json()) as {
     isSuccess?: boolean
     errorMsg?: string
     data?: string[]
@@ -617,12 +636,7 @@ export function applyMapToMemory(memory: AiBookMemory, map: AiBookMap): AiBookMe
 
 export function applyMapFallbackToMemory(
   memory: AiBookMemory,
-  {
-    prompt,
-    reason,
-    sourceChapterIndex,
-    updatedAt = Date.now(),
-  }: ApplyMapFallbackParams,
+  { prompt, reason, sourceChapterIndex, updatedAt = Date.now() }: ApplyMapFallbackParams
 ): AiBookMemory {
   return {
     ...memory,
@@ -639,7 +653,12 @@ export function applyMapFallbackToMemory(
   }
 }
 
-function coerceModelUpdate(raw: AiBookRawModelUpdate, previous: AiBookMemory, book: Book, chapter: BookChapter): AiBookModelUpdate {
+function coerceModelUpdate(
+  raw: AiBookRawModelUpdate,
+  previous: AiBookMemory,
+  book: Book,
+  chapter: BookChapter
+): AiBookModelUpdate {
   const rawMemory = raw.memory || raw
   const worldviewSource = mergeIncrementalItems(previous.worldview, rawMemory.worldview)
   const characterSource = mergeIncrementalItems(previous.characters, rawMemory.characters)
@@ -702,15 +721,22 @@ function normalizeSummary(nextSummary: unknown, previousSummary: string | undefi
 }
 
 function startsWithSingleChapterSummary(value: string) {
-  return /^(?:本章|本节|这一章)[：:，,]/.test(value.trim())
-    || /^第\s*(?:\d+|[零〇一二两三四五六七八九十百千万]+)\s*[章节回话卷篇][^。！？；]{0,40}[：:]/.test(value.trim())
+  return (
+    /^(?:本章|本节|这一章)[：:，,]/.test(value.trim()) ||
+    /^第\s*(?:\d+|[零〇一二两三四五六七八九十百千万]+)\s*[章节回话卷篇][^。！？；]{0,40}[：:]/.test(
+      value.trim()
+    )
+  )
 }
 
 function stripSingleChapterSummaryHeading(value: string) {
   return value
     .trim()
     .replace(/^(?:本章|本节|这一章)[：:，,]\s*/, '')
-    .replace(/^第\s*(?:\d+|[零〇一二两三四五六七八九十百千万]+)\s*[章节回话卷篇][^。！？；]{0,40}[：:]\s*/, '')
+    .replace(
+      /^第\s*(?:\d+|[零〇一二两三四五六七八九十百千万]+)\s*[章节回话卷篇][^。！？；]{0,40}[：:]\s*/,
+      ''
+    )
     .trim()
 }
 
@@ -736,18 +762,22 @@ function shouldAcceptMapRegeneration({
 }) {
   if (!requested || !mapPrompt) return false
   if (!previous.map) return true
-  return locationSignature(normalizeLocations(previous.locations || [])) !== locationSignature(locations)
+  return (
+    locationSignature(normalizeLocations(previous.locations || [])) !== locationSignature(locations)
+  )
 }
 
 function locationSignature(locations: AiBookLocation[]) {
   return locations
-    .map((location) => [
-      normalizeKey(location.name),
-      normalizeKey(location.parentName),
-      normalizeKey(location.kind),
-      normalizeKey(location.status),
-      normalizeKey(location.description),
-    ].join(':'))
+    .map((location) =>
+      [
+        normalizeKey(location.name),
+        normalizeKey(location.parentName),
+        normalizeKey(location.kind),
+        normalizeKey(location.status),
+        normalizeKey(location.description),
+      ].join(':')
+    )
     .sort()
     .join('|')
 }
@@ -781,7 +811,11 @@ function isChapterSummaryWorldview(title: string, content: string, category: str
   if (/(本章|章节|剧情|简介|概要|经过|第\d+章|第[一二三四五六七八九十百千万]+章)/.test(title)) {
     return true
   }
-  if (['当前事件', '章节摘要', '剧情进展', '本章剧情'].some((term) => categoryKey.includes(normalizeKey(term)))) {
+  if (
+    ['当前事件', '章节摘要', '剧情进展', '本章剧情'].some((term) =>
+      categoryKey.includes(normalizeKey(term))
+    )
+  ) {
     return true
   }
   if (/^(本章|本节|这一章|此章|第.+章)/.test(content.trim())) {
@@ -799,12 +833,12 @@ function isNarrativeRecapText(title: string, content: string) {
   const trimmed = content.trim()
   const combined = `${title} ${trimmed}`
   const normalized = normalizeKey(combined)
-  const sentenceCount = trimmed
-    .split(/[。！？；]/)
-    .filter((part) => part.trim().length > 0)
-    .length
-  const chapterReference = /第\s*(?:\d+|[零〇一二两三四五六七八九十百千万]+)\s*[章节回话卷篇]/.test(combined)
-    || ['本章', '这一章', '当前章节', '章节内容'].some((term) => normalized.includes(normalizeKey(term)))
+  const sentenceCount = trimmed.split(/[。！？；]/).filter((part) => part.trim().length > 0).length
+  const chapterReference =
+    /第\s*(?:\d+|[零〇一二两三四五六七八九十百千万]+)\s*[章节回话卷篇]/.test(combined) ||
+    ['本章', '这一章', '当前章节', '章节内容'].some((term) =>
+      normalized.includes(normalizeKey(term))
+    )
   const narrativeTerms = [
     '随后',
     '然后',
@@ -827,9 +861,13 @@ function isNarrativeRecapText(title: string, content: string) {
     '晚上',
     '第二天',
   ]
-  const narrativeHits = narrativeTerms.filter((term) => normalized.includes(normalizeKey(term))).length
-  return (chapterReference && trimmed.length > 60 && narrativeHits >= 2)
-    || (trimmed.length > 140 && sentenceCount >= 4 && narrativeHits >= 4)
+  const narrativeHits = narrativeTerms.filter((term) =>
+    normalized.includes(normalizeKey(term))
+  ).length
+  return (
+    (chapterReference && trimmed.length > 60 && narrativeHits >= 2) ||
+    (trimmed.length > 140 && sentenceCount >= 4 && narrativeHits >= 4)
+  )
 }
 
 function isSettingCategory(category: string) {
@@ -908,7 +946,8 @@ function normalizeLocations(items: unknown[]): AiBookLocation[] {
     const location: AiBookLocation = {
       name,
       kind: readString(item, 'kind') || undefined,
-      parentName: parentName && normalizeKey(parentName) !== normalizeKey(name) ? parentName : undefined,
+      parentName:
+        parentName && normalizeKey(parentName) !== normalizeKey(name) ? parentName : undefined,
       description: readString(item, 'description') || readString(item, 'status') || '',
       status: readString(item, 'status') || undefined,
       relatedCharacters: uniqueStrings(readStringArray(item, 'relatedCharacters')),
@@ -944,7 +983,10 @@ function mergeCharacter(current: AiBookCharacter, next: AiBookCharacter): AiBook
   }
 }
 
-function mergeRelationship(current: AiBookRelationship, next: AiBookRelationship): AiBookRelationship {
+function mergeRelationship(
+  current: AiBookRelationship,
+  next: AiBookRelationship
+): AiBookRelationship {
   return {
     ...current,
     status: next.status || current.status,
@@ -960,7 +1002,10 @@ function mergeLocation(current: AiBookLocation, next: AiBookLocation): AiBookLoc
     parentName: next.parentName || current.parentName,
     description: richerString(current.description, next.description),
     status: next.status || current.status,
-    relatedCharacters: uniqueStrings([...(current.relatedCharacters || []), ...(next.relatedCharacters || [])]),
+    relatedCharacters: uniqueStrings([
+      ...(current.relatedCharacters || []),
+      ...(next.relatedCharacters || []),
+    ]),
     firstSeenChapter: current.firstSeenChapter || next.firstSeenChapter,
     importance: preferImportance(current.importance, next.importance),
   }
@@ -1081,9 +1126,7 @@ function parseJsonContent(content: string): AiBookRawModelUpdate {
 }
 
 function extractFirstJsonObject(content: string) {
-  const text = content
-    .replace(/^```(?:json)?\s*/i, '')
-    .trim()
+  const text = content.replace(/^```(?:json)?\s*/i, '').trim()
   const start = text.indexOf('{')
   if (start < 0) {
     throw new Error('AI 资料生成结果未包含 JSON 对象')
@@ -1124,7 +1167,7 @@ async function readModelError(response: Response, fallback: string) {
   try {
     const contentType = response.headers.get('content-type') || ''
     if (contentType.includes('application/json')) {
-      const data = await response.json() as {
+      const data = (await response.json()) as {
         error?: { message?: string }
         errorMsg?: string
       }
@@ -1176,17 +1219,16 @@ async function fetchImageBlob(imageUrl: string, fetchImpl: typeof fetch, useBack
   }
   const response = useBackendProxy
     ? await fetchImpl(`${API_BASE}/aiProxyImage`, {
-      method: 'POST',
-      headers: {
-        ...buildAuthHeaders(),
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({ url: imageUrl }),
-    })
+        method: 'POST',
+        headers: {
+          ...buildAuthHeaders(),
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ url: imageUrl }),
+      })
     : await fetchImpl(imageUrl)
   if (!response.ok) {
     throw new Error(await readModelError(response, '地图图片下载失败'))
   }
   return response.blob()
 }
-

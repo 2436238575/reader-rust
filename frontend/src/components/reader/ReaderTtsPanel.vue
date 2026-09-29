@@ -1,12 +1,19 @@
 ﻿<template>
   <Transition name="slide-up">
-    <div v-if="show" class="tts-controls" :style="{ background: theme.popup, color: theme.fontColor }">
+    <div
+      v-if="show"
+      class="tts-controls"
+      :style="{ background: theme.popup, color: theme.fontColor }"
+    >
       <div class="tts-head">
         <div class="tts-info">
           <div>正在朗读: {{ chapterTitle }}</div>
           <div class="tts-mode">
             当前模式: {{ providerLabel }}
-            <span v-if="provider === 'openai'"> · {{ openaiSource === 'server' ? '后端配置' : `${openaiModel} / ${openaiVoice}` }}</span>
+            <span v-if="provider === 'openai'">
+              ·
+              {{ openaiSource === 'server' ? '后端配置' : `${openaiModel} / ${openaiVoice}` }}</span
+            >
           </div>
         </div>
         <button class="tts-close" @click="$emit('close')" aria-label="close tts panel">
@@ -19,11 +26,18 @@
         <button @click="$emit('prev')">上一段</button>
         <!-- 暂停态优先于 isSpeaking 判断：OpenAI 路径暂停时 isSpeaking=false，
              先判 isSpeaking 会把「继续」错显成「开始」并走成重读 -->
-        <button :disabled="isLoading" @click="$emit('toggle-play')">{{ isLoading ? '加载中' : (isPaused ? '继续' : (isSpeaking ? '暂停' : '开始')) }}</button>
+        <button :disabled="isLoading" @click="$emit('toggle-play')">
+          {{ isLoading ? '加载中' : isPaused ? '继续' : isSpeaking ? '暂停' : '开始' }}
+        </button>
         <button @click="$emit('stop')">停止</button>
         <button @click="$emit('next')">下一段</button>
       </div>
-      <select v-if="provider === 'system'" class="tts-voice-select" :value="voiceName" @change="$emit('voice-change', ($event.target as HTMLSelectElement).value)">
+      <select
+        v-if="provider === 'system'"
+        class="tts-voice-select"
+        :value="voiceName"
+        @change="$emit('voice-change', ($event.target as HTMLSelectElement).value)"
+      >
         <option value="">系统默认</option>
         <option v-for="voice in voices" :key="voice.name" :value="voice.name">
           {{ voice.name }} ({{ voice.lang }})
@@ -39,7 +53,7 @@
         :value="openaiVoice"
         placeholder="alloy"
         @input="$emit('openai-voice-change', ($event.target as HTMLInputElement).value)"
-      >
+      />
       <div class="tts-tuning">
         <div class="tts-stepper">
           <span class="tts-label">语速</span>
@@ -57,10 +71,18 @@
       <div class="tts-timer-row">
         <span class="tts-label">定时停止</span>
         <div class="tts-timer-actions">
-          <button :class="{ active: stopAfterMinutes === 0 }" @click="$emit('timer-change', 0)">关闭</button>
-          <button :class="{ active: stopAfterMinutes === 15 }" @click="$emit('timer-change', 15)">15分钟</button>
-          <button :class="{ active: stopAfterMinutes === 30 }" @click="$emit('timer-change', 30)">30分钟</button>
-          <button :class="{ active: stopAfterMinutes === 60 }" @click="$emit('timer-change', 60)">60分钟</button>
+          <button :class="{ active: stopAfterMinutes === 0 }" @click="$emit('timer-change', 0)">
+            关闭
+          </button>
+          <button :class="{ active: stopAfterMinutes === 15 }" @click="$emit('timer-change', 15)">
+            15分钟
+          </button>
+          <button :class="{ active: stopAfterMinutes === 30 }" @click="$emit('timer-change', 30)">
+            30分钟
+          </button>
+          <button :class="{ active: stopAfterMinutes === 60 }" @click="$emit('timer-change', 60)">
+            60分钟
+          </button>
         </div>
         <div v-if="timerText" class="tts-timer-text">{{ timerText }}</div>
       </div>

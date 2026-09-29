@@ -63,9 +63,7 @@ describe('reader local txt chapters', () => {
       origin: 'local-txt',
       bookUrl: 'local-txt:abc123',
     }
-    readerStore.chapters = [
-      { title: '第一章', url: 'local-txt:abc123#0', index: 0 },
-    ]
+    readerStore.chapters = [{ title: '第一章', url: 'local-txt:abc123#0', index: 0 }]
 
     await expect(readerStore.fetchChapterContent(0)).resolves.toBe('本地正文')
 
@@ -100,8 +98,12 @@ describe('reader progress conflict timestamps', () => {
     const serverSavedAt = 1_700_000_000_000
 
     await readerStore.loadBook({
-      name: '书', author: '', origin: 'https://example.com', bookUrl: 'https://example.com/b',
-      durChapterIndex: 0, durChapterTime: serverSavedAt,
+      name: '书',
+      author: '',
+      origin: 'https://example.com',
+      bookUrl: 'https://example.com/b',
+      durChapterIndex: 0,
+      durChapterTime: serverSavedAt,
     })
     expect(readerStore.serverProgressTime).toBe(serverSavedAt)
 

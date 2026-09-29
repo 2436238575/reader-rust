@@ -4,7 +4,13 @@
       <div v-if="open" class="mobile-menu" role="dialog" aria-modal="true" aria-label="主导航">
         <header class="menu-header">
           <div class="menu-brand">
-            <svg class="brand-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <svg
+              class="brand-icon"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+            >
               <path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z" />
               <path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z" />
             </svg>
@@ -26,14 +32,26 @@
             :class="{ active: activeKey === item.key }"
             @click="close"
           >
-            <svg class="row-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <svg
+              class="row-icon"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+            >
               <path v-for="(path, index) in item.paths" :key="index" :d="path" />
             </svg>
             <span class="row-label">{{ item.label }}</span>
           </router-link>
 
           <button class="menu-row" type="button" @click="openSettings">
-            <svg class="row-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <svg
+              class="row-icon"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+            >
               <circle cx="12" cy="12" r="3" />
               <path
                 d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"
@@ -72,7 +90,13 @@ const items: Array<{ key: NavKey; label: string; path: string; paths: string[] }
     key: 'home',
     label: '书架',
     path: '/',
-    paths: ['M4 5.5A2.5 2.5 0 0 1 6.5 3H20', 'M4 5.5V19a2 2 0 0 0 2 2h14', 'M8 7h8', 'M8 11h8', 'M8 15h5'],
+    paths: [
+      'M4 5.5A2.5 2.5 0 0 1 6.5 3H20',
+      'M4 5.5V19a2 2 0 0 0 2 2h14',
+      'M8 7h8',
+      'M8 11h8',
+      'M8 15h5',
+    ],
   },
   {
     key: 'explore',
@@ -124,13 +148,16 @@ watch(
     } else {
       window.removeEventListener('keydown', handleKeydown)
     }
-  },
+  }
 )
 
 // 路由变了就收起（点行导航、浏览器前进后退都算）
-watch(() => route.fullPath, () => {
-  if (props.open) close()
-})
+watch(
+  () => route.fullPath,
+  () => {
+    if (props.open) close()
+  }
+)
 
 onMounted(() => desktopQuery?.addEventListener('change', handleDesktopChange))
 onBeforeUnmount(() => {
@@ -254,7 +281,9 @@ onBeforeUnmount(() => {
 
 .mobile-menu-enter-active,
 .mobile-menu-leave-active {
-  transition: opacity 180ms var(--ease-out), transform 220ms var(--ease-out);
+  transition:
+    opacity 180ms var(--ease-out),
+    transform 220ms var(--ease-out);
 }
 
 .mobile-menu-enter-from,

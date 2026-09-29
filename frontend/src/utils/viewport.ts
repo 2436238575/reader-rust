@@ -18,8 +18,8 @@ function getViewportMetrics() {
   const viewport = window.visualViewport
   const layoutHeightCandidates = [window.innerHeight, document.documentElement.clientHeight]
   const layoutWidthCandidates = [window.innerWidth, document.documentElement.clientWidth]
-  const validHeights = layoutHeightCandidates.filter(value => Number.isFinite(value) && value > 0)
-  const validWidths = layoutWidthCandidates.filter(value => Number.isFinite(value) && value > 0)
+  const validHeights = layoutHeightCandidates.filter((value) => Number.isFinite(value) && value > 0)
+  const validWidths = layoutWidthCandidates.filter((value) => Number.isFinite(value) && value > 0)
   const height = validHeights.length ? Math.max(...validHeights) : 0
   const width = validWidths.length ? Math.max(...validWidths) : 0
   const visualHeight = viewport?.height && viewport.height > 0 ? viewport.height : height
@@ -156,7 +156,7 @@ export function registerViewportSync() {
       window.cancelAnimationFrame(rafId)
       rafId = null
     }
-    timeoutIds.forEach(timeoutId => window.clearTimeout(timeoutId))
+    timeoutIds.forEach((timeoutId) => window.clearTimeout(timeoutId))
     timeoutIds.clear()
 
     window.removeEventListener('load', scheduleSync)

@@ -3,24 +3,46 @@
     <div class="topbar-inner">
       <div class="topbar-left">
         <div class="logo" @click="goHome">
-          <svg class="logo-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <svg
+            class="logo-icon"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+          >
             <path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z" />
             <path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z" />
           </svg>
           <span class="logo-text">阅读</span>
         </div>
 
-        <form v-if="showGlobalSearch && !isLoginPage" class="search-box" :class="{ focused: searchFocused }"
-          role="search" @submit.prevent="handleSearch">
-          <input v-model="searchValue" type="text" :placeholder="searchPlaceholder" @focus="searchFocused = true"
-            @blur="searchFocused = false" />
+        <form
+          v-if="showGlobalSearch && !isLoginPage"
+          class="search-box"
+          :class="{ focused: searchFocused }"
+          role="search"
+          @submit.prevent="handleSearch"
+        >
+          <input
+            v-model="searchValue"
+            type="text"
+            :placeholder="searchPlaceholder"
+            @focus="searchFocused = true"
+            @blur="searchFocused = false"
+          />
           <button v-if="searchValue" class="search-clear" type="button" @click="clearSearch">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
               <path d="M18 6 6 18M6 6l12 12" />
             </svg>
           </button>
-          <button v-if="!isRecentPage" class="search-submit" type="submit" title="搜索" aria-label="搜索"
-            :disabled="!canSearch">
+          <button
+            v-if="!isRecentPage"
+            class="search-submit"
+            type="submit"
+            title="搜索"
+            aria-label="搜索"
+            :disabled="!canSearch"
+          >
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
               <circle cx="11" cy="11" r="8" />
               <path d="m21 21-4.3-4.3" />
@@ -31,18 +53,29 @@
 
       <div class="topbar-right">
         <nav v-if="showNavTabs" class="topbar-nav" aria-label="主导航">
-          <router-link v-for="item in navItems" :key="item.key" :to="item.path" class="nav-tab"
-            :class="{ active: activeNavKey === item.key }">
+          <router-link
+            v-for="item in navItems"
+            :key="item.key"
+            :to="item.path"
+            class="nav-tab"
+            :class="{ active: activeNavKey === item.key }"
+          >
             {{ item.label }}
           </router-link>
           <span class="nav-divider" aria-hidden="true"></span>
         </nav>
         <ThemeSwitch class="theme-switch-desktop" />
 
-        <button v-if="!isLoginPage" class="topbar-btn settings-btn" @click="openSettings" title="设置">
+        <button
+          v-if="!isLoginPage"
+          class="topbar-btn settings-btn"
+          @click="openSettings"
+          title="设置"
+        >
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <path
-              d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43-.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z" />
+              d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43-.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"
+            />
             <circle cx="12" cy="12" r="3" />
           </svg>
         </button>
@@ -125,7 +158,7 @@ watch(
   ([recent, value]) => {
     shelfStore.recentFilter = recent ? value : ''
   },
-  { flush: 'post' },
+  { flush: 'post' }
 )
 
 watch(isRecentPage, (recent) => {
@@ -155,7 +188,6 @@ function handleSearch() {
 function clearSearch() {
   searchValue.value = ''
 }
-
 
 function openSettings() {
   appStore.showSettingsDrawer = true
@@ -229,7 +261,8 @@ function openSettings() {
   padding: 0 6px 0 var(--space-4);
   width: 180px;
   flex: 0 0 auto;
-  transition: width var(--duration-normal) var(--ease-out),
+  transition:
+    width var(--duration-normal) var(--ease-out),
     border-color var(--duration-normal) var(--ease-out),
     background var(--duration-normal) var(--ease-out),
     box-shadow var(--duration-normal) var(--ease-out);
@@ -283,7 +316,10 @@ function openSettings() {
   background: var(--color-primary);
   flex-shrink: 0;
   padding: 0;
-  transition: transform var(--duration-fast), opacity var(--duration-fast), background var(--duration-fast);
+  transition:
+    transform var(--duration-fast),
+    opacity var(--duration-fast),
+    background var(--duration-fast);
 }
 
 .search-submit:hover:not(:disabled) {
@@ -388,7 +424,6 @@ function openSettings() {
   color: var(--color-text-secondary);
   transition: all var(--duration-fast) var(--ease-out);
 }
-
 
 .topbar-btn:hover {
   background: var(--color-bg-elevated);

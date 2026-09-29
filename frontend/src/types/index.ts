@@ -189,7 +189,6 @@ export interface UserInfo {
   createdAt?: number
 }
 
-
 // ─── 书签 ───
 export interface Bookmark {
   time?: number

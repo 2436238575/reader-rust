@@ -38,6 +38,7 @@
 ## Task 1: Pure Source Utilities
 
 **Files:**
+
 - Modify: `frontend/src/utils/sourceSelection.test.ts`
 - Modify: `frontend/src/utils/sourceSelection.ts`
 
@@ -68,7 +69,13 @@ it('filters book sources by text and group', () => {
 
 it('summarizes source counts and selected source metadata', () => {
   const list: BookSource[] = [
-    { bookSourceName: 'Enabled', bookSourceUrl: 'enabled', enabled: true, ruleSearch: {}, ruleToc: {} },
+    {
+      bookSourceName: 'Enabled',
+      bookSourceUrl: 'enabled',
+      enabled: true,
+      ruleSearch: {},
+      ruleToc: {},
+    },
     { bookSourceName: 'Disabled', bookSourceUrl: 'disabled', enabled: false },
   ]
 
@@ -112,16 +119,13 @@ export function getBookSourceGroups(sources: Pick<BookSource, 'bookSourceGroup'>
   return Array.from(groups).sort()
 }
 
-export function filterBookSources(
-  sources: BookSource[],
-  filterText: string,
-  filterGroup: string,
-) {
+export function filterBookSources(sources: BookSource[], filterText: string, filterGroup: string) {
   const keyword = filterText.trim().toLowerCase()
   return sources.filter((source) => {
-    const matchesText = !keyword
-      || source.bookSourceName.toLowerCase().includes(keyword)
-      || source.bookSourceUrl.toLowerCase().includes(keyword)
+    const matchesText =
+      !keyword ||
+      source.bookSourceName.toLowerCase().includes(keyword) ||
+      source.bookSourceUrl.toLowerCase().includes(keyword)
     const matchesGroup = !filterGroup || source.bookSourceGroup?.includes(filterGroup)
     return matchesText && matchesGroup
   })
@@ -167,6 +171,7 @@ Expected: PASS.
 ## Task 2: Extract Workbench Components
 
 **Files:**
+
 - Create: `frontend/src/components/source-manager/SourceManagerHeader.vue`
 - Create: `frontend/src/components/source-manager/SourceFilterBar.vue`
 - Create: `frontend/src/components/source-manager/SourceList.vue`
@@ -201,6 +206,7 @@ Expected: If `SourceManager.vue` does not import the new components yet, the bui
 ## Task 3: Extract Editor Panel
 
 **Files:**
+
 - Create: `frontend/src/components/source-manager/SourceEditorPanel.vue`
 - Modify: `frontend/src/utils/sourceSelection.ts` if overview metadata needs small additions.
 
@@ -233,6 +239,7 @@ Expected: PASS or component-local type errors to fix before Task 4.
 ## Task 4: Rework `SourceManager.vue`
 
 **Files:**
+
 - Modify: `frontend/src/components/SourceManager.vue`
 
 - [ ] **Step 1: Replace inline header/filter/list/editor/subscription template with extracted components**
@@ -245,7 +252,9 @@ Use:
 
 ```ts
 const groupList = computed(() => getBookSourceGroups(sources.value))
-const filteredSources = computed(() => filterBookSources(sources.value, filterText.value, filterGroup.value))
+const filteredSources = computed(() =>
+  filterBookSources(sources.value, filterText.value, filterGroup.value)
+)
 const sourceStats = computed(() => getBookSourceStats(sources.value, filteredSources.value))
 ```
 
@@ -280,6 +289,7 @@ Expected: PASS.
 ## Task 5: Visual and Build Verification
 
 **Files:**
+
 - Modify only if verification finds concrete layout or type issues.
 
 - [ ] **Step 1: Run production build**

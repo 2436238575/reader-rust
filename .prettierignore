@@ -1,0 +1,11 @@
+target
+storage
+node_modules
+frontend/node_modules
+frontend/dist
+docs/.vitepress/dist
+docs/.vitepress/cache
+# lockfile 由 npm 自己维护格式
+package-lock.json
+# 本机开发端口改动常驻工作区，不进格式化范围（见仓库提交约定）
+frontend/vite.config.ts

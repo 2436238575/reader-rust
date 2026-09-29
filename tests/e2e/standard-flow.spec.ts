@@ -14,7 +14,10 @@ test.describe('Standard E2E: optional full workflows', () => {
   })
 
   test('search results can open detail modal with fixture data', async ({ page }) => {
-    test.skip(!hasSearchFixture(config), 'Set E2E_SEARCH_KEYWORD and E2E_EXPECTED_BOOK_NAME to enable search regression.')
+    test.skip(
+      !hasSearchFixture(config),
+      'Set E2E_SEARCH_KEYWORD and E2E_EXPECTED_BOOK_NAME to enable search regression.'
+    )
 
     await gotoApp(page, '/')
     await triggerGlobalSearch(page, config.searchKeyword!)
@@ -27,7 +30,10 @@ test.describe('Standard E2E: optional full workflows', () => {
   })
 
   test('source manager supports import path when fixture file is configured', async ({ page }) => {
-    test.skip(!config.sourceImportFile, 'Set E2E_SOURCE_IMPORT_FILE to enable source import regression.')
+    test.skip(
+      !config.sourceImportFile,
+      'Set E2E_SOURCE_IMPORT_FILE to enable source import regression.'
+    )
 
     await gotoApp(page, '/')
     await page.getByTitle(/设置|用户/).click()

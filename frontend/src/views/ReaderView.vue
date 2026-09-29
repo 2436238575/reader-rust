@@ -6,7 +6,7 @@
       background: theme.body,
       color: theme.fontColor,
       fontFamily: currentFontFamily,
-      '--color-primary': '#c97f3a'
+      '--color-primary': '#c97f3a',
     }"
     @click="handleBackgroundClick"
     @contextmenu.prevent="handleContextMenu"
@@ -17,7 +17,11 @@
         <div v-if="store.activePanel" class="reader-overlay" @click="store.closePanel()"></div>
       </Transition>
       <Transition name="slide-left">
-        <div v-if="store.activePanel" class="reader-drawer" :style="{ background: chromeTheme.popup }">
+        <div
+          v-if="store.activePanel"
+          class="reader-drawer"
+          :style="{ background: chromeTheme.popup }"
+        >
           <ReaderCatalog
             v-if="store.activePanel === 'catalog' || store.activePanel === 'bookmark'"
             :initial-tab="store.activePanel === 'bookmark' ? 'bookmarks' : 'chapters'"
@@ -143,7 +147,7 @@
         class="chapter-content"
         :class="{ 'horizontal-page-article': isHorizontalPageMode }"
         :style="{
-          maxWidth: isHorizontalPageMode ? 'none' : (config.pageWidth + 'px'),
+          maxWidth: isHorizontalPageMode ? 'none' : config.pageWidth + 'px',
           fontSize: config.fontSize + 'px',
           fontWeight: config.fontWeight,
           lineHeight: config.lineHeight,
@@ -166,7 +170,11 @@
                 transitionDuration: horizontalPageTransitionDuration,
               }"
             >
-              <section v-for="(page, idx) in horizontalPages" :key="`h-page-${idx}`" class="horizontal-page">
+              <section
+                v-for="(page, idx) in horizontalPages"
+                :key="`h-page-${idx}`"
+                class="horizontal-page"
+              >
                 <div
                   class="chapter-text horizontal-page-content"
                   :style="{
@@ -207,7 +215,13 @@
               <span v-if="store.chapterCommentTotal > 0" class="chapter-comments-count">
                 · {{ store.chapterCommentTotal }}
               </span>
-              <svg class="chapter-comments-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <svg
+                class="chapter-comments-arrow"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+              >
                 <path d="m9 18 6-6-6-6" />
               </svg>
             </button>
@@ -222,7 +236,10 @@
       </article>
 
       <Transition name="fade">
-        <div v-if="!store.loading && isHorizontalPageMode && isHorizontalAtEnd" class="horizontal-next-floating">
+        <div
+          v-if="!store.loading && isHorizontalPageMode && isHorizontalAtEnd"
+          class="horizontal-next-floating"
+        >
           <button class="next-btn" :disabled="!store.hasNext" @click="nextChapter">
             {{ store.hasNext ? '下一章' : '没有更多了' }}
           </button>
@@ -258,7 +275,10 @@
             @click="handleChapterTextClick"
           ></div>
 
-          <div v-if="chapter.index === continuousChapters[continuousChapters.length - 1]?.index" class="chapter-footer">
+          <div
+            v-if="chapter.index === continuousChapters[continuousChapters.length - 1]?.index"
+            class="chapter-footer"
+          >
             <button class="next-btn" :disabled="!store.hasNext" @click="nextChapter">
               {{ store.hasNext ? '继续加载下一章' : '已经到底了' }}
             </button>
@@ -268,8 +288,6 @@
         <div v-if="continuousLoadingNext" class="continuous-loading-inline">正在加载下一章...</div>
       </div>
     </div>
-
-
 
     <ReaderSearchPanel
       :show="showSearch"
@@ -309,10 +327,7 @@
       </div>
     </Transition>
 
-    <BookDetailModal
-      v-model="showBookInfo"
-      :book="bookInfoBook"
-    />
+    <BookDetailModal v-model="showBookInfo" :book="bookInfoBook" />
 
     <ImageLightbox :src="previewImage" @close="previewImage = ''" />
   </div>
@@ -331,7 +346,10 @@ import { isReaderInteractiveClickTarget } from '../utils/readerClick'
 import { sanitizeUntrustedHtml } from '../utils/sanitize'
 import { safeLocalSet } from '../utils/storage'
 import type { ChapterImage, ParaReviewCount } from '../types'
-import { createReaderProgressAutoSaveScheduler, createReaderProgressExitSaver } from '../utils/readerProgressAutoSave'
+import {
+  createReaderProgressAutoSaveScheduler,
+  createReaderProgressExitSaver,
+} from '../utils/readerProgressAutoSave'
 import type { Book } from '../types'
 
 import ReaderSidebar from '../components/reader/ReaderSidebar.vue'
@@ -345,13 +363,19 @@ import { useReaderAutoPlayback } from '../composables/useReaderAutoPlayback'
 
 const ReaderCatalog = defineAsyncComponent(() => import('../components/reader/ReaderCatalog.vue'))
 const ReadSettings = defineAsyncComponent(() => import('../components/reader/ReadSettings.vue'))
-const ReaderBookshelf = defineAsyncComponent(() => import('../components/reader/ReaderBookshelf.vue'))
+const ReaderBookshelf = defineAsyncComponent(
+  () => import('../components/reader/ReaderBookshelf.vue')
+)
 const ReaderSource = defineAsyncComponent(() => import('../components/reader/ReaderSource.vue'))
-const ReplaceRuleManager = defineAsyncComponent(() => import('../components/reader/ReplaceRuleManager.vue'))
+const ReplaceRuleManager = defineAsyncComponent(
+  () => import('../components/reader/ReplaceRuleManager.vue')
+)
 const CacheManager = defineAsyncComponent(() => import('../components/reader/CacheManager.vue'))
 const BookDetailModal = defineAsyncComponent(() => import('../components/BookDetailModal.vue'))
 const ReaderTtsPanel = defineAsyncComponent(() => import('../components/reader/ReaderTtsPanel.vue'))
-const ReaderSearchPanel = defineAsyncComponent(() => import('../components/reader/ReaderSearchPanel.vue'))
+const ReaderSearchPanel = defineAsyncComponent(
+  () => import('../components/reader/ReaderSearchPanel.vue')
+)
 const CommentPanel = defineAsyncComponent(() => import('../components/reader/CommentPanel.vue'))
 const ImageLightbox = defineAsyncComponent(() => import('../components/reader/ImageLightbox.vue'))
 
@@ -416,14 +440,17 @@ const readerProgressExitSaver = createReaderProgressExitSaver({
   flushToServer: () => store.flushProgressToServer(true),
   flushToServerKeepalive: () => store.flushProgressToServerKeepalive(true),
 })
-const isContinuousMode = computed(() =>
-  config.value.readMethod === '上下滚动' || config.value.readMethod === '上下滚动2',
+const isContinuousMode = computed(
+  () => config.value.readMethod === '上下滚动' || config.value.readMethod === '上下滚动2'
 )
 const hideReadChaptersMode = computed(() => config.value.readMethod === '上下滚动2')
 const isHorizontalPageMode = computed(() => config.value.readMethod === '左右翻页')
 const isIosWebkit = computed(() => {
   const ua = typeof navigator !== 'undefined' ? navigator.userAgent : ''
-  return /iPhone|iPad|iPod/i.test(ua) || (/Macintosh/i.test(ua) && typeof navigator !== 'undefined' && navigator.maxTouchPoints > 1)
+  return (
+    /iPhone|iPad|iPod/i.test(ua) ||
+    (/Macintosh/i.test(ua) && typeof navigator !== 'undefined' && navigator.maxTouchPoints > 1)
+  )
 })
 const disableSystemCallout = computed(() => {
   return isIosWebkit.value && isMobile.value && config.value.selectAction === 'popup'
@@ -488,7 +515,7 @@ const {
   store,
   appStore,
   computed(() => ({ selectAction: config.value.selectAction })),
-  scrollContainerRef,
+  scrollContainerRef
 )
 
 const offlineBannerText = computed(() => {
@@ -552,7 +579,7 @@ function handleViewportChange() {
 }
 
 const currentFontFamily = computed(() => {
-  const preset = fontPresets.find(p => p.value === config.value.fontFamily)
+  const preset = fontPresets.find((p) => p.value === config.value.fontFamily)
   return preset ? preset.family : ''
 })
 
@@ -575,7 +602,9 @@ function buildBaseChapterHtml(rawText: string) {
     if (paragraphs.length) {
       paragraphs.forEach((paragraph) => {
         const plainText = (paragraph.textContent || '').replace(/^[\u3000\u00A0 \t]+/, '').trim()
-        const hasRenderableChildren = Boolean(paragraph.querySelector('img, br, ruby, table, ul, ol'))
+        const hasRenderableChildren = Boolean(
+          paragraph.querySelector('img, br, ruby, table, ul, ol')
+        )
         if (!plainText && !hasRenderableChildren) {
           paragraph.remove()
           return
@@ -646,10 +675,7 @@ function insertChapterImages(wrapper: HTMLElement, imageMap = chapterImageMap.va
     }
     const paragraph = paragraphs[position]
     const paragraphText = (paragraph.textContent || '').trim()
-    paragraph.insertAdjacentHTML(
-      'beforebegin',
-      renderChapterImageFigures(images, paragraphText),
-    )
+    paragraph.insertAdjacentHTML('beforebegin', renderChapterImageFigures(images, paragraphText))
   })
   if (trailing.length) {
     wrapper.insertAdjacentHTML('beforeend', renderChapterImageFigures(trailing, ''))
@@ -660,7 +686,10 @@ function renderChapterImageFigures(images: ChapterImage[], paragraphText: string
   return images
     .map((image) => {
       const caption = image.caption.trim()
-      const size = image.width > 0 && image.height > 0 ? ` width="${image.width}" height="${image.height}"` : ''
+      const size =
+        image.width > 0 && image.height > 0
+          ? ` width="${image.width}" height="${image.height}"`
+          : ''
       const captionHtml =
         caption && caption !== paragraphText
           ? `<figcaption>${escapeHtmlText(caption)}</figcaption>`
@@ -828,11 +857,11 @@ const showCommentPanel = ref(false)
 const commentMode = ref<'chapter' | 'para'>('chapter')
 const commentParaIndex = ref(0)
 const commentParaText = computed(
-  () => store.paraReviewCountByIndex.get(commentParaIndex.value)?.text || '',
+  () => store.paraReviewCountByIndex.get(commentParaIndex.value)?.text || ''
 )
 // 概览没标记 authorCommented 的段落，作者扫描注定空手，「只看作者」入口不显示
 const commentParaAuthorMarked = computed(
-  () => store.paraReviewCountByIndex.get(commentParaIndex.value)?.authorCommented === true,
+  () => store.paraReviewCountByIndex.get(commentParaIndex.value)?.authorCommented === true
 )
 
 function openChapterComments() {
@@ -870,7 +899,9 @@ function highlightSearchText(root: HTMLElement) {
         return NodeFilter.FILTER_REJECT
       }
       regex.lastIndex = 0
-      return regex.test(node.textContent || '') ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT
+      return regex.test(node.textContent || '')
+        ? NodeFilter.FILTER_ACCEPT
+        : NodeFilter.FILTER_REJECT
     },
   })
   const nodes: Text[] = []
@@ -905,10 +936,7 @@ function escapeRegExp(value: string) {
 }
 
 function escapeHtmlText(value: string) {
-  return value
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
+  return value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
 }
 
 /** 属性值转义：除了 `&<>` 还要挡引号，否则能拼出新的属性。 */
@@ -956,7 +984,7 @@ const {
   currentFontFamily,
   formattedContent,
   isHorizontalPageMode,
-  scrollContainerRef,
+  scrollContainerRef
 )
 
 const horizontalPageTransform = computed(() => {
@@ -987,7 +1015,7 @@ const {
   renderChapterHtml,
   isContinuousMode,
   hideReadChaptersMode,
-  scrollContainerRef,
+  scrollContainerRef
 )
 
 function syncHorizontalPageState() {
@@ -1164,7 +1192,10 @@ function scrollToTop() {
 
 function scrollToBottom() {
   if (scrollContainerRef.value) {
-    scrollContainerRef.value.scrollTo({ top: scrollContainerRef.value.scrollHeight, behavior: 'smooth' })
+    scrollContainerRef.value.scrollTo({
+      top: scrollContainerRef.value.scrollHeight,
+      behavior: 'smooth',
+    })
   }
 }
 
@@ -1201,7 +1232,7 @@ function loadSavedReadingPosition() {
   }
   try {
     const raw = localStorage.getItem(key)
-    const localSaved = raw ? JSON.parse(raw) as SavedReadingPosition : null
+    const localSaved = raw ? (JSON.parse(raw) as SavedReadingPosition) : null
     const serverSaved = buildServerSavedPosition()
 
     let selected: SavedReadingPosition | null = null
@@ -1213,7 +1244,11 @@ function loadSavedReadingPosition() {
     }
 
     if (serverSaved && serverSaved.chapterIndex === store.currentIndex) {
-      if (!selected || normalizePositionTimestamp(serverSaved.updatedAt) > normalizePositionTimestamp(selected.updatedAt)) {
+      if (
+        !selected ||
+        normalizePositionTimestamp(serverSaved.updatedAt) >
+          normalizePositionTimestamp(selected.updatedAt)
+      ) {
         selected = serverSaved
         source = 'server'
       }
@@ -1278,10 +1313,15 @@ function saveReadingPosition(options: { force?: boolean } = {}) {
   }
 
   const anchorRatio = isContinuousMode.value ? CONTINUOUS_POSITION_ANCHOR_RATIO : 0.3
-  const anchorViewportY = container.getBoundingClientRect().top + container.clientHeight * anchorRatio
+  const anchorViewportY =
+    container.getBoundingClientRect().top + container.clientHeight * anchorRatio
   if (isContinuousMode.value && continuousChapters.value.length) {
-    const section = container.querySelector(`.continuous-chapter[data-chapter-index="${store.currentIndex}"]`) as HTMLElement | null
-    const paragraphs = Array.from(section?.querySelectorAll('.chapter-text p') || []) as HTMLElement[]
+    const section = container.querySelector(
+      `.continuous-chapter[data-chapter-index="${store.currentIndex}"]`
+    ) as HTMLElement | null
+    const paragraphs = Array.from(
+      section?.querySelectorAll('.chapter-text p') || []
+    ) as HTMLElement[]
     if (paragraphs.length) {
       let activeParagraph = paragraphs[0]
       let paragraphIndex = 0
@@ -1292,12 +1332,15 @@ function saveReadingPosition(options: { force?: boolean } = {}) {
         }
       })
       const rect = activeParagraph.getBoundingClientRect()
-      const paragraphProgress = rect.height > 0 ? Math.max(0, Math.min(1, (anchorViewportY - rect.top) / rect.height)) : 0
+      const paragraphProgress =
+        rect.height > 0 ? Math.max(0, Math.min(1, (anchorViewportY - rect.top) / rect.height)) : 0
       basePosition.paragraphIndex = paragraphIndex
       basePosition.paragraphProgress = paragraphProgress
     }
   } else if (!isHorizontalPageMode.value) {
-    const paragraphs = Array.from(chapterTextRef.value?.querySelectorAll('p') || []) as HTMLElement[]
+    const paragraphs = Array.from(
+      chapterTextRef.value?.querySelectorAll('p') || []
+    ) as HTMLElement[]
     if (paragraphs.length) {
       let activeParagraph = paragraphs[0]
       let paragraphIndex = 0
@@ -1308,7 +1351,8 @@ function saveReadingPosition(options: { force?: boolean } = {}) {
         }
       })
       const rect = activeParagraph.getBoundingClientRect()
-      const paragraphProgress = rect.height > 0 ? Math.max(0, Math.min(1, (anchorViewportY - rect.top) / rect.height)) : 0
+      const paragraphProgress =
+        rect.height > 0 ? Math.max(0, Math.min(1, (anchorViewportY - rect.top) / rect.height)) : 0
       basePosition.paragraphIndex = paragraphIndex
       basePosition.paragraphProgress = paragraphProgress
     }
@@ -1341,7 +1385,8 @@ function scheduleRestoreStabilization(saved: SavedReadingPosition) {
   if (!isIosWebkit.value || isHorizontalPageMode.value) return
   ;[140, 320, 680].forEach((delay) => {
     const timer = window.setTimeout(() => {
-      if (store.loading || !scrollContainerRef.value || saved.chapterIndex !== store.currentIndex) return
+      if (store.loading || !scrollContainerRef.value || saved.chapterIndex !== store.currentIndex)
+        return
       void nextTick(() => {
         restoreReadingPositionInternal(saved, false)
       })
@@ -1374,17 +1419,24 @@ function restoreReadingPositionInternal(saved: SavedReadingPosition | null, fina
       })
       return false
     }
-    horizontalPageIndex.value = Math.max(0, Math.min(maxPage, Math.round(maxPage * Math.max(0, Math.min(1, saved.progress || 0)))))
+    horizontalPageIndex.value = Math.max(
+      0,
+      Math.min(maxPage, Math.round(maxPage * Math.max(0, Math.min(1, saved.progress || 0))))
+    )
     updateHorizontalEndState()
     if (finalize) {
       pendingRestorePosition.value = null
       pendingRestoreAttempts = 0
     }
-    debugPositionLog('restored horizontal position', { saved, pageIndex: horizontalPageIndex.value })
+    debugPositionLog('restored horizontal position', {
+      saved,
+      pageIndex: horizontalPageIndex.value,
+    })
     return true
   }
 
-  const anchorOffset = container.clientHeight * (isContinuousMode.value ? CONTINUOUS_POSITION_ANCHOR_RATIO : 0.3)
+  const anchorOffset =
+    container.clientHeight * (isContinuousMode.value ? CONTINUOUS_POSITION_ANCHOR_RATIO : 0.3)
   let targetTop = 0
 
   if (isContinuousMode.value) {
@@ -1396,11 +1448,15 @@ function restoreReadingPositionInternal(saved: SavedReadingPosition | null, fina
       })
       return false
     }
-    const section = container.querySelector(`.continuous-chapter[data-chapter-index="${saved.chapterIndex}"]`) as HTMLElement | null
+    const section = container.querySelector(
+      `.continuous-chapter[data-chapter-index="${saved.chapterIndex}"]`
+    ) as HTMLElement | null
     if (!section) {
       debugPositionLog('restore failed: section not found', {
         saved,
-        availableSections: Array.from(container.querySelectorAll('.continuous-chapter')).map((el) => (el as HTMLElement).dataset.chapterIndex),
+        availableSections: Array.from(container.querySelectorAll('.continuous-chapter')).map(
+          (el) => (el as HTMLElement).dataset.chapterIndex
+        ),
       })
       return false
     }
@@ -1413,14 +1469,27 @@ function restoreReadingPositionInternal(saved: SavedReadingPosition | null, fina
       return false
     }
     if (paragraphs.length && typeof saved.paragraphIndex === 'number') {
-      const paragraph = paragraphs[Math.max(0, Math.min(paragraphs.length - 1, saved.paragraphIndex))]
-      const top = paragraph.getBoundingClientRect().top - container.getBoundingClientRect().top + container.scrollTop
+      const paragraph =
+        paragraphs[Math.max(0, Math.min(paragraphs.length - 1, saved.paragraphIndex))]
+      const top =
+        paragraph.getBoundingClientRect().top -
+        container.getBoundingClientRect().top +
+        container.scrollTop
       const paragraphProgress = Math.max(0, Math.min(1, saved.paragraphProgress || 0))
-      targetTop = Math.max(section.offsetTop, top + paragraph.offsetHeight * paragraphProgress - anchorOffset)
+      targetTop = Math.max(
+        section.offsetTop,
+        top + paragraph.offsetHeight * paragraphProgress - anchorOffset
+      )
     } else {
       const nextSection = section.nextElementSibling as HTMLElement | null
-      const sectionHeight = Math.max(1, (nextSection ? nextSection.offsetTop : container.scrollHeight) - section.offsetTop)
-      if ((saved.progress || 0) > 0 && sectionHeight <= Math.max(1, container.clientHeight * 0.25)) {
+      const sectionHeight = Math.max(
+        1,
+        (nextSection ? nextSection.offsetTop : container.scrollHeight) - section.offsetTop
+      )
+      if (
+        (saved.progress || 0) > 0 &&
+        sectionHeight <= Math.max(1, container.clientHeight * 0.25)
+      ) {
         debugPositionLog('restore waiting: continuous section height not ready', {
           saved,
           sectionHeight,
@@ -1430,11 +1499,13 @@ function restoreReadingPositionInternal(saved: SavedReadingPosition | null, fina
       }
       targetTop = Math.max(
         section.offsetTop,
-        section.offsetTop + sectionHeight * Math.max(0, Math.min(1, saved.progress || 0)),
+        section.offsetTop + sectionHeight * Math.max(0, Math.min(1, saved.progress || 0))
       )
     }
   } else {
-    const paragraphs = Array.from(chapterTextRef.value?.querySelectorAll('p') || []) as HTMLElement[]
+    const paragraphs = Array.from(
+      chapterTextRef.value?.querySelectorAll('p') || []
+    ) as HTMLElement[]
     if (store.loading || !chapterTextRef.value) {
       debugPositionLog('restore waiting: chapter content not ready', {
         saved,
@@ -1450,8 +1521,12 @@ function restoreReadingPositionInternal(saved: SavedReadingPosition | null, fina
       return false
     }
     if (paragraphs.length && typeof saved.paragraphIndex === 'number') {
-      const paragraph = paragraphs[Math.max(0, Math.min(paragraphs.length - 1, saved.paragraphIndex))]
-      const top = paragraph.getBoundingClientRect().top - container.getBoundingClientRect().top + container.scrollTop
+      const paragraph =
+        paragraphs[Math.max(0, Math.min(paragraphs.length - 1, saved.paragraphIndex))]
+      const top =
+        paragraph.getBoundingClientRect().top -
+        container.getBoundingClientRect().top +
+        container.scrollTop
       const paragraphProgress = Math.max(0, Math.min(1, saved.paragraphProgress || 0))
       targetTop = top + paragraph.offsetHeight * paragraphProgress - anchorOffset
     } else {
@@ -1495,28 +1570,31 @@ function scheduleRestoreReadingPosition() {
     hasPending: !!pendingRestorePosition.value,
     currentIndex: store.currentIndex,
   })
-  restorePositionTimer = window.setTimeout(() => {
-    void nextTick(() => {
-      const restored = restoreReadingPosition()
-      if (!restored && pendingRestorePosition.value && pendingRestoreAttempts < 12) {
-        pendingRestoreAttempts += 1
-        debugPositionLog('restore retry', {
-          attempts: pendingRestoreAttempts,
-          pending: pendingRestorePosition.value,
-          currentIndex: store.currentIndex,
-        })
-        scheduleRestoreReadingPosition()
-      } else if (!restored) {
-        debugPositionLog('restore gave up', {
-          attempts: pendingRestoreAttempts,
-          pending: pendingRestorePosition.value,
-          currentIndex: store.currentIndex,
-        })
-        pendingRestorePosition.value = null
-        pendingRestoreAttempts = 0
-      }
-    })
-  }, pendingRestoreAttempts === 0 ? 0 : 80)
+  restorePositionTimer = window.setTimeout(
+    () => {
+      void nextTick(() => {
+        const restored = restoreReadingPosition()
+        if (!restored && pendingRestorePosition.value && pendingRestoreAttempts < 12) {
+          pendingRestoreAttempts += 1
+          debugPositionLog('restore retry', {
+            attempts: pendingRestoreAttempts,
+            pending: pendingRestorePosition.value,
+            currentIndex: store.currentIndex,
+          })
+          scheduleRestoreReadingPosition()
+        } else if (!restored) {
+          debugPositionLog('restore gave up', {
+            attempts: pendingRestoreAttempts,
+            pending: pendingRestorePosition.value,
+            currentIndex: store.currentIndex,
+          })
+          pendingRestorePosition.value = null
+          pendingRestoreAttempts = 0
+        }
+      })
+    },
+    pendingRestoreAttempts === 0 ? 0 : 80
+  )
 }
 
 // 点按/滚轮/按键打断自动滚动的时间戳：打断后紧接着的那次 tap 只表示
@@ -1555,7 +1633,7 @@ const {
   scrollContainerRef,
   chapterTextRef,
   nextChapter,
-  prevChapter,
+  prevChapter
 )
 
 // Click behavior
@@ -1629,12 +1707,12 @@ function clickZoneAction(zone: 'prev' | 'menu' | 'next') {
     }
     return
   }
-  
+
   if (config.value.clickAction === 'none') return
-  
+
   const container = scrollContainerRef.value
   if (!container) return
-  
+
   if (isHorizontalPageMode.value) {
     if (zone === 'next') pageForward()
     else pageBackward()
@@ -1648,7 +1726,7 @@ function clickZoneAction(zone: 'prev' | 'menu' | 'next') {
     pageForward()
     return
   }
-  
+
   if (zone === 'next') {
     if (container.scrollTop + h >= container.scrollHeight - 10) {
       if (config.value.clickAction === 'auto') nextChapter()
@@ -1674,7 +1752,8 @@ function handleScroll() {
     }
     const sections = getContinuousSections()
     if (sections.length) {
-      const anchorLine = container.scrollTop + container.clientHeight * CONTINUOUS_POSITION_ANCHOR_RATIO
+      const anchorLine =
+        container.scrollTop + container.clientHeight * CONTINUOUS_POSITION_ANCHOR_RATIO
       let activeSection = sections[0]
       for (const section of sections) {
         if (section.offsetTop <= anchorLine) {
@@ -1689,9 +1768,12 @@ function handleScroll() {
       const nextSection = sections[sections.indexOf(activeSection) + 1] || null
       const sectionRange = Math.max(
         1,
-        (nextSection ? nextSection.offsetTop : container.scrollHeight) - activeSection.offsetTop,
+        (nextSection ? nextSection.offsetTop : container.scrollHeight) - activeSection.offsetTop
       )
-      const progress = Math.max(0, Math.min(1, (container.scrollTop - activeSection.offsetTop) / sectionRange))
+      const progress = Math.max(
+        0,
+        Math.min(1, (container.scrollTop - activeSection.offsetTop) / sectionRange)
+      )
       if (activeChapter) {
         if (store.currentIndex !== activeIndex || store.content !== activeChapter.content) {
           setContinuousActiveChapter(activeIndex, activeChapter.content, progress)
@@ -1701,7 +1783,10 @@ function handleScroll() {
       }
     }
 
-    if (Date.now() >= suppressContinuousAutoLoadUntil && container.scrollHeight - (container.scrollTop + container.clientHeight) < 480) {
+    if (
+      Date.now() >= suppressContinuousAutoLoadUntil &&
+      container.scrollHeight - (container.scrollTop + container.clientHeight) < 480
+    ) {
       loadContinuousNext()
     }
   } else if (container) {
@@ -1711,7 +1796,9 @@ function handleScroll() {
           const maxPage = Math.max(0, horizontalPages.value.length - 1)
           return maxPage <= 0 ? 1 : horizontalPageIndex.value / maxPage
         })()
-      : (container.scrollHeight <= container.clientHeight ? 1 : container.scrollTop / maxScroll)
+      : container.scrollHeight <= container.clientHeight
+        ? 1
+        : container.scrollTop / maxScroll
     store.setChapterScrollProgress(progress)
     if (isHorizontalPageMode.value) {
       updateHorizontalMetrics()
@@ -1724,7 +1811,11 @@ function handleScroll() {
       if (config.value.enablePreload && maxPage > 0 && horizontalPageIndex.value >= maxPage - 1) {
         store.preloadAroundChapter(store.currentIndex)
       }
-    } else if (config.value.enablePreload && container.scrollHeight - (container.scrollTop + container.clientHeight) < container.clientHeight * 1.5) {
+    } else if (
+      config.value.enablePreload &&
+      container.scrollHeight - (container.scrollTop + container.clientHeight) <
+        container.clientHeight * 1.5
+    ) {
       store.preloadAroundChapter(store.currentIndex)
     }
   }
@@ -1841,13 +1932,22 @@ function handleKeydown(e: KeyboardEvent) {
   const activeElement = document.activeElement as HTMLElement | null
   const tagName = activeElement?.tagName?.toLowerCase()
   const isEditing =
-    tagName === 'input' || tagName === 'textarea' || tagName === 'select' || !!activeElement?.isContentEditable
+    tagName === 'input' ||
+    tagName === 'textarea' ||
+    tagName === 'select' ||
+    !!activeElement?.isContentEditable
 
   // Escape 优先于输入框守卫：焦点在搜索框里时也要能 ESC 关面板（先交还焦点）
   if (e.key === 'Escape') {
     // App 级弹窗（设置抽屉/书源管理/WebDAV/缓存库）开着时交给弹窗自己的
     // ESC 处理（useEscClose），别穿透落到阅读器的关闭链/goBack
-    if (appStore.showSettingsDrawer || appStore.showSourceManager || appStore.showWebdavManager || appStore.showCacheLibrary) return
+    if (
+      appStore.showSettingsDrawer ||
+      appStore.showSourceManager ||
+      appStore.showWebdavManager ||
+      appStore.showCacheLibrary
+    )
+      return
     if (isEditing) activeElement?.blur()
     if (store.activePanel) {
       store.closePanel()
@@ -1892,10 +1992,31 @@ function handleKeydown(e: KeyboardEvent) {
 
   // 覆盖型面板打开时，翻页/滚屏键不穿透到背后的正文
   // （TTS 面板是悬浮小条，不拦——边听边用键盘翻页是正常用法）
-  if (store.activePanel || showSearch.value || showCommentPanel.value || showBookInfo.value || previewImage.value) return
+  if (
+    store.activePanel ||
+    showSearch.value ||
+    showCommentPanel.value ||
+    showBookInfo.value ||
+    previewImage.value
+  )
+    return
 
   // 滚屏/翻页键视为手动接管：先停自动滚动，再继续本次按键动作
-  if (store.isAutoScrolling && [' ', 'Space', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'PageUp', 'PageDown', 'Home', 'End'].includes(e.key)) {
+  if (
+    store.isAutoScrolling &&
+    [
+      ' ',
+      'Space',
+      'ArrowUp',
+      'ArrowDown',
+      'ArrowLeft',
+      'ArrowRight',
+      'PageUp',
+      'PageDown',
+      'Home',
+      'End',
+    ].includes(e.key)
+  ) {
     interruptAutoScroll()
   }
 
@@ -1951,8 +2072,16 @@ function handleKeydown(e: KeyboardEvent) {
 // 覆盖型面板打开时压入一条同 URL 的历史标记；返回键弹掉标记时只关最上层面板。
 // UI 途径（按钮/ESC/遮罩）关闭时主动 history.back() 把标记消费掉，保持返回语义一致。
 // 瞬时元素（点按控制条、选字菜单）不参与：它们自动消失，压栈反而会吃掉返回键。
-const anyOverlayPanelOpen = computed(() =>
-  !!(store.activePanel || showSearch.value || showTTSPanel.value || showCommentPanel.value || showBookInfo.value || previewImage.value),
+const anyOverlayPanelOpen = computed(
+  () =>
+    !!(
+      store.activePanel ||
+      showSearch.value ||
+      showTTSPanel.value ||
+      showCommentPanel.value ||
+      showBookInfo.value ||
+      previewImage.value
+    )
 )
 
 let panelHistoryActive = false
@@ -2031,17 +2160,20 @@ function handleStopTTS() {
   store.stopTTS()
 }
 
-watch(() => store.isAutoScrolling, (val) => {
-  if (val && isHorizontalPageMode.value) {
-    // 横翻容器没有纵向滚动条：像素模式会立刻「到底」疯狂连翻，
-    // 段落模式的纵向滚动定位也无意义——明确拦下并告知，而不是假装在滚
-    store.isAutoScrolling = false
-    appStore.showToast('左右翻页模式不支持自动阅读', 'warning')
-    return
+watch(
+  () => store.isAutoScrolling,
+  (val) => {
+    if (val && isHorizontalPageMode.value) {
+      // 横翻容器没有纵向滚动条：像素模式会立刻「到底」疯狂连翻，
+      // 段落模式的纵向滚动定位也无意义——明确拦下并告知，而不是假装在滚
+      store.isAutoScrolling = false
+      appStore.showToast('左右翻页模式不支持自动阅读', 'warning')
+      return
+    }
+    if (val) startAutoScroll()
+    else stopAutoScroll()
   }
-  if (val) startAutoScroll()
-  else stopAutoScroll()
-})
+)
 
 function changeVoice(name: string) {
   store.setVoiceName(name)
@@ -2063,7 +2195,10 @@ function changeOpenAIVoice(voiceId: string) {
 }
 
 function adjustSpeechRate(delta: number) {
-  const next = Math.max(0.5, Math.min(3, parseFloat((store.speechConfig.speechRate + delta).toFixed(1))))
+  const next = Math.max(
+    0.5,
+    Math.min(3, parseFloat((store.speechConfig.speechRate + delta).toFixed(1)))
+  )
   store.setSpeechRate(next)
   ttsPanelDismissed.value = false
   showTTSPanel.value = true
@@ -2073,7 +2208,10 @@ function adjustSpeechRate(delta: number) {
 }
 
 function adjustSpeechPitch(delta: number) {
-  const next = Math.max(0.5, Math.min(2, parseFloat((store.speechConfig.speechPitch + delta).toFixed(1))))
+  const next = Math.max(
+    0.5,
+    Math.min(2, parseFloat((store.speechConfig.speechPitch + delta).toFixed(1)))
+  )
   store.setSpeechPitch(next)
   ttsPanelDismissed.value = false
   showTTSPanel.value = true
@@ -2101,7 +2239,8 @@ async function openInfo() {
       ...store.book,
       ...latest,
       durChapterIndex: store.currentIndex,
-      durChapterTitle: store.currentChapter?.title || latest.durChapterTitle || store.book.durChapterTitle,
+      durChapterTitle:
+        store.currentChapter?.title || latest.durChapterTitle || store.book.durChapterTitle,
     }
   } catch {
     appStore.showToast('获取书籍详情失败，已显示当前缓存信息', 'warning')
@@ -2139,14 +2278,14 @@ onMounted(async () => {
   document.addEventListener('touchend', handleTouchEndSelection)
   document.addEventListener('mousedown', handlePressStartSelection)
   document.addEventListener('touchstart', handlePressStartSelection)
-    document.addEventListener('selectionchange', handleSelectionChange)
-    checkMedia()
-    window.addEventListener('resize', checkMedia)
-    window.addEventListener(APP_VIEWPORT_CHANGE_EVENT, handleViewportChange)
-    window.addEventListener('pagehide', handlePageHide)
-    window.addEventListener('beforeunload', handleBeforeUnload)
-    document.addEventListener('visibilitychange', handleVisibilityChange)
-    store.fetchVoices()
+  document.addEventListener('selectionchange', handleSelectionChange)
+  checkMedia()
+  window.addEventListener('resize', checkMedia)
+  window.addEventListener(APP_VIEWPORT_CHANGE_EVENT, handleViewportChange)
+  window.addEventListener('pagehide', handlePageHide)
+  window.addEventListener('beforeunload', handleBeforeUnload)
+  document.addEventListener('visibilitychange', handleVisibilityChange)
+  store.fetchVoices()
   applySystemTheme(store.isNight ? 'dark' : appStore.theme, store.currentTheme.body)
   if (typeof window !== 'undefined' && window.speechSynthesis) {
     window.speechSynthesis.onvoiceschanged = () => store.fetchVoices()
@@ -2154,10 +2293,7 @@ onMounted(async () => {
   speechTimerTicker = window.setInterval(() => {
     speechTimerNow.value = Date.now()
   }, 15000)
-  await Promise.all([
-    store.fetchBookmarks(),
-    store.fetchReplaceRules(),
-  ])
+  await Promise.all([store.fetchBookmarks(), store.fetchReplaceRules()])
   scheduleRefreshOfflineCacheState()
   updateHorizontalMetrics()
   await rebuildHorizontalPages()
@@ -2169,20 +2305,20 @@ onMounted(async () => {
 
 onUnmounted(() => {
   store.flushReaderSessionSave()
-    persistReadingProgressKeepalive()
-    appStore.stopReadingSession()
-    window.removeEventListener('keydown', handleKeydown)
-    window.removeEventListener('popstate', handleOverlayPopState)
+  persistReadingProgressKeepalive()
+  appStore.stopReadingSession()
+  window.removeEventListener('keydown', handleKeydown)
+  window.removeEventListener('popstate', handleOverlayPopState)
   document.removeEventListener('mouseup', handleMouseUpSelection)
   document.removeEventListener('touchend', handleTouchEndSelection)
   document.removeEventListener('mousedown', handlePressStartSelection)
   document.removeEventListener('touchstart', handlePressStartSelection)
-    document.removeEventListener('selectionchange', handleSelectionChange)
-    window.removeEventListener('resize', checkMedia)
-    window.removeEventListener(APP_VIEWPORT_CHANGE_EVENT, handleViewportChange)
-    window.removeEventListener('pagehide', handlePageHide)
-    window.removeEventListener('beforeunload', handleBeforeUnload)
-    document.removeEventListener('visibilitychange', handleVisibilityChange)
+  document.removeEventListener('selectionchange', handleSelectionChange)
+  window.removeEventListener('resize', checkMedia)
+  window.removeEventListener(APP_VIEWPORT_CHANGE_EVENT, handleViewportChange)
+  window.removeEventListener('pagehide', handlePageHide)
+  window.removeEventListener('beforeunload', handleBeforeUnload)
+  document.removeEventListener('visibilitychange', handleVisibilityChange)
   if (speechTimerTicker) clearInterval(speechTimerTicker)
   if (restorePositionTimer) clearTimeout(restorePositionTimer)
   if (persistPositionTimer) clearTimeout(persistPositionTimer)
@@ -2200,150 +2336,208 @@ onUnmounted(() => {
   store.closePanel()
 })
 
-watch(() => config.value.autoPageMode, () => {
-  if (!store.isAutoScrolling) return
-  stopAutoScroll()
-  store.isAutoScrolling = true
-  startAutoScroll()
-})
-
-watch(() => config.value.readMethod, async () => {
-  // 切换前记下当前章内进度（竖滚/横翻都在持续维护 chapterScrollProgress），
-  // 交给结尾的 scheduleRestoreReadingPosition 在新模式下恢复，而不是回章首
-  if (store.book && store.chapterScrollProgress > 0) {
-    pendingRestorePosition.value = {
-      chapterIndex: store.currentIndex,
-      progress: store.chapterScrollProgress,
-      updatedAt: Date.now(),
-    }
-    pendingRestoreAttempts = 0
+watch(
+  () => config.value.autoPageMode,
+  () => {
+    if (!store.isAutoScrolling) return
+    stopAutoScroll()
+    store.isAutoScrolling = true
+    startAutoScroll()
   }
-  clearSelectionState()
-  if (isContinuousMode.value) {
-    await initializeContinuousChapters(store.currentIndex, false)
-  } else {
-    clearContinuousChapters()
-    await nextTick()
-    if (scrollContainerRef.value) {
-      scrollContainerRef.value.scrollTo({ top: 0, left: 0, behavior: 'auto' })
-    }
-  }
-  if (isHorizontalPageMode.value && scrollContainerRef.value) {
-    resetHorizontalPagePosition()
-  }
-  await rebuildHorizontalPages()
-  updateHorizontalEndState()
-  scheduleRestoreReadingPosition()
-})
-
-watch(() => store.currentIndex, () => {
-  if (!isHorizontalPageMode.value) return
-  resetHorizontalPagePosition()
-  scheduleRebuildHorizontalPages()
-})
+)
 
 watch(
-  [() => store.content, () => config.value.fontSize, () => config.value.fontWeight, () => config.value.lineHeight, () => config.value.paragraphSpacing, () => config.value.firstLineIndent, () => config.value.showChapterImages, showSearch, searchQuery],
+  () => config.value.readMethod,
+  async () => {
+    // 切换前记下当前章内进度（竖滚/横翻都在持续维护 chapterScrollProgress），
+    // 交给结尾的 scheduleRestoreReadingPosition 在新模式下恢复，而不是回章首
+    if (store.book && store.chapterScrollProgress > 0) {
+      pendingRestorePosition.value = {
+        chapterIndex: store.currentIndex,
+        progress: store.chapterScrollProgress,
+        updatedAt: Date.now(),
+      }
+      pendingRestoreAttempts = 0
+    }
+    clearSelectionState()
+    if (isContinuousMode.value) {
+      await initializeContinuousChapters(store.currentIndex, false)
+    } else {
+      clearContinuousChapters()
+      await nextTick()
+      if (scrollContainerRef.value) {
+        scrollContainerRef.value.scrollTo({ top: 0, left: 0, behavior: 'auto' })
+      }
+    }
+    if (isHorizontalPageMode.value && scrollContainerRef.value) {
+      resetHorizontalPagePosition()
+    }
+    await rebuildHorizontalPages()
+    updateHorizontalEndState()
+    scheduleRestoreReadingPosition()
+  }
+)
+
+watch(
+  () => store.currentIndex,
+  () => {
+    if (!isHorizontalPageMode.value) return
+    resetHorizontalPagePosition()
+    scheduleRebuildHorizontalPages()
+  }
+)
+
+watch(
+  [
+    () => store.content,
+    () => config.value.fontSize,
+    () => config.value.fontWeight,
+    () => config.value.lineHeight,
+    () => config.value.paragraphSpacing,
+    () => config.value.firstLineIndent,
+    () => config.value.showChapterImages,
+    showSearch,
+    searchQuery,
+  ],
   () => {
     if (isHorizontalPageMode.value) {
       horizontalPageIndex.value = 0
       scheduleRebuildHorizontalPages()
     }
-  },
+  }
 )
 
-watch(() => store.currentIndex, async () => {
-  loadSavedReadingPosition()
-  resetAutoParagraphIndex()
-  if (!store.isSpeaking) {
-    clearReadingClass()
+watch(
+  () => store.currentIndex,
+  async () => {
+    loadSavedReadingPosition()
+    resetAutoParagraphIndex()
+    if (!store.isSpeaking) {
+      clearReadingClass()
+    }
+    if (hideReadChaptersMode.value) {
+      pruneReadChapters(store.currentIndex)
+    }
+    if (!isContinuousMode.value && config.value.enablePreload) {
+      store.preloadAroundChapter(store.currentIndex)
+    }
+    if (isContinuousMode.value && !suppressContinuousSync.value) {
+      await syncContinuousToStoreState()
+    }
+    scheduleRefreshOfflineCacheState()
+    scheduleRestoreReadingPosition()
   }
-  if (hideReadChaptersMode.value) {
-    pruneReadChapters(store.currentIndex)
-  }
-  if (!isContinuousMode.value && config.value.enablePreload) {
-    store.preloadAroundChapter(store.currentIndex)
-  }
-  if (isContinuousMode.value && !suppressContinuousSync.value) {
-    await syncContinuousToStoreState()
-  }
-  scheduleRefreshOfflineCacheState()
-  scheduleRestoreReadingPosition()
-})
+)
 
 watch(
   [() => store.chapters.length, () => store.chaptersLoading, () => store.loading, isContinuousMode],
   async ([chapterCount, chaptersLoading, loadingNow, continuousMode]) => {
-    if (!continuousMode || !chapterCount || chaptersLoading || loadingNow || continuousChapters.value.length) return
+    if (
+      !continuousMode ||
+      !chapterCount ||
+      chaptersLoading ||
+      loadingNow ||
+      continuousChapters.value.length
+    )
+      return
     await initializeContinuousChapters(store.currentIndex, false)
     scheduleRestoreReadingPosition()
   },
-  { immediate: true },
+  { immediate: true }
 )
 
-watch(() => store.content, () => {
-  resetAutoParagraphIndex()
-  if (isContinuousMode.value) {
-    const current = getContinuousChapter(store.currentIndex)
-    if (current) {
-      current.content = store.content
-      current.html = renderChapterHtml(store.content, current.index)
-    } else if (store.content) {
-      void initializeContinuousChapters(store.currentIndex, false)
+watch(
+  () => store.content,
+  () => {
+    resetAutoParagraphIndex()
+    if (isContinuousMode.value) {
+      const current = getContinuousChapter(store.currentIndex)
+      if (current) {
+        current.content = store.content
+        current.html = renderChapterHtml(store.content, current.index)
+      } else if (store.content) {
+        void initializeContinuousChapters(store.currentIndex, false)
+      }
     }
-  }
-  handleContentChanged()
-  handleContentUpdated()
-  scheduleRefreshOfflineCacheState()
-  scheduleRestoreReadingPosition()
-})
-
-// 配图比正文晚到：连续滚动模式的 HTML 是预渲染的，得为当前章补一次
-watch(() => store.chapterImages, () => {
-  if (!isContinuousMode.value) return
-  const current = getContinuousChapter(store.currentIndex)
-  if (current) current.html = renderChapterHtml(store.content, current.index)
-})
-
-watch(() => store.loading, (loading) => {
-  if (!loading && pendingRestorePosition.value) {
+    handleContentChanged()
+    handleContentUpdated()
+    scheduleRefreshOfflineCacheState()
     scheduleRestoreReadingPosition()
   }
-})
+)
 
-watch(() => store.book?.bookUrl, () => {
-  loadSavedReadingPosition()
-  scheduleRefreshOfflineCacheState()
-})
+// 配图比正文晚到：连续滚动模式的 HTML 是预渲染的，得为当前章补一次
+watch(
+  () => store.chapterImages,
+  () => {
+    if (!isContinuousMode.value) return
+    const current = getContinuousChapter(store.currentIndex)
+    if (current) current.html = renderChapterHtml(store.content, current.index)
+  }
+)
 
-watch([showSearch, searchQuery, () => config.value.paragraphSpacing, () => config.value.firstLineIndent, () => config.value.showChapterImages, () => config.value.chineseMode, () => store.replaceRules], () => {
-  if (isContinuousMode.value) {
-    syncContinuousChapterHtml()
+watch(
+  () => store.loading,
+  (loading) => {
+    if (!loading && pendingRestorePosition.value) {
+      scheduleRestoreReadingPosition()
+    }
   }
-  handlePresentationUpdated()
-})
+)
 
-watch(() => config.value.selectAction, (value) => {
-  if (value !== 'popup') {
-    clearSelectionState()
+watch(
+  () => store.book?.bookUrl,
+  () => {
+    loadSavedReadingPosition()
+    scheduleRefreshOfflineCacheState()
   }
-})
+)
 
-watch(() => store.isSpeaking, (speaking) => {
-  if (speaking && !ttsPanelDismissed.value) {
-    showTTSPanel.value = true
+watch(
+  [
+    showSearch,
+    searchQuery,
+    () => config.value.paragraphSpacing,
+    () => config.value.firstLineIndent,
+    () => config.value.showChapterImages,
+    () => config.value.chineseMode,
+    () => store.replaceRules,
+  ],
+  () => {
+    if (isContinuousMode.value) {
+      syncContinuousChapterHtml()
+    }
+    handlePresentationUpdated()
   }
-  if (!speaking && !store.isAutoScrolling) {
-    clearReadingClass()
+)
+
+watch(
+  () => config.value.selectAction,
+  (value) => {
+    if (value !== 'popup') {
+      clearSelectionState()
+    }
   }
-})
+)
+
+watch(
+  () => store.isSpeaking,
+  (speaking) => {
+    if (speaking && !ttsPanelDismissed.value) {
+      showTTSPanel.value = true
+    }
+    if (!speaking && !store.isAutoScrolling) {
+      clearReadingClass()
+    }
+  }
+)
 
 watch(
   [() => store.isNight, () => store.currentTheme.body, () => appStore.theme],
   ([isNight, body]) => {
     applySystemTheme(isNight ? 'dark' : appStore.theme, body)
   },
-  { immediate: true },
+  { immediate: true }
 )
 </script>
 
@@ -2356,7 +2550,9 @@ watch(
   display: flex;
   position: relative;
   overflow: hidden;
-  transition: background 0.3s, color 0.3s;
+  transition:
+    background 0.3s,
+    color 0.3s;
   padding-top: var(--safe-area-top);
   box-sizing: border-box;
 }
@@ -2393,11 +2589,11 @@ watch(
   display: none;
 }
 .reader-scroll-container::-webkit-scrollbar-thumb {
-  background: rgba(0,0,0,0.1);
+  background: rgba(0, 0, 0, 0.1);
   border-radius: 4px;
 }
-.reader-view[style*="background: #1a1a2e"] .reader-scroll-container::-webkit-scrollbar-thumb {
-  background: rgba(255,255,255,0.1);
+.reader-view[style*='background: #1a1a2e'] .reader-scroll-container::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.1);
 }
 
 .content-loading {
@@ -2426,18 +2622,20 @@ watch(
 .loading-spinner {
   width: 32px;
   height: 32px;
-  border: 3px solid rgba(0,0,0,0.1);
+  border: 3px solid rgba(0, 0, 0, 0.1);
   border-top-color: var(--color-primary);
   border-radius: 50%;
   animation: spin 1s linear infinite;
 }
-.reader-view[style*="background: #1a1a2e"] .loading-spinner {
-  border-color: rgba(255,255,255,0.1);
+.reader-view[style*='background: #1a1a2e'] .loading-spinner {
+  border-color: rgba(255, 255, 255, 0.1);
   border-top-color: var(--color-primary);
 }
 
 @keyframes spin {
-  to { transform: rotate(360deg); }
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .chapter-content {
@@ -2754,15 +2952,13 @@ watch(
 
 .next-btn:hover:not(:disabled) {
   opacity: 1;
-  background: rgba(0,0,0,0.05);
+  background: rgba(0, 0, 0, 0.05);
 }
 
 .next-btn:disabled {
   opacity: 0.2;
   cursor: not-allowed;
 }
-
-
 
 /* Slide Drawer Overlay */
 .reader-overlay {
@@ -2781,7 +2977,7 @@ watch(
   left: 0;
   width: var(--sidebar-width);
   z-index: 50;
-  box-shadow: 4px 0 24px rgba(0,0,0,0.15);
+  box-shadow: 4px 0 24px rgba(0, 0, 0, 0.15);
   transition: background 0.3s;
 }
 
@@ -2921,10 +3117,21 @@ watch(
 }
 
 /* Transitions */
-.fade-enter-active, .fade-leave-active { transition: opacity 0.3s; }
-.fade-enter-from, .fade-leave-to { opacity: 0; }
+.fade-enter-active,
+.fade-leave-active {
+  transition: opacity 0.3s;
+}
+.fade-enter-from,
+.fade-leave-to {
+  opacity: 0;
+}
 
-.slide-left-enter-active, .slide-left-leave-active { transition: transform 0.35s cubic-bezier(0.2, 0.8, 0.2, 1); }
-.slide-left-enter-from, .slide-left-leave-to { transform: translateX(-100%); }
-
+.slide-left-enter-active,
+.slide-left-leave-active {
+  transition: transform 0.35s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+.slide-left-enter-from,
+.slide-left-leave-to {
+  transform: translateX(-100%);
+}
 </style>

@@ -23,6 +23,6 @@ describe('readerClick', () => {
 
 function fakeTarget(matches: (selector: string) => boolean) {
   return {
-    closest: (selector: string) => matches(selector) ? {} : null,
+    closest: (selector: string) => (matches(selector) ? {} : null),
   }
 }
