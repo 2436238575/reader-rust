@@ -340,13 +340,18 @@ function finishAvailableSourceSSE(
   }
 }
 
+// 连点不同候选源时慢响应会盖掉新预览：按序号丢弃迟到结果
+let candidatePreviewSeq = 0
+
 async function selectCandidate(item: CandidateItem) {
   selectedCandidate.value = item
   candidatePreview.value = null
+  const seq = ++candidatePreviewSeq
   try {
-    candidatePreview.value = await getBookInfo(item.book.bookUrl, item.book.origin)
+    const preview = await getBookInfo(item.book.bookUrl, item.book.origin)
+    if (seq === candidatePreviewSeq) candidatePreview.value = preview
   } catch {
-    candidatePreview.value = null
+    if (seq === candidatePreviewSeq) candidatePreview.value = null
   }
 }
 

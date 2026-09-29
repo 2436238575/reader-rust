@@ -941,6 +941,11 @@ export const useReaderStore = defineStore('reader', () => {
       if (loadSeq !== chapterLoadSeq || index !== currentIndex.value) return
       setActiveChapterState(index, chapterContent, chapterScrollProgress.value)
       void preloadAroundChapter(index)
+    } catch (error) {
+      // 手动刷新失败不能静默：转圈停了用户会以为刷新成功
+      if (loadSeq === chapterLoadSeq) {
+        appStore.showToast((error as Error)?.message || '刷新章节失败', 'error')
+      }
     } finally {
       if (loadSeq === chapterLoadSeq) loading.value = false
     }
@@ -951,14 +956,21 @@ export const useReaderStore = defineStore('reader', () => {
     chaptersLoading.value = true
     try {
       preloadedContent.value.clear()
+      // 用户要的是刷新目录列表，不是重读当前章：此前 loadChapter(target, true)
+      // 会把人踢回章首。现在只换列表，当前章正文与阅读位置不动
+      const currentUrl = chapters.value[currentIndex.value]?.url
       chapters.value = await getChapterList({
         bookUrl: book.value.bookUrl,
         bookSourceUrl: book.value.origin,
         refresh: 1,
       })
-      const targetIndex = Math.max(0, Math.min(chapters.value.length - 1, currentIndex.value))
-      if (chapters.value[targetIndex]) {
-        await loadChapter(targetIndex, true)
+      // 上游增删章导致位置漂移时，按 URL 把索引对齐回去
+      if (currentUrl) {
+        const newIndex = chapters.value.findIndex((chapter) => chapter.url === currentUrl)
+        if (newIndex >= 0 && newIndex !== currentIndex.value) {
+          currentIndex.value = newIndex
+          book.value.durChapterIndex = newIndex
+        }
       }
     } finally {
       chaptersLoading.value = false

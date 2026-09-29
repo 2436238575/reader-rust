@@ -92,7 +92,13 @@ export function useReaderSelection(
       hideSelectionMenu()
       return
     }
+    // 触屏 2(Android)/4(iOS) 字符下限；桌面端鼠标容易在点击间隙误划出
+    // 1 字选区，也给个下限
     if (isTouchDevice && text.length < (isAndroid ? 2 : 4)) {
+      hideSelectionMenu()
+      return
+    }
+    if (!isTouchDevice && text.length < 2) {
       hideSelectionMenu()
       return
     }

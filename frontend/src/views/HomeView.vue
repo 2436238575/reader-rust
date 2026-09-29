@@ -177,7 +177,7 @@ onMounted(async () => {
   if (!appStore.isOnline) {
     const restored = await readerStore.restorePersistedSession()
     if (restored) {
-      appStore.showToast('已恢复最近阅读的离线章节', 'success')
+      appStore.showToast('已恢复上次阅读的书籍', 'success')
       router.replace('/reader')
     }
   }

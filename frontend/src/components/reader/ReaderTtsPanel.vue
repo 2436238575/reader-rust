@@ -17,7 +17,9 @@
       </div>
       <div class="tts-btns">
         <button @click="$emit('prev')">上一段</button>
-        <button :disabled="isLoading" @click="$emit('toggle-play')">{{ isLoading ? '加载中' : (!isSpeaking ? '开始' : (isPaused ? '恢复' : '暂停')) }}</button>
+        <!-- 暂停态优先于 isSpeaking 判断：OpenAI 路径暂停时 isSpeaking=false，
+             先判 isSpeaking 会把「继续」错显成「开始」并走成重读 -->
+        <button :disabled="isLoading" @click="$emit('toggle-play')">{{ isLoading ? '加载中' : (isPaused ? '继续' : (isSpeaking ? '暂停' : '开始')) }}</button>
         <button @click="$emit('stop')">停止</button>
         <button @click="$emit('next')">下一段</button>
       </div>

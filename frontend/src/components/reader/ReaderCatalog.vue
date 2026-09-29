@@ -46,12 +46,12 @@
     <div v-show="activeTab === 'chapters'" class="chapter-toolbar">
       <div class="search-box">
         <input
-          v-model="chapterSearch"
+          v-model="chapterSearchInput"
           type="text"
           placeholder="搜索章节..."
           class="search-input"
         />
-        <button v-if="chapterSearch" class="search-clear" @click="chapterSearch = ''">
+        <button v-if="chapterSearchInput" class="search-clear" @click="chapterSearchInput = ''; chapterSearch = ''">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6 6 18M6 6l12 12" /></svg>
         </button>
       </div>
@@ -165,6 +165,7 @@ const props = withDefaults(defineProps<{
 })
 const emit = defineEmits<{
   jumpChapter: [index: number]
+  jumpBookmark: [bookmark: Bookmark]
 }>()
 
 const store = useReaderStore()
@@ -175,7 +176,16 @@ const listRef = ref<HTMLElement>()
 const bookmarkEditMode = ref(false)
 const selectedBookmarkKeys = ref<Set<string>>(new Set())
 const cachedChapterUrls = ref<Set<string>>(new Set())
+const chapterSearchInput = ref('')
+// 目录可上千章：每个键都全量 filter + 重渲染太贵，200ms 防抖后再进 computed
 const chapterSearch = ref('')
+let chapterSearchTimer: number | null = null
+watch(chapterSearchInput, (value) => {
+  if (chapterSearchTimer) clearTimeout(chapterSearchTimer)
+  chapterSearchTimer = window.setTimeout(() => {
+    chapterSearch.value = value
+  }, 200)
+})
 
 // Filtered chapters based on search
 const filteredChapters = computed(() => {
@@ -225,11 +235,17 @@ watch(() => store.chapters, () => {
 })
 
 function scrollToCurrent() {
+  // 长目录渲染需要时间（content-visibility 懒绘制）：一次 nextTick 可能还找不到
+  // 当前章，补一次 250ms 重试兜底
   nextTick(() => {
     const activeEl = listRef.value?.querySelector('.list-item.active')
     if (activeEl) {
       activeEl.scrollIntoView({ block: 'center' })
+      return
     }
+    window.setTimeout(() => {
+      listRef.value?.querySelector('.list-item.active')?.scrollIntoView({ block: 'center' })
+    }, 250)
   })
 }
 
@@ -270,9 +286,8 @@ async function goToBookmark(bm: Bookmark) {
     return
   }
   if (bm.chapterIndex !== undefined) {
-    await store.loadChapter(bm.chapterIndex)
-    // Position scrolling could be added here if needed
-    store.closePanel()
+    // chapterPos 是收藏时的章内进度：交给阅读器走位置恢复，而不是落在章首
+    emit('jumpBookmark', bm)
   }
 }
 

@@ -22,6 +22,7 @@
             v-if="store.activePanel === 'catalog' || store.activePanel === 'bookmark'"
             :initial-tab="store.activePanel === 'bookmark' ? 'bookmarks' : 'chapters'"
             @jump-chapter="jumpFromCatalog"
+            @jump-bookmark="jumpToBookmark"
           />
           <ReadSettings v-else-if="store.activePanel === 'settings'" />
           <ReaderBookshelf v-else-if="store.activePanel === 'bookshelf'" />
@@ -1122,6 +1123,29 @@ async function jumpFromCatalog(targetIndex: number) {
   store.closePanel()
 }
 
+// 书签跳转：loadChapter 会把进度归 0 并按服务端/本地记录恢复，
+// 书签的 chapterPos 优先级更高——等正文加载完后用恢复通道落到收藏位置
+async function jumpToBookmark(bm: { chapterIndex?: number; chapterPos?: number }) {
+  const targetIndex = bm.chapterIndex
+  if (targetIndex === undefined || targetIndex < 0 || targetIndex >= store.chapters.length) return
+
+  if (!isContinuousMode.value) {
+    await store.loadChapter(targetIndex)
+    pendingRestorePosition.value = {
+      chapterIndex: targetIndex,
+      progress: Math.max(0, Math.min(1, bm.chapterPos || 0)),
+      updatedAt: Date.now(),
+    }
+    pendingRestoreAttempts = 0
+    scheduleRestoreReadingPosition()
+    store.closePanel()
+    return
+  }
+
+  await rebuildContinuousAtChapter(targetIndex)
+  store.closePanel()
+}
+
 async function rebuildContinuousAtChapter(targetIndex: number) {
   suppressContinuousScrollSyncUntil = Date.now() + 500
   suppressContinuousAutoLoadUntil = Date.now() + 500
@@ -1971,6 +1995,12 @@ async function toggleBookmark() {
 }
 
 function handleTTS() {
+  // 朗读中/暂停中点工具栏按钮＝暂停/继续（按钮 title 就是这么承诺的），
+  // 同时打开面板；未开始时才只是打开面板
+  if (store.isSpeaking || store.isPaused) {
+    toggleSpeechFromPanel()
+    return
+  }
   ttsPanelDismissed.value = false
   showTTSPanel.value = true
 }
@@ -1983,6 +2013,11 @@ function closeTTSPanel() {
 function toggleSpeechFromPanel() {
   ttsPanelDismissed.value = false
   showTTSPanel.value = true
+  // 暂停态恢复优先（pauseTTS 是 toggle）：此前 isSpeaking=false 会走成从头重读
+  if (store.isPaused) {
+    store.pauseTTS()
+    return
+  }
   if (!store.isSpeaking) {
     startSpeech()
     return
@@ -2095,7 +2130,7 @@ onMounted(async () => {
       router.replace('/')
       return
     }
-    appStore.showToast('已恢复最近阅读的离线章节', 'success')
+    appStore.showToast('已恢复上次阅读的书籍', 'success')
   }
   loadSavedReadingPosition()
   window.addEventListener('keydown', handleKeydown)

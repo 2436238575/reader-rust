@@ -353,7 +353,8 @@ export function useReaderTts(content: Ref<string>) {
 
   function startSystemTTS(rawText: string, options: TTSOptions, sessionId: number) {
     if (!synth) return
-    isSpeechLoading.value = false
+    // 进入即转加载态：onstart 是异步的，否则点了「开始」按钮文案会闪回「开始」
+    isSpeechLoading.value = true
     if (!voiceList.value.length) {
       fetchVoices()
     }
@@ -407,6 +408,7 @@ export function useReaderTts(content: Ref<string>) {
       if (!isCurrentTTSSession(sessionId)) return
       isSpeaking.value = false
       isPaused.value = false
+      isSpeechLoading.value = false
       logTTS('system finalize', {
         sessionId,
         kind,
@@ -502,6 +504,7 @@ export function useReaderTts(content: Ref<string>) {
 
     utterance.onstart = () => {
       if (!isCurrentTTSSession(sessionId) || currentUtterance !== utterance) return
+      isSpeechLoading.value = false
       isSpeaking.value = true
       isPaused.value = false
       sawStart = true

@@ -41,7 +41,10 @@
 
           <div ref="listRef" class="comment-list">
             <div v-if="loading && !items.length" class="comment-hint">加载中...</div>
-            <div v-else-if="error" class="comment-hint comment-error">{{ error }}</div>
+            <div v-else-if="error" class="comment-hint comment-error">
+              {{ error }}
+              <button class="comment-retry" @click="fetchPage(Math.max(1, page))">重试</button>
+            </div>
             <div v-else-if="!items.length" class="comment-hint">
               {{ authorOnly ? '没有作者评论、赞过或回复过的评论' : '还没有评论' }}
             </div>
@@ -305,7 +308,11 @@ async function reload() {
   await fetchPage(1)
 }
 
+// 切换排序/筛选时连点会并发拉页，慢响应可能盖掉新条件的列表：按序号丢弃迟到结果
+let fetchSeq = 0
+
 async function fetchPage(target: number) {
+  const seq = ++fetchSeq
   loading.value = true
   error.value = ''
   try {
@@ -321,6 +328,7 @@ async function fetchPage(target: number) {
       props.mode === 'para'
         ? await getParaComments({ ...params, paraIndex: props.paraIndex ?? 0 })
         : await getChapterComments(params)
+    if (seq !== fetchSeq) return
     if (authorOnly.value && !resp.enabled) {
       authorUnsupported.value = true
       authorOnly.value = false
@@ -335,9 +343,10 @@ async function fetchPage(target: number) {
     page.value = target
     hasMore.value = data.hasMore
   } catch (err) {
+    if (seq !== fetchSeq) return
     error.value = (err as Error)?.message || '评论加载失败'
   } finally {
-    loading.value = false
+    if (seq === fetchSeq) loading.value = false
   }
 }
 
@@ -621,6 +630,17 @@ function formatReviewTime(raw: string) {
 
 .comment-error {
   color: var(--color-danger);
+}
+
+.comment-retry {
+  margin-left: 12px;
+  padding: 2px 14px;
+  border: 1px solid currentColor;
+  border-radius: 8px;
+  background: transparent;
+  color: inherit;
+  font-size: 12px;
+  cursor: pointer;
 }
 
 .comment-item {
