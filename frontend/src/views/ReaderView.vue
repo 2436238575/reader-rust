@@ -356,6 +356,7 @@ import { ref, computed, watch, onMounted, onUnmounted, nextTick, defineAsyncComp
 import { onBeforeRouteLeave, useRouter } from 'vue-router'
 import { useReaderStore, fontPresets } from '../stores/reader'
 import { useAppStore } from '../stores/app'
+import { useSourceStore } from '../stores/source'
 import { getBookInfo, withAuthQuery } from '../api/bookshelf'
 import { applySystemTheme } from '../utils/systemUi'
 import { countBrowserBookCache } from '../utils/browserCache'
@@ -400,6 +401,7 @@ const ImageLightbox = defineAsyncComponent(() => import('../components/reader/Im
 const router = useRouter()
 const store = useReaderStore()
 const appStore = useAppStore()
+const sourceStore = useSourceStore()
 const READER_POSITION_PREFIX = 'reader-position:'
 const SERVER_PROGRESS_AUTOSAVE_MS = 10000
 
@@ -2350,6 +2352,10 @@ onMounted(async () => {
     speechTimerNow.value = Date.now()
   }, 15000)
   await Promise.all([store.fetchBookmarks(), store.fetchReplaceRules()])
+  // 换源入口需要按启用书源数决定是否展示；会话内只拉一次（source store 缓存）
+  if (!sourceStore.sources.length) {
+    void sourceStore.fetchSources().catch(() => undefined)
+  }
   scheduleRefreshOfflineCacheState()
   updateHorizontalMetrics()
   await rebuildHorizontalPages()

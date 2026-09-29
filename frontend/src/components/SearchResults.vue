@@ -25,7 +25,8 @@
       </button>
     </div>
 
-    <div class="search-filters">
+    <!-- 只启用了一个书源时，范围选择与单源下拉都没有意义，整条隐藏 -->
+    <div v-if="sourceOptions.length !== 1" class="search-filters">
       <div class="filter-tabs" role="tablist" aria-label="搜索范围">
         <button
           type="button"
@@ -212,13 +213,17 @@ function doSearch(key: string) {
   searchSeen = new Set()
   searchFailed.value = false
 
-  if (searchScope.value === 'group' && !selectedGroup.value) {
+  // 只启用一个书源时筛选区整条隐藏，范围等同「全部书源」——
+  // 避免上次选过的分组/单源在隐藏后仍悄悄限制结果
+  const effectiveScope = sourceOptions.value.length === 1 ? 'all' : searchScope.value
+
+  if (effectiveScope === 'group' && !selectedGroup.value) {
     shelfStore.searchResults = []
     shelfStore.isSearching = false
     return
   }
 
-  if (searchScope.value === 'source' && !selectedSourceUrl.value) {
+  if (effectiveScope === 'source' && !selectedSourceUrl.value) {
     shelfStore.searchResults = []
     shelfStore.isSearching = false
     return
@@ -230,8 +235,8 @@ function doSearch(key: string) {
   eventSource = searchBookMultiSSE({
     key,
     concurrentCount: 24,
-    bookSourceGroup: searchScope.value === 'group' ? selectedGroup.value : undefined,
-    bookSourceUrl: searchScope.value === 'source' ? selectedSourceUrl.value : undefined,
+    bookSourceGroup: effectiveScope === 'group' ? selectedGroup.value : undefined,
+    bookSourceUrl: effectiveScope === 'source' ? selectedSourceUrl.value : undefined,
   })
 
   eventSource.onmessage = (event) => {

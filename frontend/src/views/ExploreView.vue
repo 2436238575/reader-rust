@@ -2,12 +2,12 @@
   <div class="explore-view" :style="{ '--color-primary': '#c97f3a' }">
     <div class="explore-header">
       <h2>发现</h2>
-      <!-- 顶部：书源切换（与标题同行，右对齐） -->
+      <!-- 顶部：书源切换（与标题同行，右对齐）；只有一个可用书源时没有切换意义 -->
       <div class="source-selector">
         <select
           :value="store.activeSourceUrl"
           @change="onSourceChange"
-          v-if="store.exploreSources.length > 0"
+          v-if="store.exploreSources.length > 1"
         >
           <option
             v-for="src in store.exploreSources"
@@ -17,7 +17,9 @@
             {{ src.bookSourceName }}
           </option>
         </select>
-        <span v-else class="no-sources-text">无带有发现规则的书源</span>
+        <span v-else-if="store.exploreSources.length === 0" class="no-sources-text">
+          无带有发现规则的书源
+        </span>
       </div>
     </div>
 

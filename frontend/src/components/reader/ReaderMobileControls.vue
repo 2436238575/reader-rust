@@ -27,6 +27,7 @@
           <span>书架</span>
         </div>
         <div
+          v-if="showSourceSwitch"
           class="m-top-item"
           :class="{ active: store.activePanel === 'source' }"
           @click="store.togglePanel('source')"
@@ -208,9 +209,17 @@
 import { computed } from 'vue'
 import { useReaderStore } from '../../stores/reader'
 import { useAppStore } from '../../stores/app'
+import { useSourceStore } from '../../stores/source'
 
 const store = useReaderStore()
 const appStore = useAppStore()
+const sourceStore = useSourceStore()
+
+// 只有一个启用的书源时「换源」无从谈起，隐藏入口；书源未加载时不闪动
+const showSourceSwitch = computed(() => {
+  if (!sourceStore.sources.length) return true
+  return sourceStore.sources.filter((s) => s.enabled !== false).length > 1
+})
 const theme = computed(() => {
   if (store.isNight || appStore.theme === 'dark') {
     return {
