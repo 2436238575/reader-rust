@@ -154,6 +154,7 @@
           '--reader-page-width': config.pageWidth + 'px',
           '--reader-side-padding': '24px',
           '--reader-page-step': horizontalPageStepStyle,
+          '--reader-page-content-height': horizontalPageContentHeightStyle,
         }"
       >
         <div v-if="isHorizontalPageMode" class="horizontal-page-layout">
@@ -240,6 +241,16 @@
           v-if="!store.loading && isHorizontalPageMode && isHorizontalAtEnd"
           class="horizontal-next-floating"
         >
+          <button
+            v-if="store.reviewEnabled"
+            class="chapter-comments-bar horizontal-comments-entry"
+            @click="openChapterComments"
+          >
+            <span class="chapter-comments-label">本章评论</span>
+            <span v-if="store.chapterCommentTotal > 0" class="chapter-comments-count">
+              · {{ store.chapterCommentTotal }}
+            </span>
+          </button>
           <button class="next-btn" :disabled="!store.hasNext" @click="nextChapter">
             {{ store.hasNext ? '下一章' : '没有更多了' }}
           </button>
@@ -496,7 +507,22 @@ const {
   jumpToSearchResult,
   handleContentUpdated,
   handlePresentationUpdated,
-} = useReaderSearch(store)
+} = useReaderSearch(store, { locateMatch: locateSearchMatch })
+
+// 搜索命中定位：横翻模式容器 overflow hidden + transform 翻页，
+// scrollIntoView 无效，换算成页码跳过去（函数声明提升，useReaderSearch 可先引用）
+function locateSearchMatch(el: HTMLElement) {
+  const page = el.closest('.horizontal-page')
+  if (isHorizontalPageMode.value && page?.parentElement) {
+    const idx = Array.from(page.parentElement.children).indexOf(page as Element)
+    if (idx >= 0) {
+      horizontalPageIndex.value = idx
+      syncHorizontalPageState()
+    }
+    return
+  }
+  el.scrollIntoView({ block: 'center', behavior: 'smooth' })
+}
 const {
   selectionMenu,
   suppressSelectionCloseUntil,
@@ -969,6 +995,7 @@ const {
   horizontalPageStepStyle,
   horizontalPages,
   isHorizontalAtEnd,
+  horizontalPageContentHeightStyle,
   rebuildHorizontalPages,
   updateHorizontalMetrics,
   updateHorizontalEndState,
@@ -1677,7 +1704,9 @@ function handleGlobalClick(e: MouseEvent) {
   // 不再附带翻页或弹菜单动作
   if (Date.now() - autoScrollInterruptAt < 400) return
 
-  if (isHorizontalPageMode.value && isMobile.value) {
+  if (isHorizontalPageMode.value) {
+    // 左右翻页模式下点击区域永远是左/右（桌面端鼠标也一样），
+    // 竖滚模式才是上/下
     const x = e.clientX / window.innerWidth
     if (x < 0.3) {
       clickZoneAction('prev')
@@ -2378,6 +2407,13 @@ watch(
   }
 )
 
+// 段评计数、章节配图、搜索高亮都是异步到达/会变化的装饰层：
+// 竖滚模式由 v-html 自动跟随，横翻模式的分页快照需要主动重排。
+// 不重置页码——rebuildHorizontalPages 内部只 clamp 不归零。
+watch(formattedContent, () => {
+  if (isHorizontalPageMode.value) scheduleRebuildHorizontalPages()
+})
+
 watch(
   () => store.currentIndex,
   () => {
@@ -2923,12 +2959,32 @@ watch(
   transform: translateX(-50%);
   z-index: 12;
   pointer-events: none;
+  display: flex;
+  align-items: center;
+  gap: 10px;
 }
 
-.horizontal-next-floating .next-btn {
+.horizontal-next-floating .next-btn,
+.horizontal-next-floating .horizontal-comments-entry {
   pointer-events: auto;
   background: rgba(255, 255, 255, 0.75);
   backdrop-filter: blur(6px);
+}
+
+/* 横翻章末浮层里的评论入口：窄条形态，区别于竖滚的整行 bar */
+.horizontal-next-floating .horizontal-comments-entry {
+  width: auto;
+  margin-top: 0;
+  padding: 8px 14px;
+  border-radius: 30px;
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.12);
+}
+
+/* 横翻页内图片限高：分页是定高裁剪，图片不能超过单页内容区，
+   否则超出部分直接被 overflow:hidden 切掉 */
+:deep(.horizontal-page-content img) {
+  max-height: var(--reader-page-content-height, none);
+  object-fit: contain;
 }
 
 .continuous-loading-inline {

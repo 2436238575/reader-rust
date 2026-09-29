@@ -9,7 +9,15 @@ export interface SearchResultItem {
   snippet: string
 }
 
-export function useReaderSearch(store: ReaderStore) {
+interface ReaderSearchOptions {
+  /**
+   * 命中项定位钩子。横翻分页模式容器 overflow:hidden + transform 翻页，
+   * scrollIntoView 不生效，由调用方按页跳转；不传则维持 scrollIntoView。
+   */
+  locateMatch?: (el: HTMLElement) => void
+}
+
+export function useReaderSearch(store: ReaderStore, options: ReaderSearchOptions = {}) {
   const showSearch = ref(false)
   const searchQuery = ref('')
   const searchResults = ref<SearchResultItem[]>([])
@@ -101,10 +109,14 @@ export function useReaderSearch(store: ReaderStore) {
     runChapterSearch()
   }
 
-  function scrollToMatch() {
+  function scrollToMatch(allowRetry = true) {
     nextTick(() => {
       const matches = document.querySelectorAll('.search-highlight')
-      if (!matches.length) return
+      if (!matches.length) {
+        // 横翻模式的分页是异步重建的，跨章跳转后高亮可能还没落进页里
+        if (allowRetry) window.setTimeout(() => scrollToMatch(false), 150)
+        return
+      }
       let targetIndex = searchIndex.value
       if (pendingSearchResult.value) {
         const snippet = pendingSearchResult.value.snippet.replace(/\.\.\./g, '').trim()
@@ -117,7 +129,8 @@ export function useReaderSearch(store: ReaderStore) {
       }
       const target = matches[targetIndex] as HTMLElement | undefined
       if (!target) return
-      target.scrollIntoView({ block: 'center', behavior: 'smooth' })
+      if (options.locateMatch) options.locateMatch(target)
+      else target.scrollIntoView({ block: 'center', behavior: 'smooth' })
       matches.forEach((item) => item.classList.remove('current-match'))
       target.classList.add('current-match')
     })

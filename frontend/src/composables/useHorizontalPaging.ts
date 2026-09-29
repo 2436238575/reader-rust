@@ -69,6 +69,12 @@ export function useHorizontalPaging(
   const horizontalPageStepStyle = computed(() => `${Math.max(1, horizontalPageStep.value)}px`)
   const horizontalPages = ref<string[]>([])
   const isHorizontalAtEnd = ref(false)
+  // 单页内容区高度（px），模板挂到 article 的 CSS 变量上给图片限高；
+  // 测量器上也设置同名变量，保证测量与渲染一致
+  const horizontalPageContentHeight = ref(0)
+  const horizontalPageContentHeightStyle = computed(() =>
+    horizontalPageContentHeight.value > 0 ? `${horizontalPageContentHeight.value}px` : undefined
+  )
 
   function escapeHtml(input: string) {
     return input.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;')
@@ -130,6 +136,29 @@ export function useHorizontalPaging(
       className: paragraph.getAttribute('class') || '',
       text: (paragraph.textContent || '').trimEnd(),
     }
+  }
+
+  /**
+   * 段评气泡不参与分页：测量器里气泡的 SVG 没有 scoped 样式时会按 300×150
+   * 默认尺寸撑爆段落高度（正文只显示半屏的根因），按字符拆段时气泡文本又会
+   * 被拍平成正文里的裸数字。分页前摘下，段落全部放定后挂回末段。
+   */
+  function stripParaCommentBubble(blockHtml: string) {
+    if (!blockHtml.includes('para-comment-bubble')) return { html: blockHtml, bubbleHtml: '' }
+    const wrapper = document.createElement('div')
+    wrapper.innerHTML = blockHtml
+    const paragraph = wrapper.querySelector('p')
+    const bubble = wrapper.querySelector('.para-comment-bubble')
+    if (!paragraph || !bubble) return { html: blockHtml, bubbleHtml: '' }
+    const bubbleHtml = bubble.outerHTML
+    bubble.remove()
+    return { html: paragraph.outerHTML, bubbleHtml }
+  }
+
+  function appendBubbleToBlock(blockHtml: string, bubbleHtml: string) {
+    const idx = blockHtml.lastIndexOf('</p>')
+    if (idx < 0) return `${blockHtml}${bubbleHtml}`
+    return `${blockHtml.slice(0, idx)}${bubbleHtml}${blockHtml.slice(idx)}`
   }
 
   function buildParagraphHtml(style: string, text: string, className = '') {
@@ -214,11 +243,13 @@ export function useHorizontalPaging(
     return mergedPages
   }
 
-  function buildHorizontalParagraphs() {
+  function buildHorizontalBlocks() {
     const root = document.createElement('div')
     root.innerHTML = formattedContent.value
-    return Array.from(root.querySelectorAll('p')).map((node) =>
-      normalizeParagraphHtml(node.outerHTML)
+    // 收集全部顶层块（p + figure 等），不再只取 p：
+    // 章节配图/正文 HTML 自带的非段落元素在横翻模式也要保留
+    return Array.from(root.children).map((node) =>
+      node.tagName === 'P' ? normalizeParagraphHtml(node.outerHTML) : node.outerHTML
     )
   }
 
@@ -266,11 +297,18 @@ export function useHorizontalPaging(
     updateHorizontalMetrics()
 
     const { innerWidth, pageHeight } = getHorizontalPageMeasure(container)
+    horizontalPageContentHeight.value = pageHeight
     const title = (store.currentChapter?.title || '加载中...').trim()
     const titleHtml = `<h1 class="horizontal-flow-title">${escapeHtml(title)}</h1>`
-    const paragraphs = buildHorizontalParagraphs()
+    const paragraphs = buildHorizontalBlocks()
 
+    // 测量器必须和真实页吃同一套样式：带上渲染容器的 scoped id 与类链，
+    // 否则 :deep() 样式（章节标题、气泡、figure、图片限高等）在测量时全部
+    // 失效——气泡里的 SVG 会按 300×150 默认尺寸把段落量成数倍高。
+    const scopeAttr = container.getAttributeNames().find((name) => name.startsWith('data-v-'))
     const measurer = document.createElement('div')
+    measurer.className = 'chapter-text horizontal-page-content'
+    if (scopeAttr) measurer.setAttribute(scopeAttr, '')
     measurer.style.position = 'fixed'
     measurer.style.left = '-99999px'
     measurer.style.top = '0'
@@ -287,6 +325,7 @@ export function useHorizontalPaging(
     measurer.style.wordBreak = 'normal'
     measurer.style.overflowWrap = 'break-word'
     measurer.style.textAlign = 'left'
+    measurer.style.setProperty('--reader-page-content-height', `${pageHeight}px`)
     document.body.appendChild(measurer)
 
     const pages: string[] = []
@@ -356,6 +395,13 @@ export function useHorizontalPaging(
       if (fitCount <= 0) return null
 
       fitCount = adjustFitCountForReadableStart(text, fitCount)
+
+      // 别把 UTF-16 代理对从中间切开（emoji 等会碎成占位符）
+      if (fitCount > 0 && fitCount < text.length) {
+        const hi = text.charCodeAt(fitCount - 1)
+        const lo = text.charCodeAt(fitCount)
+        if (hi >= 0xd800 && hi <= 0xdbff && lo >= 0xdc00 && lo <= 0xdfff) fitCount -= 1
+      }
       if (
         fitCount <= 0 ||
         (fitCount < text.length && isPunctuationOnlyText(text.slice(0, fitCount)))
@@ -372,9 +418,13 @@ export function useHorizontalPaging(
       }
     }
 
+    // 含图片/换行/嵌套结构的块不按字符切分——切分会丢掉内联 HTML，整块放置
+    const ATOMIC_BLOCK_PATTERN = /<(?:img|br|table|ruby|video|audio|svg|iframe|canvas)\b/i
+    const isAtomicBlock = (blockHtml: string) => ATOMIC_BLOCK_PATTERN.test(blockHtml)
+
     const appendOversizedParagraph = (blockHtml: string, isContinuation = false) => {
       const parsed = parseParagraphHtml(blockHtml)
-      if (!parsed || parsed.text.length <= 1) {
+      if (!parsed || parsed.text.length <= 1 || isAtomicBlock(blockHtml)) {
         pages.push(blockHtml)
         return
       }
@@ -409,14 +459,16 @@ export function useHorizontalPaging(
       }
 
       if (currentParts.length) {
-        const fitted = fitParagraphSegment(blockHtml, { isContinuation: false })
-        if (fitted) {
-          currentParts = [...currentParts, fitted.html]
-          if (fitted.remainingHtml) {
-            flushPage()
-            appendOversizedParagraph(fitted.remainingHtml, true)
+        if (!isAtomicBlock(blockHtml)) {
+          const fitted = fitParagraphSegment(blockHtml, { isContinuation: false })
+          if (fitted) {
+            currentParts = [...currentParts, fitted.html]
+            if (fitted.remainingHtml) {
+              flushPage()
+              appendOversizedParagraph(fitted.remainingHtml, true)
+            }
+            return
           }
-          return
         }
 
         flushPage()
@@ -429,8 +481,18 @@ export function useHorizontalPaging(
       appendOversizedParagraph(blockHtml)
     }
 
-    for (const paragraph of paragraphs) {
-      appendBlock(paragraph)
+    for (const rawBlock of paragraphs) {
+      const { html: blockHtml, bubbleHtml } = stripParaCommentBubble(rawBlock)
+      appendBlock(blockHtml)
+      // 气泡挂回该段的最后一个片段（可能在未完成页，也可能刚被 flush 成整页）
+      if (bubbleHtml) {
+        if (currentParts.length) {
+          const last = currentParts.length - 1
+          currentParts[last] = appendBubbleToBlock(currentParts[last], bubbleHtml)
+        } else if (pages.length) {
+          pages[pages.length - 1] = appendBubbleToBlock(pages[pages.length - 1], bubbleHtml)
+        }
+      }
     }
 
     if (currentParts.length) {
@@ -478,6 +540,7 @@ export function useHorizontalPaging(
     horizontalPageStepStyle,
     horizontalPages,
     isHorizontalAtEnd,
+    horizontalPageContentHeightStyle,
     rebuildHorizontalPages,
     updateHorizontalMetrics,
     updateHorizontalEndState,
