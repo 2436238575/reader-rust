@@ -122,6 +122,11 @@ const shelfUrls = computed(() => new Set(shelfStore.books.map((book) => book.boo
 const addingUrls = ref(new Set<string>())
 
 onMounted(async () => {
+  // 「已在书架」状态依赖书架列表；书架页还没打开过时这里是空的，
+  // 会发现页所有卡片都显示「加入书架」直到手动加一本才翻转
+  if (!shelfStore.books.length) {
+    void shelfStore.fetchBooks().catch(() => undefined)
+  }
   await store.init()
   tryFetchMore()
 })
