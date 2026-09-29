@@ -353,7 +353,7 @@ import { getBookInfo, withAuthQuery } from '../api/bookshelf'
 import { applySystemTheme } from '../utils/systemUi'
 import { countBrowserBookCache } from '../utils/browserCache'
 import { APP_VIEWPORT_CHANGE_EVENT, syncViewportSize } from '../utils/viewport'
-import { isReaderInteractiveClickTarget } from '../utils/readerClick'
+import { isReaderInteractiveClickTarget, resolveReaderTapZone } from '../utils/readerClick'
 import { sanitizeUntrustedHtml } from '../utils/sanitize'
 import { safeLocalSet } from '../utils/storage'
 import type { ChapterImage, ParaReviewCount } from '../types'
@@ -1704,27 +1704,15 @@ function handleGlobalClick(e: MouseEvent) {
   // 不再附带翻页或弹菜单动作
   if (Date.now() - autoScrollInterruptAt < 400) return
 
-  if (isHorizontalPageMode.value) {
-    // 左右翻页模式下点击区域永远是左/右（桌面端鼠标也一样），
-    // 竖滚模式才是上/下
-    const x = e.clientX / window.innerWidth
-    if (x < 0.3) {
-      clickZoneAction('prev')
-    } else if (x > 0.7) {
-      clickZoneAction('next')
-    } else {
-      clickZoneAction('menu')
-    }
-  } else {
-    const y = e.clientY / window.innerHeight
-    if (y < 0.3) {
-      clickZoneAction('prev')
-    } else if (y > 0.7) {
-      clickZoneAction('next')
-    } else {
-      clickZoneAction('menu')
-    }
-  }
+  // 九宫格热区（横翻永远左右分区，其余模式上下偏置），四边留白不触发
+  const zone = resolveReaderTapZone(
+    e.clientX,
+    e.clientY,
+    isHorizontalPageMode.value,
+    window.innerWidth,
+    window.innerHeight
+  )
+  if (zone) clickZoneAction(zone)
 }
 
 function clickZoneAction(zone: 'prev' | 'menu' | 'next') {
@@ -1934,14 +1922,14 @@ function handleTouchEnd(event: TouchEvent) {
       if (showControls.value && !store.activePanel) {
         showControls.value = false
       } else {
-        const x = touch.clientX / window.innerWidth
-        if (x < 0.3) {
-          clickZoneAction('prev')
-        } else if (x > 0.7) {
-          clickZoneAction('next')
-        } else {
-          clickZoneAction('menu')
-        }
+        const zone = resolveReaderTapZone(
+          touch.clientX,
+          touch.clientY,
+          true,
+          window.innerWidth,
+          window.innerHeight
+        )
+        if (zone) clickZoneAction(zone)
       }
     } else {
       window.setTimeout(() => {
