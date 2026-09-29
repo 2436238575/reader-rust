@@ -89,6 +89,54 @@ pub struct ResolvedAiModelEndpoint {
 }
 
 impl AiModelConfig {
+    /// 从环境变量读取后端 AI 模型配置。
+    ///
+    /// 后端配置只在服务端保存（env / .env），**从不下发到浏览器**——
+    /// 前端只能拿到各模型的启用状态布尔值。
+    pub fn from_env() -> Self {
+        Self::from_lookup(|key| std::env::var(key).unwrap_or_default())
+    }
+
+    /// 与 `from_env` 同形，但来源可注入（测试用，避免碰进程环境变量）。
+    pub fn from_lookup(lookup: impl Fn(&str) -> String) -> Self {
+        let text = |key: &str| lookup(key).trim().to_string();
+        let flag = |key: &str| {
+            matches!(
+                text(key).to_ascii_lowercase().as_str(),
+                "1" | "true" | "yes" | "on"
+            )
+        };
+        Self {
+            text: AiModelEndpointConfig {
+                enabled: flag("AI_TEXT_ENABLED"),
+                base_url: text("AI_TEXT_BASE_URL"),
+                api_key: text("AI_TEXT_API_KEY"),
+                model: text("AI_TEXT_MODEL"),
+                use_full_url: flag("AI_TEXT_USE_FULL_URL"),
+            },
+            image: AiImageModelConfig {
+                enabled: flag("AI_IMAGE_ENABLED"),
+                base_url: text("AI_IMAGE_BASE_URL"),
+                api_key: text("AI_IMAGE_API_KEY"),
+                model: text("AI_IMAGE_MODEL"),
+                use_full_url: flag("AI_IMAGE_USE_FULL_URL"),
+                image_size: text("AI_IMAGE_SIZE"),
+            },
+            speech: AiSpeechModelConfig {
+                enabled: flag("AI_SPEECH_ENABLED"),
+                base_url: text("AI_SPEECH_BASE_URL"),
+                api_key: text("AI_SPEECH_API_KEY"),
+                model: text("AI_SPEECH_MODEL"),
+                use_full_url: flag("AI_SPEECH_USE_FULL_URL"),
+                voice: text("AI_SPEECH_VOICE"),
+                response_format: text("AI_SPEECH_FORMAT"),
+            },
+        }
+        .sanitized()
+    }
+}
+
+impl AiModelConfig {
     pub fn sanitized(mut self) -> Self {
         self.text.base_url = normalize_url(self.text.base_url);
         self.text.api_key = self.text.api_key.trim().to_string();
@@ -153,5 +201,41 @@ fn default_if_empty(value: String, default_value: &str) -> String {
         default_value.to_string()
     } else {
         value.to_string()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::HashMap;
+
+    #[test]
+    fn from_lookup_reads_flat_env_vars() {
+        let vars: HashMap<String, String> = [
+            ("AI_TEXT_ENABLED", "true"),
+            ("AI_TEXT_BASE_URL", "https://api.example.test/"),
+            ("AI_TEXT_API_KEY", " sk-live "),
+            ("AI_TEXT_MODEL", "gpt-4o-mini"),
+            ("AI_SPEECH_ENABLED", "1"),
+            ("AI_SPEECH_MODEL", ""),
+        ]
+        .into_iter()
+        .map(|(k, v)| (k.to_string(), v.to_string()))
+        .collect();
+        let config = AiModelConfig::from_lookup(|key| vars.get(key).cloned().unwrap_or_default());
+        assert!(config.text.enabled);
+        assert_eq!(config.text.base_url, "https://api.example.test");
+        assert_eq!(config.text.api_key, "sk-live");
+        assert_eq!(config.text.model, "gpt-4o-mini");
+        assert!(config.speech.enabled);
+        // 空值落回默认
+        assert_eq!(config.speech.model, "gpt-4o-mini-tts");
+        assert!(!config.image.enabled);
+    }
+
+    #[test]
+    fn from_lookup_defaults_to_disabled() {
+        let config = AiModelConfig::from_lookup(|_| String::new());
+        assert!(!config.text.enabled && !config.image.enabled && !config.speech.enabled);
     }
 }

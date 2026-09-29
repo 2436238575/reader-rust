@@ -107,8 +107,7 @@ AI资料页面主要使用这些后端接口：
 | `GET/POST /reader3/getAiBookMemory` | 获取当前书籍 AI资料                |
 | `POST /reader3/saveAiBookMemory`    | 保存当前书籍 AI资料                |
 | `POST /reader3/deleteAiBookMemory`  | 重置当前书籍 AI资料                |
-| `GET /reader3/getAiModelConfig`     | 获取后端模型配置可见信息与权限状态 |
-| `POST /reader3/saveAiModelConfig`   | 保存后端模型配置                   |
+| `GET /reader3/getAiModelConfig`     | 获取后端模型各类型的可用状态（布尔） |
 | `POST /reader3/aiProxy`             | 后端代理文本、图片、语音模型请求   |
 | `POST /reader3/aiProxyImage`        | 后端代理图片下载                   |
 

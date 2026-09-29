@@ -115,6 +115,7 @@ cp .env.example .env
 | `PRIVATE_NETWORK_WHITELIST`     | 空                                  | 私网白名单（逗号分隔），仅 `ALLOW_PRIVATE_NETWORK=false` 时生效。条目支持 IP / CIDR 网段 / 域名，均可带端口（如 `192.168.100.99:9999, 192.168.100.0/24, nas.lan`）。**名单为空时全部放行**（等同 `true`）；名单非空时只有命中的目标可以出站 |
 | `CORS_ALLOWED_ORIGINS`          | 空                                  | 跨域来源白名单；留空仅同源                                                                                                                                                                                                                  |
 | `RATE_LIMIT_DISABLED`           | `false`                             | 豁免登录限速（开发/测试用）。默认：IP 登录败 5 次封该 IP 登录 6h、用户名败 10 次封 6h。e2e 跑测试时建议后端开此项                                                                                                                           |
+| `AI_TEXT_*` / `AI_IMAGE_*` / `AI_SPEECH_*` | 空                         | 后端 AI 模型配置（`ENABLED`/`BASE_URL`/`API_KEY`/`MODEL`/`USE_FULL_URL`，图片另有 `SIZE`，语音另有 `VOICE`/`FORMAT`）。**只在服务端维护，从不下发到浏览器**；`getAiModelConfig` 只返回各类型「是否可用」的布尔值                           |
 
 两点需要注意：
 

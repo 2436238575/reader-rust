@@ -118,9 +118,10 @@ pub async fn build_state(cfg: AppConfig) -> anyhow::Result<AppState> {
     user_service.bootstrap_admin().await?;
     let book_group_service = Arc::new(BookGroupService::new(json_document_service.clone()));
     let ai_book_service = Arc::new(AiBookService::new(pool.clone(), &cfg.storage_dir));
+    // 后端 AI 模型配置只来自环境变量（AI_TEXT_* / AI_IMAGE_* / AI_SPEECH_*），
+    // 不落库、不下发；config::load() 已先加载 .env
     let ai_model_service = Arc::new(AiModelService::new(
-        json_document_service.clone(),
-        &cfg.storage_dir,
+        crate::model::ai_model::AiModelConfig::from_env(),
     ));
 
     Ok(AppState {

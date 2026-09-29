@@ -64,6 +64,21 @@ Reader-Rust 通过**环境变量**配置，支持从 `.env` 文件读取。代�
 | `ADMIN_USERNAME` | `admin` | 唯一账号的用户名，首次启动建号时使用；仅允许小写字母、数字与下划线。建号后修改它相当于换一个全新账号（旧命名空间下的数据不可见）                                                                       |
 | `ADMIN_PASSWORD` | 空      | 唯一账号的密码。**非空时每次启动都强制写入**（覆盖现有密码并使旧令牌失效），因此它也是忘记密码时的找回通道；与现密码相同时是 no-op，不会重置登录态。留空则首次启动随机生成 20 位强密码并打印到启动日志 |
 
+### 后端 AI 模型（可选）
+
+AI资料/AI 地图/听书 TTS 可以使用「后端」模型：请求经 `/reader3/aiProxy` 由服务端转发，
+**配置只存在于服务端，从不下发到浏览器**（前端只能看到各类型的可用状态布尔值，
+浏览器全程接触不到 API Key）。三组各自独立，按 `AI_<类型>_ENABLED=true` 启用：
+
+| 变量前缀     | 用途                     | 变量                                                                                                          |
+| ------------ | ------------------------ | ------------------------------------------------------------------------------------------------------------- |
+| `AI_TEXT_`   | 文本模型（AI资料生成）   | `ENABLED`、`BASE_URL`、`API_KEY`、`MODEL`、`USE_FULL_URL`                                                     |
+| `AI_IMAGE_`  | 图片模型（AI 地图）      | `ENABLED`、`BASE_URL`、`API_KEY`、`MODEL`（默认 `gpt-image-1`）、`SIZE`（默认 `1024x1024`）、`USE_FULL_URL`   |
+| `AI_SPEECH_` | 语音模型（听书 TTS）     | `ENABLED`、`BASE_URL`、`API_KEY`、`MODEL`（默认 `gpt-4o-mini-tts`）、`VOICE`（默认 `alloy`）、`FORMAT`（默认 `mp3`）、`USE_FULL_URL` |
+
+示例：`AI_SPEECH_ENABLED=true` + `AI_SPEECH_BASE_URL=http://localhost:8825` + `AI_SPEECH_API_KEY=...`
+即可让前端「听书 · 模型来源 = 后端」可用。
+
 ### 资源限额
 
 | 变量                    | 默认值 | 说明                               |

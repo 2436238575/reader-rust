@@ -34,50 +34,18 @@ POST /reader3/deleteAiBookMemory
 
 ## AI 模型配置
 
-### 获取模型配置
+### 获取后端模型可用状态
 
 ```text
 GET /reader3/getAiModelConfig
 ```
 
-响应 `data`：`{ "config": {...}, "canUseServerModel": bool, "isAdmin": bool }`（后两者为兼容字段，单用户下恒为 `true`）。
+响应 `data`：`{ "canUseServerModel": bool, "textReady": bool, "imageReady": bool, "speechReady": bool }`。
 
-### 保存模型配置
-
-```text
-POST /reader3/saveAiModelConfig
-```
-
-请求体为完整 `AiModelConfig`：
-
-```json
-{
-  "text": {
-    "enabled": true,
-    "baseUrl": "https://api.openai.com",
-    "apiKey": "sk-...",
-    "model": "gpt-4o-mini",
-    "useFullUrl": false
-  },
-  "image": {
-    "enabled": false,
-    "baseUrl": "",
-    "apiKey": "",
-    "model": "gpt-image-1",
-    "useFullUrl": false,
-    "imageSize": "1024x1024"
-  },
-  "speech": {
-    "enabled": false,
-    "baseUrl": "",
-    "apiKey": "",
-    "model": "gpt-4o-mini-tts",
-    "useFullUrl": false,
-    "voice": "alloy",
-    "responseFormat": "mp3"
-  }
-}
-```
+> 后端模型配置只通过环境变量维护（`AI_TEXT_*` / `AI_IMAGE_*` / `AI_SPEECH_*`，见
+> [配置 · AI 模型](../guide/configuration.md)），**从不下发到浏览器**——接口只返回
+> 「是否配置可用」的布尔值，地址/Key/模型名均不可见。原 `POST /reader3/saveAiModelConfig`
+> 已移除。
 
 ## AI 代理
 

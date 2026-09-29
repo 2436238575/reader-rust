@@ -299,10 +299,6 @@ pub fn build_router(state: AppState) -> Router {
         .route("/reader3/uploadFile", post(handlers::upload_file))
         .route("/reader3/deleteFile", post(handlers::delete_file))
         .route("/reader3/getTxtTocRules", get(handlers::get_txt_toc_rules))
-        .route(
-            "/reader3/saveAiModelConfig",
-            post(handlers::save_ai_model_config),
-        )
         .layer(middleware::from_fn_with_state(state.clone(), require_auth))
         .with_state(state.clone());
 
