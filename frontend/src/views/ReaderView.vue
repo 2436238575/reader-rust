@@ -516,6 +516,7 @@ function locateSearchMatch(el: HTMLElement) {
   if (isHorizontalPageMode.value && page?.parentElement) {
     const idx = Array.from(page.parentElement.children).indexOf(page as Element)
     if (idx >= 0) {
+      suppressHorizontalTransitionOnce()
       horizontalPageIndex.value = idx
       syncHorizontalPageState()
     }
@@ -996,6 +997,8 @@ const {
   horizontalPages,
   isHorizontalAtEnd,
   horizontalPageContentHeightStyle,
+  horizontalInstantJump,
+  suppressHorizontalTransitionOnce,
   rebuildHorizontalPages,
   updateHorizontalMetrics,
   updateHorizontalEndState,
@@ -1019,6 +1022,7 @@ const horizontalPageTransform = computed(() => {
   return `translate3d(${-offset}px, 0, 0)`
 })
 const horizontalPageTransitionDuration = computed(() => {
+  if (horizontalInstantJump.value) return '0ms'
   const duration = Number(config.value.animateDuration) || 0
   if (duration <= 0) return '0ms'
   return `${Math.min(220, duration)}ms`
@@ -1458,6 +1462,7 @@ function restoreReadingPositionInternal(saved: SavedReadingPosition | null, fina
       })
       return false
     }
+    suppressHorizontalTransitionOnce()
     horizontalPageIndex.value = Math.max(
       0,
       Math.min(maxPage, Math.round(maxPage * Math.max(0, Math.min(1, saved.progress || 0))))

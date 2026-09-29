@@ -69,6 +69,18 @@ export function useHorizontalPaging(
   const horizontalPageStepStyle = computed(() => `${Math.max(1, horizontalPageStep.value)}px`)
   const horizontalPages = ref<string[]>([])
   const isHorizontalAtEnd = ref(false)
+  // 「瞬移」标记：章节切换/位置恢复的页码跳跃不走 transform 过渡动画，
+  // 否则会看到从旧页一路滑过所有页的怪动画（尤其回上一章章末时）
+  const horizontalInstantJump = ref(false)
+  let horizontalInstantJumpTimer: number | null = null
+  function suppressHorizontalTransitionOnce() {
+    horizontalInstantJump.value = true
+    if (horizontalInstantJumpTimer) clearTimeout(horizontalInstantJumpTimer)
+    horizontalInstantJumpTimer = window.setTimeout(() => {
+      horizontalInstantJumpTimer = null
+      horizontalInstantJump.value = false
+    }, 120)
+  }
   // 单页内容区高度（px），模板挂到 article 的 CSS 变量上给图片限高；
   // 测量器上也设置同名变量，保证测量与渲染一致
   const horizontalPageContentHeight = ref(0)
@@ -527,6 +539,7 @@ export function useHorizontalPaging(
   }
 
   function resetHorizontalPagePosition() {
+    suppressHorizontalTransitionOnce()
     horizontalPageIndex.value = 0
     const container = scrollContainerRef.value
     if (!container) return
@@ -541,6 +554,8 @@ export function useHorizontalPaging(
     horizontalPages,
     isHorizontalAtEnd,
     horizontalPageContentHeightStyle,
+    horizontalInstantJump,
+    suppressHorizontalTransitionOnce,
     rebuildHorizontalPages,
     updateHorizontalMetrics,
     updateHorizontalEndState,
