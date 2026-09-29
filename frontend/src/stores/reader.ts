@@ -30,7 +30,12 @@ import type {
   ReplaceRule,
   ReviewPage,
 } from '../types'
-import { getBrowserCachedChapter, setBrowserCachedChapter } from '../utils/browserCache'
+import {
+  getBrowserCachedChapter,
+  getBrowserCatalog,
+  setBrowserCachedChapter,
+  setBrowserCatalog,
+} from '../utils/browserCache'
 import { isLocalBook } from '../utils/localBook'
 import { saveRecentReadBook } from '../utils/recentBooks'
 import { useReaderTts } from '../composables/useReaderTts'
@@ -435,12 +440,17 @@ export const useReaderStore = defineStore('reader', () => {
     // 瘦身会话（配额降级时落的盘）不带目录：恢复时重新拉一次
     if (!chapters.value.length) {
       try {
-        chapters.value = await getChapterList({
+        const list = await getChapterList({
           bookUrl: session.book.bookUrl,
           bookSourceUrl: session.book.origin,
         })
+        chapters.value = list
+        void setBrowserCatalog(session.book.bookUrl, list)
       } catch {
-        return false
+        // 离线兜底：浏览器里缓存的目录
+        const cachedCatalog = await getBrowserCatalog<BookChapter>(session.book.bookUrl)
+        if (!cachedCatalog) return false
+        chapters.value = cachedCatalog
       }
     }
     if (!chapters.value.length) return false
@@ -567,10 +577,20 @@ export const useReaderStore = defineStore('reader', () => {
       })
       if (loadSeq !== bookLoadSeq) return
       chapters.value = list
+      // 目录落浏览器缓存：离线时同一本书还能打开
+      void setBrowserCatalog(b.bookUrl, list)
       saveReaderSession()
     } catch (error) {
-      // 目录都拿不到就等于这本书打不开。清掉半开状态并记下原因：否则阅读页
+      // 目录都拿不到时先试浏览器里的目录缓存（离线场景），
+      // 实在没有才等于这本书打不开。清掉半开状态并记下原因：否则阅读页
       // 会一直停在「加载中...」的占位符上，用户完全看不出发生了什么。
+      const cachedCatalog = await getBrowserCatalog<BookChapter>(b.bookUrl)
+      if (cachedCatalog && loadSeq === bookLoadSeq) {
+        chapters.value = cachedCatalog
+        chaptersLoading.value = false
+        appStore.showToast('离线中：目录来自浏览器缓存', 'warning')
+        return
+      }
       if (loadSeq === bookLoadSeq) {
         loading.value = false
         chapters.value = []
@@ -1010,6 +1030,7 @@ export const useReaderStore = defineStore('reader', () => {
           book.value.durChapterIndex = newIndex
         }
       }
+      void setBrowserCatalog(book.value.bookUrl, chapters.value)
     } finally {
       chaptersLoading.value = false
     }

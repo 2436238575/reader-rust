@@ -13,6 +13,7 @@ import {
 import type { Book, BookGroup, SearchBook } from '../types'
 import { deleteBrowserBookCache, listBrowserCacheSummary } from '../utils/browserCache'
 import { isLocalBook } from '../utils/localBook'
+import { useAppStore } from './app'
 import {
   clearRecentReadBooks,
   getRecentReadBookKey,
@@ -28,6 +29,50 @@ export const useBookshelfStore = defineStore('bookshelf', () => {
   // 最近阅读的过滤关键词，由顶栏搜索框在最近页写入
   const recentFilter = ref('')
   const loading = ref(false)
+
+  /* 书架快照：离线（或后端不可达）时让书架还能打开。
+     只存展示必需字段，避免整本书对象把 localStorage 撑爆 */
+  const SHELF_SNAPSHOT_KEY = 'reader-shelf-snapshot'
+
+  function saveShelfSnapshot() {
+    try {
+      const slim = books.value.map((b) => ({
+        name: b.name,
+        author: b.author,
+        bookUrl: b.bookUrl,
+        origin: b.origin,
+        coverUrl: b.coverUrl,
+        customCoverUrl: b.customCoverUrl,
+        durChapterIndex: b.durChapterIndex,
+        durChapterTitle: b.durChapterTitle,
+        durChapterTime: b.durChapterTime,
+        totalChapterNum: b.totalChapterNum,
+        latestChapterTitle: b.latestChapterTitle,
+        group: b.group,
+        browserCachedChapterCount: b.browserCachedChapterCount,
+      }))
+      localStorage.setItem(
+        SHELF_SNAPSHOT_KEY,
+        JSON.stringify({ books: slim, groups: groups.value, savedAt: Date.now() })
+      )
+    } catch {
+      // 配额满就算了——快照只是兜底
+    }
+  }
+
+  function hydrateShelfSnapshot(): boolean {
+    try {
+      const raw = localStorage.getItem(SHELF_SNAPSHOT_KEY)
+      if (!raw) return false
+      const snap = JSON.parse(raw) as { books?: Book[]; groups?: BookGroup[] }
+      if (!snap.books?.length) return false
+      books.value = snap.books
+      if (!groups.value.length && snap.groups?.length) groups.value = snap.groups
+      return true
+    } catch {
+      return false
+    }
+  }
   const sorting = ref(false)
 
   async function refreshRecentBooks() {
@@ -82,6 +127,14 @@ export const useBookshelfStore = defineStore('bookshelf', () => {
         browserCachedChapterCount: isLocalBook(book) ? 0 : browserMap.get(book.bookUrl) || 0,
       }))
       await refreshRecentBooks()
+      saveShelfSnapshot()
+    } catch (error) {
+      // 离线/后端不可达：书架回退到最近一次成功的快照，不是空书架
+      if (!books.value.length && hydrateShelfSnapshot()) {
+        useAppStore().showToast('离线中：书架展示的是最近缓存', 'warning')
+        return
+      }
+      throw error
     } finally {
       loading.value = false
     }

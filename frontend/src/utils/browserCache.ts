@@ -1,7 +1,9 @@
 const DB_NAME = 'reader-browser-cache'
-const DB_VERSION = 2
+const DB_VERSION = 3
 const STORE_NAME = 'chapters'
 const SUMMARY_STORE = 'summary'
+// 目录缓存：{ bookUrl, chapters, updatedAt }，离线时阅读器/详情弹窗回退用
+const CATALOG_STORE = 'catalogs'
 let dbPromise: Promise<IDBDatabase> | null = null
 
 export interface BrowserChapterCacheRecord {
@@ -74,6 +76,10 @@ function openDb(): Promise<IDBDatabase> {
             summaryMap.set(record.bookUrl, current)
             cursor.continue()
           }
+        }
+        // v2 → v3：目录缓存表（纯新增，无迁移负担）
+        if (!db.objectStoreNames.contains(CATALOG_STORE)) {
+          db.createObjectStore(CATALOG_STORE, { keyPath: 'bookUrl' })
         }
       }
     }).catch((error: unknown) => {
@@ -228,7 +234,7 @@ export async function setBrowserCachedChapter(params: {
 }
 
 export async function deleteBrowserBookCache(bookUrl: string) {
-  return withStores('readwrite', async ({ chapters, summary }) => {
+  await withStores('readwrite', async ({ chapters, summary }) => {
     const index = chapters.index('bookUrl')
     const records = await requestToPromise(index.getAll(IDBKeyRange.only(bookUrl)))
     const removed = records as BrowserChapterCacheRecord[]
@@ -239,6 +245,10 @@ export async function deleteBrowserBookCache(bookUrl: string) {
       bytes: current.bytes - removed.reduce((total, record) => total + (record.size || 0), 0),
     }))
   })
+  // 目录缓存跟随该书一起清
+  await withStoreIn(CATALOG_STORE, 'readwrite', async (store) => {
+    await requestToPromise(store.delete(bookUrl))
+  }).catch(() => undefined)
 }
 
 export async function countBrowserBookCache(bookUrl: string) {
@@ -270,8 +280,37 @@ export async function listBrowserCacheSummary(): Promise<BrowserBookCacheSummary
 }
 
 export async function clearAllBrowserCache() {
-  return withStores('readwrite', async ({ chapters, summary }) => {
+  await withStores('readwrite', async ({ chapters, summary }) => {
     await requestToPromise(chapters.clear())
     await requestToPromise(summary.clear())
   })
+  // 目录缓存一并清掉（表可能不存在于旧库——错误吞掉即可）
+  await withStoreIn(CATALOG_STORE, 'readwrite', async (store) => {
+    await requestToPromise(store.clear())
+  }).catch(() => undefined)
+}
+
+/* ─── 目录缓存：离线时阅读器/详情弹窗回退到最近一次成功拉到的目录 ─── */
+
+export interface BrowserCatalogRecord<ChapterT = unknown> {
+  bookUrl: string
+  chapters: ChapterT[]
+  updatedAt: number
+}
+
+export async function getBrowserCatalog<ChapterT>(bookUrl: string): Promise<ChapterT[] | null> {
+  if (!bookUrl) return null
+  return withStoreIn(CATALOG_STORE, 'readonly', async (store) => {
+    const record = (await requestToPromise(store.get(bookUrl))) as
+      BrowserCatalogRecord<ChapterT> | undefined
+    return record?.chapters?.length ? record.chapters : null
+  }).catch(() => null)
+}
+
+export async function setBrowserCatalog<ChapterT>(bookUrl: string, chapters: ChapterT[]) {
+  if (!bookUrl || !chapters.length) return
+  return withStoreIn(CATALOG_STORE, 'readwrite', async (store) => {
+    const record: BrowserCatalogRecord<ChapterT> = { bookUrl, chapters, updatedAt: Date.now() }
+    await requestToPromise(store.put(record))
+  }).catch(() => undefined)
 }

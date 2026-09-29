@@ -140,6 +140,7 @@ import { ref, watch, computed, toRef } from 'vue'
 import { useEscClose } from '../composables/useEscClose'
 import { useRouter } from 'vue-router'
 import { getCoverUrl, getChapterList } from '../api/bookshelf'
+import { getBrowserCatalog, setBrowserCatalog } from '../utils/browserCache'
 import { useMobileLayout } from '../composables/useMobileLayout'
 import { useOpenBook } from '../composables/useOpenBook'
 import type { Book, SearchBook, BookChapter } from '../types'
@@ -182,14 +183,23 @@ async function loadChapters() {
   chaptersLoading.value = true
   try {
     const b = props.book as Book
-    chapters.value = await getChapterList({
+    const list = await getChapterList({
       bookUrl: b.bookUrl,
       bookSourceUrl: b.origin,
     })
+    chapters.value = list
+    // 落浏览器目录缓存：离线时详情弹窗与阅读器都能回退
+    void setBrowserCatalog(b.bookUrl, list)
   } catch {
-    // 此前静默吞掉：目录区直接空白，用户分不清「没目录」还是「加载失败」
-    chapters.value = []
-    chaptersFailed.value = true
+    // 离线兜底：先翻浏览器里的目录缓存，实在没有才报失败
+    const cached = await getBrowserCatalog<BookChapter>((props.book as Book).bookUrl)
+    if (cached) {
+      chapters.value = cached
+    } else {
+      // 此前静默吞掉：目录区直接空白，用户分不清「没目录」还是「加载失败」
+      chapters.value = []
+      chaptersFailed.value = true
+    }
   } finally {
     chaptersLoading.value = false
   }

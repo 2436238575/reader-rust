@@ -26,6 +26,8 @@ vi.mock('../api/replaceRule', () => ({
 vi.mock('../utils/browserCache', () => ({
   getBrowserCachedChapter: vi.fn(),
   setBrowserCachedChapter: vi.fn(),
+  getBrowserCatalog: vi.fn().mockResolvedValue(null),
+  setBrowserCatalog: vi.fn().mockResolvedValue(undefined),
 }))
 
 vi.mock('../utils/recentBooks', () => ({
