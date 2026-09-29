@@ -22,6 +22,7 @@
             placeholder="请输入用户名"
             required
             autocomplete="username"
+            autofocus
           />
         </div>
         <div class="form-field">

@@ -120,7 +120,8 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, ref, watch, toRef } from 'vue'
+import { useEscClose } from '../composables/useEscClose'
 import { useBookshelfStore } from '../stores/bookshelf'
 import { useAppStore } from '../stores/app'
 import { getBookshelfWithCacheInfo, deleteBookCache } from '../api/bookshelf'
@@ -146,6 +147,8 @@ const props = defineProps<{
 const emit = defineEmits<{
   'update:modelValue': [value: boolean]
 }>()
+
+useEscClose(toRef(props, 'modelValue'), () => emit('update:modelValue', false))
 
 const shelfStore = useBookshelfStore()
 const appStore = useAppStore()

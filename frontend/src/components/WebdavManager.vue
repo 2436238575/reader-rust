@@ -116,7 +116,8 @@
 </template>
 
 <script setup lang="ts">
-import { ref, watch } from 'vue'
+import { ref, watch, toRef } from 'vue'
+import { useEscClose } from '../composables/useEscClose'
 import { useAppStore } from '../stores/app'
 import {
   deleteWebdavFile,
@@ -146,6 +147,8 @@ const props = defineProps<{
 const emit = defineEmits<{
   'update:modelValue': [value: boolean]
 }>()
+
+useEscClose(toRef(props, 'modelValue'), () => emit('update:modelValue', false))
 
 const appStore = useAppStore()
 const fileInputRef = ref<HTMLInputElement | null>(null)

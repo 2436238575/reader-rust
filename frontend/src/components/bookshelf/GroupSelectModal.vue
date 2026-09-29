@@ -42,11 +42,12 @@
 </template>
 
 <script setup lang="ts">
-import { ref } from 'vue'
+import { ref, toRef } from 'vue'
 import { useBookshelfStore } from '../../stores/bookshelf'
 import { useAppStore } from '../../stores/app'
+import { useEscClose } from '../../composables/useEscClose'
 
-defineProps<{
+const props = defineProps<{
   modelValue: boolean
 }>()
 
@@ -54,6 +55,8 @@ const emit = defineEmits<{
   'update:modelValue': [value: boolean]
   select: [groupId: number]
 }>()
+
+useEscClose(toRef(props, 'modelValue'), () => emit('update:modelValue', false))
 
 const shelfStore = useBookshelfStore()
 const appStore = useAppStore()

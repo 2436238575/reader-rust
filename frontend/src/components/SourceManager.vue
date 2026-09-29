@@ -125,7 +125,8 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch } from 'vue'
+import { ref, computed, watch, toRef } from 'vue'
+import { useEscClose } from '../composables/useEscClose'
 import { API_BASE } from '../utils/appBase'
 import {
   getBookSources,
@@ -172,6 +173,8 @@ const props = defineProps<{
 const emit = defineEmits<{
   'update:modelValue': [value: boolean]
 }>()
+
+useEscClose(toRef(props, 'modelValue'), () => emit('update:modelValue', false))
 
 const appStore = useAppStore()
 
@@ -601,9 +604,9 @@ function close() {
 
 watch(() => props.modelValue, (v) => {
   if (v) {
-    if (sources.value.length === 0) {
-      loadSources()
-    }
+    // 每次打开都重拉：书源可能在别处变动过（阅读器内换源/订阅同步），
+    // 只在空列表时加载会让重开看到旧列表
+    loadSources()
     if (!editingSource.value && !editorText.value.trim()) {
       createSource()
     }

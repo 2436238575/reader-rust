@@ -21,7 +21,7 @@
 
             <div class="group-list">
               <div v-for="group in shelfStore.groups" :key="group.groupId" class="group-item">
-                <input v-model.trim="editingNames[group.groupId]" class="group-input" />
+                <input v-model.trim="editingNames[group.groupId]" class="group-input" @keyup.enter="renameGroup(group.groupId)" />
                 <div class="group-actions">
                   <button class="btn btn-sm" @click="renameGroup(group.groupId)">保存</button>
                   <button class="btn btn-sm btn-danger" @click="deleteGroup(group.groupId, group.groupName)">删除</button>
@@ -36,17 +36,20 @@
 </template>
 
 <script setup lang="ts">
-import { reactive, ref, watch } from 'vue'
+import { reactive, ref, watch, toRef } from 'vue'
 import { useBookshelfStore } from '../../stores/bookshelf'
 import { useAppStore } from '../../stores/app'
+import { useEscClose } from '../../composables/useEscClose'
 
-defineProps<{
+const props = defineProps<{
   modelValue: boolean
 }>()
 
-defineEmits<{
+const emit = defineEmits<{
   'update:modelValue': [value: boolean]
 }>()
+
+useEscClose(toRef(props, 'modelValue'), () => emit('update:modelValue', false))
 
 const shelfStore = useBookshelfStore()
 const appStore = useAppStore()

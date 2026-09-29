@@ -61,10 +61,10 @@
                   <button class="btn btn-danger" @click="handleLogout">退出登录</button>
                 </div>
               </div>
-              <div v-if="showPasswordPanel" class="password-panel embedded">
+              <form v-if="showPasswordPanel" class="password-panel embedded" @submit.prevent="handleChangePassword">
                 <label class="password-field">
                   <span>当前密码</span>
-                  <input v-model="passwordForm.oldPassword" type="password" autocomplete="current-password" />
+                  <input ref="oldPasswordInputRef" v-model="passwordForm.oldPassword" type="password" autocomplete="current-password" />
                 </label>
                 <label class="password-field">
                   <span>新密码</span>
@@ -75,11 +75,11 @@
                   <input v-model="passwordForm.confirmPassword" type="password" autocomplete="new-password" />
                 </label>
                 <div class="password-actions">
-                  <button class="btn btn-primary" :disabled="changingPassword" @click="handleChangePassword">
+                  <button class="btn btn-primary" type="submit" :disabled="changingPassword">
                     {{ changingPassword ? '提交中...' : '保存新密码' }}
                   </button>
                 </div>
-              </div>
+              </form>
             </div>
             <button v-else class="btn btn-primary btn-block" @click="handleLogin">
               登录
@@ -159,7 +159,8 @@
 </template>
 
 <script setup lang="ts">
-import { computed, reactive, ref } from 'vue'
+import { computed, nextTick, reactive, ref, toRef } from 'vue'
+import { useEscClose } from '../composables/useEscClose'
 import { useRouter } from 'vue-router'
 import { useAppStore } from '../stores/app'
 import { useBookshelfStore } from '../stores/bookshelf'
@@ -172,6 +173,8 @@ const props = defineProps<{
 const emit = defineEmits<{
   'update:modelValue': [value: boolean]
 }>()
+
+useEscClose(toRef(props, 'modelValue'), () => emit('update:modelValue', false))
 
 const appStore = useAppStore()
 const shelfStore = useBookshelfStore()
@@ -201,11 +204,17 @@ function handleLogin() {
 }
 
 async function handleLogout() {
-  await apiLogout()
-  appStore.clearUser()
-  await appStore.fetchUserInfo()
-  close()
-  shelfStore.fetchBooks()
+  if (loggingOut.value) return
+  loggingOut.value = true
+  try {
+    await apiLogout()
+    appStore.clearUser()
+    await appStore.fetchUserInfo()
+    close()
+    shelfStore.fetchBooks()
+  } finally {
+    loggingOut.value = false
+  }
 }
 
 function resetPasswordForm() {
@@ -214,10 +223,16 @@ function resetPasswordForm() {
   passwordForm.confirmPassword = ''
 }
 
+const oldPasswordInputRef = ref<HTMLInputElement>()
+const loggingOut = ref(false)
+
 function togglePasswordPanel() {
   showPasswordPanel.value = !showPasswordPanel.value
   if (!showPasswordPanel.value) {
     resetPasswordForm()
+  } else {
+    // 展开即聚焦第一个输入框
+    void nextTick(() => oldPasswordInputRef.value?.focus())
   }
 }
 

@@ -118,7 +118,8 @@
 </template>
 
 <script setup lang="ts">
-import { ref, watch, computed } from 'vue'
+import { ref, watch, computed, toRef } from 'vue'
+import { useEscClose } from '../composables/useEscClose'
 import { useRouter } from 'vue-router'
 import { getCoverUrl, getChapterList } from '../api/bookshelf'
 import { useMobileLayout } from '../composables/useMobileLayout'
@@ -133,6 +134,8 @@ const props = defineProps<{
 const emit = defineEmits<{
   'update:modelValue': [value: boolean]
 }>()
+
+useEscClose(toRef(props, 'modelValue'), () => emit('update:modelValue', false))
 
 const router = useRouter()
 const { openBook } = useOpenBook()
