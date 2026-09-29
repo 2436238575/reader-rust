@@ -33,6 +33,9 @@
           >
             {{ aiStore.phase === 'text' || updatingToCurrent ? '更新中...' : '更新到当前进度' }}
           </button>
+          <button class="ghost-danger-btn" title="清空当前书的 AI资料" @click="resetMemory">
+            重置
+          </button>
         </div>
       </header>
 
@@ -223,297 +226,14 @@
             <EmptyState v-if="!visibleLocationRows.length" text="暂无地点资料" />
           </div>
         </section>
-
-        <section v-else class="settings-panel">
-          <article class="settings-card source-card">
-            <div class="settings-card-head">
-              <h2>模型来源</h2>
-              <span class="server-status" :class="{ active: canUseServerModel }">
-                {{ canUseServerModel ? '可用后端配置' : '未登录' }}
-              </span>
-            </div>
-            <div class="source-options">
-              <button
-                class="source-option"
-                :class="{ active: configDraft.modelSource === 'browser' }"
-                @click="configDraft.modelSource = 'browser'"
-              >
-                自己配置模型
-              </button>
-              <button
-                class="source-option"
-                :class="{ active: configDraft.modelSource === 'server' }"
-                :disabled="!canUseServerModel"
-                @click="configDraft.modelSource = 'server'"
-              >
-                使用后端配置
-              </button>
-            </div>
-            <p class="settings-hint">
-              后端配置保存在服务器上，全端共享；自己配置仍只保存在当前浏览器。
-            </p>
-          </article>
-
-          <div v-if="configDraft.modelSource === 'server'" class="settings-cards">
-            <article class="settings-card">
-              <div class="settings-card-head">
-                <h2>后端文本模型</h2>
-                <span class="server-status" :class="{ active: serverTextReady }">{{
-                  serverTextReady ? '已启用' : '未配置'
-                }}</span>
-              </div>
-              <p class="settings-hint">
-                {{ serverConfig?.text.model || '管理员尚未配置文本模型' }}
-              </p>
-            </article>
-            <article class="settings-card">
-              <div class="settings-card-head">
-                <h2>后端图片模型</h2>
-                <span class="server-status" :class="{ active: serverImageReady }">{{
-                  serverImageReady ? '已启用' : '未配置'
-                }}</span>
-              </div>
-              <p class="settings-hint">
-                {{ serverConfig?.image.model || '管理员尚未配置图片模型' }} ·
-                {{ serverConfig?.image.imageSize || '1024x1024' }}
-              </p>
-            </article>
-            <article class="settings-card">
-              <div class="settings-card-head">
-                <h2>后端语音模型</h2>
-                <span class="server-status" :class="{ active: serverSpeechReady }">{{
-                  serverSpeechReady ? '已启用' : '未配置'
-                }}</span>
-              </div>
-              <p class="settings-hint">
-                {{ serverConfig?.speech.model || '管理员尚未配置 OpenAI Speech' }} ·
-                {{ serverConfig?.speech.voice || 'alloy' }}
-              </p>
-            </article>
-          </div>
-
-          <div v-else class="settings-cards">
-            <article class="settings-card">
-              <div class="settings-card-head">
-                <h2>文本模型</h2>
-                <label class="switch-line compact">
-                  <input v-model="configDraft.textUseFullUrl" type="checkbox" />
-                  <span class="switch-ui"></span>
-                  <span>完整链接</span>
-                </label>
-              </div>
-              <div class="settings-grid">
-                <label class="field span-2">
-                  <span>Base URL</span>
-                  <input v-model="configDraft.textBaseUrl" placeholder="http://localhost:8825" />
-                </label>
-                <label class="field">
-                  <span>模型</span>
-                  <input v-model="configDraft.textModel" />
-                </label>
-                <label class="field">
-                  <span>API Key</span>
-                  <input v-model="configDraft.textApiKey" type="password" autocomplete="off" />
-                </label>
-              </div>
-            </article>
-
-            <article class="settings-card">
-              <div class="settings-card-head">
-                <h2>图片模型</h2>
-                <label class="switch-line compact">
-                  <input v-model="configDraft.imageUseFullUrl" type="checkbox" />
-                  <span class="switch-ui"></span>
-                  <span>完整链接</span>
-                </label>
-              </div>
-              <div class="settings-grid">
-                <label class="field span-2">
-                  <span>Base URL</span>
-                  <input v-model="configDraft.imageBaseUrl" placeholder="http://localhost:8826" />
-                </label>
-                <label class="field">
-                  <span>模型</span>
-                  <input v-model="configDraft.imageModel" />
-                </label>
-                <label class="field">
-                  <span>尺寸</span>
-                  <select v-model="configDraft.imageSize">
-                    <option value="1024x1024">1024x1024</option>
-                    <option value="1792x1024">1792x1024</option>
-                    <option value="1024x1792">1024x1792</option>
-                  </select>
-                </label>
-                <label class="field span-2">
-                  <span>API Key</span>
-                  <input v-model="configDraft.imageApiKey" type="password" autocomplete="off" />
-                </label>
-              </div>
-            </article>
-          </div>
-
-          <div v-if="configDraft.modelSource === 'browser'" class="settings-footer">
-            <label class="switch-line proxy-option">
-              <input v-model="configDraft.useBackendProxy" type="checkbox" />
-              <span class="switch-ui"></span>
-              <span>使用后端代理调用模型</span>
-            </label>
-          </div>
-          <div class="settings-actions">
-            <button class="primary-btn" @click="saveConfig">保存配置</button>
-            <button class="danger-btn" @click="resetMemory">重置 AI资料</button>
-          </div>
-
-          <section v-if="isServerModelAdmin" class="admin-model-panel">
-            <div class="admin-model-head">
-              <h2>后端模型配置</h2>
-              <button class="primary-btn" @click="saveServerConfig">保存后端配置</button>
-            </div>
-            <div class="settings-cards">
-              <article class="settings-card">
-                <div class="settings-card-head">
-                  <h2>文本模型</h2>
-                  <label class="switch-line compact">
-                    <input v-model="serverConfigDraft.text.enabled" type="checkbox" />
-                    <span class="switch-ui"></span>
-                    <span>启用</span>
-                  </label>
-                </div>
-                <div class="settings-grid">
-                  <label class="field span-2">
-                    <span>Base URL</span>
-                    <input
-                      v-model="serverConfigDraft.text.baseUrl"
-                      placeholder="https://api.openai.com"
-                    />
-                  </label>
-                  <label class="field">
-                    <span>模型</span>
-                    <input v-model="serverConfigDraft.text.model" placeholder="gpt-4o-mini" />
-                  </label>
-                  <label class="field">
-                    <span>API Key</span>
-                    <input
-                      v-model="serverConfigDraft.text.apiKey"
-                      type="password"
-                      autocomplete="off"
-                    />
-                  </label>
-                  <label class="switch-line compact">
-                    <input v-model="serverConfigDraft.text.useFullUrl" type="checkbox" />
-                    <span class="switch-ui"></span>
-                    <span>完整链接</span>
-                  </label>
-                </div>
-              </article>
-
-              <article class="settings-card">
-                <div class="settings-card-head">
-                  <h2>图片模型</h2>
-                  <label class="switch-line compact">
-                    <input v-model="serverConfigDraft.image.enabled" type="checkbox" />
-                    <span class="switch-ui"></span>
-                    <span>启用</span>
-                  </label>
-                </div>
-                <div class="settings-grid">
-                  <label class="field span-2">
-                    <span>Base URL</span>
-                    <input
-                      v-model="serverConfigDraft.image.baseUrl"
-                      placeholder="https://api.openai.com"
-                    />
-                  </label>
-                  <label class="field">
-                    <span>模型</span>
-                    <input v-model="serverConfigDraft.image.model" placeholder="gpt-image-1" />
-                  </label>
-                  <label class="field">
-                    <span>尺寸</span>
-                    <select v-model="serverConfigDraft.image.imageSize">
-                      <option value="1024x1024">1024x1024</option>
-                      <option value="1792x1024">1792x1024</option>
-                      <option value="1024x1792">1024x1792</option>
-                    </select>
-                  </label>
-                  <label class="field span-2">
-                    <span>API Key</span>
-                    <input
-                      v-model="serverConfigDraft.image.apiKey"
-                      type="password"
-                      autocomplete="off"
-                    />
-                  </label>
-                  <label class="switch-line compact">
-                    <input v-model="serverConfigDraft.image.useFullUrl" type="checkbox" />
-                    <span class="switch-ui"></span>
-                    <span>完整链接</span>
-                  </label>
-                </div>
-              </article>
-
-              <article class="settings-card">
-                <div class="settings-card-head">
-                  <h2>OpenAI Speech</h2>
-                  <label class="switch-line compact">
-                    <input v-model="serverConfigDraft.speech.enabled" type="checkbox" />
-                    <span class="switch-ui"></span>
-                    <span>启用</span>
-                  </label>
-                </div>
-                <div class="settings-grid">
-                  <label class="field span-2">
-                    <span>Base URL</span>
-                    <input
-                      v-model="serverConfigDraft.speech.baseUrl"
-                      placeholder="https://api.openai.com"
-                    />
-                  </label>
-                  <label class="field">
-                    <span>模型</span>
-                    <input v-model="serverConfigDraft.speech.model" placeholder="gpt-4o-mini-tts" />
-                  </label>
-                  <label class="field">
-                    <span>音色</span>
-                    <input v-model="serverConfigDraft.speech.voice" placeholder="alloy" />
-                  </label>
-                  <label class="field">
-                    <span>格式</span>
-                    <select v-model="serverConfigDraft.speech.responseFormat">
-                      <option value="mp3">mp3</option>
-                      <option value="wav">wav</option>
-                      <option value="opus">opus</option>
-                      <option value="flac">flac</option>
-                      <option value="pcm">pcm</option>
-                    </select>
-                  </label>
-                  <label class="field">
-                    <span>API Key</span>
-                    <input
-                      v-model="serverConfigDraft.speech.apiKey"
-                      type="password"
-                      autocomplete="off"
-                    />
-                  </label>
-                  <label class="switch-line compact">
-                    <input v-model="serverConfigDraft.speech.useFullUrl" type="checkbox" />
-                    <span class="switch-ui"></span>
-                    <span>完整链接</span>
-                  </label>
-                </div>
-              </article>
-            </div>
-          </section>
-        </section>
       </main>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed, defineComponent, h, onMounted, reactive, ref, watch } from 'vue'
+import { computed, defineComponent, h, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { saveAiModelConfig } from '../api/aiModel'
 import { getBookContent, getChapterList, getShelfBook } from '../api/bookshelf'
 import { useAiBookStore } from '../stores/aiBook'
 import { useAppStore } from '../stores/app'
@@ -521,11 +241,9 @@ import { useReaderStore } from '../stores/reader'
 import { formatDateTime } from '../utils/format'
 import type {
   AiBookCharacter,
-  AiBookConfig,
   AiBookLocation,
   AiBookMemory,
   AiBookRelationship,
-  AiServerModelConfig,
   Book,
   BookChapter,
 } from '../types'
@@ -542,7 +260,7 @@ import {
 import { buildAiBookLocationRows, groupAiBookWorldview } from '../utils/aiBookPresentation'
 import { collapseWhitespace, summarizeDisplayError } from '../utils/httpError'
 
-type AiTab = 'overview' | 'characters' | 'relationships' | 'map' | 'settings'
+type AiTab = 'overview' | 'characters' | 'relationships' | 'map'
 
 const EmptyState = defineComponent({
   props: { text: { type: String, required: true } },
@@ -561,8 +279,6 @@ const loading = ref(true)
 const activeTab = ref<AiTab>('overview')
 const book = ref<Book | null>(null)
 const chapters = ref<BookChapter[]>([])
-const configDraft = reactive<AiBookConfig>({ ...aiStore.config })
-const serverConfigDraft = reactive<AiServerModelConfig>(createEmptyServerModelConfig())
 const characterSearch = ref('')
 const collapsedLocationIds = ref(new Set<string>())
 const collapsedWorldviewCategories = ref(new Set<string>())
@@ -572,34 +288,9 @@ const tabs: Array<{ key: AiTab; label: string }> = [
   { key: 'characters', label: '角色' },
   { key: 'relationships', label: '关系' },
   { key: 'map', label: '地图' },
-  { key: 'settings', label: '设置' },
 ]
 
 const memory = computed(() => aiStore.memory)
-const canUseServerModel = computed(() => aiStore.canUseServerModel || aiStore.isServerModelAdmin)
-const isServerModelAdmin = computed(() => aiStore.isServerModelAdmin)
-const serverConfig = computed(() => aiStore.serverModelConfig?.config || null)
-const serverTextReady = computed(() =>
-  Boolean(
-    serverConfig.value?.text.enabled &&
-    serverConfig.value.text.baseUrl &&
-    serverConfig.value.text.model
-  )
-)
-const serverImageReady = computed(() =>
-  Boolean(
-    serverConfig.value?.image.enabled &&
-    serverConfig.value.image.baseUrl &&
-    serverConfig.value.image.model
-  )
-)
-const serverSpeechReady = computed(() =>
-  Boolean(
-    serverConfig.value?.speech.enabled &&
-    serverConfig.value.speech.baseUrl &&
-    serverConfig.value.speech.model
-  )
-)
 const worldviewGroups = computed(() =>
   groupAiBookWorldview(memory.value?.worldview || [], collapsedWorldviewCategories.value)
 )
@@ -645,28 +336,9 @@ const statusNotice = computed(() => {
   }
 })
 
-watch(
-  () => aiStore.config,
-  (next) => Object.assign(configDraft, next),
-  { deep: true }
-)
-
-watch(
-  () => aiStore.serverModelConfig?.config,
-  (next) => {
-    if (next) Object.assign(serverConfigDraft, cloneServerModelConfig(next))
-  },
-  { deep: true }
-)
-
 onMounted(async () => {
   await appStore.fetchUserInfo()
   aiStore.refreshConfig()
-  await aiStore.loadServerModelConfig({ force: true })
-  Object.assign(configDraft, aiStore.config)
-  if (aiStore.serverModelConfig?.config) {
-    Object.assign(serverConfigDraft, cloneServerModelConfig(aiStore.serverModelConfig.config))
-  }
   const bookUrl = String(route.query.bookUrl || '')
   if (!bookUrl) {
     router.replace('/')
@@ -776,27 +448,6 @@ function toggleWorldviewGroup(category: string) {
     next.add(key)
   }
   collapsedWorldviewCategories.value = next
-}
-
-function saveConfig() {
-  if (configDraft.modelSource === 'server' && !canUseServerModel.value) {
-    appStore.showToast('后端配置暂不可用，请先登录', 'warning')
-    configDraft.modelSource = 'browser'
-  }
-  aiStore.persistConfig({ ...configDraft })
-  appStore.showToast('AI配置已保存', 'success')
-}
-
-async function saveServerConfig() {
-  if (!isServerModelAdmin.value) return
-  try {
-    const saved = await saveAiModelConfig(cloneServerModelConfig(serverConfigDraft))
-    aiStore.serverModelConfig = saved
-    Object.assign(serverConfigDraft, cloneServerModelConfig(saved.config))
-    appStore.showToast('后端模型配置已保存', 'success')
-  } catch (error) {
-    appStore.showToast((error as Error).message || '后端模型配置保存失败', 'error')
-  }
 }
 
 async function resetMemory() {
@@ -942,39 +593,6 @@ function mergeDisplayLocation(current: AiBookLocation, next: AiBookLocation): Ai
 function normalizeSearch(value: string) {
   return value.trim().toLowerCase().replace(/\s+/g, '')
 }
-
-function createEmptyServerModelConfig(): AiServerModelConfig {
-  return {
-    text: {
-      enabled: false,
-      baseUrl: '',
-      apiKey: '',
-      model: 'gpt-4o-mini',
-      useFullUrl: false,
-    },
-    image: {
-      enabled: false,
-      baseUrl: '',
-      apiKey: '',
-      model: 'gpt-image-1',
-      useFullUrl: false,
-      imageSize: '1024x1024',
-    },
-    speech: {
-      enabled: false,
-      baseUrl: '',
-      apiKey: '',
-      model: 'gpt-4o-mini-tts',
-      useFullUrl: false,
-      voice: 'alloy',
-      responseFormat: 'mp3',
-    },
-  }
-}
-
-function cloneServerModelConfig(config: AiServerModelConfig): AiServerModelConfig {
-  return JSON.parse(JSON.stringify(config)) as AiServerModelConfig
-}
 </script>
 
 <style scoped>
@@ -1045,7 +663,7 @@ function cloneServerModelConfig(config: AiServerModelConfig): AiServerModelConfi
 .back-btn,
 .secondary-btn,
 .primary-btn,
-.danger-btn {
+.ghost-danger-btn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -1076,8 +694,14 @@ function cloneServerModelConfig(config: AiServerModelConfig): AiServerModelConfi
   color: #fff;
 }
 
-.danger-btn {
+.ghost-danger-btn {
   color: var(--color-danger, #d14b4b);
+  background: transparent;
+  border-color: transparent;
+}
+
+.ghost-danger-btn:hover {
+  background: rgba(209, 75, 75, 0.1);
 }
 
 .primary-btn:disabled,
@@ -1087,7 +711,6 @@ function cloneServerModelConfig(config: AiServerModelConfig): AiServerModelConfi
 }
 
 .header-actions,
-.settings-actions,
 .map-toolbar {
   display: flex;
   align-items: center;
@@ -1540,211 +1163,6 @@ function cloneServerModelConfig(config: AiServerModelConfig): AiServerModelConfi
   text-align: center;
 }
 
-.settings-panel {
-  display: grid;
-  gap: 14px;
-}
-
-.source-card {
-  padding: 16px;
-}
-
-.source-options {
-  display: inline-flex;
-  gap: 8px;
-  padding: 4px;
-  border-radius: 8px;
-  background: var(--color-bg-sunken);
-}
-
-.source-option {
-  min-height: 32px;
-  padding: 0 12px;
-  border-radius: 7px;
-  color: var(--color-text-secondary);
-  font-weight: 700;
-}
-
-.source-option.active {
-  background: var(--color-bg-elevated);
-  color: var(--color-primary);
-  box-shadow: var(--shadow-xs);
-}
-
-.source-option:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-
-.server-status {
-  color: var(--color-text-tertiary);
-  font-size: var(--text-xs);
-  font-weight: 700;
-}
-
-.server-status.active {
-  color: var(--color-primary);
-}
-
-.settings-hint {
-  margin: 10px 0 0;
-  color: var(--color-text-tertiary);
-  font-size: var(--text-xs);
-  line-height: 1.6;
-}
-
-.admin-model-panel {
-  display: grid;
-  gap: 14px;
-  margin-top: 4px;
-  padding-top: 14px;
-  border-top: 1px solid var(--color-border-light);
-}
-
-.admin-model-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-}
-
-.admin-model-head h2 {
-  margin: 0;
-  font-size: var(--text-lg);
-}
-
-.settings-cards {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 14px;
-}
-
-.settings-card,
-.settings-footer {
-  border: 1px solid var(--color-border-light);
-  border-radius: 8px;
-  background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.72), rgba(255, 255, 255, 0)),
-    var(--color-bg-elevated);
-  box-shadow: var(--shadow-xs);
-}
-
-.settings-card {
-  padding: 16px;
-}
-
-.settings-card-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  margin-bottom: 14px;
-}
-
-.settings-card h2 {
-  margin: 0;
-  font-size: var(--text-base);
-  letter-spacing: 0;
-}
-
-.settings-grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 12px;
-}
-
-.field {
-  display: grid;
-  gap: 7px;
-  color: var(--color-text-secondary);
-  font-size: var(--text-xs);
-  font-weight: 600;
-}
-
-.field.span-2 {
-  grid-column: 1 / -1;
-}
-
-.settings-grid input,
-.settings-grid select {
-  min-height: 40px;
-  border-radius: 8px;
-  border: 1px solid var(--color-border);
-  background: var(--color-bg-elevated);
-  color: var(--color-text);
-  padding: 0 11px;
-  outline: none;
-}
-
-.settings-grid input:focus,
-.settings-grid select:focus {
-  border-color: var(--color-primary-border);
-  box-shadow: 0 0 0 3px rgba(212, 129, 42, 0.1);
-}
-
-.settings-footer {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 12px 14px;
-}
-
-.switch-line {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  color: var(--color-text-secondary);
-  font-size: var(--text-sm);
-  font-weight: 600;
-  cursor: pointer;
-}
-
-.switch-line.compact {
-  font-size: var(--text-xs);
-}
-
-.switch-line input {
-  display: none;
-}
-
-.switch-ui {
-  width: 36px;
-  height: 20px;
-  border-radius: 999px;
-  background: var(--color-bg-sunken);
-  border: 1px solid var(--color-border);
-  position: relative;
-  transition:
-    background var(--duration-fast),
-    border-color var(--duration-fast);
-}
-
-.switch-ui::after {
-  content: '';
-  position: absolute;
-  width: 14px;
-  height: 14px;
-  left: 2px;
-  top: 2px;
-  border-radius: 50%;
-  background: var(--color-bg-elevated);
-  box-shadow: var(--shadow-xs);
-  transition: transform var(--duration-fast);
-}
-
-.switch-line input:checked + .switch-ui {
-  background: var(--color-primary);
-  border-color: var(--color-primary);
-}
-
-.switch-line input:checked + .switch-ui::after {
-  transform: translateX(16px);
-}
-
-.settings-actions {
-  justify-content: flex-end;
-}
-
 @media (max-width: 767px) {
   .ai-shell {
     padding: 16px;
@@ -1770,12 +1188,7 @@ function cloneServerModelConfig(config: AiServerModelConfig): AiServerModelConfi
   }
 
   .overview-grid,
-  .relation-grid,
-  .settings-cards {
-    grid-template-columns: 1fr;
-  }
-
-  .settings-grid {
+  .relation-grid {
     grid-template-columns: 1fr;
   }
 

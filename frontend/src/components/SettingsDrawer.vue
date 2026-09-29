@@ -181,6 +181,21 @@
                 </svg>
                 备份与恢复
               </button>
+              <button class="btn btn-soft" :disabled="!appStore.isLoggedIn" @click="openAiSettings">
+                <svg
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  width="16"
+                  height="16"
+                >
+                  <path
+                    d="M9.5 2 11 7l5 1.5L11 10l-1.5 5L8 10 3 8.5 8 7l1.5-5ZM19 13l.8 2.7 2.7.8-2.7.8L19 20l-.8-2.7-2.7-.8 2.7-.8L19 13Z"
+                  />
+                </svg>
+                AI 设置
+              </button>
             </div>
           </section>
 
@@ -350,6 +365,11 @@ function openSourceManager() {
 function openWebdavManager() {
   close()
   appStore.showWebdavManager = true
+}
+
+function openAiSettings() {
+  close()
+  appStore.showAiSettings = true
 }
 
 function openCacheLibrary() {

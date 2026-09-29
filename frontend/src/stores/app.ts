@@ -107,6 +107,7 @@ export const useAppStore = defineStore('app', () => {
   const showSourceManager = ref(false)
   const showWebdavManager = ref(false)
   const showCacheLibrary = ref(false)
+  const showAiSettings = ref(false)
   const isOnline = ref(typeof navigator !== 'undefined' ? navigator.onLine : true)
   const pwaReady = ref(false)
   const pwaUpdateAvailable = ref(false)
@@ -241,6 +242,7 @@ export const useAppStore = defineStore('app', () => {
     showSourceManager,
     showWebdavManager,
     showCacheLibrary,
+    showAiSettings,
     isOnline,
     pwaReady,
     pwaUpdateAvailable,

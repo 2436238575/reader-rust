@@ -1,64 +1,53 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
 import { useAiBookStore } from './aiBook'
-import { getAiModelConfig } from '../api/aiModel'
-import type { AiServerModelConfigResponse } from '../types'
+import { getAiModelStatus } from '../api/aiModel'
+import type { AiServerModelStatus } from '../types'
 
 vi.mock('../api/aiModel', () => ({
-  getAiModelConfig: vi.fn(),
+  getAiModelStatus: vi.fn(),
 }))
 
-const getAiModelConfigMock = vi.mocked(getAiModelConfig)
+const getAiModelStatusMock = vi.mocked(getAiModelStatus)
 
-describe('aiBook store server model config', () => {
+describe('aiBook store server model status', () => {
   beforeEach(() => {
     installLocalStorage()
     setActivePinia(createPinia())
-    getAiModelConfigMock.mockReset()
+    getAiModelStatusMock.mockReset()
   })
 
-  it('reuses the loaded server model config for repeated checks', async () => {
-    const response = createServerModelConfigResponse()
-    getAiModelConfigMock.mockResolvedValue(response)
+  it('reuses the loaded server model status for repeated checks', async () => {
+    const status = createServerModelStatus()
+    getAiModelStatusMock.mockResolvedValue(status)
     const store = useAiBookStore()
 
-    await expect(store.loadServerModelConfig()).resolves.toEqual(response)
-    await expect(store.loadServerModelConfig()).resolves.toEqual(response)
+    await expect(store.loadServerModelStatus()).resolves.toEqual(status)
+    await expect(store.loadServerModelStatus()).resolves.toEqual(status)
 
-    expect(getAiModelConfigMock).toHaveBeenCalledTimes(1)
+    expect(getAiModelStatusMock).toHaveBeenCalledTimes(1)
+  })
+
+  it('exposes per-kind readiness flags only', async () => {
+    getAiModelStatusMock.mockResolvedValue(createServerModelStatus())
+    const store = useAiBookStore()
+    await store.loadServerModelStatus()
+
+    expect(store.canUseServerModel).toBe(true)
+    expect(store.serverTextReady).toBe(true)
+    expect(store.serverImageReady).toBe(false)
+    expect(store.serverSpeechReady).toBe(true)
+    // 状态里不应出现任何配置本体（地址/Key 等字段名都不下发）
+    expect(JSON.stringify(store.serverModelStatus)).not.toMatch(/apiKey|baseUrl/i)
   })
 })
 
-function createServerModelConfigResponse(): AiServerModelConfigResponse {
+function createServerModelStatus(): AiServerModelStatus {
   return {
     canUseServerModel: true,
-    isAdmin: false,
-    config: {
-      text: {
-        enabled: true,
-        baseUrl: 'https://api.example.com',
-        apiKey: '',
-        model: 'gpt-4o-mini',
-        useFullUrl: false,
-      },
-      image: {
-        enabled: true,
-        baseUrl: 'https://api.example.com',
-        apiKey: '',
-        model: 'gpt-image-1',
-        imageSize: '1024x1024',
-        useFullUrl: false,
-      },
-      speech: {
-        enabled: true,
-        baseUrl: 'https://api.example.com',
-        apiKey: '',
-        model: 'gpt-4o-mini-tts',
-        voice: 'alloy',
-        responseFormat: 'mp3',
-        useFullUrl: false,
-      },
-    },
+    textReady: true,
+    imageReady: false,
+    speechReady: true,
   }
 }
 

@@ -14,6 +14,7 @@
     <SourceManager v-model="appStore.showSourceManager" />
     <WebdavManager v-model="appStore.showWebdavManager" />
     <CacheLibraryModal v-model="appStore.showCacheLibrary" />
+    <AiSettingsModal v-model="appStore.showAiSettings" />
 
     <!-- Toast notifications -->
     <div class="toast-container">
@@ -35,6 +36,7 @@ import SettingsDrawer from './components/SettingsDrawer.vue'
 import SourceManager from './components/SourceManager.vue'
 import WebdavManager from './components/WebdavManager.vue'
 import CacheLibraryModal from './components/CacheLibraryModal.vue'
+import AiSettingsModal from './components/AiSettingsModal.vue'
 
 const route = useRoute()
 const router = useRouter()

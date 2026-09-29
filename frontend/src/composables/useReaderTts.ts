@@ -572,15 +572,15 @@ export function useReaderTts(content: Ref<string>) {
       return
     }
     if (speechConfig.openaiSource === 'server') {
-      const serverConfig = await aiBookStore.loadServerModelConfig()
-      if (!serverConfig?.canUseServerModel) {
-        const error = new Error('后端模型配置暂不可用，请先登录')
+      const status = await aiBookStore.loadServerModelStatus()
+      if (!status?.canUseServerModel) {
+        const error = new Error('后端模型暂不可用，请先在服务端 env 配置')
         appStore.showToast(error.message, 'warning')
         options.onError?.(error)
         return
       }
-      if (!serverConfig.config.speech.enabled) {
-        const error = new Error('后端 OpenAI Speech 未启用')
+      if (!status.speechReady) {
+        const error = new Error('后端未启用语音模型（AI_SPEECH_*）')
         appStore.showToast(error.message, 'warning')
         options.onError?.(error)
         return

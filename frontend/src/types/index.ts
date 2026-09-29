@@ -246,16 +246,15 @@ export interface AiSpeechModelConfig extends AiModelEndpointConfig {
   responseFormat: string
 }
 
-export interface AiServerModelConfig {
-  text: AiModelEndpointConfig
-  image: AiImageModelConfig
-  speech: AiSpeechModelConfig
-}
-
-export interface AiServerModelConfigResponse {
-  config: AiServerModelConfig
+/**
+ * 后端模型配置只回报「是否可用」的布尔状态——配置本体（地址/Key/模型名）
+ * 只存在于服务端 env，从不下发到浏览器。
+ */
+export interface AiServerModelStatus {
   canUseServerModel: boolean
-  isAdmin: boolean
+  textReady: boolean
+  imageReady: boolean
+  speechReady: boolean
 }
 
 export interface AiBookNote {

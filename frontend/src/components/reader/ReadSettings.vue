@@ -413,122 +413,40 @@
               :class="{ active: store.speechConfig.openaiSource === 'browser' }"
               @click="store.setOpenAISpeechSource('browser')"
             >
-              自己配置
+              浏览器
             </button>
             <button
               class="opt-btn"
               :class="{ active: store.speechConfig.openaiSource === 'server' }"
-              :disabled="serverModelLoaded && !canUseServerModel"
+              :disabled="serverModelLoaded && !canUseServerSpeech"
               @click="selectOpenAISpeechSource('server')"
             >
-              后端配置
+              后端
             </button>
           </div>
         </div>
 
         <template v-if="store.speechConfig.openaiSource === 'browser'">
           <div class="setting-row setting-row-top">
-            <label>服务地址</label>
-            <input
-              class="voice-select"
-              type="url"
-              :value="store.speechConfig.openaiBaseUrl"
-              placeholder="http://localhost:8825"
-              @input="store.setOpenAISpeechBaseUrl(($event.target as HTMLInputElement).value)"
-            />
+            <label>语音参数</label>
+            <button class="opt-btn" @click="appStore.showAiSettings = true">
+              前往「AI 设置」配置
+            </button>
           </div>
-
-          <div class="setting-row setting-row-top">
-            <label>API Key</label>
-            <input
-              class="voice-select"
-              type="password"
-              :value="store.speechConfig.openaiApiKey"
-              placeholder="sk-..."
-              autocomplete="off"
-              @input="store.setOpenAISpeechApiKey(($event.target as HTMLInputElement).value)"
-            />
-          </div>
-
-          <div class="setting-row setting-row-top">
-            <label>语音模型</label>
-            <input
-              class="voice-select"
-              type="text"
-              :value="store.speechConfig.openaiModel"
-              placeholder="gpt-4o-mini-tts"
-              @input="store.setOpenAISpeechModel(($event.target as HTMLInputElement).value)"
-            />
-          </div>
-
-          <div class="setting-row setting-row-top">
-            <label>语音音色</label>
-            <input
-              class="voice-select"
-              type="text"
-              :value="store.speechConfig.openaiVoice"
-              placeholder="alloy"
-              @input="store.setOpenAISpeechVoice(($event.target as HTMLInputElement).value)"
-            />
-          </div>
-
-          <div class="setting-row setting-row-top">
-            <label>音频格式</label>
-            <select
-              class="voice-select"
-              :value="store.speechConfig.openaiFormat"
-              @change="
-                store.setOpenAISpeechFormat(
-                  ($event.target as HTMLSelectElement).value as
-                    'mp3' | 'wav' | 'opus' | 'flac' | 'pcm'
-                )
-              "
-            >
-              <option value="mp3">mp3</option>
-              <option value="wav">wav</option>
-              <option value="opus">opus</option>
-              <option value="flac">flac</option>
-              <option value="pcm">pcm</option>
-            </select>
+          <div class="setting-hint">
+            服务地址、API Key、语音模型、音色、格式与请求模式统一在「设置 → 管理 → AI
+            设置」里维护；URL 和 Key 仅保存在当前浏览器。
           </div>
         </template>
 
         <div v-else class="server-speech-note">
-          <template v-if="canUseServerModel">
-            使用后端配置的 OpenAI Speech
-            模型、音色和音频格式。请求通过后端代理转发，浏览器不会保存后端 API Key。
+          <template v-if="canUseServerSpeech">
+            使用服务端 env 里配置的 OpenAI Speech（AI_SPEECH_*）。
+            请求由后端代理转发，浏览器接触不到 API Key。
           </template>
           <template v-else>
-            后端模型配置暂不可用（未登录或服务端未启用），或切回自己配置。
+            后端语音模型未配置（需在服务端 env 设置 AI_SPEECH_*），或切回浏览器。
           </template>
-        </div>
-
-        <div class="setting-row setting-row-top">
-          <label>请求模式</label>
-          <div class="btn-group">
-            <button
-              class="opt-btn"
-              :class="{ active: store.speechConfig.openaiRequestMode === 'chunked' }"
-              @click="store.setOpenAISpeechRequestMode('chunked')"
-            >
-              少字多请求
-            </button>
-            <button
-              class="opt-btn"
-              :class="{ active: store.speechConfig.openaiRequestMode === 'merged' }"
-              @click="store.setOpenAISpeechRequestMode('merged')"
-            >
-              多字少请求
-            </button>
-          </div>
-        </div>
-
-        <div class="setting-hint">
-          少字多请求会按短句细分并预加载更多片段；多字少请求会合并较短段落，只预加载下一段。
-          <template v-if="store.speechConfig.openaiSource === 'browser'"
-            >URL 和 Key 仅保存在当前浏览器。</template
-          >
-          <template v-else>后端配置由管理员维护，权限不足时朗读请求会失败。</template>
         </div>
       </template>
 
@@ -624,7 +542,7 @@ const appStore = useAppStore()
 const config = computed(() => store.config)
 const theme = computed(() => store.currentTheme)
 const serverModelLoaded = ref(false)
-const canUseServerModel = computed(() => Boolean(aiBookStore.serverModelConfig?.canUseServerModel))
+const canUseServerSpeech = computed(() => Boolean(aiBookStore.serverModelStatus?.speechReady))
 
 // 双页翻页只在窗口宽度足够时可选（阅读器里过窄会自动退回单页）
 const windowWidth = ref(typeof window !== 'undefined' ? window.innerWidth : 1024)
@@ -685,12 +603,12 @@ async function selectOpenAISpeechSource(source: 'browser' | 'server') {
     return
   }
   if (!serverModelLoaded.value) {
-    await aiBookStore.loadServerModelConfig({ force: true })
+    await aiBookStore.loadServerModelStatus({ force: true })
     serverModelLoaded.value = true
   }
-  if (!canUseServerModel.value) {
+  if (!canUseServerSpeech.value) {
     store.setOpenAISpeechSource('browser')
-    appStore.showToast('后端模型配置暂不可用，请先登录', 'warning')
+    appStore.showToast('后端未启用语音模型，请在服务端 env 配置 AI_SPEECH_*', 'warning')
     return
   }
   store.setOpenAISpeechSource('server')
@@ -698,9 +616,9 @@ async function selectOpenAISpeechSource(source: 'browser' | 'server') {
 
 onMounted(async () => {
   store.fetchVoices()
-  await aiBookStore.loadServerModelConfig({ force: true })
+  await aiBookStore.loadServerModelStatus({ force: true })
   serverModelLoaded.value = true
-  if (store.speechConfig.openaiSource === 'server' && !canUseServerModel.value) {
+  if (store.speechConfig.openaiSource === 'server' && !canUseServerSpeech.value) {
     store.setOpenAISpeechSource('browser')
   }
 })

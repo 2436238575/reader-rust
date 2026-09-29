@@ -1,8 +1,8 @@
 import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
-import { getAiModelConfig } from '../api/aiModel'
+import { getAiModelStatus } from '../api/aiModel'
 import { deleteAiBookMemory, getAiBookMemory, saveAiBookMemory } from '../api/aiBook'
-import type { AiBookMemory, AiServerModelConfigResponse, Book, BookChapter } from '../types'
+import type { AiBookMemory, AiServerModelStatus, Book, BookChapter } from '../types'
 import { useAppStore } from './app'
 import { getAiBookConfig, saveAiBookConfig } from '../utils/aiBookConfig'
 import type { AiBookConfig } from '../types'
@@ -32,36 +32,39 @@ export const useAiBookStore = defineStore('aiBook', () => {
 
   const username = computed(() => appStore.userInfo?.username || 'default')
   const config = ref<AiBookConfig>(getAiBookConfig(username.value))
-  const serverModelConfig = ref<AiServerModelConfigResponse | null>(null)
+  // 后端模型只有「是否可用」状态可见（配置本体在服务端 env，不下发）
+  const serverModelStatus = ref<AiServerModelStatus | null>(null)
   const isBusy = computed(() => loading.value || phase.value !== 'idle')
-  const canUseServerModel = computed(() => Boolean(serverModelConfig.value?.canUseServerModel))
-  const isServerModelAdmin = computed(() => Boolean(serverModelConfig.value?.isAdmin))
-  let serverModelConfigRequest: Promise<AiServerModelConfigResponse | null> | null = null
+  const canUseServerModel = computed(() => Boolean(serverModelStatus.value?.canUseServerModel))
+  const serverTextReady = computed(() => Boolean(serverModelStatus.value?.textReady))
+  const serverImageReady = computed(() => Boolean(serverModelStatus.value?.imageReady))
+  const serverSpeechReady = computed(() => Boolean(serverModelStatus.value?.speechReady))
+  let serverModelStatusRequest: Promise<AiServerModelStatus | null> | null = null
 
-  async function loadServerModelConfig(options: LoadServerModelConfigOptions = {}) {
-    if (!options.force && serverModelConfig.value) {
-      return serverModelConfig.value
+  async function loadServerModelStatus(options: LoadServerModelConfigOptions = {}) {
+    if (!options.force && serverModelStatus.value) {
+      return serverModelStatus.value
     }
-    if (!options.force && serverModelConfigRequest) {
-      return serverModelConfigRequest
+    if (!options.force && serverModelStatusRequest) {
+      return serverModelStatusRequest
     }
 
-    const request = getAiModelConfig()
-      .then((config) => {
-        serverModelConfig.value = config
-        return config
+    const request = getAiModelStatus()
+      .then((status) => {
+        serverModelStatus.value = status
+        return status
       })
       .catch(() => {
-        serverModelConfig.value = null
+        serverModelStatus.value = null
         return null
       })
       .finally(() => {
-        if (serverModelConfigRequest === request) {
-          serverModelConfigRequest = null
+        if (serverModelStatusRequest === request) {
+          serverModelStatusRequest = null
         }
       })
 
-    serverModelConfigRequest = request
+    serverModelStatusRequest = request
     return request
   }
 
@@ -284,10 +287,12 @@ export const useAiBookStore = defineStore('aiBook', () => {
     statusText,
     isBusy,
     config,
-    serverModelConfig,
+    serverModelStatus,
     canUseServerModel,
-    isServerModelAdmin,
-    loadServerModelConfig,
+    serverTextReady,
+    serverImageReady,
+    serverSpeechReady,
+    loadServerModelStatus,
     refreshConfig,
     persistConfig,
     load,

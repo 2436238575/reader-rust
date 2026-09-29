@@ -12,7 +12,7 @@
             当前模式: {{ providerLabel }}
             <span v-if="provider === 'openai'">
               ·
-              {{ openaiSource === 'server' ? '后端配置' : `${openaiModel} / ${openaiVoice}` }}</span
+              {{ openaiSource === 'server' ? '后端' : `${openaiModel} / ${openaiVoice}` }}</span
             >
           </div>
         </div>
@@ -44,7 +44,7 @@
         </option>
       </select>
       <div v-else-if="openaiSource === 'server'" class="tts-source-note">
-        OpenAI Speech 使用后端配置
+        OpenAI Speech 由后端转发
       </div>
       <input
         v-else
