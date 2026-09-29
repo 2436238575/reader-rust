@@ -42,7 +42,7 @@
           </div>
 
           <blockquote v-if="mode === 'para' && paraText" class="comment-quote">
-            {{ paraText }}
+            <span class="comment-quote-text">{{ paraText }}</span>
           </blockquote>
 
           <div ref="listRef" class="comment-list">
@@ -647,6 +647,18 @@ function formatReviewTime(raw: string) {
   color: var(--color-text-secondary);
   font-size: 13px;
   line-height: 1.6;
+}
+
+/* 原文最多两行，截断行末出省略号。
+   clamp 必须放在无内边距的内层元素上：裁剪边界是 padding 外缘，
+   带内边距的容器截不住第三行——它的字形会漏进 padding-bottom 区域。
+   只用 -webkit-line-clamp：标准 line-clamp 的省略号是「预留行末空间」，
+   CJK 文本放不下会把最后一个字挤到下一行 */
+.comment-quote-text {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
 }
 
 .comment-list {
