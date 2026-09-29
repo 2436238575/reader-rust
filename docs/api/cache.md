@@ -2,18 +2,18 @@
 
 缓存的显式清理与占用统计。
 
-后端缓存**不按时间过期**：内容一旦抓取即持续有效，直到被显式清理或超出容量上限被淘汰。因此 `purgeCache` 是唯一的回收手段，`cacheStats` 用来确认清理效果。
+后端缓存大多**不按时间过期**：内容一旦抓取即持续有效，直到被显式清理或超出容量上限被淘汰。按时间过期的例外是章节列表与书籍详情（1 小时 TTL）与评论（7 天 TTL）。`purgeCache` 是显式回收手段，`cacheStats` 用来确认清理效果。
 
 ## 缓存分层
 
-| 层               | 位置                                                 | 说明                                                |
-| ---------------- | ---------------------------------------------------- | --------------------------------------------------- |
-| `content`        | `storage/cache/<ns>/<md5(bookUrl)>/*.txt`            | 章节正文，按书一个目录                              |
-| `cover`          | `storage/cache/public/cover/*`                       | 封面图片，匿名抓取，固定 `public` 命名空间          |
-| `chapterList`    | `storage/data/<ns>/chapters/<md5(tocUrl)>.json`      | 章节列表                                            |
-| `searchResults`  | `storage/data/<ns>/book_sources/<md5(bookUrl)>.json` | 某本书在各书源中的搜索结果                          |
-| `invalidSources` | `storage/cache/invalid_book_sources/<ns>.json`       | 失效书源清单                                        |
-| `bookInfo`       | `storage/cache/bookinfo/<ns>/<md5(bookUrl)>.json`    | 书籍详情，10 分钟 TTL（唯一例外，`refresh=1` 强刷） |
+| 层               | 位置                                                 | 说明                                          |
+| ---------------- | ---------------------------------------------------- | --------------------------------------------- |
+| `content`        | `storage/cache/<ns>/<md5(bookUrl)>/*.txt`            | 章节正文，按书一个目录                        |
+| `cover`          | `storage/cache/public/cover/*`                       | 封面图片，匿名抓取，固定 `public` 命名空间    |
+| `chapterList`    | `storage/data/<ns>/chapters/<md5(tocUrl)>.json`      | 章节列表，1 小时 TTL                          |
+| `searchResults`  | `storage/data/<ns>/book_sources/<md5(bookUrl)>.json` | 某本书在各书源中的搜索结果                    |
+| `invalidSources` | `storage/cache/invalid_book_sources/<ns>.json`       | 失效书源清单                                  |
+| `bookInfo`       | `storage/cache/bookinfo/<ns>/<md5(bookUrl)>.json`    | 书籍详情，1 小时 TTL（`refresh=1` 强刷）      |
 
 容量上限由 `CACHE_USER_LIMIT_BYTES`（默认 512MiB）与 `CACHE_COVER_LIMIT_BYTES`（默认 256MiB，封面目录）控制，超出时按修改时间最旧优先淘汰；设为 `0` 表示不限制。
 

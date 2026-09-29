@@ -594,7 +594,7 @@ pub async fn get_chapter_list(
     if !do_refresh {
         if let Ok(Some(cached)) = state
             .book_service
-            .load_chapter_list_cache(&user_ns, &toc_url)
+            .load_fresh_chapter_list_cache(&user_ns, &toc_url)
             .await
         {
             if !cached.is_empty() {

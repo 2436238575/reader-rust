@@ -316,9 +316,9 @@ id = `md5(去掉查询串的地址)`；抓取失败时按登记时的书籍上�
 - SQLite 通过 `sqlx` 访问，连接池 10 条连接，开启 WAL（`synchronous=NORMAL`），启动时自动执行 `src/storage/db/migrations/` 下的迁移。
 - 主要表：`book_sources`（书源 JSON，按 `(user_ns, book_source_url)` 主键）、`users`、`json_documents`（通用 JSON 文档，按 namespace + name 存取）、`ai_book_memories`。迁移只有 `0001_init.sql` 一个。
 - 章节正文以文件形式缓存于 `storage/cache/<ns>/<md5(bookUrl)>/`，文件名用 MD5，数据库里不存索引。
-- 缓存**不按时间过期**，只在显式调用 `POST /reader3/purgeCache` 或超出容量上限时回收；占用可用 `GET /reader3/cacheStats` 查看。例外有二：评论缓存（见下）与书籍详情缓存（`storage/cache/bookinfo/`，10 分钟 TTL，`refresh=1` 强刷）。
-- 唯一例外是**评论缓存**（`storage/cache/reviews/<ns>/<md5(bookUrl)>/`）：评论是会变的第三方数据，
-  因此保留 7 天 TTL（`REVIEW_CACHE_TTL_SECS`），同时也受容量上限约束。
+- 缓存**大多不按时间过期**，只在显式调用 `POST /reader3/purgeCache` 或超出容量上限时回收；占用可用 `GET /reader3/cacheStats` 查看。按时间过期的例外有三：章节列表缓存（`storage/data/<ns>/chapters/`）与书籍详情缓存（`storage/cache/bookinfo/`）均为 1 小时 TTL（`refresh=1` 强刷，TTL 只作用于「缓存直接喂响应」的读路径），以及评论缓存（见下）。
+- **评论缓存**（`storage/cache/reviews/<ns>/<md5(bookUrl)>/`）是会变的第三方数据，
+  保留 7 天 TTL（`REVIEW_CACHE_TTL_SECS`），同时也受容量上限约束。
 - **图片缓存**（`storage/cache/image/`）是书源图片的统一出口：`<id>.bin` 是图片本体、
   `<id>.json` 是映射记录（id = `md5(去掉查询串的地址)`，附上游地址与书籍上下文）。
   它**不按时间过期**（id 稳定，抓下来就长期复用），容量与封面共用 `CACHE_COVER_LIMIT_BYTES`；

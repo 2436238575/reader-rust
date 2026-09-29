@@ -92,14 +92,22 @@ const RECENT_BODY_LIMIT: usize = 32;
 const RECENT_BODY_MAX_BYTES: usize = 1024 * 1024;
 const RECENT_BODY_TTL: Duration = Duration::from_secs(600);
 
-/// 书籍详情缓存的存活时间（10 分钟）与目录名。
+/// 书籍详情缓存的存活时间（1 小时）与目录名。
 ///
 /// 详情页、仅传 bookUrl 拉目录、翻章按 index 换算 chapterUrl 都会走
 /// `get_book_info`，此前每次都打上游。详情不常变，短 TTL 足够新；
 /// `refresh=1` 与 saveBook/换源路径走旁路强刷。文件随 `CacheKind::ChapterList`
 /// 清理（详情与目录同属书籍元数据）。
-const BOOK_INFO_CACHE_TTL: Duration = Duration::from_secs(600);
+const BOOK_INFO_CACHE_TTL: Duration = Duration::from_secs(3600);
 const BOOK_INFO_CACHE_DIR: &str = "bookinfo";
+
+/// 章节列表缓存的存活时间（1 小时）。
+///
+/// 目录文件本体不带时间戳，过期判定用文件 mtime；只作用于「把缓存直接
+/// 喂给响应」的读路径（过期按未命中处理，重抓后整份覆盖写回）。
+/// 供反向查找、后台补全使用的 `load_chapter_list_cache` 不做 TTL——
+/// 那些路径宁可读到旧目录，也不该顺手删掉还能用的文件。
+const CHAPTER_LIST_CACHE_TTL: Duration = Duration::from_secs(3600);
 
 /// 「作者相关」的评论：作者本人发的、作者赞过的、或有内联回复来自作者/被作者赞过。
 ///
@@ -825,7 +833,7 @@ impl BookService {
     ) -> Result<Vec<BookChapter>, AppError> {
         // Check cache first (unless force refresh)
         if !force_refresh {
-            if let Ok(Some(cached)) = self.load_chapter_list_cache(user_ns, toc_url).await {
+            if let Ok(Some(cached)) = self.load_fresh_chapter_list_cache(user_ns, toc_url).await {
                 if !cached.is_empty() {
                     return Ok(cached);
                 }
@@ -2514,6 +2522,30 @@ impl BookService {
         let list: Vec<BookChapter> =
             serde_json::from_str(&data).map_err(|e| AppError::BadRequest(e.to_string()))?;
         Ok(Some(list))
+    }
+
+    /// 带 TTL 的目录缓存读取：超过 `CHAPTER_LIST_CACHE_TTL` 的文件按未命中
+    /// 处理（不删除，留给反向查找等裸读路径），由调用方重抓后覆盖写回。
+    /// 仅限「缓存直接喂响应」的路径使用。
+    pub async fn load_fresh_chapter_list_cache(
+        &self,
+        user_ns: &str,
+        toc_url: &str,
+    ) -> Result<Option<Vec<BookChapter>>, AppError> {
+        let path = self.chapter_list_cache_path(user_ns, toc_url);
+        let expired = match fs::metadata(&path).await {
+            Ok(meta) => meta
+                .modified()
+                .ok()
+                .and_then(|m| m.elapsed().ok())
+                .map(|age| age > CHAPTER_LIST_CACHE_TTL)
+                .unwrap_or(true),
+            Err(_) => false,
+        };
+        if expired {
+            return Ok(None);
+        }
+        self.load_chapter_list_cache(user_ns, toc_url).await
     }
 
     pub async fn save_chapter_list_cache(
