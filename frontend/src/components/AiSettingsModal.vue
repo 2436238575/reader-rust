@@ -19,10 +19,8 @@
           </div>
 
           <div class="modal-body">
-            <section class="settings-card">
-              <div class="settings-card-head">
-                <h3>模型来源</h3>
-              </div>
+            <div class="source-row">
+              <span class="source-row-label">AI资料 / 地图</span>
               <div class="source-options">
                 <button
                   class="source-option"
@@ -40,11 +38,11 @@
                   后端
                 </button>
               </div>
-              <p class="settings-hint">
-                浏览器：配置只保存在当前浏览器。后端：使用服务端 env 里的配置，浏览器接触不到 API
-                Key。
-              </p>
-            </section>
+            </div>
+            <p class="settings-hint source-hint">
+              浏览器：配置只保存在当前浏览器。后端：使用服务端 env 里的配置，浏览器接触不到 API
+              Key。
+            </p>
 
             <template v-if="draft.modelSource === 'server'">
               <section class="settings-card">
@@ -354,13 +352,13 @@ function save() {
   background: var(--overlay-mask-bg);
   backdrop-filter: var(--overlay-mask-blur);
   -webkit-backdrop-filter: var(--overlay-mask-blur);
-  z-index: 100;
+  z-index: var(--z-overlay);
 }
 
 .modal-container {
   position: fixed;
   inset: 0;
-  z-index: 101;
+  z-index: var(--z-modal);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -370,8 +368,8 @@ function save() {
 .ai-settings-modal {
   background: var(--color-bg-elevated);
   border-radius: 16px;
-  width: min(560px, 100%);
-  max-height: min(80vh, 720px);
+  width: min(640px, 100%);
+  max-height: min(84vh, 760px);
   display: flex;
   flex-direction: column;
   border: 1px solid var(--color-border);
@@ -414,10 +412,28 @@ function save() {
 }
 
 .modal-body {
-  padding: 16px 20px;
+  padding: 12px 20px;
   overflow-y: auto;
   display: grid;
-  gap: 14px;
+  gap: 10px;
+}
+
+/* 模型来源行：不占整张卡片，标签在左、分段选择在右 */
+.source-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 2px 2px 0;
+}
+
+.source-row-label {
+  font-size: var(--text-sm);
+  font-weight: 600;
+}
+
+.source-hint {
+  margin-top: -2px;
+  padding: 0 2px;
 }
 
 .modal-foot {
@@ -439,19 +455,19 @@ function save() {
   background: var(--color-bg-sunken);
   border: 1px solid var(--color-border);
   border-radius: 12px;
-  padding: 14px 16px;
+  padding: 10px 14px;
 }
 
 .settings-card-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  margin-bottom: 10px;
+  margin-bottom: 6px;
 }
 
 .settings-card-head h3 {
   margin: 0;
-  font-size: var(--text-base);
+  font-size: var(--text-sm);
 }
 
 .settings-hint {
@@ -520,7 +536,7 @@ function save() {
 .settings-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 10px;
+  gap: 8px;
 }
 
 .settings-grid > .settings-hint {

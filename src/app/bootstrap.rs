@@ -120,9 +120,39 @@ pub async fn build_state(cfg: AppConfig) -> anyhow::Result<AppState> {
     let ai_book_service = Arc::new(AiBookService::new(pool.clone(), &cfg.storage_dir));
     // 后端 AI 模型配置只来自环境变量（AI_TEXT_* / AI_IMAGE_* / AI_SPEECH_*），
     // 不落库、不下发；config::load() 已先加载 .env
-    let ai_model_service = Arc::new(AiModelService::new(
-        crate::model::ai_model::AiModelConfig::from_env(),
-    ));
+    let ai_model_config = crate::model::ai_model::AiModelConfig::from_env();
+    {
+        // 启动时汇报各模型就绪状态：env 配了但没生效时（工作目录不对、
+        // 二进制没更新）从这行就能看出来，不用等前端报「未配置」
+        let ready = |enabled: bool, base_url: &str, model: &str| -> String {
+            if enabled && !base_url.trim().is_empty() && !model.trim().is_empty() {
+                format!("已启用（{}）", model)
+            } else if enabled {
+                "已启用但缺 BASE_URL/MODEL".to_string()
+            } else {
+                "未配置".to_string()
+            }
+        };
+        tracing::info!(
+            "AI 模型配置：文本={}，图片={}，语音={}",
+            ready(
+                ai_model_config.text.enabled,
+                &ai_model_config.text.base_url,
+                &ai_model_config.text.model
+            ),
+            ready(
+                ai_model_config.image.enabled,
+                &ai_model_config.image.base_url,
+                &ai_model_config.image.model
+            ),
+            ready(
+                ai_model_config.speech.enabled,
+                &ai_model_config.speech.base_url,
+                &ai_model_config.speech.model
+            ),
+        );
+    }
+    let ai_model_service = Arc::new(AiModelService::new(ai_model_config));
 
     Ok(AppState {
         config: cfg,
