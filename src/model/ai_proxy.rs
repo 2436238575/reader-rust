@@ -41,7 +41,16 @@ pub fn build_ai_proxy_url(base_url: &str, path: &str, full_url: bool) -> Result<
     }
 
     let mut base = parse_http_url(base_url)?;
-    let joined_path = format!("{}{}", base.path().trim_end_matches('/'), path,);
+    // OpenAI 兼容服务的 BASE_URL 约定混乱：有人填到主机（…:8825），有人填到
+    // `/v1`（…:8825/v1）。后者直接拼会出 `/v1/v1/chat/completions` 404，
+    // 这里把重复的 `/v1` 段折叠掉（BASE_URL 里再深的前缀如 /api/v1 也一样折叠）
+    let base_path = base.path().trim_end_matches('/');
+    let suffix = if base_path.ends_with("/v1") {
+        path.strip_prefix("/v1").unwrap_or(path)
+    } else {
+        path
+    };
+    let joined_path = format!("{}{}", base_path, suffix);
     base.set_path(&joined_path);
     base.set_query(None);
     base.set_fragment(None);
@@ -116,4 +125,53 @@ fn truncate_error_detail(value: &str) -> String {
     let mut result = cleaned.chars().take(240).collect::<String>();
     result.push('…');
     result
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn joins_path_onto_bare_host() {
+        let url =
+            build_ai_proxy_url("http://localhost:8825", "/v1/chat/completions", false).unwrap();
+        assert_eq!(url.as_str(), "http://localhost:8825/v1/chat/completions");
+    }
+
+    #[test]
+    fn folds_duplicate_v1_segment() {
+        // BASE_URL 带 /v1 尾巴时不再叠出 /v1/v1/...（上游 404 的常见根因）
+        let url =
+            build_ai_proxy_url("http://localhost:8825/v1", "/v1/chat/completions", false).unwrap();
+        assert_eq!(url.as_str(), "http://localhost:8825/v1/chat/completions");
+        let url =
+            build_ai_proxy_url("http://localhost:8825/v1/", "/v1/audio/speech", false).unwrap();
+        assert_eq!(url.as_str(), "http://localhost:8825/v1/audio/speech");
+        // 更深的前缀同理
+        let url = build_ai_proxy_url(
+            "https://proxy.example/api/v1",
+            "/v1/images/generations",
+            false,
+        )
+        .unwrap();
+        assert_eq!(
+            url.as_str(),
+            "https://proxy.example/api/v1/images/generations"
+        );
+    }
+
+    #[test]
+    fn keeps_non_v1_prefix_and_rejects_unknown_path() {
+        let url = build_ai_proxy_url(
+            "https://proxy.example/openai",
+            "/v1/chat/completions",
+            false,
+        )
+        .unwrap();
+        assert_eq!(
+            url.as_str(),
+            "https://proxy.example/openai/v1/chat/completions"
+        );
+        assert!(build_ai_proxy_url("http://localhost:8825", "/v1/models", false).is_err());
+    }
 }
