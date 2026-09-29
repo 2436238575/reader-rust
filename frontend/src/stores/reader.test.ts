@@ -30,6 +30,11 @@ vi.mock('../utils/browserCache', () => ({
   setBrowserCatalog: vi.fn().mockResolvedValue(undefined),
 }))
 
+vi.mock('../api/userdata', () => ({
+  getUserdata: vi.fn().mockResolvedValue(null),
+  saveUserdata: vi.fn().mockResolvedValue(undefined),
+}))
+
 vi.mock('../utils/recentBooks', () => ({
   saveRecentReadBook: vi.fn(),
 }))

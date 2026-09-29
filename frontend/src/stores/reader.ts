@@ -20,6 +20,7 @@ import {
   deleteBookmarks as apiDeleteBookmarks,
 } from '../api/bookmark'
 import { getChapterComments, getParaCommentIndex } from '../api/review'
+import { getUserdata, saveUserdata } from '../api/userdata'
 import { getReplaceRules } from '../api/replaceRule'
 import type {
   Book,
@@ -496,23 +497,80 @@ export const useReaderStore = defineStore('reader', () => {
     }
     try {
       const raw = localStorage.getItem(storageKey)
-      if (!raw) {
+      if (raw) {
+        const parsed = JSON.parse(raw)
+        readChapterKeys.value = new Set(
+          Array.isArray(parsed) ? parsed.filter((item) => typeof item === 'string') : []
+        )
+      } else {
         readChapterKeys.value = new Set()
-        return
       }
-      const parsed = JSON.parse(raw)
-      readChapterKeys.value = new Set(
-        Array.isArray(parsed) ? parsed.filter((item) => typeof item === 'string') : []
-      )
     } catch {
       readChapterKeys.value = new Set()
     }
+    // 已读标记存在 localStorage，天然单浏览器；与后端文档做并集合并实现跨浏览器同步。
+    // 注意本地为空时也必须同步（那正是「另一台浏览器」的场景）
+    void syncReadChapterHistoryFromBackend(currentBook)
   }
 
   function persistReadChapterHistory(currentBook?: Book | null) {
     const storageKey = getReadHistoryStorageKey(currentBook)
     if (!storageKey) return
     safeLocalSet(storageKey, JSON.stringify(Array.from(readChapterKeys.value)))
+    scheduleReadHistoryPush(currentBook)
+  }
+
+  // ─── 已读标记的跨浏览器同步（userdata 单文档：{ [bookUrl]: string[] }） ───
+  const READ_HISTORY_DOC = 'readChapterHistory'
+
+  let readHistoryPushTimer: ReturnType<typeof setTimeout> | null = null
+  function scheduleReadHistoryPush(currentBook?: Book | null) {
+    const bookUrl = currentBook?.bookUrl
+    if (!bookUrl) return
+    if (readHistoryPushTimer) clearTimeout(readHistoryPushTimer)
+    readHistoryPushTimer = setTimeout(() => {
+      readHistoryPushTimer = null
+      void pushReadHistory(bookUrl, Array.from(readChapterKeys.value))
+    }, 1500)
+  }
+
+  // 读-改-写整文档：只动当前书的分片，别的浏览器写的其他书不受影响
+  async function pushReadHistory(bookUrl: string, keys: string[]) {
+    try {
+      const doc = (await getUserdata<Record<string, string[]>>(READ_HISTORY_DOC)) || {}
+      const remote = new Set(Array.isArray(doc[bookUrl]) ? doc[bookUrl] : [])
+      const merged = Array.from(new Set([...remote, ...keys]))
+      if (merged.length === remote.size) return
+      doc[bookUrl] = merged
+      await saveUserdata(READ_HISTORY_DOC, doc)
+    } catch {
+      // 离线/未登录：本地已持久化，下次同步会补上
+    }
+  }
+
+  async function syncReadChapterHistoryFromBackend(currentBook?: Book | null) {
+    const bookUrl = currentBook?.bookUrl
+    if (!bookUrl) return
+    let doc: Record<string, string[]> | null
+    try {
+      doc = await getUserdata<Record<string, string[]>>(READ_HISTORY_DOC)
+    } catch {
+      return // 离线或未登录：保持本地
+    }
+    // 拉取期间换了书就不要往当前书写
+    if (book.value?.bookUrl !== bookUrl) return
+    const remote = new Set(
+      doc && Array.isArray(doc[bookUrl]) ? doc[bookUrl].filter((x) => typeof x === 'string') : []
+    )
+    const merged = new Set([...remote, ...readChapterKeys.value])
+    if (merged.size !== readChapterKeys.value.size) {
+      readChapterKeys.value = merged
+      persistReadChapterHistory(currentBook)
+    }
+    // 本地多出来的（在别的浏览器里读的）推回后端
+    if (merged.size !== remote.size) {
+      void pushReadHistory(bookUrl, Array.from(merged))
+    }
   }
 
   function markChapterAsRead(index: number) {
