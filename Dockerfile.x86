@@ -2,9 +2,11 @@
 # Build binary first: cargo build --release --target x86_64-unknown-linux-musl
 # Build frontend first: cd frontend && npm install && npm run build
 
+FROM ghcr.io/astral-sh/uv:0.12.21 AS uv
+
 FROM alpine:3.19
 
-RUN apk add --no-cache ca-certificates tzdata python3 py3-pip \
+RUN apk add --no-cache ca-certificates tzdata \
     && addgroup -S app && adduser -S -G app app
 
 WORKDIR /app
@@ -15,14 +17,17 @@ COPY target/x86_64-unknown-linux-musl/release/reader-rust /app/reader-rust
 # Copy frontend dist
 COPY frontend/dist /app/web/dist
 
-# Copy agent sidecar (AI 资料/地图编排) + pinned deps
+# uv（来自官方镜像，不污染 apk）+ agent sidecar 及其依赖预热
+COPY --from=uv /uv /usr/local/bin/uv
 COPY sidecar /app/sidecar
-# 依赖版本以 sidecar/pyproject.toml 为唯一钉版源
-RUN pip install --no-cache-dir ./sidecar
+# 版本以 sidecar/pyproject.toml 为唯一钉版源；uv sync 自动建 /app/sidecar/.venv
+# 托管 Python 装到共享位置：默认在 /root/.local 下，运行时 app 用户穿不过去
+ENV UV_PYTHON_INSTALL_DIR=/opt/uv-python
+RUN uv sync --project /app/sidecar
 
 # Create storage directory and hand ownership to the non-root user
 # (SQLite database, file cache and uploaded assets all live under /app/storage)
-RUN mkdir -p /app/storage/assets && chown -R app:app /app
+RUN mkdir -p /app/storage/assets && chown -R app:app /app /opt/uv-python
 
 # Drop privileges: the server must not run as root
 USER app
@@ -35,8 +40,6 @@ ENV STORAGE_DIR=/app/storage
 ENV ASSETS_DIR=/app/storage/assets
 ENV WEB_ROOT=/app/web/dist
 ENV LOG_LEVEL=info
-# Alpine 无 `python` 命令，显式覆盖默认的 `python -m agent_sidecar`
-ENV AGENT_SIDECAR_COMMAND="python3 -m agent_sidecar"
 
 EXPOSE 8080
 

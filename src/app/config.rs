@@ -76,6 +76,12 @@ pub struct AppConfig {
     pub agent_sidecar_command: String,
     /// 单章处理超时（秒），默认 600。超时即终止 sidecar 进程并中止批量任务。
     pub agent_sidecar_chapter_timeout_secs: u64,
+    /// uv 二进制的显式路径。
+    ///
+    /// 非空时用它管理 sidecar 依赖（`uv run --project sidecar ...` 自动建
+    /// `sidecar/.venv` 并安装 `pyproject.toml` 里钉死的版本）；留空时探测 PATH
+    /// 里的 `uv`；都没有则降级为 `AGENT_SIDECAR_COMMAND`（需宿主机预装依赖）。
+    pub agent_sidecar_uv: String,
 }
 
 impl Default for AppConfig {
@@ -106,6 +112,7 @@ impl Default for AppConfig {
             agent_sidecar_enabled: true,
             agent_sidecar_command: "python -m agent_sidecar".to_string(),
             agent_sidecar_chapter_timeout_secs: 600,
+            agent_sidecar_uv: String::new(),
         }
     }
 }
@@ -167,6 +174,7 @@ pub fn load() -> anyhow::Result<AppConfig> {
             "agent_sidecar_chapter_timeout_secs",
             defaults.agent_sidecar_chapter_timeout_secs as i64,
         )?
+        .set_default("agent_sidecar_uv", defaults.agent_sidecar_uv)?
         .add_source(config::Environment::default().try_parsing(true))
         .build()?;
     Ok(cfg.try_deserialize()?)

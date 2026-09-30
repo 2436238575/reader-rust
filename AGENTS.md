@@ -118,6 +118,7 @@ cp .env.example .env
 | `AI_TEXT_*` / `AI_IMAGE_*` / `AI_SPEECH_*` | 空                         | 后端 AI 模型配置（`ENABLED`/`BASE_URL`/`API_KEY`/`MODEL`/`USE_FULL_URL`，图片另有 `SIZE`，语音另有 `VOICE`/`FORMAT`）。**只在服务端维护，从不下发到浏览器**；`getAiModelConfig` 只返回各类型「是否可用」的布尔值                           |
 | `AGENT_SIDECAR_ENABLED`              | `true`                    | AI 资料编排 sidecar 开关；关闭后 AI 资料更新接口返回明确错误                                            |
 | `AGENT_SIDECAR_COMMAND`              | `python -m agent_sidecar` | sidecar 启动命令，进程 cwd 为 `sidecar/`；保持默认时若 `sidecar/.venv` 存在自动优先其 Python，自定义（含 Docker ENV）则不兜底 |
+| `AGENT_SIDECAR_UV`                   | 空                        | uv 二进制路径；非空/PATH 可探测时由 uv 自动管理依赖（推荐），都没有时降级为 AGENT_SIDECAR_COMMAND      |
 | `AGENT_SIDECAR_CHAPTER_TIMEOUT_SECS` | `600`                     | 单章处理超时；超时即终止 sidecar 进程并中止批量任务                                                     |
 
 三点需要注意：
@@ -165,7 +166,7 @@ src/
   util/                   加密、哈希、文本、时间等工具
 frontend/                 Vue 3 + TypeScript + Vite + Pinia 前端
 docs/                     VitePress 文档站，见文末「文档地图」
-sidecar/                  AI 资料编排 Python sidecar（stdio NDJSON 协议）
+sidecar/                  AI 资料编排 Python sidecar（stdio NDJSON；依赖由 uv 自动管理，见配置表 AGENT_SIDECAR_UV）
   agent_sidecar/          agent 循环、提示词、patch 归一化合并、模型客户端
   tests/                  pytest，与前端展示层共用口径的领域规则在此逐字移植
 tests/                    Rust 集成测试（15 文件）+ Playwright e2e
@@ -358,7 +359,7 @@ Rust 侧共 **260 个测试**（179 个内联单元测试 + 81 个集成用例�
   （机器上需要有 Node）；
 - `src/` 内的内联单元测试模块（179 个）。
 
-前端使用 vitest，共 21 个 `*.test.ts`（97 个用例）；sidecar 使用 pytest（89 个用例，
+sidecar 使用 pytest（90 个用例，
 见「常用命令」），含从旧前端实现 1:1 移植的领域规则用例与新增编排能力用例。
 
 需要注意：

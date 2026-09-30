@@ -9,10 +9,12 @@ Rust 后端（`src/service/agent_sidecar_service.rs`）按任务 spawn 本进程
 
 ```bash
 cd sidecar
-python -m venv .venv
-.venv/Scripts/python -m pip install httpx==0.28.1 pydantic==2.11.7 pytest==8.3.5   # POSIX 为 .venv/bin/...
-.venv/Scripts/python -m pytest
+uv sync          # 推荐：自动建 .venv 并按 pyproject 钉版安装（uv.lock 已提交）
+uv run pytest    # 全部测试
 ```
+
+无 uv 时手动建 venv：`python -m venv .venv` 后
+`.venv/Scripts/python -m pip install -e .[dev]`（POSIX 为 `.venv/bin/...`）。
 
 - 依赖版本在 `pyproject.toml` 钉死（Docker 镜像以 `pip install ./sidecar` 安装，此处是唯一钉版源）。
 - 独立调试单个任务：`python -m agent_sidecar --job-file <任务 JSON>`（任务帧可附带
@@ -20,7 +22,7 @@ python -m venv .venv
 - `python -m agent_sidecar` 必须在 `sidecar/` 目录下运行（模块解析依赖 cwd），
   与后端 `AGENT_SIDECAR_COMMAND` 默认行为一致。
 
-## 测试口径（pytest 89 例）
+## 测试口径（pytest 90 例）
 
 | 分块 | 数量 | 来源 |
 | --- | --- | --- |

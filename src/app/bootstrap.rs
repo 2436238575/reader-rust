@@ -26,13 +26,18 @@ pub async fn run() -> anyhow::Result<()> {
     // _log_guard 保活非阻塞写线程，必须活到进程退出
     let logs_dir = std::path::Path::new(&cfg.storage_dir).join("logs");
     std::fs::create_dir_all(&logs_dir).ok();
-    let (log_writer, _log_guard) =
-        tracing_appender::non_blocking(tracing_appender::rolling::daily(&logs_dir, "reader-rust.log"));
+    let (log_writer, _log_guard) = tracing_appender::non_blocking(
+        tracing_appender::rolling::daily(&logs_dir, "reader-rust.log"),
+    );
     use tracing_subscriber::prelude::*;
     tracing_subscriber::registry()
         .with(EnvFilter::new(cfg.log_level.clone()))
         .with(tracing_subscriber::fmt::layer().with_writer(std::io::stdout))
-        .with(tracing_subscriber::fmt::layer().with_writer(log_writer).with_ansi(false))
+        .with(
+            tracing_subscriber::fmt::layer()
+                .with_writer(log_writer)
+                .with_ansi(false),
+        )
         .init();
 
     // 把 panic 也记录进 tracing，便于在日志里定位崩溃位置；
@@ -170,6 +175,7 @@ pub async fn build_state(cfg: AppConfig) -> anyhow::Result<AppState> {
         ai_book_service.clone(),
         ai_model_service.clone(),
         &cfg.agent_sidecar_command,
+        &cfg.agent_sidecar_uv,
         cfg.agent_sidecar_enabled,
         cfg.agent_sidecar_chapter_timeout_secs,
         &cfg.assets_dir,

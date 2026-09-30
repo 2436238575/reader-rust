@@ -5,6 +5,9 @@ target/
 !target/aarch64-unknown-linux-musl/release/reader-rust
 # Dependencies
 frontend/node_modules/
+# sidecar 本地 venv（含 Windows 目录联接，构建上下文传不了）与缓存
+sidecar/.venv/
+**/__pycache__/
 
 # Git
 .git/

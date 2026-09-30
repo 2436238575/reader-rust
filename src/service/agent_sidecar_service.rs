@@ -61,6 +61,19 @@ const PROTOCOL_VERSION: u32 = 1;
 /// 与 config.rs 的默认值保持一致：仅当命令未被自定义时才应用 venv 优先逻辑
 const DEFAULT_SIDECAR_COMMAND: &str = "python -m agent_sidecar";
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
+/// uv 模式下首次 `uv run` 可能现场同步依赖（下载/建 venv），握手超时放宽
+const HANDSHAKE_TIMEOUT_UV: Duration = Duration::from_secs(60);
+
+/// sidecar 启动计划：四级优先级（详见 resolve_spawn_plan）。
+#[derive(Debug, Clone, PartialEq)]
+enum SpawnPlan {
+    /// 显式自定义命令（AGENT_SIDECAR_COMMAND 非默认；测试与自托管逃生门）
+    Custom(String, Vec<String>),
+    /// uv 自动管理依赖（uv run --project <dir> python -m agent_sidecar）
+    Uv(String),
+    /// 降级：默认命令直接跑（需宿主机已装好 sidecar 依赖）
+    Default(String, Vec<String>),
+}
 const SIDECAR_LOG_TARGET: &str = "agent_sidecar";
 const MAP_IMAGE_DOWNLOAD_TIMEOUT: Duration = Duration::from_secs(60);
 const MAX_MAP_IMAGE_BYTES: u64 = 20 * 1024 * 1024;
@@ -152,6 +165,7 @@ pub struct AgentSidecarService {
     ai_book_service: Arc<AiBookService>,
     ai_model_service: Arc<AiModelService>,
     command: String,
+    uv_path: String,
     enabled: bool,
     chapter_timeout: Duration,
     sidecar_dir: PathBuf,
@@ -159,6 +173,8 @@ pub struct AgentSidecarService {
     registry: Arc<AsyncMutex<Option<AgentTaskSnapshot>>>,
     active: Arc<AsyncMutex<Option<Arc<ActiveTask>>>>,
     probe: Arc<AtomicU8>,
+    /// PATH 探测结果缓存（probe 第一次 spawn 时解析，之后复用）
+    spawn_plan: Arc<AsyncMutex<Option<SpawnPlan>>>,
 }
 
 impl AgentSidecarService {
@@ -171,6 +187,7 @@ impl AgentSidecarService {
         ai_book_service: Arc<AiBookService>,
         ai_model_service: Arc<AiModelService>,
         command: &str,
+        uv_path: &str,
         enabled: bool,
         chapter_timeout_secs: u64,
         assets_dir: &str,
@@ -183,6 +200,7 @@ impl AgentSidecarService {
             ai_book_service,
             ai_model_service,
             command: command.to_string(),
+            uv_path: uv_path.to_string(),
             enabled,
             chapter_timeout: Duration::from_secs(chapter_timeout_secs.max(1)),
             sidecar_dir: resolve_sidecar_dir(),
@@ -190,7 +208,19 @@ impl AgentSidecarService {
             registry: Arc::new(AsyncMutex::new(None)),
             active: Arc::new(AsyncMutex::new(None)),
             probe: Arc::new(AtomicU8::new(PROBE_UNKNOWN)),
+            spawn_plan: Arc::new(AsyncMutex::new(None)),
         }
+    }
+
+    /// 解析启动计划（惰性 + 缓存）：PATH 探测只在首次 spawn 时做一次。
+    async fn spawn_plan(&self) -> SpawnPlan {
+        let mut guard = self.spawn_plan.lock().await;
+        if let Some(plan) = guard.clone() {
+            return plan;
+        }
+        let plan = resolve_spawn_plan(&self.command, &self.uv_path, uv_in_path().await);
+        *guard = Some(plan.clone());
+        plan
     }
 
     /// sidecar 可用性（启动时握手探测的结果）。
@@ -962,7 +992,9 @@ impl AgentSidecarService {
             chapters: &[],
             memory,
         };
-        let result = self.run_frame_until_result(stdin, rx, frame, &ctx, stderr_tail).await?;
+        let result = self
+            .run_frame_until_result(stdin, rx, frame, &ctx, stderr_tail)
+            .await?;
         decode_map_image(&result)
     }
 
@@ -1009,21 +1041,26 @@ impl AgentSidecarService {
     async fn spawn_sidecar(
         &self,
     ) -> Result<(Child, ChildStdin, mpsc::Receiver<String>, StderrTail), AppError> {
-        let (mut program, args) = split_command(&self.command)
-            .ok_or_else(|| AppError::BadRequest("AGENT_SIDECAR_COMMAND 无法解析".to_string()))?;
-        // 开发便利：命令仍是默认值且 sidecar/.venv 存在时，优先用 venv 的 Python——
-        // 系统Python 往往没有 sidecar 依赖（ModuleNotFoundError 是最常见握手失败原因）。
-        // Docker / 自定义命令不受影响（显式覆盖，见 Dockerfile 的 ENV）。
-        if self.command == DEFAULT_SIDECAR_COMMAND {
-            if let Some(venv_python) = venv_python(&self.sidecar_dir) {
-                tracing::info!(
-                    target: SIDECAR_LOG_TARGET,
-                    "使用 sidecar venv 的 Python：{}",
-                    venv_python.display()
-                );
-                program = venv_python.to_string_lossy().to_string();
+        let plan = self.spawn_plan().await;
+        let (program, args, handshake_timeout) = match plan {
+            // uv 自动管理：uv run --project <sidecar_dir> python -m agent_sidecar
+            SpawnPlan::Uv(uv) => (uv, uv_run_args(&self.sidecar_dir), HANDSHAKE_TIMEOUT_UV),
+            SpawnPlan::Custom(program, args) => (program, args, HANDSHAKE_TIMEOUT),
+            SpawnPlan::Default(mut program, args) => {
+                // 开发便利：sidecar/.venv 存在时优先用它的 Python——
+                // 系统 Python 往往没有 sidecar 依赖（ModuleNotFoundError 是
+                // 最常见的握手失败原因）。uv 与自定义命令不受影响。
+                if let Some(venv_python) = venv_python(&self.sidecar_dir) {
+                    tracing::info!(
+                        target: SIDECAR_LOG_TARGET,
+                        "使用 sidecar venv 的 Python：{}",
+                        venv_python.display()
+                    );
+                    program = venv_python.to_string_lossy().to_string();
+                }
+                (program, args, HANDSHAKE_TIMEOUT)
             }
-        }
+        };
         let mut cmd = Command::new(&program);
         cmd.args(&args)
             .current_dir(&self.sidecar_dir)
@@ -1038,7 +1075,7 @@ impl AgentSidecarService {
         }
         let mut child = cmd.spawn().map_err(|e| {
             AppError::BadRequest(format!(
-                "sidecar 启动失败（{program}）：{e}。请确认已安装 Python ≥3.11 并配置 AGENT_SIDECAR_COMMAND"
+                "sidecar 启动失败（{program}）：{e}。请安装 Python ≥3.11 与 sidecar 依赖，                 或安装 uv 让依赖自动管理（可用 AGENT_SIDECAR_UV 指定路径）"
             ))
         })?;
 
@@ -1081,7 +1118,7 @@ impl AgentSidecarService {
         // 握手：hello 帧 → 协议版本。失败必须带上子进程 stderr 的真实原因，
         // 否则用户只能看到一句无法定位的 "internal error"
         let mut rx = rx;
-        let first_line = match timeout(HANDSHAKE_TIMEOUT, rx.recv()).await {
+        let first_line = match timeout(handshake_timeout, rx.recv()).await {
             Ok(Some(line)) => Some(line),
             Ok(None) => None,
             Err(_) => return Err(handshake_failed(&stderr_tail, "sidecar 握手超时（10 秒）").await),
@@ -1273,6 +1310,61 @@ fn find_snippet(content: &str, keyword: &str) -> Option<String> {
     Some(snippet)
 }
 
+/// 启动计划的优先级解析（纯函数，规则与 spec 一致）：
+///
+/// 1. `AGENT_SIDECAR_COMMAND` 显式非默认 → 原样使用（测试与自托管逃生门）；
+/// 2. `AGENT_SIDECAR_UV` 非空 → uv 用该路径；
+/// 3. PATH 里有 `uv` → 用 uv；
+/// 4. 都没有 → 默认命令降级（宿主机需已装好依赖）。
+///
+/// 注意 uv 路径来自 env，可能含空格——它是单个二进制路径，绝不能过 split_command。
+fn resolve_spawn_plan(command: &str, uv_path: &str, uv_in_path: bool) -> SpawnPlan {
+    if command != DEFAULT_SIDECAR_COMMAND {
+        if let Some((program, args)) = split_command(command) {
+            return SpawnPlan::Custom(program, args);
+        }
+    }
+    let uv_path = uv_path.trim();
+    if !uv_path.is_empty() {
+        return SpawnPlan::Uv(uv_path.to_string());
+    }
+    if uv_in_path {
+        return SpawnPlan::Uv("uv".to_string());
+    }
+    match split_command(command) {
+        Some((program, args)) => SpawnPlan::Default(program, args),
+        None => SpawnPlan::Default(
+            "python".to_string(),
+            vec!["-m".into(), "agent_sidecar".into()],
+        ),
+    }
+}
+
+/// uv run 的参数形态：--project 指向 sidecar 目录（uv 会按需同步 .venv）。
+fn uv_run_args(sidecar_dir: &std::path::Path) -> Vec<String> {
+    vec![
+        "run".to_string(),
+        "--project".to_string(),
+        sidecar_dir.to_string_lossy().to_string(),
+        "python".to_string(),
+        "-m".to_string(),
+        "agent_sidecar".to_string(),
+    ]
+}
+
+/// PATH 里的 `uv` 是否可执行（只探测一次，结果在 spawn_plan 缓存）。
+async fn uv_in_path() -> bool {
+    tokio::process::Command::new("uv")
+        .arg("--version")
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .stdin(Stdio::null())
+        .status()
+        .await
+        .map(|status| status.success())
+        .unwrap_or(false)
+}
+
 /// 按空白切分命令，支持双引号包裹含空格的路径。
 fn split_command(command: &str) -> Option<(String, Vec<String>)> {
     let trimmed = command.trim();
@@ -1321,7 +1413,7 @@ async fn handshake_failed(stderr_tail: &StderrTail, reason: &str) -> AppError {
         format!("；子进程 stderr 末尾：{}", tail.join(" ┃ "))
     };
     AppError::BadRequest(format!(
-        "{reason}{detail}。请确认：Python ≥3.11 可用（Windows 上 `python` 可能命中          Microsoft Store 占位符）；sidecar 依赖已装进该 Python（pip install httpx==0.28.1          pydantic==2.11.7，或让 AGENT_SIDECAR_COMMAND 指向 sidecar/.venv 里的 python）"
+        "{reason}{detail}。请确认：Python ≥3.11 可用（Windows 上 `python` 可能命中 Microsoft          Store 占位符）；sidecar 依赖已装进该 Python（pip install httpx==0.28.1          pydantic==2.11.7，或让 AGENT_SIDECAR_COMMAND 指向 sidecar/.venv 里的 python）；          或安装 uv 让依赖自动管理（AGENT_SIDECAR_UV 可指定路径）"
     ))
 }
 
@@ -1335,17 +1427,82 @@ fn venv_python(sidecar_dir: &std::path::Path) -> Option<PathBuf> {
 }
 
 fn resolve_sidecar_dir() -> PathBuf {
-    // 优先工作目录下的 sidecar/（cargo run 在仓库根），其次可执行文件旁（部署态）
-    if PathBuf::from("sidecar").join("agent_sidecar").is_dir() {
-        return PathBuf::from("sidecar");
-    }
-    if let Ok(exe) = std::env::current_exe() {
-        if let Some(parent) = exe.parent() {
-            let candidate = parent.join("sidecar");
-            if candidate.join("agent_sidecar").is_dir() {
-                return candidate;
+    // 必须返回绝对路径：spawn 时 current_dir 就是 sidecar/，`uv --project` 等参数
+    // 若拿到相对路径会被双重相对（sidecar/sidecar）而找不到目录
+    let candidates: Vec<PathBuf> = {
+        let mut list = vec![PathBuf::from("sidecar")];
+        if let Ok(exe) = std::env::current_exe() {
+            if let Some(parent) = exe.parent() {
+                list.push(parent.join("sidecar"));
             }
         }
+        list
+    };
+    for candidate in &candidates {
+        if candidate.join("agent_sidecar").is_dir() {
+            return std::fs::canonicalize(candidate).unwrap_or_else(|_| candidate.clone());
+        }
     }
-    PathBuf::from("sidecar")
+    std::env::current_dir()
+        .map(|cwd| cwd.join("sidecar"))
+        .unwrap_or_else(|_| PathBuf::from("sidecar"))
+}
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn plan_command(plan: &SpawnPlan) -> (String, Vec<String>) {
+        match plan {
+            SpawnPlan::Custom(p, a) | SpawnPlan::Default(p, a) => (p.clone(), a.clone()),
+            SpawnPlan::Uv(uv) => (uv.clone(), Vec::new()),
+        }
+    }
+
+    #[test]
+    fn explicit_custom_command_wins_over_uv() {
+        // 逃生门：显式命令（测试的 node 假 sidecar 也走这里）
+        let plan = resolve_spawn_plan("node fake.mjs", "C:/tools/uv.exe", true);
+        let (program, args) = plan_command(&plan);
+        assert_eq!(program, "node");
+        assert_eq!(args, vec!["fake.mjs".to_string()]);
+        assert!(matches!(plan, SpawnPlan::Custom(..)));
+    }
+
+    #[test]
+    fn explicit_uv_path_wins_over_path_lookup() {
+        let plan = resolve_spawn_plan(DEFAULT_SIDECAR_COMMAND, "C:/tools/uv.exe", true);
+        assert!(matches!(plan, SpawnPlan::Uv(ref p) if p == "C:/tools/uv.exe"));
+    }
+
+    #[test]
+    fn uv_in_path_is_used_when_no_override() {
+        let plan = resolve_spawn_plan(DEFAULT_SIDECAR_COMMAND, "", true);
+        assert!(matches!(plan, SpawnPlan::Uv(ref p) if p == "uv"));
+    }
+
+    #[test]
+    fn default_command_degrades_when_no_uv() {
+        let plan = resolve_spawn_plan(DEFAULT_SIDECAR_COMMAND, "", false);
+        let (program, args) = plan_command(&plan);
+        assert!(matches!(plan, SpawnPlan::Default(..)));
+        assert_eq!(program, "python");
+        assert_eq!(args, vec!["-m".to_string(), "agent_sidecar".to_string()]);
+    }
+
+    #[test]
+    fn default_command_parse_failure_falls_back_to_python_module() {
+        let plan = resolve_spawn_plan("   ", "", false);
+        let (program, args) = plan_command(&plan);
+        assert_eq!(program, "python");
+        assert_eq!(args, vec!["-m".to_string(), "agent_sidecar".to_string()]);
+    }
+
+    #[test]
+    fn uv_run_args_point_at_project_python_module() {
+        let args = uv_run_args(std::path::Path::new("sidecar"));
+        assert_eq!(args[0], "run");
+        assert_eq!(args[1], "--project");
+        assert_eq!(args[3], "python");
+        assert_eq!(args[4..], ["-m".to_string(), "agent_sidecar".to_string()]);
+    }
 }
