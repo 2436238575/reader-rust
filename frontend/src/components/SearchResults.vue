@@ -25,8 +25,8 @@
       </button>
     </div>
 
-    <!-- 只启用了一个书源时，范围选择与单源下拉都没有意义，整条隐藏 -->
-    <div v-if="sourceOptions.length !== 1" class="search-filters">
+    <!-- 启用的书源多于一个才有范围选择的意义；未加载时默认隐藏 -->
+    <div v-if="sourceOptions.length > 1" class="search-filters">
       <div class="filter-tabs" role="tablist" aria-label="搜索范围">
         <button
           type="button"

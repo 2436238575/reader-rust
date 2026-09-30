@@ -83,11 +83,10 @@ const store = useReaderStore()
 const appStore = useAppStore()
 const sourceStore = useSourceStore()
 
-// 只有一个启用的书源时「换源」无从谈起，隐藏入口；书源未加载时不闪动
-const showSourceSwitch = computed(() => {
-  if (!sourceStore.sources.length) return true
-  return sourceStore.sources.filter((s) => s.enabled !== false).length > 1
-})
+// 「换源」只在启用的书源多于一个时显示；书源未加载时默认隐藏
+const showSourceSwitch = computed(
+  () => sourceStore.sources.filter((s) => s.enabled !== false).length > 1
+)
 
 const theme = computed(() => {
   if (store.isNight || appStore.theme === 'dark') {
