@@ -79,6 +79,36 @@ AI资料/AI 地图/听书 TTS 可以使用「后端」模型：请求经 `/reade
 示例：`AI_SPEECH_ENABLED=true` + `AI_SPEECH_BASE_URL=http://localhost:8825` + `AI_SPEECH_API_KEY=...`
 即可让前端「听书 · 模型来源 = 后端」可用。
 
+### AI 资料编排（Python sidecar）
+
+AI 资料的使用建议、剧情摘要、人物/关系/地点与世界观的生成循环运行在**后端拉起的
+Python 进程**里（Rust 只负责提交任务、转发进度与落库）。宿主机要求：
+
+- Python >= 3.11（Docker 镜像已内置）；
+- 仓库 `sidecar/` 目录随二进制一同部署（可执行文件旁的 `sidecar/` 会被自动识别）。
+
+| 变量                                | 默认值                     | 说明                                                                                                     |
+| ----------------------------------- | -------------------------- | -------------------------------------------------------------------------------------------------------- |
+| `AGENT_SIDECAR_ENABLED`             | `true`                     | 是否启用 AI 资料编排；关闭后 AI 资料更新接口返回明确错误                                                 |
+| `AGENT_SIDECAR_COMMAND`             | `python -m agent_sidecar`  | sidecar 启动命令（按空白切分，支持双引号包裹含空格的路径），进程工作目录为 `sidecar/`                    |
+| `AGENT_SIDECAR_CHAPTER_TIMEOUT_SECS`| `600`                      | 单章处理超时；超时即终止 sidecar 进程并中止批量任务                                                      |
+
+部署注意：
+
+- **Windows 裸机**：`python` 可能命中 Microsoft Store 的占位符（报 "Python was not
+  found"），把 `AGENT_SIDECAR_COMMAND` 配成 Python 绝对路径即可，如
+  `AGENT_SIDECAR_COMMAND=C:\Python313\python.exe -m agent_sidecar`。
+- **依赖安装**：`sidecar/` 依赖 `httpx` 与 `pydantic`（版本在 `pyproject.toml`
+  钉死），**必须装进 `AGENT_SIDECAR_COMMAND` 指向的那个 Python**。仓库根直接
+  `cargo run` 的开发场景是零配置的：命令保持默认值时，若 `sidecar/.venv` 存在
+  会自动优先用它的 Python（venv 的安装方式见「常用命令」）；命令被自定义（含
+  Docker 的 ENV）则完全按配置执行，不再兜底。裸机部署执行
+  `pip install httpx==0.28.1 pydantic==2.11.7`。
+- **启动即探测**：后端启动时做一次握手自检；失败会打 WARN 并把**子进程 stderr
+  末尾**（缺依赖、Store 占位符等真实原因）写进日志，`agentReady=false`。
+- **可用性探测**：后端启动时会 spawn 一次 sidecar 做握手自检，结果通过
+  `getAiModelConfig` 的 `agentReady` 暴露给前端；探测失败只打 warn，不影响主服务。
+
 ### 资源限额
 
 | 变量                    | 默认值 | 说明                               |
@@ -106,6 +136,16 @@ SERVER_PORT=3000
 DATABASE_URL=sqlite:custom/path/reader.db?mode=rwc
 LOG_LEVEL=debug
 ```
+
+::: warning 值含特殊字符时必须加双引号
+
+`.env` 用 dotenvy 解析：值里含**逗号、空格**等特殊字符（典型如
+`PRIVATE_NETWORK_WHITELIST`、`CORS_ALLOWED_ORIGINS`）时必须用双引号包裹，如
+`PRIVATE_NETWORK_WHITELIST="192.168.1.1:9999, 192.168.1.0/24"`。不加引号时
+dotenvy 会在该行**中断加载**——之前的变量正常、之后的所有变量静默失效，
+且大多有代码默认值兜底，极难察觉（后端启动日志会对加载失败打 WARN）。
+
+:::
 
 ::: warning 不存在 `__` 层级分隔符
 配置加载使用 `config` crate 的默认环境变量源（无前缀），因此 `APP__SERVER__PORT` 这类写法**不会生效**，也不存在「用双下划线表示层级」的语义。

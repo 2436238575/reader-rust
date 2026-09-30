@@ -116,10 +116,14 @@ cp .env.example .env
 | `CORS_ALLOWED_ORIGINS`          | 空                                  | 跨域来源白名单；留空仅同源                                                                                                                                                                                                                  |
 | `RATE_LIMIT_DISABLED`           | `false`                             | 豁免登录限速（开发/测试用）。默认：IP 登录败 5 次封该 IP 登录 6h、用户名败 10 次封 6h。e2e 跑测试时建议后端开此项                                                                                                                           |
 | `AI_TEXT_*` / `AI_IMAGE_*` / `AI_SPEECH_*` | 空                         | 后端 AI 模型配置（`ENABLED`/`BASE_URL`/`API_KEY`/`MODEL`/`USE_FULL_URL`，图片另有 `SIZE`，语音另有 `VOICE`/`FORMAT`）。**只在服务端维护，从不下发到浏览器**；`getAiModelConfig` 只返回各类型「是否可用」的布尔值                           |
+| `AGENT_SIDECAR_ENABLED`              | `true`                    | AI 资料编排 sidecar 开关；关闭后 AI 资料更新接口返回明确错误                                            |
+| `AGENT_SIDECAR_COMMAND`              | `python -m agent_sidecar` | sidecar 启动命令，进程 cwd 为 `sidecar/`；保持默认时若 `sidecar/.venv` 存在自动优先其 Python，自定义（含 Docker ENV）则不兜底 |
+| `AGENT_SIDECAR_CHAPTER_TIMEOUT_SECS` | `600`                     | 单章处理超时；超时即终止 sidecar 进程并中止批量任务                                                     |
 
-两点需要注意：
+三点需要注意：
 
 - **配置结构是扁平的**，没有嵌套层级，因此不存在「用 `__` 表示层级」这种用法。
+- **`.env` 值含逗号/空格必须用双引号包裹**：dotenvy 在解析不了的行会中断加载，该行之后的所有变量静默失效（启动日志会对加载失败打 WARN）。典型受害者：`PRIVATE_NETWORK_WHITELIST`、`CORS_ALLOWED_ORIGINS`。
 - `JWT_SECRET` 留空时后端会在启动阶段生成随机密钥写入 `storage/jwt_secret`，开发开箱即用；**多实例部署必须显式配置同一个值**，否则各实例签发的令牌互不认可。
 
 ---
@@ -131,18 +135,19 @@ src/
   main.rs / lib.rs        入口，各十余行
   api/                    路由与 HTTP 处理（axum），18 文件约 7000 行
     router.rs             全部路由定义 + 鉴权分组（唯一真相来源）
-    handlers/             14 个领域模块：book、book_source、user、bookmark、
-                          book_group、ai_book、ai_model、ai_proxy、replace_rule、
+    handlers/             15 个领域模块：book、book_source、user、bookmark、
+                          book_group、ai_book、ai_model、ai_proxy、agent、replace_rule、
                           image、webdav、cache（缓存清理与统计）、chapter_image、
-                          review（章评/段评）；
-                          另有共享的 multipart.rs（限量读取工具）
+                          review（章评/段评）；另有共享的 multipart.rs（限量读取工具）
   auth/                   JWT 鉴权，4 文件
     jwt.rs                Claims 定义与 HS256 编解码
     secret.rs             JWT_SECRET 解析与持久化
     extractor.rs          CurrentUser / MaybeUser 提取器
     middleware.rs         require_auth / require_admin / optional_auth
-  service/                业务编排，11 文件约 7100 行
+  service/                业务编排，12 文件约 7800 行
     image_service.rs       图片管道：id 映射 + HEIC→JPEG + 永久缓存 + 回源自愈
+    agent_sidecar_service.rs AI 资料编排：spawn Python sidecar、逐章 run/result 泵、
+                          工具应答（统一内容链路）、单章看门狗、任务注册表与取消
   parser/                 规则解析引擎，6 文件约 4300 行
     rule_engine.rs        核心（3000 行）：六种用途的解析入口 + 评论解析
     rule_analyzer.rs      组合规则拆分（正确处理引号与括号嵌套）
@@ -160,7 +165,10 @@ src/
   util/                   加密、哈希、文本、时间等工具
 frontend/                 Vue 3 + TypeScript + Vite + Pinia 前端
 docs/                     VitePress 文档站，见文末「文档地图」
-tests/                    Rust 集成测试（11 文件）+ Playwright e2e
+sidecar/                  AI 资料编排 Python sidecar（stdio NDJSON 协议）
+  agent_sidecar/          agent 循环、提示词、patch 归一化合并、模型客户端
+  tests/                  pytest，与前端展示层共用口径的领域规则在此逐字移植
+tests/                    Rust 集成测试（15 文件）+ Playwright e2e
 scripts/release.sh        发布脚本
 storage/                  运行期数据，gitignored，首次启动自动创建
 ```
@@ -199,6 +207,8 @@ HTTP 请求
 - `isSuccess=false` 时从 `errorMsg` 读取失败原因。
 - 未登录/令牌无效或过期 → **HTTP 401**，`errorMsg` 为 `"需要登录"`（用户可读文案，前端原样 toast）；前端凭 401 状态码弹出登录框。
 - `/reader3` 是纯 API 命名空间：未注册路径返回 JSON 404，不落到静态文件服务。
+- `/reader3/aiProxyImage` 目前**无前端调用方**（AI 资料的地图图片改由后端直接下载落盘到
+  `ASSETS_DIR`），端点保留备用。
 
 鉴权说明：**单用户**，使用 **JWT（HS256）**。唯一账号由启动时的 bootstrap 创建：用户名取 `ADMIN_USERNAME`，密码取 `ADMIN_PASSWORD`（非空则每次启动强制覆盖，兼作找回通道），都为空则首启随机生成并打印到启动日志；不提供注册、用户管理与角色/权限分层——登录即拥有全部能力。登录返回的 `accessToken` 是标准 JWT，载荷为 `{ sub, ns, iat, exp, ver }`（`bookSourceProxy` 注入被代理页面的令牌额外带 `scope`/`bsu`，是只能访问代理路径、绑定单个书源的 30 分钟限定令牌）。传递方式只有两种：`Authorization: Bearer <jwt>` 头，或查询参数 `accessToken`（SSE 与 `<img>` 无法设置请求头，只能走查询串）。中间件位于 `src/auth/middleware.rs`，分 `require_auth` / `optional_auth` 两档，在 `api/router.rs` 里按分组挂载；handler 通过 `CurrentUser` 提取器取身份，不再自行解析凭据。撤销靠 `users.token_version`：改密码自增版本号即作废该账号所有旧令牌。
 
@@ -334,16 +344,20 @@ id = `md5(去掉查询串的地址)`；抓取失败时按登记时的书籍上�
 
 ## 测试
 
-Rust 侧共 **233 个测试**（164 个内联单元测试 + 69 个集成用例，另有 2 个 `#[ignore]` 的真实网络用例），分布为：
+Rust 侧共 **260 个测试**（179 个内联单元测试 + 81 个集成用例，另有 2 个 `#[ignore]` 的真实网络用例），分布为：
 
-- `tests/` 下 14 个集成测试文件（69 个用例），其中 `book_source_compat.rs` 用例最多（17 个）；
+- `tests/` 下 15 个集成测试文件（81 个用例），其中 `book_source_compat.rs` 用例最多（17 个）；
   `auth_flow.rs`、`review_flow.rs`、`chapter_image_flow.rs` 与 `image_pipeline.rs` 起真实监听端口，
   前者覆盖 401、静态回落、缓存清理与改密吊销令牌，其余各用一个假上游覆盖评论规则（7 天缓存、
   按类型清理）、章节配图（配图规则、无图不报错、正文 HTML 内嵌图片透传）与图片管道
   （封面地址改写、HEIC→JPEG、过期签名回源自愈、缓存命中不重抓）；
-- `src/` 内的内联单元测试模块（164 个）。
+- `agent_sidecar_flow.rs` 用 Node 假 sidecar（`tests/helpers/fake_agent_sidecar.mjs`）
+  走全流程：批量更新、章节跳过、工具回调（正文/搜索钳制）、地图落盘与降级、看门狗与取消
+  （机器上需要有 Node）；
+- `src/` 内的内联单元测试模块（179 个）。
 
-前端使用 vitest，共 21 个 `*.test.ts`（84 个用例）。
+前端使用 vitest，共 21 个 `*.test.ts`（97 个用例）；sidecar 使用 pytest（89 个用例，
+见「常用命令」），含从旧前端实现 1:1 移植的领域规则用例与新增编排能力用例。
 
 需要注意：
 

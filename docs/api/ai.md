@@ -32,6 +32,48 @@ POST /reader3/deleteAiBookMemory
 
 `AiBookMemory` 主要字段：`bookUrl`、`bookName?`、`author?`、`enabled`、`processedChapterIndex?`、`processedChapterTitle?`、`updatedAt`、`summary`、`worldview[]`、`characters[]`、`relationships[]`、`locations[]`、`map?`、`mapDirty`。
 
+## AI 资料编排任务
+
+AI 资料的生成循环运行在**后端拉起的 Python sidecar 进程**里（批量章节循环在 Rust 侧）。
+前端只触发、轮询与展示；任务在服务端跑，**关页面不取消**。三个端点均为 `POST`、需登录。
+
+### 提交任务
+
+```text
+POST /reader3/runAgentTask
+```
+
+请求体：
+
+| 参数                 | 类型    | 说明                                                                    |
+| -------------------- | ------- | ------------------------------------------------------------------------ |
+| `bookUrl`            | string  | 书架上的书籍 URL（必填）                                                 |
+| `kind`               | string  | `update_to_current`（更新到当前进度，默认）或 `redraw_map`（重绘地图）   |
+| `targetChapterIndex` | number? | 目标章 index；缺省取书架阅读进度                                         |
+
+响应 `data` 为 `{ "jobId": string }`。已有任务进行中返回 **HTTP 409**（单用户单任务）。
+
+### 查询任务状态
+
+```text
+POST /reader3/getAgentTaskStatus
+```
+
+响应 `data`：`{ "running": bool, "jobId": string, "bookUrl": string, "phase": "idle"|"loading"|"text"|"map"|"saving"|"error", "statusText": string, "currentChapterIndex": number|null, "targetChapterIndex": number|null, "lastError": string|null }`。
+
+状态快照在任务结束后保留（含 `lastError`），直到下一个任务提交或服务重启。
+
+### 取消任务
+
+```text
+POST /reader3/cancelAgentTask
+```
+
+取消 = 终止 sidecar 进程并中止批量；响应 `data` 为 `{ "cancelled": bool }`（无进行中任务时为 false）。
+
+> 任务结果不设独立端点：轮询到完成后前端复用 `getAiBookMemory` 重拉资料。
+> sidecar 配置见 [配置 · AI 资料编排](../guide/configuration.md)（`AGENT_SIDECAR_*`）。
+
 ## AI 模型配置
 
 ### 获取后端模型可用状态
@@ -40,7 +82,9 @@ POST /reader3/deleteAiBookMemory
 GET /reader3/getAiModelConfig
 ```
 
-响应 `data`：`{ "canUseServerModel": bool, "textReady": bool, "imageReady": bool, "speechReady": bool }`。
+响应 `data`：`{ "canUseServerModel": bool, "textReady": bool, "imageReady": bool, "speechReady": bool, "agentReady": bool }`。
+
+`agentReady` 表示 AI 资料编排 sidecar 是否就绪（启动时握手探测的结果），仅作提示。
 
 > 后端模型配置只通过环境变量维护（`AI_TEXT_*` / `AI_IMAGE_*` / `AI_SPEECH_*`，见
 > [配置 · AI 模型](../guide/configuration.md)），**从不下发到浏览器**——接口只返回
@@ -78,3 +122,6 @@ POST /reader3/aiProxyImage
 ```
 
 请求体：`{ "url": "https://..." }`。拉取远程图片并回传（上限 20MB），用于绕开图片防盗链。URL 仅允许 http/https 且过出站守卫。
+
+> **未实现调用方**：本端点目前无前端调用方（AI 资料的地图图片改由后端直接下载落盘到
+> `ASSETS_DIR`，依据：`src/service/agent_sidecar_service.rs`），端点保留备用。

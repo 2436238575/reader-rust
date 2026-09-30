@@ -4,7 +4,7 @@
 
 FROM alpine:3.19
 
-RUN apk add --no-cache ca-certificates tzdata \
+RUN apk add --no-cache ca-certificates tzdata python3 py3-pip \
     && addgroup -S app && adduser -S -G app app
 
 WORKDIR /app
@@ -14,6 +14,11 @@ COPY target/x86_64-unknown-linux-musl/release/reader-rust /app/reader-rust
 
 # Copy frontend dist
 COPY frontend/dist /app/web/dist
+
+# Copy agent sidecar (AI 资料/地图编排) + pinned deps
+COPY sidecar /app/sidecar
+# 依赖版本以 sidecar/pyproject.toml 为唯一钉版源
+RUN pip install --no-cache-dir ./sidecar
 
 # Create storage directory and hand ownership to the non-root user
 # (SQLite database, file cache and uploaded assets all live under /app/storage)
@@ -30,6 +35,8 @@ ENV STORAGE_DIR=/app/storage
 ENV ASSETS_DIR=/app/storage/assets
 ENV WEB_ROOT=/app/web/dist
 ENV LOG_LEVEL=info
+# Alpine 无 `python` 命令，显式覆盖默认的 `python -m agent_sidecar`
+ENV AGENT_SIDECAR_COMMAND="python3 -m agent_sidecar"
 
 EXPOSE 8080
 
