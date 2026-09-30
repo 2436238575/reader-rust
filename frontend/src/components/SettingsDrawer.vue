@@ -359,12 +359,12 @@ async function handleChangePassword() {
 
 function openSourceManager() {
   close()
-  appStore.showSourceManager = true
+  router.push({ name: 'sources' })
 }
 
 function openWebdavManager() {
   close()
-  appStore.showWebdavManager = true
+  router.push({ name: 'webdav' })
 }
 
 function openAiSettings() {

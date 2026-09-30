@@ -1,93 +1,81 @@
 <template>
-  <Teleport to="body">
-    <Transition name="fade">
-      <div v-if="modelValue" class="modal-overlay" @click="close"></div>
-    </Transition>
+  <div class="sources-view">
+    <SourceManagerHeader
+      :total="sourceStats.total"
+      :enabled="sourceStats.enabled"
+      :filtered="sourceStats.filtered"
+      :selected="selectedFilteredSources.length"
+      :loading="loading"
+      :testing="testingSources"
+      :invalid-count="invalidSources.length"
+      @refresh="loadSources"
+      @import-local="triggerFileImport"
+      @open-subscriptions="subscriptionPanelVisible = true"
+      @export="exportSources"
+      @test-sources="testSources"
+      @delete-invalid="removeInvalidSources"
+      @create="createSource"
+      @back="goBack"
+    />
 
-    <Transition :name="isMobileLayout ? 'slide-right' : 'scale'">
-      <div v-if="modelValue" class="modal-container" @click.self="close">
-        <div class="source-modal">
-          <SourceManagerHeader
-            :total="sourceStats.total"
-            :enabled="sourceStats.enabled"
-            :filtered="sourceStats.filtered"
-            :selected="selectedFilteredSources.length"
-            :loading="loading"
-            :testing="testingSources"
-            :invalid-count="invalidSources.length"
-            @refresh="loadSources"
-            @import-local="triggerFileImport"
-            @open-subscriptions="subscriptionPanelVisible = true"
-            @export="exportSources"
-            @test-sources="testSources"
-            @delete-invalid="removeInvalidSources"
-            @create="createSource"
-            @close="close"
-          />
+    <input
+      ref="fileInputRef"
+      type="file"
+      accept=".json,.txt"
+      class="hidden-input"
+      @change="handleFileImport"
+    />
 
-          <input
-            ref="fileInputRef"
-            type="file"
-            accept=".json,.txt"
-            class="hidden-input"
-            @change="handleFileImport"
-          />
+    <SourceFilterBar
+      :filter-text="filterText"
+      :filter-group="filterGroup"
+      :groups="groupList"
+      :all-selected="allFilteredSelected"
+      :partially-selected="partiallyFilteredSelected"
+      :selected-count="selectedFilteredSources.length"
+      :has-sources="filteredSources.length > 0"
+      @update:filter-text="filterText = $event"
+      @update:filter-group="filterGroup = $event"
+      @toggle-current-selection="toggleFilteredSelection"
+      @clear-selection="clearSelection"
+      @delete-selection="removeSelectedSources"
+    />
 
-          <SourceFilterBar
-            :filter-text="filterText"
-            :filter-group="filterGroup"
-            :groups="groupList"
-            :all-selected="allFilteredSelected"
-            :partially-selected="partiallyFilteredSelected"
-            :selected-count="selectedFilteredSources.length"
-            :has-sources="filteredSources.length > 0"
-            @update:filter-text="filterText = $event"
-            @update:filter-group="filterGroup = $event"
-            @toggle-current-selection="toggleFilteredSelection"
-            @clear-selection="clearSelection"
-            @delete-selection="removeSelectedSources"
-          />
+    <div class="content-grid">
+      <SourceList
+        class="source-list-slot"
+        :sources="filteredSources"
+        :loading="loading"
+        :selected-urls="selectedSourceUrls"
+        :active-url="editingSource?.bookSourceUrl"
+        :empty-title="sources.length ? '没有匹配的书源' : '暂无书源'"
+        :empty-description="
+          sources.length ? '调整搜索关键词或分组筛选后再试' : '可以本地导入、远程同步或手动新增'
+        "
+        @edit="editSource"
+        @toggle-enabled="toggleSource"
+        @toggle-selection="toggleSourceSelection"
+        @delete="removeSource"
+      />
 
-          <div class="content-grid">
-            <SourceList
-              class="source-list-slot"
-              :sources="filteredSources"
-              :loading="loading"
-              :selected-urls="selectedSourceUrls"
-              :active-url="editingSource?.bookSourceUrl"
-              :empty-title="sources.length ? '没有匹配的书源' : '暂无书源'"
-              :empty-description="
-                sources.length
-                  ? '调整搜索关键词或分组筛选后再试'
-                  : '可以本地导入、远程同步或手动新增'
-              "
-              @edit="editSource"
-              @toggle-enabled="toggleSource"
-              @toggle-selection="toggleSourceSelection"
-              @delete="removeSource"
-            />
+      <SourceEditorPanel
+        class="editor-slot"
+        :source="editingSource"
+        :editor-text="editorText"
+        :can-login="canLoginSource"
+        :login-loading="sourceLoginLoading"
+        @update:editor-text="editorText = $event"
+        @format="formatEditor"
+        @save="saveEditor"
+        @login="handleSourceLogin"
+        @create="createSource"
+        @import-local="triggerFileImport"
+      />
+    </div>
 
-            <SourceEditorPanel
-              class="editor-slot"
-              :source="editingSource"
-              :editor-text="editorText"
-              :can-login="canLoginSource"
-              :login-loading="sourceLoginLoading"
-              @update:editor-text="editorText = $event"
-              @format="formatEditor"
-              @save="saveEditor"
-              @login="handleSourceLogin"
-              @create="createSource"
-              @import-local="triggerFileImport"
-            />
-          </div>
-
-          <footer class="modal-footer">
-            <span class="count-info">显示 {{ filteredSources.length }} / {{ sources.length }}</span>
-          </footer>
-        </div>
-      </div>
-    </Transition>
+    <footer class="page-footer">
+      <span class="count-info">显示 {{ filteredSources.length }} / {{ sources.length }}</span>
+    </footer>
 
     <SourceSubscriptionPanel
       v-model:remote-url="remoteUrl"
@@ -134,12 +122,12 @@
         </div>
       </div>
     </Transition>
-  </Teleport>
+  </div>
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch, toRef } from 'vue'
-import { useEscClose } from '../composables/useEscClose'
+import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { onBeforeRouteLeave, useRouter } from 'vue-router'
 import { API_BASE } from '../utils/appBase'
 import {
   getBookSources,
@@ -164,13 +152,12 @@ import {
   toBookSourceDeletePayload,
 } from '../utils/sourceSelection'
 import { appendAuthQueryParams } from '../utils/secureAccess'
-import { useMobileLayout } from '../composables/useMobileLayout'
 import { chunkBookSourceUrls, mergeBookSourceTestResponses } from '../utils/sourceTesting'
-import SourceEditorPanel from './source-manager/SourceEditorPanel.vue'
-import SourceFilterBar from './source-manager/SourceFilterBar.vue'
-import SourceList from './source-manager/SourceList.vue'
-import SourceManagerHeader from './source-manager/SourceManagerHeader.vue'
-import SourceSubscriptionPanel from './source-manager/SourceSubscriptionPanel.vue'
+import SourceEditorPanel from '../components/source-manager/SourceEditorPanel.vue'
+import SourceFilterBar from '../components/source-manager/SourceFilterBar.vue'
+import SourceList from '../components/source-manager/SourceList.vue'
+import SourceManagerHeader from '../components/source-manager/SourceManagerHeader.vue'
+import SourceSubscriptionPanel from '../components/source-manager/SourceSubscriptionPanel.vue'
 
 type SourceSubscription = {
   url: string
@@ -179,20 +166,8 @@ type SourceSubscription = {
 
 const SUBSCRIPTION_KEY = 'reader-source-subscriptions'
 
-const props = defineProps<{
-  modelValue: boolean
-}>()
-
-const emit = defineEmits<{
-  'update:modelValue': [value: boolean]
-}>()
-
-useEscClose(toRef(props, 'modelValue'), () => emit('update:modelValue', false))
-
 const appStore = useAppStore()
-
-// 移动端整屏铺开（对齐导航菜单/设置抽屉的断点），入场动画随之换成侧滑
-const { isMobileLayout } = useMobileLayout()
+const router = useRouter()
 
 const sources = ref<BookSource[]>([])
 const loading = ref(false)
@@ -208,6 +183,8 @@ const subscriptions = ref<SourceSubscription[]>(loadSubscriptions())
 
 const editingSource = ref<BookSource | null>(null)
 const editorText = ref(JSON.stringify(createEmptySource(), null, 2))
+// 最近一次落盘（或载入编辑器）时的文本：与 editorText 不一致即视为未保存
+const lastSavedEditorText = ref(editorText.value)
 const sourceLoginLoading = ref(false)
 const loginPreviewVisible = ref(false)
 const loginPreviewUrl = ref('')
@@ -253,6 +230,8 @@ const canLoginSource = computed(() => {
     return false
   }
 })
+
+const editorDirty = computed(() => editorText.value !== lastSavedEditorText.value)
 
 function createEmptySource(): BookSource {
   return {
@@ -430,11 +409,13 @@ function pruneSelection() {
 function createSource() {
   editingSource.value = null
   editorText.value = JSON.stringify(createEmptySource(), null, 2)
+  lastSavedEditorText.value = editorText.value
 }
 
 function editSource(source: BookSource) {
   editingSource.value = source
   editorText.value = JSON.stringify(source, null, 2)
+  lastSavedEditorText.value = editorText.value
 }
 
 function formatEditor() {
@@ -463,6 +444,8 @@ async function saveEditor() {
     const latest = sources.value.find((item) => item.bookSourceUrl === parsed.bookSourceUrl)
     if (latest) {
       editSource(latest)
+    } else {
+      lastSavedEditorText.value = editorText.value
     }
   } catch (e: unknown) {
     appStore.showToast((e as Error).message || '保存失败', 'error')
@@ -624,63 +607,47 @@ function formatDateForFile() {
   return `${date.getFullYear()}${pad(date.getMonth() + 1)}${pad(date.getDate())}-${pad(date.getHours())}${pad(date.getMinutes())}${pad(date.getSeconds())}`
 }
 
-function close() {
-  emit('update:modelValue', false)
+// 深链接直达时 history 里没有上一条记录，回退落到书架页
+function goBack() {
+  if (window.history.state?.back) {
+    router.back()
+  } else {
+    router.push({ name: 'home' })
+  }
 }
 
-watch(
-  () => props.modelValue,
-  (v) => {
-    if (v) {
-      // 每次打开都重拉：书源可能在别处变动过（阅读器内换源/订阅同步），
-      // 只在空列表时加载会让重开看到旧列表
-      loadSources()
-      if (!editingSource.value && !editorText.value.trim()) {
-        createSource()
-      }
-    }
-  },
-  { immediate: true }
-)
+// 未保存的编辑：路由离开前 confirm 拦截（含 goBack 与浏览器前进后退）
+onBeforeRouteLeave(() => {
+  if (!editorDirty.value) return true
+  return window.confirm('当前书源编辑内容尚未保存，确定要离开吗？')
+})
+
+// 刷新/关标签页由 beforeunload 兜底（原生提示，文案由浏览器决定）
+function handleBeforeUnload(e: BeforeUnloadEvent) {
+  if (editorDirty.value) e.preventDefault()
+}
+
+onMounted(() => {
+  window.addEventListener('beforeunload', handleBeforeUnload)
+  // 每次进入都重拉：书源可能在别处变动过（阅读器内换源/订阅同步）
+  loadSources()
+})
+
+onUnmounted(() => {
+  window.removeEventListener('beforeunload', handleBeforeUnload)
+})
 </script>
 
 <style scoped>
-.modal-overlay {
-  position: fixed;
-  inset: 0;
-  background: var(--overlay-mask-bg);
-  z-index: var(--z-overlay);
-  -webkit-backdrop-filter: var(--overlay-mask-blur);
-  backdrop-filter: var(--overlay-mask-blur);
-}
-
-.modal-container {
-  position: fixed;
-  inset: 0;
-  z-index: var(--z-modal);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: calc(var(--space-6) + var(--safe-area-top)) calc(var(--space-6) + var(--safe-area-right))
-    calc(var(--space-6) + var(--safe-area-bottom)) calc(var(--space-6) + var(--safe-area-left));
-}
-
-.source-modal {
-  width: min(1180px, 100%);
-  height: min(
-    780px,
-    calc(var(--app-height, 100dvh) - var(--safe-area-top) - var(--safe-area-bottom) - 32px)
-  );
-  max-height: min(
-    88vh,
-    calc(var(--app-height, 100dvh) - var(--safe-area-top) - var(--safe-area-bottom) - 32px)
-  );
-  background: var(--color-bg-elevated);
-  border-radius: var(--radius-xl);
+.sources-view {
+  height: 100%;
+  min-height: 0;
+  width: 100%;
+  max-width: 1280px;
+  margin: 0 auto;
+  padding: 0 var(--space-6);
   display: flex;
   flex-direction: column;
-  box-shadow: var(--shadow-xl);
-  overflow: hidden;
 }
 
 .hidden-input {
@@ -693,7 +660,7 @@ watch(
   gap: 14px;
   min-height: 0;
   flex: 1;
-  padding: 14px 24px 0;
+  padding: 14px 0 0;
   overflow: hidden;
 }
 
@@ -702,13 +669,13 @@ watch(
   min-height: 0;
 }
 
-.modal-footer {
+.page-footer {
   min-height: 44px;
   display: flex;
   align-items: center;
   justify-content: flex-start;
   gap: 12px;
-  padding: 8px 24px 14px;
+  padding: 8px 0 calc(14px + var(--safe-area-bottom));
   flex-shrink: 0;
 }
 
@@ -789,18 +756,10 @@ watch(
 }
 
 @media (max-width: 900px) {
-  .modal-container {
-    align-items: stretch;
-    padding: 8px;
-  }
-
-  .source-modal {
-    width: 100%;
-    height: calc(var(--app-height, 100dvh) - 16px);
-    max-height: calc(var(--app-height, 100dvh) - 16px);
-    border-radius: 24px;
+  .sources-view {
     overflow-y: auto;
     -webkit-overflow-scrolling: touch;
+    padding: 0 var(--space-4);
   }
 
   .content-grid {
@@ -808,8 +767,6 @@ watch(
     flex-direction: column;
     overflow: visible;
     flex: none;
-    padding-left: 16px;
-    padding-right: 16px;
   }
 
   .editor-slot {
@@ -822,27 +779,8 @@ watch(
     max-height: min(46vh, 460px);
   }
 
-  .modal-footer {
-    padding: 10px 16px 14px;
-    background: var(--color-bg-elevated);
-    border-top: 1px solid var(--color-border-light);
-  }
-}
-
-/* 移动端与其他管理页一致：整屏铺开，遮罩被完全盖住 */
-@media (max-width: 767px) {
-  .modal-overlay {
-    display: none;
-  }
-
-  .modal-container {
-    padding: 0;
-  }
-
-  .source-modal {
-    height: 100%;
-    max-height: none;
-    border-radius: 0;
+  .page-footer {
+    padding-bottom: calc(14px + var(--safe-area-bottom));
   }
 }
 </style>

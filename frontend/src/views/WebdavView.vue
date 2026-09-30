@@ -1,123 +1,107 @@
 <template>
-  <Teleport to="body">
-    <Transition name="fade">
-      <div v-if="modelValue" class="modal-overlay" @click="close"></div>
-    </Transition>
-    <Transition :name="isMobileLayout ? 'slide-right' : 'scale'">
-      <div v-if="modelValue" class="modal-container" @click.self="close">
-        <section class="webdav-modal">
-          <header class="modal-header">
-            <div>
-              <h2>服务器备份与文件管理</h2>
-              <p class="subtitle">将书架、书源、书签、净化规则和本地阅读配置备份到服务器</p>
-            </div>
-            <button class="icon-btn" @click="close" aria-label="关闭">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <path d="M18 6 6 18M6 6l12 12" />
-              </svg>
-            </button>
-          </header>
-
-          <div class="toolbar">
-            <div class="toolbar-left">
-              <button class="btn btn-primary" :disabled="working" @click="createBackup">
-                备份
-              </button>
-              <button class="btn" :disabled="working || loading" @click="loadFiles(currentPath)">
-                刷新
-              </button>
-              <button class="btn" :disabled="working" @click="triggerUpload">上传</button>
-              <input
-                ref="fileInputRef"
-                type="file"
-                multiple
-                class="hidden-input"
-                @change="handleUpload"
-              />
-            </div>
-            <button
-              class="btn btn-danger"
-              :disabled="working || selectedPaths.length === 0"
-              @click="removeSelected"
-            >
-              删除选中项
-            </button>
-          </div>
-
-          <div class="path-bar">
-            <span class="path-label">当前目录</span>
-            <code>{{ currentPath }}</code>
-          </div>
-
-          <div v-if="errorMessage" class="notice error">
-            <strong>加载失败</strong>
-            <span>{{ errorMessage }}</span>
-          </div>
-
-          <div class="file-list">
-            <div v-if="loading" class="empty-state">正在加载文件列表...</div>
-            <div v-else-if="entries.length === 0" class="empty-state">当前目录为空</div>
-            <div v-else v-for="entry in entries" :key="entry.path" class="file-row">
-              <label class="file-check" v-if="!entry.toParent">
-                <input
-                  type="checkbox"
-                  :checked="selectedPaths.includes(entry.path)"
-                  @change="toggleSelection(entry.path)"
-                />
-              </label>
-              <span v-else class="file-check placeholder"></span>
-
-              <button
-                class="file-main"
-                :class="{ directory: entry.isDirectory }"
-                @click="openEntry(entry)"
-              >
-                <span class="file-icon">{{ entry.isDirectory ? '📁' : '📄' }}</span>
-                <span class="file-name">{{ entry.name }}</span>
-              </button>
-
-              <span class="file-meta">{{
-                entry.isDirectory ? '目录' : formatBytes(entry.size)
-              }}</span>
-              <span class="file-meta">{{ formatDateTime(entry.lastModified) }}</span>
-
-              <div class="file-actions">
-                <button
-                  v-if="!entry.isDirectory && isBackupFile(entry.name)"
-                  class="btn btn-sm"
-                  :disabled="working"
-                  @click="restoreBackup(entry)"
-                >
-                  恢复
-                </button>
-                <button
-                  v-if="!entry.isDirectory"
-                  class="btn btn-sm"
-                  :disabled="working"
-                  @click="downloadEntry(entry)"
-                >
-                  下载
-                </button>
-                <button
-                  v-if="!entry.toParent"
-                  class="btn btn-sm btn-danger"
-                  :disabled="working"
-                  @click="removeEntry(entry)"
-                >
-                  删除
-                </button>
-              </div>
-            </div>
-          </div>
-        </section>
+  <div class="webdav-view">
+    <header class="page-header">
+      <button class="icon-btn" @click="goBack" aria-label="返回" title="返回">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M19 12H5" />
+          <path d="M12 19l-7-7 7-7" />
+        </svg>
+      </button>
+      <div class="title-block">
+        <h2>服务器备份与文件管理</h2>
+        <p class="subtitle">将书架、书源、书签、净化规则和本地阅读配置备份到服务器</p>
       </div>
-    </Transition>
-  </Teleport>
+    </header>
+
+    <div class="toolbar">
+      <div class="toolbar-left">
+        <button class="btn btn-primary" :disabled="working" @click="createBackup">备份</button>
+        <button class="btn" :disabled="working || loading" @click="loadFiles(currentPath)">
+          刷新
+        </button>
+        <button class="btn" :disabled="working" @click="triggerUpload">上传</button>
+        <input
+          ref="fileInputRef"
+          type="file"
+          multiple
+          class="hidden-input"
+          @change="handleUpload"
+        />
+      </div>
+      <button
+        class="btn btn-danger"
+        :disabled="working || selectedPaths.length === 0"
+        @click="removeSelected"
+      >
+        删除选中项
+      </button>
+    </div>
+
+    <div class="path-bar">
+      <span class="path-label">当前目录</span>
+      <code>{{ currentPath }}</code>
+    </div>
+
+    <div v-if="errorMessage" class="notice error">
+      <strong>加载失败</strong>
+      <span>{{ errorMessage }}</span>
+    </div>
+
+    <div class="file-list">
+      <div v-if="loading" class="empty-state">正在加载文件列表...</div>
+      <div v-else-if="entries.length === 0" class="empty-state">当前目录为空</div>
+      <div v-else v-for="entry in entries" :key="entry.path" class="file-row">
+        <label class="file-check" v-if="!entry.toParent">
+          <input
+            type="checkbox"
+            :checked="selectedPaths.includes(entry.path)"
+            @change="toggleSelection(entry.path)"
+          />
+        </label>
+        <span v-else class="file-check placeholder"></span>
+
+        <button class="file-main" :class="{ directory: entry.isDirectory }" @click="openEntry(entry)">
+          <span class="file-icon">{{ entry.isDirectory ? '📁' : '📄' }}</span>
+          <span class="file-name">{{ entry.name }}</span>
+        </button>
+
+        <span class="file-meta">{{ entry.isDirectory ? '目录' : formatBytes(entry.size) }}</span>
+        <span class="file-meta">{{ formatDateTime(entry.lastModified) }}</span>
+
+        <div class="file-actions">
+          <button
+            v-if="!entry.isDirectory && isBackupFile(entry.name)"
+            class="btn btn-sm"
+            :disabled="working"
+            @click="restoreBackup(entry)"
+          >
+            恢复
+          </button>
+          <button
+            v-if="!entry.isDirectory"
+            class="btn btn-sm"
+            :disabled="working"
+            @click="downloadEntry(entry)"
+          >
+            下载
+          </button>
+          <button
+            v-if="!entry.toParent"
+            class="btn btn-sm btn-danger"
+            :disabled="working"
+            @click="removeEntry(entry)"
+          >
+            删除
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
 </template>
 
 <script setup lang="ts">
-import { ref, watch, toRef } from 'vue'
-import { useEscClose } from '../composables/useEscClose'
+import { ref, onMounted } from 'vue'
+import { useRouter } from 'vue-router'
 import { useAppStore } from '../stores/app'
 import {
   deleteWebdavFile,
@@ -136,21 +120,11 @@ import {
   serializeWebdavBackup,
 } from '../utils/webdavBackup'
 import { formatBytes, formatDateTime } from '../utils/format'
-import { useMobileLayout } from '../composables/useMobileLayout'
 
 type EntryRow = WebdavFileEntry & { toParent?: boolean }
 
-const props = defineProps<{
-  modelValue: boolean
-}>()
-
-const emit = defineEmits<{
-  'update:modelValue': [value: boolean]
-}>()
-
-useEscClose(toRef(props, 'modelValue'), () => emit('update:modelValue', false))
-
 const appStore = useAppStore()
+const router = useRouter()
 const fileInputRef = ref<HTMLInputElement | null>(null)
 const currentPath = ref('/')
 const entries = ref<EntryRow[]>([])
@@ -159,24 +133,19 @@ const loading = ref(false)
 const working = ref(false)
 const errorMessage = ref('')
 
-// 移动端整屏铺开（对齐导航菜单/设置抽屉的断点），入场动画随之换成侧滑
-const { isMobileLayout } = useMobileLayout()
-
-watch(
-  () => props.modelValue,
-  (visible) => {
-    if (visible && appStore.isLoggedIn) {
-      void loadFiles(currentPath.value)
-    }
-    if (!visible) {
-      errorMessage.value = ''
-      selectedPaths.value = []
-    }
+onMounted(() => {
+  if (appStore.isLoggedIn) {
+    void loadFiles(currentPath.value)
   }
-)
+})
 
-function close() {
-  emit('update:modelValue', false)
+// 深链接直达时 history 里没有上一条记录，回退落到书架页
+function goBack() {
+  if (window.history.state?.back) {
+    router.back()
+  } else {
+    router.push({ name: 'home' })
+  }
 }
 
 function isBackupFile(name: string) {
@@ -353,47 +322,31 @@ async function restoreBackup(entry: EntryRow) {
 </script>
 
 <style scoped>
-.modal-overlay {
-  position: fixed;
-  inset: 0;
-  background: var(--overlay-mask-bg);
-  -webkit-backdrop-filter: var(--overlay-mask-blur);
-  backdrop-filter: var(--overlay-mask-blur);
-  z-index: var(--z-overlay);
-}
-
-.modal-container {
-  position: fixed;
-  inset: 0;
-  z-index: var(--z-modal);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: var(--space-6);
-}
-
-.webdav-modal {
-  width: min(980px, 100%);
-  max-height: min(88vh, 920px);
-  background: var(--color-bg-elevated);
-  border: 1px solid var(--color-border-light);
-  border-radius: var(--radius-xl);
-  box-shadow: var(--shadow-xl);
+.webdav-view {
+  height: 100%;
+  min-height: 0;
+  width: 100%;
+  max-width: 1100px;
+  margin: 0 auto;
+  padding: 0 var(--space-6);
   display: flex;
   flex-direction: column;
-  overflow: hidden;
 }
 
-.modal-header {
+.page-header {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: var(--space-4);
-  padding: var(--space-5) var(--space-6);
+  gap: var(--space-3);
+  padding: var(--space-5) 0;
   border-bottom: 1px solid var(--color-divider);
+  flex-shrink: 0;
 }
 
-.modal-header h2 {
+.title-block {
+  min-width: 0;
+}
+
+.page-header h2 {
   font-size: var(--text-xl);
   font-weight: 700;
 }
@@ -419,6 +372,7 @@ async function restoreBackup(entry: EntryRow) {
   display: flex;
   align-items: center;
   justify-content: center;
+  flex-shrink: 0;
 }
 
 .icon-btn:hover {
@@ -435,8 +389,9 @@ async function restoreBackup(entry: EntryRow) {
   align-items: center;
   justify-content: space-between;
   gap: var(--space-3);
-  padding: var(--space-4) var(--space-6);
+  padding: var(--space-4) 0;
   border-bottom: 1px solid var(--color-divider);
+  flex-shrink: 0;
 }
 
 .toolbar-left {
@@ -447,7 +402,7 @@ async function restoreBackup(entry: EntryRow) {
 
 .path-bar,
 .notice {
-  margin: var(--space-4) var(--space-6) 0;
+  margin: var(--space-4) 0 0;
 }
 
 .path-bar {
@@ -486,7 +441,7 @@ async function restoreBackup(entry: EntryRow) {
 .file-list {
   flex: 1;
   overflow: auto;
-  padding: var(--space-4) var(--space-6) var(--space-6);
+  padding: var(--space-4) 0 calc(var(--space-6) + var(--safe-area-bottom));
 }
 
 .file-row {
@@ -561,26 +516,9 @@ async function restoreBackup(entry: EntryRow) {
   display: none;
 }
 
-/* 移动端与设置抽屉一样整屏铺开；遮罩被完全盖住，直接隐藏 */
 @media (max-width: 767px) {
-  .modal-overlay {
-    display: none;
-  }
-
-  .modal-container {
-    padding: 0;
-  }
-
-  .webdav-modal {
-    width: 100%;
-    height: 100%;
-    max-height: none;
-    border: none;
-    border-radius: 0;
-  }
-
-  .modal-header {
-    padding-top: calc(var(--space-5) + var(--safe-area-top));
+  .webdav-view {
+    padding: 0 var(--space-4);
   }
 
   /* 四个按钮同一行排得开；极窄屏换行时删除按钮也贴右 */
@@ -590,10 +528,6 @@ async function restoreBackup(entry: EntryRow) {
 
   .toolbar > .btn-danger {
     margin-left: auto;
-  }
-
-  .file-list {
-    padding-bottom: calc(var(--space-6) + var(--safe-area-bottom));
   }
 
   .file-row {

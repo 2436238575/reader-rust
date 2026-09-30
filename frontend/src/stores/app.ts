@@ -104,8 +104,6 @@ export const useAppStore = defineStore('app', () => {
 
   // ─── UI State ───
   const showSettingsDrawer = ref(false)
-  const showSourceManager = ref(false)
-  const showWebdavManager = ref(false)
   const showCacheLibrary = ref(false)
   const showAiSettings = ref(false)
   const isOnline = ref(typeof navigator !== 'undefined' ? navigator.onLine : true)
@@ -239,8 +237,6 @@ export const useAppStore = defineStore('app', () => {
     clearUser,
     updateUserInfo,
     showSettingsDrawer,
-    showSourceManager,
-    showWebdavManager,
     showCacheLibrary,
     showAiSettings,
     isOnline,

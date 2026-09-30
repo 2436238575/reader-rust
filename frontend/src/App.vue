@@ -11,8 +11,6 @@
       </router-view>
     </main>
     <SettingsDrawer v-model="appStore.showSettingsDrawer" />
-    <SourceManager v-model="appStore.showSourceManager" />
-    <WebdavManager v-model="appStore.showWebdavManager" />
     <CacheLibraryModal v-model="appStore.showCacheLibrary" />
     <AiSettingsModal v-model="appStore.showAiSettings" />
 
@@ -28,15 +26,15 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted } from 'vue'
+import { computed, defineAsyncComponent, onMounted, onUnmounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useAppStore } from './stores/app'
 import AppTopBar from './components/AppTopBar.vue'
 import SettingsDrawer from './components/SettingsDrawer.vue'
-import SourceManager from './components/SourceManager.vue'
-import WebdavManager from './components/WebdavManager.vue'
-import CacheLibraryModal from './components/CacheLibraryModal.vue'
-import AiSettingsModal from './components/AiSettingsModal.vue'
+
+// 低频管理弹窗懒加载：不进首包，首次打开时才拉取对应 chunk
+const CacheLibraryModal = defineAsyncComponent(() => import('./components/CacheLibraryModal.vue'))
+const AiSettingsModal = defineAsyncComponent(() => import('./components/AiSettingsModal.vue'))
 
 const route = useRoute()
 const router = useRouter()

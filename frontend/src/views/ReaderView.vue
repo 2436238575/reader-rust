@@ -1997,15 +1997,9 @@ function handleKeydown(e: KeyboardEvent) {
 
   // Escape 优先于输入框守卫：焦点在搜索框里时也要能 ESC 关面板（先交还焦点）
   if (e.key === 'Escape') {
-    // App 级弹窗（设置抽屉/书源管理/WebDAV/缓存库）开着时交给弹窗自己的
+    // App 级弹窗（设置抽屉/缓存库）开着时交给弹窗自己的
     // ESC 处理（useEscClose），别穿透落到阅读器的关闭链/goBack
-    if (
-      appStore.showSettingsDrawer ||
-      appStore.showSourceManager ||
-      appStore.showWebdavManager ||
-      appStore.showCacheLibrary
-    )
-      return
+    if (appStore.showSettingsDrawer || appStore.showCacheLibrary) return
     if (isEditing) activeElement?.blur()
     if (store.activePanel) {
       store.closePanel()

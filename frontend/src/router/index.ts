@@ -39,6 +39,16 @@ const router = createRouter({
       name: 'recent',
       component: () => import('../views/RecentView.vue'),
     },
+    {
+      path: '/sources',
+      name: 'sources',
+      component: () => import('../views/SourcesView.vue'),
+    },
+    {
+      path: '/webdav',
+      name: 'webdav',
+      component: () => import('../views/WebdavView.vue'),
+    },
   ],
 })
 

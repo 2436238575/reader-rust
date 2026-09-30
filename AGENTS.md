@@ -387,9 +387,10 @@ sidecar 使用 pytest（90 个用例，
 
 ## 前端 UI 约定
 
-管理类弹窗/面板（设置抽屉、书源管理、缓存管理、WebDAV 备份、书源订阅等）共用一套形态语言，**新弹窗照此实现，不要发明新样式**：
+管理类弹窗/面板（设置抽屉、缓存管理、AI 设置、书源订阅等）共用一套形态语言，**新弹窗照此实现，不要发明新样式**：
 
-- **桌面端居中卡片，移动端整屏**。断点全站统一 **767px**（顶栏汉堡、整屏菜单、各弹窗同一断点）。整屏时：隐藏遮罩（被完全盖住）、去圆角与边框、头部/底部加 `safe-area` 内边距。参考实现：`SettingsDrawer.vue`、`CacheLibraryModal.vue`、`WebdavManager.vue`、`SourceManager.vue`。
+- **弹窗 or 页面怎么选**：会被阅读器内打开的（AI 设置）必须是弹窗，保持挂载在 `App.vue` 并用 `defineAsyncComponent` 懒加载；只在设置抽屉有入口的重管理功能（书源管理 `/sources`、WebDAV 备份 `/webdav`）做成**独立路由页面**——可深链接、浏览器返回可用，且不进首包。页面式管理屏参考 `views/SourcesView.vue` / `views/WebdavView.vue`（页头左侧返回箭头 + 最大宽度容器，无遮罩/卡片壳）。
+- **桌面端居中卡片，移动端整屏**。断点全站统一 **767px**（顶栏汉堡、整屏菜单、各弹窗同一断点）。整屏时：隐藏遮罩（被完全盖住）、去圆角与边框、头部/底部加 `safe-area` 内边距。参考实现：`SettingsDrawer.vue`、`CacheLibraryModal.vue`、`AiSettingsModal.vue`。
 - **入场动画随形态切换**：用 `matchMedia('(max-width: 767px)')` 驱动一个 `isMobileLayout` ref，移动端 `slide-right`、桌面端 `scale`（`<Transition :name="...">`）。
 - **头部操作区中心对齐**（`align-items: center`），不要顶对齐——按钮高度不一会视觉错位。
 - **图标按钮无边框**（关闭、刷新等）：全局 `button` 已默认无边框，纯图标 + 悬停出底色（`--color-bg-hover`）即可；注意别让「带边框按钮」的共享选择器把它捎上。

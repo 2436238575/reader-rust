@@ -1,5 +1,11 @@
 <template>
   <header class="source-manager-header">
+    <button class="icon-btn back-btn" type="button" title="返回" @click="$emit('back')">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <path d="M19 12H5" />
+        <path d="M12 19l-7-7 7-7" />
+      </svg>
+    </button>
     <div class="title-block">
       <h2>书源管理</h2>
       <p>
@@ -42,11 +48,6 @@
         删除失效<span v-if="invalidCount"> {{ invalidCount }}</span>
       </button>
       <button class="btn btn-primary" type="button" @click="$emit('create')">新增</button>
-      <button class="icon-btn close-btn" type="button" title="关闭" @click="$emit('close')">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <path d="M18 6 6 18M6 6l12 12" />
-        </svg>
-      </button>
     </div>
   </header>
 </template>
@@ -70,7 +71,7 @@ defineEmits<{
   'test-sources': []
   'delete-invalid': []
   create: []
-  close: []
+  back: []
 }>()
 </script>
 
@@ -80,13 +81,13 @@ defineEmits<{
   align-items: center;
   justify-content: space-between;
   gap: 16px;
-  padding: calc(var(--space-5) + var(--safe-area-top)) var(--space-6) var(--space-5);
+  padding: var(--space-5) 0;
   border-bottom: 1px solid var(--color-border-light);
-  background: var(--color-bg-elevated);
   flex-shrink: 0;
 }
 
 .title-block {
+  flex: 1;
   min-width: 0;
 }
 
@@ -108,7 +109,7 @@ defineEmits<{
   gap: var(--space-2);
 }
 
-/* 图标按钮与其他弹窗统一：无边框，悬停出底色 */
+/* 图标按钮与其他页面统一：无边框，悬停出底色 */
 .icon-btn {
   border-radius: var(--radius-md);
   border: none;
@@ -124,6 +125,7 @@ defineEmits<{
   align-items: center;
   justify-content: center;
   color: var(--color-text-secondary);
+  flex-shrink: 0;
 }
 
 .icon-btn svg {
@@ -149,7 +151,13 @@ defineEmits<{
   .source-manager-header {
     position: relative;
     flex-direction: column;
-    padding: calc(var(--space-4) + var(--safe-area-top)) var(--space-4) var(--space-4);
+    align-items: stretch;
+    padding: var(--space-4) 0;
+  }
+
+  .title-block {
+    /* 给左上角的返回按钮让位 */
+    padding-left: 44px;
   }
 
   .header-actions {
@@ -157,10 +165,10 @@ defineEmits<{
     justify-content: flex-start;
   }
 
-  .close-btn {
+  .back-btn {
     position: absolute;
-    top: calc(var(--space-4) + var(--safe-area-top));
-    right: var(--space-4);
+    top: var(--space-4);
+    left: 0;
   }
 }
 </style>
