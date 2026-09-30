@@ -1412,9 +1412,7 @@ async fn handshake_failed(stderr_tail: &StderrTail, reason: &str) -> AppError {
     } else {
         format!("；子进程 stderr 末尾：{}", tail.join(" ┃ "))
     };
-    AppError::BadRequest(format!(
-        "{reason}{detail}。请确认：Python ≥3.11 可用（Windows 上 `python` 可能命中 Microsoft          Store 占位符）；sidecar 依赖已装进该 Python（pip install httpx==0.28.1          pydantic==2.11.7，或让 AGENT_SIDECAR_COMMAND 指向 sidecar/.venv 里的 python）；          或安装 uv 让依赖自动管理（AGENT_SIDECAR_UV 可指定路径）"
-    ))
+    AppError::BadRequest(format!("{reason}{detail}"))
 }
 
 /// `sidecar/.venv` 里的解释器路径（存在才返回 Some）。
