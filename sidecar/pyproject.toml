@@ -1,0 +1,24 @@
+[project]
+name = "agent-sidecar"
+version = "0.1.0"
+description = "Reader-Rust AI 资料编排 sidecar（stdio NDJSON 协议）"
+requires-python = ">=3.11"
+dependencies = [
+    # 版本必须钉死：Docker（musl）镜像里现场 pip install，
+    # 浮动版本可能解析到没有 musllinux wheel 的组合导致现场编译
+    "httpx==0.28.1",
+    "pydantic==2.11.7",
+]
+
+[project.optional-dependencies]
+dev = ["pytest==8.3.5"]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["agent_sidecar"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
