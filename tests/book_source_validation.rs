@@ -26,6 +26,8 @@ async fn empty_page() -> Html<&'static str> {
 
 #[tokio::test]
 async fn source_availability_is_valid_when_search_or_explore_has_results() {
+    // 测试上游监听 127.0.0.1：显式放行私网出站（url_guard 默认拦截私网）
+    reader_rust::crawler::url_guard::set_allow_private_network(true);
     let app = Router::new()
         .route("/search-ok", get(search_ok))
         .route("/explore-ok", get(explore_ok))

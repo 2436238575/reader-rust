@@ -15,6 +15,11 @@ use std::sync::{
 };
 use uuid::Uuid;
 
+/// 测试上游监听 127.0.0.1：显式放行私网出站（url_guard 默认拦截私网）。
+fn allow_private_network() {
+    reader_rust::crawler::url_guard::set_allow_private_network(true);
+}
+
 #[test]
 fn book_source_deserializes_stringified_rule_objects() {
     let source: BookSource = serde_json::from_value(json!({
@@ -328,6 +333,7 @@ async fn search_page(headers: HeaderMap) -> Html<&'static str> {
 
 #[tokio::test]
 async fn search_pipeline_uses_url_analyzer_final_url_and_login_check_js() {
+    allow_private_network();
     let app = Router::new().route("/search", get(search_page));
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
@@ -395,6 +401,7 @@ async fn next_chapter_page(State(hits): State<Arc<AtomicUsize>>) -> Html<&'stati
 
 #[tokio::test]
 async fn content_pagination_stops_before_next_chapter_url() {
+    allow_private_network();
     let next_chapter_hits = Arc::new(AtomicUsize::new(0));
     let app = Router::new()
         .route("/chapters/1.html", get(content_page_one))

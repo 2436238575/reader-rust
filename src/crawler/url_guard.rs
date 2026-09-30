@@ -4,18 +4,17 @@
 //! 远程书源导入、`bookSourceProxy`、`aiProxy` 等。如果没有约束，它们就是一个
 //! 可以被用来探测/读取内网（云元数据 `169.254.169.254`、本地管理端口等）的代理。
 //!
-//! 默认**放行**私网地址（`ALLOW_PRIVATE_NETWORK=true`）：本项目默认按自托管单用户
-//! 场景使用，局域网书源、本地书源服务（如 `http://192.168.x.x:9999`）、本地模型服务
-//! 都属正常用法，参考实现（阅读/Legado）同样不做限制。
+//! 默认**拦截**私网地址（`ALLOW_PRIVATE_NETWORK=false`）：安全优先，公网暴露的
+//! 部署开箱即是安全姿态。拦截范围覆盖私网、环回、链路本地、ULA、CGNAT 等地址，
+//! 并禁止 302 跳转到这些地址。
 //!
-//! 多用户或公网暴露的部署应显式设为 `ALLOW_PRIVATE_NETWORK=false` 并配置
-//! `PRIVATE_NETWORK_WHITELIST` 白名单，此时会拦截私网、环回、链路本地、ULA、
-//! CGNAT 等地址，并禁止 302 跳转到这些地址——否则任意用户都能把服务端当成
-//! 内网探测代理。
+//! 自托管单用户、书源/模型服务在局域网的场景，有两种放行方式：
+//! - `PRIVATE_NETWORK_WHITELIST` 精确放行（推荐）：名单非空时只有命中的目标
+//!   可以出站；**名单为空时一律拦截**（不与 `ALLOW_PRIVATE_NETWORK=true` 等同）。
+//! - `ALLOW_PRIVATE_NETWORK=true` 整体放行私网：回到参考实现（阅读/Legado）
+//!   的行为，公网/多用户部署不应开启。
 //!
-//! 白名单语义：`ALLOW_PRIVATE_NETWORK=false` 启用白名单机制，**名单为空时全部
-//! 放行**（等同 `true`，方便先设 false 再逐步收紧），名单非空时只有命中的目标
-//! 可以出站。条目支持 IP、CIDR 网段与域名，均可带端口。
+//! 白名单条目支持 IP、CIDR 网段与域名，均可带端口。
 //!
 //! 命中策略时抛出 [`OutboundBlocked`]，上层据此回一个带原因的 4xx，而不是
 //! 被兜底成看不出所以然的 "internal error"。
@@ -30,8 +29,8 @@ use url::{Host, Url};
 /// 一次请求最多跟随的重定向跳数。
 const MAX_REDIRECTS: usize = 5;
 
-/// 与 `AppConfig::allow_private_network` 的默认值保持一致（自托管单用户放行私网）。
-static ALLOW_PRIVATE_NETWORK: AtomicBool = AtomicBool::new(true);
+/// 与 `AppConfig::allow_private_network` 的默认值保持一致（默认拦截私网）。
+static ALLOW_PRIVATE_NETWORK: AtomicBool = AtomicBool::new(false);
 
 /// 私网白名单（`PRIVATE_NETWORK_WHITELIST`），由 bootstrap 按配置初始化。
 /// 读多写少（只在启动时写一次、测试里偶尔重置），用 RwLock 而不是 OnceLock。
@@ -137,11 +136,6 @@ pub fn private_whitelist_len() -> usize {
     PRIVATE_WHITELIST.read().unwrap().len()
 }
 
-/// 白名单为空 = 未启用收紧（`ALLOW_PRIVATE_NETWORK=false` 时也全部放行）。
-fn whitelist_is_empty() -> bool {
-    PRIVATE_WHITELIST.read().unwrap().is_empty()
-}
-
 /// 目标是否命中白名单（`url.host()` 枚举避免把 IPv6 字面量误判成域名）。
 fn url_matches_whitelist(url: &Url) -> bool {
     let port = url.port_or_known_default();
@@ -224,10 +218,10 @@ fn ip_in_cidr(ip: &IpAddr, net: &IpAddr, prefix: u8) -> bool {
     }
 }
 
-/// 防护是否实际生效：`ALLOW_PRIVATE_NETWORK=false` 且白名单非空。
-/// 白名单为空时按用户配置「全部放行」，等同 `true`。
+/// 防护是否实际生效：`ALLOW_PRIVATE_NETWORK=false` 即生效。
+/// 白名单只决定「例外放行谁」——名单为空时无任何例外，私网目标一律拦截。
 fn guard_active() -> bool {
-    !private_network_allowed() && !whitelist_is_empty()
+    !private_network_allowed()
 }
 
 /// 出站策略拒绝。
@@ -561,15 +555,15 @@ mod tests {
     /// 改全局守卫状态的测试互斥：并行测试里 allow/whitelist 互相踩会偶发失败。
     static TEST_SERIALIZER: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
+    /// 回到开箱默认：拦截私网、白名单为空（一律拦截）。
     fn restore_guard_defaults() {
-        set_allow_private_network(true);
+        set_allow_private_network(false);
         set_private_network_whitelist(Vec::new());
     }
 
     #[test]
     fn redirect_target_check_blocks_literal_internal() {
         let _lock = TEST_SERIALIZER.lock().unwrap();
-        // 空白名单 = 全部放行，先配一条名单让防护真正生效
         set_allow_private_network(false);
         set_private_network_whitelist(parse_private_whitelist("192.168.100.0/24").unwrap());
         assert!(check_redirect_target(&Url::parse("http://127.0.0.1/").unwrap()).is_err());
@@ -698,13 +692,15 @@ mod tests {
     }
 
     #[test]
-    fn empty_whitelist_with_allow_false_allows_everything() {
+    fn empty_whitelist_with_allow_false_blocks_everything_internal() {
         let _lock = TEST_SERIALIZER.lock().unwrap();
         set_allow_private_network(false);
         set_private_network_whitelist(Vec::new());
-        // 名单为空 = 全部放行（等同 allow=true），不做 DNS 检查直接过
-        assert!(ensure_outbound_url_str_allowed_blocking("http://127.0.0.1/").is_ok());
-        assert!(ensure_outbound_url_str_allowed_blocking("http://192.168.1.1:9999/").is_ok());
+        // 名单为空 = 无任何例外，私网目标一律拦截（字面 IP 无需 DNS 即可判定）
+        assert!(ensure_outbound_url_str_allowed_blocking("http://127.0.0.1/").is_err());
+        assert!(ensure_outbound_url_str_allowed_blocking("http://192.168.1.1:9999/").is_err());
+        // 环回主机名走主机名黑名单，同样拦
+        assert!(ensure_outbound_url_str_allowed_blocking("http://localhost:6379/").is_err());
         restore_guard_defaults();
     }
 }

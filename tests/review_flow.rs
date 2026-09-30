@@ -302,6 +302,8 @@ impl TestServer {
             admin_password: "password123".to_string(),
             // 集成测试从同一地址重复登录，豁免 IP 限速
             rate_limit_disabled: true,
+            // 假上游监听 127.0.0.1：显式放行私网出站（默认拦截）
+            allow_private_network: true,
             ..AppConfig::default()
         };
 

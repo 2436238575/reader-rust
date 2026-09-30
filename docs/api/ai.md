@@ -111,7 +111,7 @@ POST /reader3/aiProxy
 | `kind`            | string? | `text`/`image`/`speech`，用于服务端配置的默认值补全                                                     |
 | `body`            | object  | 透传给上游的请求体                                                                                      |
 
-> **注意**：`useServerConfig=false`（客户端自带端点，含 `fullUrl=true` 任意路径）等价于向任意地址发 POST 的通用代理——单用户下登录者即所有者，不再收敛；公网暴露时请配合 `ALLOW_PRIVATE_NETWORK=false`。
+> **注意**：`useServerConfig=false`（客户端自带端点，含 `fullUrl=true` 任意路径）等价于向任意地址发 POST 的通用代理——单用户下登录者即所有者，不再收敛；出站安全由 `ALLOW_PRIVATE_NETWORK=false`（默认）兜底。
 
 响应为上游响应体原样透传（上限 32MB，非 JSON 包装）。所有目标地址经过出站守卫（`ALLOW_PRIVATE_NETWORK=false` 时拒绝私网/环回/链路本地地址，含重定向逐跳检查）。
 

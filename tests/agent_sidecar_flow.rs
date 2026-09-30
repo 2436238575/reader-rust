@@ -73,6 +73,8 @@ impl TestServer {
             admin_username: TEST_USERNAME.to_string(),
             admin_password: TEST_PASSWORD.to_string(),
             rate_limit_disabled: true,
+            // 假上游监听 127.0.0.1：显式放行私网出站（默认拦截）
+            allow_private_network: true,
             agent_sidecar_command: format!("node \"{}\"", fake_script.display()),
             agent_sidecar_chapter_timeout_secs: chapter_timeout_secs,
             ..AppConfig::default()

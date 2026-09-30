@@ -39,18 +39,16 @@ pub struct AppConfig {
     pub review_cache_user_limit_bytes: u64,
     /// 出站请求是否允许访问私网/环回/链路本地地址。
     ///
-    /// 默认 `true`：本项目按自托管单用户场景使用，局域网书源、本地书源服务
-    /// （如 `http://192.168.x.x:9999`）、本地模型服务都属正常用法，参考实现
-    /// （阅读/Legado）同样不做限制。
-    ///
-    /// **公网暴露的部署应设为 `false`**，否则任何人拿到登录态后都能把服务端
-    /// 当成内网探测代理（读取云元数据、扫内网端口）。
+    /// 默认 `false`（安全优先）：公网暴露的部署开箱即不会被打成内网探测代理
+    /// （读取云元数据、扫内网端口）。自托管单用户场景下局域网书源、本地书源服务
+    /// （如 `http://192.168.x.x:9999`）、本地模型服务属正常用法，可显式设为 `true`
+    /// 整体放行，或保持 `false` 并用 `PRIVATE_NETWORK_WHITELIST` 精确放行。
     pub allow_private_network: bool,
     /// 私网白名单（逗号分隔），仅在 `ALLOW_PRIVATE_NETWORK=false` 时生效。
     ///
     /// 条目可以是 IP（`192.168.100.99`）、网段（`192.168.100.0/24`）或域名
     /// （`nas.lan`），都可带端口（`192.168.100.99:9999`——带端口时目标端口也须一致）。
-    /// **名单为空时全部放行**（等同 `ALLOW_PRIVATE_NETWORK=true`）；名单非空时
+    /// **名单为空时一律拦截**（不与 `ALLOW_PRIVATE_NETWORK=true` 等同）；名单非空时
     /// 只有命中的目标可以出站，其余私网/环回地址一律拦截。
     pub private_network_whitelist: String,
     /// 允许跨域访问的来源列表（逗号分隔，如 `https://a.example,https://b.example`）。
@@ -87,7 +85,7 @@ pub struct AppConfig {
 impl Default for AppConfig {
     fn default() -> Self {
         Self {
-            server_host: "0.0.0.0".to_string(),
+            server_host: "127.0.0.1".to_string(),
             server_port: 8080,
             database_url: "sqlite:storage/reader.db?mode=rwc".to_string(),
             storage_dir: "storage".to_string(),
@@ -105,7 +103,7 @@ impl Default for AppConfig {
             cache_cover_limit_bytes: 256 * 1024 * 1024,
             review_cache_ttl_secs: 7 * 24 * 3600,
             review_cache_user_limit_bytes: 64 * 1024 * 1024,
-            allow_private_network: true,
+            allow_private_network: false,
             private_network_whitelist: String::new(),
             cors_allowed_origins: String::new(),
             rate_limit_disabled: false,

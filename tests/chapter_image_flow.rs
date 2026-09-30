@@ -202,6 +202,8 @@ impl TestServer {
             admin_username: "reader1".to_string(),
             admin_password: "password123".to_string(),
             rate_limit_disabled: true,
+            // 假上游监听 127.0.0.1：显式放行私网出站（默认拦截）
+            allow_private_network: true,
             ..AppConfig::default()
         };
 

@@ -97,7 +97,7 @@
 - ServeDir 跟随符号链接、WEB_ROOT fallback 暴露全部文件、Windows 下 `jwt_secret` 无 ACL：部署目录不要混入敏感内容
 - 依赖遗留：sqlx 0.7.4 待升级 0.8（`rustls-webpki` 0.101 的三条 advisory 随之解决）；`rsa`（经 jsonwebtoken 拉入，HS256-only 不可达）无修复版本
 
-**公网部署要点**：`ALLOW_PRIVATE_NETWORK=false`，并显式配置 `ADMIN_PASSWORD`（或首启后到设置里改密）
+**公网部署要点**：`ALLOW_PRIVATE_NETWORK=false`（已是默认值），并显式配置 `ADMIN_PASSWORD`（或首启后到设置里改密）
 （旧的 `SECURE` 开关已随 JWT 重构删除）
 
 ## 配额默认值

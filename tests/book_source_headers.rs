@@ -37,6 +37,8 @@ async fn protected_toc(headers: HeaderMap) -> Json<Value> {
 
 #[tokio::test]
 async fn chapter_list_requests_include_legacy_source_headers() {
+    // 测试上游监听 127.0.0.1：显式放行私网出站（url_guard 默认拦截私网）
+    reader_rust::crawler::url_guard::set_allow_private_network(true);
     let app = Router::new().route("/toc", get(protected_toc));
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();

@@ -1073,7 +1073,7 @@ pub async fn read_remote_source_file(
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
     );
     if url_guard::private_network_allowed() {
-        // 仅单用户本地部署允许自签证书（内网书源常有自签证书）
+        // 仅显式放行私网（ALLOW_PRIVATE_NETWORK=true）时容忍自签证书（内网书源常见）
         builder = builder.danger_accept_invalid_certs(true);
     }
     let client = builder.build().map_err(|e| AppError::Internal(e.into()))?;
