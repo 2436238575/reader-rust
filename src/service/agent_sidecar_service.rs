@@ -878,13 +878,23 @@ impl AgentSidecarService {
             .resolve_source(user_ns, book)
             .await?
             .ok_or_else(|| AppError::BadRequest("书源不存在".to_string()))?;
-        let toc_url = book
-            .toc_url
-            .as_deref()
-            .filter(|v| !v.trim().is_empty())
-            .unwrap_or(&book.book_url);
+        let toc_url = match book.toc_url.as_deref().filter(|v| !v.trim().is_empty()) {
+            Some(toc_url) => toc_url.to_string(),
+            // 书架条目可能不持久化 tocUrl（部分书源的目录地址由书籍信息规则
+            // 动态算出，如 FQWeb 的 info→catalog）——与 getChapterList handler
+            // 对齐：缺 tocUrl 时先经 book_info 回退拿真实目录地址
+            None => self
+                .book_service
+                .get_book_info(user_ns, &source, &book.book_url, false)
+                .await?
+                .toc_url
+                .as_deref()
+                .filter(|v| !v.trim().is_empty())
+                .unwrap_or(&book.book_url)
+                .to_string(),
+        };
         self.book_service
-            .get_chapter_list_with_cache(user_ns, &source, &repair_encoded_url(toc_url), false)
+            .get_chapter_list_with_cache(user_ns, &source, &repair_encoded_url(&toc_url), false)
             .await
     }
 

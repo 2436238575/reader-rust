@@ -1,6 +1,6 @@
 """地图提示词：制图约束包装（vitest 用例移植）+ 兜底提示词。"""
 
-from agent_sidecar.map_prompt import build_fallback_map_prompt, build_map_image_prompt
+from agent_sidecar.map_prompt import build_fallback_map_prompt, build_map_image_prompt, request_map_image
 
 RAW_PROMPT = (
     "绘制一张包含两个独立区域的地图：左侧为现代化的地球大学机房，"
@@ -46,3 +46,34 @@ def test_fallback_map_prompt_falls_back_to_summary():
 def test_fallback_map_prompt_uses_scroll_style_when_nothing_known():
     prompt = build_fallback_map_prompt({"locations": [], "summary": ""}, {"name": "X"})
     assert "保留未知区域，以卷轴地图风格呈现。" in prompt
+
+
+def test_sensenova_always_gets_watermark_false():
+    """sensenova 系列模型始终传 watermark=False；size 里的空格被清理。"""
+    import httpx
+    from agent_sidecar.model_client import ModelClient
+    from agent_sidecar.types import ImageModelEndpoint
+
+    captured = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        import json as _json
+        captured["body"] = _json.loads(request.content)
+        return httpx.Response(200, json={"data": [{"b64_json": "aGk="}]})
+
+    client = ModelClient(transport=httpx.MockTransport(handler))
+    endpoint = ImageModelEndpoint(
+        baseUrl="https://token.sensenova.cn",
+        apiKey="k",
+        model="sensenova-u1.5-lite",
+        imageSize="2048 x 2048",
+    )
+    request_map_image(client, endpoint, "p")
+    assert captured["body"]["watermark"] is False
+    assert captured["body"]["size"] == "2048x2048"
+
+    # 非 sensenova 不传 watermark
+    captured.clear()
+    other = ImageModelEndpoint(baseUrl="https://api.openai.com", apiKey="k", model="dall-e-3")
+    request_map_image(client, other, "p")
+    assert "watermark" not in captured["body"]

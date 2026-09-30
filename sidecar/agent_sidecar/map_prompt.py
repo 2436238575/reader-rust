@@ -53,19 +53,24 @@ def build_fallback_map_prompt(memory: dict, book: dict) -> str:
 
 
 def request_map_image(client: ModelClient, endpoint: ImageModelEndpoint, prompt: str) -> dict:
-    """调用图片模型，返回 {b64Json?, imageUrl?}。失败抛 ModelError（Rust 据此走关系图兜底）。"""
+    """调用图片模型，返回 {b64Json?, imageUrl?}。失败抛 ModelError（Rust 据此走关系图兜底）。
+
+    sensenova（日日新）系列需要 watermark=False，否则返回的图带官方水印。
+    size 里可能含空格（"2048 x 2048"），上游不接受，统一清理。
+    """
     if not endpoint.ready():
         raise ModelError("图片模型未配置")
-    data = client.images(
-        endpoint,
-        {
-            "model": endpoint.model,
-            "prompt": build_map_image_prompt(prompt),
-            "size": endpoint.imageSize or "1024x1024",
-            "response_format": "b64_json",
-            "n": 1,
-        },
-    )
+    size = (endpoint.imageSize or "1024x1024").replace(" ", "")
+    body = {
+        "model": endpoint.model,
+        "prompt": build_map_image_prompt(prompt),
+        "size": size,
+        "response_format": "b64_json",
+        "n": 1,
+    }
+    if _is_sensenova(endpoint):
+        body["watermark"] = False
+    data = client.images(endpoint, body)
     items = data.get("data") if isinstance(data, dict) else None
     first = items[0] if isinstance(items, list) and items and isinstance(items[0], dict) else None
     b64 = first.get("b64_json") if first else None
@@ -73,3 +78,7 @@ def request_map_image(client: ModelClient, endpoint: ImageModelEndpoint, prompt:
     if not b64 and not image_url:
         raise ModelError("地图生成结果为空")
     return {"b64Json": b64, "imageUrl": image_url}
+
+
+def _is_sensenova(endpoint: ImageModelEndpoint) -> bool:
+    return "sensenova" in (endpoint.model + endpoint.baseUrl).lower()
