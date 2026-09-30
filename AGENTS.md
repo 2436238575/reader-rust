@@ -22,7 +22,7 @@ Reader-Rust 是 [阅读3.0](https://github.com/hectorqin/reader) 的 Rust 重写
 cargo run                      # 开发模式运行，默认监听 0.0.0.0:8080
 cargo build                    # 调试构建
 cargo build --release          # 发布构建
-cargo test                     # 全部测试（Rust 侧共 233 个，另有 2 个真实网络用例默认忽略）
+cargo test                     # 全部测试（Rust 侧共 273 个，另有 2 个真实网络用例默认忽略）
 cargo test <关键字>             # 按名称过滤测试
 cargo clippy --all-targets     # 静态检查
 cargo fmt                      # 格式化
@@ -134,12 +134,15 @@ cp .env.example .env
 ```
 src/
   main.rs / lib.rs        入口，各十余行
-  api/                    路由与 HTTP 处理（axum），18 文件约 7000 行
+  api/                    路由与 HTTP 处理（axum），19 文件约 7000 行
     router.rs             全部路由定义 + 鉴权分组（唯一真相来源）
     handlers/             15 个领域模块：book、book_source、user、bookmark、
                           book_group、ai_book、ai_model、ai_proxy、agent、replace_rule、
                           image、webdav、cache（缓存清理与统计）、chapter_image、
-                          review（章评/段评）；另有共享的 multipart.rs（限量读取工具）
+                          review（章评/段评）；另有共享的 multipart.rs（限量读取工具）。
+                          webdav 的协议语义（PROPFIND/PUT/LOCK 等）由 dav-server
+                          crate 实现，本模块只做 Basic 认证、按用户隔离目录与
+                          Windows 路径加固
   auth/                   JWT 鉴权，4 文件
     jwt.rs                Claims 定义与 HS256 编解码
     secret.rs             JWT_SECRET 解析与持久化
@@ -347,13 +350,15 @@ id = `md5(去掉查询串的地址)`；抓取失败时按登记时的书籍上�
 
 ## 测试
 
-Rust 侧共 **260 个测试**（179 个内联单元测试 + 81 个集成用例，另有 2 个 `#[ignore]` 的真实网络用例），分布为：
+Rust 侧共 **273 个测试**（184 个内联单元测试 + 89 个集成用例，另有 2 个 `#[ignore]` 的真实网络用例），分布为：
 
-- `tests/` 下 15 个集成测试文件（81 个用例），其中 `book_source_compat.rs` 用例最多（17 个）；
-  `auth_flow.rs`、`review_flow.rs`、`chapter_image_flow.rs` 与 `image_pipeline.rs` 起真实监听端口，
-  前者覆盖 401、静态回落、缓存清理与改密吊销令牌，其余各用一个假上游覆盖评论规则（7 天缓存、
-  按类型清理）、章节配图（配图规则、无图不报错、正文 HTML 内嵌图片透传）与图片管道
-  （封面地址改写、HEIC→JPEG、过期签名回源自愈、缓存命中不重抓）；
+- `tests/` 下 16 个集成测试文件（89 个用例），其中 `book_source_compat.rs` 用例最多（17 个）；
+  `auth_flow.rs`、`review_flow.rs`、`chapter_image_flow.rs`、`image_pipeline.rs` 与
+  `webdav_flow.rs` 起真实监听端口，前者覆盖 401、静态回落、缓存清理与改密吊销令牌，
+  中间三个各用一个假上游覆盖评论规则（7 天缓存、按类型清理）、章节配图（配图规则、
+  无图不报错、正文 HTML 内嵌图片透传）与图片管道（封面地址改写、HEIC→JPEG、过期签名
+  回源自愈、缓存命中不重抓），`webdav_flow.rs` 覆盖 WebDAV 协议端点（Basic 认证、
+  CRUD、Depth、Destination、锁语义与 Windows 路径安全门）；
 - `agent_sidecar_flow.rs` 用 Node 假 sidecar（`tests/helpers/fake_agent_sidecar.mjs`）
   走全流程：批量更新、章节跳过、工具回调（正文/搜索钳制）、地图落盘与降级、看门狗与取消
   （机器上需要有 Node）；

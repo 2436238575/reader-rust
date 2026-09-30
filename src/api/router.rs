@@ -52,6 +52,10 @@ pub fn build_router(state: AppState) -> Router {
 
     // ── WebDAV 文件接口：自带 HTTP Basic 认证，不经 JWT ──
     let webdav = Router::new()
+        // 裸根与尾斜杠根都要显式注册：matchit 0.7 的 *path 通配不匹配空段，
+        // 缺了会落到静态文件兜底上（PROPFIND 变成 405）
+        .route("/reader3/webdav", any(handlers::webdav_handler))
+        .route("/reader3/webdav/", any(handlers::webdav_handler))
         .route("/reader3/webdav/*path", any(handlers::webdav_handler))
         .with_state(state.clone());
 

@@ -47,3 +47,9 @@ quick-xml = "0.41"
 zip = { version = "0.6", default-features = false, features = ["deflate"] }
 heic-rs = { version = "0.1", default-features = false, features = ["std"] }
 jpeg-encoder = "0.7"
+# WebDAV 协议实现（PROPFIND/PUT/LOCK 等），litmus 验证过的成熟实现；
+# Basic 认证与 Windows 路径加固仍在 axum 层（src/api/handlers/webdav.rs）。
+dav-server = { version = "0.11", default-features = false, features = ["localfs"] }
+# 直通 dav-server 的请求体不走 axum 提取器，DefaultBodyLimit 对其无效，
+# 用 Limited 显式保持 WebDAV PUT 的体积上限。
+http-body-util = "0.1"

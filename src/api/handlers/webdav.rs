@@ -3,26 +3,28 @@ use crate::api::AppState;
 use crate::auth::CurrentUser;
 use crate::error::error::{ApiResponse, AppError};
 use crate::util::time::now_ts;
-use axum::http::{HeaderMap, Method, StatusCode};
+use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::{
-    body::Bytes,
-    extract::{ConnectInfo, Multipart, Path, Query, State},
+    extract::{ConnectInfo, Multipart, Path, Query, Request, State},
     Json,
 };
 use base64::Engine;
+use dav_server::{localfs::LocalFs, memls::MemLs, DavHandler};
+use http_body_util::{BodyExt, Limited};
 use serde::Deserialize;
 use serde_json::Value;
 use std::path::PathBuf;
+use std::sync::OnceLock;
 use tokio::fs;
-use uuid::Uuid;
 
 #[derive(Debug, Deserialize)]
 pub struct WebdavPathRequest {
     pub path: Option<String>,
 }
 
-/// WebDAV 上传单文件上限（multipart 字段不受 DefaultBodyLimit 约束，必须自行限量）。
+/// WebDAV 上传/PUT 单文件上限。multipart 字段不受 DefaultBodyLimit 约束，
+/// 直通 dav-server 的 PUT 体也不走 axum 提取器，两处都必须自行限量。
 const MAX_WEBDAV_UPLOAD_BYTES: usize = 100 * 1024 * 1024;
 /// 目录路径字段的上限，超出即异常请求。
 const MAX_WEBDAV_PATH_FIELD_BYTES: usize = 4 * 1024;
@@ -215,13 +217,15 @@ pub async fn delete_webdav_file_list(
     Ok(Json(ApiResponse::ok(Value::String("".to_string()))))
 }
 
+/// WebDAV 协议入口：协议语义由 dav-server 实现（litmus 验证过的
+/// PROPFIND/PUT/MOVE/LOCK 等行为），本层只负责 Basic 认证、按用户隔离目录、
+/// Windows 路径加固与上传体积上限。
 pub async fn webdav_handler(
     State(state): State<AppState>,
     ConnectInfo(addr): ConnectInfo<std::net::SocketAddr>,
+    path: Option<Path<String>>,
     headers: HeaderMap,
-    method: Method,
-    Path(path): Path<String>,
-    body: Bytes,
+    req: Request,
 ) -> Response {
     // Basic 认证与登录接口共享限速，按对端 IP 记账
     let client_ip = addr.ip().to_string();
@@ -233,26 +237,33 @@ pub async fn webdav_handler(
         Ok(h) => h,
         Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
     };
-    let rel_path = format!("/{}", path);
-    let rel = match normalize_rel_path(&rel_path) {
-        Ok(p) => p,
-        Err(_) => return StatusCode::BAD_REQUEST.into_response(),
-    };
-    let full = join_parts(&home, &rel);
-
-    match method.as_str() {
-        "OPTIONS" => StatusCode::OK.into_response(),
-        "PROPFIND" => webdav_propfind(&full, &rel_path).await,
-        "MKCOL" => webdav_mkcol(&full).await,
-        "PUT" => webdav_put(&full, body).await,
-        "GET" => webdav_get(&full).await,
-        "DELETE" => webdav_delete(&full).await,
-        "MOVE" => webdav_move(&home, &full, &headers).await,
-        "COPY" => webdav_copy(&home, &full, &headers).await,
-        "LOCK" => webdav_lock(&rel_path),
-        "UNLOCK" => webdav_unlock(&headers),
-        _ => StatusCode::METHOD_NOT_ALLOWED.into_response(),
+    // dav-server 自己会拦路径逃逸（`..` 越级、段内 %2f），但不认识 Windows 的
+    // 盘符/设备名/ADS/结尾点空格，分发前按原有规则再拦一遍（Path 通配值已
+    // percent-decode）。裸根路径 /reader3/webdav 无通配参数，path 为 None。
+    let rel = format!("/{}", path.map(|p| p.0).unwrap_or_default());
+    if normalize_rel_path(&rel).is_err() {
+        return StatusCode::BAD_REQUEST.into_response();
     }
+
+    let dav = DavHandler::builder()
+        .filesystem(LocalFs::new(&home, false, false, false))
+        .locksystem(memls())
+        .strip_prefix("/reader3/webdav")
+        .build_handler();
+    let (parts, body) = req.into_parts();
+    // DefaultBodyLimit 只约束 axum 提取器，直通 dav-server 的 PUT 体自行限量；
+    // dav-server 要求 body 错误类型是具体 StdError，axum 0.7 的
+    // BoxError（Box<dyn Error> 不实现 Error）不满足，统一映射为 io::Error。
+    let body = Limited::new(body, MAX_WEBDAV_UPLOAD_BYTES).map_err(std::io::Error::other);
+    let req = Request::from_parts(parts, body);
+    dav.handle(req).await.into_response()
+}
+
+/// 全进程共享一把真实内存锁。MemLs 是 Arc 句柄，必须全局唯一——
+/// 每请求新建等于锁状态恒为空。
+fn memls() -> Box<MemLs> {
+    static LS: OnceLock<MemLs> = OnceLock::new();
+    Box::new(LS.get_or_init(|| *MemLs::new()).clone())
 }
 
 async fn resolve_webdav_user(
@@ -337,265 +348,6 @@ fn build_relative_path(parts: &[String], name: &str) -> String {
     }
 }
 
-async fn webdav_propfind(full: &PathBuf, rel: &str) -> Response {
-    let full = full.clone();
-    let rel = rel.to_string();
-    tokio::task::spawn_blocking(move || webdav_propfind_sync(full, rel))
-        .await
-        .unwrap_or_else(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response())
-}
-
-/// [`webdav_propfind`] 的同步实现：目录元数据与遍历都是阻塞调用，放阻塞线程池。
-fn webdav_propfind_sync(full: PathBuf, rel: String) -> Response {
-    if !full.exists() {
-        return StatusCode::NOT_FOUND.into_response();
-    }
-    let mut response =
-        String::from(r#"<?xml version="1.0" encoding="utf-8"?><D:multistatus xmlns:D="DAV:">"#);
-    let add_entry = |resp: &mut String, href: String, is_dir: bool, size: u64, modified: String| {
-        if is_dir {
-            resp.push_str(&format!(r#"<D:response><D:href>{}</D:href><D:propstat><D:status>HTTP/1.1 200 OK</D:status><D:prop><D:getlastmodified>{}</D:getlastmodified><D:creationdate>{}</D:creationdate><D:resourcetype><D:collection /></D:resourcetype><D:displayname></D:displayname></D:prop></D:propstat></D:response>"#, href, modified, modified));
-        } else {
-            resp.push_str(&format!(r#"<D:response><D:href>{}</D:href><D:propstat><D:status>HTTP/1.1 200 OK</D:status><D:prop><D:getlastmodified>{}</D:getlastmodified><D:creationdate>{}</D:creationdate><D:resourcetype /><D:displayname></D:displayname><D:getcontentlength>{}</D:getcontentlength></D:prop></D:propstat></D:response>"#, href, modified, modified, size));
-        }
-    };
-    let href_base = if rel.ends_with('/') {
-        rel.clone()
-    } else {
-        format!("{}/", rel)
-    };
-    let meta = std::fs::metadata(&full).ok();
-    let size = meta.as_ref().map(|m| m.len()).unwrap_or(0);
-    let modified = meta
-        .as_ref()
-        .and_then(|m| m.modified().ok())
-        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-        .map(|d| d.as_secs())
-        .unwrap_or(0);
-    add_entry(
-        &mut response,
-        href_base.clone(),
-        full.is_dir(),
-        size,
-        modified.to_string(),
-    );
-    if full.is_dir() {
-        if let Ok(entries) = std::fs::read_dir(&full) {
-            for entry in entries.flatten() {
-                let file = entry.path();
-                let name = entry.file_name().to_string_lossy().to_string();
-                if name.starts_with('.') {
-                    continue;
-                }
-                let href = format!("{}{}", href_base, name);
-                let meta = entry.metadata().ok();
-                let size = meta.as_ref().map(|m| m.len()).unwrap_or(0);
-                let modified = meta
-                    .as_ref()
-                    .and_then(|m| m.modified().ok())
-                    .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-                    .map(|d| d.as_secs())
-                    .unwrap_or(0);
-                add_entry(
-                    &mut response,
-                    href,
-                    file.is_dir(),
-                    size,
-                    modified.to_string(),
-                );
-            }
-        }
-    }
-    response.push_str("</D:multistatus>");
-    let mut resp = Response::new(axum::body::Body::from(response));
-    *resp.status_mut() = StatusCode::MULTI_STATUS;
-    resp
-}
-
-async fn webdav_mkcol(full: &PathBuf) -> Response {
-    if full.exists() {
-        // RFC 4918 §9.3.1：对已存在的集合返回 405
-        return StatusCode::METHOD_NOT_ALLOWED.into_response();
-    }
-    match fs::create_dir_all(full).await {
-        Ok(_) => StatusCode::CREATED.into_response(),
-        Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
-    }
-}
-
-async fn webdav_put(full: &PathBuf, body: Bytes) -> Response {
-    if let Some(parent) = full.parent() {
-        if !parent.exists() {
-            return StatusCode::CONFLICT.into_response();
-        }
-    }
-    if full.exists() && full.is_dir() {
-        return StatusCode::METHOD_NOT_ALLOWED.into_response();
-    }
-    if let Err(_) = fs::write(full, body).await {
-        return StatusCode::INTERNAL_SERVER_ERROR.into_response();
-    }
-    StatusCode::CREATED.into_response()
-}
-
-async fn webdav_get(full: &PathBuf) -> Response {
-    if !full.exists() {
-        return StatusCode::NOT_FOUND.into_response();
-    }
-    if full.is_dir() {
-        return StatusCode::METHOD_NOT_ALLOWED.into_response();
-    }
-    // 流式返回，避免大文件整读入内存
-    match fs::File::open(full).await {
-        Ok(file) => Response::new(axum::body::Body::from_stream(
-            tokio_util::io::ReaderStream::new(file),
-        )),
-        Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
-    }
-}
-
-async fn webdav_delete(full: &PathBuf) -> Response {
-    if !full.exists() {
-        return StatusCode::NOT_FOUND.into_response();
-    }
-    let res = if full.is_dir() {
-        fs::remove_dir_all(full).await
-    } else {
-        fs::remove_file(full).await
-    };
-    match res {
-        Ok(_) => StatusCode::OK.into_response(),
-        Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
-    }
-}
-
-/// 解析 MOVE/COPY 的 `Destination` 头为 home 下的目标路径。
-///
-/// Destination 必须带 `/reader3/webdav/` 前缀：缺前缀时若按空相对路径解析，
-/// 目标会塌缩成家目录本身，配合 `Overwrite` 头等于把整个家目录清空。
-fn resolve_destination(home: &PathBuf, headers: &HeaderMap) -> Result<PathBuf, StatusCode> {
-    let destination = headers
-        .get("Destination")
-        .and_then(|v| v.to_str().ok())
-        .unwrap_or("");
-    let Some(dest_path) = destination.split("/reader3/webdav/").nth(1) else {
-        return Err(StatusCode::BAD_REQUEST);
-    };
-    let rel =
-        normalize_rel_path(&format!("/{}", dest_path)).map_err(|_| StatusCode::BAD_REQUEST)?;
-    Ok(join_parts(home, &rel))
-}
-
-async fn webdav_move(home: &PathBuf, full: &PathBuf, headers: &HeaderMap) -> Response {
-    let dest = match resolve_destination(home, headers) {
-        Ok(p) => p,
-        Err(status) => return status.into_response(),
-    };
-    // RFC 4918 §10.6：未携带 Overwrite 头默认按 "T"（允许覆盖），只有 "F" 才拒绝
-    let overwrite_forbidden = headers
-        .get("Overwrite")
-        .and_then(|v| v.to_str().ok())
-        .is_some_and(|v| v.eq_ignore_ascii_case("F"));
-    let full = full.clone();
-    let result = tokio::task::spawn_blocking(move || {
-        if dest.exists() {
-            if overwrite_forbidden {
-                return StatusCode::PRECONDITION_FAILED.into_response();
-            }
-            let _ = if dest.is_dir() {
-                std::fs::remove_dir_all(&dest)
-            } else {
-                std::fs::remove_file(&dest)
-            };
-        }
-        match std::fs::rename(&full, &dest) {
-            Ok(_) => StatusCode::CREATED.into_response(),
-            Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
-        }
-    })
-    .await
-    .unwrap_or_else(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response());
-    result
-}
-
-async fn webdav_copy(home: &PathBuf, full: &PathBuf, headers: &HeaderMap) -> Response {
-    let dest = match resolve_destination(home, headers) {
-        Ok(p) => p,
-        Err(status) => return status.into_response(),
-    };
-    // RFC 4918 §10.6：未携带 Overwrite 头默认按 "T"（允许覆盖），只有 "F" 才拒绝
-    let overwrite_forbidden = headers
-        .get("Overwrite")
-        .and_then(|v| v.to_str().ok())
-        .is_some_and(|v| v.eq_ignore_ascii_case("F"));
-    let full = full.clone();
-    let result = tokio::task::spawn_blocking(move || {
-        if dest.exists() {
-            if overwrite_forbidden {
-                return StatusCode::PRECONDITION_FAILED.into_response();
-            }
-            let _ = if dest.is_dir() {
-                std::fs::remove_dir_all(&dest)
-            } else {
-                std::fs::remove_file(&dest)
-            };
-        }
-        let res = if full.is_dir() {
-            copy_dir(&full, &dest)
-        } else {
-            std::fs::copy(&full, &dest).map(|_| ())
-        };
-        match res {
-            Ok(_) => StatusCode::CREATED.into_response(),
-            Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
-        }
-    })
-    .await
-    .unwrap_or_else(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response());
-    result
-}
-
-fn copy_dir(src: &std::path::Path, dst: &std::path::Path) -> std::io::Result<()> {
-    std::fs::create_dir_all(dst)?;
-    for entry in std::fs::read_dir(src)? {
-        let entry = entry?;
-        let path = entry.path();
-        let dest = dst.join(entry.file_name());
-        if path.is_dir() {
-            copy_dir(&path, &dest)?;
-        } else {
-            std::fs::copy(&path, &dest)?;
-        }
-    }
-    Ok(())
-}
-
-fn webdav_lock(path: &str) -> Response {
-    let lock_token = format!("urn:uuid:{}", Uuid::new_v4());
-    let response = format!(
-        r#"<?xml version="1.0" encoding="utf-8"?><D:prop xmlns:D="DAV:"><D:lockdiscovery><D:activelock><D:locktype><write /></D:locktype><D:lockscope><exclusive /></D:lockscope><D:locktoken><D:href>{}</D:href></D:locktoken><D:lockroot><D:href>{}</D:href></D:lockroot><D:depth>infinity</D:depth><D:timeout>Second-3600</D:timeout></D:activelock></D:lockdiscovery></D:prop>"#,
-        lock_token, path
-    );
-    let mut resp = Response::new(axum::body::Body::from(response));
-    if let Ok(v) = lock_token.parse() {
-        resp.headers_mut().insert("Lock-Token", v);
-    }
-    *resp.status_mut() = StatusCode::OK;
-    resp
-}
-
-fn webdav_unlock(headers: &HeaderMap) -> Response {
-    let lock_token = headers
-        .get("Lock-Token")
-        .and_then(|v| v.to_str().ok())
-        .unwrap_or("");
-    let mut resp = StatusCode::NO_CONTENT.into_response();
-    if let Ok(v) = lock_token.parse() {
-        resp.headers_mut().insert("Lock-Token", v);
-    }
-    resp
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -625,17 +377,5 @@ mod tests {
         );
         assert!(normalize_rel_path("/").unwrap().is_empty());
         assert_eq!(normalize_rel_path("//a//./b//").unwrap(), vec!["a", "b"]);
-    }
-
-    #[tokio::test]
-    async fn mkcol_returns_405_for_existing_collection() {
-        let dir = std::env::temp_dir().join(format!("rr-mkcol-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
-        let resp = webdav_mkcol(&dir).await;
-        assert_eq!(resp.status(), StatusCode::METHOD_NOT_ALLOWED);
-        let fresh = dir.join("new-collection");
-        let resp = webdav_mkcol(&fresh).await;
-        assert_eq!(resp.status(), StatusCode::CREATED);
-        std::fs::remove_dir_all(&dir).ok();
     }
 }
