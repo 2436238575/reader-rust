@@ -75,13 +75,18 @@
       </div>
     </div>
 
+    <div v-else-if="activeTab === 'edit'" class="edit-pane">
+      <SourceVisualEditor
+        :editor-text="editorText"
+        @update:editor-text="$emit('update:editorText', $event)"
+      />
+    </div>
+
     <div v-else-if="activeTab === 'json'" class="json-pane">
-      <textarea
-        :value="editorText"
-        class="editor-textarea"
-        spellcheck="false"
-        @input="$emit('update:editorText', ($event.target as HTMLTextAreaElement).value)"
-      ></textarea>
+      <JsonCodeEditor
+        :model-value="editorText"
+        @update:model-value="$emit('update:editorText', $event)"
+      />
     </div>
 
     <div v-else class="login-pane">
@@ -106,8 +111,10 @@
 import { computed, ref } from 'vue'
 import type { BookSource } from '../../types'
 import { getBookSourceOverview } from '../../utils/sourceSelection'
+import SourceVisualEditor from './SourceVisualEditor.vue'
+import JsonCodeEditor from './JsonCodeEditor.vue'
 
-type TabKey = 'overview' | 'json' | 'login'
+type TabKey = 'overview' | 'edit' | 'json' | 'login'
 
 const props = defineProps<{
   source: BookSource | null
@@ -128,6 +135,7 @@ defineEmits<{
 const activeTab = ref<TabKey>('overview')
 const tabs: { key: TabKey; label: string }[] = [
   { key: 'overview', label: '概览' },
+  { key: 'edit', label: '编辑' },
   { key: 'json', label: 'JSON' },
   { key: 'login', label: '登录调试' },
 ]
@@ -205,6 +213,7 @@ const overview = computed(() => getBookSourceOverview(props.source))
 
 .overview-pane,
 .json-pane,
+.edit-pane,
 .login-pane {
   flex: 1;
   min-height: 0;
@@ -212,8 +221,13 @@ const overview = computed(() => getBookSourceOverview(props.source))
 }
 
 .overview-pane,
+.edit-pane,
 .login-pane {
   padding: 16px;
+}
+
+.edit-pane {
+  padding: 12px;
 }
 
 .overview-grid {
@@ -285,20 +299,6 @@ const overview = computed(() => getBookSourceOverview(props.source))
   color: var(--color-text-secondary);
   font-size: var(--text-xs);
   overflow-wrap: anywhere;
-}
-
-.editor-textarea {
-  width: 100%;
-  min-height: 100%;
-  resize: none;
-  border: none;
-  outline: none;
-  padding: 16px;
-  background: #181614;
-  color: #f4ede4;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  font-size: var(--text-xs);
-  line-height: 1.55;
 }
 
 .editor-empty {
