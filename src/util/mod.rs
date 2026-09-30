@@ -1,3 +1,4 @@
+pub mod asset;
 pub mod bounded_map;
 pub mod crypto;
 pub mod hash;

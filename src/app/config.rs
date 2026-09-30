@@ -62,6 +62,20 @@ pub struct AppConfig {
     ///
     /// 设为 `true` 时跳过用户名维度与 IP 维度的登录失败封禁。生产部署**不应**开启。
     pub rate_limit_disabled: bool,
+    /// 是否启用 Python agent sidecar（AI 资料的编排与生成）。
+    ///
+    /// 启用后 AI 资料更新由后端拉起 `AGENT_SIDECAR_COMMAND` 指定的 Python
+    /// 进程完成；宿主机需要 Python ≥3.11（生产 Docker 镜像已内置）。
+    /// 关闭后 AI 资料更新接口返回明确错误，不影响其他功能。
+    pub agent_sidecar_enabled: bool,
+    /// sidecar 启动命令（按空白切分程序与参数，支持双引号包裹含空格的路径）。
+    ///
+    /// 默认 `python -m agent_sidecar`，进程工作目录为 `sidecar/`。Windows 上
+    /// `python` 可能命中 Microsoft Store 的占位符，建议配置 Python 绝对路径，
+    /// 如 `C:\Python313\python.exe -m agent_sidecar`。
+    pub agent_sidecar_command: String,
+    /// 单章处理超时（秒），默认 600。超时即终止 sidecar 进程并中止批量任务。
+    pub agent_sidecar_chapter_timeout_secs: u64,
 }
 
 impl Default for AppConfig {
@@ -89,12 +103,22 @@ impl Default for AppConfig {
             private_network_whitelist: String::new(),
             cors_allowed_origins: String::new(),
             rate_limit_disabled: false,
+            agent_sidecar_enabled: true,
+            agent_sidecar_command: "python -m agent_sidecar".to_string(),
+            agent_sidecar_chapter_timeout_secs: 600,
         }
     }
 }
 
 pub fn load() -> anyhow::Result<AppConfig> {
-    dotenvy::dotenv().ok();
+    // dotenvy 遇到解析不了的行会**中断加载**——之前的变量生效、之后的全丢，
+    // 且这类问题有默认值兜底很难察觉。失败必须打 WARN（含逗号等特殊字符的
+    // 值要用双引号包裹），不能 .ok() 吞掉。
+    if let Err(error) = dotenvy::dotenv() {
+        tracing::warn!(
+            ".env 加载中断：{error}。该行之后的变量全部未生效——含逗号/空格等特殊字符的值请用双引号包裹"
+        );
+    }
     let defaults = AppConfig::default();
     let cfg = config::Config::builder()
         .set_default("server_host", defaults.server_host)?
@@ -137,6 +161,12 @@ pub fn load() -> anyhow::Result<AppConfig> {
         )?
         .set_default("cors_allowed_origins", defaults.cors_allowed_origins)?
         .set_default("rate_limit_disabled", defaults.rate_limit_disabled)?
+        .set_default("agent_sidecar_enabled", defaults.agent_sidecar_enabled)?
+        .set_default("agent_sidecar_command", defaults.agent_sidecar_command)?
+        .set_default(
+            "agent_sidecar_chapter_timeout_secs",
+            defaults.agent_sidecar_chapter_timeout_secs as i64,
+        )?
         .add_source(config::Environment::default().try_parsing(true))
         .build()?;
     Ok(cfg.try_deserialize()?)

@@ -199,8 +199,6 @@ pub async fn upload_file(
     };
     // 与静态路由同源：静态服务把 ASSETS_DIR 挂在 /assets 下，
     // 写入端必须用同一个目录，否则自定义 ASSETS_DIR 后上传的文件取不到
-    let assets_root = PathBuf::from(&state.config.assets_dir);
-
     let mut file_list = Vec::new();
     while let Some(field) = multipart
         .next_field()
@@ -226,21 +224,19 @@ pub async fn upload_file(
             Ok(data) => data,
             Err(e) => return Ok(Json(ApiResponse::err(e.to_string()))),
         };
-        let dir = assets_root.join(&user_ns).join(&file_type);
-        fs::create_dir_all(&dir)
-            .await
-            .map_err(|e| AppError::Internal(e.into()))?;
-        // 词法解析 + 越界检查：解析后必须仍在 assets/ 之内
-        let Some(path) = safe_path::resolve_within(
-            &assets_root,
-            &Path::new(&user_ns).join(&file_type).join(&name),
-        ) else {
-            return Ok(Json(ApiResponse::err("文件名不合法")));
+        // 写盘统一走 util::asset（消毒/越界检查/URL 形态与 AI 地图落盘共用一份）
+        let url = match crate::util::asset::write_asset_file(
+            &state.config.assets_dir,
+            &user_ns,
+            &file_type,
+            &name,
+            data,
+        )
+        .await
+        {
+            Ok(url) => url,
+            Err(e) => return Ok(Json(ApiResponse::err(e.to_string()))),
         };
-        fs::write(&path, data)
-            .await
-            .map_err(|e| AppError::Internal(e.into()))?;
-        let url = format!("/assets/{}/{}/{}", user_ns, file_type, name);
         file_list.push(Value::String(url));
     }
     Ok(Json(ApiResponse::ok(Value::from(file_list))))

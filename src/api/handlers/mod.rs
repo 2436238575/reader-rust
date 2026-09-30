@@ -1,3 +1,4 @@
+mod agent;
 mod ai_book;
 mod ai_model;
 mod ai_proxy;
@@ -14,6 +15,7 @@ mod review;
 mod user;
 mod webdav;
 
+pub use agent::*;
 pub use ai_book::*;
 pub use ai_model::*;
 pub use ai_proxy::*;

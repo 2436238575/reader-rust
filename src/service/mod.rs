@@ -1,3 +1,4 @@
+pub mod agent_sidecar_service;
 pub mod ai_book_service;
 pub mod ai_model_service;
 pub mod book_group_service;

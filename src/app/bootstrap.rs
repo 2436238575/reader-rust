@@ -10,9 +10,9 @@ use crate::crawler::http_client::HttpClient;
 use crate::crawler::url_guard;
 use crate::parser::rule_engine::RuleEngine;
 use crate::service::{
-    ai_book_service::AiBookService, ai_model_service::AiModelService,
-    book_group_service::BookGroupService, book_service::BookService,
-    book_source_service::BookSourceService, image_service::ImageService,
+    agent_sidecar_service::AgentSidecarService, ai_book_service::AiBookService,
+    ai_model_service::AiModelService, book_group_service::BookGroupService,
+    book_service::BookService, book_source_service::BookSourceService, image_service::ImageService,
     json_document_service::JsonDocumentService, local_epub_book::LocalEpubBookService,
     local_txt_book::LocalTxtBookService, user_service::UserService,
 };
@@ -153,6 +153,22 @@ pub async fn build_state(cfg: AppConfig) -> anyhow::Result<AppState> {
         );
     }
     let ai_model_service = Arc::new(AiModelService::new(ai_model_config));
+    let agent_sidecar_service = Arc::new(AgentSidecarService::new(
+        book_service.clone(),
+        book_source_service.clone(),
+        local_txt_book_service.clone(),
+        local_epub_book_service.clone(),
+        ai_book_service.clone(),
+        ai_model_service.clone(),
+        &cfg.agent_sidecar_command,
+        cfg.agent_sidecar_enabled,
+        cfg.agent_sidecar_chapter_timeout_secs,
+        &cfg.assets_dir,
+    ));
+    let probe_service = agent_sidecar_service.clone();
+    tokio::spawn(async move {
+        probe_service.probe().await;
+    });
 
     Ok(AppState {
         config: cfg,
@@ -167,6 +183,7 @@ pub async fn build_state(cfg: AppConfig) -> anyhow::Result<AppState> {
         json_document_service,
         ai_book_service,
         ai_model_service,
+        agent_sidecar_service,
     })
 }
 

@@ -257,6 +257,15 @@ pub fn build_router(state: AppState) -> Router {
         )
         .route("/reader3/aiProxy", post(handlers::ai_proxy))
         .route("/reader3/aiProxyImage", post(handlers::ai_proxy_image))
+        .route("/reader3/runAgentTask", post(handlers::run_agent_task))
+        .route(
+            "/reader3/getAgentTaskStatus",
+            post(handlers::get_agent_task_status),
+        )
+        .route(
+            "/reader3/cancelAgentTask",
+            post(handlers::cancel_agent_task),
+        )
         .route("/reader3/getReplaceRules", get(handlers::get_replace_rules))
         .route(
             "/reader3/saveReplaceRule",

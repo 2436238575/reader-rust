@@ -26,6 +26,9 @@ pub enum AppError {
     /// 看不出所以然的 "internal error"。
     #[error("blocked: {0}")]
     Blocked(String),
+    /// 409：已有同类任务进行中（AI 资料批量更新为单任务串行）。
+    #[error("conflict: {0}")]
+    Conflict(String),
     #[error("internal error")]
     Internal(anyhow::Error),
     #[error("db error")]
@@ -80,6 +83,7 @@ impl IntoResponse for AppError {
             AppError::NotFound(msg) => (StatusCode::NOT_FOUND, msg.clone()),
             AppError::BadRequest(msg) => (StatusCode::BAD_REQUEST, msg.clone()),
             AppError::Blocked(msg) => (StatusCode::BAD_REQUEST, msg.clone()),
+            AppError::Conflict(msg) => (StatusCode::CONFLICT, msg.clone()),
             AppError::Db(_) => (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "database error".to_string(),

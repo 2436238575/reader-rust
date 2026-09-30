@@ -4,9 +4,9 @@ pub mod router;
 use crate::app::config::AppConfig;
 use crate::auth::AuthState;
 use crate::service::{
-    ai_book_service::AiBookService, ai_model_service::AiModelService,
-    book_group_service::BookGroupService, book_service::BookService,
-    book_source_service::BookSourceService, image_service::ImageService,
+    agent_sidecar_service::AgentSidecarService, ai_book_service::AiBookService,
+    ai_model_service::AiModelService, book_group_service::BookGroupService,
+    book_service::BookService, book_source_service::BookSourceService, image_service::ImageService,
     json_document_service::JsonDocumentService, local_epub_book::LocalEpubBookService,
     local_txt_book::LocalTxtBookService, user_service::UserService,
 };
@@ -27,4 +27,5 @@ pub struct AppState {
     pub image_service: Arc<ImageService>,
     pub ai_book_service: Arc<AiBookService>,
     pub ai_model_service: Arc<AiModelService>,
+    pub agent_sidecar_service: Arc<AgentSidecarService>,
 }

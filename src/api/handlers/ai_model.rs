@@ -31,5 +31,7 @@ pub async fn get_ai_model_config(
         "textReady": text_ready,
         "imageReady": image_ready,
         "speechReady": speech_ready,
+        // sidecar 可用性：仅提示用，失败不影响其他 AI 功能
+        "agentReady": state.agent_sidecar_service.agent_ready(),
     }))))
 }
