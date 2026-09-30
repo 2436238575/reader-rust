@@ -338,6 +338,8 @@ id = `md5(去掉查询串的地址)`；抓取失败时按登记时的书籍上�
   `exploreUrl` 的 JS 求值结果（按 `MD5(用户命名空间 | bookSourceUrl + exploreUrl)` 缓存 1 小时，
   键含用户维度——脚本输出可能含 `java.androidId` 等用户相关值）。
   它们都设了条目上限，超出即整表清空。
+- 日志按天滚动落盘到 `storage/logs/reader-rust.log.YYYY-MM-DD`（stdout + 文件双写，
+  文件不含 ANSI 颜色码；sidecar 的 stderr 经主进程 tracing 也落同一个文件）。
 - `storage/` 全部属于运行期数据，**不要提交**，清理时也不要误删。
 
 ---

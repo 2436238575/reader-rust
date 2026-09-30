@@ -31,7 +31,7 @@ Reader-Rust 通过**环境变量**配置，支持从 `.env` 文件读取。代�
 
 | 变量        | 默认值 | 说明                                          |
 | ----------- | ------ | --------------------------------------------- |
-| `LOG_LEVEL` | `info` | `trace` / `debug` / `info` / `warn` / `error` |
+| `LOG_LEVEL` | `info` | `trace` / `debug` / `info` / `warn` / `error` 日志同时落盘到 `storage/logs/`（按天滚动，sidecar 输出合并进同一文件） |
 
 ### 鉴权
 

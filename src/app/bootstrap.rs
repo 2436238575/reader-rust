@@ -21,9 +21,18 @@ use crate::storage::{cache::file_cache::FileCache, db, fs::storage_fs::StorageFs
 pub async fn run() -> anyhow::Result<()> {
     let cfg = config::load()?;
 
-    // 初始化日志：之后所有输出统一走 tracing，不再直接 println!/eprintln!
-    tracing_subscriber::fmt()
-        .with_env_filter(EnvFilter::new(cfg.log_level.clone()))
+    // 初始化日志：控制台 + 文件双写（按天滚动到 <STORAGE_DIR>/logs/reader-rust.log.*，
+    // 文件里不带 ANSI 颜色码；sidecar 的 stderr 经主进程 tracing 落同一个文件）。
+    // _log_guard 保活非阻塞写线程，必须活到进程退出
+    let logs_dir = std::path::Path::new(&cfg.storage_dir).join("logs");
+    std::fs::create_dir_all(&logs_dir).ok();
+    let (log_writer, _log_guard) =
+        tracing_appender::non_blocking(tracing_appender::rolling::daily(&logs_dir, "reader-rust.log"));
+    use tracing_subscriber::prelude::*;
+    tracing_subscriber::registry()
+        .with(EnvFilter::new(cfg.log_level.clone()))
+        .with(tracing_subscriber::fmt::layer().with_writer(std::io::stdout))
+        .with(tracing_subscriber::fmt::layer().with_writer(log_writer).with_ansi(false))
         .init();
 
     // 把 panic 也记录进 tracing，便于在日志里定位崩溃位置；

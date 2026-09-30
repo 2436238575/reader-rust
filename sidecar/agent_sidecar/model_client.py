@@ -18,8 +18,9 @@ import httpx
 from .errors import sanitize_error_message, summarize_http_error_body
 from .types import ModelEndpoint
 
-MAX_ATTEMPTS = 3
-RETRY_DELAYS = (1.0, 3.0)
+# 10 次尝试：上游偶发 429/5xx 常见，退避拉到 30s 封顶
+MAX_ATTEMPTS = 10
+RETRY_DELAYS = (1.0, 2.0, 4.0, 8.0, 16.0, 30.0, 30.0, 30.0, 30.0)
 
 CHAT_PATH = "/v1/chat/completions"
 IMAGES_PATH = "/v1/images/generations"

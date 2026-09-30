@@ -77,6 +77,8 @@ const SEARCH_CONTEXT_BEFORE: usize = 80;
 const STDERR_TAIL_LINES: usize = 8;
 const STDERR_LINE_CHARS: usize = 200;
 
+type StderrTail = Arc<AsyncMutex<Vec<String>>>;
+
 const PROBE_UNKNOWN: u8 = 0;
 const PROBE_READY: u8 = 1;
 const PROBE_FAILED: u8 = 2;
@@ -203,7 +205,7 @@ impl AgentSidecarService {
             return;
         }
         match self.spawn_sidecar().await {
-            Ok((mut child, mut stdin, _rx)) => {
+            Ok((mut child, mut stdin, _rx, _tail)) => {
                 let _ = stdin.shutdown().await;
                 let _ = child.start_kill();
                 self.probe.store(PROBE_READY, Ordering::Relaxed);
@@ -345,7 +347,10 @@ impl AgentSidecarService {
             .await
         {
             Ok(status_text) => (status_text, None),
-            Err(error) => (error.to_string(), Some(error.to_string())),
+            Err(error) => {
+                let text = task_error_text(&error);
+                (text.clone(), Some(text))
+            }
         }
     }
 
@@ -358,7 +363,10 @@ impl AgentSidecarService {
     ) -> (String, Option<String>) {
         match self.execute_redraw_task(user_ns, book, job_id, task).await {
             Ok(status_text) => (status_text, None),
-            Err(error) => (error.to_string(), Some(error.to_string())),
+            Err(error) => {
+                let text = task_error_text(&error);
+                (text.clone(), Some(text))
+            }
         }
     }
 
@@ -412,7 +420,7 @@ impl AgentSidecarService {
         }
         let model_json = model_payload_json(&text_endpoint, &image_endpoint);
 
-        let (child, mut stdin, mut rx) = self.spawn_sidecar().await?;
+        let (child, mut stdin, mut rx, stderr_tail) = self.spawn_sidecar().await?;
         *task.child.lock().await = Some(child);
 
         let outcome: Result<String, AppError> = async {
@@ -447,7 +455,7 @@ impl AgentSidecarService {
                     memory: &memory,
                 };
                 let result = self
-                    .run_frame_until_result(&mut stdin, &mut rx, run_frame, &ctx)
+                    .run_frame_until_result(&mut stdin, &mut rx, run_frame, &ctx, &stderr_tail)
                     .await?;
 
                 if result.get("skipped").and_then(Value::as_bool) == Some(true) {
@@ -491,7 +499,7 @@ impl AgentSidecarService {
                         snapshot.status_text = "生成世界地图...".to_string();
                     })
                     .await;
-                    match self.redraw_map_via_sidecar(&mut stdin, &mut rx, &memory, &model_json).await {
+                    match self.redraw_map_via_sidecar(&mut stdin, &mut rx, &memory, &model_json, &stderr_tail).await {
                         Ok(map_image) => {
                             match self.resolve_map_image(user_ns, &map_image, map_prompt.as_deref().unwrap_or_default()).await {
                                 Ok(url) => {
@@ -562,7 +570,7 @@ impl AgentSidecarService {
         let text_endpoint = model.resolve(AiModelKind::Text);
         let model_json = model_payload_json(&text_endpoint, &image_endpoint);
 
-        let (child, mut stdin, mut rx) = self.spawn_sidecar().await?;
+        let (child, mut stdin, mut rx, stderr_tail) = self.spawn_sidecar().await?;
         *task.child.lock().await = Some(child);
         let outcome = async {
             let frame = json!({
@@ -587,7 +595,7 @@ impl AgentSidecarService {
                 memory: &memory,
             };
             let result = self
-                .run_frame_until_result(&mut stdin, &mut rx, frame, &ctx)
+                .run_frame_until_result(&mut stdin, &mut rx, frame, &ctx, &stderr_tail)
                 .await?;
             // 与前端旧版 redrawMap 的语义一致：生成/落盘失败不作为任务错误，
             // 而是降级为关系图兜底并保存
@@ -653,6 +661,7 @@ impl AgentSidecarService {
         rx: &mut mpsc::Receiver<String>,
         run_frame: Value,
         ctx: &TaskContext<'_>,
+        stderr_tail: &StderrTail,
     ) -> Result<Value, AppError> {
         // NDJSON：帧必须以换行结尾，对端按行读取
         let mut line =
@@ -713,7 +722,18 @@ impl AgentSidecarService {
                     }
                 }
             }
-            Err(AppError::Internal(anyhow::anyhow!("sidecar 意外退出")))
+            // EOF：sidecar 崩溃/被杀——把它的 stderr 末尾带进错误
+            Err(AppError::Internal(anyhow::anyhow!("sidecar 意外退出"))).map_err(|e| {
+                let tail = stderr_tail.blocking_lock();
+                if tail.is_empty() {
+                    e
+                } else {
+                    AppError::Internal(anyhow::anyhow!(
+                        "sidecar 意外退出；子进程 stderr 末尾：{}",
+                        tail.join(" ┃ ")
+                    ))
+                }
+            })
         })
         .await;
 
@@ -925,6 +945,7 @@ impl AgentSidecarService {
         rx: &mut mpsc::Receiver<String>,
         memory: &AiBookMemory,
         model_json: &Value,
+        stderr_tail: &StderrTail,
     ) -> Result<MapImage, AppError> {
         let frame = json!({
             "type": "run",
@@ -941,7 +962,7 @@ impl AgentSidecarService {
             chapters: &[],
             memory,
         };
-        let result = self.run_frame_until_result(stdin, rx, frame, &ctx).await?;
+        let result = self.run_frame_until_result(stdin, rx, frame, &ctx, stderr_tail).await?;
         decode_map_image(&result)
     }
 
@@ -985,7 +1006,9 @@ impl AgentSidecarService {
     // sidecar 进程
     // -----------------------------------------------------------------------
 
-    async fn spawn_sidecar(&self) -> Result<(Child, ChildStdin, mpsc::Receiver<String>), AppError> {
+    async fn spawn_sidecar(
+        &self,
+    ) -> Result<(Child, ChildStdin, mpsc::Receiver<String>, StderrTail), AppError> {
         let (mut program, args) = split_command(&self.command)
             .ok_or_else(|| AppError::BadRequest("AGENT_SIDECAR_COMMAND 无法解析".to_string()))?;
         // 开发便利：命令仍是默认值且 sidecar/.venv 存在时，优先用 venv 的 Python——
@@ -1085,7 +1108,7 @@ impl AgentSidecarService {
             .stdin
             .take()
             .ok_or_else(|| AppError::Internal(anyhow::anyhow!("sidecar stdin 不可用")))?;
-        Ok((child, stdin, rx))
+        Ok((child, stdin, rx, stderr_tail))
     }
 }
 
@@ -1280,8 +1303,17 @@ fn split_command(command: &str) -> Option<(String, Vec<String>)> {
     Some((program, parts))
 }
 
+/// 任务快照里的错误文案：Internal 用 anyhow 错误链（Display 只有顶层一句 "internal error"），
+/// 其余保持 Display。给「sidecar 意外退出」这类内部错误一个能被看懂的上下文。
+fn task_error_text(error: &AppError) -> String {
+    match error {
+        AppError::Internal(e) => format!("内部错误：{e:#}"),
+        _ => error.to_string(),
+    }
+}
+
 /// 握手失败：附上子进程 stderr 末尾（缺依赖、Store 占位符等真实原因都在那里）。
-async fn handshake_failed(stderr_tail: &AsyncMutex<Vec<String>>, reason: &str) -> AppError {
+async fn handshake_failed(stderr_tail: &StderrTail, reason: &str) -> AppError {
     let tail = stderr_tail.lock().await;
     let detail = if tail.is_empty() {
         String::new()

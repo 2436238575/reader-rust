@@ -82,16 +82,18 @@ def test_retries_429_then_succeeds():
     assert sleeps == [1.0]
 
 
-def test_retries_5xx_up_to_three_attempts_then_raises():
+def test_retries_5xx_up_to_ten_attempts_then_raises():
     attempts = {"n": 0}
+    sleeps: list[float] = []
 
     def handler(request: httpx.Request) -> httpx.Response:
         attempts["n"] += 1
         return httpx.Response(503, json={"error": {"message": "upstream down"}})
 
     with pytest.raises(ModelError, match="upstream down"):
-        _client(handler).chat(_endpoint(), {})
-    assert attempts["n"] == 3
+        _client(handler, sleeps).chat(_endpoint(), {})
+    assert attempts["n"] == 10
+    assert sleeps == [1.0, 2.0, 4.0, 8.0, 16.0, 30.0, 30.0, 30.0, 30.0]
 
 
 def test_4xx_is_not_retried():
@@ -151,8 +153,8 @@ def test_network_error_is_wrapped_and_retried():
         raise httpx.ConnectError("connection refused", request=request)
 
     with pytest.raises(ModelError, match="网络请求失败"):
-        _client(handler).chat(_endpoint(), {})
-    assert attempts["n"] == 3
+        _client(handler, []).chat(_endpoint(), {})
+    assert attempts["n"] == 10
 
 
 def test_unready_endpoint_raises_without_request():
