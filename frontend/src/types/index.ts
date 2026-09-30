@@ -215,20 +215,6 @@ export interface ReplaceRule {
 }
 
 // ─── AI 设定集 ───
-export interface AiBookConfig {
-  modelSource: 'browser' | 'server'
-  textBaseUrl: string
-  textApiKey: string
-  textModel: string
-  textUseFullUrl: boolean
-  imageBaseUrl: string
-  imageApiKey: string
-  imageModel: string
-  imageSize: string
-  imageUseFullUrl: boolean
-  useBackendProxy: boolean
-}
-
 export interface AiModelEndpointConfig {
   enabled: boolean
   baseUrl: string
@@ -255,6 +241,8 @@ export interface AiServerModelStatus {
   textReady: boolean
   imageReady: boolean
   speechReady: boolean
+  /** sidecar（AI 资料编排）是否就绪：提示用，失败不影响其他 AI 功能 */
+  agentReady: boolean
 }
 
 export interface AiBookNote {

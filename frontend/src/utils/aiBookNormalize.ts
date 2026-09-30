@@ -1,11 +1,12 @@
 /**
  * AI 书籍资料（人物/地点/关系/笔记）的归一化与合并原语。
  *
- * 生成管线（aiBookGeneration）、展示折叠（aiBookPresentation）与视图（AiBookView）
- * 共用这一份——此前三处各抄一份，已漂移风险最高的是 importance/低价值关系的判定口径。
+ * 展示折叠（aiBookPresentation）与视图（AiBookView）共用这一份；
+ * 生成期合并管线已迁到 sidecar（agent_sidecar/merge.py），那边持有一份
+ * 同名移植实现——判定口径与词表必须逐字保持一致，改动需两侧同步。
  *
  * 注意：合并方向有意不成对——生成期合并偏好新数据（next 优先），
- * 展示期合并偏好先到数据（current 优先），所以 merge* 函数不在这里共享，
+ * 展示期合并偏好先到数据（current 优先），所以 merge* 不在这里共享，
  * 只有无方向性的原语共享。
  */
 

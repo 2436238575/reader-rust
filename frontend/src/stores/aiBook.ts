@@ -1,47 +1,34 @@
 import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
 import { getAiModelStatus } from '../api/aiModel'
-import { deleteAiBookMemory, getAiBookMemory, saveAiBookMemory } from '../api/aiBook'
-import type { AiBookMemory, AiServerModelStatus, Book, BookChapter } from '../types'
-import { useAppStore } from './app'
-import { getAiBookConfig, saveAiBookConfig } from '../utils/aiBookConfig'
-import type { AiBookConfig } from '../types'
 import {
-  applyMapFallbackToMemory,
-  applyMapToMemory,
-  createEmptyAiBookMemory,
-  requestAiBookMapImage,
-  requestAiBookMemoryUpdate,
-  shouldRunAiBookAutoUpdate,
-  uploadGeneratedMap,
-} from '../utils/aiBookGeneration'
-import { shouldSkipAiBookChapter } from '../utils/aiBookChapterFilter'
+  cancelAgentTask,
+  getAgentTaskStatus,
+  runAgentTask,
+  type AgentTaskPhase,
+  type AgentTaskSnapshot,
+} from '../api/agentTask'
+import { deleteAiBookMemory, getAiBookMemory, saveAiBookMemory } from '../api/aiBook'
+import type { AiBookMemory, AiServerModelStatus, Book } from '../types'
 
-type GenerationPhase = 'idle' | 'loading' | 'text' | 'map' | 'saving' | 'error'
-interface LoadServerModelConfigOptions {
-  force?: boolean
-}
+/**
+ * AI 资料编排（后端 sidecar 承载）：
+ * - 生成循环、patch 归一化全部在服务端；前端只做触发、轮询与展示；
+ * - 任务在服务端跑，关页面不取消；重开页面 onMounted 里 startPolling 恢复显示；
+ * - 快照带 bookUrl——A 书任务跑着、打开 B 书页面时按钮不受影响。
+ */
+
+const POLL_INTERVAL_MS = 2000
+const POLL_INTERVAL_HIDDEN_MS = 10000
 
 export const useAiBookStore = defineStore('aiBook', () => {
-  const appStore = useAppStore()
   const memory = ref<AiBookMemory | null>(null)
   const loading = ref(false)
-  const phase = ref<GenerationPhase>('idle')
-  const statusText = ref('')
-  const updatingChapterKeys = new Set<string>()
-
-  const username = computed(() => appStore.userInfo?.username || 'default')
-  const config = ref<AiBookConfig>(getAiBookConfig(username.value))
   // 后端模型只有「是否可用」状态可见（配置本体在服务端 env，不下发）
   const serverModelStatus = ref<AiServerModelStatus | null>(null)
-  const isBusy = computed(() => loading.value || phase.value !== 'idle')
-  const canUseServerModel = computed(() => Boolean(serverModelStatus.value?.canUseServerModel))
-  const serverTextReady = computed(() => Boolean(serverModelStatus.value?.textReady))
-  const serverImageReady = computed(() => Boolean(serverModelStatus.value?.imageReady))
-  const serverSpeechReady = computed(() => Boolean(serverModelStatus.value?.speechReady))
   let serverModelStatusRequest: Promise<AiServerModelStatus | null> | null = null
 
-  async function loadServerModelStatus(options: LoadServerModelConfigOptions = {}) {
+  async function loadServerModelStatus(options: { force?: boolean } = {}) {
     if (!options.force && serverModelStatus.value) {
       return serverModelStatus.value
     }
@@ -68,21 +55,11 @@ export const useAiBookStore = defineStore('aiBook', () => {
     return request
   }
 
-  function refreshConfig() {
-    config.value = getAiBookConfig(username.value)
-    return config.value
-  }
-
-  function persistConfig(next: AiBookConfig) {
-    config.value = saveAiBookConfig(username.value, next)
-    return config.value
-  }
-
   async function load(book: Book) {
     loading.value = true
     try {
       const saved = await getAiBookMemory(book.bookUrl)
-      memory.value = saved || createEmptyAiBookMemory(book)
+      memory.value = saved || emptyMemory(book)
       return memory.value
     } finally {
       loading.value = false
@@ -90,19 +67,13 @@ export const useAiBookStore = defineStore('aiBook', () => {
   }
 
   async function save(next: AiBookMemory) {
-    phase.value = 'saving'
-    statusText.value = '保存 AI 资料...'
-    try {
-      memory.value = await saveAiBookMemory(next)
-      return memory.value
-    } finally {
-      phase.value = 'idle'
-      statusText.value = ''
-    }
+    memory.value = await saveAiBookMemory(next)
+    return memory.value
   }
 
   async function setEnabled(book: Book, enabled: boolean) {
     const current = memory.value?.bookUrl === book.bookUrl ? memory.value : await load(book)
+    if (!current) return null
     return save({
       ...current,
       bookUrl: book.bookUrl,
@@ -115,215 +86,189 @@ export const useAiBookStore = defineStore('aiBook', () => {
 
   async function reset(book: Book) {
     await deleteAiBookMemory(book.bookUrl)
-    memory.value = createEmptyAiBookMemory(book)
-    phase.value = 'idle'
-    statusText.value = ''
+    memory.value = emptyMemory(book)
     return memory.value
   }
 
-  async function autoUpdateCompletedChapter(params: {
-    book: Book
-    chapter: BookChapter
-    chapterContent: string
-    chapters?: BookChapter[]
-  }) {
-    const current =
-      memory.value?.bookUrl === params.book.bookUrl
-        ? memory.value
-        : await getAiBookMemory(params.book.bookUrl).catch(() => null)
-    if (!current?.enabled) return null
+  // -- 任务状态与轮询 --------------------------------------------------------
 
-    const currentConfig = refreshConfig()
-    if (!shouldRunAiBookAutoUpdate(current, params.chapter.index, currentConfig)) {
-      return current
-    }
-    return runChapterUpdate({ ...params, current, allowSkip: true })
+  const task = ref<AgentTaskSnapshot | null>(null)
+  const wasRunning = ref(false)
+  let pollTimer: ReturnType<typeof setTimeout> | null = null
+  let polling = false
+
+  const isBusy = computed(() => Boolean(task.value?.running))
+  const phase = computed<AgentTaskPhase>(() => task.value?.phase ?? 'idle')
+  const statusText = computed(() => task.value?.statusText || task.value?.lastError || '')
+
+  /** 任务是否属于这本书（防误显示/误取消他书任务）。 */
+  function taskForBook(bookUrl: string) {
+    return task.value?.bookUrl === bookUrl && task.value.jobId ? task.value : null
   }
 
-  async function runChapterUpdate(params: {
-    book: Book
-    chapter: BookChapter
-    chapterContent: string
-    current?: AiBookMemory
-    allowSkip?: boolean
-    chapters?: BookChapter[]
-  }) {
-    const currentConfig = refreshConfig()
-    const current =
-      params.current ||
-      (memory.value?.bookUrl === params.book.bookUrl ? memory.value : await load(params.book))
-    if (
-      params.allowSkip &&
-      !shouldRunAiBookAutoUpdate(current, params.chapter.index, currentConfig)
-    ) {
-      return current
-    }
-
-    if (shouldSkipAiBookChapter(params.chapter, params.chapters || [])) {
-      return saveSkippedChapterMemory(params.book, params.chapter, current)
-    }
-
-    const key = `${params.book.bookUrl}::${params.chapter.index}`
-    if (updatingChapterKeys.has(key)) return current
-    updatingChapterKeys.add(key)
-    phase.value = 'text'
-    statusText.value = `更新 ${params.chapter.title} 的 AI 资料...`
-
+  async function pollOnce() {
+    let snapshot: AgentTaskSnapshot | null = null
     try {
-      const update = await requestAiBookMemoryUpdate({
-        config: currentConfig,
-        book: params.book,
-        chapter: params.chapter,
-        chapterContent: params.chapterContent,
-        memory: current,
-      })
-      let next = await saveAiBookMemory(update.memory)
-      memory.value = next
+      snapshot = await getAgentTaskStatus()
+      task.value = snapshot
+    } catch {
+      // 网络抖动：保持旧快照，按隐藏态间隔重试
+    }
 
-      if (update.shouldRegenerateMap && update.mapPrompt) {
-        next = await redrawMap(params.book, update.mapPrompt, params.chapter.index, next)
-      }
+    const current = task.value
+    const running = current?.running ?? false
+    if (wasRunning.value && !running) {
+      // 任务刚好结束：刷新资料（错误也已由服务端写入 lastError / 地图兜底）
+      wasRunning.value = running
+      await refreshMemoryOf(current?.bookUrl)
+      return
+    }
+    wasRunning.value = running
 
-      phase.value = 'idle'
-      statusText.value = ''
-      return next
-    } catch (error) {
-      const message = (error as Error).message || 'AI 资料更新失败'
-      phase.value = 'error'
-      statusText.value = message
-      const failed: AiBookMemory = {
-        ...current,
-        bookUrl: params.book.bookUrl,
-        bookName: params.book.name,
-        author: params.book.author,
-        lastError: message,
-        updatedAt: Date.now(),
-      }
-      memory.value = await saveAiBookMemory(failed).catch(() => failed)
-      return memory.value
-    } finally {
-      updatingChapterKeys.delete(key)
-      if (phase.value === 'error') {
-        window.setTimeout(() => {
-          if (phase.value === 'error') {
-            phase.value = 'idle'
-            statusText.value = ''
-          }
-        }, 3000)
-      }
+    if (!running) return
+    scheduleNextPoll()
+  }
+
+  async function refreshMemoryOf(bookUrl: string | undefined) {
+    if (!bookUrl || memory.value?.bookUrl !== bookUrl) return
+    try {
+      memory.value = await getAiBookMemory(bookUrl)
+    } catch {
+      /* 保留旧资料 */
     }
   }
 
-  async function saveSkippedChapterMemory(book: Book, chapter: BookChapter, current: AiBookMemory) {
-    const next: AiBookMemory = {
-      ...current,
-      bookUrl: book.bookUrl,
-      bookName: book.name,
-      author: book.author,
-      processedChapterIndex: Math.max(current.processedChapterIndex ?? -1, chapter.index),
-      processedChapterTitle: chapter.title,
-      lastError: undefined,
-      updatedAt: Date.now(),
-    }
-    memory.value = await saveAiBookMemory(next).catch(() => next)
-    return memory.value
+  function scheduleNextPoll() {
+    if (pollTimer != null) clearTimeout(pollTimer)
+    const interval =
+      typeof document !== 'undefined' && document.hidden ? POLL_INTERVAL_HIDDEN_MS : POLL_INTERVAL_MS
+    pollTimer = setTimeout(() => {
+      pollTimer = null
+      void pollOnce()
+    }, interval)
   }
 
-  async function redrawMap(
+  /** 开始轮询（幂等）。onMounted 与任务提交后都会调用。 */
+  function startPolling() {
+    if (polling) return
+    polling = true
+    void pollOnce()
+  }
+
+  function stopPolling() {
+    polling = false
+    if (pollTimer != null) {
+      clearTimeout(pollTimer)
+      pollTimer = null
+    }
+  }
+
+  function handleVisibilityChange() {
+    if (polling && task.value?.running) scheduleNextPoll()
+  }
+
+  async function startTask(
     book: Book,
-    prompt?: string,
-    sourceChapterIndex?: number,
-    currentMemory?: AiBookMemory
+    kind: 'update_to_current' | 'redraw_map',
+    targetChapterIndex?: number
   ) {
-    const currentConfig = refreshConfig()
-    const current = currentMemory || memory.value || (await load(book))
-    const resolvedPrompt = prompt || current.map?.prompt || buildFallbackMapPrompt(current, book)
-    phase.value = 'map'
-    statusText.value = '生成世界地图...'
     try {
-      const image = await requestAiBookMapImage({
-        config: currentConfig,
-        prompt: resolvedPrompt,
-      })
-      const imageUrl = await uploadGeneratedMap({
-        b64Json: image.b64Json,
-        imageUrl: image.imageUrl,
-        filename: `${Date.now()}-${slugify(book.name || 'map')}.png`,
-        useBackendProxy: currentConfig.useBackendProxy || currentConfig.modelSource === 'server',
-      })
-      const next = applyMapToMemory(current, {
-        imageUrl,
-        prompt: resolvedPrompt,
-        updatedAt: Date.now(),
-        sourceChapterIndex,
-      })
-      memory.value = await saveAiBookMemory(next)
-      phase.value = 'idle'
-      statusText.value = ''
-      return memory.value
+      await runAgentTask({ bookUrl: book.bookUrl, kind, targetChapterIndex })
     } catch (error) {
-      const message = (error as Error).message || '地图生成失败'
-      const fallback = applyMapFallbackToMemory(current, {
-        prompt: resolvedPrompt,
-        reason: `${message}，已显示关系图`,
-        sourceChapterIndex,
-      })
-      memory.value = await saveAiBookMemory(fallback).catch(() => fallback)
-      phase.value = 'idle'
-      statusText.value = '图片地图不可用，已显示关系图'
-      window.setTimeout(() => {
-        if (statusText.value === '图片地图不可用，已显示关系图') {
-          statusText.value = ''
-        }
-      }, 3000)
-      return memory.value
+      // 409：已有任务进行中（可能是别的书）——切到轮询展示即可
+      if (!isConflict(error)) throw error
     }
+    wasRunning.value = false // 强制下一次 poll 走「刚启动」分支
+    startPolling()
+    await pollOnce()
+    // 秒完成的任务（如整章跳过）不会经历 running→false 跳变：此刻已结束就直接刷新
+    const current = task.value
+    if (current && !current.running && current.bookUrl === book.bookUrl) {
+      await refreshMemoryOf(book.bookUrl)
+    }
+  }
+
+  function startUpdateToCurrent(book: Book, targetChapterIndex?: number) {
+    return startTask(book, 'update_to_current', targetChapterIndex)
+  }
+
+  /// 翻章自动触发：保留「开关开启 + 进度未到」的前置门槛（与旧版一致）；
+  /// 失败静默接受——lastError 留在服务端注册表，下次打开页面可见。
+  async function maybeAutoUpdate(book: Book, completedChapterIndex: number) {
+    try {
+      const current =
+        memory.value?.bookUrl === book.bookUrl
+          ? memory.value
+          : await getAiBookMemory(book.bookUrl).catch(() => null)
+      if (!current?.enabled) return
+      if ((current.processedChapterIndex ?? -1) >= completedChapterIndex) return
+      await startTask(book, 'update_to_current', completedChapterIndex)
+    } catch {
+      /* 静默 */
+    }
+  }
+
+  function startRedrawMap(book: Book) {
+    return startTask(book, 'redraw_map')
+  }
+
+  async function cancelCurrentTask() {
+    await cancelAgentTask()
+    await pollOnce()
   }
 
   return {
     memory,
     loading,
+    task,
+    isBusy,
     phase,
     statusText,
-    isBusy,
-    config,
     serverModelStatus,
-    canUseServerModel,
-    serverTextReady,
-    serverImageReady,
-    serverSpeechReady,
+    canUseServerModel: computed(() => Boolean(serverModelStatus.value?.canUseServerModel)),
+    serverTextReady: computed(() => Boolean(serverModelStatus.value?.textReady)),
+    serverImageReady: computed(() => Boolean(serverModelStatus.value?.imageReady)),
+    serverSpeechReady: computed(() => Boolean(serverModelStatus.value?.speechReady)),
+    agentReady: computed(() => Boolean(serverModelStatus.value?.agentReady)),
     loadServerModelStatus,
-    refreshConfig,
-    persistConfig,
     load,
     save,
     setEnabled,
     reset,
-    autoUpdateCompletedChapter,
-    runChapterUpdate,
-    redrawMap,
+    taskForBook,
+    startPolling,
+    stopPolling,
+    handleVisibilityChange,
+    startUpdateToCurrent,
+    startRedrawMap,
+    maybeAutoUpdate,
+    cancelCurrentTask,
   }
 })
 
-function buildFallbackMapPrompt(memory: AiBookMemory, book: Book) {
-  const locations = memory.locations
-    .map(
-      (item) =>
-        `${item.parentName ? `${item.parentName} > ` : ''}${item.name}${item.kind ? `（${item.kind}）` : ''}: ${item.description}`
-    )
-    .join('\n')
-  return [
-    `为小说《${book.name}》绘制一张不剧透的世界地图。`,
-    '只包含已读进度中出现的地点和势力范围。',
-    '优先表现地点层级、区域边界、路线连接、图例和地点标签，避免画成建筑外观或场景照片。',
-    locations || memory.summary || '保留未知区域，以卷轴地图风格呈现。',
-  ].join('\n')
+/** 视图在 load/reset 后始终持有可渲染的记忆骨架（与旧 createEmptyAiBookMemory 一致）。 */
+function emptyMemory(book: Book): AiBookMemory {
+  return {
+    bookUrl: book.bookUrl,
+    bookName: book.name,
+    author: book.author,
+    enabled: false,
+    updatedAt: Date.now(),
+    summary: '',
+    worldview: [],
+    characters: [],
+    relationships: [],
+    locations: [],
+    map: null,
+    mapDirty: false,
+  }
 }
 
-function slugify(value: string) {
-  const slug = value
-    .toLowerCase()
-    .replace(/[^a-z0-9\u4e00-\u9fa5]+/gi, '-')
-    .replace(/^-+|-+$/g, '')
-  return slug || 'map'
+function isConflict(error: unknown) {
+  return Boolean(
+    error &&
+      typeof error === 'object' &&
+      'status' in error &&
+      (error as { status?: number }).status === 409
+  )
 }

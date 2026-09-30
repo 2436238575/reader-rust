@@ -48,6 +48,7 @@ function createServerModelStatus(): AiServerModelStatus {
     textReady: true,
     imageReady: false,
     speechReady: true,
+  agentReady: false,
   }
 }
 

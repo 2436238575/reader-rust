@@ -26,18 +26,29 @@
             <span></span>
             自动更新
           </label>
-          <button
-            class="primary-btn"
-            :disabled="aiStore.isBusy || updatingToCurrent"
-            @click="updateToCurrent"
-          >
-            {{ aiStore.phase === 'text' || updatingToCurrent ? '更新中...' : '更新到当前进度' }}
+          <button v-if="taskRunning" class="primary-btn danger" @click="cancelTask">
+            取消更新...
           </button>
-          <button class="ghost-danger-btn" title="清空当前书的 AI资料" @click="resetMemory">
+          <button v-else class="primary-btn" :disabled="aiStore.isBusy" @click="updateToCurrent">
+            更新到当前进度
+          </button>
+          <button
+            class="ghost-danger-btn"
+            title="清空当前书的 AI资料"
+            :disabled="taskRunning"
+            @click="resetMemory"
+          >
             重置
           </button>
         </div>
       </header>
+
+      <div v-if="agentUnavailable" class="status-strip">
+        <div class="status-main">
+          <strong>AI 资料编排不可用</strong>
+          <p>服务端 sidecar 未就绪：请确认已安装 Python ≥3.11 且 AGENT_SIDECAR_ENABLED 未关闭</p>
+        </div>
+      </div>
 
       <div v-if="statusNotice" class="status-strip" :class="{ error: statusNotice.isError }">
         <div class="status-main">
@@ -179,7 +190,7 @@
               <p>{{ memory.map?.updatedAt ? formatDateTime(memory.map.updatedAt) : '未生成' }}</p>
             </div>
             <button class="secondary-btn" :disabled="aiStore.isBusy" @click="redrawMap">
-              {{ aiStore.phase === 'map' ? '绘制中...' : '重绘地图' }}
+              {{ taskRunning && viewTask?.phase === 'map' ? '绘制中...' : '重绘地图' }}
             </button>
           </div>
 
@@ -232,9 +243,9 @@
 </template>
 
 <script setup lang="ts">
-import { computed, defineComponent, h, onMounted, ref } from 'vue'
+import { computed, defineComponent, h, onMounted, onUnmounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { getBookContent, getChapterList, getShelfBook } from '../api/bookshelf'
+import { getShelfBook } from '../api/bookshelf'
 import { useAiBookStore } from '../stores/aiBook'
 import { useAppStore } from '../stores/app'
 import { useReaderStore } from '../stores/reader'
@@ -245,7 +256,6 @@ import type {
   AiBookMemory,
   AiBookRelationship,
   Book,
-  BookChapter,
 } from '../types'
 import RelationshipGraph from '../components/ai-book/RelationshipGraph.vue'
 import {
@@ -278,7 +288,6 @@ const readerStore = useReaderStore()
 const loading = ref(true)
 const activeTab = ref<AiTab>('overview')
 const book = ref<Book | null>(null)
-const chapters = ref<BookChapter[]>([])
 const characterSearch = ref('')
 const collapsedLocationIds = ref(new Set<string>())
 const collapsedWorldviewCategories = ref(new Set<string>())
@@ -317,28 +326,37 @@ const displayMemory = computed<AiBookMemory | null>(() =>
       }
     : null
 )
+const viewTask = computed(() => (book.value ? aiStore.taskForBook(book.value.bookUrl) : null))
+const taskRunning = computed(() => Boolean(viewTask.value?.running))
 const progressText = computed(() => {
+  const task = viewTask.value
+  if (task?.running && task.currentChapterIndex != null && task.targetChapterIndex != null) {
+    return `AI 更新中：第 ${task.currentChapterIndex + 1} / ${task.targetChapterIndex + 1} 章`
+  }
   const index = memory.value?.processedChapterIndex
   if (index == null) return '尚未生成'
   return `已更新至第 ${index + 1} 章`
 })
+const agentUnavailable = computed(
+  () => aiStore.serverModelStatus != null && !aiStore.agentReady
+)
 const statusNotice = computed(() => {
-  const source = aiStore.statusText || memory.value?.lastError || ''
+  const runningText = viewTask.value?.running ? aiStore.statusText : ''
+  const source = runningText || viewTask.value?.lastError || memory.value?.lastError || ''
   if (!source.trim()) return null
-  const isLastError = !aiStore.statusText && Boolean(memory.value?.lastError)
   const summary = summarizeDisplayError(source)
   const normalizedSource = collapseWhitespace(source)
   const hasDetail = normalizedSource !== summary && source.trim().length > summary.length + 20
   return {
     summary,
     detail: hasDetail ? source.trim() : '',
-    isError: aiStore.phase === 'error' || isLastError,
+    isError: viewTask.value?.phase === 'error' || (!runningText && Boolean(source)),
   }
 })
 
 onMounted(async () => {
   await appStore.fetchUserInfo()
-  aiStore.refreshConfig()
+  await aiStore.loadServerModelStatus()
   const bookUrl = String(route.query.bookUrl || '')
   if (!bookUrl) {
     router.replace('/')
@@ -347,16 +365,21 @@ onMounted(async () => {
   try {
     book.value = await getShelfBook(bookUrl)
     await aiStore.load(book.value)
-    chapters.value = await getChapterList({
-      bookUrl: book.value.bookUrl,
-      bookSourceUrl: book.value.origin,
-    }).catch(() => [])
   } catch (error) {
     appStore.showToast((error as Error).message || 'AI资料加载失败', 'error')
     router.replace('/')
   } finally {
     loading.value = false
   }
+  // 任务在服务端跑：进页面即轮询，重开页面恢复进度显示
+  document.addEventListener('visibilitychange', aiStore.handleVisibilityChange)
+  aiStore.startPolling()
+})
+
+onUnmounted(() => {
+  document.removeEventListener('visibilitychange', aiStore.handleVisibilityChange)
+  // 关页面不取消任务；只是本页停止展示
+  aiStore.stopPolling()
 })
 
 function goBack() {
@@ -374,53 +397,37 @@ async function toggleEnabled(event: Event) {
   }
 }
 
-// 逐章循环里每章结束 phase 会短暂回到 idle（拉下一章正文期间），
-// isBusy 会出现空窗；整个循环用一个本地守卫盖住
-const updatingToCurrent = ref(false)
-
 async function updateToCurrent() {
-  if (!book.value || !memory.value || updatingToCurrent.value) return
+  if (!book.value) return
   const targetIndex = resolveCurrentIndex()
-  if (!chapters.value.length) {
-    appStore.showToast('目录未加载，无法更新', 'warning')
-    return
-  }
-  const startIndex = Math.max(0, (memory.value.processedChapterIndex ?? -1) + 1)
+  const startIndex = Math.max(0, (memory.value?.processedChapterIndex ?? -1) + 1)
   if (startIndex > targetIndex) {
     appStore.showToast('当前进度已更新', 'success')
     return
   }
-
-  updatingToCurrent.value = true
   try {
-    let currentMemory = memory.value
-    for (let index = startIndex; index <= targetIndex; index += 1) {
-      const chapter = chapters.value[index]
-      if (!chapter) continue
-      const chapterContent = await resolveChapterContent(index, chapter)
-      currentMemory = await aiStore.runChapterUpdate({
-        book: book.value,
-        chapter,
-        chapterContent,
-        current: currentMemory,
-        chapters: chapters.value,
-      })
-    }
-    appStore.showToast('AI资料已更新', 'success')
+    await aiStore.startUpdateToCurrent(book.value, targetIndex)
   } catch (error) {
     appStore.showToast((error as Error).message || 'AI资料更新失败', 'error')
-  } finally {
-    updatingToCurrent.value = false
+  }
+}
+
+async function cancelTask() {
+  try {
+    await aiStore.cancelCurrentTask()
+    appStore.showToast('已取消更新', 'success')
+  } catch (error) {
+    appStore.showToast((error as Error).message || '取消失败', 'error')
   }
 }
 
 async function redrawMap() {
   if (!book.value) return
-  const next = await aiStore.redrawMap(book.value)
-  if (next?.map?.imageUrl) {
-    appStore.showToast('地图已更新', 'success')
-  } else {
-    appStore.showToast('图片地图不可用，已显示关系图', 'warning')
+  try {
+    await aiStore.startRedrawMap(book.value)
+    appStore.showToast('地图绘制已开始', 'success')
+  } catch (error) {
+    appStore.showToast((error as Error).message || '地图绘制失败', 'error')
   }
 }
 
@@ -465,18 +472,7 @@ function resolveCurrentIndex() {
   if (readerStore.book?.bookUrl === book.value?.bookUrl) {
     return Math.max(0, readerStore.currentIndex)
   }
-  return Math.max(0, Math.min(chapters.value.length - 1, book.value?.durChapterIndex || 0))
-}
-
-async function resolveChapterContent(index: number, chapter: BookChapter) {
-  if (readerStore.book?.bookUrl === book.value?.bookUrl) {
-    const content = await readerStore.fetchChapterContent(index)
-    if (content) return content
-  }
-  return getBookContent({
-    chapterUrl: chapter.url,
-    bookSourceUrl: book.value?.origin,
-  })
+  return Math.max(0, book.value?.durChapterIndex || 0)
 }
 
 function normalizeDisplayCharacters(characters: AiBookCharacter[]) {

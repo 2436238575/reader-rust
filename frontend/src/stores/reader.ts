@@ -1104,15 +1104,10 @@ export const useReaderStore = defineStore('reader', () => {
     if (hasNext.value) {
       const completedBook = book.value ? { ...book.value } : null
       const completedChapter = currentChapter.value ? { ...currentChapter.value } : null
-      const completedContent = content.value
       await loadChapter(currentIndex.value + 1)
-      if (completedBook && completedChapter && completedContent) {
-        void aiBookStore.autoUpdateCompletedChapter({
-          book: completedBook,
-          chapter: completedChapter,
-          chapterContent: completedContent,
-          chapters: chapters.value,
-        })
+      if (completedBook && completedChapter) {
+        // 自动更新在服务端跑：fire-and-forget，关页面/换书都不受影响
+        void aiBookStore.maybeAutoUpdate(completedBook, completedChapter.index)
       }
     }
   }

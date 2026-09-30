@@ -51,11 +51,19 @@ http.interceptors.response.use(
     }
     if (data && typeof data === 'object') {
       if (typeof data.errorMsg === 'string' && data.errorMsg.trim()) {
-        return Promise.reject(new Error(data.errorMsg))
+        return Promise.reject(withStatus(new Error(data.errorMsg), error.response?.status))
       }
     }
-    return Promise.reject(new Error(error.message || '请求失败'))
+    return Promise.reject(withStatus(new Error(error.message || '请求失败'), error.response?.status))
   }
 )
+
+/** 把 HTTP 状态码挂到错误对象上（如 409 冲突检测），不改变既有 message 语义。 */
+function withStatus(error: Error, status: number | undefined): Error {
+  if (typeof status === 'number') {
+    ;(error as Error & { status?: number }).status = status
+  }
+  return error
+}
 
 export default http

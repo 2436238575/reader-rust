@@ -19,128 +19,41 @@
           </div>
 
           <div class="modal-body">
-            <div class="source-row">
-              <span class="source-row-label">AI资料 / 地图</span>
-              <div class="source-options">
-                <button
-                  class="source-option"
-                  :class="{ active: draft.modelSource === 'browser' }"
-                  @click="draft.modelSource = 'browser'"
-                >
-                  浏览器
-                </button>
-                <button
-                  class="source-option"
-                  :class="{ active: draft.modelSource === 'server' }"
-                  :disabled="statusLoaded && !aiStore.canUseServerModel"
-                  @click="selectServerSource"
-                >
-                  后端
-                </button>
+            <section class="settings-card">
+              <div class="settings-card-head">
+                <h3>后端模型状态</h3>
               </div>
-            </div>
-            <p class="settings-hint source-hint">
-              浏览器：配置只保存在当前浏览器。后端：使用服务端 env 里的配置，浏览器接触不到 API
-              Key。
-            </p>
-
-            <template v-if="draft.modelSource === 'server'">
-              <section class="settings-card">
-                <div class="settings-card-head">
-                  <h3>后端模型状态</h3>
-                </div>
-                <ul class="server-status-list">
-                  <li>
-                    文本模型（AI资料）
-                    <span :class="['status-pill', { ready: aiStore.serverTextReady }]">
-                      {{ aiStore.serverTextReady ? '已配置可用' : '未配置' }}
-                    </span>
-                  </li>
-                  <li>
-                    图片模型（AI 地图）
-                    <span :class="['status-pill', { ready: aiStore.serverImageReady }]">
-                      {{ aiStore.serverImageReady ? '已配置可用' : '未配置' }}
-                    </span>
-                  </li>
-                  <li>
-                    语音模型（听书）
-                    <span :class="['status-pill', { ready: aiStore.serverSpeechReady }]">
-                      {{ aiStore.serverSpeechReady ? '已配置可用' : '未配置' }}
-                    </span>
-                  </li>
-                </ul>
-                <p class="settings-hint">
-                  后端配置由服务端环境变量维护（AI_TEXT_* / AI_IMAGE_* / AI_SPEECH_*），
-                  改配置需要重启后端；此处只读。
-                </p>
-              </section>
-            </template>
-
-            <template v-else>
-              <section class="settings-card">
-                <div class="settings-card-head">
-                  <h3>文本模型</h3>
-                  <label class="switch-line compact">
-                    <input v-model="draft.textUseFullUrl" type="checkbox" />
-                    <span class="switch-ui"></span>
-                    <span>完整链接</span>
-                  </label>
-                </div>
-                <div class="settings-grid">
-                  <label class="field span-2">
-                    <span>Base URL</span>
-                    <input v-model="draft.textBaseUrl" placeholder="http://localhost:8825" />
-                  </label>
-                  <label class="field">
-                    <span>模型</span>
-                    <input v-model="draft.textModel" placeholder="gpt-4o-mini" />
-                  </label>
-                  <label class="field">
-                    <span>API Key</span>
-                    <input v-model="draft.textApiKey" type="password" autocomplete="off" />
-                  </label>
-                </div>
-              </section>
-
-              <section class="settings-card">
-                <div class="settings-card-head">
-                  <h3>图片模型</h3>
-                  <label class="switch-line compact">
-                    <input v-model="draft.imageUseFullUrl" type="checkbox" />
-                    <span class="switch-ui"></span>
-                    <span>完整链接</span>
-                  </label>
-                </div>
-                <div class="settings-grid">
-                  <label class="field span-2">
-                    <span>Base URL</span>
-                    <input v-model="draft.imageBaseUrl" placeholder="http://localhost:8826" />
-                  </label>
-                  <label class="field">
-                    <span>模型</span>
-                    <input v-model="draft.imageModel" placeholder="gpt-image-1" />
-                  </label>
-                  <label class="field">
-                    <span>尺寸</span>
-                    <select v-model="draft.imageSize">
-                      <option value="1024x1024">1024x1024</option>
-                      <option value="1792x1024">1792x1024</option>
-                      <option value="1024x1792">1024x1792</option>
-                    </select>
-                  </label>
-                  <label class="field span-2">
-                    <span>API Key</span>
-                    <input v-model="draft.imageApiKey" type="password" autocomplete="off" />
-                  </label>
-                </div>
-              </section>
-
-              <label class="switch-line proxy-option">
-                <input v-model="draft.useBackendProxy" type="checkbox" />
-                <span class="switch-ui"></span>
-                <span>使用后端代理调用模型</span>
-              </label>
-            </template>
+              <ul class="server-status-list">
+                <li>
+                  文本模型（AI资料）
+                  <span :class="['status-pill', { ready: aiStore.serverTextReady }]">
+                    {{ aiStore.serverTextReady ? '已配置可用' : '未配置' }}
+                  </span>
+                </li>
+                <li>
+                  图片模型（AI 地图）
+                  <span :class="['status-pill', { ready: aiStore.serverImageReady }]">
+                    {{ aiStore.serverImageReady ? '已配置可用' : '未配置' }}
+                  </span>
+                </li>
+                <li>
+                  语音模型（听书）
+                  <span :class="['status-pill', { ready: aiStore.serverSpeechReady }]">
+                    {{ aiStore.serverSpeechReady ? '已配置可用' : '未配置' }}
+                  </span>
+                </li>
+                <li>
+                  AI 资料编排（sidecar）
+                  <span :class="['status-pill', { ready: aiStore.agentReady }]">
+                    {{ aiStore.agentReady ? '已就绪' : '未就绪' }}
+                  </span>
+                </li>
+              </ul>
+              <p class="settings-hint">
+                AI资料与地图由服务端编排生成，模型配置在服务端环境变量维护
+                （AI_TEXT_* / AI_IMAGE_*），改配置需要重启后端；此处只读。
+              </p>
+            </section>
 
             <section class="settings-card">
               <div class="settings-card-head">
@@ -261,10 +174,6 @@
               </div>
             </section>
           </div>
-
-          <div class="modal-foot">
-            <button class="primary-btn" @click="save">保存配置</button>
-          </div>
         </div>
       </div>
     </Transition>
@@ -272,13 +181,12 @@
 </template>
 
 <script setup lang="ts">
-import { computed, reactive, ref, toRef, watch } from 'vue'
+import { computed, ref, toRef, watch } from 'vue'
 import { useAiBookStore } from '../stores/aiBook'
 import { useAppStore } from '../stores/app'
 import { useReaderStore } from '../stores/reader'
 import { useEscClose } from '../composables/useEscClose'
 import { useMobileLayout } from '../composables/useMobileLayout'
-import type { AiBookConfig } from '../types'
 
 const props = defineProps<{ modelValue: boolean }>()
 const emit = defineEmits<{ 'update:modelValue': [boolean] }>()
@@ -288,7 +196,6 @@ const appStore = useAppStore()
 const readerStore = useReaderStore()
 const { isMobileLayout } = useMobileLayout()
 
-const draft = reactive<AiBookConfig>({ ...aiStore.config })
 const speechCfg = computed(() => readerStore.speechConfig)
 const statusLoaded = ref(false)
 
@@ -302,26 +209,12 @@ watch(
   () => props.modelValue,
   async (open) => {
     if (!open) return
-    // 每次打开都同步最新配置与后端状态（可能在别处改过）
-    aiStore.refreshConfig()
-    Object.assign(draft, aiStore.config)
+    // 每次打开都拉最新后端状态（可能在别处改过）
     statusLoaded.value = false
     await aiStore.loadServerModelStatus({ force: true })
     statusLoaded.value = true
   }
 )
-
-async function selectServerSource() {
-  if (!statusLoaded.value) {
-    await aiStore.loadServerModelStatus({ force: true })
-    statusLoaded.value = true
-  }
-  if (!aiStore.canUseServerModel) {
-    appStore.showToast('后端未配置 AI 模型，请在服务端 env 设置 AI_TEXT_* / AI_IMAGE_*', 'warning')
-    return
-  }
-  draft.modelSource = 'server'
-}
 
 async function selectServerSpeech() {
   if (!statusLoaded.value) {
@@ -333,15 +226,6 @@ async function selectServerSpeech() {
     return
   }
   readerStore.setOpenAISpeechSource('server')
-}
-
-function save() {
-  if (draft.modelSource === 'server' && !aiStore.canUseServerModel) {
-    draft.modelSource = 'browser'
-  }
-  aiStore.persistConfig({ ...draft })
-  appStore.showToast('AI 配置已保存', 'success')
-  close()
 }
 </script>
 
@@ -436,20 +320,6 @@ function save() {
   padding: 0 2px;
 }
 
-.modal-foot {
-  padding: 12px 20px calc(16px + var(--safe-area-bottom));
-  border-top: 1px solid var(--color-border);
-  display: flex;
-  justify-content: flex-end;
-}
-
-.primary-btn {
-  padding: 8px 20px;
-  border-radius: 8px;
-  background: var(--color-primary);
-  color: #fff;
-  font-weight: 600;
-}
 
 .settings-card {
   background: var(--color-bg-sunken);
