@@ -527,10 +527,8 @@ fn parse_opf_element(package: &mut EpubPackage, e: &BytesStart<'_>, opf_base: &s
                 package.spine.push(idref);
             }
         }
-        "meta" => {
-            if attr_by_name(e, "name").as_deref() == Some("cover") {
-                package.cover_id = attr_by_name(e, "content");
-            }
+        "meta" if attr_by_name(e, "name").as_deref() == Some("cover") => {
+            package.cover_id = attr_by_name(e, "content");
         }
         _ => {}
     }

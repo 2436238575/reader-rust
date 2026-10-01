@@ -32,7 +32,7 @@ pub fn jsonpath_first_string(value: &Value, rule: &str) -> Option<String> {
         return Some(rendered);
     }
     let res = jsonpath_query(value, rule);
-    res.first().and_then(|v| value_to_string(v))
+    res.first().and_then(value_to_string)
 }
 
 pub fn value_to_string(v: &Value) -> Option<String> {

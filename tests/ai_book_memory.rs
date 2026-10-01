@@ -132,8 +132,10 @@ async fn ai_book_memory_round_trips_and_isolated_by_user() {
 async fn ai_book_memory_rejects_mismatched_book_url_on_save() {
     let (service, storage_dir) = create_service("mismatch").await;
 
-    let mut memory = AiBookMemory::default();
-    memory.book_url = "https://example.test/book/1".to_string();
+    let memory = AiBookMemory {
+        book_url: "https://example.test/book/1".to_string(),
+        ..Default::default()
+    };
 
     let err = service
         .save_for_book("alice", "https://example.test/book/2", memory)

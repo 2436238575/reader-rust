@@ -650,7 +650,6 @@ impl RuleEngine {
                 is_vip,
                 is_pay,
                 is_volume,
-                ..Default::default()
             });
         }
         (out, vec![])
@@ -700,7 +699,6 @@ impl RuleEngine {
                 is_vip,
                 is_pay,
                 is_volume,
-                ..Default::default()
             });
         }
         (out, vec![])
@@ -2121,7 +2119,6 @@ fn parse_chapter_list_html(
             is_vip,
             is_pay,
             is_volume,
-            ..Default::default()
         });
     }
 
@@ -2203,7 +2200,6 @@ fn parse_chapter_list_xpath(
             is_vip,
             is_pay,
             is_volume,
-            ..Default::default()
         });
     }
 
@@ -2288,7 +2284,6 @@ fn parse_chapter_list_json(
             is_vip,
             is_pay,
             is_volume,
-            ..Default::default()
         });
     }
 
@@ -2416,15 +2411,13 @@ fn interpolate_json_templates(
             .iter()
             .map(|(key, value)| (key.clone(), Value::String(value.clone())))
             .collect();
-        match eval_js_with_bindings(
+        eval_js_with_bindings(
             expr,
             &serde_json::to_string(v).unwrap_or_default(),
             base_url,
             &bindings,
-        ) {
-            Ok(res) => res,
-            Err(_) => String::new(),
-        }
+        )
+        .unwrap_or_default()
     })
     .into_owned()
 }
@@ -2757,8 +2750,7 @@ fn eval_field_html_with_ctx(
 ) -> Option<String> {
     // Handle mode forcing prefixes
     let rule = rule.trim();
-    if rule.starts_with("@css:") {
-        let pure = &rule[5..];
+    if let Some(pure) = rule.strip_prefix("@css:") {
         return eval_field_html_with_ctx(pure, el, base_url, ctx);
     }
     if let Some(pure) = rule.strip_prefix("@xpath:") {
@@ -3065,9 +3057,8 @@ fn eval_field_json_with_ctx(
         String::new,
         |pure| {
             // 「字面量启发式」：插值后仍含模板痕迹或带 URL/列表特征的规则按字面量返回
-            if pure.contains("{{") && pure.contains("}}") {
-                pure.to_string()
-            } else if pure.contains('/')
+            if (pure.contains("{{") && pure.contains("}}"))
+                || pure.contains('/')
                 || pure.contains('?')
                 || pure.contains('&')
                 || pure.contains('=')

@@ -93,9 +93,7 @@ pub fn resolve_within(base: &Path, relative: &Path) -> Option<PathBuf> {
             Component::CurDir => {}
             Component::ParentDir => {
                 // 只允许弹出普通目录，绝不允许越过 base
-                if stack.pop().is_none() {
-                    return None;
-                }
+                stack.pop()?;
             }
             Component::RootDir | Component::Prefix(_) => return None,
         }

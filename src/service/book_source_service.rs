@@ -10,6 +10,8 @@ pub const INVALID_BOOK_SOURCE_GROUP: &str = "失效";
 /// fallback 解析缓存的每命名空间键数上限，满了整表清空。
 const RESOLUTION_CACHE_MAX_KEYS: usize = 1024;
 
+type ResolutionCache = Arc<Mutex<HashMap<String, HashMap<String, Option<String>>>>>;
+
 #[derive(Clone)]
 pub struct BookSourceService {
     repo: BookSourceRepo,
@@ -19,7 +21,7 @@ pub struct BookSourceService {
     /// 拉取并反序列化该命名空间的所有书源 JSON（几百个源就是几 MB 解析）。
     /// 缓存只存命中的 source URL（单行主键查询重建完整对象），
     /// 任何书源写入/删除都会失效对应命名空间。
-    resolution_cache: Arc<Mutex<HashMap<String, HashMap<String, Option<String>>>>>,
+    resolution_cache: ResolutionCache,
 }
 
 impl BookSourceService {
@@ -239,7 +241,7 @@ pub fn set_invalid_book_source_group(source: &mut BookSource, invalid: bool) -> 
 }
 
 fn split_source_groups(raw: &str) -> Vec<String> {
-    raw.split(|ch| matches!(ch, ',' | ';' | '；' | '、'))
+    raw.split([',', ';', '；', '、'])
         .map(str::trim)
         .filter(|group| !group.is_empty())
         .map(str::to_string)

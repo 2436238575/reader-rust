@@ -40,10 +40,7 @@ pub async fn ai_proxy(
         .header(reqwest::header::ACCEPT, "application/json")
         .json(&body);
 
-    if let Some(api_key) = Some(endpoint.api_key.as_str())
-        .map(str::trim)
-        .filter(|v| !v.is_empty())
-    {
+    if let Some(api_key) = Some(str::trim(endpoint.api_key.as_str())).filter(|v| !v.is_empty()) {
         builder = builder.bearer_auth(api_key);
     }
 

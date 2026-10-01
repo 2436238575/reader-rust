@@ -122,6 +122,19 @@ fn image_response(bytes: Vec<u8>, content_type: String) -> Response<Body> {
     resp
 }
 
+/// 包一层响应，并把书籍封面换成本站取图地址。
+///
+/// 前端因此不需要知道书源地址（更不需要知道它什么时候过期）；没有改写到的地方
+/// 仍然可以走兼容入口 `/reader3/cover?path=`，所以这里只做「能改就改」。
+pub(crate) async fn ok_with_cover_routes(
+    state: &AppState,
+    value: impl serde::Serialize,
+) -> Json<crate::error::error::ApiResponse<serde_json::Value>> {
+    let mut value = serde_json::to_value(value).unwrap_or_default();
+    state.image_service.rewrite_cover_urls(&mut value).await;
+    Json(crate::error::error::ApiResponse::ok(value))
+}
+
 #[cfg(test)]
 mod tests {
     use super::is_valid_image_id;
@@ -137,17 +150,4 @@ mod tests {
         assert!(!is_valid_image_id("..%2F..%2Fetc"));
         assert!(!is_valid_image_id(""));
     }
-}
-
-/// 包一层响应，并把书籍封面换成本站取图地址。
-///
-/// 前端因此不需要知道书源地址（更不需要知道它什么时候过期）；没有改写到的地方
-/// 仍然可以走兼容入口 `/reader3/cover?path=`，所以这里只做「能改就改」。
-pub(crate) async fn ok_with_cover_routes(
-    state: &AppState,
-    value: impl serde::Serialize,
-) -> Json<crate::error::error::ApiResponse<serde_json::Value>> {
-    let mut value = serde_json::to_value(value).unwrap_or_default();
-    state.image_service.rewrite_cover_urls(&mut value).await;
-    Json(crate::error::error::ApiResponse::ok(value))
 }

@@ -103,7 +103,7 @@ pub fn parse_txt_chapters(book_url: &str, text: &str) -> Vec<ParsedTxtChapter> {
 
     let mut chapters = Vec::new();
     let first_start = headings[0].0;
-    if text[..first_start].trim().len() > 0 {
+    if !text[..first_start].trim().is_empty() {
         chapters.push(ParsedTxtChapter {
             title: "序章".to_string(),
             url: build_chapter_url(book_url, 0),

@@ -120,7 +120,7 @@ pub async fn get_book_source(
     let user_ns = user.0.ns.clone();
     let url = q
         .book_source_url
-        .or_else(|| body.map(|b| b.0.book_source_url).flatten());
+        .or_else(|| body.and_then(|b| b.0.book_source_url));
     let url = url.ok_or_else(|| AppError::BadRequest("bookSourceUrl required".to_string()))?;
     let source = state
         .book_source_service
@@ -870,11 +870,11 @@ fn rewrite_proxy_actions(
         .replace_all(html, |tag_caps: &Captures| {
             let tag = tag_caps.get(0).map(|m| m.as_str()).unwrap_or("");
             let output = double_quoted.replace_all(tag, |caps: &Captures| {
-                rewrite_proxy_attr(&caps, upstream_url, book_source_url, access_token, "\"")
+                rewrite_proxy_attr(caps, upstream_url, book_source_url, access_token, "\"")
             });
             single_quoted
                 .replace_all(&output, |caps: &Captures| {
-                    rewrite_proxy_attr(&caps, upstream_url, book_source_url, access_token, "'")
+                    rewrite_proxy_attr(caps, upstream_url, book_source_url, access_token, "'")
                 })
                 .into_owned()
         })
@@ -940,12 +940,12 @@ fn rewrite_script_root_relative_urls(
         .replace_all(html, |script_caps: &Captures| {
             let script = script_caps.get(0).map(|m| m.as_str()).unwrap_or("");
             let output = double_quoted.replace_all(script, |caps: &Captures| {
-                rewrite_script_url_literal(&caps, upstream_url, book_source_url, access_token, "\"")
+                rewrite_script_url_literal(caps, upstream_url, book_source_url, access_token, "\"")
             });
             single_quoted
                 .replace_all(&output, |caps: &Captures| {
                     rewrite_script_url_literal(
-                        &caps,
+                        caps,
                         upstream_url,
                         book_source_url,
                         access_token,

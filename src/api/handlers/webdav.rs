@@ -332,8 +332,8 @@ fn normalize_rel_path(path: &str) -> Result<Vec<String>, AppError> {
     Ok(parts)
 }
 
-fn join_parts(home: &PathBuf, parts: &Vec<String>) -> PathBuf {
-    let mut p = home.clone();
+fn join_parts(home: &std::path::Path, parts: &[String]) -> PathBuf {
+    let mut p = home.to_path_buf();
     for part in parts {
         p = p.join(part);
     }

@@ -30,16 +30,13 @@ pub async fn read_body_limited(
     Ok(bytes::Bytes::from(buf))
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+// GET/POST 按 HTTP 惯例保留全大写
+#[allow(clippy::upper_case_acronyms)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
 pub enum HttpMethod {
+    #[default]
     GET,
     POST,
-}
-
-impl Default for HttpMethod {
-    fn default() -> Self {
-        Self::GET
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
