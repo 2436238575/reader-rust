@@ -342,6 +342,15 @@ function stopWorking() {
   border: none;
   cursor: pointer;
 }
+.close-btn:hover {
+  opacity: 1;
+  background: rgba(0, 0, 0, 0.05);
+}
+
+.close-btn svg {
+  width: 18px;
+  height: 18px;
+}
 
 .cache-body {
   flex: 1;

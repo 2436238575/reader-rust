@@ -479,9 +479,22 @@ const formatDate = formatMonthDayTime
   gap: 8px;
 }
 
+.icon-btn:hover:not(:disabled),
+.close-btn:hover {
+  opacity: 1;
+  background: rgba(0, 0, 0, 0.05);
+}
+
 .icon-btn:disabled {
   opacity: 0.35;
   cursor: default;
+}
+
+/* 图标限定 18px：不加约束会撑满 32px 按钮，比全站其他关闭/刷新键大一圈 */
+.icon-btn svg,
+.close-btn svg {
+  width: 18px;
+  height: 18px;
 }
 
 .list-container {

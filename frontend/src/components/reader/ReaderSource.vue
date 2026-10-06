@@ -279,6 +279,15 @@ async function handleSwitch(res: SearchBook) {
   border: none;
   cursor: pointer;
 }
+.close-btn:hover {
+  opacity: 1;
+  background: rgba(0, 0, 0, 0.05);
+}
+
+.close-btn svg {
+  width: 18px;
+  height: 18px;
+}
 
 .source-list {
   flex: 1;
