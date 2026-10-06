@@ -224,6 +224,8 @@ const sections: SectionDef[] = [
       { key: 'ruleToc.isVip', label: '收费标识' },
       { key: 'ruleToc.isPay', label: '购买标识' },
       { key: 'ruleToc.updateTime', label: '章节信息' },
+      { key: 'ruleToc.volumeName', label: '卷名', placeholder: '本项目扩展：目录按卷名连续分组' },
+      { key: 'ruleToc.wordCount', label: '章节字数', placeholder: '本项目扩展：目录条目副行展示' },
       { key: 'ruleToc.nextTocUrl', label: '翻页规则' },
     ],
   },
@@ -265,6 +267,11 @@ const sections: SectionDef[] = [
       { key: 'ruleReview.replyPostTimeRule', label: '回复时间' },
       { key: 'ruleReview.replyAuthorRule', label: '回复作者标记' },
       { key: 'ruleReview.replyAuthorDiggRule', label: '回复作者点赞' },
+      {
+        key: 'ruleReview.replyImageRule',
+        label: '回复配图',
+        placeholder: '本项目扩展：缺省回落配图规则',
+      },
     ],
   },
   {
@@ -295,6 +302,11 @@ const sections: SectionDef[] = [
       { key: 'ruleParaReview.replyPostTimeRule', label: '回复时间' },
       { key: 'ruleParaReview.replyAuthorRule', label: '回复作者标记' },
       { key: 'ruleParaReview.replyAuthorDiggRule', label: '回复作者点赞' },
+      {
+        key: 'ruleParaReview.replyImageRule',
+        label: '回复配图',
+        placeholder: '本项目扩展：缺省回落配图规则',
+      },
     ],
   },
   {
