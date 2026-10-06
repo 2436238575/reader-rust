@@ -691,8 +691,7 @@ impl RuleEngine {
                 capture_rule_value(rule.chapter_url.as_deref(), &groups).unwrap_or_default();
             let tag = capture_rule_value(rule.update_time.as_deref(), &groups);
             let volume = chapter_meta(capture_rule_value(rule.volume_name.as_deref(), &groups));
-            let word_count =
-                chapter_meta(capture_rule_value(rule.word_count.as_deref(), &groups));
+            let word_count = chapter_meta(capture_rule_value(rule.word_count.as_deref(), &groups));
             let is_volume = capture_rule_value(rule.is_volume.as_deref(), &groups)
                 .map(is_truthy)
                 .unwrap_or(false);
