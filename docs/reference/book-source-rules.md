@@ -1484,9 +1484,9 @@ getContentAwait(source, book, chapter, nextChapterUrl=null, needSave=true):
     "replyListRule": "$.reply_list[*]",
     "replyNameRule": "$.user_info.user_name",
     "replyContentRule": "$.text",
-    "authorRule": "$.author",
+    "authorRule": "$.user_info.is_author",
     "authorDiggRule": "$.has_author_digg",
-    "replyAuthorRule": "$.author",
+    "replyAuthorRule": "$.user_info.is_author",
     "replyAuthorDiggRule": "$.has_author_digg",
     "imageRule": "$.image_url[*]"
   },
@@ -1507,9 +1507,9 @@ getContentAwait(source, book, chapter, nextChapterUrl=null, needSave=true):
     "replyListRule": "$.reply_list[*]",
     "replyNameRule": "$.user_info.user_name",
     "replyContentRule": "$.text",
-    "authorRule": "$.author",
+    "authorRule": "$.user_info.is_author",
     "authorDiggRule": "$.has_author_digg",
-    "replyAuthorRule": "$.author",
+    "replyAuthorRule": "$.user_info.is_author",
     "replyAuthorDiggRule": "$.has_author_digg",
     "imageRule": "$.image_url[*]"
   }

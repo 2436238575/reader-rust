@@ -157,36 +157,36 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { ref, computed, watch, onMounted } from 'vue'
 import { useReaderStore } from '../../stores/reader'
 import { useAppStore } from '../../stores/app'
-import { getAvailableBookSourceSSE } from '../../api/search'
 import { getBookInfo, getCoverUrl } from '../../api/bookshelf'
+import {
+  useAvailableSources,
+  type AvailableSourceCandidate,
+} from '../../composables/useAvailableSources'
 import type { Book, SearchBook } from '../../types'
-
-type CandidateItem = {
-  book: SearchBook
-  sameName: boolean
-  sameAuthor: boolean
-  sameLatest: boolean
-  chapterHint: string
-  score: number
-}
 
 const store = useReaderStore()
 const appStore = useAppStore()
 const theme = computed(() => store.currentTheme)
 /// 封面要经后端取图接口并带上令牌（<img> 带不了请求头）
 const coverSrc = computed(() => getCoverUrl(store.book?.coverUrl))
-const searching = ref(false)
-const loadingMore = ref(false)
-const results = ref<SearchBook[]>([])
-const lastIndex = ref(-1)
-const hasMoreSources = ref(true)
-const selectedCandidate = ref<CandidateItem | null>(null)
+const selectedCandidate = ref<AvailableSourceCandidate | null>(null)
 const candidatePreview = ref<Book | null>(null)
-const AVAILABLE_CONCURRENT_COUNT = 8
-let availableSourceSSE: EventSource | null = null
+
+// 换源候选搜索/打分/SSE 管线在 useAvailableSources（与详情弹窗换源共用）
+const { searching, loadingMore, hasMoreSources, preparedResults, startSearch, loadMoreSources } =
+  useAvailableSources(() => {
+    if (!store.book) return null
+    return {
+      bookUrl: store.book.bookUrl,
+      name: store.book.name,
+      author: store.book.author,
+      origin: store.book.origin,
+      latest: store.book.latestChapterTitle || store.currentChapter?.title,
+    }
+  })
 
 const currentSource = computed(() => {
   if (!store.book) return null
@@ -196,195 +196,19 @@ const currentSource = computed(() => {
   }
 })
 
-function normalizeText(value?: string) {
-  return (value || '')
-    .replace(/\s+/g, '')
-    .replace(/[：:,.，。！？!?\-—_()（）【】\[\]<>《》'"“”‘’]/g, '')
-    .toLowerCase()
-}
-
-function normalizeAuthorText(value?: string) {
-  return normalizeText(value).replace(/^作者/, '')
-}
-
-const preparedResults = computed<CandidateItem[]>(() => {
-  if (!store.book) return []
-  const currentName = normalizeText(store.book.name)
-  const currentAuthor = normalizeAuthorText(store.book.author)
-  const currentLatest = normalizeText(store.book.latestChapterTitle || store.currentChapter?.title)
-
-  return results.value
-    .map((book) => {
-      const sameName = normalizeText(book.name) === currentName
-      const sameAuthor = normalizeAuthorText(book.author) === currentAuthor
-      const sameLatest = !!currentLatest && normalizeText(book.lastChapter) === currentLatest
-      const chapterHint = sameLatest
-        ? '可无缝续读'
-        : book.lastChapter
-          ? `目标源最新：${book.lastChapter}`
-          : ''
-      const score = (sameName ? 3 : 0) + (sameAuthor ? 3 : 0) + (sameLatest ? 4 : 0)
-      return { book, sameName, sameAuthor, sameLatest, chapterHint, score }
-    })
-    .sort((a, b) => b.score - a.score)
+// 首批候选一到就默认选中第一个（原 SSE 回调里的自动选中）
+watch(preparedResults, (list) => {
+  if (!selectedCandidate.value && list.length) void selectCandidate(list[0])
 })
 
 onMounted(() => {
   startSearch()
 })
 
-onUnmounted(() => {
-  closeAvailableSourceSSE()
-})
-
-function startSearch() {
-  if (!store.book) return
-  closeAvailableSourceSSE()
-  searching.value = true
-  loadingMore.value = false
-  results.value = []
-  lastIndex.value = -1
-  hasMoreSources.value = true
-  selectedCandidate.value = null
-  candidatePreview.value = null
-
-  openAvailableSourceSSE('initial')
-}
-
-function mergeCandidates(candidates: SearchBook[]) {
-  if (!store.book || !candidates.length) return
-  const currentBook = store.book
-  const currentAuthor = normalizeAuthorText(currentBook.author)
-  candidates.forEach((item) => {
-    if (item.origin === currentBook.origin) return
-    if (currentAuthor && item.author && normalizeAuthorText(item.author) !== currentAuthor) return
-    // 同源（origin=bookSourceUrl 唯一）即重复
-    const existed = results.value.some((candidate) => candidate.origin === item.origin)
-    if (!existed) {
-      results.value.push(item)
-    }
-  })
-}
-
-type AvailableSourceMode = 'initial' | 'loadMore'
-type AvailableSourceSSEPayload = {
-  data?: SearchBook[]
-  books?: SearchBook[]
-  lastIndex?: number
-  hasMore?: boolean
-}
-
-function closeAvailableSourceSSE() {
-  if (!availableSourceSSE) return
-  availableSourceSSE.close()
-  availableSourceSSE = null
-}
-
-function parseAvailableSourcePayload(event: MessageEvent): AvailableSourceSSEPayload | null {
-  try {
-    return JSON.parse(event.data) as AvailableSourceSSEPayload
-  } catch (error) {
-    console.error('parse getAvailableBookSourceSSE payload failed', error)
-    return null
-  }
-}
-
-function applyAvailableSourcePayload(payload: AvailableSourceSSEPayload | null) {
-  if (!payload) return
-  const incoming = Array.isArray(payload.data)
-    ? payload.data
-    : Array.isArray(payload.books)
-      ? payload.books
-      : []
-
-  if (typeof payload.lastIndex === 'number') {
-    lastIndex.value = payload.lastIndex
-  }
-  if (typeof payload.hasMore === 'boolean') {
-    hasMoreSources.value = payload.hasMore
-  }
-  mergeCandidates(incoming)
-
-  if (!selectedCandidate.value && preparedResults.value.length) {
-    void selectCandidate(preparedResults.value[0])
-  }
-}
-
-function openAvailableSourceSSE(mode: AvailableSourceMode) {
-  if (!store.book) return
-
-  const beforeCount = results.value.length
-  const stream = getAvailableBookSourceSSE({
-    url: store.book.bookUrl,
-    name: store.book.name,
-    author: store.book.author,
-    origin: store.book.origin,
-    lastIndex: mode === 'loadMore' ? lastIndex.value : -1,
-    concurrentCount: AVAILABLE_CONCURRENT_COUNT,
-  })
-  availableSourceSSE = stream
-
-  stream.onmessage = (event) => {
-    if (availableSourceSSE !== stream) return
-    applyAvailableSourcePayload(parseAvailableSourcePayload(event))
-  }
-
-  stream.addEventListener('end', (event) => {
-    if (availableSourceSSE !== stream) return
-    applyAvailableSourcePayload(parseAvailableSourcePayload(event as MessageEvent))
-    finishAvailableSourceSSE(stream, mode, beforeCount)
-  })
-
-  stream.onerror = (event) => {
-    if (availableSourceSSE !== stream) return
-    console.error('getAvailableBookSourceSSE failed', event)
-    finishAvailableSourceSSE(stream, mode, beforeCount, true)
-  }
-}
-
-function finishAvailableSourceSSE(
-  stream: EventSource,
-  mode: AvailableSourceMode,
-  beforeCount: number,
-  failed = false
-) {
-  if (availableSourceSSE !== stream) return
-  stream.close()
-  availableSourceSSE = null
-
-  if (mode === 'initial') {
-    searching.value = false
-  } else {
-    loadingMore.value = false
-  }
-
-  if (!selectedCandidate.value && preparedResults.value.length) {
-    void selectCandidate(preparedResults.value[0])
-  }
-
-  if (failed) {
-    if (mode === 'loadMore') {
-      appStore.showToast('加载更多书源失败', 'error')
-    }
-    return
-  }
-
-  if (mode === 'loadMore') {
-    const addedCount = results.value.length - beforeCount
-    if (addedCount > 0) {
-      appStore.showToast(`已新增 ${addedCount} 个书源`, 'success')
-    } else if (!hasMoreSources.value) {
-      appStore.showToast('没有更多书源了', 'warning')
-    } else {
-      appStore.showToast('本批次未找到更多匹配书源', 'warning')
-    }
-  }
-}
-
 // 连点不同候选源时慢响应会盖掉新预览：按序号丢弃迟到结果
 let candidatePreviewSeq = 0
 
-async function selectCandidate(item: CandidateItem) {
+async function selectCandidate(item: AvailableSourceCandidate) {
   selectedCandidate.value = item
   candidatePreview.value = null
   const seq = ++candidatePreviewSeq
@@ -394,14 +218,6 @@ async function selectCandidate(item: CandidateItem) {
   } catch {
     if (seq === candidatePreviewSeq) candidatePreview.value = null
   }
-}
-
-function loadMoreSources() {
-  if (!store.book || loadingMore.value || !hasMoreSources.value) return
-
-  closeAvailableSourceSSE()
-  loadingMore.value = true
-  openAvailableSourceSSE('loadMore')
 }
 
 async function handleSwitch(res: SearchBook) {

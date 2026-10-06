@@ -63,11 +63,10 @@ async fn start_upstream() -> (String, HitCounter) {
                 "create_timestamp": 1717597455,
                 "digg_count": 68,
                 "reply_count": 1,
-                "author": 1,
                 "has_author_digg": true,
-                "user_info": { "user_name": "读者甲", "user_avatar": "https://img.example/a.jpg" },
+                "user_info": { "user_name": "读者甲", "user_avatar": "https://img.example/a.jpg", "is_author": true },
                 "reply_list": [
-                    { "text": "同感", "user_info": { "user_name": "读者乙" }, "author": 1 }
+                    { "text": "同感", "user_info": { "user_name": "读者乙", "is_author": true } }
                 ]
             }]
         }}
@@ -138,9 +137,8 @@ async fn start_upstream() -> (String, HitCounter) {
                         body["data"]["data"]["comment"] = json!([{
                             "comment_id": "c2",
                             "text": "普通评论",
-                            "author": 0,
                             "has_author_digg": false,
-                            "user_info": { "user_name": "读者丙" }
+                            "user_info": { "user_name": "读者丙", "is_author": false }
                         }]);
                     }
                     async move { Json(body) }
@@ -247,9 +245,9 @@ fn book_source(upstream_url: &str) -> Value {
             "replyListRule": "$.reply_list[*]",
             "replyNameRule": "$.user_info.user_name",
             "replyContentRule": "$.text",
-            "authorRule": "$.author",
+            "authorRule": "$.user_info.is_author",
             "authorDiggRule": "$.has_author_digg",
-            "replyAuthorRule": "$.author",
+            "replyAuthorRule": "$.user_info.is_author",
             "replyAuthorDiggRule": "$.has_author_digg",
             "imageRule": "$.image_url[*]"
         },
@@ -271,9 +269,9 @@ fn book_source(upstream_url: &str) -> Value {
             "replyListRule": "$.reply_list[*]",
             "replyNameRule": "$.user_info.user_name",
             "replyContentRule": "$.text",
-            "authorRule": "$.author",
+            "authorRule": "$.user_info.is_author",
             "authorDiggRule": "$.has_author_digg",
-            "replyAuthorRule": "$.author",
+            "replyAuthorRule": "$.user_info.is_author",
             "replyAuthorDiggRule": "$.has_author_digg",
             "imageRule": "$.image_url[*]"
         }

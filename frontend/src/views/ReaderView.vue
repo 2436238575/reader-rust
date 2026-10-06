@@ -345,7 +345,7 @@
       </div>
     </Transition>
 
-    <BookDetailModal v-model="showBookInfo" :book="bookInfoBook" />
+    <BookDetailModal v-model="showBookInfo" :book="bookInfoBook" @switched="handleBookSwitched" />
 
     <ImageLightbox :src="previewImage" @close="previewImage = ''" />
   </div>
@@ -370,7 +370,7 @@ import {
   createReaderProgressAutoSaveScheduler,
   createReaderProgressExitSaver,
 } from '../utils/readerProgressAutoSave'
-import type { Book } from '../types'
+import type { Book, SearchBook } from '../types'
 
 import ReaderSidebar from '../components/reader/ReaderSidebar.vue'
 import ReaderToolbar from '../components/reader/ReaderToolbar.vue'
@@ -2297,6 +2297,15 @@ async function openInfo() {
   } catch {
     appStore.showToast('获取书籍详情失败，已显示当前缓存信息', 'warning')
   }
+}
+
+// 详情弹窗内换源成功：后台书籍已落库，但当前阅读会话还握着旧源的 book 对象，
+// 不刷新的话弹窗一关，阅读区仍是旧源的报错。用换源结果重开一次会话（含目录）。
+async function handleBookSwitched(updated: Book | SearchBook) {
+  const b = updated as Book
+  bookInfoBook.value = b
+  await store.loadBook(b).catch(() => undefined)
+  await store.loadChapter(b.durChapterIndex ?? 0)
 }
 
 function openAiBook() {

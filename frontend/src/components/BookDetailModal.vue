@@ -35,9 +35,21 @@
                     <span v-if="(book as Book).totalChapterNum" class="tag"
                       >共{{ (book as Book).totalChapterNum }}章</span
                     >
-                    <span v-if="(book as Book).originName" class="tag origin">{{
-                      (book as Book).originName
-                    }}</span>
+                    <button
+                      v-if="book && book.origin"
+                      class="tag origin tag-switch"
+                      type="button"
+                      title="点击切换书源"
+                      @click="showSourcePanel = true"
+                    >
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M16 3l4 4-4 4" />
+                        <path d="M20 7H7" />
+                        <path d="M8 21l-4-4 4-4" />
+                        <path d="M4 17h13" />
+                      </svg>
+                      {{ book.originName || book.origin }}
+                    </button>
                   </div>
                   <p v-if="(book as Book).durChapterTitle" class="progress">
                     已读至：{{ (book as Book).durChapterTitle }}
@@ -129,6 +141,18 @@
               </button>
             </div>
           </div>
+
+          <!-- 换源面板：盖在详情内容之上，入口是书籍信息里的来源标签 -->
+          <Transition :name="isMobileLayout ? 'slide-right' : 'scale'">
+            <BookSourceSwitchPanel
+              v-if="showSourcePanel && book"
+              class="source-switch-layer"
+              :book="book"
+              :switching="switchingSource"
+              @switch="handleSourceSwitch"
+              @close="showSourcePanel = false"
+            />
+          </Transition>
         </div>
       </div>
     </Transition>
@@ -139,10 +163,14 @@
 import { ref, watch, computed, toRef } from 'vue'
 import { useEscClose } from '../composables/useEscClose'
 import { useRouter } from 'vue-router'
-import { getCoverUrl, getChapterList } from '../api/bookshelf'
+import { getCoverUrl, getChapterList, setBookSource } from '../api/bookshelf'
 import { getBrowserCatalog, setBrowserCatalog } from '../utils/browserCache'
 import { useMobileLayout } from '../composables/useMobileLayout'
 import { useOpenBook } from '../composables/useOpenBook'
+import { useBookshelfStore } from '../stores/bookshelf'
+import { useAppStore } from '../stores/app'
+import { useSourceNameResolver } from '../composables/useAvailableSources'
+import BookSourceSwitchPanel from './BookSourceSwitchPanel.vue'
 import type { Book, SearchBook, BookChapter } from '../types'
 
 const props = defineProps<{
@@ -152,6 +180,7 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   'update:modelValue': [value: boolean]
+  switched: [book: Book | SearchBook]
 }>()
 
 useEscClose(toRef(props, 'modelValue'), () => emit('update:modelValue', false))
@@ -159,6 +188,15 @@ useEscClose(toRef(props, 'modelValue'), () => emit('update:modelValue', false))
 const router = useRouter()
 const { openBook } = useOpenBook()
 const { isMobileLayout } = useMobileLayout()
+const shelfStore = useBookshelfStore()
+const appStore = useAppStore()
+const resolveSourceName = useSourceNameResolver()
+
+// 弹窗内的工作副本：换源后指向新书；重开弹窗时从 props 重新取，
+// 父组件的 selectedBook 不必跟着换源结果走
+const book = ref<Book | SearchBook | null>(null)
+const showSourcePanel = ref(false)
+const switchingSource = ref(false)
 
 const coverFailed = ref(false)
 const chapters = ref<BookChapter[]>([])
@@ -167,8 +205,8 @@ const chaptersFailed = ref(false)
 const showAllChapters = ref(false)
 
 const coverSrc = computed(() => {
-  if (coverFailed.value || !props.book) return ''
-  const url = (props.book as Book).customCoverUrl || props.book.coverUrl
+  if (coverFailed.value || !book.value) return ''
+  const url = (book.value as Book).customCoverUrl || book.value.coverUrl
   return url ? getCoverUrl(url) : ''
 })
 
@@ -178,11 +216,11 @@ const displayChapters = computed(() => {
 })
 
 async function loadChapters() {
-  if (!props.book) return
+  if (!book.value) return
   chaptersFailed.value = false
   chaptersLoading.value = true
   try {
-    const b = props.book as Book
+    const b = book.value as Book
     const list = await getChapterList({
       bookUrl: b.bookUrl,
       bookSourceUrl: b.origin,
@@ -192,7 +230,7 @@ async function loadChapters() {
     void setBrowserCatalog(b.bookUrl, list)
   } catch {
     // 离线兜底：先翻浏览器里的目录缓存，实在没有才报失败
-    const cached = await getBrowserCatalog<BookChapter>((props.book as Book).bookUrl)
+    const cached = await getBrowserCatalog<BookChapter>((book.value as Book).bookUrl)
     if (cached) {
       chapters.value = cached
     } else {
@@ -209,6 +247,8 @@ watch(
   () => props.modelValue,
   async (visible) => {
     if (visible && props.book) {
+      book.value = props.book
+      showSourcePanel.value = false
       coverFailed.value = false
       showAllChapters.value = false
       chapters.value = []
@@ -222,27 +262,95 @@ function close() {
 }
 
 async function startReading() {
-  if (!props.book) return
-  const book = props.book
+  if (!book.value) return
+  const current = book.value
   close()
-  await openBook(book)
+  await openBook(current)
 }
 
 async function readChapter(index: number) {
-  if (!props.book) return
-  const book = props.book
+  if (!book.value) return
+  const current = book.value
   close()
-  await openBook(book, index)
+  await openBook(current, index)
 }
 
 function openAiBook() {
-  if (!props.book) return
-  const b = props.book as Book
+  if (!book.value) return
+  const b = book.value as Book
   close()
   router.push({
     name: 'ai-book',
     query: { bookUrl: b.bookUrl },
   })
+}
+
+/* ─── 换源 ─── */
+
+// 换源后新目录的章节序号可能整体漂移：按已读章节标题就近对齐，
+// 对不上就夹回合法范围（阅读页对越界序号不动作，「继续阅读」会卡住）
+function alignDurChapterAfterSwitch(target: Book, list: BookChapter[]) {
+  if (!list.length) return
+  const normalize = (title?: string) =>
+    (title || '')
+      .replace(/\s+/g, '')
+      .replace(/[^\p{L}\p{N}]/gu, '')
+      .toLowerCase()
+  const wanted = normalize(target.durChapterTitle)
+  let index = -1
+  if (wanted) {
+    index = list.findIndex((chapter) => normalize(chapter.title) === wanted)
+    if (index < 0) {
+      index = list.findIndex((chapter) => {
+        const title = normalize(chapter.title)
+        return title.includes(wanted) || wanted.includes(title)
+      })
+    }
+  }
+  target.durChapterIndex =
+    index >= 0 ? index : Math.max(0, Math.min(list.length - 1, target.durChapterIndex ?? 0))
+}
+
+async function handleSourceSwitch(candidate: SearchBook) {
+  const current = book.value
+  if (!current || switchingSource.value) return
+  switchingSource.value = true
+  try {
+    let switched: Book | SearchBook
+    if (shelfStore.books.some((item) => item.bookUrl === current.bookUrl)) {
+      // 书架书：后端换源落库（不依赖旧书源仍存在），返回换源后的完整书籍
+      const updated = await setBookSource({
+        bookUrl: current.bookUrl,
+        newUrl: candidate.bookUrl,
+        bookSourceUrl: candidate.origin,
+      })
+      book.value = updated
+      switched = updated
+      // 书架网格还是旧源信息：后台刷新，失败不打断换源本身
+      void shelfStore.fetchBooks().catch(() => undefined)
+    } else {
+      // 搜索/发现结果未入库：换源只是把详情指向另一源的这本书
+      switched = { ...candidate, latestChapterTitle: candidate.lastChapter }
+      book.value = switched
+    }
+
+    showSourcePanel.value = false
+    coverFailed.value = false
+    appStore.showToast(
+      `已切换到 ${switched.originName || resolveSourceName(candidate.origin)}`,
+      'success'
+    )
+    await loadChapters()
+    if ('durChapterTitle' in switched) {
+      alignDurChapterAfterSwitch(switched, chapters.value)
+    }
+    // 通知宿主换源结果（阅读页用它刷新当前会话；其余宿主可忽略）
+    emit('switched', switched)
+  } catch (e: any) {
+    appStore.showToast(`切换失败: ${e?.message || '未知错误'}`, 'error')
+  } finally {
+    switchingSource.value = false
+  }
 }
 </script>
 
@@ -284,6 +392,14 @@ function openAiBook() {
   position: relative;
   box-shadow: var(--shadow-xl);
   overflow: hidden;
+}
+
+/* 换源面板：盖住详情内容（父容器 overflow:hidden 负责裁圆角） */
+.source-switch-layer {
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  background: var(--color-bg-elevated);
 }
 
 .detail-body {
@@ -401,6 +517,28 @@ function openAiBook() {
 .tag.origin {
   background: var(--color-primary-bg);
   color: var(--color-primary);
+}
+
+/* 来源标签即换源入口：常驻可点，悬停变实底提示可交互 */
+.tag-switch {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 220px;
+  transition:
+    background var(--duration-fast),
+    color var(--duration-fast);
+}
+
+.tag-switch svg {
+  width: 11px;
+  height: 11px;
+  flex-shrink: 0;
+}
+
+.tag-switch:hover {
+  background: var(--color-primary);
+  color: var(--color-bg-elevated);
 }
 
 .progress {
