@@ -752,7 +752,9 @@ function renderChapterImageFigures(images: ChapterImage[], paragraphText: string
 
 function formatChapterHtml(rawText: string, withParaComments = false) {
   const base = withParaComments ? baseChapterHtml.value : buildBaseChapterHtml(rawText)
-  if (!base) return ''
+  // 空正文不能提前短路：纯图章节（出版书「文前」）没有文字，章节配图在
+  // 装饰层插入。非气泡路径维持短路——连续滚动模式自己按当前章插配图。
+  if (!base && !withParaComments) return ''
   return decorateChapterHtml(base, withParaComments)
 }
 
