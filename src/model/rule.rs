@@ -119,6 +119,8 @@ pub struct ReviewRule {
     pub reply_author_digg_rule: Option<String>,
     /// 评论配图。写成列表规则（如 `$.image_url[*]`）时取多个；JS 规则按行切分。
     pub image_rule: Option<String>,
+    /// 回复配图（楼中楼里的图片）。缺省时回落到 [`ReviewRule::image_rule`]。
+    pub reply_image_rule: Option<String>,
 }
 
 /// 段评（段落评论）规则。
@@ -166,6 +168,8 @@ pub struct ParaReviewRule {
     pub reply_author_digg_rule: Option<String>,
     /// 评论配图，同 [`ReviewRule::image_rule`]。
     pub image_rule: Option<String>,
+    /// 回复配图，同 [`ReviewRule::reply_image_rule`]。
+    pub reply_image_rule: Option<String>,
 }
 
 /// 章节配图规则（本项目扩展，阅读3.0 无此字段）。

@@ -38,6 +38,9 @@ pub struct ReviewReply {
     pub author: bool,
     /// 作者赞过这条回复。
     pub author_digg: bool,
+    /// 回复配图。同一张图站点常给多个格式变体，与评论配图同规则：
+    /// 顺序保留，由客户端挑能渲染的。
+    pub images: Vec<String>,
 }
 
 /// 一页评论。

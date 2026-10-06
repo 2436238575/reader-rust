@@ -185,7 +185,9 @@ data class ReviewRule(
   var authorDiggRule: String? = null,
   var replyAuthorRule: String? = null,
   var replyAuthorDiggRule: String? = null,
-  var imageRule: String? = null
+  var imageRule: String? = null,
+  // 回复配图；缺省时回落到 imageRule
+  var replyImageRule: String? = null
 )
 ```
 
@@ -217,7 +219,9 @@ data class ParaReviewRule(
   var authorDiggRule: String? = null,
   var replyAuthorRule: String? = null,
   var replyAuthorDiggRule: String? = null,
-  var imageRule: String? = null
+  var imageRule: String? = null,
+  // 回复配图；缺省时回落到 imageRule
+  var replyImageRule: String? = null
 )
 ```
 
@@ -1420,6 +1424,7 @@ getContentAwait(source, book, chapter, nextChapterUrl=null, needSave=true):
 | `authorRule` / `authorDiggRule`                                            | 评论者是作者本人 / 作者赞过这条评论（真值词表同 §15，如 `1`/`true`） |
 | `replyAuthorRule` / `replyAuthorDiggRule`                                  | 回复者是作者本人 / 作者赞过这条回复                                  |
 | `imageRule`                                                                | 评论配图，**列表规则**（见 17.5）                                    |
+| `replyImageRule`                                                           | 回复配图（楼中楼图片），列表规则；缺省回落 `imageRule`                |
 
 `voteUpUrl` / `voteDownUrl` / `postReviewUrl` / `postQuoteUrl` / `deleteUrl` /
 `reviewQuoteUrl` 保留字段，本项目不执行（不提供点赞、发评论、删评论）。

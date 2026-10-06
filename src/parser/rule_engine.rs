@@ -1013,6 +1013,10 @@ impl RuleEngine {
             reply_author: rule.reply_author_rule.as_deref(),
             reply_author_digg: rule.reply_author_digg_rule.as_deref(),
             image: rule.image_rule.as_deref(),
+            reply_image: rule
+                .reply_image_rule
+                .as_deref()
+                .or(rule.image_rule.as_deref()),
         };
         with_book_source(source, || parse_review_page(&fields, body, base_url))
     }
@@ -1043,6 +1047,10 @@ impl RuleEngine {
             reply_author: rule.reply_author_rule.as_deref(),
             reply_author_digg: rule.reply_author_digg_rule.as_deref(),
             image: rule.image_rule.as_deref(),
+            reply_image: rule
+                .reply_image_rule
+                .as_deref()
+                .or(rule.image_rule.as_deref()),
         };
         with_book_source(source, || parse_review_page(&fields, body, base_url))
     }
@@ -1204,6 +1212,7 @@ struct ReviewFields<'a> {
     reply_author: Option<&'a str>,
     reply_author_digg: Option<&'a str>,
     image: Option<&'a str>,
+    reply_image: Option<&'a str>,
 }
 
 fn has_rule(rule: Option<&str>) -> bool {
@@ -1337,8 +1346,12 @@ fn parse_review_page_json(fields: &ReviewFields<'_>, v: &Value, base_url: &str) 
                         )
                         .map(is_truthy)
                         .unwrap_or(false),
+                        images: fields
+                            .reply_image
+                            .map(|rule| eval_image_list_json(rule, reply, base_url))
+                            .unwrap_or_default(),
                     })
-                    .filter(|reply| !reply.content.trim().is_empty())
+                    .filter(|reply| !reply.content.trim().is_empty() || !reply.images.is_empty())
                     .collect::<Vec<_>>()
             })
             .unwrap_or_default();
@@ -1464,8 +1477,12 @@ fn parse_review_page_html(fields: &ReviewFields<'_>, body: &str, base_url: &str)
                         )
                         .map(is_truthy)
                         .unwrap_or(false),
+                        images: fields
+                            .reply_image
+                            .map(|rule| eval_image_list_html(rule, reply, base_url))
+                            .unwrap_or_default(),
                     })
-                    .filter(|reply| !reply.content.trim().is_empty())
+                    .filter(|reply| !reply.content.trim().is_empty() || !reply.images.is_empty())
                     .collect::<Vec<_>>()
             })
             .unwrap_or_default();
@@ -4268,7 +4285,15 @@ mod tests {
                             "author": 1,
                             "has_author_digg": true,
                             "reply_list": [
-                                {"text": "同感", "user_info": {"user_name": "读者乙"}, "author": true}
+                                {"text": "同感", "user_info": {"user_name": "读者乙"}, "author": true},
+                                {
+                                    "text": "",
+                                    "user_info": {"user_name": "读者丙"},
+                                    "image_url": [
+                                        "https://img.example/pic.heic",
+                                        "https://img.example/pic.jpeg"
+                                    ]
+                                }
                             ]
                         },
                         {
@@ -4295,7 +4320,7 @@ mod tests {
         assert_eq!(item.digg, 68);
         assert_eq!(item.reply_count, 13);
         assert_eq!(item.avatar, "https://img.example/a.jpg");
-        assert_eq!(item.replies.len(), 1);
+        assert_eq!(item.replies.len(), 2);
         assert_eq!(item.replies[0].name, "读者乙");
         assert_eq!(item.replies[0].content, "同感");
         // 作者标记：数字 1 与布尔 true 都算真（is_truthy 词表）
@@ -4303,6 +4328,13 @@ mod tests {
         assert!(item.author_digg);
         assert!(item.replies[0].author);
         assert!(!item.replies[0].author_digg);
+        // 楼中楼配图：reply_image_rule 缺省回落到 image_rule；
+        // 纯图回复（无文字）不因空 content 被丢弃
+        assert!(item.replies[0].images.is_empty());
+        let image_reply = &page.items[0].replies[1];
+        assert_eq!(image_reply.name, "读者丙");
+        assert_eq!(image_reply.images.len(), 2);
+        assert_eq!(image_reply.images[0], "https://img.example/pic.heic");
     }
 
     #[test]

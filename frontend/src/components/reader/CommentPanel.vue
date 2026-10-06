@@ -106,19 +106,53 @@
                 />
               </div>
               <div v-if="item.replies.length" class="comment-replies">
-                <p
+                <div
                   v-for="(reply, replyIndex) in item.replies"
                   :key="replyIndex"
                   class="comment-reply"
                 >
-                  <span class="comment-reply-name">{{ reply.name || '匿名读者' }}</span>
-                  <span v-if="reply.author" class="comment-badge-author">作者</span>
-                  <span v-if="reply.replyTo" class="comment-reply-to"
-                    >回复 {{ reply.replyTo }}</span
-                  >
-                  ：{{ reply.content }}
-                  <span v-if="reply.authorDigg" class="comment-author-digg">作者赞过</span>
-                </p>
+                  <p class="comment-reply-line">
+                    <span class="comment-reply-name">{{ reply.name || '匿名读者' }}</span>
+                    <span v-if="reply.author" class="comment-badge-author">作者</span>
+                    <span v-if="reply.replyTo" class="comment-reply-to"
+                      >回复 {{ reply.replyTo }}</span
+                    >
+                    ：{{ reply.content }}
+                    <span v-if="reply.authorDigg" class="comment-author-digg">作者赞过</span>
+                  </p>
+                  <!-- 楼中楼配图：缩略图或「查看图片」文字链，设置里切换 -->
+                  <template v-if="reply.images?.length">
+                    <span v-if="replyImageStyle === 'thumbnail'" class="comment-reply-images">
+                      <img
+                        v-for="(url, imageIndex) in reply.images"
+                        :key="imageIndex"
+                        :src="url"
+                        alt=""
+                        loading="lazy"
+                        referrerpolicy="no-referrer"
+                        @click="preview = url"
+                      />
+                    </span>
+                    <button
+                      v-else
+                      class="comment-view-image"
+                      type="button"
+                      @click="preview = reply.images?.[0] || ''"
+                    >
+                      <svg
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="2"
+                      >
+                        <rect x="3" y="3" width="18" height="18" rx="2" />
+                        <circle cx="9" cy="9" r="2" />
+                        <path d="m21 15-3.1-3.1a2 2 0 0 0-2.8 0L6 21" />
+                      </svg>
+                      查看图片
+                    </button>
+                  </template>
+                </div>
               </div>
               <div v-if="item.replyCount > item.replies.length" class="comment-reply-more">
                 共 {{ item.replyCount }} 条回复
@@ -169,10 +203,10 @@
 
 <script setup lang="ts">
 import { computed, nextTick, ref, watch } from 'vue'
-import type { ReviewItem, ReviewPage } from '../../types'
+import type { ReviewItem, ReviewPage, ReviewReply } from '../../types'
 import { withAuthQuery } from '../../api/bookshelf'
 import ImageLightbox from './ImageLightbox.vue'
-import type { ThemePreset } from '../../stores/reader'
+import { useReaderStore, type ThemePreset } from '../../stores/reader'
 import { getChapterComments, getParaComments, type ReviewSort } from '../../api/review'
 
 /** 浏览器能直接渲染的图片后缀；HEIC/HEIF 只有 Safari 认，排到最后。 */
@@ -206,6 +240,10 @@ const props = defineProps<{
 }>()
 
 defineEmits<{ close: [] }>()
+
+const readerStore = useReaderStore()
+// 楼中楼配图形态：缩略图 / 番茄式「查看图片」文字链（阅读器设置里切换）
+const replyImageStyle = computed(() => readerStore.config.replyImageStyle)
 
 const items = ref<ReviewItem[]>([])
 const total = ref(0)
@@ -328,7 +366,10 @@ async function reload() {
   if (initial && initial.items?.length) {
     // 首屏那一页由阅读器 store 预先取好，同样要过一遍配图规范化
     // （补令牌、挑可渲染的格式），否则首屏的配图会挂
-    items.value = initial.items.map(normalizeItem)
+    items.value = initial.items.map((item) => ({
+      ...normalizeItem(item),
+      replies: (item.replies || []).map(normalizeReply),
+    }))
     total.value = initial.total
     page.value = initial.page || 1
     hasMore.value = initial.hasMore
@@ -370,7 +411,10 @@ async function fetchPage(target: number) {
     }
     const data = resp.data
     serverSort.value = resp.serverSort
-    const incoming = (data.items || []).map(normalizeItem)
+    const incoming = (data.items || []).map((item) => ({
+      ...normalizeItem(item),
+      replies: (item.replies || []).map(normalizeReply),
+    }))
     items.value = target <= 1 ? incoming : [...items.value, ...incoming]
     total.value = data.total
     page.value = target
@@ -481,6 +525,18 @@ function normalizeItem(item: ReviewItem): ReviewItem {
   }
   const renderable = urls.find((url) => RENDERABLE_IMAGE_EXTENSIONS.includes(extensionOf(url)))
   return { ...item, images: [withAuthQuery(renderable || urls[0])] }
+}
+
+// 回复配图同管道收口（/reader3/image/<id>），这里只补令牌；
+// 历史缓存里若还留着书源原始地址则走顶层评论那套挑可渲染变体
+function normalizeReply(reply: ReviewReply): ReviewReply {
+  const urls = reply.images || []
+  if (!urls.length) return { ...reply, images: [] }
+  if (urls.every((url) => url.startsWith('/reader3/image/'))) {
+    return { ...reply, images: urls.map((url) => withAuthQuery(url)) }
+  }
+  const renderable = urls.find((url) => RENDERABLE_IMAGE_EXTENSIONS.includes(extensionOf(url)))
+  return { ...reply, images: [withAuthQuery(renderable || urls[0])] }
 }
 
 /** Unix 秒/毫秒时间戳；认不出来返回 null（排序时保持站点顺序）。 */
@@ -815,6 +871,45 @@ function formatReviewTime(raw: string) {
   font-size: 13px;
   line-height: 1.6;
   word-break: break-word;
+}
+
+.comment-reply .comment-reply-line {
+  margin: 0;
+}
+
+/* 楼中楼配图：缩略图形态 */
+.comment-reply-images {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 4px;
+}
+
+.comment-reply-images img {
+  max-width: 96px;
+  max-height: 96px;
+  border-radius: 6px;
+  object-fit: cover;
+  cursor: zoom-in;
+}
+
+/* 楼中楼配图：「查看图片」文字链形态（番茄样式） */
+.comment-view-image {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  margin-top: 2px;
+  padding: 0;
+  background: none;
+  color: var(--color-primary, #c97f3a);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.comment-view-image svg {
+  width: 13px;
+  height: 13px;
+  opacity: 0.8;
 }
 
 .comment-reply + .comment-reply {

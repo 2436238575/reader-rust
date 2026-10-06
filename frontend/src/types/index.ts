@@ -71,6 +71,8 @@ export interface ReviewReply {
   author?: boolean
   /** 作者赞过这条回复 */
   authorDigg?: boolean
+  /** 回复配图（已经过图片管道收口为 /reader3/image/<id>） */
+  images?: string[]
 }
 
 export interface ReviewItem {

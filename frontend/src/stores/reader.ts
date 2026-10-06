@@ -76,6 +76,8 @@ export interface ReadConfig {
   enablePreload: boolean
   /** 显示章节配图（书源配图规则取回的图，以及正文 HTML 里的 <img>） */
   showChapterImages: boolean
+  /** 评论里回复的配图形态：缩略图直接显示，或番茄式「查看图片」文字链 */
+  replyImageStyle: 'thumbnail' | 'link'
 }
 
 const defaultConfig: ReadConfig = {
@@ -99,6 +101,7 @@ const defaultConfig: ReadConfig = {
   specialMode: 'normal',
   enablePreload: false,
   showChapterImages: true,
+  replyImageStyle: 'thumbnail',
 }
 
 function loadConfig(): ReadConfig {
