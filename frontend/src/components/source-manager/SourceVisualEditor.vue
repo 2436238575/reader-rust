@@ -168,8 +168,16 @@ const sections: SectionDef[] = [
     title: '搜索',
     fields: [
       { key: 'searchUrl', label: '搜索地址', placeholder: '[域名可省略]/search.php@kw={{key}}' },
-      { key: 'ruleSearch.checkKeyWord', label: '校验文字', placeholder: '校验关键字，强烈建议填写' },
-      { key: 'ruleSearch.bookList', label: '列表规则', placeholder: '选择书籍节点 (规则结果为List)' },
+      {
+        key: 'ruleSearch.checkKeyWord',
+        label: '校验文字',
+        placeholder: '校验关键字，强烈建议填写',
+      },
+      {
+        key: 'ruleSearch.bookList',
+        label: '列表规则',
+        placeholder: '选择书籍节点 (规则结果为List)',
+      },
       { key: 'ruleSearch.name', label: '书名规则' },
       { key: 'ruleSearch.author', label: '作者规则' },
       { key: 'ruleSearch.kind', label: '分类规则' },
@@ -184,7 +192,11 @@ const sections: SectionDef[] = [
     title: '发现',
     fields: [
       { key: 'exploreUrl', label: '发现地址', placeholder: '分类列表，换行或&&分隔' },
-      { key: 'ruleExplore.bookList', label: '列表规则', placeholder: '选择书籍节点 (规则结果为List)' },
+      {
+        key: 'ruleExplore.bookList',
+        label: '列表规则',
+        placeholder: '选择书籍节点 (规则结果为List)',
+      },
       { key: 'ruleExplore.name', label: '书名规则' },
       { key: 'ruleExplore.author', label: '作者规则' },
       { key: 'ruleExplore.kind', label: '分类规则' },

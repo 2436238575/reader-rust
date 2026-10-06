@@ -141,7 +141,9 @@ export const useAiBookStore = defineStore('aiBook', () => {
   function scheduleNextPoll() {
     if (pollTimer != null) clearTimeout(pollTimer)
     const interval =
-      typeof document !== 'undefined' && document.hidden ? POLL_INTERVAL_HIDDEN_MS : POLL_INTERVAL_MS
+      typeof document !== 'undefined' && document.hidden
+        ? POLL_INTERVAL_HIDDEN_MS
+        : POLL_INTERVAL_MS
     pollTimer = setTimeout(() => {
       pollTimer = null
       void pollOnce()
@@ -267,8 +269,8 @@ function emptyMemory(book: Book): AiBookMemory {
 function isConflict(error: unknown) {
   return Boolean(
     error &&
-      typeof error === 'object' &&
-      'status' in error &&
-      (error as { status?: number }).status === 409
+    typeof error === 'object' &&
+    'status' in error &&
+    (error as { status?: number }).status === 409
   )
 }

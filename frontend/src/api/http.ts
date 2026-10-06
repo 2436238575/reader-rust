@@ -54,7 +54,9 @@ http.interceptors.response.use(
         return Promise.reject(withStatus(new Error(data.errorMsg), error.response?.status))
       }
     }
-    return Promise.reject(withStatus(new Error(error.message || '请求失败'), error.response?.status))
+    return Promise.reject(
+      withStatus(new Error(error.message || '请求失败'), error.response?.status)
+    )
   }
 )
 

@@ -61,11 +61,7 @@
           placeholder="搜索章节..."
           class="search-input"
         />
-        <button
-          v-if="chapterSearchInput"
-          class="search-clear"
-          @click="clearChapterSearch"
-        >
+        <button v-if="chapterSearchInput" class="search-clear" @click="clearChapterSearch">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <path d="M18 6 6 18M6 6l12 12" />
           </svg>
@@ -267,10 +263,7 @@ const catalogRows = computed<CatalogRow[]>(() => {
       rows.push({ kind: 'volume', key: `vol-${chapter.index}`, name: volume })
     }
     lastVolume = volume
-    const meta = [
-      formatChapterWordCount(chapter.wordCount),
-      formatChapterTag(chapter.tag),
-    ]
+    const meta = [formatChapterWordCount(chapter.wordCount), formatChapterTag(chapter.tag)]
       .filter(Boolean)
       .join(' · ')
     rows.push({ kind: 'chapter', key: `ch-${chapter.index}`, chapter, meta })

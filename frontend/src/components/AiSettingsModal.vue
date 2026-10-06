@@ -50,8 +50,8 @@
                 </li>
               </ul>
               <p class="settings-hint">
-                AI资料与地图由服务端编排生成，模型配置在服务端环境变量维护
-                （AI_TEXT_* / AI_IMAGE_*），改配置需要重启后端；此处只读。
+                AI资料与地图由服务端编排生成，模型配置在服务端环境变量维护 （AI_TEXT_* /
+                AI_IMAGE_*），改配置需要重启后端；此处只读。
               </p>
             </section>
 
@@ -319,7 +319,6 @@ async function selectServerSpeech() {
   margin-top: -2px;
   padding: 0 2px;
 }
-
 
 .settings-card {
   background: var(--color-bg-sunken);

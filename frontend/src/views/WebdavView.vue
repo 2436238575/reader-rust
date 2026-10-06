@@ -60,7 +60,11 @@
         </label>
         <span v-else class="file-check placeholder"></span>
 
-        <button class="file-main" :class="{ directory: entry.isDirectory }" @click="openEntry(entry)">
+        <button
+          class="file-main"
+          :class="{ directory: entry.isDirectory }"
+          @click="openEntry(entry)"
+        >
           <span class="file-icon">{{ entry.isDirectory ? '📁' : '📄' }}</span>
           <span class="file-name">{{ entry.name }}</span>
         </button>

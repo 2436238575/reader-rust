@@ -337,9 +337,7 @@ const progressText = computed(() => {
   if (index == null) return '尚未生成'
   return `已更新至第 ${index + 1} 章`
 })
-const agentUnavailable = computed(
-  () => aiStore.serverModelStatus != null && !aiStore.agentReady
-)
+const agentUnavailable = computed(() => aiStore.serverModelStatus != null && !aiStore.agentReady)
 const statusNotice = computed(() => {
   const runningText = viewTask.value?.running ? aiStore.statusText : ''
   const source = runningText || viewTask.value?.lastError || memory.value?.lastError || ''

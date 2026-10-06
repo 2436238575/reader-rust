@@ -6,7 +6,10 @@
       </div>
     </div>
     <div class="code-scroll">
-      <pre class="highlight-layer" aria-hidden="true"><code ref="highlightRef" v-html="highlightedHtml"></code></pre>
+      <pre
+        class="highlight-layer"
+        aria-hidden="true"
+      ><code ref="highlightRef" v-html="highlightedHtml"></code></pre>
       <textarea
         ref="textareaRef"
         class="input-layer"
