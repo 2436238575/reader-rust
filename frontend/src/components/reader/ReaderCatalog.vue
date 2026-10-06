@@ -115,25 +115,38 @@
     <div v-show="activeTab === 'chapters'" class="list-container" ref="listRef">
       <div v-if="store.chaptersLoading" class="loading">加载目录中...</div>
       <div v-else-if="filteredChapters.length === 0" class="empty">未找到匹配的章节</div>
-      <div
-        v-else
-        v-for="chapter in filteredChapters"
-        :key="chapter.index"
-        class="list-item"
-        :class="{
-          active: chapter.index === store.currentIndex,
-          read: store.isChapterRead(chapter.index),
-        }"
-        @click="goToChapter(chapter.index)"
-      >
-        <span class="item-index">{{ chapter.index + 1 }}</span>
-        <span class="item-title">{{ chapter.title }}</span>
-        <div class="item-status">
-          <span v-if="chapter.index === store.currentIndex" class="status-badge current">当前</span>
-          <span v-else-if="store.isChapterRead(chapter.index)" class="status-badge read">已读</span>
-          <span v-if="isChapterCached(chapter.url)" class="status-badge cached">已缓存</span>
-        </div>
-      </div>
+      <template v-else>
+        <template v-for="row in catalogRows" :key="row.key">
+          <div v-if="row.kind === 'volume'" class="volume-header">{{ row.name }}</div>
+          <div
+            v-else
+            class="list-item"
+            :class="{
+              active: row.chapter.index === store.currentIndex,
+              read: store.isChapterRead(row.chapter.index),
+              'with-meta': !!row.meta,
+            }"
+            @click="goToChapter(row.chapter.index)"
+          >
+            <span class="item-index">{{ row.chapter.index + 1 }}</span>
+            <div class="item-main">
+              <span class="item-title">{{ row.chapter.title }}</span>
+              <span v-if="row.meta" class="item-meta">{{ row.meta }}</span>
+            </div>
+            <div class="item-status">
+              <span v-if="row.chapter.index === store.currentIndex" class="status-badge current"
+                >当前</span
+              >
+              <span v-else-if="store.isChapterRead(row.chapter.index)" class="status-badge read"
+                >已读</span
+              >
+              <span v-if="isChapterCached(row.chapter.url)" class="status-badge cached"
+                >已缓存</span
+              >
+            </div>
+          </div>
+        </template>
+      </template>
     </div>
 
     <!-- Bookmarks List -->
@@ -179,7 +192,8 @@ import { useAppStore } from '../../stores/app'
 import type { Bookmark } from '../../types'
 import { listBrowserCachedChapterUrls } from '../../utils/browserCache'
 import { isLocalBook } from '../../utils/localBook'
-import { formatMonthDayTime } from '../../utils/format'
+import { formatMonthDayTime, formatChapterTag, formatChapterWordCount } from '../../utils/format'
+import type { BookChapter } from '../../types'
 
 const props = withDefaults(
   defineProps<{
@@ -237,6 +251,32 @@ const filteredChapters = computed(() => {
 const currentChapterInList = computed(() =>
   filteredChapters.value.some((chapter) => chapter.index === store.currentIndex)
 )
+
+// 卷分组：书源目录规则的 volumeName 挂在每个章节上，卷名变化处插入卷标题行；
+// meta 行（字数/时间）在此预算好，避免模板里对千章列表重复跑格式化
+type CatalogRow =
+  | { kind: 'volume'; key: string; name: string }
+  | { kind: 'chapter'; key: string; chapter: BookChapter; meta: string }
+
+const catalogRows = computed<CatalogRow[]>(() => {
+  const rows: CatalogRow[] = []
+  let lastVolume: string | null = null
+  for (const chapter of filteredChapters.value) {
+    const volume = chapter.volume?.trim() || null
+    if (volume && volume !== lastVolume) {
+      rows.push({ kind: 'volume', key: `vol-${chapter.index}`, name: volume })
+    }
+    lastVolume = volume
+    const meta = [
+      formatChapterWordCount(chapter.wordCount),
+      formatChapterTag(chapter.tag),
+    ]
+      .filter(Boolean)
+      .join(' · ')
+    rows.push({ kind: 'chapter', key: `ch-${chapter.index}`, chapter, meta })
+  }
+  return rows
+})
 
 onMounted(() => {
   activeTab.value = props.initialTab
@@ -606,6 +646,22 @@ const formatDate = formatMonthDayTime
   border-bottom: 1px solid rgba(0, 0, 0, 0.02);
 }
 
+/* 带 meta 行（字数/时间）的章节更高，给 content-visibility 一个更准的预估 */
+.list-item.with-meta {
+  contain-intrinsic-size: auto 64px;
+}
+
+.volume-header {
+  padding: 10px 20px 6px;
+  font-size: var(--text-sm);
+  font-weight: 600;
+  opacity: 0.65;
+  line-height: 1.4;
+  cursor: default;
+  content-visibility: auto;
+  contain-intrinsic-size: auto 34px;
+}
+
 .list-item:hover {
   background: rgba(0, 0, 0, 0.03);
 }
@@ -626,11 +682,26 @@ const formatDate = formatMonthDayTime
   flex-shrink: 0;
 }
 
+.item-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
 .item-title {
   font-size: var(--text-base);
   line-height: 1.4;
-  flex: 1;
-  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.item-meta {
+  font-size: var(--text-xs);
+  opacity: 0.45;
+  line-height: 1.3;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;

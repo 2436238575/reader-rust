@@ -58,6 +58,15 @@ export interface BookChapter {
   title: string
   url: string
   index: number
+  /** 章节时间（书源 updateTime 规则；纯数字时间戳由 formatChapterTag 转日期） */
+  tag?: string | null
+  isVip?: boolean
+  isPay?: boolean
+  isVolume?: boolean
+  /** 卷名（书源 volumeName 规则）：相同卷名的连续章节在目录里归为一组 */
+  volume?: string | null
+  /** 字数（书源 wordCount 规则） */
+  wordCount?: string | null
 }
 
 // ─── 评论（章评 / 段评） ───

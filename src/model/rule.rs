@@ -48,6 +48,11 @@ pub struct TocRule {
     pub is_vip: Option<String>,
     pub is_pay: Option<String>,
     pub update_time: Option<String>,
+    /// 卷名（本项目扩展）：规则挂在每个章节条目上，
+    /// 目录 UI 把卷名相同的连续章节归到同一个卷标题下
+    pub volume_name: Option<String>,
+    /// 字数（本项目扩展）：目录里随章节条目展示
+    pub word_count: Option<String>,
     pub next_toc_url: Option<String>,
 }
 

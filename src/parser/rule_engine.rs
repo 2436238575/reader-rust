@@ -620,6 +620,16 @@ impl RuleEngine {
                 .update_time
                 .as_ref()
                 .and_then(|r| eval_field_html_with_ctx(r, &el, base_url, ctx));
+            let volume = chapter_meta(
+                rule.volume_name
+                    .as_ref()
+                    .and_then(|r| eval_field_html_with_ctx(r, &el, base_url, ctx)),
+            );
+            let word_count = chapter_meta(
+                rule.word_count
+                    .as_ref()
+                    .and_then(|r| eval_field_html_with_ctx(r, &el, base_url, ctx)),
+            );
             let is_volume = rule
                 .is_volume
                 .as_ref()
@@ -650,6 +660,8 @@ impl RuleEngine {
                 is_vip,
                 is_pay,
                 is_volume,
+                volume,
+                word_count,
             });
         }
         (out, vec![])
@@ -678,6 +690,9 @@ impl RuleEngine {
             let raw_url =
                 capture_rule_value(rule.chapter_url.as_deref(), &groups).unwrap_or_default();
             let tag = capture_rule_value(rule.update_time.as_deref(), &groups);
+            let volume = chapter_meta(capture_rule_value(rule.volume_name.as_deref(), &groups));
+            let word_count =
+                chapter_meta(capture_rule_value(rule.word_count.as_deref(), &groups));
             let is_volume = capture_rule_value(rule.is_volume.as_deref(), &groups)
                 .map(is_truthy)
                 .unwrap_or(false);
@@ -699,6 +714,8 @@ impl RuleEngine {
                 is_vip,
                 is_pay,
                 is_volume,
+                volume,
+                word_count,
             });
         }
         (out, vec![])
@@ -2101,6 +2118,16 @@ fn parse_chapter_list_html(
             .update_time
             .as_ref()
             .and_then(|r| eval_field_html_with_ctx(r, &el, base_url, ctx));
+        let volume = chapter_meta(
+            rule.volume_name
+                .as_ref()
+                .and_then(|r| eval_field_html_with_ctx(r, &el, base_url, ctx)),
+        );
+        let word_count = chapter_meta(
+            rule.word_count
+                .as_ref()
+                .and_then(|r| eval_field_html_with_ctx(r, &el, base_url, ctx)),
+        );
         let is_volume = rule
             .is_volume
             .as_ref()
@@ -2136,6 +2163,8 @@ fn parse_chapter_list_html(
             is_vip,
             is_pay,
             is_volume,
+            volume,
+            word_count,
         });
     }
 
@@ -2192,6 +2221,18 @@ fn parse_chapter_list_xpath(
             base_url,
             ctx,
         );
+        let volume = chapter_meta(eval_field_xpath_with_ctx(
+            rule.volume_name.as_deref().unwrap_or(""),
+            item,
+            base_url,
+            ctx,
+        ));
+        let word_count = chapter_meta(eval_field_xpath_with_ctx(
+            rule.word_count.as_deref().unwrap_or(""),
+            item,
+            base_url,
+            ctx,
+        ));
         let is_volume =
             eval_field_xpath_with_ctx(rule.is_volume.as_deref().unwrap_or(""), item, base_url, ctx)
                 .map(is_truthy)
@@ -2217,6 +2258,8 @@ fn parse_chapter_list_xpath(
             is_vip,
             is_pay,
             is_volume,
+            volume,
+            word_count,
         });
     }
 
@@ -2270,6 +2313,18 @@ fn parse_chapter_list_json(
             base_url,
             ctx,
         );
+        let volume = chapter_meta(eval_field_json_with_ctx(
+            rule.volume_name.as_deref().unwrap_or(""),
+            &item,
+            base_url,
+            ctx,
+        ));
+        let word_count = chapter_meta(eval_field_json_with_ctx(
+            rule.word_count.as_deref().unwrap_or(""),
+            &item,
+            base_url,
+            ctx,
+        ));
         let is_volume = eval_field_json_with_ctx(
             rule.is_volume.as_deref().unwrap_or(""),
             &item,
@@ -2301,6 +2356,8 @@ fn parse_chapter_list_json(
             is_vip,
             is_pay,
             is_volume,
+            volume,
+            word_count,
         });
     }
 
@@ -3421,6 +3478,18 @@ fn build_chapter_from_json(
         base_url,
         ctx,
     );
+    let volume = chapter_meta(eval_field_json_with_ctx(
+        rule.volume_name.as_deref().unwrap_or(""),
+        item,
+        base_url,
+        ctx,
+    ));
+    let word_count = chapter_meta(eval_field_json_with_ctx(
+        rule.word_count.as_deref().unwrap_or(""),
+        item,
+        base_url,
+        ctx,
+    ));
     let is_volume =
         eval_field_json_with_ctx(rule.is_volume.as_deref().unwrap_or(""), item, base_url, ctx)
             .map(is_truthy)
@@ -3441,6 +3510,8 @@ fn build_chapter_from_json(
         is_vip,
         is_pay,
         is_volume,
+        volume,
+        word_count,
     })
 }
 
@@ -3592,6 +3663,19 @@ fn is_truthy(value: String) -> bool {
         value.to_ascii_lowercase().as_str(),
         "0" | "false" | "null" | "none" | "no" | "not" | "off"
     )
+}
+
+/// 章节元信息（卷名/字数）归一化：空白结果视为「没有」，避免空串卷名
+/// 在目录 UI 上渲染出空卷标题
+fn chapter_meta(value: Option<String>) -> Option<String> {
+    value.and_then(|s| {
+        let trimmed = s.trim();
+        if trimmed.is_empty() {
+            None
+        } else {
+            Some(trimmed.to_string())
+        }
+    })
 }
 
 /// Extract chapter number from title
@@ -3852,6 +3936,68 @@ mod tests {
         let (chapters, _) = engine.chapter_list(&source, "{}", "https://books.example");
         let titles: Vec<&str> = chapters.iter().map(|c| c.title.as_str()).collect();
         assert_eq!(titles, vec!["0-A", "1-B", "2-C"]);
+    }
+
+    #[test]
+    fn test_chapter_list_json_volume_word_count_and_tag() {
+        let engine = RuleEngine::new().unwrap();
+        let source = BookSource {
+            book_source_name: "TOC".to_string(),
+            book_source_url: "https://source.example".to_string(),
+            rule_toc: Some(TocRule {
+                chapter_list: Some("$.data.item_data_list[*]".to_string()),
+                chapter_name: Some("$.title".to_string()),
+                chapter_url: Some("$.item_id".to_string()),
+                update_time: Some("$.first_pass_time".to_string()),
+                volume_name: Some("$.volume_name".to_string()),
+                word_count: Some("$.chapter_word_number".to_string()),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let body = r#"{"data":{"item_data_list":[
+            {"item_id":"1","title":"第一章","volume_name":"第一卷：起","chapter_word_number":2397,"first_pass_time":1724481989},
+            {"item_id":"2","title":"第二章","volume_name":"第一卷：起","chapter_word_number":2104,"first_pass_time":1724500813},
+            {"item_id":"3","title":"第三章","volume_name":" ","chapter_word_number":"","first_pass_time":0}
+        ]}}"#;
+
+        let (chapters, _) = engine.chapter_list(&source, body, "https://books.example");
+        assert_eq!(chapters.len(), 3);
+        assert_eq!(chapters[0].volume.as_deref(), Some("第一卷：起"));
+        assert_eq!(chapters[0].word_count.as_deref(), Some("2397"));
+        assert_eq!(chapters[0].tag.as_deref(), Some("1724481989"));
+        assert_eq!(chapters[1].volume.as_deref(), Some("第一卷：起"));
+        // 空白卷名/字数归一化为 None，避免目录渲染出空卷标题
+        assert_eq!(chapters[2].volume, None);
+        assert_eq!(chapters[2].word_count, None);
+    }
+
+    #[test]
+    fn test_chapter_list_js_carries_volume_meta() {
+        let engine = RuleEngine::new().unwrap();
+        let source = BookSource {
+            book_source_name: "TOC".to_string(),
+            book_source_url: "https://source.example".to_string(),
+            rule_toc: Some(TocRule {
+                chapter_list: Some(
+                    "js:JSON.stringify([{chapterName:'A',chapterUrl:'/1',volumeName:'卷一',wordCount:'100',updateTime:'1724481989'}])"
+                        .to_string(),
+                ),
+                chapter_name: Some("chapterName".to_string()),
+                chapter_url: Some("chapterUrl".to_string()),
+                volume_name: Some("volumeName".to_string()),
+                word_count: Some("wordCount".to_string()),
+                update_time: Some("updateTime".to_string()),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+
+        let (chapters, _) = engine.chapter_list(&source, "{}", "https://books.example");
+        assert_eq!(chapters.len(), 1);
+        assert_eq!(chapters[0].volume.as_deref(), Some("卷一"));
+        assert_eq!(chapters[0].word_count.as_deref(), Some("100"));
+        assert_eq!(chapters[0].tag.as_deref(), Some("1724481989"));
     }
 
     #[test]

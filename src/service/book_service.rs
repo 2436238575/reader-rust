@@ -973,10 +973,8 @@ impl BookService {
                     seen_chapter_urls.insert(ch.url.clone());
 
                     all_chapters.push(BookChapter {
-                        title: ch.title,
-                        url: ch.url,
                         index: chapter_index,
-                        ..Default::default()
+                        ..ch
                     });
                     chapter_index += 1;
                 }
@@ -1023,10 +1021,8 @@ impl BookService {
                     seen_chapter_urls.insert(ch.url.clone());
 
                     all_chapters.push(BookChapter {
-                        title: ch.title,
-                        url: ch.url,
                         index: chapter_index,
-                        ..Default::default()
+                        ..ch
                     });
                     chapter_index += 1;
                 }
@@ -1073,10 +1069,8 @@ impl BookService {
             }
             seen_chapter_urls.insert(ch.url.clone());
             all_chapters.push(BookChapter {
-                title: ch.title,
-                url: ch.url,
                 index: chapter_index,
-                ..Default::default()
+                ..ch
             });
             chapter_index += 1;
         }
@@ -1121,10 +1115,8 @@ impl BookService {
                     }
                     seen_chapter_urls.insert(ch.url.clone());
                     all_chapters.push(BookChapter {
-                        title: ch.title,
-                        url: ch.url,
                         index: chapter_index,
-                        ..Default::default()
+                        ..ch
                     });
                     chapter_index += 1;
                 }
@@ -1162,10 +1154,8 @@ impl BookService {
                     }
                     seen_chapter_urls.insert(ch.url.clone());
                     all_chapters.push(BookChapter {
-                        title: ch.title,
-                        url: ch.url,
                         index: chapter_index,
-                        ..Default::default()
+                        ..ch
                     });
                     chapter_index += 1;
                 }

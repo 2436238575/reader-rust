@@ -132,6 +132,10 @@ data class TocRule(
   var isVip: String? = null,
   var isPay: String? = null,
   var updateTime: String? = null,
+  // reader-rust 扩展字段：卷名（目录 UI 把卷名相同的连续章节归到同一个卷标题下）
+  var volumeName: String? = null,
+  // reader-rust 扩展字段：章节字数（目录条目旁展示）
+  var wordCount: String? = null,
   var nextTocUrl: String? = null
 )
 ```
@@ -251,7 +255,7 @@ data class ParaReviewRule(
 | ------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `SearchBook`  | `name`、`author`、`kind`、`wordCount`、`latestChapterTitle`、`intro`、`coverUrl`、`bookUrl`、`origin`、`originName`、`originOrder`、`type`、`variable`、`infoHtml`。                             |
 | `Book`        | `name`、`author`、`kind`、`wordCount`、`latestChapterTitle`、`intro`、`coverUrl`、`bookUrl`、`tocUrl`、`tocHtml`、`downloadUrls`、`origin`、`originName`、`originOrder`、`type`、`variableMap`。 |
-| `BookChapter` | `bookUrl`、`baseUrl`、`title`、`url`、`tag`、`isVolume`、`isVip`、`isPay`、`index`、变量 map。                                                                                                   |
+| `BookChapter` | `bookUrl`、`baseUrl`、`title`、`url`、`tag`、`isVolume`、`isVip`、`isPay`、`volume`、`wordCount`、`index`、变量 map。                                                                                   |
 | `StrResponse` | `raw`、`body`、`url`、`code`、`headers`、`isSuccessful`。                                                                                                                                        |
 | `RuleData`    | 临时 `variableMap`。搜索/发现列表阶段使用。                                                                                                                                                      |
 
@@ -1276,6 +1280,15 @@ else:
 | `isVolume`    | `getString(isVolumeRule).isTrue()`。                                                            |
 | `isVip`       | `getString(isVipRule).isTrue()`。                                                               |
 | `isPay`       | `getString(isPayRule).isTrue()`。                                                               |
+
+reader-rust 扩展字段（阅读3.0 没有，忽略不影响兼容）：
+
+| 字段         | 行为                                                                                                                                           |
+| ------------ | ----------------------------------------------------------------------------------------------------------------------------------------------- |
+| `volumeName` | `getString(volumeNameRule)` 写入 `BookChapter.volume`，空白归一化为 null。目录 UI 把卷名相同的**连续**章节归到一个卷标题行下；搜索过滤时同样生效。 |
+| `wordCount`  | `getString(wordCountRule)` 写入 `BookChapter.wordCount`，空白归一化为 null。目录条目副行展示；纯数字自动补「字」后缀。                              |
+
+章节时间与字数的展示规则在前端：纯数字（10 位秒 / 13 位毫秒）的 `tag` 按本地时区格式化为 `YY-MM-DD`，其余文本原样展示。
 
 `isTrue()` 行为：
 
