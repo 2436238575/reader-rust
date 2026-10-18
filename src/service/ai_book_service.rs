@@ -1,37 +1,30 @@
-use std::path::PathBuf;
-
 use sqlx::{Row, SqlitePool};
-use tokio::fs;
 
 use crate::error::error::AppError;
 use crate::model::ai_book::AiBookMemory;
-use crate::util::hash::md5_hex;
 use crate::util::time::now_ts;
 
+/// AI 书籍记忆：按 bookId 键控（`book_key` 列存 `book_<n>`）。
+/// `book_url` 列是冗余数据，供 WebDAV 恢复后校验「同 id 同书」防串书。
 #[derive(Clone)]
 pub struct AiBookService {
     pool: SqlitePool,
-    storage_dir: PathBuf,
 }
 
 impl AiBookService {
-    pub fn new(pool: SqlitePool, storage_dir: &str) -> Self {
-        Self {
-            pool,
-            storage_dir: PathBuf::from(storage_dir),
-        }
+    pub fn new(pool: SqlitePool, _storage_dir: &str) -> Self {
+        Self { pool }
     }
 
     pub async fn get(
         &self,
         user_ns: &str,
-        book_url: &str,
+        book_id: &str,
     ) -> Result<Option<AiBookMemory>, AppError> {
-        let key = md5_hex(book_url);
         if let Some(row) =
             sqlx::query("SELECT json FROM ai_book_memories WHERE user_ns=?1 AND book_key=?2")
                 .bind(user_ns)
-                .bind(&key)
+                .bind(book_id)
                 .fetch_optional(&self.pool)
                 .await?
         {
@@ -40,29 +33,18 @@ impl AiBookService {
                 .map_err(|e| AppError::BadRequest(e.to_string()))?;
             return Ok(Some(memory));
         }
-
-        let path = self.memory_path(user_ns, book_url);
-        if !path.exists() {
-            return Ok(None);
-        }
-        let data = fs::read_to_string(&path)
-            .await
-            .map_err(|e| AppError::Internal(e.into()))?;
-        let memory = serde_json::from_str::<AiBookMemory>(&data)
-            .map_err(|e| AppError::BadRequest(e.to_string()))?;
-        self.save_memory_row(user_ns, book_url, &memory).await?;
-        let _ = fs::remove_file(path).await;
-        Ok(Some(memory))
+        Ok(None)
     }
 
     pub async fn save_for_book(
         &self,
         user_ns: &str,
+        book_id: &str,
         book_url: &str,
         mut memory: AiBookMemory,
     ) -> Result<AiBookMemory, AppError> {
-        if book_url.trim().is_empty() {
-            return Err(AppError::BadRequest("bookUrl required".to_string()));
+        if book_id.trim().is_empty() {
+            return Err(AppError::BadRequest("bookId required".to_string()));
         }
         if memory.book_url.trim().is_empty() {
             memory.book_url = book_url.to_string();
@@ -73,60 +55,48 @@ impl AiBookService {
         if memory.updated_at <= 0 {
             memory.updated_at = now_ts() * 1000;
         }
+        memory.book_id = Some(book_id.to_string());
 
-        self.save_memory_row(user_ns, book_url, &memory).await?;
-        Ok(memory)
-    }
-
-    pub async fn delete(&self, user_ns: &str, book_url: &str) -> Result<bool, AppError> {
-        let key = md5_hex(book_url);
-        let result = sqlx::query("DELETE FROM ai_book_memories WHERE user_ns=?1 AND book_key=?2")
-            .bind(user_ns)
-            .bind(&key)
-            .execute(&self.pool)
-            .await?;
-
-        let path = self.memory_path(user_ns, book_url);
-        let removed_file = if path.exists() {
-            fs::remove_file(path)
-                .await
-                .map_err(|e| AppError::Internal(e.into()))?;
-            true
-        } else {
-            false
-        };
-
-        Ok(result.rows_affected() > 0 || removed_file)
-    }
-
-    async fn save_memory_row(
-        &self,
-        user_ns: &str,
-        book_url: &str,
-        memory: &AiBookMemory,
-    ) -> Result<(), AppError> {
-        let key = md5_hex(book_url);
         let data =
-            serde_json::to_string(memory).map_err(|e| AppError::BadRequest(e.to_string()))?;
+            serde_json::to_string(&memory).map_err(|e| AppError::BadRequest(e.to_string()))?;
         sqlx::query(
             "INSERT INTO ai_book_memories (user_ns, book_key, book_url, json, updated_at) VALUES (?1, ?2, ?3, ?4, ?5) \
              ON CONFLICT(user_ns, book_key) DO UPDATE SET book_url=excluded.book_url, json=excluded.json, updated_at=excluded.updated_at",
         )
         .bind(user_ns)
-        .bind(&key)
+        .bind(book_id)
         .bind(book_url)
         .bind(data)
         .bind(memory.updated_at)
         .execute(&self.pool)
         .await?;
-        Ok(())
+        Ok(memory)
     }
 
-    fn memory_path(&self, user_ns: &str, book_url: &str) -> PathBuf {
-        self.storage_dir
-            .join("data")
-            .join(user_ns)
-            .join("ai-books")
-            .join(format!("{}.json", md5_hex(book_url)))
+    pub async fn delete(&self, user_ns: &str, book_id: &str) -> Result<bool, AppError> {
+        let result = sqlx::query("DELETE FROM ai_book_memories WHERE user_ns=?1 AND book_key=?2")
+            .bind(user_ns)
+            .bind(book_id)
+            .execute(&self.pool)
+            .await?;
+        Ok(result.rows_affected() > 0)
+    }
+
+    /// 列出全部记忆的 `(book_id, book_url)`：WebDAV 恢复重建登记表后，
+    /// 由调用方逐行比对，book_url 与新登记同 id 行不一致的记忆删除（防串书）。
+    pub async fn list_keys(&self, user_ns: &str) -> Result<Vec<(String, String)>, AppError> {
+        let rows = sqlx::query("SELECT book_key, book_url FROM ai_book_memories WHERE user_ns=?1")
+            .bind(user_ns)
+            .fetch_all(&self.pool)
+            .await?;
+        Ok(rows
+            .into_iter()
+            .map(|r| {
+                (
+                    r.get::<String, _>("book_key"),
+                    r.get::<String, _>("book_url"),
+                )
+            })
+            .collect())
     }
 }

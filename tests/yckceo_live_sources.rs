@@ -31,11 +31,19 @@ async fn yckceo_live_non_webview_sources_end_to_end() {
     assert!(!ids.is_empty(), "YCKCeo index returned no source ids");
 
     let cache_root = env::temp_dir().join(format!("reader-rust-yckceo-{}", Uuid::new_v4()));
+    std::fs::create_dir_all(&cache_root).unwrap();
+    let pool = reader_rust::storage::db::init_pool(&format!(
+        "sqlite:{}?mode=rwc",
+        cache_root.join("reader.db").display()
+    ))
+    .await
+    .expect("init test db");
     let service = BookService::new(
         http.clone(),
         RuleEngine::new().expect("rule engine"),
         FileCache::new(cache_root.join("cache"), 0),
         cache_root.to_string_lossy().as_ref(),
+        reader_rust::storage::db::repo::BookRepo::new(pool),
     );
 
     let mut attempted = Vec::new();
@@ -235,7 +243,13 @@ async fn smoke_source(
         .ok_or_else(|| "search returned no usable books".to_string())?;
 
     let info = service
-        .get_book_info("yckceo-live", source, &book.book_url, false)
+        .get_book_info(
+            "yckceo-live",
+            book.book_id.as_deref().unwrap_or("book_live"),
+            source,
+            &book.book_url,
+            false,
+        )
         .await
         .map_err(|err| format!("book info failed for {}: {err:?}", book.book_url))?;
     let toc_url = info
@@ -254,7 +268,12 @@ async fn smoke_source(
         })
         .ok_or_else(|| "toc returned no readable chapter".to_string())?;
     let content = service
-        .get_content("yckceo-live", &book.book_url, source, &chapter.url)
+        .get_content(
+            "yckceo-live",
+            book.book_id.as_deref().unwrap_or("book_live"),
+            source,
+            &chapter.url,
+        )
         .await
         .map_err(|err| format!("content failed for {}: {err:?}", chapter.url))?;
     let content_chars = content.trim().chars().count();
@@ -369,11 +388,19 @@ async fn yckceo_live_chapter_images_survive_content_parsing() {
         .expect("fetch YCKCeo index");
 
     let cache_root = env::temp_dir().join(format!("reader-rust-yckceo-img-{}", Uuid::new_v4()));
+    std::fs::create_dir_all(&cache_root).unwrap();
+    let pool = reader_rust::storage::db::init_pool(&format!(
+        "sqlite:{}?mode=rwc",
+        cache_root.join("reader.db").display()
+    ))
+    .await
+    .expect("init test db");
     let service = BookService::new(
         http.clone(),
         RuleEngine::new().expect("rule engine"),
         FileCache::new(cache_root.join("cache"), 0),
         cache_root.to_string_lossy().as_ref(),
+        reader_rust::storage::db::repo::BookRepo::new(pool),
     );
 
     let mut checked = 0usize;
@@ -395,7 +422,13 @@ async fn yckceo_live_chapter_images_survive_content_parsing() {
             .and_then(|books| books.into_iter().find(|b| !b.book_url.trim().is_empty()));
         let Some(book) = book else { continue };
         let Ok(info) = service
-            .get_book_info("yckceo-live", &source, &book.book_url, false)
+            .get_book_info(
+                "yckceo-live",
+                book.book_id.as_deref().unwrap_or("book_live"),
+                &source,
+                &book.book_url,
+                false,
+            )
             .await
         else {
             continue;
@@ -418,7 +451,12 @@ async fn yckceo_live_chapter_images_survive_content_parsing() {
             .take(5)
         {
             let Ok(content) = service
-                .get_content("yckceo-live", &book.book_url, &source, &chapter.url)
+                .get_content(
+                    "yckceo-live",
+                    book.book_id.as_deref().unwrap_or("book_live"),
+                    &source,
+                    &chapter.url,
+                )
                 .await
             else {
                 continue;

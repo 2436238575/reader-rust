@@ -5,6 +5,12 @@ use serde::{Deserialize, Serialize};
 pub struct Book {
     pub name: String,
     pub author: String,
+    /// 后端分配的稳定身份（`book_<n>`），不随换源变化；请求身份参数一律用它。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub book_id: Option<String>,
+    /// 当前绑定的书源 id；与 `origin`（书源 URL，数据字段）并行保存。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub book_source_id: Option<i64>,
     pub book_url: String,
     pub origin: String,
     pub origin_name: Option<String>,

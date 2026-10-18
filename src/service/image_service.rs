@@ -40,15 +40,13 @@ const JPEG_QUALITY: u8 = 85;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ImageRecord {
     pub id: String,
-    /// 用途，目前只有 `cover`；后续章节配图、评论配图可以复用同一套。
+    /// 用途：`cover` / `chapter` / `review`。
     pub kind: String,
     /// 最近一次已知的上游地址（含签名）。
     pub source_url: String,
-    /// 登记时的书籍上下文，用于上游地址失效时回源刷新。
+    /// 登记时所属的书籍（`book_<n>`）：按书清理与回源自愈都靠它。
     #[serde(default)]
-    pub book_url: Option<String>,
-    #[serde(default)]
-    pub book_source_url: Option<String>,
+    pub book_id: Option<String>,
     /// 落盘后的类型（HEIC 已转成 JPEG）。
     pub content_type: String,
     pub ext: String,
@@ -130,15 +128,9 @@ impl ImageService {
 
     /// 登记一张图，返回它的 id。
     ///
-    /// 上游地址没变就不重复写盘；`book_url` / `book_source_url` 用于日后
-    /// 地址失效时回源刷新（见 `update_source_url`）。
-    pub async fn register(
-        &self,
-        kind: &str,
-        url: &str,
-        book_url: Option<&str>,
-        book_source_url: Option<&str>,
-    ) -> Option<String> {
+    /// 上游地址没变就不重复写盘；`book_id` 是所属书籍（按书清理、回源自愈用），
+    /// 缺省时沿用旧记录里的值。
+    pub async fn register(&self, kind: &str, url: &str, book_id: Option<&str>) -> Option<String> {
         let url = url.trim();
         if !url.starts_with("http://") && !url.starts_with("https://") {
             return None;
@@ -155,12 +147,9 @@ impl ImageService {
             id: id.clone(),
             kind: kind.to_string(),
             source_url: url.to_string(),
-            book_url: book_url
+            book_id: book_id
                 .map(str::to_string)
-                .or(existing.as_ref().and_then(|r| r.book_url.clone())),
-            book_source_url: book_source_url
-                .map(str::to_string)
-                .or(existing.as_ref().and_then(|r| r.book_source_url.clone())),
+                .or(existing.as_ref().and_then(|r| r.book_id.clone())),
             content_type: existing
                 .as_ref()
                 .map(|r| r.content_type.clone())
@@ -197,10 +186,8 @@ impl ImageService {
         let mut targets = Vec::new();
         collect_cover_targets(value, "", &mut targets);
         for target in targets {
-            let book_url = target.book_url.as_deref();
-            let source_url = target.book_source_url.as_deref();
             let Some(id) = self
-                .register("cover", &target.url, book_url, source_url)
+                .register("cover", &target.url, target.book_id.as_deref())
                 .await
             else {
                 continue;
@@ -216,26 +203,51 @@ impl ImageService {
     /// 站点常为同一张图给多个格式变体（番茄同时给 HEIC 与 JPEG），这里替客户端
     /// 挑一张能渲染的：管道会把 HEIC 转成 JPEG，所以只要留一张就够，
     /// 留多张反而会在前端渲染出重复的图。
-    pub async fn rewrite_image_lists(
-        &self,
-        value: &mut Value,
-        kind: &str,
-        book_url: Option<&str>,
-        book_source_url: Option<&str>,
-    ) {
+    pub async fn rewrite_image_lists(&self, value: &mut Value, kind: &str, book_id: Option<&str>) {
         let mut targets = Vec::new();
         collect_string_arrays(value, "", "images", &mut targets);
         for target in targets {
             let Some(picked) = pick_renderable(&target.urls) else {
                 continue;
             };
-            let Some(id) = self.register(kind, picked, book_url, book_source_url).await else {
+            let Some(id) = self.register(kind, picked, book_id).await else {
                 continue;
             };
             if let Some(slot) = value.pointer_mut(&target.pointer) {
                 *slot = Value::Array(vec![Value::String(Self::route(&id))]);
             }
         }
+    }
+
+    /// 按书删除其全部图片（记录 + 本体），返回删除的图片数。
+    ///
+    /// 目录即映射表：逐条读记录比对 book_id。只在删书/按书清缓存时调用，
+    /// 频率极低，全目录扫描可接受。
+    pub async fn remove_by_book_id(&self, book_id: &str) -> u64 {
+        let dir = self.dir();
+        let Ok(mut entries) = fs::read_dir(&dir).await else {
+            return 0;
+        };
+        let mut removed = 0u64;
+        while let Ok(Some(entry)) = entries.next_entry().await {
+            let path = entry.path();
+            if path.extension().and_then(|e| e.to_str()) != Some("json") {
+                continue;
+            }
+            let Ok(data) = fs::read(&path).await else {
+                continue;
+            };
+            let Ok(record) = serde_json::from_slice::<ImageRecord>(&data) else {
+                continue;
+            };
+            if record.book_id.as_deref() != Some(book_id) {
+                continue;
+            }
+            let _ = fs::remove_file(&path).await;
+            let _ = fs::remove_file(self.body_path(&record.id)).await;
+            removed += 1;
+        }
+        removed
     }
 
     /// 取图：缓存命中直接返回，否则抓上游（必要时转码）后落盘。
@@ -429,28 +441,22 @@ fn now_secs() -> i64 {
         .unwrap_or(0)
 }
 
-/// 待改写的封面：JSON 指针 + 上游地址 + 书籍上下文。
+/// 待改写的封面：JSON 指针 + 上游地址 + 所属书籍。
 struct CoverTarget {
     pointer: String,
     url: String,
-    book_url: Option<String>,
-    book_source_url: Option<String>,
+    book_id: Option<String>,
 }
 
 /// 同步遍历响应，收集需要改写的 `coverUrl`。
 ///
-/// 书籍上下文（`bookUrl` / `origin`）取同一层对象的兄弟字段——书架、搜索、
-/// 探索返回的书籍对象都是这个形状。
+/// 所属书籍取同一层对象的兄弟字段 `bookId`——书架、搜索、探索返回的
+/// 书籍对象都是这个形状。
 fn collect_cover_targets(value: &Value, pointer: &str, out: &mut Vec<CoverTarget>) {
     match value {
         Value::Object(map) => {
-            let book_url = map
-                .get("bookUrl")
-                .and_then(Value::as_str)
-                .map(str::to_string);
-            let book_source_url = map
-                .get("origin")
-                .or_else(|| map.get("bookSourceUrl"))
+            let book_id = map
+                .get("bookId")
                 .and_then(Value::as_str)
                 .map(str::to_string);
             for (key, child) in map {
@@ -463,8 +469,7 @@ fn collect_cover_targets(value: &Value, pointer: &str, out: &mut Vec<CoverTarget
                         out.push(CoverTarget {
                             pointer: child_pointer,
                             url: url.clone(),
-                            book_url: book_url.clone(),
-                            book_source_url: book_source_url.clone(),
+                            book_id: book_id.clone(),
                         });
                     }
                     Value::Object(_) | Value::Array(_) => {
@@ -690,8 +695,8 @@ mod tests {
     fn cover_targets_carry_book_context() {
         let mut value = json!({
             "books": [{
+                "bookId": "book_7",
                 "bookUrl": "http://src/info?book_id=1",
-                "origin": "http://src/",
                 "coverUrl": "https://img.example/a.heic?sig=1",
                 "customCoverUrl": "https://user.example/mine.png"
             }],
@@ -702,8 +707,7 @@ mod tests {
         assert_eq!(targets.len(), 2, "customCoverUrl 不该被收集");
         let first = &targets[0];
         assert_eq!(first.pointer, "/books/0/coverUrl");
-        assert_eq!(first.book_url.as_deref(), Some("http://src/info?book_id=1"));
-        assert_eq!(first.book_source_url.as_deref(), Some("http://src/"));
+        assert_eq!(first.book_id.as_deref(), Some("book_7"));
 
         // 改写只动 coverUrl
         let pointer = targets[0].pointer.clone();

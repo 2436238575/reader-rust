@@ -519,7 +519,9 @@ impl RuleEngine {
                 last_chapter,
                 update_time,
                 word_count,
-                book_source_urls: None,
+                book_id: None,
+                book_source_id: None,
+                book_source_ids: None,
             });
         }
         out
@@ -565,7 +567,9 @@ impl RuleEngine {
                 last_chapter,
                 update_time,
                 word_count,
-                book_source_urls: None,
+                book_id: None,
+                book_source_id: None,
+                book_source_ids: None,
             });
         }
         out
@@ -785,7 +789,9 @@ impl RuleEngine {
                 last_chapter,
                 update_time,
                 word_count,
-                book_source_urls: None,
+                book_id: None,
+                book_source_id: None,
+                book_source_ids: None,
             });
         }
         out
@@ -835,7 +841,9 @@ impl RuleEngine {
                 last_chapter,
                 update_time,
                 word_count,
-                book_source_urls: None,
+                book_id: None,
+                book_source_id: None,
+                book_source_ids: None,
             });
         }
 
@@ -883,7 +891,9 @@ impl RuleEngine {
                 last_chapter,
                 update_time,
                 word_count,
-                book_source_urls: None,
+                book_id: None,
+                book_source_id: None,
+                book_source_ids: None,
             });
         }
         out
@@ -3369,7 +3379,9 @@ fn search_book_from_book(book: Book) -> Option<SearchBook> {
         last_chapter: book.latest_chapter_title,
         update_time: book.update_time,
         word_count: book.word_count,
-        book_source_urls: None,
+        book_id: None,
+        book_source_id: None,
+        book_source_ids: None,
     })
 }
 
@@ -3443,7 +3455,9 @@ fn build_search_book_from_json(
         last_chapter,
         update_time,
         word_count,
-        book_source_urls: None,
+        book_id: None,
+        book_source_id: None,
+        book_source_ids: None,
     })
 }
 

@@ -48,12 +48,21 @@ async fn chapter_list_requests_include_legacy_source_headers() {
 
     let storage_dir =
         std::env::temp_dir().join(format!("reader-rust-header-test-{}", Uuid::new_v4()));
+    // init_pool 不会建父目录，先落目录再开库
+    std::fs::create_dir_all(&storage_dir).unwrap();
+    let pool = reader_rust::storage::db::init_pool(&format!(
+        "sqlite:{}?mode=rwc",
+        storage_dir.join("reader.db").display()
+    ))
+    .await
+    .unwrap();
     let cache = FileCache::new(storage_dir.join("cache"), 0);
     let service = BookService::new(
         HttpClient::new(5, None).unwrap(),
         RuleEngine::new().unwrap(),
         cache,
         storage_dir.to_str().unwrap(),
+        reader_rust::storage::db::repo::BookRepo::new(pool),
     );
 
     let source = BookSource {
@@ -70,7 +79,13 @@ async fn chapter_list_requests_include_legacy_source_headers() {
     };
 
     let chapters = service
-        .get_chapter_list_with_cache("default", &source, &format!("http://{}/toc", addr), true)
+        .get_chapter_list_with_cache(
+            "default",
+            "book_1",
+            &source,
+            &format!("http://{}/toc", addr),
+            true,
+        )
         .await
         .unwrap();
 

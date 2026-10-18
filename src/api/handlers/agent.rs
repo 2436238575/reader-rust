@@ -1,7 +1,7 @@
 //! AI 资料编排任务的三个轮询端点。
 //!
 //! POST /reader3/runAgentTask    提交任务（update_to_current | redraw_map），进行中返回 409
-//! POST /reader3/getAgentTaskStatus   状态快照（含 bookUrl，前端据此过滤他书任务）
+//! POST /reader3/getAgentTaskStatus   状态快照（含 bookId，前端据此过滤他书任务）
 //! POST /reader3/cancelAgentTask      取消 = kill sidecar 进程
 //!
 //! 结果不设独立端点：任务完成后前端复用 getAiBookMemory 重拉资料。
@@ -14,12 +14,11 @@ use crate::api::AppState;
 use crate::auth::CurrentUser;
 use crate::error::error::{ApiResponse, AppError};
 use crate::service::agent_sidecar_service::AgentTaskKind;
-use crate::util::text::repair_encoded_url;
 
 #[derive(Debug, Deserialize, Default)]
 pub struct RunAgentTaskRequest {
-    #[serde(rename = "bookUrl", alias = "url")]
-    pub book_url: Option<String>,
+    #[serde(rename = "bookId")]
+    pub book_id: Option<String>,
     pub kind: Option<String>,
     #[serde(rename = "targetChapterIndex")]
     pub target_chapter_index: Option<i32>,
@@ -31,13 +30,12 @@ pub async fn run_agent_task(
     Json(req): Json<RunAgentTaskRequest>,
 ) -> Result<Json<ApiResponse<Value>>, AppError> {
     let user_ns = user.0.ns.clone();
-    let book_url = req
-        .book_url
+    let book_id = req
+        .book_id
         .as_deref()
         .map(str::trim)
         .filter(|v| !v.is_empty())
-        .ok_or_else(|| AppError::BadRequest("bookUrl required".to_string()))?;
-    let book_url = repair_encoded_url(book_url);
+        .ok_or_else(|| AppError::BadRequest("bookId required".to_string()))?;
     let kind = AgentTaskKind::parse(req.kind.as_deref().unwrap_or("update_to_current"))
         .ok_or_else(|| {
             AppError::BadRequest("kind 必须是 update_to_current 或 redraw_map".to_string())
@@ -46,7 +44,7 @@ pub async fn run_agent_task(
     // 任务只针对书架上的书
     let book = state
         .book_service
-        .get_shelf_book(&user_ns, &book_url)
+        .get_shelf_book(&user_ns, book_id)
         .await?
         .ok_or_else(|| AppError::BadRequest("书籍未加入书架".to_string()))?;
 

@@ -5,7 +5,7 @@ use axum::{
 use serde::Deserialize;
 use serde_json::Value;
 
-use crate::api::handlers::book::resolve_book_source;
+use crate::api::handlers::book::resolve_book;
 use crate::api::AppState;
 use crate::auth::CurrentUser;
 use crate::error::error::{ApiResponse, AppError};
@@ -23,10 +23,8 @@ const MAX_REVIEW_COUNT: i32 = 50;
 #[derive(Debug, Default, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct ReviewRequest {
-    pub book_url: Option<String>,
+    pub book_id: Option<String>,
     pub chapter_url: Option<String>,
-    pub book_source_url: Option<String>,
-    pub book_source: Option<Value>,
     pub page: Option<i32>,
     pub count: Option<i32>,
     pub para_index: Option<i32>,
@@ -40,6 +38,7 @@ pub struct ReviewRequest {
 /// 一次评论查询的完整上下文。
 struct ReviewContext {
     source: BookSource,
+    book_id: String,
     book_url: String,
     chapter_url: String,
     page: i32,
@@ -54,17 +53,11 @@ fn merge_body(mut req: ReviewRequest, body: &axum::body::Bytes) -> ReviewRequest
         return req;
     }
     if let Ok(v) = serde_json::from_slice::<ReviewRequest>(body) {
-        if req.book_url.is_none() {
-            req.book_url = v.book_url;
+        if req.book_id.is_none() {
+            req.book_id = v.book_id;
         }
         if req.chapter_url.is_none() {
             req.chapter_url = v.chapter_url;
-        }
-        if req.book_source_url.is_none() {
-            req.book_source_url = v.book_source_url;
-        }
-        if req.book_source.is_none() {
-            req.book_source = v.book_source;
         }
         if req.page.is_none() {
             req.page = v.page;
@@ -91,9 +84,8 @@ fn merge_body(mut req: ReviewRequest, body: &axum::body::Bytes) -> ReviewRequest
     };
     for (key, value) in url::form_urlencoded::parse(text.as_bytes()) {
         match key.as_ref() {
-            "bookUrl" | "url" => req.book_url = Some(value.into_owned()),
-            "chapterUrl" | "href" => req.chapter_url = Some(value.into_owned()),
-            "bookSourceUrl" | "origin" => req.book_source_url = Some(value.into_owned()),
+            "bookId" => req.book_id = Some(value.into_owned()),
+            "chapterUrl" => req.chapter_url = Some(value.into_owned()),
             "page" => req.page = value.parse().ok(),
             "count" => req.count = value.parse().ok(),
             "paraIndex" => req.para_index = value.parse().ok(),
@@ -106,29 +98,19 @@ fn merge_body(mut req: ReviewRequest, body: &axum::body::Bytes) -> ReviewRequest
     req
 }
 
-/// 解析请求里的书源与 URL，得到一次评论查询的全部上下文。
+/// 解析请求里的书籍与书源，得到一次评论查询的全部上下文。
 async fn resolve_context(
     state: &AppState,
     user_ns: &str,
     req: ReviewRequest,
 ) -> Result<ReviewContext, AppError> {
-    let book_url = required(&req.book_url, "bookUrl")?;
+    let book_id = required(&req.book_id, "bookId")?;
     let chapter_url = required(&req.chapter_url, "chapterUrl")?;
-    let book_source = req
-        .book_source
-        .clone()
-        .and_then(|v| serde_json::from_value::<BookSource>(v).ok());
-    let source = resolve_book_source(
-        state,
-        user_ns,
-        req.book_source_url.clone(),
-        book_source,
-        Some(&book_url),
-    )
-    .await?;
+    let resolved = resolve_book(state, user_ns, &book_id).await?;
     Ok(ReviewContext {
-        source,
-        book_url,
+        source: resolved.source,
+        book_id,
+        book_url: resolved.book_url,
         chapter_url,
         page: req.page.unwrap_or(1).max(1),
         count: req
@@ -165,12 +147,7 @@ async fn ok_json_with_images<T: serde::Serialize>(
     let mut value = serde_json::to_value(value).unwrap_or_default();
     state
         .image_service
-        .rewrite_image_lists(
-            &mut value,
-            "review",
-            Some(&ctx.book_url),
-            Some(&ctx.source.book_source_url),
-        )
+        .rewrite_image_lists(&mut value, "review", Some(&ctx.book_id))
         .await;
     Json(ApiResponse::ok(value))
 }
@@ -192,6 +169,7 @@ pub async fn get_chapter_comments(
             .get_author_reviews(
                 &user_ns,
                 &ctx.source,
+                &ctx.book_id,
                 &ctx.book_url,
                 &ctx.chapter_url,
                 None,
@@ -204,6 +182,7 @@ pub async fn get_chapter_comments(
             .get_chapter_reviews(
                 &user_ns,
                 &ctx.source,
+                &ctx.book_id,
                 &ctx.book_url,
                 &ctx.chapter_url,
                 ctx.page,
@@ -231,6 +210,7 @@ pub async fn get_para_comment_index(
         .get_para_review_index(
             &user_ns,
             &ctx.source,
+            &ctx.book_id,
             &ctx.book_url,
             &ctx.chapter_url,
             ctx.refresh,
@@ -260,6 +240,7 @@ pub async fn get_para_comments(
             .get_author_reviews(
                 &user_ns,
                 &ctx.source,
+                &ctx.book_id,
                 &ctx.book_url,
                 &ctx.chapter_url,
                 Some(para_index),
@@ -272,6 +253,7 @@ pub async fn get_para_comments(
             .get_para_reviews(
                 &user_ns,
                 &ctx.source,
+                &ctx.book_id,
                 &ctx.book_url,
                 &ctx.chapter_url,
                 para_index,

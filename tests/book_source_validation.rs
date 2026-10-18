@@ -8,6 +8,25 @@ use reader_rust::service::book_source_service::set_invalid_book_source_group;
 use reader_rust::storage::cache::file_cache::FileCache;
 use uuid::Uuid;
 
+/// 装配一套带书籍登记表的 BookService（独立临时目录 + 临时 SQLite）。
+async fn test_book_service(storage_dir: &std::path::Path) -> BookService {
+    // init_pool 不会建父目录，先落目录再开库
+    std::fs::create_dir_all(storage_dir).unwrap();
+    let pool = reader_rust::storage::db::init_pool(&format!(
+        "sqlite:{}?mode=rwc",
+        storage_dir.join("reader.db").display()
+    ))
+    .await
+    .unwrap();
+    BookService::new(
+        HttpClient::new(5, None).unwrap(),
+        RuleEngine::new().unwrap(),
+        FileCache::new(storage_dir.join("cache"), 0),
+        storage_dir.to_str().unwrap(),
+        reader_rust::storage::db::repo::BookRepo::new(pool),
+    )
+}
+
 async fn search_ok() -> Html<&'static str> {
     Html(
         r#"<div class="item"><a class="title" href="/book/1">搜索书</a><span class="author">作者</span></div>"#,
@@ -40,12 +59,7 @@ async fn source_availability_is_valid_when_search_or_explore_has_results() {
 
     let storage_dir =
         std::env::temp_dir().join(format!("reader-rust-source-validation-{}", Uuid::new_v4()));
-    let service = BookService::new(
-        HttpClient::new(5, None).unwrap(),
-        RuleEngine::new().unwrap(),
-        FileCache::new(storage_dir.join("cache"), 0),
-        storage_dir.to_str().unwrap(),
-    );
+    let service = test_book_service(&storage_dir).await;
 
     let search_valid = source_with_routes(&format!("http://{}", addr), "/search-ok", "/empty");
     let explore_valid = source_with_routes(&format!("http://{}", addr), "/empty", "/explore-ok");

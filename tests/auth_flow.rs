@@ -345,7 +345,7 @@ async fn purge_cache_scopes_all_work_for_the_single_user() {
         .await;
     assert_eq!(response.status(), 200);
 
-    // 单本书的清理需要 bookUrl
+    // 单本书的清理需要 bookId
     let response = server
         .post(
             "/reader3/purgeCache",
@@ -353,12 +353,12 @@ async fn purge_cache_scopes_all_work_for_the_single_user() {
             serde_json::json!({ "scope": "book" }),
         )
         .await;
-    assert_eq!(response.status(), 400, "缺少 bookUrl 应被拒绝");
+    assert_eq!(response.status(), 400, "缺少 bookId 应被拒绝");
     let response = server
         .post(
             "/reader3/purgeCache",
             Some(&token),
-            serde_json::json!({ "scope": "book", "bookUrl": "https://example.com/book/1" }),
+            serde_json::json!({ "scope": "book", "bookId": "book_1" }),
         )
         .await;
     assert_eq!(response.status(), 200);

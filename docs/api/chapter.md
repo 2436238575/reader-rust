@@ -106,13 +106,14 @@ SSE 流式缓存指定书籍的章节正文。查询参数：
 POST /reader3/deleteBookCache
 ```
 
+删除粒度是整本书：正文缓存、目录缓存与该书的搜索结果一并清理。
+
 查询参数或请求体：
 
-| 参数         | 类型   | 必填 | 说明                          |
-| ------------ | ------ | ---- | ----------------------------- |
-| `bookUrl`    | string | 是   | 书籍 URL（别名 `url`）        |
-| `chapterUrl` | string | 否   | 章节 URL                      |
-| `url`        | string | 否   | 书籍 URL（与 `bookUrl` 等效） |
+| 参数      | 类型   | 必填 | 说明                          |
+| --------- | ------ | ---- | ----------------------------- |
+| `bookUrl` | string | 是   | 书籍 URL（别名 `url`）        |
+| `url`     | string | 否   | 书籍 URL（与 `bookUrl` 等效） |
 
 响应：`data` 形如 `{ "deleted": true, "contentCache": true, "chapterListCache": true }`。
 
@@ -186,8 +187,8 @@ GET /reader3/cover?path=<封面URL>
 ```
 
 早期版本的前端与历史书架记录里存的是书源地址，这个入口保留兼容：把 `path` 登记成 id
-后走上面同一条管道（转码、缓存、自愈一致）。**匿名可访问**（固定使用隔离的 `public`
-命名空间，不携带任何用户书源会话 Cookie），行为约定同上。
+后走上面同一条管道（转码、缓存、自愈一致）。**需要登录**，令牌的携带方式与
+`/reader3/image/<id>` 相同（`Authorization` 头或 `accessToken` 查询参数）。
 
 ## 获取本地 EPUB 资源
 

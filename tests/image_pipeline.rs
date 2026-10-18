@@ -128,6 +128,7 @@ struct TestServer {
     temp_dir: PathBuf,
     client: reqwest::Client,
     token: String,
+    book_source_id: std::cell::Cell<i64>,
 }
 
 impl TestServer {
@@ -175,6 +176,7 @@ impl TestServer {
             temp_dir,
             client,
             token,
+            book_source_id: std::cell::Cell::new(0),
         };
         server.save_source().await;
         server
@@ -201,6 +203,9 @@ impl TestServer {
             .await
             .unwrap();
         assert_eq!(resp.status(), StatusCode::OK);
+        let payload: Value = resp.json().await.unwrap();
+        self.book_source_id
+            .set(payload["data"]["bookSourceId"].as_i64().unwrap());
     }
 
     fn book_url(&self) -> String {
@@ -213,7 +218,7 @@ impl TestServer {
             "name": "假书",
             "author": "作者",
             "bookUrl": self.book_url(),
-            "origin": self.upstream_url,
+            "bookSourceId": self.book_source_id.get(),
             "coverUrl": format!("{}/cover.heic?sig=stale&x-expires=1&x-signature=old", self.upstream_url),
         });
         let resp = self

@@ -5,11 +5,10 @@ use axum::{
 use serde::Deserialize;
 use serde_json::Value;
 
-use crate::api::handlers::book::resolve_book_source;
+use crate::api::handlers::book::resolve_book;
 use crate::api::AppState;
 use crate::auth::CurrentUser;
 use crate::error::error::{ApiResponse, AppError};
-use crate::model::book_source::BookSource;
 use crate::service::image_service::ImageService;
 
 /// 章节配图接口的入参。
@@ -19,10 +18,8 @@ use crate::service::image_service::ImageService;
 #[derive(Debug, Default, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct ChapterImageRequest {
-    pub book_url: Option<String>,
+    pub book_id: Option<String>,
     pub chapter_url: Option<String>,
-    pub book_source_url: Option<String>,
-    pub book_source: Option<Value>,
 }
 
 /// 把 POST 表单参数合并进查询参数。
@@ -31,17 +28,11 @@ fn merge_body(mut req: ChapterImageRequest, body: &axum::body::Bytes) -> Chapter
         return req;
     }
     if let Ok(v) = serde_json::from_slice::<ChapterImageRequest>(body) {
-        if req.book_url.is_none() {
-            req.book_url = v.book_url;
+        if req.book_id.is_none() {
+            req.book_id = v.book_id;
         }
         if req.chapter_url.is_none() {
             req.chapter_url = v.chapter_url;
-        }
-        if req.book_source_url.is_none() {
-            req.book_source_url = v.book_source_url;
-        }
-        if req.book_source.is_none() {
-            req.book_source = v.book_source;
         }
         return req;
     }
@@ -50,9 +41,8 @@ fn merge_body(mut req: ChapterImageRequest, body: &axum::body::Bytes) -> Chapter
     };
     for (key, value) in url::form_urlencoded::parse(text.as_bytes()) {
         match key.as_ref() {
-            "bookUrl" | "url" => req.book_url = Some(value.into_owned()),
-            "chapterUrl" | "href" => req.chapter_url = Some(value.into_owned()),
-            "bookSourceUrl" | "origin" => req.book_source_url = Some(value.into_owned()),
+            "bookId" => req.book_id = Some(value.into_owned()),
+            "chapterUrl" => req.chapter_url = Some(value.into_owned()),
             _ => {}
         }
     }
@@ -80,30 +70,19 @@ pub async fn get_chapter_images(
 ) -> Result<Json<ApiResponse<Value>>, AppError> {
     let req = merge_body(q, &body);
     let user_ns = user.0.ns.clone();
-    let book_url = required(&req.book_url, "bookUrl")?;
+    let book_id = required(&req.book_id, "bookId")?;
     let chapter_url = required(&req.chapter_url, "chapterUrl")?;
-    let book_source = req
-        .book_source
-        .clone()
-        .and_then(|v| serde_json::from_value::<BookSource>(v).ok());
-    let source = resolve_book_source(
-        &state,
-        &user_ns,
-        req.book_source_url.clone(),
-        book_source,
-        Some(&book_url),
-    )
-    .await?;
+    let resolved = resolve_book(&state, &user_ns, &book_id).await?;
+    let source = resolved.source;
     let mut result = state
         .book_service
         .get_chapter_images(&user_ns, &source, &chapter_url)
         .await?;
     // 图片地址收口到本站取图接口：签名会过期，id 不会
-    let source_url = source.book_source_url.clone();
     for image in result.images.iter_mut() {
         if let Some(id) = state
             .image_service
-            .register("chapter", &image.url, Some(&book_url), Some(&source_url))
+            .register("chapter", &image.url, Some(&book_id))
             .await
         {
             image.url = ImageService::route(&id);

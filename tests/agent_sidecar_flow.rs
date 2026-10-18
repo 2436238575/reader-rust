@@ -120,8 +120,8 @@ impl TestServer {
         body["data"]["accessToken"].as_str().unwrap().to_string()
     }
 
-    /// 上传本地 TXT（multipart 手工构造），返回书架上的 bookUrl。
-    async fn upload_txt(&self, token: &str, file_name: &str, content: &str) -> String {
+    /// 上传本地 TXT（multipart 手工构造），返回 (bookId, bookUrl)。
+    async fn upload_txt(&self, token: &str, file_name: &str, content: &str) -> (String, String) {
         let boundary = "----agenttestboundary";
         let body = format!(
             "--{boundary}\r\n\
@@ -150,7 +150,10 @@ impl TestServer {
         );
         let body: Value = response.json().await.unwrap();
         assert_eq!(body["isSuccess"], json!(true), "upload error: {}", body);
-        body["data"]["bookUrl"].as_str().unwrap().to_string()
+        (
+            body["data"]["bookId"].as_str().unwrap().to_string(),
+            body["data"]["bookUrl"].as_str().unwrap().to_string(),
+        )
     }
 
     /// 上传后用 saveBook 改作者（redraw 测试以此分流假 sidecar 行为）。
@@ -161,32 +164,32 @@ impl TestServer {
         content: &str,
         author: &str,
     ) -> String {
-        let book_url = self.upload_txt(token, file_name, content).await;
+        let (book_id, book_url) = self.upload_txt(token, file_name, content).await;
         let response = self
             .client
             .post(self.url("/reader3/saveBook"))
             .header("Authorization", format!("Bearer {token}"))
-            .json(&json!({"bookUrl": book_url, "origin": "local-txt", "author": author}))
+            .json(&json!({"bookId": book_id, "bookUrl": book_url, "author": author}))
             .send()
             .await
             .unwrap();
         assert!(response.status().is_success(), "saveBook failed");
         let body: Value = response.json().await.unwrap();
         assert_eq!(body["isSuccess"], json!(true), "saveBook error: {}", body);
-        book_url
+        book_id
     }
 
     async fn start_task(
         &self,
         token: &str,
-        book_url: &str,
+        book_id: &str,
         kind: &str,
         target: Option<i32>,
     ) -> reqwest::Response {
         self.client
             .post(self.url("/reader3/runAgentTask"))
             .header("Authorization", format!("Bearer {token}"))
-            .json(&json!({"bookUrl": book_url, "kind": kind, "targetChapterIndex": target}))
+            .json(&json!({"bookId": book_id, "kind": kind, "targetChapterIndex": target}))
             .send()
             .await
             .unwrap()
@@ -220,12 +223,12 @@ impl TestServer {
         }
     }
 
-    async fn get_memory(&self, token: &str, book_url: &str) -> Value {
+    async fn get_memory(&self, token: &str, book_id: &str) -> Value {
         let response = self
             .client
             .post(self.url("/reader3/getAiBookMemory"))
             .header("Authorization", format!("Bearer {token}"))
-            .json(&json!({"bookUrl": book_url}))
+            .json(&json!({"bookId": book_id}))
             .send()
             .await
             .unwrap();
@@ -250,10 +253,10 @@ async fn agent_task_updates_to_current_with_tool_roundtrip() {
 正文里藏着暗号这个词。
 第三章 结尾
 最后章节的正文。";
-    let book_url = server.upload_txt(&token, "流程测试.txt", content).await;
+    let (book_id, _) = server.upload_txt(&token, "流程测试.txt", content).await;
 
     let response = server
-        .start_task(&token, &book_url, "update_to_current", Some(2))
+        .start_task(&token, &book_id, "update_to_current", Some(2))
         .await;
     assert_eq!(response.status().as_u16(), 200, "runAgentTask 失败");
     let body: Value = response.json().await.unwrap();
@@ -264,7 +267,7 @@ async fn agent_task_updates_to_current_with_tool_roundtrip() {
     assert_eq!(snapshot["lastError"], Value::Null, "{snapshot}");
     assert_eq!(snapshot["targetChapterIndex"], json!(2));
 
-    let memory = server.get_memory(&token, &book_url).await;
+    let memory = server.get_memory(&token, &book_id).await;
     assert_eq!(
         memory["processedChapterIndex"],
         json!(2),
@@ -283,7 +286,7 @@ async fn agent_task_updates_to_current_with_tool_roundtrip() {
         "搜索范围应被钳制：{summary}"
     );
     // 章节窗口下发了邻近目录，快照也记录了目标章
-    assert_eq!(snapshot["bookUrl"], json!(book_url));
+    assert_eq!(snapshot["bookId"], json!(book_id));
 }
 
 #[tokio::test]
@@ -302,16 +305,16 @@ async fn agent_task_skips_non_story_chapters() {
 番外内容。
 第三章 结尾
 正文三。";
-    let book_url = server.upload_txt(&token, "跳过测试.txt", content).await;
+    let (book_id, _) = server.upload_txt(&token, "跳过测试.txt", content).await;
 
     let response = server
-        .start_task(&token, &book_url, "update_to_current", Some(2))
+        .start_task(&token, &book_id, "update_to_current", Some(2))
         .await;
     assert_eq!(response.status().as_u16(), 200);
 
     let snapshot = server.wait_task_done(&token).await;
     assert_eq!(snapshot["lastError"], Value::Null, "不应出错：{snapshot}");
-    let memory = server.get_memory(&token, &book_url).await;
+    let memory = server.get_memory(&token, &book_id).await;
     assert_eq!(memory["processedChapterIndex"], json!(2));
     let summary = memory["summary"].as_str().unwrap_or_default();
     // 跳过章不产生正文回执，前后章照常处理
@@ -337,10 +340,10 @@ async fn agent_task_watchdog_kills_stuck_chapter() {
 正文一。
 第二章 卡住
 永不回应。";
-    let book_url = server.upload_txt(&token, "卡住测试.txt", content).await;
+    let (book_id, _) = server.upload_txt(&token, "卡住测试.txt", content).await;
 
     let response = server
-        .start_task(&token, &book_url, "update_to_current", Some(2))
+        .start_task(&token, &book_id, "update_to_current", Some(2))
         .await;
     assert_eq!(response.status().as_u16(), 200);
 
@@ -364,10 +367,10 @@ async fn agent_task_cancel_kills_process_and_rejects_duplicate() {
 正文一。
 第二章 卡住
 永不回应。";
-    let book_url = server.upload_txt(&token, "取消测试.txt", content).await;
+    let (book_id, _) = server.upload_txt(&token, "取消测试.txt", content).await;
 
     let response = server
-        .start_task(&token, &book_url, "update_to_current", Some(2))
+        .start_task(&token, &book_id, "update_to_current", Some(2))
         .await;
     assert_eq!(response.status().as_u16(), 200);
 
@@ -386,7 +389,7 @@ async fn agent_task_cancel_kills_process_and_rejects_duplicate() {
 
     // 任务进行中重复提交 → 409
     let duplicate = server
-        .start_task(&token, &book_url, "update_to_current", None)
+        .start_task(&token, &book_id, "update_to_current", None)
         .await;
     assert_eq!(duplicate.status().as_u16(), 409, "重复提交应 409");
 
@@ -419,7 +422,7 @@ async fn redraw_map_task_stores_image() {
     let token = server.login().await;
 
     let content = "第一章 开始\n正文。";
-    let book_url = server
+    let book_id = server
         .upload_txt_as(&token, "地图测试.txt", content, "正常作者")
         .await;
     // 预置 map prompt，假 sidecar 会原样回显
@@ -428,7 +431,7 @@ async fn redraw_map_task_stores_image() {
         .post(server.url("/reader3/saveAiBookMemory"))
         .header("Authorization", format!("Bearer {token}"))
         .json(&json!({
-            "bookUrl": book_url,
+            "bookId": book_id,
             "enabled": true,
             "map": {"prompt": "绘制测试地图"},
             "mapDirty": true,
@@ -438,13 +441,13 @@ async fn redraw_map_task_stores_image() {
         .unwrap();
 
     let response = server
-        .start_task(&token, &book_url, "redraw_map", None)
+        .start_task(&token, &book_id, "redraw_map", None)
         .await;
     assert_eq!(response.status().as_u16(), 200);
 
     let snapshot = server.wait_task_done(&token).await;
     assert_eq!(snapshot["lastError"], Value::Null, "{snapshot}");
-    let memory = server.get_memory(&token, &book_url).await;
+    let memory = server.get_memory(&token, &book_id).await;
     let image_url = memory["map"]["imageUrl"].as_str().expect("应有地图 URL");
     assert!(image_url.starts_with("/assets/"), "URL：{image_url}");
     assert!(image_url.contains("ai-maps"), "URL：{image_url}");
@@ -472,7 +475,7 @@ async fn redraw_map_failure_falls_back_to_relationship_graph() {
     let token = server.login().await;
 
     let content = "第一章 开始\n正文。";
-    let book_url = server
+    let book_id = server
         .upload_txt_as(&token, "地图失败测试.txt", content, "地图失败作者")
         .await;
     server
@@ -480,7 +483,7 @@ async fn redraw_map_failure_falls_back_to_relationship_graph() {
         .post(server.url("/reader3/saveAiBookMemory"))
         .header("Authorization", format!("Bearer {token}"))
         .json(&json!({
-            "bookUrl": book_url,
+            "bookId": book_id,
             "enabled": true,
             "map": {"prompt": "绘制测试地图"},
             "mapDirty": true,
@@ -490,13 +493,13 @@ async fn redraw_map_failure_falls_back_to_relationship_graph() {
         .unwrap();
 
     let response = server
-        .start_task(&token, &book_url, "redraw_map", None)
+        .start_task(&token, &book_id, "redraw_map", None)
         .await;
     assert_eq!(response.status().as_u16(), 200);
 
     let snapshot = server.wait_task_done(&token).await;
     assert_eq!(snapshot["running"], json!(false));
-    let memory = server.get_memory(&token, &book_url).await;
+    let memory = server.get_memory(&token, &book_id).await;
     // 现状 applyMapFallbackToMemory 的字段结构
     assert_eq!(memory["map"]["fallback"], json!("relationship-graph"));
     assert!(memory["map"]["fallbackReason"]

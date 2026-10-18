@@ -61,8 +61,8 @@ pub async fn save_book_group_order(
 
 #[derive(Debug, Deserialize)]
 pub struct SaveBookGroupIdParam {
-    #[serde(rename = "bookUrl")]
-    book_url: Option<String>,
+    #[serde(rename = "bookId")]
+    book_id: Option<String>,
     #[serde(rename = "groupId")]
     group_id: Option<i64>,
 }
@@ -73,13 +73,13 @@ pub async fn save_book_group_id(
     Json(param): Json<SaveBookGroupIdParam>,
 ) -> Result<Json<ApiResponse<Value>>, AppError> {
     let user_ns = user.0.ns.clone();
-    let url = param
-        .book_url
-        .ok_or_else(|| AppError::BadRequest("bookUrl required".to_string()))?;
+    let book_id = param
+        .book_id
+        .ok_or_else(|| AppError::BadRequest("bookId required".to_string()))?;
     let gid = param.group_id.unwrap_or(0);
     let mut book = state
         .book_service
-        .get_shelf_book(&user_ns, &url)
+        .get_shelf_book(&user_ns, &book_id)
         .await?
         .ok_or_else(|| AppError::NotFound("Book not found".to_string()))?;
     book.group = Some(gid);
@@ -89,8 +89,8 @@ pub async fn save_book_group_id(
 
 #[derive(Debug, Deserialize)]
 pub struct MultiBookGroupParam {
-    #[serde(rename = "bookUrls")]
-    book_urls: Option<Vec<String>>,
+    #[serde(rename = "bookIds")]
+    book_ids: Option<Vec<String>>,
     #[serde(rename = "groupId")]
     group_id: Option<i64>,
 }
@@ -101,13 +101,11 @@ pub async fn add_book_group_multi(
     Json(param): Json<MultiBookGroupParam>,
 ) -> Result<Json<ApiResponse<Value>>, AppError> {
     let user_ns = user.0.ns.clone();
-    let urls = param.book_urls.unwrap_or_default();
+    let ids = param.book_ids.unwrap_or_default();
     let gid = param.group_id.unwrap_or(0);
-    // Here we should bitwise OR the group_id if it's bitfield, but reader original uses it as bitfield!
-    // Wait! Original `legado` Reader uses bitwise grouping: book.group is a bitfield!
-    // "addBookGroupMulti": books.forEach { it.group = it.group | groupId }
-    for url in urls {
-        if let Some(mut book) = state.book_service.get_shelf_book(&user_ns, &url).await? {
+    // 位域语义：`book.group = book.group | groupId`
+    for id in ids {
+        if let Some(mut book) = state.book_service.get_shelf_book(&user_ns, &id).await? {
             let cur = book.group.unwrap_or(0);
             book.group = Some(cur | gid);
             let _ = state.book_service.save_book(&user_ns, book).await;
@@ -122,11 +120,11 @@ pub async fn remove_book_group_multi(
     Json(param): Json<MultiBookGroupParam>,
 ) -> Result<Json<ApiResponse<Value>>, AppError> {
     let user_ns = user.0.ns.clone();
-    let urls = param.book_urls.unwrap_or_default();
+    let ids = param.book_ids.unwrap_or_default();
     let gid = param.group_id.unwrap_or(0);
     // remove: book.group = book.group & ~groupId
-    for url in urls {
-        if let Some(mut book) = state.book_service.get_shelf_book(&user_ns, &url).await? {
+    for id in ids {
+        if let Some(mut book) = state.book_service.get_shelf_book(&user_ns, &id).await? {
             let cur = book.group.unwrap_or(0);
             book.group = Some(cur & !gid);
             let _ = state.book_service.save_book(&user_ns, book).await;

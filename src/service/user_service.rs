@@ -302,7 +302,7 @@ impl UserService {
             exp: now.saturating_add(self.cfg.jwt_ttl_secs as i64),
             ver: user.token_version,
             scope: None,
-            bsu: None,
+            bsid: None,
         };
         encode_token(&claims, &self.jwt_secret)
     }

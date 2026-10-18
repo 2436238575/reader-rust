@@ -220,6 +220,8 @@ struct TestServer {
     temp_dir: PathBuf,
     client: reqwest::Client,
     token: String,
+    book_source_id: i64,
+    book_id: String,
 }
 
 fn book_source(upstream_url: &str) -> Value {
@@ -327,8 +329,11 @@ impl TestServer {
             temp_dir,
             client,
             token,
+            book_source_id: 0,
+            book_id: String::new(),
         };
         server.save_source().await;
+        server.register_book().await;
         server
     }
 
@@ -342,6 +347,30 @@ impl TestServer {
             .await
             .unwrap();
         assert_eq!(resp.status(), StatusCode::OK);
+        let payload: Value = resp.json().await.unwrap();
+        self.book_source_id = payload["data"]["bookSourceId"].as_i64().unwrap();
+    }
+
+    /// 把测试书登记入架（评论接口只认 bookId），保存分配的 bookId。
+    async fn register_book(&mut self) {
+        let book = json!({
+            "name": "测试书",
+            "author": "作者",
+            "bookUrl": self.book_url(),
+            "bookSourceId": self.book_source_id,
+            "tocUrl": format!("{}/catalog?book_id={BOOK_ID}", self.upstream_url),
+        });
+        let resp = self
+            .client
+            .post(format!("{}/reader3/saveBook", self.base_url))
+            .bearer_auth(&self.token)
+            .json(&book)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let payload: Value = resp.json().await.unwrap();
+        self.book_id = payload["data"]["bookId"].as_str().unwrap().to_string();
     }
 
     async fn post(&self, path: &str, body: Value) -> Value {
@@ -369,9 +398,8 @@ impl TestServer {
 
     fn review_body(&self, extra: Value) -> Value {
         let mut body = json!({
-            "bookUrl": self.book_url(),
+            "bookId": self.book_id,
             "chapterUrl": self.chapter_url(),
-            "bookSourceUrl": self.upstream_url,
         });
         for (key, value) in extra.as_object().unwrap() {
             body[key] = value.clone();

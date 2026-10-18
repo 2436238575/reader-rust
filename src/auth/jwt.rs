@@ -29,9 +29,9 @@ pub struct Claims {
     /// 限定用途（空 = 全功能主令牌）；目前是 [`PROXY_TOKEN_SCOPE`]
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub scope: Option<String>,
-    /// 代理令牌绑定的书源（`bookSourceUrl`）
+    /// 代理令牌绑定的书源（`bookSourceId`）
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub bsu: Option<String>,
+    pub bsid: Option<i64>,
 }
 
 /// 用 HS256 签发令牌。算法固定，不接受载荷指定。
@@ -70,7 +70,7 @@ mod tests {
             exp,
             ver,
             scope: None,
-            bsu: None,
+            bsid: None,
         }
     }
 
@@ -114,11 +114,11 @@ mod tests {
         let secret = b"test-secret";
         let mut scoped = claims(4_000_000_000, 1);
         scoped.scope = Some(PROXY_TOKEN_SCOPE.to_string());
-        scoped.bsu = Some("https://source.example".to_string());
+        scoped.bsid = Some(42);
         let token = encode_token(&scoped, secret).unwrap();
         let decoded = decode_token(&token, secret).unwrap();
         assert_eq!(decoded.scope.as_deref(), Some(PROXY_TOKEN_SCOPE));
-        assert_eq!(decoded.bsu.as_deref(), Some("https://source.example"));
+        assert_eq!(decoded.bsid, Some(42));
         // 主令牌不带 scope 字段，序列化里不该出现（老令牌格式保持干净）
         let plain = encode_token(&claims(4_000_000_000, 1), secret).unwrap();
         let payload = plain.split('.').nth(1).unwrap().to_string();
@@ -127,7 +127,7 @@ mod tests {
                 .unwrap(),
         )
         .unwrap();
-        assert!(!json.contains("scope") && !json.contains("bsu"));
+        assert!(!json.contains("scope") && !json.contains("bsid"));
     }
 
     #[test]

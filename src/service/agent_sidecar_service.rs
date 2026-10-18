@@ -49,12 +49,7 @@ use crate::{
         local_epub_book::{is_local_epub_origin, is_local_epub_url, LocalEpubBookService},
         local_txt_book::{is_local_txt_origin, is_local_txt_url, LocalTxtBookService},
     },
-    util::{
-        asset::write_asset_file,
-        hash::md5_hex,
-        text::{normalize_source_url, repair_encoded_url},
-        time::now_ts,
-    },
+    util::{asset::write_asset_file, hash::md5_hex, text::repair_encoded_url, time::now_ts},
 };
 
 const PROTOCOL_VERSION: u32 = 1;
@@ -103,7 +98,7 @@ const PROBE_FAILED: u8 = 2;
 pub struct AgentTaskSnapshot {
     pub running: bool,
     pub job_id: String,
-    pub book_url: String,
+    pub book_id: String,
     pub phase: String,
     pub status_text: String,
     pub current_chapter_index: Option<i32>,
@@ -116,7 +111,7 @@ impl AgentTaskSnapshot {
         Self {
             running: false,
             job_id: String::new(),
-            book_url: String::new(),
+            book_id: String::new(),
             phase: "idle".to_string(),
             status_text: String::new(),
             current_chapter_index: None,
@@ -265,8 +260,8 @@ impl AgentSidecarService {
             ));
         }
         // 检查与写入必须在同一临界区完成，否则两个并发请求可双双通过检查
-        let digest = md5_hex(&book.book_url);
-        let job_id = format!("agent-{}-{}", now_ts(), &digest[..8]);
+        let book_id = book.book_id.clone().unwrap_or_default();
+        let job_id = format!("agent-{}-{}", now_ts(), book_id);
         let task = Arc::new(ActiveTask {
             cancel: Arc::new(AtomicBool::new(false)),
             child: Arc::new(AsyncMutex::new(None)),
@@ -283,7 +278,7 @@ impl AgentSidecarService {
             *registry = Some(AgentTaskSnapshot {
                 running: true,
                 job_id: job_id.clone(),
-                book_url: book.book_url.clone(),
+                book_id,
                 phase: "loading".to_string(),
                 status_text: "准备任务...".to_string(),
                 current_chapter_index: None,
@@ -410,7 +405,7 @@ impl AgentSidecarService {
     ) -> Result<String, AppError> {
         let mut memory = self
             .ai_book_service
-            .get(user_ns, &book.book_url)
+            .get(user_ns, book.book_id.as_deref().unwrap_or(""))
             .await?
             .unwrap_or_else(|| default_memory(book));
 
@@ -511,6 +506,9 @@ impl AgentSidecarService {
                     .ok_or_else(|| AppError::Internal(anyhow::anyhow!("result 帧缺少 memory")))?;
                 memory = serde_json::from_value(memory_value)
                     .map_err(|e| AppError::BadRequest(format!("sidecar 返回的资料无法解析：{e}")))?;
+                // 身份字段以任务书籍为准（sidecar 回传的 JSON 可能不含 bookId）
+                memory.book_id = book.book_id.clone();
+                memory.book_url = book.book_url.clone();
                 memory.updated_at = now_ts() * 1000;
                 memory.last_error = None;
 
@@ -586,7 +584,7 @@ impl AgentSidecarService {
     ) -> Result<String, AppError> {
         let mut memory = self
             .ai_book_service
-            .get(user_ns, &book.book_url)
+            .get(user_ns, book.book_id.as_deref().unwrap_or(""))
             .await?
             .unwrap_or_else(|| default_memory(book));
         let model = self.ai_model_service.get().await?;
@@ -899,7 +897,7 @@ impl AgentSidecarService {
         self.book_service
             .get_content(
                 user_ns,
-                &book.book_url,
+                book.book_id.as_deref().unwrap_or(""),
                 &source,
                 &repair_encoded_url(&chapter.url),
             )
@@ -928,6 +926,7 @@ impl AgentSidecarService {
             .resolve_source(user_ns, book)
             .await?
             .ok_or_else(|| AppError::BadRequest("书源不存在".to_string()))?;
+        let book_id = book.book_id.clone().unwrap_or_default();
         let toc_url = match book.toc_url.as_deref().filter(|v| !v.trim().is_empty()) {
             Some(toc_url) => toc_url.to_string(),
             // 书架条目可能不持久化 tocUrl（部分书源的目录地址由书籍信息规则
@@ -935,7 +934,7 @@ impl AgentSidecarService {
             // 对齐：缺 tocUrl 时先经 book_info 回退拿真实目录地址
             None => self
                 .book_service
-                .get_book_info(user_ns, &source, &book.book_url, false)
+                .get_book_info(user_ns, &book_id, &source, &book.book_url, false)
                 .await?
                 .toc_url
                 .as_deref()
@@ -944,7 +943,13 @@ impl AgentSidecarService {
                 .to_string(),
         };
         self.book_service
-            .get_chapter_list_with_cache(user_ns, &source, &repair_encoded_url(&toc_url), false)
+            .get_chapter_list_with_cache(
+                user_ns,
+                &book_id,
+                &source,
+                &repair_encoded_url(&toc_url),
+                false,
+            )
             .await
     }
 
@@ -953,16 +958,10 @@ impl AgentSidecarService {
         user_ns: &str,
         book: &Book,
     ) -> Result<Option<BookSource>, AppError> {
-        let origin = normalize_source_url(&book.origin);
-        if origin.is_empty() {
-            return Ok(None);
+        match book.book_source_id {
+            Some(id) => self.book_source_service.get_by_id(user_ns, id).await,
+            None => Ok(None),
         }
-        if let Some(source) = self.book_source_service.get(user_ns, &origin).await? {
-            return Ok(Some(source));
-        }
-        self.book_source_service
-            .find_by_normalized_url(user_ns, &origin)
-            .await
     }
 
     // -----------------------------------------------------------------------
@@ -1021,8 +1020,12 @@ impl AgentSidecarService {
     // -----------------------------------------------------------------------
 
     async fn persist(&self, user_ns: &str, memory: &AiBookMemory) -> Result<(), AppError> {
+        let book_id = memory
+            .book_id
+            .clone()
+            .ok_or_else(|| AppError::BadRequest("bookId required".to_string()))?;
         self.ai_book_service
-            .save_for_book(user_ns, &memory.book_url, memory.clone())
+            .save_for_book(user_ns, &book_id, &memory.book_url, memory.clone())
             .await?;
         Ok(())
     }
@@ -1232,6 +1235,7 @@ fn endpoint_json(endpoint: &ResolvedAiModelEndpoint) -> Value {
 
 fn default_memory(book: &Book) -> AiBookMemory {
     AiBookMemory {
+        book_id: book.book_id.clone(),
         book_url: book.book_url.clone(),
         book_name: Some(book.name.clone()),
         author: Some(book.author.clone()),

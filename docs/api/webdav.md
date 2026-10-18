@@ -6,7 +6,7 @@ WebDAV 远端备份/同步接口。所有 JSON 接口响应包裹为统一结构
 
 ## JSON 接口
 
-这几个接口走 `Authorization: 用户名:token` 鉴权。
+这几个接口与其他 `/reader3/*` 接口一致，使用 JWT：`Authorization: Bearer <jwt>` 头或 `accessToken` 查询参数。HTTP **Basic 认证只用于下面的协议入口**。
 
 ### 获取文件列表
 
@@ -48,7 +48,7 @@ ANY /reader3/webdav        （裸根与 / 尾斜杠形式等价）
 ANY /reader3/webdav/*path
 ```
 
-协议由 dav-server 实现（litmus 一致性套件验证）。走 HTTP **Basic 认证**（用户名 + 账号密码），支持 `PROPFIND` / `MKCOL` / `PUT` / `GET` / `HEAD` / `DELETE` / `MOVE` / `COPY` / `LOCK` / `UNLOCK`，供第三方 WebDAV 客户端挂载。认证失败返回 401；与登录接口共享失败限速（10 分钟窗口内失败 8 次锁定 5 分钟）。
+协议由 dav-server 实现（litmus 一致性套件验证）。走 HTTP **Basic 认证**（用户名 + 账号密码），支持 `PROPFIND` / `MKCOL` / `PUT` / `GET` / `HEAD` / `DELETE` / `MOVE` / `COPY` / `LOCK` / `UNLOCK`，供第三方 WebDAV 客户端挂载。认证失败返回 401；与登录接口共享同一份失败限速（IP 维度失败 5 次、用户名维度失败 10 次后封禁 6 小时）。
 
 - `PROPFIND` 支持 `Depth: 0/1/infinity`，条目带 `ETag` 与标准 HTTP-date 时间；隐藏文件（`.` 开头）会出现在结果里（JSON 列表接口仍过滤）。
 - `PUT` 流式落盘，单文件上限 100MB；支持 `If-None-Match` 等条件请求与 `ETag`。

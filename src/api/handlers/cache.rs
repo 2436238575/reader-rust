@@ -31,7 +31,7 @@ pub struct PurgeCacheRequest {
     pub scope: Option<PurgeScope>,
     /// 目标命名空间；省略即自己
     pub username: Option<String>,
-    pub book_url: Option<String>,
+    pub book_id: Option<String>,
     pub kind: Option<CacheKind>,
 }
 
@@ -60,12 +60,12 @@ pub async fn purge_cache(
         }
         PurgeScope::Book => {
             let ns = target_ns(&user.0, req.username.as_deref())?;
-            let book_url = non_empty(req.book_url.as_deref())
-                .ok_or_else(|| AppError::BadRequest("bookUrl required".to_string()))?;
-            state
-                .book_service
-                .purge_book_cache(&ns, book_url, None)
-                .await?
+            let book_id = non_empty(req.book_id.as_deref())
+                .ok_or_else(|| AppError::BadRequest("bookId required".to_string()))?;
+            let mut purged = state.book_service.purge_book_cache(&ns, book_id).await?;
+            // 连带删除该书登记过的图片（封面/章节配图/评论配图共用 image 目录）
+            purged.cover += state.image_service.remove_by_book_id(book_id).await;
+            purged
         }
         PurgeScope::Kind => {
             let ns = target_ns(&user.0, req.username.as_deref())?;

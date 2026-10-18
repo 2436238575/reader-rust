@@ -13,6 +13,10 @@ pub struct BookSource {
     pub book_source_name: String,
     pub book_source_group: Option<String>,
     pub book_source_url: String,
+    /// 后端分配的稳定自增 id，书源的身份键；URL 只是数据字段与导入去重键。
+    /// 不落 json blob（由表列携带），装载/响应时注入。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub book_source_id: Option<i64>,
     pub book_source_type: Option<i32>,
     pub book_url_pattern: Option<String>,
     pub custom_order: Option<i32>,

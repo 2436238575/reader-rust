@@ -1,10 +1,8 @@
-//! 正文缓存的落盘位置：getBookContent 必须把正文缓存到 md5(bookUrl) 目录下。
+//! 正文缓存的落盘位置：getBookContent 必须把正文缓存到 `cache/<ns>/<bookId>/` 目录下。
 //!
-//! 覆盖两条路径：请求显式带 bookUrl（前端主路径）；只带 chapterUrl 时靠
-//! 书架记录 + 目录缓存反查出 bookUrl。API 型书源的书/章节 URL 没有公共
-//! 前缀（/info 与 /content），书架 URL 前缀启发式对它们必然失效——
-//! 曾经的兜底会把缓存写进 md5(chapterUrl) 孤儿目录：统计显示 0、
-//! 复读不命中、按书清理清不掉。
+//! bookId 是唯一身份参数：曾经「只带 chapterUrl 靠书架/目录缓存反推 bookUrl」的
+//! 兜底链路已删除（API 型书源的书/章节 URL 没有公共前缀，反推失败会把缓存写进
+//! md5(chapterUrl) 孤儿目录）。现在请求缺 bookId 直接 400，孤儿目录无从产生。
 
 use axum::{extract::Query, http::StatusCode, routing::get, Json, Router};
 use reader_rust::api::router::build_router;
@@ -88,6 +86,8 @@ struct TestServer {
     temp_dir: PathBuf,
     client: reqwest::Client,
     token: String,
+    book_source_id: i64,
+    book_id: String,
 }
 
 fn book_source(upstream_url: &str) -> Value {
@@ -145,37 +145,29 @@ impl TestServer {
         let client = reqwest::Client::new();
         let base_url = format!("http://{addr}");
         let token = register(&client, &base_url, "reader1").await;
-        let server = Self {
+        let book_source_id = save_source(&client, &base_url, &token, &upstream_url).await;
+        let mut server = Self {
             base_url,
             upstream_url,
             hits,
             temp_dir,
             client,
             token,
+            book_source_id,
+            book_id: String::new(),
         };
-        server.save_source().await;
+        server.book_id = server.save_book().await;
         server
     }
 
-    async fn save_source(&self) {
-        let resp = self
-            .client
-            .post(format!("{}/reader3/saveBookSource", self.base_url))
-            .bearer_auth(&self.token)
-            .json(&book_source(&self.upstream_url))
-            .send()
-            .await
-            .unwrap();
-        assert_eq!(resp.status(), StatusCode::OK);
-    }
-
     /// 书架塞一本书：bookUrl 与章节 URL 没有公共前缀（API 型书源）。
-    async fn save_book(&self) {
+    /// 返回分配到的 bookId。
+    async fn save_book(&self) -> String {
         let book = json!({
             "name": "测试书",
             "author": "作者",
             "bookUrl": self.book_url(),
-            "origin": self.upstream_url,
+            "bookSourceId": self.book_source_id,
             "tocUrl": self.toc_url(),
         });
         let resp = self
@@ -187,6 +179,8 @@ impl TestServer {
             .await
             .unwrap();
         assert_eq!(resp.status(), StatusCode::OK);
+        let payload: Value = resp.json().await.unwrap();
+        payload["data"]["bookId"].as_str().unwrap().to_string()
     }
 
     async fn post(&self, path: &str, body: Value) -> Value {
@@ -220,21 +214,13 @@ impl TestServer {
         format!("{}/content?item_id={}", self.upstream_url, 100 + index)
     }
 
-    /// 正文缓存应当落到的文件：cache/<ns>/<md5(bookUrl)>/<md5(chapterUrl)>.txt
+    /// 正文缓存应当落到的文件：`cache/<ns>/<bookId>/<md5(chapterUrl)>.txt`
     fn book_cache_file(&self, chapter_url: &str) -> PathBuf {
         self.temp_dir
             .join("cache")
             .join("reader1")
-            .join(md5_hex(&self.book_url()))
+            .join(&self.book_id)
             .join(format!("{}.txt", md5_hex(chapter_url)))
-    }
-
-    /// 修复前的错误落点：md5(chapterUrl) 孤儿目录
-    fn orphan_cache_dir(&self, chapter_url: &str) -> PathBuf {
-        self.temp_dir
-            .join("cache")
-            .join("reader1")
-            .join(md5_hex(chapter_url))
     }
 
     fn hits_for(&self, path: &str) -> usize {
@@ -263,16 +249,33 @@ async fn register(client: &reqwest::Client, base_url: &str, username: &str) -> S
     payload["data"]["accessToken"].as_str().unwrap().to_string()
 }
 
-/// 主路径：请求显式带 bookUrl，正文直接缓存到 md5(bookUrl) 目录。
+/// 保存假书源，返回分配到的 bookSourceId。
+async fn save_source(
+    client: &reqwest::Client,
+    base_url: &str,
+    token: &str,
+    upstream_url: &str,
+) -> i64 {
+    let resp = client
+        .post(format!("{base_url}/reader3/saveBookSource"))
+        .bearer_auth(token)
+        .json(&book_source(upstream_url))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let payload: Value = resp.json().await.unwrap();
+    payload["data"]["bookSourceId"].as_i64().unwrap()
+}
+
+/// 主路径：请求带 bookId，正文直接缓存到 `cache/<ns>/<bookId>/` 目录。
 #[tokio::test]
 async fn content_with_explicit_book_url_lands_in_the_book_cache_dir() {
     let server = TestServer::start().await;
-    server.save_book().await;
 
     let body = json!({
+        "bookId": server.book_id,
         "chapterUrl": server.chapter_url(0),
-        "bookUrl": server.book_url(),
-        "bookSourceUrl": server.upstream_url,
     });
     let content = server.post("getBookContent", body.clone()).await;
     assert_eq!(content, json!("章节 100 的正文"));
@@ -280,12 +283,8 @@ async fn content_with_explicit_book_url_lands_in_the_book_cache_dir() {
     let file = server.book_cache_file(&server.chapter_url(0));
     assert!(
         file.exists(),
-        "正文应缓存到 md5(bookUrl) 目录: {}",
+        "正文应缓存到 cache/<ns>/<bookId>/ 目录: {}",
         file.display()
-    );
-    assert!(
-        !server.orphan_cache_dir(&server.chapter_url(0)).exists(),
-        "不该产生 md5(chapterUrl) 孤儿目录"
     );
 
     server.post("getBookContent", body).await;
@@ -296,50 +295,38 @@ async fn content_with_explicit_book_url_lands_in_the_book_cache_dir() {
     );
 }
 
-/// 兜底路径：只传 chapterUrl（老版本前端的请求形态）。书架 URL 前缀启发式
-/// 对 /info 与 /content 必然失效，靠目录缓存反查出 bookUrl。
+/// 缺 bookId 的请求直接 400：反推链路已删除，孤儿缓存目录无从产生。
 #[tokio::test]
-async fn content_without_book_url_is_recovered_through_the_cached_toc() {
+async fn content_without_book_id_is_rejected() {
     let server = TestServer::start().await;
-    server.save_book().await;
 
-    // 先建目录缓存（阅读器进正文前必然先拉目录，这是反查的事实基础）
-    let chapters = server
-        .post(
-            "getChapterList",
-            json!({
-                "bookUrl": server.book_url(),
-                "tocUrl": server.toc_url(),
-                "bookSourceUrl": server.upstream_url,
-            }),
-        )
-        .await;
-    let list = chapters.as_array().unwrap();
-    assert_eq!(list.len(), 3);
-    assert_eq!(list[0]["url"], json!(server.chapter_url(0)));
-
-    let body = json!({
-        "chapterUrl": server.chapter_url(0),
-        "bookSourceUrl": server.upstream_url,
-    });
-    let content = server.post("getBookContent", body.clone()).await;
-    assert_eq!(content, json!("章节 100 的正文"));
-
-    let file = server.book_cache_file(&server.chapter_url(0));
+    let resp = server
+        .client
+        .post(format!("{}/reader3/getBookContent", server.base_url))
+        .bearer_auth(&server.token)
+        .json(&json!({ "chapterUrl": server.chapter_url(0) }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST, "缺 bookId 应被拒绝");
+    let payload: Value = resp.json().await.unwrap();
     assert!(
-        file.exists(),
-        "反查命中后正文应缓存到 md5(bookUrl) 目录: {}",
-        file.display()
-    );
-    assert!(
-        !server.orphan_cache_dir(&server.chapter_url(0)).exists(),
-        "不该产生 md5(chapterUrl) 孤儿目录"
+        payload["errorMsg"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("bookId"),
+        "应报缺 bookId: {payload}"
     );
 
-    server.post("getBookContent", body).await;
-    assert_eq!(
-        server.hits_for("/content"),
-        1,
-        "第二次应命中缓存，不再打上游"
+    // 缓存目录里不该出现任何以章节 URL 命名的孤儿目录
+    let orphan = server
+        .temp_dir
+        .join("cache")
+        .join("reader1")
+        .join(md5_hex(&server.chapter_url(0)));
+    assert!(
+        !orphan.exists(),
+        "不该产生孤儿缓存目录: {}",
+        orphan.display()
     );
 }

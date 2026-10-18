@@ -69,7 +69,7 @@ async fn authenticate(state: &AuthState, token: String) -> Result<AuthUser, AppE
         ns,
         ver: claims.ver,
         scope: claims.scope,
-        proxy_source: claims.bsu,
+        proxy_source: claims.bsid,
     })
 }
 

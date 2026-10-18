@@ -2,7 +2,7 @@ pub mod repo;
 
 use sqlx::{
     sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions, SqliteSynchronous},
-    SqlitePool,
+    Row, SqlitePool,
 };
 use std::str::FromStr;
 
@@ -22,5 +22,45 @@ pub async fn init_pool(database_url: &str) -> anyhow::Result<SqlitePool> {
     sqlx::migrate!("src/storage/db/migrations")
         .run(&pool)
         .await?;
+    backfill_book_source_ids(&pool).await?;
     Ok(pool)
+}
+
+/// 给 0002 迁移前已存在的书源行回填自增 id（新插入由 repo 层分配）。
+/// 正常升级路径要求删除 storage/ 重建，这里只是防止旧库启动后 id 全 NULL 的保险。
+async fn backfill_book_source_ids(pool: &SqlitePool) -> anyhow::Result<()> {
+    let rows = sqlx::query(
+        "SELECT rowid AS rid, user_ns FROM book_sources WHERE book_source_id IS NULL ORDER BY rowid",
+    )
+    .fetch_all(pool)
+    .await?;
+    if rows.is_empty() {
+        return Ok(());
+    }
+    let mut tx = pool.begin().await?;
+    let mut next_per_ns: std::collections::HashMap<String, i64> = std::collections::HashMap::new();
+    for row in &rows {
+        let ns = row.get::<String, _>("user_ns");
+        let next = match next_per_ns.get(&ns) {
+            Some(v) => *v,
+            None => {
+                let max: Option<i64> = sqlx::query_scalar(
+                    "SELECT MAX(book_source_id) FROM book_sources WHERE user_ns = ?1",
+                )
+                .bind(&ns)
+                .fetch_one(&mut *tx)
+                .await?;
+                max.unwrap_or(0) + 1
+            }
+        };
+        sqlx::query("UPDATE book_sources SET book_source_id = ?1 WHERE rowid = ?2")
+            .bind(next)
+            .bind(row.get::<i64, _>("rid"))
+            .execute(&mut *tx)
+            .await?;
+        next_per_ns.insert(ns, next + 1);
+    }
+    tx.commit().await?;
+    tracing::info!("已为 {} 条存量书源回填 bookSourceId", rows.len());
+    Ok(())
 }

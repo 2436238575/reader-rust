@@ -9,13 +9,14 @@
 | 层               | 位置                                                 | 说明                                          |
 | ---------------- | ---------------------------------------------------- | --------------------------------------------- |
 | `content`        | `storage/cache/<ns>/<md5(bookUrl)>/*.txt`            | 章节正文，按书一个目录                        |
-| `cover`          | `storage/cache/public/cover/*`                       | 封面图片，匿名抓取，固定 `public` 命名空间    |
+| `cover`          | `storage/cache/image/*`                              | 书源图片（封面、章节配图、评论配图）统一存放，全局共享 |
 | `chapterList`    | `storage/data/<ns>/chapters/<md5(tocUrl)>.json`      | 章节列表，1 小时 TTL                          |
 | `searchResults`  | `storage/data/<ns>/book_sources/<md5(bookUrl)>.json` | 某本书在各书源中的搜索结果                    |
+| `review`         | `storage/cache/reviews/<ns>/<md5(bookUrl)>/*.json`   | 章评/段评，7 天 TTL                           |
 | `invalidSources` | `storage/cache/invalid_book_sources/<ns>.json`       | 失效书源清单                                  |
 | `bookInfo`       | `storage/cache/bookinfo/<ns>/<md5(bookUrl)>.json`    | 书籍详情，1 小时 TTL（`refresh=1` 强刷）      |
 
-容量上限由 `CACHE_USER_LIMIT_BYTES`（默认 512MiB）与 `CACHE_COVER_LIMIT_BYTES`（默认 256MiB，封面目录）控制，超出时按修改时间最旧优先淘汰；设为 `0` 表示不限制。
+容量上限由 `CACHE_USER_LIMIT_BYTES`（默认 512MiB）与 `CACHE_COVER_LIMIT_BYTES`（默认 256MiB，图片目录：封面与配图共用）控制，超出时按修改时间最旧优先淘汰；设为 `0` 表示不限制。
 
 ## 清理缓存
 
@@ -94,4 +95,4 @@ GET /reader3/cacheStats?username=<其他用户>
 }
 ```
 
-封面缓存固定落在 `public` 命名空间，因此按用户统计时只有 `public` 用户会看到非零的 `cover`；`all=true` 时统计的就是这个全局封面目录。
+图片缓存（`cover` 层）是全局共享目录，不在任何用户命名空间下：无论按用户统计还是按层清理，都会一并处理这份图片目录；统计与清理还会计入旧版本遗留的 `storage/cache/<ns>/cover/`。`all=true` 时统计的是全部命名空间的合计。

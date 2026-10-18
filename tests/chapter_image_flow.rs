@@ -154,6 +154,7 @@ struct TestServer {
     temp_dir: PathBuf,
     client: reqwest::Client,
     token: String,
+    book_id: String,
 }
 
 /// 书源：正文走 `/content`，配图走独立的 `/content/image`。
@@ -222,20 +223,22 @@ impl TestServer {
         let client = reqwest::Client::new();
         let base_url = format!("http://{addr}");
         let token = register(&client, &base_url, "reader1").await;
-        let server = Self {
+        let mut server = Self {
             base_url,
             upstream_url,
             temp_dir,
             client,
             token,
+            book_id: String::new(),
         };
         let mut source = source;
         source["bookSourceUrl"] = json!(server.upstream_url);
         server.save_source(&source).await;
+        server.register_book().await;
         server
     }
 
-    async fn save_source(&self, source: &Value) {
+    async fn save_source(&self, source: &Value) -> i64 {
         let resp = self
             .client
             .post(format!("{}/reader3/saveBookSource", self.base_url))
@@ -245,6 +248,43 @@ impl TestServer {
             .await
             .unwrap();
         assert_eq!(resp.status(), StatusCode::OK);
+        let payload: Value = resp.json().await.unwrap();
+        payload["data"]["bookSourceId"].as_i64().unwrap()
+    }
+
+    /// 登记测试书（配图接口只认 bookId），保存分配的 bookId。
+    async fn register_book(&mut self) {
+        // save_source 先于它调用：URL upsert 后 id 可回读
+        let source_id = self.source_id().await;
+        let book = json!({
+            "name": "测试书",
+            "author": "作者",
+            "bookUrl": format!("{}/info?book_id={BOOK_ID}", self.upstream_url),
+            "bookSourceId": source_id,
+        });
+        let resp = self
+            .client
+            .post(format!("{}/reader3/saveBook", self.base_url))
+            .bearer_auth(&self.token)
+            .json(&book)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let payload: Value = resp.json().await.unwrap();
+        self.book_id = payload["data"]["bookId"].as_str().unwrap().to_string();
+    }
+
+    async fn source_id(&self) -> i64 {
+        let resp = self
+            .client
+            .get(format!("{}/reader3/getBookSources", self.base_url))
+            .bearer_auth(&self.token)
+            .send()
+            .await
+            .unwrap();
+        let payload: Value = resp.json().await.unwrap();
+        payload["data"][0]["bookSourceId"].as_i64().unwrap()
     }
 
     async fn post(&self, path: &str, body: Value) -> Value {
@@ -264,9 +304,8 @@ impl TestServer {
 
     fn chapter_params(&self, chapter_url: &str) -> Value {
         json!({
-            "bookUrl": format!("{}/info?book_id={BOOK_ID}", self.upstream_url),
+            "bookId": self.book_id,
             "chapterUrl": chapter_url,
-            "bookSourceUrl": self.upstream_url,
         })
     }
 }

@@ -180,11 +180,20 @@ async fn saving_same_named_local_txt_books_keeps_distinct_book_urls() {
 
     let local_service =
         reader_rust::service::local_txt_book::LocalTxtBookService::new(&storage_dir);
+    // init_pool 不会建父目录，先落目录再开库
+    std::fs::create_dir_all(&storage_dir).unwrap();
+    let pool = reader_rust::storage::db::init_pool(&format!(
+        "sqlite:{}?mode=rwc",
+        storage_dir.join("reader.db").display()
+    ))
+    .await
+    .unwrap();
     let book_service = BookService::new(
         HttpClient::new(5, None).unwrap(),
         RuleEngine::new().unwrap(),
         FileCache::new(storage_dir.join("cache"), 0),
         storage_dir.to_str().unwrap(),
+        reader_rust::storage::db::repo::BookRepo::new(pool),
     );
 
     let first = local_service

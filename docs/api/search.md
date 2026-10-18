@@ -99,7 +99,7 @@ GET /reader3/getBookInfo
     "intro": "书籍简介",
     "kind": "分类",
     "wordCount": "字数",
-    "lastChapter": "最新章节",
+    "latestChapterTitle": "最新章节",
     "tocUrl": "目录页URL"
   },
   "errorMsg": ""

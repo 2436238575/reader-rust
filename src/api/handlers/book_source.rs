@@ -31,23 +31,21 @@ const MAX_TEST_SOURCE_BATCH_SIZE: usize = 100;
 const MAX_SOURCE_FILE_BYTES: usize = 32 * 1024 * 1024;
 
 #[derive(Debug, Deserialize)]
-pub struct BookSourceUrlParam {
-    #[serde(rename = "bookSourceUrl")]
-    book_source_url: Option<String>,
+pub struct BookSourceIdParam {
+    #[serde(rename = "bookSourceId")]
+    book_source_id: Option<i64>,
 }
 
 #[derive(Debug, Deserialize)]
 pub struct ExploreKindsRequest {
-    #[serde(rename = "bookSourceUrl")]
-    book_source_url: Option<String>,
-    #[serde(rename = "bookSource")]
-    book_source: Option<BookSource>,
+    #[serde(rename = "bookSourceId")]
+    book_source_id: Option<i64>,
 }
 
 #[derive(Debug, Deserialize, Default)]
 #[serde(default, rename_all = "camelCase")]
 pub struct TestBookSourcesRequest {
-    pub book_source_urls: Option<Vec<String>>,
+    pub book_source_ids: Option<Vec<i64>>,
     pub keyword: Option<String>,
     pub mark_invalid: Option<bool>,
     pub concurrent: Option<usize>,
@@ -56,6 +54,7 @@ pub struct TestBookSourcesRequest {
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct TestBookSourceItem {
+    book_source_id: Option<i64>,
     book_source_url: String,
     book_source_name: String,
     valid: bool,
@@ -87,8 +86,10 @@ pub async fn save_book_source(
     let user_ns = user.0.ns.clone();
     let source =
         book_source_from_value(payload).map_err(|e| AppError::BadRequest(e.to_string()))?;
-    state.book_source_service.save(&user_ns, source).await?;
-    Ok(Json(ApiResponse::ok(serde_json::json!({"saved": true}))))
+    let id = state.book_source_service.save(&user_ns, source).await?;
+    Ok(Json(ApiResponse::ok(
+        serde_json::json!({"saved": true, "bookSourceId": id}),
+    )))
 }
 
 pub async fn save_book_sources(
@@ -114,17 +115,17 @@ pub async fn save_book_sources(
 pub async fn get_book_source(
     State(state): State<AppState>,
     user: CurrentUser,
-    Query(q): Query<BookSourceUrlParam>,
-    body: Option<Json<BookSourceUrlParam>>,
+    Query(q): Query<BookSourceIdParam>,
+    body: Option<Json<BookSourceIdParam>>,
 ) -> Result<Json<ApiResponse<serde_json::Value>>, AppError> {
     let user_ns = user.0.ns.clone();
-    let url = q
-        .book_source_url
-        .or_else(|| body.and_then(|b| b.0.book_source_url));
-    let url = url.ok_or_else(|| AppError::BadRequest("bookSourceUrl required".to_string()))?;
+    let id = q
+        .book_source_id
+        .or_else(|| body.and_then(|b| b.0.book_source_id));
+    let id = id.ok_or_else(|| AppError::BadRequest("bookSourceId required".to_string()))?;
     let source = state
         .book_source_service
-        .get(&user_ns, &url)
+        .get_by_id(&user_ns, id)
         .await?
         .ok_or_else(|| AppError::NotFound("bookSource not found".to_string()))?;
     Ok(Json(ApiResponse::ok(
@@ -146,15 +147,15 @@ pub async fn get_book_sources(
 pub async fn login_book_source(
     State(state): State<AppState>,
     user: CurrentUser,
-    Json(param): Json<BookSourceUrlParam>,
+    Json(param): Json<BookSourceIdParam>,
 ) -> Result<Json<ApiResponse<serde_json::Value>>, AppError> {
     let user_ns = user.0.ns.clone();
-    let url = param
-        .book_source_url
-        .ok_or_else(|| AppError::BadRequest("bookSourceUrl required".to_string()))?;
+    let id = param
+        .book_source_id
+        .ok_or_else(|| AppError::BadRequest("bookSourceId required".to_string()))?;
     let source = state
         .book_source_service
-        .get(&user_ns, &url)
+        .get_by_id(&user_ns, id)
         .await?
         .ok_or_else(|| AppError::NotFound("bookSource not found".to_string()))?;
     let result = state
@@ -171,18 +172,14 @@ pub async fn get_explore_kinds(
 ) -> Result<Json<ApiResponse<serde_json::Value>>, AppError> {
     let user_ns = user.0.ns.clone();
 
-    let source = if let Some(source) = req.book_source {
-        source
-    } else {
-        let url = req
-            .book_source_url
-            .ok_or_else(|| AppError::BadRequest("bookSourceUrl required".to_string()))?;
-        state
-            .book_source_service
-            .get(&user_ns, &url)
-            .await?
-            .ok_or_else(|| AppError::NotFound("bookSource not found".to_string()))?
-    };
+    let id = req
+        .book_source_id
+        .ok_or_else(|| AppError::BadRequest("bookSourceId required".to_string()))?;
+    let source = state
+        .book_source_service
+        .get_by_id(&user_ns, id)
+        .await?
+        .ok_or_else(|| AppError::NotFound("bookSource not found".to_string()))?;
 
     let kinds = state.book_service.explore_kinds(&user_ns, &source).await?;
     Ok(Json(ApiResponse::ok(
@@ -197,7 +194,7 @@ pub async fn test_book_sources(
 ) -> Result<Json<ApiResponse<serde_json::Value>>, AppError> {
     let user_ns = user.0.ns.clone();
 
-    let requested = normalize_requested_source_urls(req.book_source_urls.as_deref())?;
+    let requested = validate_requested_source_ids(req.book_source_ids.as_deref())?;
     let sources = state
         .book_source_service
         .list(&user_ns)
@@ -206,7 +203,7 @@ pub async fn test_book_sources(
         .filter(|source| {
             requested
                 .as_ref()
-                .map(|urls| urls.contains(&normalize_source_url(&source.book_source_url)))
+                .map(|ids| source.book_source_id.is_some_and(|id| ids.contains(&id)))
                 .unwrap_or(true)
         })
         .collect::<Vec<_>>();
@@ -242,6 +239,7 @@ pub async fn test_book_sources(
         }
 
         results.push(TestBookSourceItem {
+            book_source_id: source.book_source_id,
             book_source_url: availability.book_source_url,
             book_source_name: availability.book_source_name,
             valid: availability.valid,
@@ -271,24 +269,17 @@ pub async fn test_book_sources(
     )))
 }
 
-fn normalize_requested_source_urls(
-    urls: Option<&[String]>,
-) -> Result<Option<HashSet<String>>, AppError> {
-    let Some(urls) = urls else {
+fn validate_requested_source_ids(ids: Option<&[i64]>) -> Result<Option<HashSet<i64>>, AppError> {
+    let Some(ids) = ids else {
         return Ok(None);
     };
-    if urls.len() > MAX_TEST_SOURCE_BATCH_SIZE {
+    if ids.len() > MAX_TEST_SOURCE_BATCH_SIZE {
         return Err(AppError::BadRequest(format!(
-            "bookSourceUrls 最多支持 {} 条",
+            "bookSourceIds 最多支持 {} 条",
             MAX_TEST_SOURCE_BATCH_SIZE
         )));
     }
-    Ok(Some(
-        urls.iter()
-            .map(|url| normalize_source_url(url))
-            .filter(|url| !url.is_empty())
-            .collect::<HashSet<_>>(),
-    ))
+    Ok(Some(ids.iter().copied().collect::<HashSet<_>>()))
 }
 
 async fn test_sources_in_parallel(
@@ -337,23 +328,26 @@ pub async fn delete_invalid_book_sources(
 ) -> Result<Json<ApiResponse<serde_json::Value>>, AppError> {
     let user_ns = user.0.ns.clone();
     let sources = state.book_source_service.list(&user_ns).await?;
-    let invalid_urls = sources
+    let invalid_ids = sources
         .iter()
         .filter(|source| book_source_has_group(source, INVALID_BOOK_SOURCE_GROUP))
-        .map(|source| source.book_source_url.clone())
+        .filter_map(|source| source.book_source_id)
         .collect::<Vec<_>>();
-    for url in &invalid_urls {
-        state.book_source_service.delete(&user_ns, url).await?;
+    for id in &invalid_ids {
+        state
+            .book_source_service
+            .delete_by_id(&user_ns, *id)
+            .await?;
     }
     Ok(Json(ApiResponse::ok(serde_json::json!({
-        "deleted": invalid_urls.len()
+        "deleted": invalid_ids.len()
     }))))
 }
 
 #[derive(Debug, Deserialize)]
 pub struct BookSourceProxyParam {
-    #[serde(rename = "bookSourceUrl")]
-    book_source_url: Option<String>,
+    #[serde(rename = "bookSourceId")]
+    book_source_id: Option<i64>,
     url: Option<String>,
 }
 
@@ -367,16 +361,16 @@ pub async fn book_source_proxy(
 ) -> Result<Response, AppError> {
     let user_ns = user.0.ns.clone();
 
-    let source_url = q
-        .book_source_url
-        .ok_or_else(|| AppError::BadRequest("bookSourceUrl required".to_string()))?;
+    let source_id = q
+        .book_source_id
+        .ok_or_else(|| AppError::BadRequest("bookSourceId required".to_string()))?;
     let raw_target_url = q
         .url
         .ok_or_else(|| AppError::BadRequest("url required".to_string()))?;
 
     let source = state
         .book_source_service
-        .get(&user_ns, &source_url)
+        .get_by_id(&user_ns, source_id)
         .await?
         .ok_or_else(|| AppError::NotFound("bookSource not found".to_string()))?;
 
@@ -394,14 +388,14 @@ pub async fn book_source_proxy(
         .map_err(AppError::BadRequest)?;
     let upstream_referer = extract_upstream_referer(&headers);
     // 限定令牌只能继续代理它绑定的那个书源
-    if let Some(bound) = user.0.proxy_source.as_deref() {
-        if bound != source.book_source_url {
+    if let Some(bound) = user.0.proxy_source {
+        if bound != source_id {
             return Err(AppError::BadRequest("代理令牌与书源不匹配".to_string()));
         }
     }
     // 被代理页面是第三方书源的 HTML/JS，与主站同源吐出：嵌进去的必须是
     // 限定令牌（短寿命、绑定书源、只能访问代理路径），而不是主 JWT。
-    let page_token = mint_proxy_token(&state, &user.0, &source.book_source_url)?;
+    let page_token = mint_proxy_token(&state, &user.0, source_id)?;
     let response = forward_book_source_request(
         &state,
         &source,
@@ -424,7 +418,7 @@ const PROXY_TOKEN_TTL_SECS: i64 = 30 * 60;
 fn mint_proxy_token(
     state: &AppState,
     user: &crate::auth::extractor::AuthUser,
-    book_source_url: &str,
+    book_source_id: i64,
 ) -> Result<String, AppError> {
     let now = chrono::Utc::now().timestamp();
     let claims = crate::auth::jwt::Claims {
@@ -434,7 +428,7 @@ fn mint_proxy_token(
         exp: now + PROXY_TOKEN_TTL_SECS,
         ver: user.ver,
         scope: Some(crate::auth::jwt::PROXY_TOKEN_SCOPE.to_string()),
-        bsu: Some(book_source_url.to_string()),
+        bsid: Some(book_source_id),
     };
     crate::auth::jwt::encode_token(&claims, state.auth.jwt_secret())
 }
@@ -500,13 +494,13 @@ pub async fn book_source_client_log(
 pub async fn delete_book_source(
     State(state): State<AppState>,
     user: CurrentUser,
-    Json(param): Json<BookSourceUrlParam>,
+    Json(param): Json<BookSourceIdParam>,
 ) -> Result<Json<ApiResponse<serde_json::Value>>, AppError> {
     let user_ns = user.0.ns.clone();
-    let url = param
-        .book_source_url
-        .ok_or_else(|| AppError::BadRequest("bookSourceUrl required".to_string()))?;
-    state.book_source_service.delete(&user_ns, &url).await?;
+    let id = param
+        .book_source_id
+        .ok_or_else(|| AppError::BadRequest("bookSourceId required".to_string()))?;
+    state.book_source_service.delete_by_id(&user_ns, id).await?;
     Ok(Json(ApiResponse::ok(serde_json::json!({"deleted": true}))))
 }
 
@@ -678,7 +672,7 @@ async fn forward_book_source_request(
 
     let body = if is_html_response(content_type.as_deref(), &bytes) {
         let text = String::from_utf8_lossy(&bytes).to_string();
-        rewrite_login_html(&text, &final_url, &source.book_source_url, access_token).into_bytes()
+        rewrite_login_html(&text, &final_url, source.book_source_id, access_token).into_bytes()
     } else {
         bytes.to_vec()
     };
@@ -719,11 +713,11 @@ fn is_html_response(content_type: Option<&str>, body: &[u8]) -> bool {
 fn rewrite_login_html(
     html: &str,
     upstream_url: &str,
-    book_source_url: &str,
+    book_source_id: Option<i64>,
     access_token: Option<&str>,
 ) -> String {
     let base_href = html_escape_attr(upstream_url);
-    let proxy_script = build_proxy_script(upstream_url, book_source_url, access_token);
+    let proxy_script = build_proxy_script(upstream_url, book_source_id, access_token);
     let mut output = if html.contains("<head") {
         html.replace(
             "</head>",
@@ -735,26 +729,25 @@ fn rewrite_login_html(
         )
     };
 
-    output = rewrite_proxy_actions(&output, upstream_url, book_source_url, access_token);
-    output =
-        rewrite_script_root_relative_urls(&output, upstream_url, book_source_url, access_token);
+    output = rewrite_proxy_actions(&output, upstream_url, book_source_id, access_token);
+    output = rewrite_script_root_relative_urls(&output, upstream_url, book_source_id, access_token);
     output
 }
 
 fn build_proxy_script(
     upstream_url: &str,
-    book_source_url: &str,
+    book_source_id: Option<i64>,
     access_token: Option<&str>,
 ) -> String {
     let upstream_json = serde_json::to_string(upstream_url).unwrap_or_else(|_| "\"\"".to_string());
-    let source_json = serde_json::to_string(book_source_url).unwrap_or_else(|_| "\"\"".to_string());
     let token_json =
         serde_json::to_string(access_token.unwrap_or("")).unwrap_or_else(|_| "\"\"".to_string());
+    let source_id = book_source_id.unwrap_or_default();
     format!(
         r#"<script>
 (function() {{
   const upstreamBase = {upstream_json};
-  const bookSourceUrl = {source_json};
+  const bookSourceId = {source_id};
   const accessToken = {token_json};
   const proxyPath = "/reader3/bookSourceProxy";
   const alreadyProxyPattern = /^\/reader3\/bookSourceProxy(?:\?|$)/i;
@@ -768,7 +761,7 @@ fn build_proxy_script(
     if (String(absolute).indexOf("/reader3/bookSourceProxy?") !== -1) return absolute;
     const params = new URLSearchParams();
     if (accessToken) params.set("accessToken", accessToken);
-    params.set("bookSourceUrl", bookSourceUrl);
+    params.set("bookSourceId", String(bookSourceId));
     params.set("url", absolute);
     return proxyPath + "?" + params.toString();
   }}
@@ -859,7 +852,7 @@ static SINGLE_QUOTED_ROOT_REL_RE: Lazy<Regex> =
 fn rewrite_proxy_actions(
     html: &str,
     upstream_url: &str,
-    book_source_url: &str,
+    book_source_id: Option<i64>,
     access_token: Option<&str>,
 ) -> String {
     let tag_re = &*TAG_RE;
@@ -870,11 +863,11 @@ fn rewrite_proxy_actions(
         .replace_all(html, |tag_caps: &Captures| {
             let tag = tag_caps.get(0).map(|m| m.as_str()).unwrap_or("");
             let output = double_quoted.replace_all(tag, |caps: &Captures| {
-                rewrite_proxy_attr(caps, upstream_url, book_source_url, access_token, "\"")
+                rewrite_proxy_attr(caps, upstream_url, book_source_id, access_token, "\"")
             });
             single_quoted
                 .replace_all(&output, |caps: &Captures| {
-                    rewrite_proxy_attr(caps, upstream_url, book_source_url, access_token, "'")
+                    rewrite_proxy_attr(caps, upstream_url, book_source_id, access_token, "'")
                 })
                 .into_owned()
         })
@@ -884,13 +877,13 @@ fn rewrite_proxy_actions(
 fn rewrite_proxy_attr(
     caps: &Captures,
     upstream_url: &str,
-    book_source_url: &str,
+    book_source_id: Option<i64>,
     access_token: Option<&str>,
     quote: &str,
 ) -> String {
     let attr = caps.get(1).map(|m| m.as_str()).unwrap_or("href");
     let value = caps.get(2).map(|m| m.as_str()).unwrap_or("");
-    let proxied = build_proxy_url(value, upstream_url, book_source_url, access_token)
+    let proxied = build_proxy_url(value, upstream_url, book_source_id, access_token)
         .unwrap_or_else(|| value.to_string());
     format!(r#"{attr}={quote}{proxied}{quote}"#)
 }
@@ -898,7 +891,7 @@ fn rewrite_proxy_attr(
 fn build_proxy_url(
     raw_value: &str,
     upstream_url: &str,
-    book_source_url: &str,
+    book_source_id: Option<i64>,
     access_token: Option<&str>,
 ) -> Option<String> {
     let trimmed = raw_value.trim();
@@ -917,7 +910,7 @@ fn build_proxy_url(
         .or_else(|_| Url::parse(upstream_url).and_then(|base| base.join(trimmed)))
         .ok()?;
     let mut params = vec![
-        format!("bookSourceUrl={}", urlencoding::encode(book_source_url)),
+        format!("bookSourceId={}", book_source_id.unwrap_or_default()),
         format!("url={}", urlencoding::encode(absolute.as_str())),
     ];
     if let Some(token) = access_token.filter(|v| !v.is_empty()) {
@@ -929,7 +922,7 @@ fn build_proxy_url(
 fn rewrite_script_root_relative_urls(
     html: &str,
     upstream_url: &str,
-    book_source_url: &str,
+    book_source_id: Option<i64>,
     access_token: Option<&str>,
 ) -> String {
     let script_re = &*SCRIPT_BLOCK_RE;
@@ -940,14 +933,14 @@ fn rewrite_script_root_relative_urls(
         .replace_all(html, |script_caps: &Captures| {
             let script = script_caps.get(0).map(|m| m.as_str()).unwrap_or("");
             let output = double_quoted.replace_all(script, |caps: &Captures| {
-                rewrite_script_url_literal(caps, upstream_url, book_source_url, access_token, "\"")
+                rewrite_script_url_literal(caps, upstream_url, book_source_id, access_token, "\"")
             });
             single_quoted
                 .replace_all(&output, |caps: &Captures| {
                     rewrite_script_url_literal(
                         caps,
                         upstream_url,
-                        book_source_url,
+                        book_source_id,
                         access_token,
                         "'",
                     )
@@ -960,12 +953,12 @@ fn rewrite_script_root_relative_urls(
 fn rewrite_script_url_literal(
     caps: &Captures,
     upstream_url: &str,
-    book_source_url: &str,
+    book_source_id: Option<i64>,
     access_token: Option<&str>,
     quote: &str,
 ) -> String {
     let raw_value = caps.get(1).map(|m| m.as_str()).unwrap_or("");
-    let proxied = build_proxy_url(raw_value, upstream_url, book_source_url, access_token)
+    let proxied = build_proxy_url(raw_value, upstream_url, book_source_id, access_token)
         .unwrap_or_else(|| raw_value.to_string());
     format!("{quote}{proxied}{quote}")
 }
@@ -1005,12 +998,12 @@ fn rewrite_set_cookie_for_proxy(raw: &str) -> Option<String> {
 pub async fn delete_book_sources(
     State(state): State<AppState>,
     user: CurrentUser,
-    Json(list): Json<Vec<BookSourceUrlParam>>,
+    Json(list): Json<Vec<BookSourceIdParam>>,
 ) -> Result<Json<ApiResponse<serde_json::Value>>, AppError> {
     let user_ns = user.0.ns.clone();
     for item in list {
-        if let Some(url) = item.book_source_url {
-            state.book_source_service.delete(&user_ns, &url).await?;
+        if let Some(id) = item.book_source_id {
+            state.book_source_service.delete_by_id(&user_ns, id).await?;
         }
     }
     Ok(Json(ApiResponse::ok(serde_json::json!({"deleted": true}))))
@@ -1147,12 +1140,10 @@ mod tests {
     use super::*;
 
     #[test]
-    fn requested_source_urls_rejects_batches_above_limit() {
-        let urls = (0..101)
-            .map(|index| format!("https://source-{index}.example"))
-            .collect::<Vec<_>>();
+    fn requested_source_ids_rejects_batches_above_limit() {
+        let ids = (0..101).collect::<Vec<i64>>();
 
-        let err = normalize_requested_source_urls(Some(&urls)).unwrap_err();
+        let err = validate_requested_source_ids(Some(&ids)).unwrap_err();
 
         assert!(matches!(err, AppError::BadRequest(message) if message.contains("100")));
     }

@@ -20,6 +20,25 @@ fn allow_private_network() {
     reader_rust::crawler::url_guard::set_allow_private_network(true);
 }
 
+/// 装配一套带书籍登记表的 BookService（独立临时目录 + 临时 SQLite）。
+async fn test_book_service(storage_dir: &std::path::Path) -> BookService {
+    // init_pool 不会建父目录，先落目录再开库
+    std::fs::create_dir_all(storage_dir).unwrap();
+    let pool = reader_rust::storage::db::init_pool(&format!(
+        "sqlite:{}?mode=rwc",
+        storage_dir.join("reader.db").display()
+    ))
+    .await
+    .unwrap();
+    BookService::new(
+        HttpClient::new(5, None).unwrap(),
+        RuleEngine::new().unwrap(),
+        FileCache::new(storage_dir.join("cache"), 0),
+        storage_dir.to_str().unwrap(),
+        reader_rust::storage::db::repo::BookRepo::new(pool),
+    )
+}
+
 #[test]
 fn book_source_deserializes_stringified_rule_objects() {
     let source: BookSource = serde_json::from_value(json!({
@@ -343,12 +362,7 @@ async fn search_pipeline_uses_url_analyzer_final_url_and_login_check_js() {
 
     let storage_dir =
         std::env::temp_dir().join(format!("reader-rust-search-compat-{}", Uuid::new_v4()));
-    let service = BookService::new(
-        HttpClient::new(5, None).unwrap(),
-        RuleEngine::new().unwrap(),
-        FileCache::new(storage_dir.join("cache"), 0),
-        storage_dir.to_str().unwrap(),
-    );
+    let service = test_book_service(&storage_dir).await;
     let source = BookSource {
         book_source_name: "Runtime".to_string(),
         book_source_url: format!("http://{}", addr),
@@ -416,12 +430,7 @@ async fn content_pagination_stops_before_next_chapter_url() {
 
     let storage_dir =
         std::env::temp_dir().join(format!("reader-rust-content-test-{}", Uuid::new_v4()));
-    let service = BookService::new(
-        HttpClient::new(5, None).unwrap(),
-        RuleEngine::new().unwrap(),
-        FileCache::new(storage_dir.join("cache"), 0),
-        storage_dir.to_str().unwrap(),
-    );
+    let service = test_book_service(&storage_dir).await;
     let source = BookSource {
         book_source_name: "Content pagination".to_string(),
         book_source_url: format!("http://{}", addr),
@@ -436,7 +445,7 @@ async fn content_pagination_stops_before_next_chapter_url() {
     let content = service
         .get_content(
             "default",
-            &format!("http://{}/books/1", addr),
+            "book_1",
             &source,
             &format!("http://{}/chapters/1.html", addr),
         )
@@ -454,12 +463,10 @@ async fn content_pagination_stops_before_next_chapter_url() {
 
 #[tokio::test]
 async fn explore_kinds_support_text_and_js_rules() {
-    let service = BookService::new(
-        HttpClient::new(5, None).unwrap(),
-        RuleEngine::new().unwrap(),
-        FileCache::new(std::env::temp_dir().join("reader-rust-explore-kinds"), 0),
-        std::env::temp_dir().to_str().unwrap(),
-    );
+    let service = test_book_service(
+        &std::env::temp_dir().join(format!("reader-rust-explore-kinds-{}", Uuid::new_v4())),
+    )
+    .await;
     let text_source = BookSource {
         book_source_name: "Explore".to_string(),
         book_source_url: "https://explore.example".to_string(),
@@ -490,15 +497,11 @@ async fn explore_kinds_support_text_and_js_rules() {
 
 #[tokio::test]
 async fn explore_kinds_accept_relaxed_style_objects() {
-    let service = BookService::new(
-        HttpClient::new(5, None).unwrap(),
-        RuleEngine::new().unwrap(),
-        FileCache::new(
-            std::env::temp_dir().join("reader-rust-explore-kinds-relaxed"),
-            0,
-        ),
-        std::env::temp_dir().to_str().unwrap(),
-    );
+    let service = test_book_service(&std::env::temp_dir().join(format!(
+        "reader-rust-explore-kinds-relaxed-{}",
+        Uuid::new_v4()
+    )))
+    .await;
     let source = BookSource {
         book_source_name: "Relaxed explore".to_string(),
         book_source_url: "https://explore.example".to_string(),
@@ -527,15 +530,11 @@ async fn explore_kinds_accept_relaxed_style_objects() {
 
 #[tokio::test]
 async fn explore_kinds_accept_relaxed_angle_item_objects() {
-    let service = BookService::new(
-        HttpClient::new(5, None).unwrap(),
-        RuleEngine::new().unwrap(),
-        FileCache::new(
-            std::env::temp_dir().join("reader-rust-explore-kinds-angle-items"),
-            0,
-        ),
-        std::env::temp_dir().to_str().unwrap(),
-    );
+    let service = test_book_service(&std::env::temp_dir().join(format!(
+        "reader-rust-explore-kinds-angle-items-{}",
+        Uuid::new_v4()
+    )))
+    .await;
     let source = BookSource {
         book_source_name: "Relaxed explore items".to_string(),
         book_source_url: "https://explore.example".to_string(),

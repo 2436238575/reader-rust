@@ -7,7 +7,6 @@ use axum::{
 };
 use serde::Deserialize;
 
-use crate::api::handlers::book::resolve_book_source;
 use crate::api::AppState;
 use crate::auth::CurrentUser;
 use crate::error::error::AppError;
@@ -62,36 +61,41 @@ pub async fn get_book_cover(
     let Some(url) = q.path.as_deref().map(str::trim).filter(|u| !u.is_empty()) else {
         return Ok(StatusCode::NOT_FOUND.into_response());
     };
-    let Some(id) = state.image_service.register("cover", url, None, None).await else {
+    let Some(id) = state.image_service.register("cover", url, None).await else {
         return Ok(StatusCode::NOT_FOUND.into_response());
     };
     match state.image_service.load(&id).await {
         Ok((bytes, content_type)) => Ok(image_response(bytes, content_type)),
         Err(err) => {
-            // 老入口没有书籍上下文，回源刷新只能靠书架反查
-            match heal_source_url(&state, &user_ns, &id).await {
-                Some((bytes, content_type)) => Ok(image_response(bytes, content_type)),
-                None => {
-                    tracing::warn!("封面抓取失败 url={url} err={err:?}");
-                    Ok(StatusCode::NOT_FOUND.into_response())
-                }
-            }
+            // 兼容入口（customCoverUrl）没有书籍上下文，无法回源刷新
+            let _ = heal_source_url(&state, &user_ns, &id).await;
+            let _ = err;
+            Ok(StatusCode::NOT_FOUND.into_response())
         }
     }
 }
 
-/// 上游地址失效时回源刷新一次：拿登记时的书籍上下文重新求值书源的封面地址。
+/// 上游地址失效时回源刷新一次：按记录里的 bookId 解析当前绑定（换源后
+/// 也能拿到当前书源），重新求值书源的封面地址。
 async fn heal_source_url(state: &AppState, user_ns: &str, id: &str) -> Option<(Vec<u8>, String)> {
     let record = state.image_service.record(id).await?;
-    let book_url = record.book_url.clone()?;
-    let book_source_url = record.book_source_url.clone();
-    let source = resolve_book_source(state, user_ns, book_source_url, None, Some(&book_url))
+    let book_id = record.book_id.clone()?;
+    let row = state
+        .book_service
+        .book_repo()
+        .get(user_ns, &book_id)
         .await
-        .ok()?;
-    // 书籍详情有 10 分钟缓存，这里必须绕过，否则拿回来的还是那条过期地址
+        .ok()??;
+    let source_id = row.book_source_id?;
+    let source = state
+        .book_source_service
+        .get_by_id(user_ns, source_id)
+        .await
+        .ok()??;
+    // 书籍详情有缓存，这里必须绕过，否则拿回来的还是那条过期地址
     let info = state
         .book_service
-        .get_book_info(user_ns, &source, &book_url, true)
+        .get_book_info(user_ns, &book_id, &source, &row.book_url, true)
         .await
         .ok()?;
     let fresh = info.cover_url.filter(|url| !url.trim().is_empty())?;

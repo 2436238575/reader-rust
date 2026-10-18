@@ -79,12 +79,17 @@ async fn ai_book_memory_round_trips_and_isolated_by_user() {
     };
 
     service
-        .save_for_book("alice", "https://example.test/book/1", memory.clone())
+        .save_for_book(
+            "alice",
+            "book_1",
+            "https://example.test/book/1",
+            memory.clone(),
+        )
         .await
         .unwrap();
 
     let saved = service
-        .get("alice", "https://example.test/book/1")
+        .get("alice", "book_1")
         .await
         .unwrap()
         .expect("alice should have memory");
@@ -109,21 +114,11 @@ async fn ai_book_memory_round_trips_and_isolated_by_user() {
         })
     );
 
-    let bob = service
-        .get("bob", "https://example.test/book/1")
-        .await
-        .unwrap();
+    let bob = service.get("bob", "book_1").await.unwrap();
     assert!(bob.is_none(), "memory must be isolated by user namespace");
 
-    assert!(service
-        .delete("alice", "https://example.test/book/1")
-        .await
-        .unwrap());
-    assert!(service
-        .get("alice", "https://example.test/book/1")
-        .await
-        .unwrap()
-        .is_none());
+    assert!(service.delete("alice", "book_1").await.unwrap());
+    assert!(service.get("alice", "book_1").await.unwrap().is_none());
 
     let _ = std::fs::remove_dir_all(storage_dir);
 }
@@ -138,7 +133,7 @@ async fn ai_book_memory_rejects_mismatched_book_url_on_save() {
     };
 
     let err = service
-        .save_for_book("alice", "https://example.test/book/2", memory)
+        .save_for_book("alice", "book_2", "https://example.test/book/2", memory)
         .await
         .expect_err("mismatched bookUrl should fail");
 

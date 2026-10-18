@@ -738,8 +738,8 @@ splitRule("&&", "||")
 5. 一旦确定第一个有效分隔符，后续只按同一种分隔符继续切分。
 6. `elementsType` 保存实际使用的分隔符。
 
-> **reader-rust 实现差异**：切分器把 `{}` 也当作平衡组（`{{内联 JS}}` 里的 `&&` 因此不会被切开），
-> 且引号内的 `\` 视为转义——都比规格更宽容。改回规格会破坏 `{{...}}` 模板与带反斜杠的 JS 正则，
+> **reader-rust 实现差异**：切分器把 `{}` 也当作平衡组（<code v-pre>{{内联 JS}}</code> 里的 `&&` 因此不会被切开），
+> 且引号内的 `\` 视为转义——都比规格更宽容。改回规格会破坏 <code v-pre>{{...}}</code> 模板与带反斜杠的 JS 正则，
 > 因此这里接受分叉。
 
 示例：
@@ -953,12 +953,17 @@ JS 运行时 SHOULD 提供 `JsExtensions` 等价能力，至少包括：
   `htmlFormat`、简繁转换、`queryTTF`、`toNumChapter`、`toURL`、`reGetBook`、`refreshTocUrl`、WebView 相关。
   调用未实现的 `java.*` 会抛 `TypeError`，整条规则失效（依据：`src/parser/js.rs` 的注册表）。
 - `source` 是**真实书源对象**（`bookSourceUrl`、`bookSourceName`、`header` 等全部字段），
-  因此 `{{source.bookSourceUrl}}` 这类模板能正常拼 URL；`key` / `getKey()` 仍可用
+  因此 <code v-pre>{{source.bookSourceUrl}}</code> 这类模板能正常拼 URL；`key` / `getKey()` 仍可用
   （依据：`with_book_source` 与 `src/parser/js.rs` 的全局注入）。
 - 规则脚本可以用**顶层 `return`**（书源常见写法）：首次求值报 `return not in a function`
   时自动包成 IIFE 重试一次，表达式风格的规则行为不变（依据：`eval_script`）。
 - `<js>...</js>` **支持链式**：`</js>` 之后的片段继续对 JS 结果求值（结果是 JSON 就按
-  JSON 规则、否则按 HTML 文档规则），例如 `{{source.bookSourceUrl}}info?book_id={{$.id}}<js>java.ajax(result)</js>$.data.title`。
+  JSON 规则、否则按 HTML 文档规则），例如：
+
+  ```text
+  {{source.bookSourceUrl}}info?book_id={{$.id}}<js>java.ajax(result)</js>$.data.title
+  ```
+
   `@js:` 仍然吞掉后续整段规则（依据：`extract_js`、`eval_rule_on_text`）。
 - `book` / `chapter` 只在 `formatJs` 里是真实对象，其余规则上下文仍是空对象占位
   （依据：`src/parser/js.rs` 的全局注入）。
@@ -1178,7 +1183,7 @@ title::url
 
 > **reader-rust 实现差异**：`formatBookName` / `formatBookAuthor` / `wordCountFormat` **未实现**——
 > 本项目 `BookSource` 里没有这三个字段（依据：`src/model/book_source.rs`）。
-> `kind` 按规格取全部命中并用 `,` 连接；规则里含 JS、`{{}}` 或 `@put`/`@get` 时退回单值求值
+> `kind` 按规格取全部命中并用 `,` 连接；规则里含 JS、<code v-pre>{{}}</code> 或 `@put`/`@get` 时退回单值求值
 > （依据：`eval_kind_*`）。
 > | `lastChapter` | 写入 `latestChapterTitle`。 |
 > | `intro` | HTML 格式化后写入。 |
@@ -1400,17 +1405,17 @@ getContentAwait(source, book, chapter, nextChapterUrl=null, needSave=true):
 
 | 占位符                   | 来源                                                                                               |
 | ------------------------ | -------------------------------------------------------------------------------------------------- |
-| `{{$.a.b}}`              | 正文响应的 JSONPath                                                                                |
-| `{{表达式}}`             | JS，`result` 为正文响应体、`baseUrl` 为章节 URL；上表其余键也作为同名 JS 变量可用                  |
+| <code v-pre>{{$.a.b}}</code>              | 正文响应的 JSONPath                                                                                |
+| <code v-pre>{{表达式}}</code>             | JS，`result` 为正文响应体、`baseUrl` 为章节 URL；上表其余键也作为同名 JS 变量可用                  |
 | `@get:{key}`             | 上游步骤存入的上下文                                                                               |
-| `{{page}}` / `{{count}}` | 页码 / 每页条数                                                                                    |
-| `{{paraIndex}}`          | 段号（仅段评列表 URL）                                                                             |
-| `{{sort}}`               | 排序方式：`hot` / `time`。站点取值不同时可用 JS 映射，如 `{{sort === 'hot' ? 'Hot' : 'TimeDesc'}}` |
+| <code v-pre>{{page}}</code> / <code v-pre>{{count}}</code> | 页码 / 每页条数                                                                                    |
+| <code v-pre>{{paraIndex}}</code>          | 段号（仅段评列表 URL）                                                                             |
+| <code v-pre>{{sort}}</code>               | 排序方式：`hot` / `time`。站点取值不同时可用 JS 映射，如 <code v-pre>{{sort === 'hot' ? 'Hot' : 'TimeDesc'}}</code> |
+| <code v-pre>{{bookUrl}}</code> / <code v-pre>{{chapterUrl}}</code> | 当前书籍 / 章节 URL |
 
 番茄书源（FQWeb）的实际取值：章评 `smart_hot` / `time`，段评 `hot` / `time_desc`。
 注意 `sort=`（空串）会被 FQWeb 直接拒绝，省略整个参数才是默认值；后端会自动剔除
 求值后为空的 `sort=` 参数。
-| `{{bookUrl}}` / `{{chapterUrl}}` | 当前书籍 / 章节 URL |
 
 规则本身也可以写成纯 JSONPath（`$.data.comment_url`）。相对地址按**章节 URL**解析，
 与 `nextContentUrl` 一致。
@@ -1453,7 +1458,7 @@ getContentAwait(source, book, chapter, nextChapterUrl=null, needSave=true):
 | `indexListRule`                                                                                                               | 概览里「段号 → 该段数据」的映射；通常是一个对象，也可以是数组                                              |
 | `indexCountRule`                                                                                                              | 从单段数据里取条数                                                                                         |
 | `indexAuthorCommentedRule`                                                                                                    | 从单段数据里取「作者评论/点赞过」标记（`true`/`1`/非零数字为真）；缺省时恒为 false，前端气泡不显示作者标记 |
-| `reviewUrl`                                                                                                                   | 段评列表 URL 模板（可用 `{{paraIndex}}`）                                                                  |
+| `reviewUrl`                                                                                                                   | 段评列表 URL 模板（可用 <code v-pre>{{paraIndex}}</code>）                                                                  |
 | `listRule` / `idRule` / `nameRule` / `avatarRule` / `contentRule` / `postTimeRule` / `diggRule` / `totalRule` / `hasMoreRule` | 同章评                                                                                                     |
 | `replyCountRule` / `replyListRule` / `replyNameRule` / `replyContentRule` / `replyPostTimeRule` / `replyToRule`               | 同章评（段评同样可能有内联回复）                                                                           |
 | `authorRule` / `authorDiggRule` / `replyAuthorRule` / `replyAuthorDiggRule`                                                   | 同章评                                                                                                     |

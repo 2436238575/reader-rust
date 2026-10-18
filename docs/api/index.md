@@ -65,7 +65,7 @@ http://localhost:8080/reader3
 | `GET`          | 读取类接口，参数走 query string                                                          |
 | `POST`         | 写入类接口与「参数较多/含敏感字段」的读取类接口，参数走 JSON body                        |
 | `GET` + `POST` | 不少接口同时注册两种方法，同名参数两种传法都接受                                         |
-| `any`          | 仅 `bookSourceProxy`、`bookSourceClientLog`、`webdav/*path` 三个路由，接受任意 HTTP 方法 |
+| `any`          | `bookSourceProxy`、`bookSourceClientLog`、`webdav` 系列，以及兜底的 `/reader3(/*rest)`，接受任意 HTTP 方法 |
 
 因为大量接口同时支持 `GET` 与 `POST`，各接口页面会以 `GET /reader3/xxx` 或 `POST /reader3/xxx` 的形式标注实际注册的方法。
 

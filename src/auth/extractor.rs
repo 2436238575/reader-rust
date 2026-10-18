@@ -16,8 +16,8 @@ pub struct AuthUser {
     pub ver: i64,
     /// 限定用途（空 = 全功能主令牌），见 `auth::jwt::PROXY_TOKEN_SCOPE`
     pub scope: Option<String>,
-    /// 代理令牌绑定的书源（`bookSourceUrl`）
-    pub proxy_source: Option<String>,
+    /// 代理令牌绑定的书源（`bookSourceId`）
+    pub proxy_source: Option<i64>,
 }
 
 /// 必须已登录；中间件未写入身份时返回 401。

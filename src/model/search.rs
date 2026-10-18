@@ -7,15 +7,21 @@ pub struct SearchBook {
     pub author: String,
     pub book_url: String,
     pub origin: String,
+    /// 登记分配的 `book_<n>`：搜索结果产出即登记，后续详情/目录/正文请求只用它
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub book_id: Option<String>,
+    /// 该书当前命中的书源 id
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub book_source_id: Option<i64>,
     pub cover_url: Option<String>,
     pub intro: Option<String>,
     pub kind: Option<String>,
     pub last_chapter: Option<String>,
     pub update_time: Option<String>,
     pub word_count: Option<String>,
-    /// Book source URLs for the same book from different sources (for merged results)
+    /// 同一本书在各书源的命中（聚合结果用），值是 bookSourceId
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub book_source_urls: Option<Vec<String>>,
+    pub book_source_ids: Option<Vec<i64>>,
 }
 
 impl SearchBook {

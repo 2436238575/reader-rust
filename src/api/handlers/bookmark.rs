@@ -23,13 +23,11 @@ pub async fn save_bookmark(
     Json(bookmark): Json<Bookmark>,
 ) -> Result<Json<ApiResponse<Value>>, AppError> {
     let user_ns = user.0.ns.clone();
-    if bookmark.book_name.is_empty() && bookmark.book_author.is_empty() {
-        return Err(AppError::BadRequest("书籍信息错误".to_string()));
+    if bookmark.book_id.trim().is_empty() {
+        return Err(AppError::BadRequest("bookId required".to_string()));
     }
     let mut list = read_list::<Bookmark>(&state, &user_ns, "bookmark.json").await?;
-    upsert_by_key(&mut list, bookmark, |b| {
-        format!("{}_{}", b.book_name, b.book_author)
-    });
+    upsert_bookmark(&mut list, bookmark);
     write_list(&state, &user_ns, "bookmark.json", &list).await?;
     Ok(Json(ApiResponse::ok(Value::String("".to_string()))))
 }
@@ -41,11 +39,9 @@ pub async fn save_bookmarks(
 ) -> Result<Json<ApiResponse<Value>>, AppError> {
     let user_ns = user.0.ns.clone();
     let mut list = read_list::<Bookmark>(&state, &user_ns, "bookmark.json").await?;
-    bookmarks.retain(|b| !(b.book_name.is_empty() && b.book_author.is_empty()));
+    bookmarks.retain(|b| !b.book_id.trim().is_empty());
     for b in bookmarks {
-        upsert_by_key(&mut list, b, |v| {
-            format!("{}_{}", v.book_name, v.book_author)
-        });
+        upsert_bookmark(&mut list, b);
     }
     write_list(&state, &user_ns, "bookmark.json", &list).await?;
     Ok(Json(ApiResponse::ok(Value::String("".to_string()))))
@@ -58,7 +54,8 @@ pub async fn delete_bookmark(
 ) -> Result<Json<ApiResponse<Value>>, AppError> {
     let user_ns = user.0.ns.clone();
     let mut list = read_list::<Bookmark>(&state, &user_ns, "bookmark.json").await?;
-    list.retain(|b| !(b.book_name == bookmark.book_name && b.book_author == bookmark.book_author));
+    let identity = bookmark.identity();
+    list.retain(|b| b.identity() != identity);
     write_list(&state, &user_ns, "bookmark.json", &list).await?;
     Ok(Json(ApiResponse::ok(Value::String("".to_string()))))
 }
@@ -71,10 +68,22 @@ pub async fn delete_bookmarks(
     let user_ns = user.0.ns.clone();
     let mut list = read_list::<Bookmark>(&state, &user_ns, "bookmark.json").await?;
     for b in bookmarks {
-        list.retain(|v| !(v.book_name == b.book_name && v.book_author == b.book_author));
+        let identity = b.identity();
+        list.retain(|v| v.identity() != identity);
     }
     write_list(&state, &user_ns, "bookmark.json", &list).await?;
     Ok(Json(ApiResponse::ok(Value::String("".to_string()))))
+}
+
+/// 删书联动：该书的书签一并删除（bookId 不再存在，书签留着也是孤儿）。
+pub(crate) async fn delete_bookmarks_for_book(state: &AppState, user_ns: &str, book_id: &str) {
+    if let Ok(mut list) = read_list::<Bookmark>(state, user_ns, "bookmark.json").await {
+        let before = list.len();
+        list.retain(|b| b.book_id != book_id);
+        if list.len() != before {
+            let _ = write_list(state, user_ns, "bookmark.json", &list).await;
+        }
+    }
 }
 
 async fn read_list<T: for<'de> serde::Deserialize<'de>>(
@@ -97,12 +106,9 @@ async fn write_list<T: serde::Serialize>(
         .await
 }
 
-fn upsert_by_key<T, F>(list: &mut Vec<T>, item: T, key_fn: F)
-where
-    F: Fn(&T) -> String,
-{
-    let key = key_fn(&item);
-    if let Some(pos) = list.iter().position(|v| key_fn(v) == key) {
+fn upsert_bookmark(list: &mut Vec<Bookmark>, item: Bookmark) {
+    let identity = item.identity();
+    if let Some(pos) = list.iter().position(|v| v.identity() == identity) {
         list[pos] = item;
     } else {
         list.push(item);

@@ -3,6 +3,9 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
 #[serde(default, rename_all = "camelCase")]
 pub struct AiBookMemory {
+    /// 所属书籍的 bookId（`book_<n>`），存储主键；bookUrl 只是冗余数据
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub book_id: Option<String>,
     pub book_url: String,
     pub book_name: Option<String>,
     pub author: Option<String>,
