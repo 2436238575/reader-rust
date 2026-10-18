@@ -285,18 +285,18 @@ export const useReaderStore = defineStore('reader', () => {
       if (!currentBook) return false
 
       if (scope.startsWith('source:')) {
-        return scope.slice('source:'.length) === currentBook.origin
+        return scope.slice('source:'.length) === String(currentBook.bookSourceId ?? '')
       }
 
       if (scope.startsWith('book:')) {
-        return scope.slice('book:'.length) === currentBook.bookUrl
+        return scope.slice('book:'.length) === (currentBook.bookId ?? '')
       }
 
       const scopeParts = scope.split(';')
       if (scopeParts[0] !== '*' && scopeParts[0] !== currentBook.name) {
         return false
       }
-      return scopeParts.length === 1 || scopeParts[1] === currentBook.bookUrl
+      return scopeParts.length === 1 || scopeParts[1] === (currentBook.bookId ?? '')
     }
 
     // Sort by order and apply enabled rules
@@ -380,9 +380,9 @@ export const useReaderStore = defineStore('reader', () => {
     index = currentIndex.value,
     progress = chapterScrollProgress.value
   ) {
-    if (!book.value) return null
+    if (!book.value?.bookId) return null
     return {
-      bookUrl: book.value.bookUrl,
+      bookId: book.value.bookId,
       index,
       position: encodeServerProgress(progress),
     }
@@ -419,7 +419,7 @@ export const useReaderStore = defineStore('reader', () => {
     if (!book.value) return
     const encodedProgress = encodeServerProgress(progress)
     book.value.durChapterPos = encodedProgress
-    const shelfBook = shelfStore.books.find((item) => item.bookUrl === book.value?.bookUrl)
+    const shelfBook = shelfStore.books.find((item) => item.bookId === book.value?.bookId)
     if (shelfBook) {
       shelfBook.durChapterPos = encodedProgress
     }
@@ -443,16 +443,15 @@ export const useReaderStore = defineStore('reader', () => {
     chapters.value = session.chapters ?? []
     // 瘦身会话（配额降级时落的盘）不带目录：恢复时重新拉一次
     if (!chapters.value.length) {
+      const bookId = session.book.bookId
+      if (!bookId) return false
       try {
-        const list = await getChapterList({
-          bookUrl: session.book.bookUrl,
-          bookSourceUrl: session.book.origin,
-        })
+        const list = await getChapterList({ bookId })
         chapters.value = list
-        void setBrowserCatalog(session.book.bookUrl, list)
+        void setBrowserCatalog(bookId, list)
       } catch {
         // 离线兜底：浏览器里缓存的目录
-        const cachedCatalog = await getBrowserCatalog<BookChapter>(session.book.bookUrl)
+        const cachedCatalog = await getBrowserCatalog<BookChapter>(bookId)
         if (!cachedCatalog) return false
         chapters.value = cachedCatalog
       }
@@ -475,8 +474,8 @@ export const useReaderStore = defineStore('reader', () => {
   }
 
   function getReadHistoryStorageKey(currentBook?: Book | null) {
-    if (!currentBook?.bookUrl) return ''
-    return `${READER_READ_HISTORY_PREFIX}${currentBook.bookUrl}`
+    if (!currentBook?.bookId) return ''
+    return `${READER_READ_HISTORY_PREFIX}${currentBook.bookId}`
   }
 
   function buildReadChapterKey(
@@ -484,12 +483,12 @@ export const useReaderStore = defineStore('reader', () => {
     chapter?: BookChapter | null,
     currentBook?: Book | null
   ) {
-    if (!currentBook?.bookUrl) return ''
-    const sourceKey = currentBook.origin || 'default'
+    if (!currentBook?.bookId) return ''
+    // 换源后章节 URL 会变，旧标记自然失效（与旧版按 origin 分段的行为一致）
     if (chapter?.url) {
-      return `${currentBook.bookUrl}::${sourceKey}::${chapter.url}`
+      return `${currentBook.bookId}::${chapter.url}`
     }
-    return `${currentBook.bookUrl}::${sourceKey}::index:${index}`
+    return `${currentBook.bookId}::index:${index}`
   }
 
   function loadReadChapterHistory(currentBook?: Book | null) {
@@ -523,28 +522,28 @@ export const useReaderStore = defineStore('reader', () => {
     scheduleReadHistoryPush(currentBook)
   }
 
-  // ─── 已读标记的跨浏览器同步（userdata 单文档：{ [bookUrl]: string[] }） ───
+  // ─── 已读标记的跨浏览器同步（userdata 单文档：{ [bookId]: string[] }） ───
   const READ_HISTORY_DOC = 'readChapterHistory'
 
   let readHistoryPushTimer: ReturnType<typeof setTimeout> | null = null
   function scheduleReadHistoryPush(currentBook?: Book | null) {
-    const bookUrl = currentBook?.bookUrl
-    if (!bookUrl) return
+    const bookId = currentBook?.bookId
+    if (!bookId) return
     if (readHistoryPushTimer) clearTimeout(readHistoryPushTimer)
     readHistoryPushTimer = setTimeout(() => {
       readHistoryPushTimer = null
-      void pushReadHistory(bookUrl, Array.from(readChapterKeys.value))
+      void pushReadHistory(bookId, Array.from(readChapterKeys.value))
     }, 1500)
   }
 
   // 读-改-写整文档：只动当前书的分片，别的浏览器写的其他书不受影响
-  async function pushReadHistory(bookUrl: string, keys: string[]) {
+  async function pushReadHistory(bookId: string, keys: string[]) {
     try {
       const doc = (await getUserdata<Record<string, string[]>>(READ_HISTORY_DOC)) || {}
-      const remote = new Set(Array.isArray(doc[bookUrl]) ? doc[bookUrl] : [])
+      const remote = new Set(Array.isArray(doc[bookId]) ? doc[bookId] : [])
       const merged = Array.from(new Set([...remote, ...keys]))
       if (merged.length === remote.size) return
-      doc[bookUrl] = merged
+      doc[bookId] = merged
       await saveUserdata(READ_HISTORY_DOC, doc)
     } catch {
       // 离线/未登录：本地已持久化，下次同步会补上
@@ -552,8 +551,8 @@ export const useReaderStore = defineStore('reader', () => {
   }
 
   async function syncReadChapterHistoryFromBackend(currentBook?: Book | null) {
-    const bookUrl = currentBook?.bookUrl
-    if (!bookUrl) return
+    const bookId = currentBook?.bookId
+    if (!bookId) return
     let doc: Record<string, string[]> | null
     try {
       doc = await getUserdata<Record<string, string[]>>(READ_HISTORY_DOC)
@@ -561,9 +560,9 @@ export const useReaderStore = defineStore('reader', () => {
       return // 离线或未登录：保持本地
     }
     // 拉取期间换了书就不要往当前书写
-    if (book.value?.bookUrl !== bookUrl) return
+    if (book.value?.bookId !== bookId) return
     const remote = new Set(
-      doc && Array.isArray(doc[bookUrl]) ? doc[bookUrl].filter((x) => typeof x === 'string') : []
+      doc && Array.isArray(doc[bookId]) ? doc[bookId].filter((x) => typeof x === 'string') : []
     )
     const merged = new Set([...remote, ...readChapterKeys.value])
     if (merged.size !== readChapterKeys.value.size) {
@@ -572,7 +571,7 @@ export const useReaderStore = defineStore('reader', () => {
     }
     // 本地多出来的（在别的浏览器里读的）推回后端
     if (merged.size !== remote.size) {
-      void pushReadHistory(bookUrl, Array.from(merged))
+      void pushReadHistory(bookId, Array.from(merged))
     }
   }
 
@@ -623,7 +622,7 @@ export const useReaderStore = defineStore('reader', () => {
     chapters.value = []
     content.value = ''
     resetReviews()
-    appStore.markBookOpened(b.bookUrl)
+      appStore.markBookOpened(b.bookId || b.bookUrl)
     currentIndex.value = b.durChapterIndex || 0
     chapterScrollProgress.value = 0
     preloadedContent.value.clear()
@@ -632,20 +631,18 @@ export const useReaderStore = defineStore('reader', () => {
     lastServerProgressKey.value = ''
     chaptersLoading.value = true
     try {
-      const list = await getChapterList({
-        bookUrl: b.bookUrl,
-        bookSourceUrl: b.origin,
-      })
+      if (!b.bookId) throw new Error('书籍缺少 bookId')
+      const list = await getChapterList({ bookId: b.bookId })
       if (loadSeq !== bookLoadSeq) return
       chapters.value = list
       // 目录落浏览器缓存：离线时同一本书还能打开
-      void setBrowserCatalog(b.bookUrl, list)
+      void setBrowserCatalog(b.bookId, list)
       saveReaderSession()
     } catch (error) {
       // 目录都拿不到时先试浏览器里的目录缓存（离线场景），
       // 实在没有才等于这本书打不开。清掉半开状态并记下原因：否则阅读页
       // 会一直停在「加载中...」的占位符上，用户完全看不出发生了什么。
-      const cachedCatalog = await getBrowserCatalog<BookChapter>(b.bookUrl)
+      const cachedCatalog = b.bookId ? await getBrowserCatalog<BookChapter>(b.bookId) : null
       if (cachedCatalog && loadSeq === bookLoadSeq) {
         chapters.value = cachedCatalog
         chaptersLoading.value = false
@@ -675,7 +672,7 @@ export const useReaderStore = defineStore('reader', () => {
       book.value.durChapterIndex = index
       book.value.durChapterTitle = chapters.value[index]?.title || book.value.durChapterTitle
       book.value.durChapterTime = Date.now()
-      const shelfBook = shelfStore.books.find((item) => item.bookUrl === book.value?.bookUrl)
+      const shelfBook = shelfStore.books.find((item) => item.bookId === book.value?.bookId)
       if (shelfBook) {
         shelfBook.durChapterIndex = book.value.durChapterIndex
         shelfBook.durChapterTitle = book.value.durChapterTitle
@@ -700,7 +697,7 @@ export const useReaderStore = defineStore('reader', () => {
     await saveBookProgress(payload)
       .then(() => {
         progressDirty.value = false
-        lastServerProgressKey.value = `${payload.bookUrl}::${payload.index}::${payload.position}`
+        lastServerProgressKey.value = `${payload.bookId}::${payload.index}::${payload.position}`
       })
       .catch(() => undefined)
   }
@@ -708,7 +705,7 @@ export const useReaderStore = defineStore('reader', () => {
   async function flushProgressToServer(force = false) {
     const payload = currentServerProgressPayload()
     if (!payload) return
-    const nextKey = `${payload.bookUrl}::${payload.index}::${payload.position}`
+    const nextKey = `${payload.bookId}::${payload.index}::${payload.position}`
     if (!force && !progressDirty.value && lastServerProgressKey.value === nextKey) return
     await persistProgress(payload.index, chapterScrollProgress.value)
   }
@@ -716,7 +713,7 @@ export const useReaderStore = defineStore('reader', () => {
   function flushProgressToServerKeepalive(force = false) {
     const payload = currentServerProgressPayload()
     if (!payload || typeof fetch === 'undefined') return
-    const nextKey = `${payload.bookUrl}::${payload.index}::${payload.position}`
+    const nextKey = `${payload.bookId}::${payload.index}::${payload.position}`
     if (!force && !progressDirty.value && lastServerProgressKey.value === nextKey) return
 
     const headers: Record<string, string> = {
@@ -735,18 +732,19 @@ export const useReaderStore = defineStore('reader', () => {
   }
 
   async function fetchChapterContent(index: number, forceRefresh = false) {
-    if (!book.value || !chapters.value[index]) return null
+    if (!book.value?.bookId || !chapters.value[index]) return null
 
     if (!forceRefresh && preloadedContent.value.has(index)) {
       return preloadedContent.value.get(index) || null
     }
 
     const chapter = chapters.value[index]
+    const bookId = book.value.bookId
 
     const isLocal = isLocalBook(book.value)
     const useBrowserCache = !isLocal
     const browserCached = useBrowserCache
-      ? await getBrowserCachedChapter(book.value.bookUrl, chapter.url).catch(() => null)
+      ? await getBrowserCachedChapter(bookId, chapter.url).catch(() => null)
       : null
 
     if (!forceRefresh && browserCached) {
@@ -763,9 +761,9 @@ export const useReaderStore = defineStore('reader', () => {
     let chapterContent = ''
     try {
       chapterContent = await getBookContent({
+        bookId,
         chapterUrl: chapter.url,
-        bookUrl: book.value.bookUrl,
-        bookSourceUrl: book.value.origin,
+        index,
         refresh: forceRefresh ? 1 : 0,
       })
     } catch (error) {
@@ -778,7 +776,7 @@ export const useReaderStore = defineStore('reader', () => {
 
     if (useBrowserCache) {
       await setBrowserCachedChapter({
-        bookUrl: book.value.bookUrl,
+        bookId,
         chapterUrl: chapter.url,
         chapterTitle: chapter.title,
         content: chapterContent,
@@ -812,7 +810,7 @@ export const useReaderStore = defineStore('reader', () => {
 
       setActiveChapterState(index, chapterContent, initialProgress)
       markChapterAsRead(index)
-      appStore.markChapterRead(book.value.bookUrl, index, chapters.value.length)
+      appStore.markChapterRead(book.value.bookId || book.value.bookUrl, index, chapters.value.length)
 
       if (!isOpeningSavedChapter) {
         await persistProgress(index, 0)
@@ -874,10 +872,10 @@ export const useReaderStore = defineStore('reader', () => {
     const requestedChapterUrl = chapter.url
     reviewsLoading.value = true
     try {
+      if (!currentBook.bookId) throw new Error('书籍缺少 bookId')
       const params = {
-        bookUrl: currentBook.bookUrl,
+        bookId: currentBook.bookId,
         chapterUrl: requestedChapterUrl,
-        bookSourceUrl: currentBook.origin,
       }
       // 顺序请求：第二个请求能复用第一个已经取回的章节正文响应
       const indexResp = await getParaCommentIndex(params)
@@ -922,10 +920,10 @@ export const useReaderStore = defineStore('reader', () => {
     // 只认自己那次请求的结果，避免快速翻章时旧响应覆盖新章节
     const requestedChapterUrl = chapter.url
     try {
+      if (!currentBook.bookId) throw new Error('书籍缺少 bookId')
       const resp = await getChapterImages({
-        bookUrl: currentBook.bookUrl,
+        bookId: currentBook.bookId,
         chapterUrl: requestedChapterUrl,
-        bookSourceUrl: currentBook.origin,
       })
       if (chapters.value[currentIndex.value]?.url !== requestedChapterUrl) return
       chapterImagesEnabled.value = resp?.enabled === true
@@ -1016,17 +1014,17 @@ export const useReaderStore = defineStore('reader', () => {
   }
 
   /* ─── Switch Source ─── */
-  async function switchSource(newUrl: string, sourceUrl: string) {
-    if (!book.value) return
+  /** 换源：目标是候选搜索结果自己的 bookId；当前书的 bookId 不变 */
+  async function switchSource(targetBookId: string) {
+    if (!book.value?.bookId) return
     const previousChapterTitle = currentChapter.value?.title || book.value.durChapterTitle
     const previousIndex = currentIndex.value
     const previousProgress = chapterScrollProgress.value
     loading.value = true
     try {
       const updatedBook = await apiSetBookSource({
-        bookUrl: book.value.bookUrl,
-        newUrl,
-        bookSourceUrl: sourceUrl,
+        bookId: book.value.bookId,
+        targetBookId,
       })
       if (!updatedBook) return null
 
@@ -1078,9 +1076,9 @@ export const useReaderStore = defineStore('reader', () => {
       // 用户要的是刷新目录列表，不是重读当前章：此前 loadChapter(target, true)
       // 会把人踢回章首。现在只换列表，当前章正文与阅读位置不动
       const currentUrl = chapters.value[currentIndex.value]?.url
+      if (!book.value.bookId) return
       chapters.value = await getChapterList({
-        bookUrl: book.value.bookUrl,
-        bookSourceUrl: book.value.origin,
+        bookId: book.value.bookId,
         refresh: 1,
       })
       // 上游增删章导致位置漂移时，按 URL 把索引对齐回去
@@ -1091,7 +1089,7 @@ export const useReaderStore = defineStore('reader', () => {
           book.value.durChapterIndex = newIndex
         }
       }
-      void setBrowserCatalog(book.value.bookUrl, chapters.value)
+      void setBrowserCatalog(book.value.bookId, chapters.value)
     } finally {
       chaptersLoading.value = false
     }
@@ -1134,11 +1132,10 @@ export const useReaderStore = defineStore('reader', () => {
   async function fetchBookmarks() {
     try {
       const all = await getBookmarks()
-      // Filter for current book
-      if (book.value) {
-        bookmarks.value = all.filter(
-          (b) => b.bookName === book.value?.name && b.bookAuthor === book.value?.author
-        )
+      // 只留当前书的（按 bookId 过滤，换源不受影响）
+      if (book.value?.bookId) {
+        const currentId = book.value.bookId
+        bookmarks.value = all.filter((b) => b.bookId === currentId)
       } else {
         bookmarks.value = all
       }
@@ -1148,8 +1145,9 @@ export const useReaderStore = defineStore('reader', () => {
   }
 
   async function addBookmark(pos: number = 0, snippet: string = '') {
-    if (!book.value || !currentChapter.value) return
+    if (!book.value?.bookId || !currentChapter.value) return
     const b: Bookmark = {
+      bookId: book.value.bookId,
       bookName: book.value.name,
       bookAuthor: book.value.author,
       chapterIndex: currentIndex.value,

@@ -7,17 +7,17 @@
     <div v-else class="source-list">
       <article
         v-for="source in sources"
-        :key="source.bookSourceUrl"
+        :key="source.bookSourceId ?? source.bookSourceUrl"
         class="source-item"
         :class="{
-          active: activeUrl === source.bookSourceUrl,
-          selected: selectedUrls.has(source.bookSourceUrl),
+          active: activeId === source.bookSourceId,
+          selected: source.bookSourceId != null && selectedIds.has(source.bookSourceId),
         }"
       >
         <label class="row-check" @click.stop>
           <input
             type="checkbox"
-            :checked="selectedUrls.has(source.bookSourceUrl)"
+            :checked="source.bookSourceId != null && selectedIds.has(source.bookSourceId)"
             @change="$emit('toggle-selection', source)"
           />
         </label>
@@ -65,8 +65,8 @@ import type { BookSource } from '../../types'
 defineProps<{
   sources: BookSource[]
   loading: boolean
-  selectedUrls: ReadonlySet<string>
-  activeUrl?: string
+  selectedIds: ReadonlySet<number>
+  activeId?: number
   emptyTitle: string
   emptyDescription: string
 }>()

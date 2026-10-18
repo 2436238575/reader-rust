@@ -7,9 +7,15 @@ export interface ApiResponse<T = unknown> {
 
 // ─── 书籍 ───
 export interface Book {
+  /** 后端分配的稳定身份（`book_<n>`），不随换源变化；请求一律用它定位书籍 */
+  bookId?: string
+  /** 当前绑定的书源 id */
+  bookSourceId?: number
   name: string
   author: string
+  /** 上游地址（数据字段，爬虫取数/展示用；不再作为请求身份参数） */
   bookUrl: string
+  /** 书源 URL（数据字段，展示/调试用） */
   origin: string
   originName?: string
   coverUrl?: string
@@ -38,6 +44,10 @@ export interface Book {
 
 // ─── 搜索结果 ───
 export interface SearchBook {
+  /** 产出即登记的 bookId；详情/目录/正文/入架一律用它 */
+  bookId?: string
+  /** 命中书源的 id */
+  bookSourceId?: number
   name: string
   author: string
   bookUrl: string
@@ -50,7 +60,8 @@ export interface SearchBook {
   lastChapter?: string
   updateTime?: string
   wordCount?: string
-  bookSourceUrls?: string[]
+  /** 聚合结果里同一本书命中的各书源 id */
+  bookSourceIds?: number[]
 }
 
 // ─── 章节 ───
@@ -137,6 +148,8 @@ export interface ReviewResponse<T> {
 
 // ─── 书源 ───
 export interface BookSource {
+  /** 后端分配的自增 id，书源的身份键；URL 只是数据字段与导入去重键 */
+  bookSourceId?: number
   bookSourceName: string
   bookSourceGroup?: string
   bookSourceUrl: string
@@ -163,6 +176,7 @@ export interface BookSource {
 }
 
 export interface BookSourceTestResult {
+  bookSourceId?: number
   bookSourceName: string
   bookSourceUrl: string
   valid: boolean
@@ -202,6 +216,8 @@ export interface UserInfo {
 
 // ─── 书签 ───
 export interface Bookmark {
+  /** 所属书籍的 bookId；身份 = bookId + chapterIndex + chapterPos（一书可多条） */
+  bookId: string
   time?: number
   bookName: string
   bookAuthor: string
@@ -305,6 +321,8 @@ export interface AiBookMap {
 }
 
 export interface AiBookMemory {
+  /** 所属书籍的 bookId（存储主键） */
+  bookId?: string
   bookUrl: string
   bookName?: string
   author?: string

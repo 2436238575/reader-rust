@@ -68,6 +68,7 @@ describe('reader local txt chapters', () => {
       name: '本地书',
       author: '本地导入',
       origin: 'local-txt',
+      bookId: 'book_1',
       bookUrl: 'local-txt:abc123',
     }
     readerStore.chapters = [{ title: '第一章', url: 'local-txt:abc123#0', index: 0 }]
@@ -77,8 +78,8 @@ describe('reader local txt chapters', () => {
     expect(getBrowserCachedChapter).not.toHaveBeenCalled()
     expect(getBookContent).toHaveBeenCalledWith({
       chapterUrl: 'local-txt:abc123#0',
-      bookUrl: 'local-txt:abc123',
-      bookSourceUrl: 'local-txt',
+      bookId: 'book_1',
+      index: 0,
       refresh: 0,
     })
   })
@@ -108,6 +109,7 @@ describe('reader progress conflict timestamps', () => {
       name: '书',
       author: '',
       origin: 'https://example.com',
+      bookId: 'book_1',
       bookUrl: 'https://example.com/b',
       durChapterIndex: 0,
       durChapterTime: serverSavedAt,

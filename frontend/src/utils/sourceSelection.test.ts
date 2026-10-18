@@ -25,10 +25,9 @@ describe('sourceSelection', () => {
   })
 
   it('builds batch delete payloads using stable source identifiers', () => {
-    expect(toBookSourceDeletePayload(bookSources)).toEqual([
-      { bookSourceUrl: 'https://alpha.example' },
-      { bookSourceUrl: 'https://beta.example' },
-    ])
+    expect(
+      toBookSourceDeletePayload([{ bookSourceId: 1 }, { bookSourceId: 2 }])
+    ).toEqual([{ bookSourceId: 1 }, { bookSourceId: 2 }])
   })
 
   it('extracts sorted groups from comma-like source group separators', () => {

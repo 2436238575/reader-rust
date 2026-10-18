@@ -63,11 +63,11 @@
       </div>
 
       <div v-else-if="searchScope === 'source'" class="filter-select-wrap">
-        <select v-model="selectedSourceUrl" class="filter-select">
+        <select v-model="selectedSourceId" class="filter-select">
           <option
             v-for="source in sourceOptions"
-            :key="source.bookSourceUrl"
-            :value="source.bookSourceUrl"
+            :key="source.bookSourceId"
+            :value="source.bookSourceId"
           >
             {{ source.bookSourceName }}
           </option>
@@ -86,8 +86,8 @@
       :books="displayResults"
       :is-search="true"
       :loading="isSearching && displayResults.length === 0"
-      :shelf-urls="shelfUrls"
-      :adding-urls="addingUrls"
+      :shelf-ids="shelfIds"
+      :adding-ids="addingIds"
       empty-text="未找到相关书籍"
       @click="handleBookClick"
       @info="handleBookInfo"
@@ -125,7 +125,7 @@ const {
   isSearching,
   searchScope,
   searchGroup: selectedGroup,
-  searchSourceUrl: selectedSourceUrl,
+  searchSourceId: selectedSourceId,
 } = storeToRefs(shelfStore)
 
 let eventSource: EventSource | null = null
@@ -135,9 +135,11 @@ const showBookDetail = ref(false)
 const selectedBook = ref<Book | SearchBook | null>(null)
 
 // 已入库书籍把按钮切为「已在书架」（此前漏传，可重复添加同一本书）
-const shelfUrls = computed(() => new Set(shelfStore.books.map((book) => book.bookUrl)))
-// 加入书架请求进行中：按 bookUrl 防连点
-const addingUrls = ref(new Set<string>())
+const shelfIds = computed(
+  () => new Set(shelfStore.books.map((book) => book.bookId).filter(Boolean) as string[])
+)
+// 加入书架请求进行中：按 bookId 防连点
+const addingIds = ref(new Set<string>())
 // SSE 连接失败/中断：此前只置 isSearching=false，用户看到误导性的「未找到相关书籍」
 const searchFailed = ref(false)
 
@@ -145,8 +147,8 @@ const searchFailed = ref(false)
 const searchScrollRef = ref<HTMLElement>()
 usePreserveScroll(() => searchScrollRef.value)
 
-const sourceByUrl = computed(() => {
-  return new Map(sourceStore.sources.map((source) => [source.bookSourceUrl, source]))
+const sourceById = computed(() => {
+  return new Map(sourceStore.sources.map((source) => [source.bookSourceId, source]))
 })
 
 const sourceGroups = computed(() => {
@@ -174,7 +176,7 @@ const displayResults = computed<SearchBook[]>(() => {
   // 保证同一结果跨批次对象身份稳定，BookGrid 的 keyed diff 才能跳过
   return results.value.map((book) => {
     if (book.originName) return book
-    const source = sourceByUrl.value.get(book.origin)
+    const source = sourceById.value.get(book.bookSourceId)
     return {
       ...book,
       originName: book.originName || source?.bookSourceName || book.origin,
@@ -200,10 +202,10 @@ function ensureSearchSelection() {
   }
   if (searchScope.value === 'source') {
     const selectedSourceStillValid = sourceOptions.value.some(
-      (source) => source.bookSourceUrl === selectedSourceUrl.value
+      (source) => source.bookSourceId === selectedSourceId.value
     )
     if (!selectedSourceStillValid && sourceOptions.value.length > 0) {
-      selectedSourceUrl.value = sourceOptions.value[0].bookSourceUrl
+      selectedSourceId.value = sourceOptions.value[0].bookSourceId ?? null
     }
   }
 }
@@ -223,7 +225,7 @@ function doSearch(key: string) {
     return
   }
 
-  if (effectiveScope === 'source' && !selectedSourceUrl.value) {
+  if (effectiveScope === 'source' && selectedSourceId.value == null) {
     shelfStore.searchResults = []
     shelfStore.isSearching = false
     return
@@ -236,7 +238,7 @@ function doSearch(key: string) {
     key,
     concurrentCount: 24,
     bookSourceGroup: effectiveScope === 'group' ? selectedGroup.value : undefined,
-    bookSourceUrl: effectiveScope === 'source' ? selectedSourceUrl.value : undefined,
+    bookSourceId: effectiveScope === 'source' ? (selectedSourceId.value ?? undefined) : undefined,
   })
 
   eventSource.onmessage = (event) => {
@@ -246,7 +248,7 @@ function doSearch(key: string) {
         // 去重集合跨消息维护：此前每条 SSE 消息都重建一次全量 Set（O(已到条数)）
         if (!searchSeen) searchSeen = new Set()
         const annotate = (b: SearchBook) => {
-          const source = sourceByUrl.value.get(b.origin)
+          const source = sourceById.value.get(b.bookSourceId)
           return {
             ...b,
             originName: b.originName || source?.bookSourceName || b.origin,
@@ -255,7 +257,8 @@ function doSearch(key: string) {
         }
         const newBooks: SearchBook[] = []
         for (const b of data.data as SearchBook[]) {
-          const dedupeKey = `${b.origin}::${b.bookUrl}`
+          // 产出即登记：bookId 已按 bookUrl 去重
+          const dedupeKey = b.bookId || `${b.origin}::${b.bookUrl}`
           if (searchSeen.has(dedupeKey)) continue
           searchSeen.add(dedupeKey)
           newBooks.push(annotate(b))
@@ -293,7 +296,7 @@ function retrySearch() {
 }
 
 watch(
-  [() => shelfStore.searchKey, searchScope, selectedGroup, selectedSourceUrl],
+  [() => shelfStore.searchKey, searchScope, selectedGroup, selectedSourceId],
   ([key]) => {
     ensureSearchSelection()
     if (key) {
@@ -336,10 +339,13 @@ function handleBookInfo(book: Book | SearchBook) {
 }
 
 async function handleAddToShelf(book: Book | SearchBook) {
-  if (addingUrls.value.has(book.bookUrl)) return
-  addingUrls.value.add(book.bookUrl)
+  const bookId = book.bookId
+  if (!bookId || addingIds.value.has(bookId)) return
+  addingIds.value.add(bookId)
   try {
     await saveBook({
+      bookId,
+      bookSourceId: book.bookSourceId,
       name: book.name,
       author: book.author,
       bookUrl: book.bookUrl,
@@ -352,7 +358,7 @@ async function handleAddToShelf(book: Book | SearchBook) {
   } catch (e: unknown) {
     appStore.showToast((e as Error).message, 'error')
   } finally {
-    addingUrls.value.delete(book.bookUrl)
+    addingIds.value.delete(bookId)
   }
 }
 

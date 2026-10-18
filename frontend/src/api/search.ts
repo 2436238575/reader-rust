@@ -7,33 +7,27 @@ import { createAuthedEventSource } from '../utils/secureAccess'
 export function searchBookMultiSSE(params: {
   key: string
   bookSourceGroup?: string
-  bookSourceUrl?: string
+  bookSourceId?: number
   concurrentCount?: number
   searchSize?: number
 }) {
   return createAuthedEventSource('/searchBookMultiSSE', {
     key: params.key,
     bookSourceGroup: params.bookSourceGroup,
-    bookSourceUrl: params.bookSourceUrl,
+    bookSourceId: params.bookSourceId,
     concurrentCount: params.concurrentCount,
     searchSize: params.searchSize,
   })
 }
 
 export function getAvailableBookSourceSSE(params: {
-  url?: string
-  name?: string
-  author?: string
-  origin?: string
+  bookId: string
   refresh?: number
   lastIndex?: number
   concurrentCount?: number
 }) {
   return createAuthedEventSource('/getAvailableBookSourceSSE', {
-    url: params.url,
-    name: params.name,
-    author: params.author,
-    origin: params.origin,
+    bookId: params.bookId,
     refresh: params.refresh,
     lastIndex: params.lastIndex ?? -1,
     concurrentCount: params.concurrentCount ?? 8,

@@ -46,8 +46,8 @@
         class="source-list-slot"
         :sources="filteredSources"
         :loading="loading"
-        :selected-urls="selectedSourceUrls"
-        :active-url="editingSource?.bookSourceUrl"
+        :selected-ids="selectedSourceIds"
+        :active-id="editingSource?.bookSourceId"
         :empty-title="sources.length ? '没有匹配的书源' : '暂无书源'"
         :empty-description="
           sources.length ? '调整搜索关键词或分组筛选后再试' : '可以本地导入、远程同步或手动新增'
@@ -147,12 +147,10 @@ import {
   filterBookSources,
   getBookSourceGroups,
   getBookSourceStats,
-  getVisibleSelection,
   splitBookSourceGroups,
-  toBookSourceDeletePayload,
 } from '../utils/sourceSelection'
 import { appendAuthQueryParams } from '../utils/secureAccess'
-import { chunkBookSourceUrls, mergeBookSourceTestResponses } from '../utils/sourceTesting'
+import { MAX_SOURCE_TEST_BATCH_SIZE, mergeBookSourceTestResponses } from '../utils/sourceTesting'
 import SourceEditorPanel from '../components/source-manager/SourceEditorPanel.vue'
 import SourceFilterBar from '../components/source-manager/SourceFilterBar.vue'
 import SourceList from '../components/source-manager/SourceList.vue'
@@ -175,7 +173,8 @@ const testingSources = ref(false)
 const filterText = ref('')
 const filterGroup = ref('')
 const fileInputRef = ref<HTMLInputElement | null>(null)
-const selectedSourceUrls = ref(new Set<string>())
+// 书源身份是后端分配的 bookSourceId（number）；bookSourceUrl 只是展示数据
+const selectedSourceIds = ref(new Set<number>())
 
 const subscriptionPanelVisible = ref(false)
 const remoteUrl = ref('')
@@ -201,10 +200,9 @@ const filteredSources = computed(() =>
 const sourceStats = computed(() => getBookSourceStats(sources.value, filteredSources.value))
 
 const selectedFilteredSources = computed(() =>
-  getVisibleSelection(
-    filteredSources.value,
-    selectedSourceUrls.value,
-    (source) => source.bookSourceUrl
+  filteredSources.value.filter(
+    (source): source is BookSource & { bookSourceId: number } =>
+      source.bookSourceId != null && selectedSourceIds.value.has(source.bookSourceId)
   )
 )
 
@@ -278,12 +276,13 @@ async function toggleSource(source: BookSource) {
 }
 
 async function removeSource(source: BookSource) {
+  if (source.bookSourceId == null) return
   if (!confirm(`确定删除书源 "${source.bookSourceName}"？`)) return
   try {
-    await deleteBookSource(source.bookSourceUrl)
-    sources.value = sources.value.filter((s) => s.bookSourceUrl !== source.bookSourceUrl)
-    selectedSourceUrls.value.delete(source.bookSourceUrl)
-    if (editingSource.value?.bookSourceUrl === source.bookSourceUrl) {
+    await deleteBookSource(source.bookSourceId)
+    sources.value = sources.value.filter((s) => s.bookSourceId !== source.bookSourceId)
+    selectedSourceIds.value.delete(source.bookSourceId)
+    if (editingSource.value?.bookSourceId === source.bookSourceId) {
       createSource()
     }
     appStore.showToast('已删除', 'success')
@@ -300,11 +299,16 @@ async function removeSelectedSources() {
   }
   if (!confirm(`确定删除选中的 ${targets.length} 个书源？`)) return
   try {
-    await deleteBookSources(toBookSourceDeletePayload(targets))
-    const targetUrls = new Set(targets.map((source) => source.bookSourceUrl))
-    sources.value = sources.value.filter((source) => !targetUrls.has(source.bookSourceUrl))
-    selectedSourceUrls.value.clear()
-    if (editingSource.value && targetUrls.has(editingSource.value.bookSourceUrl)) {
+    await deleteBookSources(targets.map((source) => ({ bookSourceId: source.bookSourceId })))
+    const targetIds = new Set(targets.map((source) => source.bookSourceId))
+    sources.value = sources.value.filter(
+      (source) => source.bookSourceId == null || !targetIds.has(source.bookSourceId)
+    )
+    selectedSourceIds.value.clear()
+    if (
+      editingSource.value?.bookSourceId != null &&
+      targetIds.has(editingSource.value.bookSourceId)
+    ) {
       createSource()
     }
     appStore.showToast(`已删除 ${targets.length} 个书源`, 'success')
@@ -328,12 +332,14 @@ async function testSources() {
 
   testingSources.value = true
   try {
-    const batches = chunkBookSourceUrls(targets.map((source) => source.bookSourceUrl))
+    const ids = targets
+      .map((source) => source.bookSourceId)
+      .filter((id): id is number => id != null)
     const responses = []
-    for (const batch of batches) {
+    for (let index = 0; index < ids.length; index += MAX_SOURCE_TEST_BATCH_SIZE) {
       responses.push(
         await testBookSources({
-          bookSourceUrls: batch,
+          bookSourceIds: ids.slice(index, index + MAX_SOURCE_TEST_BATCH_SIZE),
           markInvalid: true,
           concurrent: 12,
         })
@@ -363,10 +369,19 @@ async function removeInvalidSources() {
   if (!confirm(`确定删除 ${invalidSources.value.length} 个失效书源？此操作不可撤销。`)) return
   try {
     const result = await deleteInvalidBookSources()
-    const invalidUrls = new Set(invalidSources.value.map((source) => source.bookSourceUrl))
-    sources.value = sources.value.filter((source) => !invalidUrls.has(source.bookSourceUrl))
-    selectedSourceUrls.value.clear()
-    if (editingSource.value && invalidUrls.has(editingSource.value.bookSourceUrl)) {
+    const invalidIds = new Set(
+      invalidSources.value
+        .map((source) => source.bookSourceId)
+        .filter((id): id is number => id != null)
+    )
+    sources.value = sources.value.filter(
+      (source) => source.bookSourceId == null || !invalidIds.has(source.bookSourceId)
+    )
+    selectedSourceIds.value.clear()
+    if (
+      editingSource.value?.bookSourceId != null &&
+      invalidIds.has(editingSource.value.bookSourceId)
+    ) {
       createSource()
     }
     appStore.showToast(`已删除 ${result.deleted} 个失效书源`, 'success')
@@ -376,32 +391,39 @@ async function removeInvalidSources() {
 }
 
 function toggleSourceSelection(source: BookSource) {
-  const selected = selectedSourceUrls.value
-  if (selected.has(source.bookSourceUrl)) {
-    selected.delete(source.bookSourceUrl)
+  if (source.bookSourceId == null) return
+  const selected = selectedSourceIds.value
+  if (selected.has(source.bookSourceId)) {
+    selected.delete(source.bookSourceId)
   } else {
-    selected.add(source.bookSourceUrl)
+    selected.add(source.bookSourceId)
   }
 }
 
 function toggleFilteredSelection() {
-  const selected = selectedSourceUrls.value
+  const selected = selectedSourceIds.value
   if (allFilteredSelected.value) {
-    filteredSources.value.forEach((source) => selected.delete(source.bookSourceUrl))
+    filteredSources.value.forEach((source) => {
+      if (source.bookSourceId != null) selected.delete(source.bookSourceId)
+    })
     return
   }
-  filteredSources.value.forEach((source) => selected.add(source.bookSourceUrl))
+  filteredSources.value.forEach((source) => {
+    if (source.bookSourceId != null) selected.add(source.bookSourceId)
+  })
 }
 
 function clearSelection() {
-  selectedSourceUrls.value.clear()
+  selectedSourceIds.value.clear()
 }
 
 function pruneSelection() {
-  const availableUrls = new Set(sources.value.map((source) => source.bookSourceUrl))
-  Array.from(selectedSourceUrls.value).forEach((url) => {
-    if (!availableUrls.has(url)) {
-      selectedSourceUrls.value.delete(url)
+  const availableIds = new Set(
+    sources.value.map((source) => source.bookSourceId).filter((id): id is number => id != null)
+  )
+  Array.from(selectedSourceIds.value).forEach((id) => {
+    if (!availableIds.has(id)) {
+      selectedSourceIds.value.delete(id)
     }
   })
 }
@@ -438,10 +460,11 @@ async function saveEditor() {
     if (!parsed.bookSourceUrl?.trim()) {
       throw new Error('书源链接不能为空')
     }
-    await saveBookSource(parsed)
+    const saved = await saveBookSource(parsed)
     appStore.showToast('保存书源成功', 'success')
     await loadSources()
-    const latest = sources.value.find((item) => item.bookSourceUrl === parsed.bookSourceUrl)
+    // 新建书源保存后才有身份：以返回的 bookSourceId 匹配回填本地列表
+    const latest = sources.value.find((item) => item.bookSourceId === saved.bookSourceId)
     if (latest) {
       editSource(latest)
     } else {
@@ -465,23 +488,29 @@ async function handleSourceLogin() {
     }
 
     sourceLoginLoading.value = true
+    // 编辑器内容相对已加载书源有改动（或新建）时先落盘，登录走保存后返回的 id
+    let sourceId = parsed.bookSourceId ?? null
     if (!editingSource.value || editingSource.value.bookSourceUrl !== parsed.bookSourceUrl) {
-      await saveBookSource(parsed)
+      const saved = await saveBookSource(parsed)
+      sourceId = saved.bookSourceId
       await loadSources()
-      const latest = sources.value.find((item) => item.bookSourceUrl === parsed.bookSourceUrl)
+      const latest = sources.value.find((item) => item.bookSourceId === saved.bookSourceId)
       if (latest) {
         editSource(latest)
       }
     }
+    if (sourceId == null) {
+      throw new Error('书源尚未保存，无法登录')
+    }
 
-    const result = await loginBookSource(parsed.bookSourceUrl)
+    const result = await loginBookSource(sourceId)
     const check =
       typeof result.checkResult === 'string' && result.checkResult.trim()
         ? `，校验结果：${result.checkResult}`
         : ''
     if (result.url?.trim()) {
       loginPreviewUrl.value = result.url
-      loginPreviewFrameUrl.value = buildLoginProxyUrl(parsed.bookSourceUrl, result.url)
+      loginPreviewFrameUrl.value = buildLoginProxyUrl(sourceId, result.url)
       loginPreviewVisible.value = true
     }
     appStore.showToast(`书源登录请求已完成，状态 ${result.status}${check}`, 'success')
@@ -492,10 +521,10 @@ async function handleSourceLogin() {
   }
 }
 
-function buildLoginProxyUrl(bookSourceUrl: string, targetUrl: string) {
+function buildLoginProxyUrl(bookSourceId: number, targetUrl: string) {
   const params = new URLSearchParams()
   appendAuthQueryParams(params)
-  params.set('bookSourceUrl', bookSourceUrl)
+  params.set('bookSourceId', String(bookSourceId))
   params.set('url', targetUrl)
   return `${API_BASE}/bookSourceProxy?${params.toString()}`
 }

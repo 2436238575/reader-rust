@@ -136,7 +136,7 @@
         <BookGrid
           :books="shelfStore.filteredBooks"
           :edit-mode="shelfStore.editMode"
-          :selected-urls="shelfStore.selectedBookUrls"
+          :selected-ids="shelfStore.selectedBookIds"
           :loading="shelfStore.loading"
           :sortable="!shelfStore.editMode && !shelfStore.loading && !shelfStore.sorting"
           empty-text="书架空空如也，搜索添加新书吧"
@@ -144,7 +144,7 @@
           @info="handleBookInfo"
           @delete="handleDeleteBook"
           @ai="handleBookAi"
-          @select="shelfStore.toggleSelection($event.bookUrl)"
+          @select="handleSelectBook"
           @reorder="handleReorderBooks"
         />
       </div>
@@ -152,11 +152,11 @@
       <!-- Batch Toolbar -->
       <Transition name="slide-up">
         <div
-          v-if="shelfStore.editMode && shelfStore.selectedBookUrls.size > 0"
+          v-if="shelfStore.editMode && shelfStore.selectedBookIds.size > 0"
           class="batch-toolbar"
         >
           <div class="batch-info">
-            已选中 <span>{{ shelfStore.selectedBookUrls.size }}</span> 本书
+            已选中 <span>{{ shelfStore.selectedBookIds.size }}</span> 本书
           </div>
           <div class="batch-actions">
             <button class="btn" :disabled="bulkWorking" @click="handleBulkMove">
@@ -282,6 +282,13 @@ function handleBookInfo(book: Book | SearchBook) {
   showDetail.value = true
 }
 
+// 选择集按 bookId 键控；书没有 bookId（不应出现在书架）时忽略
+function handleSelectBook(book: Book | SearchBook) {
+  if (book.bookId) {
+    shelfStore.toggleSelection(book.bookId)
+  }
+}
+
 function handleBookAi(book: Book | SearchBook) {
   const currentBook = book as Book
   router.push({
@@ -313,7 +320,7 @@ const bulkWorking = ref(false)
 
 async function handleBulkDelete() {
   if (bulkWorking.value) return
-  const count = shelfStore.selectedBookUrls.size
+  const count = shelfStore.selectedBookIds.size
   if (!confirm(`确定删除选中的 ${count} 本书？`)) return
   bulkWorking.value = true
   try {
@@ -332,7 +339,7 @@ async function handleBulkMove() {
 
 async function handleSetGroup(groupId: number) {
   if (bulkWorking.value) return
-  const count = shelfStore.selectedBookUrls.size
+  const count = shelfStore.selectedBookIds.size
   bulkWorking.value = true
   try {
     await shelfStore.bulkSetGroup(groupId)
@@ -343,9 +350,9 @@ async function handleSetGroup(groupId: number) {
     bulkWorking.value = false
   }
 }
-async function handleReorderBooks(payload: { draggedUrl: string; targetUrl: string }) {
+async function handleReorderBooks(payload: { draggedId: string; targetId: string }) {
   try {
-    await shelfStore.reorderBooks(payload.draggedUrl, payload.targetUrl)
+    await shelfStore.reorderBooks(payload.draggedId, payload.targetId)
   } catch (e: any) {
     appStore.showToast(e.message || '排序失败', 'error')
   }

@@ -12,7 +12,7 @@ import {
 export const useExploreStore = defineStore('explore', () => {
   const sourceStore = useSourceStore()
 
-  const activeSourceUrl = ref<string>('')
+  const activeSourceId = ref<number | null>(null)
   const activeCategoryUrl = ref<string>('')
 
   const books = ref<SearchBook[]>([])
@@ -28,7 +28,7 @@ export const useExploreStore = defineStore('explore', () => {
 
   // 当前选中的书源对象
   const currentSource = computed(() => {
-    return sourceStore.sources.find((s: BookSource) => s.bookSourceUrl === activeSourceUrl.value)
+    return sourceStore.sources.find((s: BookSource) => s.bookSourceId === activeSourceId.value)
   })
 
   // 解析当前书源的 exploreUrl 分类
@@ -38,7 +38,7 @@ export const useExploreStore = defineStore('explore', () => {
 
   function ensureActiveSource() {
     if (exploreSources.value.length === 0) {
-      activeSourceUrl.value = ''
+      activeSourceId.value = null
       activeCategoryUrl.value = ''
       books.value = []
       hasMore.value = false
@@ -46,10 +46,11 @@ export const useExploreStore = defineStore('explore', () => {
     }
 
     const activeSourceStillValid = exploreSources.value.some(
-      (source) => source.bookSourceUrl === activeSourceUrl.value
+      (source) => source.bookSourceId === activeSourceId.value
     )
-    if (!activeSourceUrl.value || !activeSourceStillValid) {
-      setSource(exploreSources.value[0].bookSourceUrl)
+    if (activeSourceId.value == null || !activeSourceStillValid) {
+      const first = exploreSources.value[0]
+      if (first.bookSourceId != null) setSource(first.bookSourceId)
       return
     }
 
@@ -61,10 +62,10 @@ export const useExploreStore = defineStore('explore', () => {
     }
   }
 
-  function setSource(url: string) {
-    const sourceChanged = activeSourceUrl.value !== url
+  function setSource(id: number) {
+    const sourceChanged = activeSourceId.value !== id
     if (sourceChanged) {
-      activeSourceUrl.value = url
+      activeSourceId.value = id
     }
 
     const firstCategoryUrl = getInitialExploreCategoryUrl(categories.value)
@@ -109,20 +110,20 @@ export const useExploreStore = defineStore('explore', () => {
     if (
       (!force && loading.value) ||
       !hasMore.value ||
-      !activeSourceUrl.value ||
+      activeSourceId.value == null ||
       !activeCategoryUrl.value
     )
       return
 
     const seq = ++fetchSeq
-    const sourceUrl = activeSourceUrl.value
+    const sourceId = activeSourceId.value
     const categoryUrl = activeCategoryUrl.value
 
     loading.value = true
     error.value = null
     try {
       const result = await exploreBook({
-        bookSourceUrl: sourceUrl,
+        bookSourceId: sourceId,
         ruleFindUrl: categoryUrl,
         page: page.value,
       })
@@ -174,7 +175,7 @@ export const useExploreStore = defineStore('explore', () => {
   })
 
   return {
-    activeSourceUrl,
+    activeSourceId,
     activeCategoryUrl,
     books,
     loading,

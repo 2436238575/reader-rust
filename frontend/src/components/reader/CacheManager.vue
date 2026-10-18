@@ -157,9 +157,9 @@ async function refreshStats() {
   }
   const [serverList, browserCount] = await Promise.all([
     getBookshelfWithCacheInfo().catch(() => []),
-    countBrowserBookCache(store.book.bookUrl).catch(() => 0),
+    countBrowserBookCache(store.book.bookId || '').catch(() => 0),
   ])
-  const matched = serverList.find((book) => book.bookUrl === store.book?.bookUrl)
+  const matched = serverList.find((book) => book.bookId === store.book?.bookId)
   serverCachedCount.value = matched?.cachedChapterCount || 0
   browserCachedCount.value = browserCount
 }
@@ -177,8 +177,9 @@ function startServerCaching(count: number) {
       ? Math.max(0, store.chapters.length - store.currentIndex)
       : Math.min(count, Math.max(0, store.chapters.length - store.currentIndex))
 
+  if (!store.book.bookId) return
   sse = cacheBookSSE({
-    bookUrl: store.book.bookUrl,
+    bookId: store.book.bookId,
     tocUrl: store.currentChapter?.url,
     count,
     concurrentCount: 8,
@@ -270,7 +271,7 @@ async function clearServerCache() {
   if (!store.book || isLocalBookInServer.value) return
   if (!confirm('确定清除这本书的服务端缓存吗？已缓存的正文需要重新抓取。')) return
   try {
-    await deleteBookCache(store.book.bookUrl)
+    await deleteBookCache(store.book.bookId || '')
     appStore.showToast('服务端缓存已清除', 'success')
   } catch (error) {
     appStore.showToast((error as Error).message || '清除服务端缓存失败', 'error')
@@ -283,7 +284,7 @@ async function clearBrowserCache() {
   if (!store.book || isLocalBookInServer.value) return
   if (!confirm('确定清除这本书的浏览器缓存吗？离线章节会被删除。')) return
   try {
-    await deleteBrowserBookCache(store.book.bookUrl)
+    await deleteBrowserBookCache(store.book.bookId || '')
     appStore.showToast('浏览器缓存已清除', 'success')
   } catch (error) {
     appStore.showToast((error as Error).message || '清除浏览器缓存失败', 'error')

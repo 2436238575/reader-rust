@@ -182,7 +182,8 @@ export function useReaderSelection(
     if (!text || !store.book) return
 
     try {
-      const scope = mode === 'source' ? `source:${store.book.origin}` : `book:${store.book.bookUrl}`
+      const scope =
+        mode === 'source' ? `source:${store.book.bookSourceId}` : `book:${store.book.bookId}`
       await saveReplaceRule({
         id: 0,
         name: `${mode === 'source' ? '书源替换' : '本书替换'} ${store.replaceRules.length + 1}`,

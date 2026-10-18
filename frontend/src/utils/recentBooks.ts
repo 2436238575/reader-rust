@@ -13,13 +13,9 @@ export interface RecentReadBook extends Book {
   recentReadAt: number
 }
 
-export function getRecentReadBookKey(book: Pick<Book, 'bookUrl' | 'origin'>) {
-  return `${book.origin || ''}::${book.bookUrl || ''}`
-}
-
-function isRssEntry(item: Partial<RecentReadBook>) {
-  // 旧版本把 RSS 文章也写进这里，RSS 功能移除后这些记录没有可打开的页面
-  return (item as { recentKind?: string }).recentKind === 'rss'
+/** 去重键：bookId 是稳定身份，换源不漂移 */
+export function getRecentReadBookKey(book: Pick<Book, 'bookId'>) {
+  return book.bookId || ''
 }
 
 function normalizeRecentReadBook(book: Book): RecentReadBook {
@@ -37,9 +33,7 @@ function readLocal(): RecentReadBook[] {
     if (!raw) return []
     const parsed = JSON.parse(raw)
     if (!Array.isArray(parsed)) return []
-    return parsed.filter(
-      (item): item is RecentReadBook => !!item?.bookUrl && !!item?.origin && !isRssEntry(item)
-    )
+    return parsed.filter((item): item is RecentReadBook => !!item?.bookId)
   } catch {
     return []
   }
@@ -62,7 +56,7 @@ export function mergeRecentLists(
 ): RecentReadBook[] {
   const byKey = new Map<string, RecentReadBook>()
   const consider = (item: RecentReadBook) => {
-    if (!item?.bookUrl || !item?.origin || isRssEntry(item)) return
+    if (!item?.bookId) return
     const key = getRecentReadBookKey(item)
     const existing = byKey.get(key)
     if (!existing || (item.recentReadAt || 0) >= (existing.recentReadAt || 0)) {
@@ -123,7 +117,7 @@ export async function syncRecentBooksFromBackend(): Promise<void> {
 }
 
 export function saveRecentReadBook(book: Book) {
-  if (!book?.bookUrl || !book?.origin) return
+  if (!book?.bookId) return
   const key = getRecentReadBookKey(book)
   const nextEntry = normalizeRecentReadBook(book)
   const next = readLocal().filter((item) => getRecentReadBookKey(item) !== key)
@@ -133,8 +127,8 @@ export function saveRecentReadBook(book: Book) {
 }
 
 /** 删除只在当前设备生效（后端无墓碑），其他浏览器会把较旧的记录再合并回来 */
-export function removeRecentReadBook(book: Pick<Book, 'bookUrl' | 'origin'>) {
-  if (!book?.bookUrl || !book?.origin) return
+export function removeRecentReadBook(book: Pick<Book, 'bookId'>) {
+  if (!book?.bookId) return
   const key = getRecentReadBookKey(book)
   const next = readLocal().filter((item) => getRecentReadBookKey(item) !== key)
   writeLocal(next)

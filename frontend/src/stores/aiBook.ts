@@ -15,7 +15,7 @@ import type { AiBookMemory, AiServerModelStatus, Book } from '../types'
  * AI 资料编排（后端 sidecar 承载）：
  * - 生成循环、patch 归一化全部在服务端；前端只做触发、轮询与展示；
  * - 任务在服务端跑，关页面不取消；重开页面 onMounted 里 startPolling 恢复显示；
- * - 快照带 bookUrl——A 书任务跑着、打开 B 书页面时按钮不受影响。
+ * - 快照带 bookId——A 书任务跑着、打开 B 书页面时按钮不受影响。
  */
 
 const POLL_INTERVAL_MS = 2000
@@ -58,7 +58,8 @@ export const useAiBookStore = defineStore('aiBook', () => {
   async function load(book: Book) {
     loading.value = true
     try {
-      const saved = await getAiBookMemory(book.bookUrl)
+      if (!book.bookId) return null
+      const saved = await getAiBookMemory(book.bookId)
       memory.value = saved || emptyMemory(book)
       return memory.value
     } finally {
@@ -72,10 +73,11 @@ export const useAiBookStore = defineStore('aiBook', () => {
   }
 
   async function setEnabled(book: Book, enabled: boolean) {
-    const current = memory.value?.bookUrl === book.bookUrl ? memory.value : await load(book)
+    const current = memory.value?.bookId === book.bookId ? memory.value : await load(book)
     if (!current) return null
     return save({
       ...current,
+      bookId: book.bookId,
       bookUrl: book.bookUrl,
       bookName: book.name,
       author: book.author,
@@ -85,7 +87,8 @@ export const useAiBookStore = defineStore('aiBook', () => {
   }
 
   async function reset(book: Book) {
-    await deleteAiBookMemory(book.bookUrl)
+    if (!book.bookId) return memory.value
+    await deleteAiBookMemory(book.bookId)
     memory.value = emptyMemory(book)
     return memory.value
   }
@@ -102,8 +105,8 @@ export const useAiBookStore = defineStore('aiBook', () => {
   const statusText = computed(() => task.value?.statusText || task.value?.lastError || '')
 
   /** 任务是否属于这本书（防误显示/误取消他书任务）。 */
-  function taskForBook(bookUrl: string) {
-    return task.value?.bookUrl === bookUrl && task.value.jobId ? task.value : null
+  function taskForBook(bookId: string) {
+    return task.value?.bookId === bookId && task.value.jobId ? task.value : null
   }
 
   async function pollOnce() {
@@ -120,7 +123,7 @@ export const useAiBookStore = defineStore('aiBook', () => {
     if (wasRunning.value && !running) {
       // 任务刚好结束：刷新资料（错误也已由服务端写入 lastError / 地图兜底）
       wasRunning.value = running
-      await refreshMemoryOf(current?.bookUrl)
+      await refreshMemoryOf(current?.bookId)
       return
     }
     wasRunning.value = running
@@ -129,10 +132,10 @@ export const useAiBookStore = defineStore('aiBook', () => {
     scheduleNextPoll()
   }
 
-  async function refreshMemoryOf(bookUrl: string | undefined) {
-    if (!bookUrl || memory.value?.bookUrl !== bookUrl) return
+  async function refreshMemoryOf(bookId: string | undefined) {
+    if (!bookId || memory.value?.bookId !== bookId) return
     try {
-      memory.value = await getAiBookMemory(bookUrl)
+      memory.value = await getAiBookMemory(bookId)
     } catch {
       /* 保留旧资料 */
     }
@@ -175,7 +178,8 @@ export const useAiBookStore = defineStore('aiBook', () => {
     targetChapterIndex?: number
   ) {
     try {
-      await runAgentTask({ bookUrl: book.bookUrl, kind, targetChapterIndex })
+      if (!book.bookId) throw new Error('书籍缺少 bookId')
+      await runAgentTask({ bookId: book.bookId, kind, targetChapterIndex })
     } catch (error) {
       // 409：已有任务进行中（可能是别的书）——切到轮询展示即可
       if (!isConflict(error)) throw error
@@ -185,8 +189,8 @@ export const useAiBookStore = defineStore('aiBook', () => {
     await pollOnce()
     // 秒完成的任务（如整章跳过）不会经历 running→false 跳变：此刻已结束就直接刷新
     const current = task.value
-    if (current && !current.running && current.bookUrl === book.bookUrl) {
-      await refreshMemoryOf(book.bookUrl)
+    if (current && !current.running && current.bookId === book.bookId) {
+      await refreshMemoryOf(book.bookId)
     }
   }
 
@@ -198,10 +202,11 @@ export const useAiBookStore = defineStore('aiBook', () => {
   /// 失败静默接受——lastError 留在服务端注册表，下次打开页面可见。
   async function maybeAutoUpdate(book: Book, completedChapterIndex: number) {
     try {
+      if (!book.bookId) return
       const current =
-        memory.value?.bookUrl === book.bookUrl
+        memory.value?.bookId === book.bookId
           ? memory.value
-          : await getAiBookMemory(book.bookUrl).catch(() => null)
+          : await getAiBookMemory(book.bookId).catch(() => null)
       if (!current?.enabled) return
       if ((current.processedChapterIndex ?? -1) >= completedChapterIndex) return
       await startTask(book, 'update_to_current', completedChapterIndex)
@@ -251,6 +256,7 @@ export const useAiBookStore = defineStore('aiBook', () => {
 /** 视图在 load/reset 后始终持有可渲染的记忆骨架（与旧 createEmptyAiBookMemory 一致）。 */
 function emptyMemory(book: Book): AiBookMemory {
   return {
+    bookId: book.bookId,
     bookUrl: book.bookUrl,
     bookName: book.name,
     author: book.author,

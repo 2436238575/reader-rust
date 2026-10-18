@@ -2,7 +2,7 @@ import http from './http'
 import type { SearchBook } from '../types'
 
 export interface ExploreBookParams {
-  bookSourceUrl: string
+  bookSourceId: number
   ruleFindUrl: string
   page?: number
 }

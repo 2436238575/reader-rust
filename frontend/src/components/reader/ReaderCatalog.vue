@@ -293,7 +293,7 @@ watch(
 )
 
 watch(
-  () => store.book?.bookUrl,
+  () => store.book?.bookId,
   () => {
     void refreshCachedChapterState()
   }
@@ -341,11 +341,11 @@ async function refreshCatalog() {
 }
 
 async function refreshCachedChapterState() {
-  if (!store.book || isLocalBook(store.book) || !store.chapters.length) {
+  if (!store.book?.bookId || isLocalBook(store.book) || !store.chapters.length) {
     cachedChapterUrls.value = new Set()
     return
   }
-  cachedChapterUrls.value = await listBrowserCachedChapterUrls(store.book.bookUrl).catch(
+  cachedChapterUrls.value = await listBrowserCachedChapterUrls(store.book.bookId).catch(
     () => new Set()
   )
 }

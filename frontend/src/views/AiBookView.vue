@@ -326,7 +326,9 @@ const displayMemory = computed<AiBookMemory | null>(() =>
       }
     : null
 )
-const viewTask = computed(() => (book.value ? aiStore.taskForBook(book.value.bookUrl) : null))
+const viewTask = computed(() =>
+  book.value?.bookId ? aiStore.taskForBook(book.value.bookId) : null
+)
 const taskRunning = computed(() => Boolean(viewTask.value?.running))
 const progressText = computed(() => {
   const task = viewTask.value
@@ -355,13 +357,13 @@ const statusNotice = computed(() => {
 onMounted(async () => {
   await appStore.fetchUserInfo()
   await aiStore.loadServerModelStatus()
-  const bookUrl = String(route.query.bookUrl || '')
-  if (!bookUrl) {
+  const bookId = String(route.query.bookId || '')
+  if (!bookId) {
     router.replace('/')
     return
   }
   try {
-    book.value = await getShelfBook(bookUrl)
+    book.value = await getShelfBook(bookId)
     await aiStore.load(book.value)
   } catch (error) {
     appStore.showToast((error as Error).message || 'AI资料加载失败', 'error')

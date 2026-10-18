@@ -6,10 +6,11 @@ import type { SearchBook } from '../types'
 
 /** 换源搜索的「当前书」口径：候选按 name/author 匹配、按 latest 对齐进度 */
 export interface AvailableSourceCurrent {
-  bookUrl?: string
+  bookId?: string
   name: string
   author?: string
-  origin?: string
+  /** 当前绑定的书源 id（候选里同源的直接排除） */
+  sourceId?: number
   latest?: string
 }
 
@@ -45,13 +46,14 @@ export function normalizeSourceAuthorText(value?: string) {
 }
 
 /**
- * 「origin → 书源名」的翻译器：后端搜索结果不带源名，用书源库补可读名。
+ * 「bookSourceId → 书源名」的翻译器：后端搜索结果不带源名，用书源库补可读名。
  * 书源库可能还没拉过（书架页直接开详情弹窗），调用方自行保证 fetchSources。
  */
 export function useSourceNameResolver() {
   const sourceStore = useSourceStore()
-  return (origin: string) =>
-    sourceStore.sources.find((source) => source.bookSourceUrl === origin)?.bookSourceName || origin
+  return (bookSourceId?: number) =>
+    sourceStore.sources.find((source) => source.bookSourceId === bookSourceId)?.bookSourceName ||
+    ''
 }
 
 /**
@@ -114,11 +116,14 @@ export function useAvailableSources(getCurrent: () => AvailableSourceCurrent | n
     if (!current || !candidates.length) return
     const currentAuthor = normalizeSourceAuthorText(current.author)
     candidates.forEach((item) => {
-      if (current.origin && item.origin === current.origin) return
+      // 后端已排除当前源；这里再挡一次陈旧缓存/竞态
+      if (current.sourceId != null && item.bookSourceId === current.sourceId) return
       if (currentAuthor && item.author && normalizeSourceAuthorText(item.author) !== currentAuthor)
         return
-      // 同源（origin=bookSourceUrl 唯一）即重复
-      const existed = results.value.some((candidate) => candidate.origin === item.origin)
+      // 同书源即重复
+      const existed = results.value.some(
+        (candidate) => candidate.bookSourceId === item.bookSourceId
+      )
       if (!existed) {
         results.value.push(item)
       }
@@ -144,14 +149,11 @@ export function useAvailableSources(getCurrent: () => AvailableSourceCurrent | n
 
   function openStream(mode: AvailableSourceMode) {
     const current = getCurrent()
-    if (!current) return
+    if (!current?.bookId) return
 
     const beforeCount = results.value.length
     const sse = getAvailableBookSourceSSE({
-      url: current.bookUrl,
-      name: current.name,
-      author: current.author,
-      origin: current.origin,
+      bookId: current.bookId,
       lastIndex: mode === 'loadMore' ? lastIndex.value : -1,
       concurrentCount: AVAILABLE_CONCURRENT_COUNT,
     })

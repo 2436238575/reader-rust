@@ -179,8 +179,8 @@ function handleSearch() {
 
   // 发现页发起的搜索限定在当前浏览的书源内
   const query: Record<string, string> = { q: value }
-  if (route.path === '/explore' && exploreStore.activeSourceUrl) {
-    query.source = exploreStore.activeSourceUrl
+  if (route.path === '/explore' && exploreStore.activeSourceId != null) {
+    query.source = String(exploreStore.activeSourceId)
   }
   router.push({ path: '/search', query })
 }

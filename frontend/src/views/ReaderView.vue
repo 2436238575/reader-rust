@@ -110,9 +110,8 @@
       :show="showCommentPanel"
       :theme="chromeTheme"
       :mode="commentMode"
-      :book-url="store.book?.bookUrl || ''"
+      :book-id="store.book?.bookId || ''"
       :chapter-url="store.currentChapter?.url || ''"
-      :book-source-url="store.book?.origin"
       :para-index="commentParaIndex"
       :para-text="commentParaText"
       :initial-page="store.chapterComments"
@@ -570,11 +569,11 @@ const offlineBannerText = computed(() => {
 })
 
 async function refreshOfflineCacheState() {
-  if (!store.book) {
+  if (!store.book?.bookId) {
     offlineCachedCount.value = 0
     return
   }
-  offlineCachedCount.value = await countBrowserBookCache(store.book.bookUrl).catch(() => 0)
+  offlineCachedCount.value = await countBrowserBookCache(store.book.bookId).catch(() => 0)
 }
 
 let refreshOfflineCacheStateTimer: number | null = null
@@ -1267,7 +1266,7 @@ function scrollToBottom() {
 }
 
 function getPositionStorageKey() {
-  return store.book?.bookUrl ? `${READER_POSITION_PREFIX}${store.book.bookUrl}` : ''
+  return store.book?.bookId ? `${READER_POSITION_PREFIX}${store.book.bookId}` : ''
 }
 
 function normalizePositionTimestamp(value?: number | null) {
@@ -2288,7 +2287,8 @@ async function openInfo() {
     durChapterTitle: store.currentChapter?.title || store.book.durChapterTitle,
   }
   try {
-    const latest = await getBookInfo(store.book.bookUrl, store.book.origin)
+    if (!store.book.bookId) return
+    const latest = await getBookInfo(store.book.bookId)
     bookInfoBook.value = {
       ...store.book,
       ...latest,
@@ -2314,7 +2314,7 @@ function openAiBook() {
   if (!store.book) return
   router.push({
     name: 'ai-book',
-    query: { bookUrl: store.book.bookUrl },
+    query: { bookId: store.book.bookId },
   })
 }
 
@@ -2576,7 +2576,7 @@ watch(
 )
 
 watch(
-  () => store.book?.bookUrl,
+  () => store.book?.bookId,
   () => {
     loadSavedReadingPosition()
     scheduleRefreshOfflineCacheState()

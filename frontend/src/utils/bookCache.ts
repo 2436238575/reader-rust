@@ -9,9 +9,9 @@ export interface CacheProgress {
 }
 
 export async function resolveBookChapters(book: Book) {
+  if (!book.bookId) throw new Error('书籍缺少 bookId')
   return getChapterList({
-    bookUrl: book.bookUrl,
-    bookSourceUrl: book.origin,
+    bookId: book.bookId,
   })
 }
 
@@ -23,6 +23,8 @@ export async function cacheBookToBrowser(params: {
   onProgress?: (progress: CacheProgress) => void
   signal?: { cancelled: boolean }
 }) {
+  if (!params.book.bookId) throw new Error('书籍缺少 bookId')
+  const bookId = params.book.bookId
   const chapters = params.chapters || (await resolveBookChapters(params.book))
   const startIndex = Math.max(0, params.startIndex || 0)
   const sliced = chapters.slice(startIndex, params.count ? startIndex + params.count : undefined)
@@ -33,14 +35,13 @@ export async function cacheBookToBrowser(params: {
       break
     }
     const content = await getBookContent({
+      bookId,
       chapterUrl: chapter.url,
-      bookUrl: params.book.bookUrl,
-      bookSourceUrl: params.book.origin,
     })
     // 浏览器配额写满时写库会抛：停下并保留已完成部分，而不是整个任务报错归零
     try {
       await setBrowserCachedChapter({
-        bookUrl: params.book.bookUrl,
+        bookId,
         chapterUrl: chapter.url,
         chapterTitle: chapter.title,
         content,

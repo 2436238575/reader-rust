@@ -4,7 +4,7 @@ import {
   deleteBooks,
   getBookGroups,
   getBookshelf,
-  saveBooks,
+  restoreBooks,
   saveBookGroup,
 } from '../api/bookshelf'
 import { getReplaceRules, deleteReplaceRules, saveReplaceRules } from '../api/replaceRule'
@@ -121,9 +121,7 @@ export async function restoreWebdavBackup(payload: WebdavBackupPayload) {
       ? Promise.all(currentGroups.map((group) => deleteBookGroup(group.groupId)))
       : Promise.resolve(),
     currentBooks.length
-      ? deleteBooks(
-          currentBooks.map((book) => ({ bookUrl: book.bookUrl, origin: book.origin })) as Book[]
-        )
+      ? deleteBooks(currentBooks.map((book) => book.bookId!).filter(Boolean))
       : Promise.resolve(),
     currentBookmarks.length ? deleteBookmarks(currentBookmarks) : Promise.resolve(),
     currentReplaceRules.length ? deleteReplaceRules(currentReplaceRules) : Promise.resolve(),
@@ -137,7 +135,9 @@ export async function restoreWebdavBackup(payload: WebdavBackupPayload) {
     await saveBookGroup(group)
   }
   if (payload.bookshelf.books.length) {
-    await saveBooks(payload.bookshelf.books)
+    // 恢复 = 全量覆盖：restore 语义让后端清表重建登记表，备份自带的
+    // bookId 原位恢复，书签等按 id 引用的数据随之对齐
+    await restoreBooks(payload.bookshelf.books)
   }
   if (payload.bookmarks.length) {
     await saveBookmarks(payload.bookmarks)

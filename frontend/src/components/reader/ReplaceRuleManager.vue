@@ -176,7 +176,7 @@ function setScopeMode(mode: 'global' | 'book' | 'source') {
   }
   if (!store.book) return
   editingRule.value.scope =
-    mode === 'source' ? `source:${store.book.origin}` : `book:${store.book.bookUrl}`
+    mode === 'source' ? `source:${store.book.bookSourceId}` : `book:${store.book.bookId}`
 }
 
 async function handleSave() {

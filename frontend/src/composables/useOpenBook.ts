@@ -14,16 +14,17 @@ export function useOpenBook() {
   const shelfStore = useBookshelfStore()
   const readerStore = useReaderStore()
   // 防连点重入：同一本书的打开流程进行中忽略重复触发
-  const openingBookUrl = ref('')
+  const openingBookId = ref('')
 
   async function openBook(book: Book | SearchBook, chapterIndex?: number) {
     const target = book as Book
-    if (!target.origin || !target.bookUrl) return
-    if (openingBookUrl.value === target.bookUrl) return
+    const bookId = target.bookId
+    if (!bookId) return
+    if (openingBookId.value === bookId) return
 
-    openingBookUrl.value = target.bookUrl
+    openingBookId.value = bookId
     try {
-      await shelfStore.moveBookToFront(target.bookUrl).catch(() => undefined)
+      await shelfStore.moveBookToFront(bookId).catch(() => undefined)
       const loadBookTask = readerStore.loadBook(target)
       await router.push('/reader')
       // loadBook 失败时已自行 toast 并写入 loadError（阅读页有重试入口），
@@ -31,7 +32,7 @@ export function useOpenBook() {
       await loadBookTask.catch(() => undefined)
       await readerStore.loadChapter(chapterIndex ?? target.durChapterIndex ?? 0)
     } finally {
-      openingBookUrl.value = ''
+      openingBookId.value = ''
     }
   }
 

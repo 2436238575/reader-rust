@@ -37,6 +37,8 @@ export const useBookshelfStore = defineStore('bookshelf', () => {
   function saveShelfSnapshot() {
     try {
       const slim = books.value.map((b) => ({
+        bookId: b.bookId,
+        bookSourceId: b.bookSourceId,
         name: b.name,
         author: b.author,
         bookUrl: b.bookUrl,
@@ -80,7 +82,7 @@ export const useBookshelfStore = defineStore('bookshelf', () => {
     await syncRecentBooksFromBackend().catch(() => undefined)
     const browserSummaries = await listBrowserCacheSummary().catch(() => [])
     const browserMap = new Map(
-      browserSummaries.map((item) => [item.bookUrl, item.cachedChapterCount])
+      browserSummaries.map((item) => [item.bookId, item.cachedChapterCount])
     )
     const shelfMap = new Map(books.value.map((book) => [getRecentReadBookKey(book), book]))
     recentBooks.value = loadRecentReadBooks().map((entry) => {
@@ -97,12 +99,12 @@ export const useBookshelfStore = defineStore('bookshelf', () => {
         ...merged,
         browserCachedChapterCount: isLocalBook(merged)
           ? 0
-          : browserMap.get(merged.bookUrl) || merged.browserCachedChapterCount || 0,
+          : browserMap.get(merged.bookId || '') || merged.browserCachedChapterCount || 0,
       }
     })
   }
 
-  async function removeRecentBook(book: Pick<Book, 'bookUrl' | 'origin'>) {
+  async function removeRecentBook(book: Pick<Book, 'bookId'>) {
     removeRecentReadBook(book)
     await refreshRecentBooks()
   }
@@ -120,11 +122,11 @@ export const useBookshelfStore = defineStore('bookshelf', () => {
         listBrowserCacheSummary().catch(() => []),
       ])
       const browserMap = new Map(
-        browserSummaries.map((item) => [item.bookUrl, item.cachedChapterCount])
+        browserSummaries.map((item) => [item.bookId, item.cachedChapterCount])
       )
       books.value = serverBooks.map((book) => ({
         ...book,
-        browserCachedChapterCount: isLocalBook(book) ? 0 : browserMap.get(book.bookUrl) || 0,
+        browserCachedChapterCount: isLocalBook(book) ? 0 : browserMap.get(book.bookId || '') || 0,
       }))
       await refreshRecentBooks()
       saveShelfSnapshot()
@@ -140,9 +142,10 @@ export const useBookshelfStore = defineStore('bookshelf', () => {
     }
   }
   async function removeBook(book: Book) {
-    await apiDeleteBook(book)
-    await deleteBrowserBookCache(book.bookUrl).catch(() => undefined)
-    books.value = books.value.filter((b) => b.bookUrl !== book.bookUrl)
+    if (!book.bookId) return
+    await apiDeleteBook(book.bookId)
+    await deleteBrowserBookCache(book.bookId).catch(() => undefined)
+    books.value = books.value.filter((b) => b.bookId !== book.bookId)
     await refreshRecentBooks()
   }
 
@@ -205,14 +208,14 @@ export const useBookshelfStore = defineStore('bookshelf', () => {
   const searchKey = ref('')
   const searchScope = ref<'all' | 'group' | 'source'>('source')
   const searchGroup = ref('')
-  const searchSourceUrl = ref('')
+  const searchSourceId = ref<number | null>(null)
 
   function startSearch(
     key: string,
     options: {
       scope?: 'all' | 'group' | 'source'
       group?: string
-      sourceUrl?: string
+      sourceId?: number | null
     } = {}
   ) {
     const nextKey = key.trim()
@@ -223,7 +226,7 @@ export const useBookshelfStore = defineStore('bookshelf', () => {
 
     searchScope.value = options.scope || 'source'
     searchGroup.value = options.group || ''
-    searchSourceUrl.value = options.sourceUrl || ''
+    searchSourceId.value = options.sourceId ?? null
     searchKey.value = nextKey
   }
 
@@ -233,59 +236,59 @@ export const useBookshelfStore = defineStore('bookshelf', () => {
     isSearching.value = false
     searchScope.value = 'source'
     searchGroup.value = ''
-    searchSourceUrl.value = ''
+    searchSourceId.value = null
   }
 
   // ─── Edit mode and Selection ───
   const editMode = ref(false)
-  const selectedBookUrls = ref<Set<string>>(new Set())
+  const selectedBookIds = ref<Set<string>>(new Set())
 
-  function toggleSelection(url: string) {
-    if (selectedBookUrls.value.has(url)) {
-      selectedBookUrls.value.delete(url)
+  function toggleSelection(bookId: string) {
+    if (selectedBookIds.value.has(bookId)) {
+      selectedBookIds.value.delete(bookId)
     } else {
-      selectedBookUrls.value.add(url)
+      selectedBookIds.value.add(bookId)
     }
   }
 
   function selectAll() {
-    filteredBooks.value.forEach((b) => selectedBookUrls.value.add(b.bookUrl))
+    filteredBooks.value.forEach((b) => b.bookId && selectedBookIds.value.add(b.bookId))
   }
 
   function clearSelection() {
-    selectedBookUrls.value.clear()
+    selectedBookIds.value.clear()
   }
 
   async function bulkDelete() {
     const toDelete = books.value
-      .filter((b) => selectedBookUrls.value.has(b.bookUrl))
-      .map((b) => ({ bookUrl: b.bookUrl, origin: b.origin }))
+      .filter((b) => b.bookId && selectedBookIds.value.has(b.bookId))
+      .map((b) => b.bookId!)
 
     if (toDelete.length === 0) return
-    await apiDeleteBooks(toDelete as Book[])
+    await apiDeleteBooks(toDelete)
     await Promise.all(
-      toDelete.map((book) => deleteBrowserBookCache(book.bookUrl).catch(() => undefined))
+      toDelete.map((bookId) => deleteBrowserBookCache(bookId).catch(() => undefined))
     )
-    books.value = books.value.filter((b) => !selectedBookUrls.value.has(b.bookUrl))
+    books.value = books.value.filter((b) => !b.bookId || !selectedBookIds.value.has(b.bookId))
     clearSelection()
   }
 
   async function bulkSetGroup(groupId: number) {
-    const urls = Array.from(selectedBookUrls.value)
-    for (const url of urls) {
-      await apiSaveBookGroupId(url, groupId)
+    const ids = Array.from(selectedBookIds.value)
+    for (const id of ids) {
+      await apiSaveBookGroupId(id, groupId)
     }
     // Refresh to get updated groups
     await fetchBooks()
     clearSelection()
   }
 
-  async function reorderBooks(draggedUrl: string, targetUrl: string) {
-    if (!draggedUrl || !targetUrl || draggedUrl === targetUrl) return
+  async function reorderBooks(draggedId: string, targetId: string) {
+    if (!draggedId || !targetId || draggedId === targetId) return
 
     const snapshot = books.value.slice()
-    const fromIndex = snapshot.findIndex((book) => book.bookUrl === draggedUrl)
-    const toIndex = snapshot.findIndex((book) => book.bookUrl === targetUrl)
+    const fromIndex = snapshot.findIndex((book) => book.bookId === draggedId)
+    const toIndex = snapshot.findIndex((book) => book.bookId === targetId)
     if (fromIndex === -1 || toIndex === -1 || fromIndex === toIndex) return
 
     const next = snapshot.slice()
@@ -304,11 +307,11 @@ export const useBookshelfStore = defineStore('bookshelf', () => {
     }
   }
 
-  async function moveBookToFront(bookUrl: string) {
-    if (!bookUrl || books.value.length <= 1) return
+  async function moveBookToFront(bookId: string) {
+    if (!bookId || books.value.length <= 1) return
 
     const snapshot = books.value.slice()
-    const fromIndex = snapshot.findIndex((book) => book.bookUrl === bookUrl)
+    const fromIndex = snapshot.findIndex((book) => book.bookId === bookId)
     if (fromIndex <= 0) return
 
     const next = snapshot.slice()
@@ -351,11 +354,11 @@ export const useBookshelfStore = defineStore('bookshelf', () => {
     searchKey,
     searchScope,
     searchGroup,
-    searchSourceUrl,
+    searchSourceId,
     startSearch,
     clearSearch,
     editMode,
-    selectedBookUrls,
+    selectedBookIds,
     toggleSelection,
     selectAll,
     clearSelection,

@@ -5,14 +5,14 @@ import { createAuthedEventSource } from '../utils/secureAccess'
  * SSE-based book caching. Returns an EventSource.
  */
 export function cacheBookSSE(params: {
-  bookUrl: string
+  bookId: string
   tocUrl?: string
   count?: number
   refresh?: number
   concurrentCount?: number
 }) {
   return createAuthedEventSource('/cacheBookSSE', {
-    bookUrl: params.bookUrl,
+    bookId: params.bookId,
     tocUrl: params.tocUrl,
     count: params.count,
     refresh: params.refresh,

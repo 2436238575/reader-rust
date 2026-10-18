@@ -8,8 +8,11 @@ export function getVisibleSelection<T>(
   return visibleItems.filter((item) => selectedKeys.has(keyOf(item)))
 }
 
-export function toBookSourceDeletePayload(sources: Pick<BookSource, 'bookSourceUrl'>[]) {
-  return sources.map((source) => ({ bookSourceUrl: source.bookSourceUrl }))
+export function toBookSourceDeletePayload(sources: Pick<BookSource, 'bookSourceId'>[]) {
+  return sources
+    .map((source) => source.bookSourceId)
+    .filter((id): id is number => id != null)
+    .map((bookSourceId) => ({ bookSourceId }))
 }
 
 // 书源分组字段的拆分是全站唯一约定：中英文逗号/分号、顿号、竖线、斜杠都视为分隔符。

@@ -6,7 +6,7 @@ export function getBookSources() {
   return http.get<BookSource[]>('/getBookSources').then((r) => r.data)
 }
 
-export function loginBookSource(bookSourceUrl: string) {
+export function loginBookSource(bookSourceId: number) {
   return http
     .post<{
       success: boolean
@@ -15,12 +15,14 @@ export function loginBookSource(bookSourceUrl: string) {
       checkResult?: string | null
       bodyPreview?: string
       bodyHtml?: string
-    }>('/loginBookSource', { bookSourceUrl })
+    }>('/loginBookSource', { bookSourceId })
     .then((r) => r.data)
 }
 
 export function saveBookSource(source: BookSource) {
-  return http.post<{ saved: boolean }>('/saveBookSource', source).then((r) => r.data)
+  return http
+    .post<{ saved: boolean; bookSourceId: number }>('/saveBookSource', source)
+    .then((r) => r.data)
 }
 
 export function saveBookSources(sources: BookSource[]) {
@@ -29,11 +31,11 @@ export function saveBookSources(sources: BookSource[]) {
     .then((r) => r.data)
 }
 
-export function deleteBookSource(bookSourceUrl: string) {
-  return http.post<{ deleted: boolean }>('/deleteBookSource', { bookSourceUrl }).then((r) => r.data)
+export function deleteBookSource(bookSourceId: number) {
+  return http.post<{ deleted: boolean }>('/deleteBookSource', { bookSourceId }).then((r) => r.data)
 }
 
-export function deleteBookSources(sources: { bookSourceUrl: string }[]) {
+export function deleteBookSources(sources: { bookSourceId: number }[]) {
   return http.post<{ deleted: boolean }>('/deleteBookSources', sources).then((r) => r.data)
 }
 
@@ -42,12 +44,12 @@ export function deleteAllBookSources() {
 }
 
 export function testBookSources(params: {
-  bookSourceUrls?: string[]
+  bookSourceIds?: number[]
   keyword?: string
   markInvalid?: boolean
   concurrent?: number
 }) {
-  if ((params.bookSourceUrls?.length || 0) > MAX_SOURCE_TEST_BATCH_SIZE) {
+  if ((params.bookSourceIds?.length || 0) > MAX_SOURCE_TEST_BATCH_SIZE) {
     throw new Error(`单次最多测试 ${MAX_SOURCE_TEST_BATCH_SIZE} 个书源`)
   }
   return http.post<BookSourceTestResponse>('/testBookSources', params).then((r) => r.data)

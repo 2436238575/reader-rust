@@ -12,9 +12,9 @@
     <div class="shelf-list">
       <div
         v-for="book in store.books"
-        :key="book.bookUrl"
+        :key="book.bookId || book.bookUrl"
         class="shelf-item"
-        :class="{ current: book.bookUrl === readerStore.book?.bookUrl }"
+        :class="{ current: book.bookId === readerStore.book?.bookId }"
         @click="openBook(book)"
       >
         <img
@@ -51,7 +51,7 @@ if (!store.books.length) {
 }
 
 async function openBook(book: Book) {
-  if (book.bookUrl !== readerStore.book?.bookUrl) {
+  if (book.bookId !== readerStore.book?.bookId) {
     readerStore.clear()
     await readerStore.loadBook(book)
     await readerStore.loadChapter(book.durChapterIndex || 0)

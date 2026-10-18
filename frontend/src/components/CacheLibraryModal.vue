@@ -55,7 +55,7 @@
               </div>
             </div>
 
-            <div v-for="item in mergedBooks" :key="item.bookUrl" class="cache-item">
+            <div v-for="item in mergedBooks" :key="item.bookId" class="cache-item">
               <div class="cache-main">
                 <h3>{{ item.name }}</h3>
                 <p>{{ item.author || '未知作者' }}</p>
@@ -170,7 +170,7 @@ const cacheCount = ref(50)
 const serverBooks = ref<Book[]>([])
 // 缓存任务（SSE/浏览器写入）按书防重入：连点会并行起多条 SSE 连接
 const cachingUrls = ref(new Set<string>())
-const browserSummaries = ref<Array<{ bookUrl: string; cachedChapterCount: number }>>([])
+const browserSummaries = ref<Array<{ bookId: string; cachedChapterCount: number }>>([])
 
 interface CacheLayer {
   kind: ServerCacheKind
@@ -254,21 +254,21 @@ async function purgeAllLayers() {
 
 const mergedBooks = computed(() => {
   const serverMap = new Map(
-    serverBooks.value.map((book) => [book.bookUrl, book.cachedChapterCount || 0])
+    serverBooks.value.map((book) => [book.bookId || '', book.cachedChapterCount || 0])
   )
   const browserMap = new Map(
-    browserSummaries.value.map((item) => [item.bookUrl, item.cachedChapterCount])
+    browserSummaries.value.map((item) => [item.bookId, item.cachedChapterCount])
   )
 
   return shelfStore.books
     .filter((book) => !isLocalBook(book))
     .map((book) => ({
       book,
-      bookUrl: book.bookUrl,
+      bookId: book.bookId || '',
       name: book.name,
       author: book.author,
-      serverCachedCount: serverMap.get(book.bookUrl) || 0,
-      browserCachedCount: browserMap.get(book.bookUrl) || 0,
+      serverCachedCount: serverMap.get(book.bookId || '') || 0,
+      browserCachedCount: browserMap.get(book.bookId || '') || 0,
     }))
 })
 
@@ -313,18 +313,19 @@ async function refreshData() {
 }
 
 function cacheServer(book: Book) {
-  if (cachingUrls.value.has(book.bookUrl)) return
-  cachingUrls.value.add(book.bookUrl)
-  const sse = cacheBookSSE({ bookUrl: book.bookUrl, count: cacheCount.value, concurrentCount: 8 })
+  const bookId = book.bookId
+  if (!bookId || cachingUrls.value.has(bookId)) return
+  cachingUrls.value.add(bookId)
+  const sse = cacheBookSSE({ bookId, count: cacheCount.value, concurrentCount: 8 })
   sse.addEventListener('end', async () => {
     sse.close()
-    cachingUrls.value.delete(book.bookUrl)
+    cachingUrls.value.delete(book.bookId || '')
     appStore.showToast(`"${book.name}" 已缓存到服务器`, 'success')
     await refreshData()
   })
   sse.onerror = () => {
     sse.close()
-    cachingUrls.value.delete(book.bookUrl)
+    cachingUrls.value.delete(book.bookId || '')
     appStore.showToast(`"${book.name}" 服务端缓存失败`, 'error')
   }
 }
@@ -339,14 +340,14 @@ async function cacheBrowser(book: Book) {
   } catch (error) {
     appStore.showToast((error as Error).message || '浏览器缓存失败', 'error')
   } finally {
-    cachingUrls.value.delete(book.bookUrl)
+    cachingUrls.value.delete(book.bookId || '')
   }
 }
 
 async function clearServer(book: Book) {
   if (!confirm(`确定清除"${book.name}"的服务端缓存吗？已缓存的正文需要重新抓取。`)) return
   try {
-    await deleteBookCache(book.bookUrl)
+    await deleteBookCache(book.bookId || '')
     appStore.showToast(`"${book.name}" 服务端缓存已清除`, 'success')
   } catch (error) {
     appStore.showToast((error as Error).message || '清除服务端缓存失败', 'error')
@@ -358,7 +359,7 @@ async function clearServer(book: Book) {
 async function clearBrowser(book: Book) {
   if (!confirm(`确定清除"${book.name}"的浏览器缓存吗？离线章节会被删除。`)) return
   try {
-    await deleteBrowserBookCache(book.bookUrl)
+    await deleteBrowserBookCache(book.bookId || '')
     appStore.showToast(`"${book.name}" 浏览器缓存已清除`, 'success')
   } catch (error) {
     appStore.showToast((error as Error).message || '清除浏览器缓存失败', 'error')

@@ -14,7 +14,7 @@ export type AgentTaskPhase = 'idle' | 'loading' | 'text' | 'map' | 'saving' | 'e
 export interface AgentTaskSnapshot {
   running: boolean
   jobId: string
-  bookUrl: string
+  bookId: string
   phase: AgentTaskPhase
   statusText: string
   currentChapterIndex: number | null
@@ -23,7 +23,7 @@ export interface AgentTaskSnapshot {
 }
 
 export function runAgentTask(params: {
-  bookUrl: string
+  bookId: string
   kind: AgentTaskKind
   targetChapterIndex?: number
 }) {

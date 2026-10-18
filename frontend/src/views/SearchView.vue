@@ -14,6 +14,7 @@ const shelfStore = useBookshelfStore()
 
 // 搜索页以 URL 为唯一事实来源（#/search?q=...）；
 // 范围筛选（全部/分组/单源）仍是会话内状态，不进 URL
+// （发现页跳转时带的 source 查询参数是书源 id，不是书源 URL）
 function applyQuery() {
   if (route.path !== '/search') return
   const q = typeof route.query.q === 'string' ? route.query.q.trim() : ''
@@ -21,9 +22,13 @@ function applyQuery() {
     router.replace('/')
     return
   }
-  const source = typeof route.query.source === 'string' ? route.query.source : ''
-  if (source) {
-    shelfStore.startSearch(q, { scope: 'source', sourceUrl: source })
+  const sourceParam = typeof route.query.source === 'string' ? route.query.source : ''
+  if (sourceParam) {
+    const sourceId = Number(sourceParam)
+    shelfStore.startSearch(q, {
+      scope: 'source',
+      sourceId: Number.isInteger(sourceId) ? sourceId : null,
+    })
     return
   }
   // URL 不带 source：别用默认值冲掉搜索页已有的范围/书源选择——
@@ -32,7 +37,7 @@ function applyQuery() {
     shelfStore.startSearch(q, {
       scope: shelfStore.searchScope,
       group: shelfStore.searchGroup,
-      sourceUrl: shelfStore.searchSourceUrl,
+      sourceId: shelfStore.searchSourceId,
     })
   }
 }

@@ -52,18 +52,14 @@
       <div
         v-else
         v-for="item in preparedResults"
-        :key="item.book.bookUrl + item.book.origin"
+        :key="item.book.bookId || item.book.bookUrl"
         class="source-item"
-        :class="{
-          selected:
-            selectedCandidate?.book.bookUrl === item.book.bookUrl &&
-            selectedCandidate?.book.origin === item.book.origin,
-        }"
+        :class="{ selected: selectedCandidate?.book.bookId === item.book.bookId }"
         @click="selectCandidate(item)"
       >
         <div class="source-main">
           <div class="source-name-row">
-            <span class="source-name">{{ item.book.origin }}</span>
+            <span class="source-name">{{ resolveSourceName(item.book.bookSourceId) || item.book.origin }}</span>
             <span class="source-tag" v-if="item.book.kind">{{ item.book.kind }}</span>
             <span v-if="item.sameLatest" class="compare-badge good">最新章节一致</span>
             <span v-else-if="item.book.lastChapter" class="compare-badge">章节不同</span>
@@ -163,6 +159,7 @@ import { useAppStore } from '../../stores/app'
 import { getBookInfo, getCoverUrl } from '../../api/bookshelf'
 import {
   useAvailableSources,
+  useSourceNameResolver,
   type AvailableSourceCandidate,
 } from '../../composables/useAvailableSources'
 import type { Book, SearchBook } from '../../types'
@@ -174,16 +171,17 @@ const theme = computed(() => store.currentTheme)
 const coverSrc = computed(() => getCoverUrl(store.book?.coverUrl))
 const selectedCandidate = ref<AvailableSourceCandidate | null>(null)
 const candidatePreview = ref<Book | null>(null)
+const resolveSourceName = useSourceNameResolver()
 
 // 换源候选搜索/打分/SSE 管线在 useAvailableSources（与详情弹窗换源共用）
 const { searching, loadingMore, hasMoreSources, preparedResults, startSearch, loadMoreSources } =
   useAvailableSources(() => {
     if (!store.book) return null
     return {
-      bookUrl: store.book.bookUrl,
+      bookId: store.book.bookId,
       name: store.book.name,
       author: store.book.author,
-      origin: store.book.origin,
+      sourceId: store.book.bookSourceId,
       latest: store.book.latestChapterTitle || store.currentChapter?.title,
     }
   })
@@ -212,8 +210,9 @@ async function selectCandidate(item: AvailableSourceCandidate) {
   selectedCandidate.value = item
   candidatePreview.value = null
   const seq = ++candidatePreviewSeq
+  if (!item.book.bookId) return
   try {
-    const preview = await getBookInfo(item.book.bookUrl, item.book.origin)
+    const preview = await getBookInfo(item.book.bookId)
     if (seq === candidatePreviewSeq) candidatePreview.value = preview
   } catch {
     if (seq === candidatePreviewSeq) candidatePreview.value = null
@@ -221,12 +220,12 @@ async function selectCandidate(item: AvailableSourceCandidate) {
 }
 
 async function handleSwitch(res: SearchBook) {
-  if (store.loading) return
+  if (store.loading || !res.bookId) return
   try {
-    const nextBook = await store.switchSource(res.bookUrl, res.origin)
+    const nextBook = await store.switchSource(res.bookId)
     store.closePanel()
     appStore.showToast(
-      `已切换到 ${nextBook?.originName || nextBook?.origin || res.origin}`,
+      `已切换到 ${nextBook?.originName || res.origin}`,
       'success'
     )
   } catch (e: any) {

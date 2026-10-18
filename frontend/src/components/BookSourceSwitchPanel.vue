@@ -38,13 +38,13 @@
       <div
         v-else
         v-for="item in preparedResults"
-        :key="item.book.bookUrl + item.book.origin"
+        :key="item.book.bookId || item.book.bookUrl"
         class="candidate"
         @click="emit('switch', item.book)"
       >
         <div class="candidate-main">
           <div class="candidate-name-row">
-            <span class="candidate-name">{{ resolveSourceName(item.book.origin) }}</span>
+            <span class="candidate-name">{{ resolveSourceName(item.book.bookSourceId) }}</span>
             <span v-if="item.sameLatest" class="match-badge good">最新章节一致</span>
             <span v-else-if="item.book.lastChapter" class="match-badge">章节不同</span>
           </div>
@@ -107,16 +107,16 @@ const { searching, loadingMore, hasMoreSources, preparedResults, startSearch, lo
   useAvailableSources(() => {
     const b = props.book
     return {
-      bookUrl: b.bookUrl,
+      bookId: b.bookId,
       name: b.name,
       author: b.author,
-      origin: b.origin,
+      sourceId: b.bookSourceId,
       latest: (b as Book).latestChapterTitle || (b as SearchBook).lastChapter,
     }
   })
 
 const currentSourceName = computed(
-  () => (props.book as Book).originName || resolveSourceName(props.book.origin)
+  () => (props.book as Book).originName || resolveSourceName(props.book.bookSourceId)
 )
 
 onMounted(() => {

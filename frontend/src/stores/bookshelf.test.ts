@@ -22,7 +22,7 @@ vi.mock('../utils/browserCache', () => ({
 
 vi.mock('../utils/recentBooks', () => ({
   clearRecentReadBooks: vi.fn(),
-  getRecentReadBookKey: vi.fn((book) => `${book.origin || ''}::${book.bookUrl}`),
+  getRecentReadBookKey: vi.fn((book) => book.bookId || ''),
   loadRecentReadBooks: vi.fn(() => []),
   removeRecentReadBook: vi.fn(),
   syncRecentBooksFromBackend: vi.fn(async () => undefined),
@@ -42,13 +42,14 @@ describe('bookshelf search state', () => {
 
     expect(store.searchKey).toBe('星门')
     expect(store.searchScope).toBe('source')
-    expect(store.searchSourceUrl).toBe('')
+    expect(store.searchSourceId).toBeNull()
     expect(store.searchGroup).toBe('')
   })
 
   it('does not display browser cache counts for uploaded local txt books', async () => {
     vi.mocked(getBookshelfWithCacheInfo).mockResolvedValue([
       {
+        bookId: 'book-local',
         name: '本地书',
         author: '本地导入',
         origin: 'local-txt',
@@ -56,6 +57,7 @@ describe('bookshelf search state', () => {
         cachedChapterCount: 12,
       },
       {
+        bookId: 'book-remote',
         name: '远程书',
         author: '作者',
         origin: 'https://source.example',
@@ -63,29 +65,28 @@ describe('bookshelf search state', () => {
       },
     ] as never)
     vi.mocked(listBrowserCacheSummary).mockResolvedValue([
-      { bookUrl: 'local-txt:abc', cachedChapterCount: 12, bytes: 100, updatedAt: 1 },
-      { bookUrl: 'https://book.example/1', cachedChapterCount: 3, bytes: 200, updatedAt: 2 },
+      { bookId: 'book-local', cachedChapterCount: 12, bytes: 100, updatedAt: 1 },
+      { bookId: 'book-remote', cachedChapterCount: 3, bytes: 200, updatedAt: 2 },
     ])
     const store = useBookshelfStore()
 
     await store.fetchBooks()
 
     expect(
-      store.books.find((book) => book.bookUrl === 'local-txt:abc')?.browserCachedChapterCount
+      store.books.find((book) => book.bookId === 'book-local')?.browserCachedChapterCount
     ).toBe(0)
     expect(
-      store.books.find((book) => book.bookUrl === 'https://book.example/1')
-        ?.browserCachedChapterCount
+      store.books.find((book) => book.bookId === 'book-remote')?.browserCachedChapterCount
     ).toBe(3)
   })
 
   it('can start a search with the active explore source selected', () => {
     const store = useBookshelfStore()
 
-    store.startSearch('星门', { sourceUrl: 'https://m.cuoceng.com' })
+    store.startSearch('星门', { sourceId: 42 })
 
     expect(store.searchKey).toBe('星门')
     expect(store.searchScope).toBe('source')
-    expect(store.searchSourceUrl).toBe('https://m.cuoceng.com')
+    expect(store.searchSourceId).toBe(42)
   })
 })

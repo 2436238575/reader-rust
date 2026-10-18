@@ -6,10 +6,10 @@
         :key="getDisplayKey(item)"
         :ref="(el) => setItemRef(el, getDisplayKey(item))"
         class="book-grid-item"
-        :data-book-url="isPlaceholder(item) ? '' : item.bookUrl"
+        :data-book-id="isPlaceholder(item) ? '' : getBookId(item)"
         :class="{
-          'drop-target': sortable && !isPlaceholder(item) && dropTargetUrl === item.bookUrl,
-          'is-dragging': sortable && !isPlaceholder(item) && draggedUrl === item.bookUrl,
+          'drop-target': sortable && !isPlaceholder(item) && dropTargetId === getBookId(item),
+          'is-dragging': sortable && !isPlaceholder(item) && draggedId === getBookId(item),
           'is-touch-gap': sortable && touchDragState.started && isPlaceholder(item),
           'is-touch-sibling': sortable && touchDragState.started && !isPlaceholder(item),
         }"
@@ -29,11 +29,11 @@
           v-else
           :book="item"
           :edit-mode="editMode"
-          :selected="selectedUrls?.has(item.bookUrl)"
+          :selected="selectedIds?.has(getBookId(item))"
           :is-search="isSearch"
-          :on-shelf="shelfUrls?.has(item.bookUrl) ?? false"
-          :adding="addingUrls?.has(item.bookUrl) ?? false"
-          :dragging="sortable && draggedUrl === item.bookUrl"
+          :on-shelf="shelfIds?.has(getBookId(item)) ?? false"
+          :adding="addingIds?.has(getBookId(item)) ?? false"
+          :dragging="sortable && draggedId === getBookId(item)"
           :show-delete-action="showDeleteAction"
           @click="$emit('click', $event)"
           @info="$emit('info', $event)"
@@ -48,7 +48,7 @@
       <BookCard
         :book="draggedBook"
         :edit-mode="editMode"
-        :selected="selectedUrls?.has(draggedBook.bookUrl)"
+        :selected="selectedIds?.has(getBookId(draggedBook))"
         :is-search="isSearch"
         :dragging="true"
         :show-delete-action="false"
@@ -79,16 +79,16 @@ const PLACEHOLDER_KEY = '__drag-placeholder__'
 const props = defineProps<{
   books: (Book | SearchBook)[]
   editMode?: boolean
-  selectedUrls?: Set<string>
+  selectedIds?: Set<string>
   isSearch?: boolean
   loading?: boolean
   emptyText?: string
   sortable?: boolean
   showDeleteAction?: boolean
-  /** 已加入书架的 bookUrl 集合：搜索/发现卡片用它把按钮切为「已在书架」 */
-  shelfUrls?: Set<string>
-  /** 加入书架请求进行中的 bookUrl 集合：按钮显示「加入中...」并禁用 */
-  addingUrls?: Set<string>
+  /** 已加入书架的 bookId 集合：搜索/发现卡片用它把按钮切为「已在书架」 */
+  shelfIds?: Set<string>
+  /** 加入书架请求进行中的 bookId 集合：按钮显示「加入中...」并禁用 */
+  addingIds?: Set<string>
 }>()
 
 const emit = defineEmits<{
@@ -98,11 +98,11 @@ const emit = defineEmits<{
   ai: [book: Book | SearchBook]
   select: [book: Book | SearchBook]
   addToShelf: [book: Book | SearchBook]
-  reorder: [payload: { draggedUrl: string; targetUrl: string }]
+  reorder: [payload: { draggedId: string; targetId: string }]
 }>()
 
-const draggedUrl = ref('')
-const dropTargetUrl = ref('')
+const draggedId = ref('')
+const dropTargetId = ref('')
 const touchDropIndex = ref(-1)
 const itemRefs = ref<Record<string, HTMLElement>>({})
 const touchDragState = ref({
@@ -129,8 +129,8 @@ const flipAnimationDurationMs = 680
 const edgeScrollThresholdPx = 140
 const maxAutoScrollStepPx = 24
 
-function getBookUrl(book: Book | SearchBook) {
-  return book.bookUrl
+function getBookId(book: Book | SearchBook) {
+  return book.bookId || book.bookUrl
 }
 
 function isPlaceholder(item: DisplayItem): item is { __placeholder: true } {
@@ -139,45 +139,45 @@ function isPlaceholder(item: DisplayItem): item is { __placeholder: true } {
 
 function getDisplayKey(item: DisplayItem) {
   if (isPlaceholder(item)) return PLACEHOLDER_KEY
-  return props.isSearch ? `${item.origin}::${item.bookUrl}` : item.bookUrl
+  return props.isSearch ? `${item.bookSourceId}::${getBookId(item)}` : getBookId(item)
 }
 
 function getRemainingBooks() {
-  return props.books.filter((book) => getBookUrl(book) !== draggedUrl.value)
+  return props.books.filter((book) => getBookId(book) !== draggedId.value)
 }
 
 function handleDragStart(book: Book | SearchBook) {
   if (!props.sortable) return
-  draggedUrl.value = getBookUrl(book)
-  dropTargetUrl.value = getBookUrl(book)
+  draggedId.value = getBookId(book)
+  dropTargetId.value = getBookId(book)
   touchDropIndex.value = -1
 }
 
 function handleDragEnter(book: Book | SearchBook) {
-  if (!props.sortable || !draggedUrl.value) return
-  dropTargetUrl.value = getBookUrl(book)
+  if (!props.sortable || !draggedId.value) return
+  dropTargetId.value = getBookId(book)
 }
 
 function handleDragOver(book: Book | SearchBook) {
-  if (!props.sortable || !draggedUrl.value) return
-  dropTargetUrl.value = getBookUrl(book)
+  if (!props.sortable || !draggedId.value) return
+  dropTargetId.value = getBookId(book)
 }
 
 function handleDrop(book: Book | SearchBook) {
-  if (!props.sortable || !draggedUrl.value) return
-  const sourceUrl = draggedUrl.value
-  const targetUrl = getBookUrl(book)
-  draggedUrl.value = ''
-  dropTargetUrl.value = ''
+  if (!props.sortable || !draggedId.value) return
+  const sourceId = draggedId.value
+  const targetId = getBookId(book)
+  draggedId.value = ''
+  dropTargetId.value = ''
   touchDropIndex.value = -1
-  if (sourceUrl !== targetUrl) {
-    emit('reorder', { draggedUrl: sourceUrl, targetUrl })
+  if (sourceId !== targetId) {
+    emit('reorder', { draggedId: sourceId, targetId })
   }
 }
 
 function handleDragEnd() {
-  draggedUrl.value = ''
-  dropTargetUrl.value = ''
+  draggedId.value = ''
+  dropTargetId.value = ''
   touchDropIndex.value = -1
   stopAutoScroll()
 }
@@ -245,13 +245,13 @@ function handleTouchStart(event: TouchEvent, book: Book | SearchBook) {
     offsetX: 0,
     offsetY: 0,
   }
-  draggedUrl.value = getBookUrl(book)
-  dropTargetUrl.value = getBookUrl(book)
-  touchDropIndex.value = props.books.findIndex((item) => getBookUrl(item) === draggedUrl.value)
+  draggedId.value = getBookId(book)
+  dropTargetId.value = getBookId(book)
+  touchDropIndex.value = props.books.findIndex((item) => getBookId(item) === draggedId.value)
   longPressTimer = window.setTimeout(() => {
-    if (!touchDragState.value.active || !draggedUrl.value) return
+    if (!touchDragState.value.active || !draggedId.value) return
     touchDragState.value.started = true
-    measureTouchDragMetrics(draggedUrl.value, touch.clientX, touch.clientY)
+    measureTouchDragMetrics(draggedId.value, touch.clientX, touch.clientY)
   }, 220)
 }
 
@@ -259,8 +259,8 @@ function resolveTouchDropIndex(clientX: number, clientY: number) {
   const remainingBooks = getRemainingBooks()
   const entries = remainingBooks
     .map((book, index) => {
-      const rect = itemRefs.value[getBookUrl(book)]?.getBoundingClientRect()
-      return rect ? { index, rect, bookUrl: getBookUrl(book) } : null
+      const rect = itemRefs.value[getBookId(book)]?.getBoundingClientRect()
+      return rect ? { index, rect, bookUrl: getBookId(book) } : null
     })
     .filter((entry): entry is { index: number; rect: DOMRect; bookUrl: string } => Boolean(entry))
 
@@ -350,21 +350,21 @@ function handleTouchEnd() {
     handleTouchCancel()
     return
   }
-  const sourceUrl = draggedUrl.value
-  const fromIndex = props.books.findIndex((item) => getBookUrl(item) === sourceUrl)
+  const sourceId = draggedId.value
+  const fromIndex = props.books.findIndex((item) => getBookId(item) === sourceId)
   const insertIndex = touchDropIndex.value
   const remainingBooks = getRemainingBooks()
-  const targetUrl =
+  const targetId =
     insertIndex !== -1 && remainingBooks.length > 0 && insertIndex !== fromIndex
       ? insertIndex > fromIndex
-        ? getBookUrl(remainingBooks[Math.min(insertIndex - 1, remainingBooks.length - 1)]!)
-        : getBookUrl(remainingBooks[Math.min(insertIndex, remainingBooks.length - 1)]!)
+        ? getBookId(remainingBooks[Math.min(insertIndex - 1, remainingBooks.length - 1)]!)
+        : getBookId(remainingBooks[Math.min(insertIndex, remainingBooks.length - 1)]!)
       : ''
   const shouldEmit =
-    touchDragState.value.started && sourceUrl && targetUrl && sourceUrl !== targetUrl
+    touchDragState.value.started && sourceId && targetId && sourceId !== targetId
   handleTouchCancel()
   if (shouldEmit) {
-    emit('reorder', { draggedUrl: sourceUrl, targetUrl })
+    emit('reorder', { draggedId: sourceId, targetId })
   }
 }
 
@@ -375,8 +375,8 @@ function handleTouchCancel() {
   touchDragState.value.started = false
   touchDragState.value.offsetX = 0
   touchDragState.value.offsetY = 0
-  draggedUrl.value = ''
-  dropTargetUrl.value = ''
+  draggedId.value = ''
+  dropTargetId.value = ''
   touchDropIndex.value = -1
 }
 
@@ -448,15 +448,15 @@ function measureTouchDragMetrics(bookUrl: string, clientX?: number, clientY?: nu
 }
 
 const draggedBook = computed(() => {
-  if (!draggedUrl.value) return null
-  return props.books.find((book) => getBookUrl(book) === draggedUrl.value) || null
+  if (!draggedId.value) return null
+  return props.books.find((book) => getBookId(book) === draggedId.value) || null
 })
 
 const displayItems = computed<DisplayItem[]>(() => {
   if (!(
     props.sortable &&
     touchDragState.value.started &&
-    draggedUrl.value &&
+    draggedId.value &&
     touchDropIndex.value !== -1
   )) {
     return props.books

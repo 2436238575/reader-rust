@@ -221,16 +221,14 @@ async function loadChapters() {
   chaptersLoading.value = true
   try {
     const b = book.value as Book
-    const list = await getChapterList({
-      bookUrl: b.bookUrl,
-      bookSourceUrl: b.origin,
-    })
+    if (!b.bookId) throw new Error('书籍缺少 bookId')
+    const list = await getChapterList({ bookId: b.bookId })
     chapters.value = list
     // 落浏览器目录缓存：离线时详情弹窗与阅读器都能回退
-    void setBrowserCatalog(b.bookUrl, list)
+    void setBrowserCatalog(b.bookId, list)
   } catch {
     // 离线兜底：先翻浏览器里的目录缓存，实在没有才报失败
-    const cached = await getBrowserCatalog<BookChapter>((book.value as Book).bookUrl)
+    const cached = await getBrowserCatalog<BookChapter>((book.value as Book).bookId || '')
     if (cached) {
       chapters.value = cached
     } else {
@@ -281,7 +279,7 @@ function openAiBook() {
   close()
   router.push({
     name: 'ai-book',
-    query: { bookUrl: b.bookUrl },
+    query: { bookId: b.bookId },
   })
 }
 
@@ -317,12 +315,12 @@ async function handleSourceSwitch(candidate: SearchBook) {
   switchingSource.value = true
   try {
     let switched: Book | SearchBook
-    if (shelfStore.books.some((item) => item.bookUrl === current.bookUrl)) {
-      // 书架书：后端换源落库（不依赖旧书源仍存在），返回换源后的完整书籍
+    if (current.bookId && shelfStore.books.some((item) => item.bookId === current.bookId)) {
+      // 书架书：后端换源落库（bookId 不变），返回换源后的完整书籍
+      if (!candidate.bookId) throw new Error('候选缺少 bookId')
       const updated = await setBookSource({
-        bookUrl: current.bookUrl,
-        newUrl: candidate.bookUrl,
-        bookSourceUrl: candidate.origin,
+        bookId: current.bookId,
+        targetBookId: candidate.bookId,
       })
       book.value = updated
       switched = updated
@@ -337,7 +335,7 @@ async function handleSourceSwitch(candidate: SearchBook) {
     showSourcePanel.value = false
     coverFailed.value = false
     appStore.showToast(
-      `已切换到 ${switched.originName || resolveSourceName(candidate.origin)}`,
+      `已切换到 ${switched.originName || resolveSourceName(candidate.bookSourceId)}`,
       'success'
     )
     await loadChapters()

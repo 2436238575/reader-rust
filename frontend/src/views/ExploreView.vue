@@ -5,14 +5,14 @@
       <!-- 顶部：书源切换（与标题同行，右对齐）；只有一个可用书源时没有切换意义 -->
       <div class="source-selector">
         <select
-          :value="store.activeSourceUrl"
+          :value="store.activeSourceId"
           @change="onSourceChange"
           v-if="store.exploreSources.length > 1"
         >
           <option
             v-for="src in store.exploreSources"
-            :key="src.bookSourceUrl"
-            :value="src.bookSourceUrl"
+            :key="src.bookSourceId"
+            :value="src.bookSourceId"
           >
             {{ src.bookSourceName }}
           </option>
@@ -48,8 +48,8 @@
           <BookGrid
             :books="store.books"
             :is-search="true"
-            :shelf-urls="shelfUrls"
-            :adding-urls="addingUrls"
+            :shelf-ids="shelfBookIds"
+            :adding-ids="addingIds"
             empty-text="暂无数据"
             @click="handleBookClick"
             @info="handleBookInfo"
@@ -116,10 +116,14 @@ usePreserveScroll(() => scrollContainer.value)
 const showDetail = ref(false)
 const selectedBook = ref<Book | SearchBook | null>(null)
 
-// 书架上已有书籍的 bookUrl 集合：发现卡片把「加入书架」切为「已在书架」
-const shelfUrls = computed(() => new Set(shelfStore.books.map((book) => book.bookUrl)))
-// 加入书架请求进行中：按 bookUrl 防连点（卡片按钮同步显示「加入中...」）
-const addingUrls = ref(new Set<string>())
+// 书架上已有书籍的 bookId 集合：发现卡片把「加入书架」切为「已在书架」
+// （同一本书不同源是不同 bookId，语义等同原来的按 bookUrl 判定）
+const shelfBookIds = computed(
+  () =>
+    new Set(shelfStore.books.map((book) => book.bookId).filter((id): id is string => Boolean(id)))
+)
+// 加入书架请求进行中：按 bookId 防连点（卡片按钮同步显示「加入中...」）
+const addingIds = ref(new Set<string>())
 
 onMounted(async () => {
   // 「已在书架」状态依赖书架列表；书架页还没打开过时这里是空的，
@@ -160,7 +164,10 @@ const stopWatchers = watch(
 )
 
 function onSourceChange(event: Event) {
-  store.setSource((event.target as HTMLSelectElement).value)
+  const id = Number((event.target as HTMLSelectElement).value)
+  if (Number.isInteger(id)) {
+    store.setSource(id)
+  }
 }
 
 function handleCategoryClick(category: ExploreCategory) {
@@ -178,10 +185,14 @@ function handleBookInfo(book: Book | SearchBook) {
 }
 
 async function handleAddToShelf(book: Book | SearchBook) {
-  if (addingUrls.value.has(book.bookUrl)) return
-  addingUrls.value.add(book.bookUrl)
+  // 探索结果产出即登记，bookId 必有；缺失时无法做入架/防连点判定
+  const bookId = book.bookId
+  if (!bookId || addingIds.value.has(bookId)) return
+  addingIds.value.add(bookId)
   try {
     await saveBook({
+      bookId,
+      bookSourceId: book.bookSourceId,
       name: book.name,
       author: book.author,
       bookUrl: book.bookUrl,
@@ -194,7 +205,7 @@ async function handleAddToShelf(book: Book | SearchBook) {
   } catch (e: unknown) {
     appStore.showToast((e as Error).message, 'error')
   } finally {
-    addingUrls.value.delete(book.bookUrl)
+    addingIds.value.delete(bookId)
   }
 }
 

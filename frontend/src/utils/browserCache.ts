@@ -1,14 +1,16 @@
 const DB_NAME = 'reader-browser-cache'
-const DB_VERSION = 3
+// v3 → v4：缓存键从 bookUrl 换为 bookId（稳定身份，不随换源变化）。
+// 纯缓存无迁移价值，升级时整库重建
+const DB_VERSION = 4
 const STORE_NAME = 'chapters'
 const SUMMARY_STORE = 'summary'
-// 目录缓存：{ bookUrl, chapters, updatedAt }，离线时阅读器/详情弹窗回退用
+// 目录缓存：{ bookId, chapters, updatedAt }，离线时阅读器/详情弹窗回退用
 const CATALOG_STORE = 'catalogs'
 let dbPromise: Promise<IDBDatabase> | null = null
 
 export interface BrowserChapterCacheRecord {
   key: string
-  bookUrl: string
+  bookId: string
   chapterUrl: string
   chapterTitle: string
   content: string
@@ -17,14 +19,14 @@ export interface BrowserChapterCacheRecord {
 }
 
 export interface BrowserBookCacheSummary {
-  bookUrl: string
+  bookId: string
   cachedChapterCount: number
   bytes: number
   updatedAt: number
 }
 
-function cacheKey(bookUrl: string, chapterUrl: string) {
-  return `${bookUrl}::${chapterUrl}`
+function cacheKey(bookId: string, chapterUrl: string) {
+  return `${bookId}::${chapterUrl}`
 }
 
 function openDb(): Promise<IDBDatabase> {
@@ -43,44 +45,15 @@ function openDb(): Promise<IDBDatabase> {
       }
       request.onupgradeneeded = () => {
         const db = request.result
-        const tx = request.transaction!
-        if (!db.objectStoreNames.contains(STORE_NAME)) {
-          const store = db.createObjectStore(STORE_NAME, { keyPath: 'key' })
-          store.createIndex('bookUrl', 'bookUrl', { unique: false })
-          store.createIndex('updatedAt', 'updatedAt', { unique: false })
+        // 缓存键整体换成 bookId：旧数据不可迁移，直接清掉重建
+        for (const name of [STORE_NAME, SUMMARY_STORE, CATALOG_STORE]) {
+          if (db.objectStoreNames.contains(name)) db.deleteObjectStore(name)
         }
-        if (!db.objectStoreNames.contains(SUMMARY_STORE)) {
-          db.createObjectStore(SUMMARY_STORE, { keyPath: 'bookUrl' })
-          // v1 → v2 迁移：一次性回填每本书的汇总（此后增删都在写路径
-          // 增量维护，读取侧再也不用 getAll 把整章正文反序列化进内存）
-          const chapters = tx.objectStore(STORE_NAME)
-          const summary = tx.objectStore(SUMMARY_STORE)
-          const summaryMap = new Map<string, BrowserBookCacheSummary>()
-          const cursorRequest = chapters.openCursor()
-          cursorRequest.onsuccess = () => {
-            const cursor = cursorRequest.result
-            if (!cursor) {
-              summaryMap.forEach((value) => summary.put(value))
-              return
-            }
-            const record = cursor.value as BrowserChapterCacheRecord
-            const current = summaryMap.get(record.bookUrl) || {
-              bookUrl: record.bookUrl,
-              cachedChapterCount: 0,
-              bytes: 0,
-              updatedAt: 0,
-            }
-            current.cachedChapterCount += 1
-            current.bytes += record.size || 0
-            current.updatedAt = Math.max(current.updatedAt, record.updatedAt || 0)
-            summaryMap.set(record.bookUrl, current)
-            cursor.continue()
-          }
-        }
-        // v2 → v3：目录缓存表（纯新增，无迁移负担）
-        if (!db.objectStoreNames.contains(CATALOG_STORE)) {
-          db.createObjectStore(CATALOG_STORE, { keyPath: 'bookUrl' })
-        }
+        const store = db.createObjectStore(STORE_NAME, { keyPath: 'key' })
+        store.createIndex('bookId', 'bookId', { unique: false })
+        store.createIndex('updatedAt', 'updatedAt', { unique: false })
+        db.createObjectStore(SUMMARY_STORE, { keyPath: 'bookId' })
+        db.createObjectStore(CATALOG_STORE, { keyPath: 'bookId' })
       }
     }).catch((error: unknown) => {
       dbPromise = null
@@ -161,10 +134,10 @@ type SummaryMutator = (summary: BrowserBookCacheSummary) => BrowserBookCacheSumm
 function applySummaryDelta(
   current: BrowserBookCacheSummary | undefined,
   mutate: SummaryMutator,
-  bookUrl: string
+  bookId: string
 ): BrowserBookCacheSummary | null {
   const base: BrowserBookCacheSummary = current || {
-    bookUrl,
+    bookId,
     cachedChapterCount: 0,
     bytes: 0,
     updatedAt: 0,
@@ -178,37 +151,37 @@ function applySummaryDelta(
 
 async function readSummary(
   summary: IDBObjectStore,
-  bookUrl: string
+  bookId: string
 ): Promise<BrowserBookCacheSummary | undefined> {
-  return requestToPromise(summary.get(bookUrl)) as Promise<BrowserBookCacheSummary | undefined>
+  return requestToPromise(summary.get(bookId)) as Promise<BrowserBookCacheSummary | undefined>
 }
 
-async function writeSummary(summary: IDBObjectStore, bookUrl: string, mutate: SummaryMutator) {
-  const current = await readSummary(summary, bookUrl)
-  const next = applySummaryDelta(current, mutate, bookUrl)
+async function writeSummary(summary: IDBObjectStore, bookId: string, mutate: SummaryMutator) {
+  const current = await readSummary(summary, bookId)
+  const next = applySummaryDelta(current, mutate, bookId)
   if (next) {
     await requestToPromise(summary.put(next))
   } else if (current) {
-    await requestToPromise(summary.delete(bookUrl))
+    await requestToPromise(summary.delete(bookId))
   }
 }
 
-export async function getBrowserCachedChapter(bookUrl: string, chapterUrl: string) {
+export async function getBrowserCachedChapter(bookId: string, chapterUrl: string) {
   return withStore('readonly', async (store) => {
-    const result = await requestToPromise(store.get(cacheKey(bookUrl, chapterUrl)))
+    const result = await requestToPromise(store.get(cacheKey(bookId, chapterUrl)))
     const record = result as BrowserChapterCacheRecord | undefined
     return record?.content || null
   })
 }
 
 export async function setBrowserCachedChapter(params: {
-  bookUrl: string
+  bookId: string
   chapterUrl: string
   chapterTitle?: string
   content: string
 }) {
   return withStores('readwrite', async ({ chapters, summary }) => {
-    const key = cacheKey(params.bookUrl, params.chapterUrl)
+    const key = cacheKey(params.bookId, params.chapterUrl)
     const size = new Blob([params.content]).size
     const updatedAt = Date.now()
     // 先查旧记录拿 size：覆盖写入时汇总只记增量
@@ -216,7 +189,7 @@ export async function setBrowserCachedChapter(params: {
       BrowserChapterCacheRecord | undefined
     const record: BrowserChapterCacheRecord = {
       key,
-      bookUrl: params.bookUrl,
+      bookId: params.bookId,
       chapterUrl: params.chapterUrl,
       chapterTitle: params.chapterTitle || '',
       content: params.content,
@@ -224,7 +197,7 @@ export async function setBrowserCachedChapter(params: {
       updatedAt,
     }
     await requestToPromise(chapters.put(record))
-    await writeSummary(summary, params.bookUrl, (current) => ({
+    await writeSummary(summary, params.bookId, (current) => ({
       ...current,
       cachedChapterCount: current.cachedChapterCount + (existing ? 0 : 1),
       bytes: current.bytes - (existing?.size || 0) + size,
@@ -233,13 +206,13 @@ export async function setBrowserCachedChapter(params: {
   })
 }
 
-export async function deleteBrowserBookCache(bookUrl: string) {
+export async function deleteBrowserBookCache(bookId: string) {
   await withStores('readwrite', async ({ chapters, summary }) => {
-    const index = chapters.index('bookUrl')
-    const records = await requestToPromise(index.getAll(IDBKeyRange.only(bookUrl)))
+    const index = chapters.index('bookId')
+    const records = await requestToPromise(index.getAll(IDBKeyRange.only(bookId)))
     const removed = records as BrowserChapterCacheRecord[]
     await Promise.all(removed.map((record) => requestToPromise(chapters.delete(record.key))))
-    await writeSummary(summary, bookUrl, (current) => ({
+    await writeSummary(summary, bookId, (current) => ({
       ...current,
       cachedChapterCount: current.cachedChapterCount - removed.length,
       bytes: current.bytes - removed.reduce((total, record) => total + (record.size || 0), 0),
@@ -247,23 +220,23 @@ export async function deleteBrowserBookCache(bookUrl: string) {
   })
   // 目录缓存跟随该书一起清
   await withStoreIn(CATALOG_STORE, 'readwrite', async (store) => {
-    await requestToPromise(store.delete(bookUrl))
+    await requestToPromise(store.delete(bookId))
   }).catch(() => undefined)
 }
 
-export async function countBrowserBookCache(bookUrl: string) {
+export async function countBrowserBookCache(bookId: string) {
   return withStores('readonly', async ({ summary }) => {
-    const record = await readSummary(summary, bookUrl)
+    const record = await readSummary(summary, bookId)
     return record?.cachedChapterCount || 0
   })
 }
 
-export async function listBrowserCachedChapterUrls(bookUrl: string) {
+export async function listBrowserCachedChapterUrls(bookId: string) {
   return withStore('readonly', async (store) => {
-    // getAllKeys 只取主键（不含整章正文），主键即 `${bookUrl}::${chapterUrl}`
-    const index = store.index('bookUrl')
-    const keys = await requestToPromise(index.getAllKeys(IDBKeyRange.only(bookUrl)))
-    const prefix = `${bookUrl}::`
+    // getAllKeys 只取主键（不含整章正文），主键即 `${bookId}::${chapterUrl}`
+    const index = store.index('bookId')
+    const keys = await requestToPromise(index.getAllKeys(IDBKeyRange.only(bookId)))
+    const prefix = `${bookId}::`
     return new Set(
       (keys as IDBValidKey[])
         .map((key) => (typeof key === 'string' ? key.slice(prefix.length) : ''))
@@ -284,7 +257,7 @@ export async function clearAllBrowserCache() {
     await requestToPromise(chapters.clear())
     await requestToPromise(summary.clear())
   })
-  // 目录缓存一并清掉（表可能不存在于旧库——错误吞掉即可）
+  // 目录缓存一并清掉
   await withStoreIn(CATALOG_STORE, 'readwrite', async (store) => {
     await requestToPromise(store.clear())
   }).catch(() => undefined)
@@ -293,24 +266,24 @@ export async function clearAllBrowserCache() {
 /* ─── 目录缓存：离线时阅读器/详情弹窗回退到最近一次成功拉到的目录 ─── */
 
 export interface BrowserCatalogRecord<ChapterT = unknown> {
-  bookUrl: string
+  bookId: string
   chapters: ChapterT[]
   updatedAt: number
 }
 
-export async function getBrowserCatalog<ChapterT>(bookUrl: string): Promise<ChapterT[] | null> {
-  if (!bookUrl) return null
+export async function getBrowserCatalog<ChapterT>(bookId: string): Promise<ChapterT[] | null> {
+  if (!bookId) return null
   return withStoreIn(CATALOG_STORE, 'readonly', async (store) => {
-    const record = (await requestToPromise(store.get(bookUrl))) as
+    const record = (await requestToPromise(store.get(bookId))) as
       BrowserCatalogRecord<ChapterT> | undefined
     return record?.chapters?.length ? record.chapters : null
   }).catch(() => null)
 }
 
-export async function setBrowserCatalog<ChapterT>(bookUrl: string, chapters: ChapterT[]) {
-  if (!bookUrl || !chapters.length) return
+export async function setBrowserCatalog<ChapterT>(bookId: string, chapters: ChapterT[]) {
+  if (!bookId || !chapters.length) return
   return withStoreIn(CATALOG_STORE, 'readwrite', async (store) => {
-    const record: BrowserCatalogRecord<ChapterT> = { bookUrl, chapters, updatedAt: Date.now() }
+    const record: BrowserCatalogRecord<ChapterT> = { bookId, chapters, updatedAt: Date.now() }
     await requestToPromise(store.put(record))
   }).catch(() => undefined)
 }

@@ -8,9 +8,8 @@ import type { ParaReviewIndex, ReviewPage, ReviewResponse } from '../types'
  * 书源没声明评论规则时 `enabled` 为 false，前端据此隐藏入口。
  */
 export interface ReviewParams {
-  bookUrl: string
+  bookId: string
   chapterUrl: string
-  bookSourceUrl?: string
   page?: number
   count?: number
   /** `hot`（默认，站点热度序）或 `time`（按时间倒序） */

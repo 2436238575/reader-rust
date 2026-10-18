@@ -29,11 +29,11 @@ describe('explore store source sync', () => {
     const sourceStore = useSourceStore()
     sourceStore.sources = [sourceWithExplore()]
     const store = useExploreStore()
-    store.activeSourceUrl = 'https://missing.example'
+    store.activeSourceId = 999 // 已不存在的书源 id
 
     await store.init()
 
-    expect(store.activeSourceUrl).toBe('https://m.cuoceng.com')
+    expect(store.activeSourceId).toBe(1)
     expect(store.categories.map((category) => category.title)).toEqual(['书 库', '排 行'])
     expect(store.activeCategoryUrl).toBe('/book/category/catalog.html')
   })
@@ -107,6 +107,7 @@ describe('explore store source sync', () => {
 
 function sourceWithExplore(): BookSource {
   return {
+    bookSourceId: 1,
     bookSourceName: 'm.cuoceng.com',
     bookSourceUrl: 'https://m.cuoceng.com',
     enabledExplore: true,

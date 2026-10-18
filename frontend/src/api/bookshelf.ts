@@ -11,8 +11,8 @@ export function getBookshelfWithCacheInfo() {
   return http.get<Book[]>('/getShelfBookWithCacheInfo').then((r) => r.data)
 }
 
-export function getShelfBook(url: string) {
-  return http.post<Book>('/getShelfBook', { url }).then((r) => r.data)
+export function getShelfBook(bookId: string) {
+  return http.post<Book>('/getShelfBook', { bookId }).then((r) => r.data)
 }
 
 export function saveBook(book: Partial<Book>) {
@@ -21,6 +21,11 @@ export function saveBook(book: Partial<Book>) {
 
 export function saveBooks(books: Partial<Book>[]) {
   return http.post<Book[]>('/saveBooks', books).then((r) => r.data)
+}
+
+/** WebDAV 恢复：整架覆盖 + 登记表清表重建（备份自带的 bookId 原位恢复） */
+export function restoreBooks(books: Partial<Book>[]) {
+  return http.post<Book[]>('/saveBooks', { books, restore: true }).then((r) => r.data)
 }
 
 export function uploadTxtBook(file: File) {
@@ -43,31 +48,25 @@ export function uploadEpubBook(file: File) {
     .then((r) => r.data)
 }
 
-export function deleteBook(book: Partial<Book>) {
-  return http.post<string>('/deleteBook', book).then((r) => r.data)
+export function deleteBook(bookId: string) {
+  return http.post<string>('/deleteBook', { bookId }).then((r) => r.data)
 }
 
-export function deleteBooks(books: Partial<Book>[]) {
-  return http.post<{ deleted: number }>('/deleteBooks', books).then((r) => r.data)
+export function deleteBooks(bookIds: string[]) {
+  return http.post<{ deleted: number }>('/deleteBooks', { bookIds }).then((r) => r.data)
 }
 
-export function getBookInfo(url: string, origin?: string) {
-  return http.post<Book>('/getBookInfo', { url, bookSourceUrl: origin }).then((r) => r.data)
+export function getBookInfo(bookId: string) {
+  return http.post<Book>('/getBookInfo', { bookId }).then((r) => r.data)
 }
 
-export function getChapterList(params: {
-  bookUrl?: string
-  tocUrl?: string
-  bookSourceUrl?: string
-  refresh?: number
-}) {
+export function getChapterList(params: { bookId: string; refresh?: number }) {
   return http.post<BookChapter[]>('/getChapterList', params).then((r) => r.data)
 }
 
 export function getBookContent(params: {
-  chapterUrl?: string
-  bookUrl?: string
-  bookSourceUrl?: string
+  bookId: string
+  chapterUrl: string
   index?: number
   refresh?: number
 }) {
@@ -75,20 +74,16 @@ export function getBookContent(params: {
 }
 
 /** 本章配图；书源没声明配图规则时返回 `enabled: false` */
-export function getChapterImages(params: {
-  bookUrl: string
-  chapterUrl: string
-  bookSourceUrl?: string
-}) {
+export function getChapterImages(params: { bookId: string; chapterUrl: string }) {
   return http.post<ChapterImages>('/getChapterImages', params).then((r) => r.data)
 }
 
-export function saveBookProgress(params: { bookUrl: string; index: number; position?: number }) {
+export function saveBookProgress(params: { bookId: string; index: number; position?: number }) {
   return http.post<string>('/saveBookProgress', params).then((r) => r.data)
 }
 
-export function deleteBookCache(bookUrl: string) {
-  return http.post('/deleteBookCache', { bookUrl }).then((r) => r.data)
+export function deleteBookCache(bookId: string) {
+  return http.post('/deleteBookCache', { bookId }).then((r) => r.data)
 }
 
 // ─── Groups ───
@@ -104,11 +99,12 @@ export function deleteBookGroup(groupId: number) {
   return http.post<string>('/deleteBookGroup', { groupId }).then((r) => r.data)
 }
 
-export function saveBookGroupId(bookUrl: string, groupId: number) {
-  return http.post<string>('/saveBookGroupId', { bookUrl, groupId }).then((r) => r.data)
+export function saveBookGroupId(bookId: string, groupId: number) {
+  return http.post<string>('/saveBookGroupId', { bookId, groupId }).then((r) => r.data)
 }
 
-export function setBookSource(params: { bookUrl: string; newUrl: string; bookSourceUrl: string }) {
+/** 换源：目标是换源候选（搜索结果）自己的 bookId，当前书的 bookId 不变 */
+export function setBookSource(params: { bookId: string; targetBookId: string }) {
   return http.post<Book>('/setBookSource', params).then((r) => r.data)
 }
 
@@ -124,7 +120,7 @@ export function getCoverUrl(coverUrl?: string) {
     return withAuthQuery(coverUrl)
   }
   if (coverUrl.startsWith('http') || coverUrl.startsWith('/')) {
-    // 兼容入口：没被改写过的地址（历史书架记录等）仍走封面接口
+    // 兼容入口：customCoverUrl 是用户自设的任意地址，走封面接口代理
     const params = new URLSearchParams({ path: coverUrl })
     appendAuthQueryParams(params)
     return withAppBase(`/reader3/cover?${params.toString()}`)

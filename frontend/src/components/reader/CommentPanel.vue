@@ -221,9 +221,8 @@ const props = defineProps<{
   show: boolean
   theme: ThemePreset | { popup: string; fontColor: string }
   mode: 'chapter' | 'para'
-  bookUrl: string
+  bookId: string
   chapterUrl: string
-  bookSourceUrl?: string
   paraIndex?: number
   paraText?: string
   /** 章评第一页已由阅读页预取，打开面板时直接复用，避免重复请求 */
@@ -386,9 +385,8 @@ async function fetchPage(target: number) {
   error.value = ''
   try {
     const params = {
-      bookUrl: props.bookUrl,
+      bookId: props.bookId,
       chapterUrl: props.chapterUrl,
-      bookSourceUrl: props.bookSourceUrl,
       page: target,
       sort: sort.value,
       authorOnly: authorOnly.value || undefined,
