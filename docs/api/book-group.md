@@ -54,7 +54,7 @@ POST /reader3/saveBookGroupId
 
 | 参数      | 类型   | 必填 | 说明                            |
 | --------- | ------ | ---- | ------------------------------- |
-| `bookUrl` | string | 是   | 书籍 URL                        |
+| `bookId`  | string | 是   | 书籍 ID                         |
 | `groupId` | number | 否   | 目标分组 ID，缺省为 0（未分组） |
 
 书籍不在书架时返回 404。响应 `data` 为 `"success"`。
@@ -65,7 +65,7 @@ POST /reader3/saveBookGroupId
 POST /reader3/addBookGroupMulti
 ```
 
-请求体：`{ "bookUrls": ["..."], "groupId": 0 }`。按位或并入分组（`group` 是位掩码字段，与阅读3.0 一致）；不在书架的书籍静默跳过。响应 `data` 为 `"success"`。
+请求体：`{ "bookIds": ["book_12", "book_13"], "groupId": 0 }`。按位或并入分组（`group` 是位掩码字段，与阅读3.0 一致）；不在书架的书籍静默跳过。响应 `data` 为 `"success"`。
 
 ## 批量移出分组
 
@@ -73,4 +73,4 @@ POST /reader3/addBookGroupMulti
 POST /reader3/removeBookGroupMulti
 ```
 
-请求体：`{ "bookUrls": ["..."], "groupId": 0 }`。按位清除（`group & ~groupId`）。响应 `data` 为 `"success"`。
+请求体：`{ "bookIds": ["book_12", "book_13"], "groupId": 0 }`。按位清除（`group & ~groupId`）。响应 `data` 为 `"success"`。

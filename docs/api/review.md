@@ -10,17 +10,15 @@
 
 三个接口共用同一组参数（GET 查询串与 POST JSON 都支持）：
 
-| 参数            | 类型    | 必填 | 说明                                                                          |
-| --------------- | ------- | ---- | ----------------------------------------------------------------------------- |
-| `bookUrl`       | string  | 是   | 书籍 URL，用作缓存归属（按书清理时用）                                        |
-| `chapterUrl`    | string  | 是   | 章节 URL，评论规则以这一章的正文响应为上下文求值                              |
-| `bookSourceUrl` | string  | 否   | 书源 URL；省略时按 `bookUrl` 在书架里反查                                     |
-| `bookSource`    | object  | 否   | 直接内联书源对象，优先于 `bookSourceUrl`                                      |
-| `page`          | number  | 否   | 页码，从 1 开始，默认 1                                                       |
-| `count`         | number  | 否   | 每页条数，默认 20、上限 50                                                    |
-| `sort`          | string  | 否   | `hot`（默认，站点热度序）或 `time`（按时间倒序）；认不出来的取值按 `hot` 处理 |
-| `authorOnly`    | boolean | 否   | `true` 时走「只看作者」扫描（见下），忽略 `page` / `count` / `sort`           |
-| `refresh`       | number  | 否   | `1` 表示忽略缓存重新抓取                                                      |
+| 参数         | 类型    | 必填 | 说明                                                                          |
+| ------------ | ------- | ---- | ----------------------------------------------------------------------------- |
+| `bookId`     | string  | 是   | 书籍 ID（`book_<n>`），书源与缓存归属都按它解析（按书清理时用）               |
+| `chapterUrl` | string  | 是   | 章节 URL，评论规则以这一章的正文响应为上下文求值                              |
+| `page`       | number  | 否   | 页码，从 1 开始，默认 1                                                       |
+| `count`      | number  | 否   | 每页条数，默认 20、上限 50                                                    |
+| `sort`       | string  | 否   | `hot`（默认，站点热度序）或 `time`（按时间倒序）；认不出来的取值按 `hot` 处理 |
+| `authorOnly` | boolean | 否   | `true` 时走「只看作者」扫描（见下），忽略 `page` / `count` / `sort`           |
+| `refresh`    | number  | 否   | `1` 表示忽略缓存重新抓取                                                      |
 
 排序说明：
 
@@ -88,7 +86,7 @@
 ## `getChapterComments` — 章评
 
 ```
-GET  /reader3/getChapterComments?bookUrl=&chapterUrl=&bookSourceUrl=&page=1&count=20
+GET  /reader3/getChapterComments?bookId=&chapterUrl=&page=1&count=20
 POST /reader3/getChapterComments
 ```
 
@@ -117,7 +115,7 @@ POST /reader3/getChapterComments
 ## `getParaCommentIndex` — 段评概览
 
 ```
-GET  /reader3/getParaCommentIndex?bookUrl=&chapterUrl=&bookSourceUrl=
+GET  /reader3/getParaCommentIndex?bookId=&chapterUrl=
 POST /reader3/getParaCommentIndex
 ```
 
@@ -151,7 +149,7 @@ POST /reader3/getParaCommentIndex
 ## `getParaComments` — 某一段的段评
 
 ```
-GET  /reader3/getParaComments?bookUrl=&chapterUrl=&paraIndex=5&page=1&count=20
+GET  /reader3/getParaComments?bookId=&chapterUrl=&paraIndex=5&page=1&count=20
 POST /reader3/getParaComments
 ```
 
@@ -163,9 +161,9 @@ POST /reader3/getParaComments
 
 ## 缓存与清理
 
-评论缓存按 `用户 / 书籍 / 章节+类型+页码` 存放于 `storage/cache/reviews/`，默认 7 天过期，同时受 `REVIEW_CACHE_USER_LIMIT_BYTES`（默认 64 MiB）容量约束。
+评论缓存按 `用户 / 书籍（bookId）/ 章节+类型+页码` 存放于 `storage/cache/reviews/`，默认 7 天过期，同时受 `REVIEW_CACHE_USER_LIMIT_BYTES`（默认 64 MiB）容量约束。
 
-- 删除单本书的缓存：`deleteBookCache` 会一并清掉该书的评论缓存。
+- 按书清理：`purgeCache` 传 `{ "scope": "book", "bookId": "book_12" }` 会一并清掉该书的评论缓存（`deleteBookCache` 只清正文/目录/换源候选，不动评论）。
 - 按类型清理：`purgeCache` 传 `{ "scope": "kind", "kind": "review" }`。
 - 占用统计：`cacheStats` 的返回里多了 `review` 一层。
 

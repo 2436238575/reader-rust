@@ -161,7 +161,7 @@ src/
     url_guard.rs          出站请求守卫（SSRF 防护）
   model/                  BookSource 等数据结构，15 文件约 1000 行
   storage/               SQLite（sqlx）+ 文件缓存，8 文件约 800 行
-    db/migrations/        仅 0001_init.sql（历史兼容补丁已并入）
+    db/migrations/        0001_init + 0002_book_source_id + 0003_books_registry
     cache/file_cache.rs   章节内容文件缓存，以 MD5 命名；无 TTL，按容量淘汰
     cache/review_cache.rs 评论缓存；**有 TTL**（默认 7 天），按容量淘汰
   app/                    配置加载与启动引导
@@ -214,7 +214,7 @@ HTTP 请求
 - `/reader3/aiProxyImage` 目前**无前端调用方**（AI 资料的地图图片改由后端直接下载落盘到
   `ASSETS_DIR`），端点保留备用。
 
-鉴权说明：**单用户**，使用 **JWT（HS256）**。唯一账号由启动时的 bootstrap 创建：用户名取 `ADMIN_USERNAME`，密码取 `ADMIN_PASSWORD`（非空则每次启动强制覆盖，兼作找回通道），都为空则首启随机生成并打印到启动日志；不提供注册、用户管理与角色/权限分层——登录即拥有全部能力。登录返回的 `accessToken` 是标准 JWT，载荷为 `{ sub, ns, iat, exp, ver }`（`bookSourceProxy` 注入被代理页面的令牌额外带 `scope`/`bsu`，是只能访问代理路径、绑定单个书源的 30 分钟限定令牌）。传递方式只有两种：`Authorization: Bearer <jwt>` 头，或查询参数 `accessToken`（SSE 与 `<img>` 无法设置请求头，只能走查询串）。中间件位于 `src/auth/middleware.rs`，分 `require_auth` / `optional_auth` 两档，在 `api/router.rs` 里按分组挂载；handler 通过 `CurrentUser` 提取器取身份，不再自行解析凭据。撤销靠 `users.token_version`：改密码自增版本号即作废该账号所有旧令牌。
+鉴权说明：**单用户**，使用 **JWT（HS256）**。唯一账号由启动时的 bootstrap 创建：用户名取 `ADMIN_USERNAME`，密码取 `ADMIN_PASSWORD`（非空则每次启动强制覆盖，兼作找回通道），都为空则首启随机生成并打印到启动日志；不提供注册、用户管理与角色/权限分层——登录即拥有全部能力。登录返回的 `accessToken` 是标准 JWT，载荷为 `{ sub, ns, iat, exp, ver }`（`bookSourceProxy` 注入被代理页面的令牌额外带 `scope`/`bsid`，是只能访问代理路径、绑定单个书源 id 的 30 分钟限定令牌）。传递方式只有两种：`Authorization: Bearer <jwt>` 头，或查询参数 `accessToken`（SSE 与 `<img>` 无法设置请求头，只能走查询串）。中间件位于 `src/auth/middleware.rs`，分 `require_auth` / `optional_auth` 两档，在 `api/router.rs` 里按分组挂载；handler 通过 `CurrentUser` 提取器取身份，不再自行解析凭据。撤销靠 `users.token_version`：改密码自增版本号即作废该账号所有旧令牌。
 
 ### 静态资源与 404
 
@@ -329,19 +329,23 @@ id = `md5(去掉查询串的地址)`；抓取失败时按登记时的书籍上�
 ## 数据与存储
 
 - SQLite 通过 `sqlx` 访问，连接池 10 条连接，开启 WAL（`synchronous=NORMAL`），启动时自动执行 `src/storage/db/migrations/` 下的迁移。
-- 主要表：`book_sources`（书源 JSON，按 `(user_ns, book_source_url)` 主键）、`users`、`json_documents`（通用 JSON 文档，按 namespace + name 存取）、`ai_book_memories`。迁移只有 `0001_init.sql` 一个。
-- 章节正文以文件形式缓存于 `storage/cache/<ns>/<md5(bookUrl)>/`，文件名用 MD5，数据库里不存索引。
-- 缓存**大多不按时间过期**，只在显式调用 `POST /reader3/purgeCache` 或超出容量上限时回收；占用可用 `GET /reader3/cacheStats` 查看。按时间过期的例外有三：章节列表缓存（`storage/data/<ns>/chapters/`）与书籍详情缓存（`storage/cache/bookinfo/`）均为 1 小时 TTL（`refresh=1` 强刷，TTL 只作用于「缓存直接喂响应」的读路径），以及评论缓存（见下）。
-- **评论缓存**（`storage/cache/reviews/<ns>/<md5(bookUrl)>/`）是会变的第三方数据，
+- 主要表：`book_sources`（书源 JSON，`(user_ns, book_source_url)` 主键 + `(user_ns, book_source_id)` 唯一索引；**`book_source_id` 是书源的身份键**，自增分配，导入/订阅按 URL 去重时保号）、`books`（**书籍登记表**：`(user_ns, book_id)` 主键 + `(user_ns, book_url)` 唯一索引；`book_id` 形如 `book_<n>`，绑定 `book_source_id`，换源只改绑不改 id；本地书 source_id 为 NULL）、`users`、`json_documents`、`ai_book_memories`（`book_key` 存 bookId）。
+- **身份模型（2026-10 重构，破坏性）**：请求的身份参数只认 `bookId`（书籍）与 `bookSourceId`（书源）；`bookUrl`/`bookSourceUrl`/`origin` 只是数据字段（爬虫取数、导入去重）。搜索/发现产出即登记（响应必带 bookId）；书籍级接口经 `resolve_book`（handlers/book.rs）由 bookId 解析出当前绑定的 bookUrl + 书源。升级存量部署：删除 `storage/` 后重启重建。
+- 章节正文以文件形式缓存于 `storage/cache/<ns>/<bookId>/<md5(chapterUrl)>.txt`；目录缓存 `data/<ns>/chapters/<bookId>.json`（1h TTL）；书籍详情缓存 `cache/bookinfo/<ns>/<bookId>.json`（1h TTL，`refresh=1` 强刷）；换源候选 `data/<ns>/book_sources/<bookId>.json`。
+- 缓存**大多不按时间过期**，只在显式调用 `POST /reader3/purgeCache` 或超出容量上限时回收；占用可用 `GET /reader3/cacheStats` 查看。`scope=book` 按 bookId 清全部按书缓存并连带该书的图片；`scope=user` 额外回收非在架书籍的登记行。
+- **评论缓存**（`storage/cache/reviews/<ns>/<bookId>/`）是会变的第三方数据，
   保留 7 天 TTL（`REVIEW_CACHE_TTL_SECS`），同时也受容量上限约束。
 - **图片缓存**（`storage/cache/image/`）是书源图片的统一出口：`<id>.bin` 是图片本体、
-  `<id>.json` 是映射记录（id = `md5(去掉查询串的地址)`，附上游地址与书籍上下文）。
+  `<id>.json` 是映射记录（id = `md5(去掉查询串的地址)`，含上游地址与所属 `book_id`）。
   它**不按时间过期**（id 稳定，抓下来就长期复用），容量与封面共用 `CACHE_COVER_LIMIT_BYTES`；
-  上游地址失效时按记录里的书籍上下文回源刷新一次再试（`service/image_service.rs`）。
+  上游地址失效时按 `book_id` 解析当前绑定回源刷新一次再试（`service/image_service.rs`）。
 - 另有若干**进程内**小缓存，重启即失效：书源正则编译缓存、JS `cache`/`kv` 与 jsLib 编译缓存、
   `exploreUrl` 的 JS 求值结果（按 `MD5(用户命名空间 | bookSourceUrl + exploreUrl)` 缓存 1 小时，
   键含用户维度——脚本输出可能含 `java.androidId` 等用户相关值）。
   它们都设了条目上限，超出即整表清空。
+- 书签按 `(bookId, chapterIndex, chapterPos)` 判等（一书多条）；替换规则 scope 用
+  `book:<bookId>` / `source:<bookSourceId>`；换源 `setBookSource {bookId, targetBookId}`
+  只改登记表绑定，进度/书签/AI 记忆天然保留。
 - 日志按天滚动落盘到 `storage/logs/reader-rust.log.YYYY-MM-DD`（stdout + 文件双写，
   文件不含 ANSI 颜色码；sidecar 的 stderr 经主进程 tracing 也落同一个文件）。
 - `storage/` 全部属于运行期数据，**不要提交**，清理时也不要误删。
@@ -350,7 +354,7 @@ id = `md5(去掉查询串的地址)`；抓取失败时按登记时的书籍上�
 
 ## 测试
 
-Rust 侧共 **273 个测试**（184 个内联单元测试 + 89 个集成用例，另有 2 个 `#[ignore]` 的真实网络用例），分布为：
+Rust 侧共 **272 个测试**（183 个内联单元测试 + 89 个集成用例，另有 2 个 `#[ignore]` 的真实网络用例），分布为：
 
 - `tests/` 下 16 个集成测试文件（89 个用例），其中 `book_source_compat.rs` 用例最多（17 个）；
   `auth_flow.rs`、`review_flow.rs`、`chapter_image_flow.rs`、`image_pipeline.rs` 与

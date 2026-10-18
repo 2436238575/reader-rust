@@ -6,15 +6,17 @@
 
 ## 缓存分层
 
-| 层               | 位置                                                 | 说明                                          |
-| ---------------- | ---------------------------------------------------- | --------------------------------------------- |
-| `content`        | `storage/cache/<ns>/<md5(bookUrl)>/*.txt`            | 章节正文，按书一个目录                        |
-| `cover`          | `storage/cache/image/*`                              | 书源图片（封面、章节配图、评论配图）统一存放，全局共享 |
-| `chapterList`    | `storage/data/<ns>/chapters/<md5(tocUrl)>.json`      | 章节列表，1 小时 TTL                          |
-| `searchResults`  | `storage/data/<ns>/book_sources/<md5(bookUrl)>.json` | 某本书在各书源中的搜索结果                    |
-| `review`         | `storage/cache/reviews/<ns>/<md5(bookUrl)>/*.json`   | 章评/段评，7 天 TTL                           |
-| `invalidSources` | `storage/cache/invalid_book_sources/<ns>.json`       | 失效书源清单                                  |
-| `bookInfo`       | `storage/cache/bookinfo/<ns>/<md5(bookUrl)>.json`    | 书籍详情，1 小时 TTL（`refresh=1` 强刷）      |
+缓存键全部以身份键为准：书籍维度一律用 `bookId`（`book_<n>`），不再取 URL 的 MD5。
+
+| 层               | 位置                                                          | 说明                                          |
+| ---------------- | ------------------------------------------------------------- | --------------------------------------------- |
+| `content`        | `storage/cache/<ns>/<bookId>/<md5(chapterUrl)>.txt`           | 章节正文，按书一个目录                        |
+| `cover`          | `storage/cache/image/<md5(去查询串地址)>.{bin,json}`          | 书源图片（封面、章节配图、评论配图）统一存放，全局共享；`.json` 记录含 `book_id`，供按书清理与回源自愈 |
+| `chapterList`    | `storage/data/<ns>/chapters/<bookId>.json`                    | 章节列表，1 小时 TTL                          |
+| `searchResults`  | `storage/data/<ns>/book_sources/<bookId>.json`                | 某本书在各书源中的换源候选搜索结果            |
+| `review`         | `storage/cache/reviews/<ns>/<bookId>/…`                       | 章评/段评，7 天 TTL                           |
+| `invalidSources` | `storage/cache/invalid_book_sources/<ns>.json`                | 失效书源清单                                  |
+| `bookInfo`       | `storage/cache/bookinfo/<ns>/<bookId>.json`                   | 书籍详情，1 小时 TTL（`refresh=1` 强刷）      |
 
 容量上限由 `CACHE_USER_LIMIT_BYTES`（默认 512MiB）与 `CACHE_COVER_LIMIT_BYTES`（默认 256MiB，图片目录：封面与配图共用）控制，超出时按修改时间最旧优先淘汰；设为 `0` 表示不限制。
 
@@ -30,17 +32,17 @@ POST /reader3/purgeCache
 {
   "scope": "user",
   "username": "目标用户（可选）",
-  "bookUrl": "https://example.com/book/1",
+  "bookId": "book_12",
   "kind": "content"
 }
 ```
 
-| `scope` | 语义                                       | 需要的字段                  |
-| ------- | ------------------------------------------ | --------------------------- |
-| `user`  | 清理该用户的全部缓存                       | `username` 可选，缺省为自己 |
-| `book`  | 清理单本书的正文、章节列表、搜索结果与评论 | `bookUrl` 必填              |
-| `kind`  | 只清理该用户的某一层                       | `kind` 必填                 |
-| `all`   | 清理全部缓存                               | 无                          |
+| `scope` | 语义                                                           | 需要的字段                  |
+| ------- | -------------------------------------------------------------- | --------------------------- |
+| `user`  | 清理该用户的全部缓存                                           | `username` 可选，缺省为自己 |
+| `book`  | 清理单本书的正文、章节列表、书籍详情、换源候选与评论缓存，连带清该书登记的图片 | `bookId` 必填               |
+| `kind`  | 只清理该用户的某一层                                           | `kind` 必填                 |
+| `all`   | 清理全部缓存                                                   | 无                          |
 
 `kind` 取值：`content`、`cover`、`chapterList`、`searchResults`、`review`（`chapterList` 同时清书籍详情缓存）。
 
@@ -63,9 +65,9 @@ POST /reader3/purgeCache
 }
 ```
 
-`scope=book` 时正文与搜索结果按「整本/整个文件」计数，因此最多为 1。
+`scope=book` 时正文与换源候选按「整本/整个文件」计数，因此最多为 1；`cover` 计入该书登记过的图片条数。
 
-单本书的正文缓存也可以继续用 [`deleteBookCache`](./chapter#删除书籍缓存)，语义等价。
+只清单本书的正文、章节列表与换源候选（不动评论/详情/图片）也可以继续用 [`deleteBookCache`](./chapter#删除章节缓存)。
 
 ## 缓存占用统计
 

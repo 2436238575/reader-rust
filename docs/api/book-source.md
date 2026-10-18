@@ -4,6 +4,10 @@
 
 > 例外：`readSourceFile` 成功时直接返回裸 JSON 数组（书源数组），不做统一包装。
 
+## 书源的身份键：`bookSourceId`
+
+**`bookSourceId`（整数）是书源的身份键**，由后端在书源首次入库时自增分配；`bookSourceUrl` 只是数据字段，同时充当导入时的去重键。所有按书源寻址的接口（`getBookSource`、`deleteBookSource(s)`、`loginBookSource`、`getExploreKinds`、`testBookSources`、`bookSourceProxy`、`bookSourceDebugSSE`、`exploreBook` 等）一律只认 `bookSourceId`；列表与保存响应里都会带上它。
+
 ## 获取书源列表
 
 ```text
@@ -17,6 +21,7 @@ GET /reader3/getBookSources
   "isSuccess": true,
   "data": [
     {
+      "bookSourceId": 1,
       "bookSourceUrl": "https://example.com",
       "bookSourceName": "示例书源",
       "bookSourceGroup": "网络小说",
@@ -37,11 +42,11 @@ GET /reader3/getBookSource
 
 请求参数：
 
-| 参数            | 类型   | 必填 | 说明                             |
-| --------------- | ------ | ---- | -------------------------------- |
-| `bookSourceUrl` | string | 是   | 书源 URL，可放在查询参数或请求体 |
+| 参数           | 类型   | 必填 | 说明                             |
+| -------------- | ------ | ---- | -------------------------------- |
+| `bookSourceId` | number | 是   | 书源 ID，可放在查询参数或请求体 |
 
-响应：`data` 为该书源对象。
+响应：`data` 为该书源对象（含 `bookSourceId`）。
 
 ## 登录书源
 
@@ -51,9 +56,9 @@ POST /reader3/loginBookSource
 
 请求参数：
 
-| 参数            | 类型   | 必填 | 说明               |
-| --------------- | ------ | ---- | ------------------ |
-| `bookSourceUrl` | string | 是   | 需要登录的书源 URL |
+| 参数           | 类型   | 必填 | 说明               |
+| -------------- | ------ | ---- | ------------------ |
+| `bookSourceId` | number | 是   | 需要登录的书源 ID  |
 
 ## 获取发现页分类
 
@@ -63,10 +68,9 @@ POST /reader3/getExploreKinds
 
 请求参数：
 
-| 参数            | 类型   | 必填 | 说明                                        |
-| --------------- | ------ | ---- | ------------------------------------------- |
-| `bookSourceUrl` | string | 否   | 书源 URL                                    |
-| `bookSource`    | object | 否   | 完整的书源对象（与 `bookSourceUrl` 二选一） |
+| 参数           | 类型   | 必填 | 说明     |
+| -------------- | ------ | ---- | -------- |
+| `bookSourceId` | number | 是   | 书源 ID  |
 
 ## 添加/更新书源
 
@@ -90,13 +94,20 @@ POST /reader3/saveBookSource
 }
 ```
 
+保存语义（依据：`src/service/book_source_service.rs` 的 `save`）：
+
+- 请求体带 `bookSourceId` 且该 id 存在 → **按 id 更新**（编辑器单条保存场景，允许改 URL；新 URL 撞了其他书源报 400）；
+- 不带 `bookSourceId`（或 id 不存在）→ **按 `bookSourceUrl` upsert**：URL 已存在时更新原记录并保留原 id，否则新建并分配新 id（重导入同一书源不会换 id）。
+
+响应：`data` 形如 `{ "saved": true, "bookSourceId": 1 }`。
+
 ## 批量保存书源
 
 ```text
 POST /reader3/saveBookSources
 ```
 
-请求体为书源对象数组，或包含 `bookSourceList` / `bookSources` / `data` / `sources` 字段的对象。响应：`data` 形如 `{ "saved": true, "count": 2 }`。
+请求体为书源对象数组，或包含 `bookSourceList` / `bookSources` / `data` / `sources` 字段的对象。按 URL 去重：URL 已存在的条目更新并保留本地 id；条目自带的 `bookSourceId` 只在「该 URL 本地不存在且该 id 空着」时生效。响应：`data` 形如 `{ "saved": true, "count": 2 }`。
 
 ## 删除书源
 
@@ -108,7 +119,7 @@ POST /reader3/deleteBookSource
 
 ```json
 {
-  "bookSourceUrl": "https://example.com"
+  "bookSourceId": 1
 }
 ```
 
@@ -118,7 +129,7 @@ POST /reader3/deleteBookSource
 POST /reader3/deleteBookSources
 ```
 
-请求体为书源对象数组（按 `bookSourceUrl` 删除）。
+请求体为 `[{ "bookSourceId": 1 }, ...]` 数组（按 `bookSourceId` 删除）。
 
 ## 删除全部书源
 
@@ -150,14 +161,14 @@ POST /reader3/testBookSources
 
 请求参数：
 
-| 参数             | 类型     | 必填 | 说明                                               |
-| ---------------- | -------- | ---- | -------------------------------------------------- |
-| `bookSourceUrls` | string[] | 否   | 要测试的书源 URL 列表，最多 100 条；为空则测试全部 |
-| `keyword`        | string   | 否   | 测试用搜索关键词                                   |
-| `markInvalid`    | boolean  | 否   | 是否将被测失效的书源标记为失效分组，默认 true      |
-| `concurrent`     | number   | 否   | 并发数，默认 12，范围 1–12                         |
+| 参数            | 类型     | 必填 | 说明                                               |
+| --------------- | -------- | ---- | -------------------------------------------------- |
+| `bookSourceIds` | number[] | 否   | 要测试的书源 ID 列表，最多 100 条；为空则测试全部  |
+| `keyword`       | string   | 否   | 测试用搜索关键词                                   |
+| `markInvalid`   | boolean  | 否   | 是否将被测失效的书源标记为失效分组，默认 true      |
+| `concurrent`    | number   | 否   | 并发数，默认 12，范围 1–12                         |
 
-响应：`data` 形如 `{ "total": 10, "valid": 8, "invalid": 2, "markedInvalid": 2, "results": [ ... ] }`。
+响应：`data` 形如 `{ "total": 10, "valid": 8, "invalid": 2, "markedInvalid": 2, "results": [ ... ] }`，`results` 每项带 `bookSourceId` 与 `bookSourceUrl` / `bookSourceName` / `valid` 等结果字段。
 
 ## 远程读取书源文件
 
@@ -183,14 +194,14 @@ ANY /reader3/bookSourceProxy
 
 查询参数：
 
-| 参数            | 类型   | 必填 | 说明                         |
-| --------------- | ------ | ---- | ---------------------------- |
-| `bookSourceUrl` | string | 是   | 书源 URL                     |
-| `url`           | string | 是   | 需要代理请求的完整或部分 URL |
+| 参数           | 类型   | 必填 | 说明                         |
+| -------------- | ------ | ---- | ---------------------------- |
+| `bookSourceId` | number | 是   | 书源 ID                      |
+| `url`          | string | 是   | 需要代理请求的完整或部分 URL |
 
 将目标站点的 HTML 页面注入代理脚本后返回，使页面内相对链接、表单、脚本自动走本代理。支持 GET/POST。
 
-安全设计：注入页面的 `accessToken` 是**限定用途令牌**——短寿命（30 分钟）、绑定当前书源、且只能访问 `bookSourceProxy` / `bookSourceClientLog` 两个路径；即使被代理页面的第三方脚本窃取，也不能用它调用其它接口。前端嵌入代理页面时应使用无 `allow-same-origin` 的 sandbox iframe。
+安全设计：注入页面的 `accessToken` 是**限定用途令牌**——短寿命（30 分钟）、通过 claims 里的 `bsid` 绑定单个书源（`bookSourceId`）、且只能访问 `bookSourceProxy` / `bookSourceClientLog` 两个路径；即使被代理页面的第三方脚本窃取，也不能用它调用其它接口或代理其它书源。前端嵌入代理页面时应使用无 `allow-same-origin` 的 sandbox iframe。
 
 ## 书源客户端日志
 
@@ -208,10 +219,10 @@ GET /reader3/bookSourceDebugSSE
 
 调试搜索规则的 SSE 流式接口。查询参数：
 
-| 参数            | 类型   | 必填 | 说明             |
-| --------------- | ------ | ---- | ---------------- |
-| `bookSourceUrl` | string | 是   | 书源 URL         |
-| `keyword`       | string | 否   | 调试用搜索关键词 |
+| 参数           | 类型   | 必填 | 说明             |
+| -------------- | ------ | ---- | ---------------- |
+| `bookSourceId` | number | 是   | 书源 ID          |
+| `keyword`      | string | 否   | 调试用搜索关键词 |
 
 ## 导入书源
 

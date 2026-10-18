@@ -10,13 +10,12 @@ GET /reader3/getBookContent
 
 查询参数：
 
-| 参数            | 类型   | 必填 | 说明                                                                                                                                                        |
-| --------------- | ------ | ---- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `chapterUrl`    | string | 是   | 章节 URL（别名 `url`、`href`）                                                                                                                              |
-| `bookUrl`       | string | 建议 | 章节所属书籍的 URL，用于服务端缓存归位；缺省时服务端依次按书架 URL 前缀、目录缓存反推所属书籍，都失败会把 `chapterUrl` 当缓存键（孤儿缓存，按书清理清不掉） |
-| `bookSourceUrl` | string | 否   | 书源 URL（别名 `origin`）                                                                                                                                   |
-| `index`         | number | 否   | 章节下标（当传入书籍 URL 时定位章节）                                                                                                                       |
-| `refresh`       | number | 否   | 非 0 时强制刷新缓存                                                                                                                                         |
+| 参数         | 类型   | 必填 | 说明                                                              |
+| ------------ | ------ | ---- | ----------------------------------------------------------------- |
+| `bookId`     | string | 是   | 书籍 ID（`book_<n>`），正文缓存按它归位                           |
+| `chapterUrl` | string | 是   | 章节 URL（数据字段，用来定位章节并作为缓存键 `md5(chapterUrl)`）  |
+| `index`      | number | 否   | 章节下标                                                          |
+| `refresh`    | number | 否   | 非 0 时强制刷新缓存                                               |
 
 响应：`data` 为**纯字符串**（章节正文内容），不包含标题或前后章 URL：
 
@@ -44,12 +43,10 @@ GET /reader3/getChapterImages
 
 查询参数与 `getBookContent` 同族（也支持 `POST`）：
 
-| 参数            | 类型   | 必填 | 说明                                     |
-| --------------- | ------ | ---- | ---------------------------------------- |
-| `bookUrl`       | string | 是   | 书籍 URL（别名 `url`）                   |
-| `chapterUrl`    | string | 是   | 章节 URL（别名 `href`）                  |
-| `bookSourceUrl` | string | 否   | 书源 URL（别名 `origin`）                |
-| `bookSource`    | object | 否   | 直接内联书源对象，优先于 `bookSourceUrl` |
+| 参数         | 类型   | 必填 | 说明     |
+| ------------ | ------ | ---- | -------- |
+| `bookId`     | string | 是   | 书籍 ID  |
+| `chapterUrl` | string | 是   | 章节 URL |
 
 响应：
 
@@ -92,7 +89,7 @@ SSE 流式缓存指定书籍的章节正文。查询参数：
 
 | 参数              | 类型   | 必填 | 说明                         |
 | ----------------- | ------ | ---- | ---------------------------- |
-| `url`             | string | 是   | 书籍 URL（别名 `bookUrl`）   |
+| `bookId`          | string | 是   | 书籍 ID                      |
 | `tocUrl`          | string | 否   | 起始章节 URL，从该章开始缓存 |
 | `count`           | number | 否   | 缓存章节数，默认 0 表示全部  |
 | `refresh`         | number | 否   | 非 0 时忽略已有缓存          |
@@ -106,14 +103,13 @@ SSE 流式缓存指定书籍的章节正文。查询参数：
 POST /reader3/deleteBookCache
 ```
 
-删除粒度是整本书：正文缓存、目录缓存与该书的搜索结果一并清理。
+删除粒度是整本书：正文缓存、目录缓存与该书的换源候选缓存一并清理（评论缓存与书籍详情缓存不动）。
 
 查询参数或请求体：
 
-| 参数      | 类型   | 必填 | 说明                          |
-| --------- | ------ | ---- | ----------------------------- |
-| `bookUrl` | string | 是   | 书籍 URL（别名 `url`）        |
-| `url`     | string | 否   | 书籍 URL（与 `bookUrl` 等效） |
+| 参数     | 类型   | 必填 | 说明    |
+| -------- | ------ | ---- | ------- |
+| `bookId` | string | 是   | 书籍 ID |
 
 响应：`data` 形如 `{ "deleted": true, "contentCache": true, "chapterListCache": true }`。
 
@@ -125,11 +121,11 @@ POST /reader3/saveBookProgress
 
 请求参数（查询或请求体）：
 
-| 参数       | 类型   | 必填 | 说明                                             |
-| ---------- | ------ | ---- | ------------------------------------------------ |
-| `url`      | string | 是   | 书籍 URL（别名 `bookUrl`、`searchBook.bookUrl`） |
-| `index`    | number | 是   | 当前章节下标                                     |
-| `position` | number | 否   | 正文中阅读位置                                   |
+| 参数       | 类型   | 必填 | 说明             |
+| ---------- | ------ | ---- | ---------------- |
+| `bookId`   | string | 是   | 书籍 ID          |
+| `index`    | number | 是   | 当前章节下标     |
+| `position` | number | 否   | 正文中阅读位置   |
 
 响应 `data` 为空字符串。
 
@@ -173,8 +169,8 @@ GET /reader3/image/<id>?accessToken=<jwt>
   `text/html`、`image/svg+xml` 一律降级为 `application/octet-stream`）。
 - **之后长期命中本地缓存**（`Cache-Control: public, max-age=31536000, immutable`）：
   签名过期不影响已经抓下来的图。
-- **签名失效会自愈**：抓取失败时，用登记时留下的书籍上下文重新求值一次书源的封面地址再试。
-- 映射与图片本体落在 `<STORAGE_DIR>/cache/image/`：`<id>.json` 是记录（上游地址 + 书籍上下文），
+- **签名失效会自愈**：抓取失败时，用登记时留下的书籍上下文（`book_id`）重新求值一次书源的封面地址再试。
+- 映射与图片本体落在 `<STORAGE_DIR>/cache/image/`：`<id>.json` 是记录（上游地址 + 所属书籍的 `book_id`，供按书清理与回源自愈），
   `<id>.bin` 是图片字节；目录本身即「id → 记录」的映射表。
 
 单个图片最大 32MiB；目录容量上限与封面共用 `CACHE_COVER_LIMIT_BYTES`（超限按最旧优先淘汰）。
@@ -186,14 +182,14 @@ GET /reader3/image/<id>?accessToken=<jwt>
 GET /reader3/cover?path=<封面URL>
 ```
 
-早期版本的前端与历史书架记录里存的是书源地址，这个入口保留兼容：把 `path` 登记成 id
+`customCoverUrl`（用户自定义封面）等历史入口存的还是书源地址，这个接口保留兼容：把 `path` 登记成 id
 后走上面同一条管道（转码、缓存、自愈一致）。**需要登录**，令牌的携带方式与
-`/reader3/image/<id>` 相同（`Authorization` 头或 `accessToken` 查询参数）。
+`/reader3/image/<id>` 相同（`Authorization` 头或 `accessToken` 查询参数）。书源下发的封面地址（`coverUrl`）在响应里已被改写成 `/reader3/image/<id>`，正常调用方不需要走这个入口。
 
 ## 获取本地 EPUB 资源
 
 ```text
-GET /reader3/localEpubAsset?bookUrl=<local-epub:...>&path=<包内路径>
+GET /reader3/localEpubAsset?bookId=<book_n>&path=<包内路径>
 ```
 
-读取已导入本地 EPUB 的包内资源（封面图、样式等）。`bookUrl` 必须是 `local-epub:` 前缀的本地书；`path` 只能命中该书 manifest 中登记的资源，否则 404。响应为资源字节流（带对应 Content-Type）。
+读取已导入本地 EPUB 的包内资源（封面图、样式等）。`bookId` 必须是本地 EPUB 书（`bookUrl` 为 `local-epub:` 前缀）；`path` 只能命中该书 manifest 中登记的资源，否则 404。响应为资源字节流（带对应 Content-Type）。

@@ -2,6 +2,10 @@
 
 书籍搜索、发现页、书架与可用书源查询接口。所有响应均包裹为统一结构：`{ "isSuccess": boolean, "data": any, "errorMsg": string }`。
 
+## 书籍的身份键：`bookId`
+
+**`bookId`（字符串，形如 `book_<n>`）是书籍的身份键**，由后端在书籍首次登记时分配，**不随换源变化**；`bookUrl` / `origin`（书源 URL）只是数据字段。搜索/发现结果**产出即登记**：响应里每条都带 `bookId` + `bookSourceId`，后续详情、目录、正文、评论等请求一律只认 `bookId`。书架、搜索结果与详情响应里的 `Book` / `SearchBook` 对象都带这两个字段。
+
 ## 搜索书籍
 
 ```text
@@ -10,13 +14,13 @@ GET /reader3/searchBook
 
 查询参数：
 
-| 参数            | 类型   | 必填 | 说明                                                                                                           |
-| --------------- | ------ | ---- | -------------------------------------------------------------------------------------------------------------- |
-| `key`           | string | 是   | 搜索关键词                                                                                                     |
-| `page`          | number | 否   | 页码，默认 1                                                                                                   |
-| `bookSourceUrl` | string | 否   | 指定书源 URL（别名 `origin`，仅 form-urlencoded POST 请求体接受别名；query 与 JSON body 请用 `bookSourceUrl`） |
+| 参数           | 类型   | 必填 | 说明           |
+| -------------- | ------ | ---- | -------------- |
+| `key`          | string | 是   | 搜索关键词     |
+| `page`         | number | 否   | 页码，默认 1   |
+| `bookSourceId` | number | 是   | 指定书源 ID    |
 
-响应：
+响应（每条结果产出即登记，带 `bookId` 与 `bookSourceId`）：
 
 ```json
 {
@@ -25,6 +29,8 @@ GET /reader3/searchBook
     {
       "name": "书名",
       "author": "作者",
+      "bookId": "book_12",
+      "bookSourceId": 3,
       "coverUrl": "https://...",
       "bookUrl": "https://...",
       "intro": "简介",
@@ -38,7 +44,7 @@ GET /reader3/searchBook
 }
 ```
 
-也可使用 `POST /reader3/searchBook`，参数放在请求体。
+也可使用 `POST /reader3/searchBook`，参数放在请求体（JSON 或 form-urlencoded）。
 
 ## 多书源搜索
 
@@ -52,10 +58,10 @@ GET /reader3/searchBookMulti
 | ----------------- | -------- | ---- | ---------------- |
 | `key`             | string   | 是   | 搜索关键词       |
 | `page`            | number   | 否   | 页码，默认 1     |
-| `bookSourceUrls`  | string[] | 否   | 指定多个书源 URL |
+| `bookSourceIds`   | number[] | 否   | 指定多个书源 ID  |
 | `bookSourceGroup` | string   | 否   | 按分组筛选书源   |
 
-跨多书源搜索并按书名+作者合并结果。
+跨多书源搜索并按书名+作者合并结果（合并条目的 `bookSourceIds` 汇出所有命中的书源 ID）。
 
 ## 发现页
 
@@ -65,11 +71,13 @@ GET /reader3/exploreBook
 
 查询参数：
 
-| 参数            | 类型   | 必填 | 说明                      |
-| --------------- | ------ | ---- | ------------------------- |
-| `ruleFindUrl`   | string | 是   | 发现页请求规则            |
-| `page`          | number | 否   | 页码，默认 1              |
-| `bookSourceUrl` | string | 否   | 书源 URL（别名 `origin`） |
+| 参数           | 类型   | 必填 | 说明           |
+| -------------- | ------ | ---- | -------------- |
+| `bookSourceId` | number | 是   | 书源 ID        |
+| `ruleFindUrl`  | string | 是   | 发现页请求规则 |
+| `page`         | number | 否   | 页码，默认 1   |
+
+也可使用 `POST /reader3/exploreBook`。响应与搜索同构：每条结果产出即登记，带 `bookId` + `bookSourceId`。
 
 ## 获取书籍详情
 
@@ -79,13 +87,12 @@ GET /reader3/getBookInfo
 
 查询参数：
 
-| 参数            | 类型   | 必填 | 说明                            |
-| --------------- | ------ | ---- | ------------------------------- |
-| `url`           | string | 是   | 书籍详情页 URL                  |
-| `bookSourceUrl` | string | 否   | 书源 URL（别名 `origin`）       |
-| `refresh`       | number | 否   | 非 0 时绕过详情缓存强制抓取上游 |
+| 参数      | 类型   | 必填 | 说明                            |
+| --------- | ------ | ---- | ------------------------------- |
+| `bookId`  | string | 是   | 书籍 ID（搜索/发现结果里下发）  |
+| `refresh` | number | 否   | 非 0 时绕过详情缓存强制抓取上游 |
 
-详情结果按用户命名空间缓存 1 小时（`refresh=1` 强刷；saveBook 与换源路径始终直抓上游），命中缓存时不产生上游请求。
+详情结果按 `bookId` 缓存 1 小时（`refresh=1` 强刷；saveBook 与换源路径始终直抓上游），命中缓存时不产生上游请求。
 
 响应：
 
@@ -95,6 +102,10 @@ GET /reader3/getBookInfo
   "data": {
     "name": "书名",
     "author": "作者",
+    "bookId": "book_12",
+    "bookSourceId": 3,
+    "bookUrl": "https://...",
+    "origin": "书源URL",
     "coverUrl": "https://...",
     "intro": "书籍简介",
     "kind": "分类",
@@ -116,14 +127,12 @@ GET /reader3/getChapterList
 
 查询参数：
 
-| 参数            | 类型   | 必填 | 说明                      |
-| --------------- | ------ | ---- | ------------------------- |
-| `tocUrl`        | string | 否   | 目录页 URL                |
-| `bookUrl`       | string | 否   | 书籍 URL（别名 `url`）    |
-| `bookSourceUrl` | string | 否   | 书源 URL（别名 `origin`） |
-| `refresh`       | number | 否   | 非 0 时强制刷新缓存       |
+| 参数      | 类型   | 必填 | 说明                |
+| --------- | ------ | ---- | ------------------- |
+| `bookId`  | string | 是   | 书籍 ID             |
+| `refresh` | number | 否   | 非 0 时强制刷新缓存 |
 
-目录结果按 `tocUrl` 缓存 1 小时（`refresh=1` 强刷），过期后重新抓取并整份覆盖。
+目录结果按 `bookId` 缓存 1 小时（`refresh=1` 强刷），过期后重新抓取并整份覆盖。
 
 响应：
 
@@ -158,6 +167,8 @@ GET /reader3/getBookshelf
     {
       "name": "书名",
       "author": "作者",
+      "bookId": "book_12",
+      "bookSourceId": 3,
       "bookUrl": "https://...",
       "origin": "https://书源",
       "coverUrl": "https://...",
@@ -188,9 +199,9 @@ GET /reader3/getShelfBook
 
 查询参数：
 
-| 参数  | 类型   | 必填 | 说明     |
-| ----- | ------ | ---- | -------- |
-| `url` | string | 是   | 书籍 URL |
+| 参数     | 类型   | 必填 | 说明    |
+| -------- | ------ | ---- | ------- |
+| `bookId` | string | 是   | 书籍 ID |
 
 响应：`data` 为单个书籍对象（字段同上）。也可使用 `POST /reader3/getShelfBook`。
 
@@ -208,6 +219,7 @@ GET /reader3/getShelfBookWithCacheInfo
   "data": [
     {
       "name": "书名",
+      "bookId": "book_12",
       "bookUrl": "https://...",
       "cachedChapterCount": 12
     }
@@ -224,7 +236,7 @@ GET /reader3/getShelfBookWithCacheInfo
 POST /reader3/saveBook
 ```
 
-请求体为单个 `Book` 对象（`origin`、`bookUrl` 必填）。已存在同书（按书名/作者/URL 匹配）时更新并保留阅读进度等字段；新入架受 `USER_BOOK_LIMIT` 上限约束（默认 2000，0 为不限），超限返回 400。响应 `data` 为保存后的书籍对象。
+请求体为单个 `Book` 对象（`bookUrl` 必填，`bookSourceId` 建议带上以定位书源）。服务端先按 `bookUrl` 登记取得 `bookId`（已登记则复用），再按需补齐元数据；新入架受 `USER_BOOK_LIMIT` 上限约束（默认 2000，0 为不限），超限返回 400。响应 `data` 为保存后的书籍对象（含 `bookId` / `bookSourceId`）。
 
 ## 整架替换保存
 
@@ -232,15 +244,27 @@ POST /reader3/saveBook
 POST /reader3/saveBooks
 ```
 
-请求体为 `Book` 数组，**整体替换**当前书架（导入场景）。替换后总数超过 `USER_BOOK_LIMIT` 时整批拒绝。响应 `data` 为保存后的数组。
+两种请求体形态：
+
+- **裸 `Book` 数组**：**整体替换**当前书架（导入场景）。替换后总数超过 `USER_BOOK_LIMIT` 时整批拒绝。
+- `{ "books": [ ... ], "restore": true }`：WebDAV 恢复场景——**清表重建书籍登记表**，尊重备份自带的 `bookId`（避免恢复后书签、AI 记忆等按 `bookId` 关联的数据失配）；恢复后会顺带清理与登记表对不上的残留 AI 记忆。
+
+响应 `data` 为保存后的数组（各项含 `bookId`）。
 
 ## 更换书籍的书源
 
 ```text
-GET /reader3/setBookSource
+POST /reader3/setBookSource
 ```
 
-查询参数：`bookUrl`（别名 `url`）、`newUrl`、`bookSourceUrl`。也可 `POST`（JSON 或 form-urlencoded 请求体）。响应 `data` 为更新后的书籍对象。
+请求体（JSON 或 form-urlencoded；查询参数同名也可）：
+
+| 参数           | 类型   | 必填 | 说明                                       |
+| -------------- | ------ | ---- | ------------------------------------------ |
+| `bookId`       | string | 是   | 当前书籍 ID                                |
+| `targetBookId` | string | 是   | 换源目标：可用书源候选自己的 `bookId`      |
+
+目标是「查找可用书源」结果里的某个候选（搜索产出即登记，因此候选自己有 `bookId`）。换源后**当前书的 `bookId` 不变**，阅读进度、书签、AI 记忆全部保留。目标已在书架时返回 **HTTP 409**（合并会让两本书共享 `bookId`，明确拒绝）。响应 `data` 为更新后的书籍对象。
 
 ## 删除书籍
 
@@ -249,7 +273,7 @@ POST /reader3/deleteBook
 POST /reader3/deleteBooks
 ```
 
-请求体分别为单个 `Book` 与 `Book` 数组。删除时级联清理该书的书籍缓存、AI 记忆与本地书文件。单个删除时书籍不存在返回 400；批量删除响应 `data` 为 `{ "deleted": n }`。
+请求体分别为 `{ "bookId": "book_12" }` 与 `{ "bookIds": ["book_12", "book_13"] }`。删除时级联清理该书的章节缓存、换源候选缓存、AI 记忆、书签、登记过的图片与本地书文件。单个删除时书籍不存在返回 400；批量删除响应 `data` 为 `{ "deleted": n }`。
 
 ## 上传本地 TXT 书籍
 
@@ -257,7 +281,7 @@ POST /reader3/deleteBooks
 POST /reader3/uploadTxtBook
 ```
 
-`multipart/form-data`，字段名 `file`。文件上限 50MB，按章节正则自动切分。受 `USER_LOCAL_BOOK_LIMIT` 约束。响应 `data` 为入架后的书籍对象。
+`multipart/form-data`，字段名 `file`。文件上限 50MB，按章节正则自动切分。受 `USER_LOCAL_BOOK_LIMIT` 约束。响应 `data` 为入架后的书籍对象（含 `bookId`）。
 
 ## 上传本地 EPUB 书籍
 
@@ -265,7 +289,7 @@ POST /reader3/uploadTxtBook
 POST /reader3/uploadEpubBook
 ```
 
-`multipart/form-data`，字段名 `file`。文件上限 80MB；EPUB 条目数上限 3000，解压后总体积上限 300MB（按实际解压输出计）。受 `USER_LOCAL_BOOK_LIMIT` 约束。响应 `data` 为入架后的书籍对象。
+`multipart/form-data`，字段名 `file`。文件上限 80MB；EPUB 条目数上限 3000，解压后总体积上限 300MB（按实际解压输出计）。受 `USER_LOCAL_BOOK_LIMIT` 约束。响应 `data` 为入架后的书籍对象（含 `bookId`）。
 
 ## 多书源搜索（流式）
 
@@ -273,7 +297,7 @@ POST /reader3/uploadEpubBook
 GET /reader3/searchBookMultiSSE
 ```
 
-SSE 流式多书源搜索。查询参数：`key`、`bookSourceUrl`、`bookSourceGroup`、`lastIndex`、`searchSize`（默认 50）、`concurrentCount`（默认 24）。
+SSE 流式多书源搜索。查询参数：`key`、`bookSourceId`（单个书源 ID）、`bookSourceGroup`、`lastIndex`、`searchSize`（默认 50）、`concurrentCount`（默认 24）。事件里的每条结果同样带 `bookId` + `bookSourceId`。
 
 ## 按书源搜索（流式）
 
@@ -281,7 +305,7 @@ SSE 流式多书源搜索。查询参数：`key`、`bookSourceUrl`、`bookSource
 GET /reader3/searchBookSourceSSE
 ```
 
-SSE 流式的按书源查找可阅读来源接口。查询参数：`url`、`bookSourceGroup`、`lastIndex`、`searchSize`（默认 30）、`refresh`。
+SSE 流式的按书源查找可阅读来源接口。查询参数：`bookId`、`bookSourceGroup`、`lastIndex`、`searchSize`（默认 30）、`refresh`。
 
 ## 查找可用书源
 
@@ -293,14 +317,13 @@ GET /reader3/getAvailableBookSource
 
 | 参数              | 类型   | 必填 | 说明                             |
 | ----------------- | ------ | ---- | -------------------------------- |
-| `url`             | string | 否   | 书籍 URL                         |
-| `name`            | string | 否   | 书名                             |
-| `author`          | string | 否   | 作者                             |
-| `origin`          | string | 否   | 书源 URL（别名 `bookSourceUrl`） |
+| `bookId`          | string | 是   | 书籍 ID（须在书架或已登记）      |
 | `refresh`         | number | 否   | 非 0 时强制刷新                  |
 | `lastIndex`       | number | 否   | 分页游标                         |
 | `resultLimit`     | number | 否   | 单页结果上限，默认 20，上限 100  |
 | `concurrentCount` | number | 否   | 并发数，默认 8，上限 20          |
+
+按当前书籍的书名+作者在各书源搜索同名候选。**候选每项都带自己的 `bookId` / `bookSourceId`**（产出即登记，可直接作为 `setBookSource` 的 `targetBookId`）；**当前书源不再出现在候选里**。
 
 响应：两种形态——带 `refresh`/`resultLimit`/`lastIndex` 任一分页参数时 `data` 为 `{ "books": [ ... ], "lastIndex": 0, "hasMore": true }`；均不带时 `data` 为裸数组 `[ ... ]`（全量结果）。
 
@@ -312,4 +335,4 @@ GET /reader3/getAvailableBookSource
 GET /reader3/getAvailableBookSourceSSE
 ```
 
-SSE 流式版本的 `getAvailableBookSource`。
+SSE 流式版本的 `getAvailableBookSource`，查询参数相同。

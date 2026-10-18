@@ -210,7 +210,7 @@ JWT 本身无状态，但服务端每个请求都比对 `users.token_version`：
 | 前端 HTML 消毒          | `frontend/src/utils/sanitize.ts`            | 书源正文经 DOMPurify 白名单消毒后才进 `v-html`（保留排版标签，剥脚本/事件属性/iframe）                                                                                                                                                     |
 | CORS                    | `api/router.rs`                             | 默认仅同源（不下发任何 CORS 头）；跨域需 `CORS_ALLOWED_ORIGINS` 显式白名单                                                                                                                                                                 |
 | 令牌                    | `auth/`、`service/user_service.rs`          | HS256 JWT；签名密钥来自 `JWT_SECRET` 或自动生成并持久化到 `storage/jwt_secret`；`token_version` 提供即时撤销                                                                                                                               |
-| 图片管道                | `service/image_service.rs`                  | 书源图片统一收口（id 映射、HEIC 转 JPEG、回源自愈）；Content-Type 收敛为位图白名单（防 `text/html`/`svg` 的同源 XSS）；图片目录容量上限 `CACHE_COVER_LIMIT_BYTES`、按最旧优先淘汰                                                                  |
+| 图片管道                | `service/image_service.rs`                  | 书源图片统一收口（id 映射、HEIC 转 JPEG、按记录里的 book_id 回源自愈）；Content-Type 收敛为位图白名单（防 `text/html`/`svg` 的同源 XSS）；图片目录容量上限 `CACHE_COVER_LIMIT_BYTES`、按最旧优先淘汰                                                                  |
 
 缓存**不按时间过期**：章节正文只在显式调用 `purgeCache` 或超出 `CACHE_USER_LIMIT_BYTES`（默认 512MiB，按用户）时被回收，超限按修改时间最旧优先淘汰。
 
@@ -224,10 +224,11 @@ SQLite 表：
 
 | 表                 | 主键                         | 用途                                                 |
 | ------------------ | ---------------------------- | ---------------------------------------------------- |
-| `book_sources`     | `(user_ns, book_source_url)` | 书源配置（整份 JSON 存储）                           |
+| `book_sources`     | `(user_ns, book_source_url)` | 书源配置（整份 JSON 存储；`book_source_id` 唯一索引是自增身份键） |
+| `books`            | `(user_ns, book_id)`         | 书籍登记表（`book_<n>`，绑定书源 id，换源只改绑）    |
 | `users`            | `username`                   | 唯一账号与 `token_version`（撤销版本号）             |
 | `json_documents`   | `(namespace, name)`          | 通用 JSON 文档存取（用户配置、书源变量等复用这张表） |
-| `ai_book_memories` | `(user_ns, book_key)`        | AI 资料                                              |
+| `ai_book_memories` | `(user_ns, book_key)`        | AI 资料（book_key 存 bookId）                        |
 
 > `book_cache` / `chapter_cache` 两张表曾随 0001 迁移创建，但从未被代码读写
 > （书籍元信息按需抓取、章节正文走文件缓存）——已由 0004 迁移删除。
