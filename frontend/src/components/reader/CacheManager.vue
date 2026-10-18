@@ -187,7 +187,9 @@ function startServerCaching(count: number) {
   sse.onmessage = (event) => {
     try {
       const data = JSON.parse(event.data)
-      const completed = (data.successCount || 0) + (data.cachedCount || 0) - (data.failedCount || 0)
+      // cachedCount 是范围内已缓存总数（已含本次新增）；失败章节本次不会再重试，
+      // 一并计入已处理，进度条才会到 100%
+      const completed = (data.cachedCount || 0) + (data.failedCount || 0)
       if (total > 0) {
         progress.value = Math.min(100, Math.round((Math.max(0, completed) / total) * 100))
       }

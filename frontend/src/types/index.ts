@@ -97,7 +97,7 @@ export interface ReviewItem {
   author?: boolean
   /** 作者赞过这条评论 */
   authorDigg?: boolean
-  /** 评论配图。站点常给同一张图的多个变体（HEIC + JPEG），由前端挑可渲染的 */
+  /** 评论配图。后端已挑好可渲染的格式，通常只有一个元素（`/reader3/image/<id>`） */
   images: string[]
 }
 
