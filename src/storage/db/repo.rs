@@ -122,6 +122,72 @@ impl BookRepo {
         Ok(out)
     }
 
+    /// 开事务：save_books 的整架替换/恢复需要跨 books+shelf_books 的原子性。
+    pub async fn begin(&self) -> Result<sqlx::Transaction<'_, sqlx::Sqlite>, AppError> {
+        Ok(self.pool.begin().await?)
+    }
+
+    /// 事务版 wipe。
+    pub async fn wipe_on(
+        &self,
+        tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+        user_ns: &str,
+    ) -> Result<(), AppError> {
+        sqlx::query("DELETE FROM books WHERE user_ns=?1")
+            .bind(user_ns)
+            .execute(&mut **tx)
+            .await?;
+        Ok(())
+    }
+
+    /// 事务版 register：与 `register` 语义一致，全部读写落在给定事务里。
+    pub async fn register_on(
+        &self,
+        tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+        user_ns: &str,
+        item: RegisterBook<'_>,
+        desired_id: Option<&str>,
+    ) -> Result<String, AppError> {
+        let row = sqlx::query(&format!(
+            "SELECT {BOOK_ROW_COLS} FROM books WHERE user_ns=?1 AND book_url=?2"
+        ))
+        .bind(user_ns)
+        .bind(item.book_url)
+        .fetch_optional(&mut **tx)
+        .await?;
+        if let Some(row) = row {
+            let existing = map_book_row(&row);
+            touch_book_fields(&mut **tx, user_ns, &existing.book_id, item).await?;
+            return Ok(existing.book_id);
+        }
+        if let Some(desired) = desired_id {
+            let desired_num = parse_book_id(desired)
+                .ok_or_else(|| AppError::BadRequest(format!("bookId 格式非法: {desired:?}")))?;
+            let row = sqlx::query(&format!(
+                "SELECT {BOOK_ROW_COLS} FROM books WHERE user_ns=?1 AND book_id=?2"
+            ))
+            .bind(user_ns)
+            .bind(desired_num)
+            .fetch_optional(&mut **tx)
+            .await?;
+            match row {
+                Some(row) if map_book_row(&row).book_url == item.book_url => {
+                    touch_book_fields(&mut **tx, user_ns, desired, item).await?;
+                    return Ok(desired.to_string());
+                }
+                // id 被别的书占用：本地身份优先，新来的一律分配新 id
+                Some(_) => {}
+                None => {
+                    insert_book_with_id(&mut **tx, user_ns, desired_num, item).await?;
+                    return Ok(desired.to_string());
+                }
+            }
+        }
+        insert_book_auto(&mut **tx, user_ns, item)
+            .await
+            .map(|(id, _)| id)
+    }
+
     pub async fn get(&self, user_ns: &str, book_id: &str) -> Result<Option<BookRow>, AppError> {
         let Some(id) = parse_book_id(book_id) else {
             return Ok(None);
@@ -189,15 +255,6 @@ impl BookRepo {
         Ok(())
     }
 
-    /// WebDAV 恢复的清表重建：恢复语义是全量覆盖，登记表随书架一起重置。
-    pub async fn wipe(&self, user_ns: &str) -> Result<(), AppError> {
-        sqlx::query("DELETE FROM books WHERE user_ns=?1")
-            .bind(user_ns)
-            .execute(&self.pool)
-            .await?;
-        Ok(())
-    }
-
     /// 回收不在给定保留清单里的登记行（purgeCache 清用户缓存时联动调用）。
     pub async fn delete_except(&self, user_ns: &str, keep_ids: &[String]) -> Result<u64, AppError> {
         if keep_ids.is_empty() {
@@ -209,7 +266,7 @@ impl BookRepo {
         }
         let ids: Vec<i64> = keep_ids.iter().filter_map(|s| parse_book_id(s)).collect();
         let placeholders = ids.iter().map(|_| "?").collect::<Vec<_>>().join(",");
-        let sql = format!("DELETE FROM books WHERE user_ns=?1 AND book_id NOT IN ({placeholders})");
+        let sql = format!("DELETE FROM books WHERE user_ns=? AND book_id NOT IN ({placeholders})");
         let mut query = sqlx::query(&sql).bind(user_ns);
         for id in ids {
             query = query.bind(id);
@@ -687,22 +744,34 @@ impl ShelfBookRepo {
         self.insert_row(&self.pool, user_ns, &row).await
     }
 
-    /// 整架替换：单事务清空重写，position 按数组序。
-    pub async fn replace_all(
+    /// 事务版整架替换（save_books 跨表原子性用）。
+    pub async fn replace_all_on(
         &self,
+        tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
         user_ns: &str,
         rows: Vec<ShelfBookRow>,
     ) -> Result<(), AppError> {
-        let mut tx = self.pool.begin().await?;
         sqlx::query("DELETE FROM shelf_books WHERE user_ns=?1")
             .bind(user_ns)
-            .execute(&mut *tx)
+            .execute(&mut **tx)
             .await?;
         for (index, mut row) in rows.into_iter().enumerate() {
             row.position = (index + 1) as i64;
-            self.insert_row(&mut *tx, user_ns, &row).await?;
+            self.insert_row(&mut **tx, user_ns, &row).await?;
         }
-        tx.commit().await?;
+        Ok(())
+    }
+
+    /// 事务版 wipe。
+    pub async fn wipe_on(
+        &self,
+        tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+        user_ns: &str,
+    ) -> Result<(), AppError> {
+        sqlx::query("DELETE FROM shelf_books WHERE user_ns=?1")
+            .bind(user_ns)
+            .execute(&mut **tx)
+            .await?;
         Ok(())
     }
 
@@ -798,14 +867,5 @@ impl ShelfBookRepo {
             .fetch_one(&self.pool)
             .await?;
         Ok(count)
-    }
-
-    /// 恢复语义：登记表清表时书架同步清空。
-    pub async fn wipe(&self, user_ns: &str) -> Result<(), AppError> {
-        sqlx::query("DELETE FROM shelf_books WHERE user_ns=?1")
-            .bind(user_ns)
-            .execute(&self.pool)
-            .await?;
-        Ok(())
     }
 }

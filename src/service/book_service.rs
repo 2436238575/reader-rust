@@ -319,18 +319,6 @@ impl BookService {
         self.book_repo.register(user_ns, item, None).await
     }
 
-    /// WebDAV 恢复专用：尊重备份自带的 bookId（空位才用）。
-    pub async fn register_book_with_id(
-        &self,
-        user_ns: &str,
-        item: RegisterBook<'_>,
-        desired_id: &str,
-    ) -> Result<String, AppError> {
-        self.book_repo
-            .register(user_ns, item, Some(desired_id))
-            .await
-    }
-
     /// 批量登记搜索/发现结果，把 bookId/bookSourceId 写回结果对象。
     pub async fn register_search_books(
         &self,
@@ -1941,15 +1929,15 @@ impl BookService {
             .remove_user(user_ns)
             .await
             .map_err(internal_error)?;
-        // 联动回收非在架书籍的登记行（在架书籍的 id 保留，缓存已清但身份不动）
+        // 联动回收非在架书籍的登记行（在架书籍的 id 保留，缓存已清但身份不动）。
+        // 书架读取失败必须中断：失败被吞成空书架会把在架书籍的登记行也一并删掉。
         let shelf_ids: Vec<String> = self
             .get_bookshelf(user_ns)
-            .await
-            .unwrap_or_default()
+            .await?
             .iter()
             .filter_map(|b| b.book_id.clone())
             .collect();
-        let _ = self.book_repo.delete_except(user_ns, &shelf_ids).await;
+        self.book_repo.delete_except(user_ns, &shelf_ids).await?;
         Ok(result)
     }
 
@@ -2268,41 +2256,25 @@ impl BookService {
 
     /// 整架替换（含 WebDAV 恢复）。`restore=true` 时先清空登记表与书架再按
     /// 备份自带的 bookId 逐条重建——空表无冲突，恢复后书签等按 id 引用的
-    /// 数据依然对齐。
+    /// 数据依然对齐。全路径单事务：两个存储不会半路不一致。
     pub async fn save_books(
         &self,
         user_ns: &str,
         books: Vec<Book>,
         restore: bool,
     ) -> Result<Vec<Book>, AppError> {
-        // 登记表与书架一起清重建：恢复语义是全量覆盖，两个存储不能半路不一致
-        if restore {
-            self.book_repo.wipe(user_ns).await?;
-            self.shelf_repo.wipe(user_ns).await?;
-        }
-        let mut normalized = Vec::with_capacity(books.len());
+        // 预校验（不落库）：URL 清洗与限额都在事务外完成
+        let mut prepared = Vec::with_capacity(books.len());
         for mut book in books {
             sanitize_book_urls(&mut book);
             if book.book_url.trim().is_empty() {
                 return Err(AppError::BadRequest("bookUrl required".to_string()));
             }
-            let item = RegisterBook {
-                book_url: &book.book_url,
-                book_source_id: book.book_source_id,
-                name: Some(&book.name),
-                author: Some(&book.author),
-                toc_url: book.toc_url.as_deref(),
-            };
-            let book_id = match (restore, book.book_id.as_deref()) {
-                (true, Some(desired)) => self.register_book_with_id(user_ns, item, desired).await?,
-                _ => self.register_book(user_ns, item).await?,
-            };
-            book.book_id = Some(book_id);
-            normalized.push(book);
+            prepared.push(book);
         }
         // save_books 是整架替换（导入场景），按替换后的总量校验上限
         let limit = self.user_book_limit as usize;
-        if limit > 0 && normalized.len() > limit {
+        if limit > 0 && prepared.len() > limit {
             return Err(AppError::BadRequest(format!(
                 "书架书籍数量不能超过 {limit} 本"
             )));
@@ -2310,7 +2282,7 @@ impl BookService {
         // 本地书限额在整架替换后同样成立
         let local_limit = self.user_local_book_limit as usize;
         if local_limit > 0 {
-            let local_count = normalized
+            let local_count = prepared
                 .iter()
                 .filter(|b| is_local_book_url(&b.book_url))
                 .count();
@@ -2320,8 +2292,39 @@ impl BookService {
                 )));
             }
         }
+
+        let mut tx = self.book_repo.begin().await?;
+        // 登记表与书架一起清重建：恢复语义是全量覆盖
+        if restore {
+            self.book_repo.wipe_on(&mut tx, user_ns).await?;
+            self.shelf_repo.wipe_on(&mut tx, user_ns).await?;
+        }
+        let mut normalized = Vec::with_capacity(prepared.len());
+        for mut book in prepared {
+            let item = RegisterBook {
+                book_url: &book.book_url,
+                book_source_id: book.book_source_id,
+                name: Some(&book.name),
+                author: Some(&book.author),
+                toc_url: book.toc_url.as_deref(),
+            };
+            let desired = if restore {
+                book.book_id.as_deref()
+            } else {
+                None
+            };
+            let book_id = self
+                .book_repo
+                .register_on(&mut tx, user_ns, item, desired)
+                .await?;
+            book.book_id = Some(book_id);
+            normalized.push(book);
+        }
         let rows = normalized.iter().map(shelf_row_of).collect();
-        self.shelf_repo.replace_all(user_ns, rows).await?;
+        self.shelf_repo
+            .replace_all_on(&mut tx, user_ns, rows)
+            .await?;
+        tx.commit().await?;
         Ok(normalized)
     }
 
@@ -3170,6 +3173,147 @@ mod tests {
             .await
             .unwrap_err();
         assert!(err.to_string().contains("本地书籍数量不能超过"));
+
+        let _ = tokio::fs::remove_dir_all(&storage_dir).await;
+    }
+
+    #[tokio::test]
+    async fn restore_aligns_backup_book_ids() {
+        let storage_dir =
+            std::env::temp_dir().join(format!("reader-rust-restore-align-{}", std::process::id()));
+        let service = test_service(&storage_dir).await;
+
+        let mut a = make_book("https://example.com/a");
+        a.book_id = Some("book_7".to_string());
+        let mut b = make_book("https://example.com/b");
+        b.book_id = Some("book_3".to_string());
+        let saved = service.save_books("u", vec![a, b], true).await.unwrap();
+
+        // 空表重建无冲突，备份自带 id 原位对齐
+        let ids: Vec<&str> = saved.iter().filter_map(|b| b.book_id.as_deref()).collect();
+        assert_eq!(ids, ["book_7", "book_3"]);
+        // 后续登记自动分配不撞已占用的 id
+        let c = service
+            .register_book(
+                "u",
+                RegisterBook {
+                    book_url: "https://example.com/c",
+                    book_source_id: None,
+                    name: None,
+                    author: None,
+                    toc_url: None,
+                },
+            )
+            .await
+            .unwrap();
+        assert_eq!(c, "book_8");
+
+        let _ = tokio::fs::remove_dir_all(&storage_dir).await;
+    }
+
+    #[tokio::test]
+    async fn restore_rolls_back_atomically_when_book_id_invalid() {
+        let storage_dir =
+            std::env::temp_dir().join(format!("reader-rust-restore-tx-{}", std::process::id()));
+        let service = test_service(&storage_dir).await;
+
+        // 先在架两本，作为「恢复前状态」
+        service
+            .save_books(
+                "u",
+                vec![
+                    make_book("https://example.com/a"),
+                    make_book("https://example.com/b"),
+                ],
+                false,
+            )
+            .await
+            .unwrap();
+
+        // 恢复备份：第一本合法，第二本 bookId 非法 → 事务整体回滚
+        let good = make_book("https://example.com/c");
+        let mut bad = make_book("https://example.com/d");
+        bad.book_id = Some("../evil".to_string());
+        let err = service
+            .save_books("u", vec![good, bad], true)
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("bookId 格式非法"));
+
+        // 书架与登记表都还是恢复前的样子（a/b 在架，c 未写入）
+        let shelf = service.get_bookshelf("u").await.unwrap();
+        let urls: Vec<&str> = shelf.iter().map(|b| b.book_url.as_str()).collect();
+        assert_eq!(urls, ["https://example.com/a", "https://example.com/b"]);
+        assert!(service
+            .book_repo()
+            .get_by_url("u", "https://example.com/c")
+            .await
+            .unwrap()
+            .is_none());
+
+        let _ = tokio::fs::remove_dir_all(&storage_dir).await;
+    }
+
+    #[tokio::test]
+    async fn purge_user_cache_keeps_shelf_registrations_and_recycles_orphans() {
+        let storage_dir =
+            std::env::temp_dir().join(format!("reader-rust-purge-{}", std::process::id()));
+        let service = test_service(&storage_dir).await;
+
+        // 在架一本 + 非在架登记一本
+        service
+            .save_book("u", make_book("https://example.com/onshelf"))
+            .await
+            .unwrap();
+        service
+            .register_book(
+                "u",
+                RegisterBook {
+                    book_url: "https://example.com/orphan",
+                    book_source_id: None,
+                    name: None,
+                    author: None,
+                    toc_url: None,
+                },
+            )
+            .await
+            .unwrap();
+
+        service.purge_user_cache("u").await.unwrap();
+
+        let repo = service.book_repo();
+        // 在架书的登记行保留（身份不动），孤儿行被回收
+        assert!(repo
+            .get_by_url("u", "https://example.com/onshelf")
+            .await
+            .unwrap()
+            .is_some());
+        assert!(repo
+            .get_by_url("u", "https://example.com/orphan")
+            .await
+            .unwrap()
+            .is_none());
+
+        // 合法语义保持不变：书架为空的用户 purge 后登记行全清
+        service
+            .register_book(
+                "v",
+                RegisterBook {
+                    book_url: "https://example.com/orphan2",
+                    book_source_id: None,
+                    name: None,
+                    author: None,
+                    toc_url: None,
+                },
+            )
+            .await
+            .unwrap();
+        service.purge_user_cache("v").await.unwrap();
+        assert!(repo
+            .get_by_url("v", "https://example.com/orphan2")
+            .await
+            .unwrap()
+            .is_none());
 
         let _ = tokio::fs::remove_dir_all(&storage_dir).await;
     }
