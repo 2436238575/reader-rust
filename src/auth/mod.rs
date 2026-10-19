@@ -34,18 +34,17 @@ impl AuthState {
 
     /// 读取用户的撤销版本号；用户不存在返回 `None`。
     ///
-    /// 走主键查询，是每个受保护请求唯一的一次数据库往返。
-    pub async fn load_token_version(&self, username: &str) -> Result<Option<i64>, sqlx::Error> {
-        let row = sqlx::query("SELECT token_version FROM users WHERE username=?1")
-            .bind(username)
+    /// 按 uid 查询（uid 随令牌签发），是每个受保护请求唯一的一次数据库往返。
+    pub async fn load_token_version(&self, uid: i64) -> Result<Option<i64>, sqlx::Error> {
+        let row = sqlx::query("SELECT token_version FROM users WHERE uid=?1")
+            .bind(uid)
             .fetch_optional(&self.pool)
             .await?;
         Ok(row.map(|row| row.get("token_version")))
     }
 }
 
-/// 用户命名空间的合法形式：与注册用户名同字符集（`^[a-z0-9]+$`），
-/// 另允许下划线以兼容内部命名（`__default__`、`__app__`）。
+/// 用户命名空间的合法形式：小写字母/数字/下划线（`user_<uid>`、用户名都满足）。
 ///
 /// 命名空间直接参与 storage 路径拼接（书架、缓存、上传目录等），
 /// 因此任何来源的 ns 都必须先过这里，否则可借 `../..` 穿越数据目录。

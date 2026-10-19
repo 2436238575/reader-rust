@@ -294,7 +294,8 @@ async fn resolve_webdav_user(
         .verify_basic_webdav(username, password, client_ip)
         .await
     {
-        Ok(Some(_)) => Ok(username.to_string()),
+        // 存储路径按 user_<uid> 隔离：username 只用于认证
+        Ok(Some(user)) => Ok(crate::auth::middleware::user_ns_of(user.uid)),
         _ => Err(StatusCode::UNAUTHORIZED),
     }
 }

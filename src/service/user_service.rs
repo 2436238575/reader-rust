@@ -161,6 +161,7 @@ impl UserService {
         let password = if generated { random_string(20) } else { preset };
         let now = now_ms();
         let user = User {
+            uid: 0, // 由 upsert 分配
             username: username.clone(),
             password: hash_password_async(&password).await?,
             last_login_at: 0,
@@ -297,7 +298,7 @@ impl UserService {
         let now = now_ts();
         let claims = Claims {
             sub: user.username.clone(),
-            ns: user.username.clone(),
+            uid: user.uid,
             iat: now,
             exp: now.saturating_add(self.cfg.jwt_ttl_secs as i64),
             ver: user.token_version,
@@ -458,7 +459,7 @@ impl UserService {
 
     pub async fn find_user(&self, username: &str) -> Result<Option<User>, AppError> {
         let row = sqlx::query(
-            "SELECT username, password, last_login_at, created_at, token_version FROM users \
+            "SELECT uid, username, password, last_login_at, created_at, token_version FROM users \
              WHERE username=?1",
         )
         .bind(username)
@@ -470,6 +471,7 @@ impl UserService {
     /// 对外返回的用户信息：不含任何凭据。
     fn format_user(&self, user: &User) -> Value {
         serde_json::json!({
+            "uid": user.uid,
             "username": user.username,
             "lastLoginAt": user.last_login_at,
             "createdAt": user.created_at,
@@ -487,6 +489,7 @@ impl UserService {
 
     fn user_from_row(&self, row: &SqliteRow) -> User {
         User {
+            uid: row.get("uid"),
             username: row.get("username"),
             password: row.get("password"),
             last_login_at: row.get("last_login_at"),
@@ -497,8 +500,8 @@ impl UserService {
 
     async fn upsert_user_row(&self, user: &User) -> Result<(), AppError> {
         sqlx::query(
-            "INSERT INTO users (username, password, last_login_at, created_at, token_version) \
-             VALUES (?1, ?2, ?3, ?4, ?5) \
+            "INSERT INTO users (username, password, last_login_at, created_at, token_version, uid) \
+             VALUES (?1, ?2, ?3, ?4, ?5, COALESCE(NULLIF(?6, 0), (SELECT COALESCE(MAX(uid), 0) + 1 FROM users))) \
              ON CONFLICT(username) DO UPDATE SET password=excluded.password, \
              last_login_at=excluded.last_login_at, created_at=excluded.created_at, \
              token_version=excluded.token_version",
@@ -508,6 +511,7 @@ impl UserService {
         .bind(user.last_login_at)
         .bind(user.created_at)
         .bind(user.token_version)
+        .bind(user.uid)
         .execute(&self.pool)
         .await?;
         Ok(())
@@ -656,7 +660,7 @@ mod tests {
         let claims = claims_of(&login);
 
         assert_eq!(claims.sub, "reader1");
-        assert_eq!(claims.ns, "reader1");
+        assert_eq!(claims.uid, 1);
         assert_eq!(claims.ver, 0);
         assert!(claims.exp > claims.iat);
         assert_eq!(claims.exp - claims.iat, service.cfg.jwt_ttl_secs as i64);
@@ -840,14 +844,16 @@ mod tests {
         assert!(anonymous["userInfo"].is_null());
 
         let auth = AuthUser {
+            uid: 1,
             username: "reader1".to_string(),
-            ns: "reader1".to_string(),
+            ns: "user_1".to_string(),
             ver: 1,
             scope: None,
             proxy_source: None,
         };
         let info = service.get_user_info(Some(&auth)).await.unwrap();
         assert_eq!(info["userInfo"]["username"], "reader1");
+        assert_eq!(info["userInfo"]["uid"], 1);
         assert!(info["userInfo"].get("accessToken").is_none());
         assert!(info["userInfo"].get("password").is_none());
 

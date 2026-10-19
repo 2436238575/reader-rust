@@ -423,7 +423,7 @@ fn mint_proxy_token(
     let now = chrono::Utc::now().timestamp();
     let claims = crate::auth::jwt::Claims {
         sub: user.username.clone(),
-        ns: user.ns.clone(),
+        uid: user.uid,
         iat: now,
         exp: now + PROXY_TOKEN_TTL_SECS,
         ver: user.ver,

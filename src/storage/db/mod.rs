@@ -23,7 +23,34 @@ pub async fn init_pool(database_url: &str) -> anyhow::Result<SqlitePool> {
         .run(&pool)
         .await?;
     backfill_book_source_ids(&pool).await?;
+    backfill_user_uids(&pool).await?;
     Ok(pool)
+}
+
+/// 给 0004 迁移前已存在的用户行回填自增 uid。
+/// 正常升级路径要求删除 storage/ 重建，这里只是防止旧库启动后 uid 全 NULL 的保险。
+async fn backfill_user_uids(pool: &SqlitePool) -> anyhow::Result<()> {
+    let rows = sqlx::query("SELECT rowid AS rid FROM users WHERE uid IS NULL ORDER BY rowid")
+        .fetch_all(pool)
+        .await?;
+    if rows.is_empty() {
+        return Ok(());
+    }
+    let mut tx = pool.begin().await?;
+    let mut next: i64 = sqlx::query_scalar("SELECT COALESCE(MAX(uid), 0) + 1 FROM users")
+        .fetch_one(&mut *tx)
+        .await?;
+    for row in &rows {
+        sqlx::query("UPDATE users SET uid = ?1 WHERE rowid = ?2")
+            .bind(next)
+            .bind(row.get::<i64, _>("rid"))
+            .execute(&mut *tx)
+            .await?;
+        next += 1;
+    }
+    tx.commit().await?;
+    tracing::info!("已为 {} 个存量用户回填 uid", rows.len());
+    Ok(())
 }
 
 /// 给 0002 迁移前已存在的书源行回填自增 id（新插入由 repo 层分配）。

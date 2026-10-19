@@ -16,10 +16,10 @@ pub const PROXY_TOKEN_SCOPE: &str = "bookSourceProxy";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Claims {
-    /// 用户名（`users.username`）
+    /// 用户名（`users.username`），仅登录与前端展示用
     pub sub: String,
-    /// 用户命名空间，直接参与 storage 路径拼接
-    pub ns: String,
+    /// 用户自增 id（`users.uid`）；命名空间 `u<uid>` 由中间件推导
+    pub uid: i64,
     /// 签发时间（Unix 秒）
     pub iat: i64,
     /// 过期时间（Unix 秒）
@@ -65,7 +65,7 @@ mod tests {
     fn claims(exp: i64, ver: i64) -> Claims {
         Claims {
             sub: "reader1".to_string(),
-            ns: "reader1".to_string(),
+            uid: 1,
             iat: 1_700_000_000,
             exp,
             ver,
@@ -80,7 +80,7 @@ mod tests {
         let token = encode_token(&claims(4_000_000_000, 3), secret).unwrap();
         let decoded = decode_token(&token, secret).unwrap();
         assert_eq!(decoded.sub, "reader1");
-        assert_eq!(decoded.ns, "reader1");
+        assert_eq!(decoded.uid, 1);
         assert_eq!(decoded.ver, 3);
     }
 

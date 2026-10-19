@@ -9,8 +9,10 @@ use std::convert::Infallible;
 /// 单用户部署下没有角色区分：能拿到 AuthUser 即拥有全部能力。
 #[derive(Debug, Clone)]
 pub struct AuthUser {
+    /// 用户自增 id（`users.uid`）
+    pub uid: i64,
     pub username: String,
-    /// 用户命名空间；所有按用户隔离的存储都以它为路径前缀
+    /// 用户命名空间；所有按用户隔离的存储都以它为路径前缀（`user_<uid>`）
     pub ns: String,
     /// 令牌里的撤销版本号（`users.token_version`），供铸造派生令牌时沿用
     pub ver: i64,
@@ -70,8 +72,9 @@ mod tests {
 
     fn user() -> AuthUser {
         AuthUser {
+            uid: 1,
             username: "reader1".to_string(),
-            ns: "reader1".to_string(),
+            ns: "user_1".to_string(),
             ver: 1,
             scope: None,
             proxy_source: None,
@@ -86,7 +89,7 @@ mod tests {
         let CurrentUser(extracted) = CurrentUser::from_request_parts(&mut parts, &())
             .await
             .unwrap();
-        assert_eq!(extracted.ns, "reader1");
+        assert_eq!(extracted.ns, "user_1");
     }
 
     #[tokio::test]

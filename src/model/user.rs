@@ -3,6 +3,9 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(default, rename_all = "camelCase")]
 pub struct User {
+    /// 自增身份 id：命名空间与存储路径的锚点（ns = `u<uid>`）。
+    /// username 只用于登录与前端展示。
+    pub uid: i64,
     pub username: String,
     /// Argon2id PHC 字符串（自含参数与随机盐）
     pub password: String,

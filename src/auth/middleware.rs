@@ -1,7 +1,7 @@
 use crate::api::AppState;
 use crate::auth::extractor::AuthUser;
 use crate::auth::jwt::decode_token;
-use crate::auth::{is_valid_user_ns, AuthState};
+use crate::auth::AuthState;
 use crate::error::error::{AppError, NEED_LOGIN};
 use axum::extract::{Request, State};
 use axum::http::header::AUTHORIZATION;
@@ -56,21 +56,26 @@ pub async fn optional_auth(
 async fn authenticate(state: &AuthState, token: String) -> Result<AuthUser, AppError> {
     let claims = decode_token(&token, state.jwt_secret())?;
     let token_version = state
-        .load_token_version(&claims.sub)
+        .load_token_version(claims.uid)
         .await?
         .ok_or_else(unauthorized)?;
     // 撤销检查：改密码会自增 token_version，使旧令牌立即失效
     if token_version != claims.ver {
         return Err(unauthorized());
     }
-    let ns = resolve_ns(&claims.ns, &claims.sub);
     Ok(AuthUser {
+        uid: claims.uid,
         username: claims.sub,
-        ns,
+        ns: user_ns_of(claims.uid),
         ver: claims.ver,
         scope: claims.scope,
         proxy_source: claims.bsid,
     })
+}
+
+/// 用户命名空间：`user_<uid>`。username 只用于登录与展示，改它不动数据。
+pub fn user_ns_of(uid: i64) -> String {
+    format!("user_{uid}")
 }
 
 /// 令牌从 `Authorization` 头取，回退到查询参数 `accessToken`。
@@ -113,20 +118,6 @@ fn parse_bearer(raw: &str) -> Option<String> {
             let token = value.trim();
             (!token.is_empty()).then(|| token.to_string())
         }
-    }
-}
-
-/// 命名空间参与 storage 路径拼接，异常值一律退回用户名。
-///
-/// 令牌已验签，正常情况下 `ns` 就是用户名；这里只是兜底，防止将来
-/// 有别的签发路径写入非法值。退回用户名而不是空串：空串会塌缩到
-/// data 根目录（跨用户共享区）。
-fn resolve_ns(ns: &str, username: &str) -> String {
-    let ns = ns.trim();
-    if is_valid_user_ns(ns) {
-        ns.to_string()
-    } else {
-        username.trim().to_string()
     }
 }
 
@@ -222,10 +213,8 @@ mod tests {
     }
 
     #[test]
-    fn resolve_ns_falls_back_to_username_for_invalid_claim() {
-        assert_eq!(resolve_ns("reader1", "reader1"), "reader1");
-        // 非法 ns 退回用户名而不是空串，保住用户隔离
-        assert_eq!(resolve_ns("", "reader1"), "reader1");
-        assert_eq!(resolve_ns("../etc", "reader1"), "reader1");
+    fn user_ns_of_uses_stable_uid_form() {
+        assert_eq!(user_ns_of(1), "user_1");
+        assert!(crate::auth::is_valid_user_ns(&user_ns_of(1)));
     }
 }
