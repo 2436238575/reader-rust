@@ -993,174 +993,48 @@ impl BookService {
         Ok((result, pagination))
     }
 
-    /// Continue fetching remaining chapters from pagination state
-    pub async fn fetch_remaining_chapters(
-        &self,
-        pagination: ChapterPagination,
-    ) -> Result<Vec<BookChapter>, AppError> {
-        let mut all_chapters = Vec::new();
-        let mut visited_page_urls: std::collections::HashSet<String> =
-            pagination.visited_urls.iter().cloned().collect();
-        let mut seen_chapter_urls: std::collections::HashSet<String> =
-            pagination.seen_chapter_urls.iter().cloned().collect();
-        let mut chapter_index = pagination.next_index;
-
-        let pending_urls: Vec<String> = pagination
-            .pending_urls
-            .into_iter()
-            .filter(|u| !visited_page_urls.contains(u))
-            .collect();
-
-        if pending_urls.len() > 1 {
-            // Multiple URLs from option dropdown - fetch all pages
-            for url in pending_urls {
-                if visited_page_urls.contains(&url) {
-                    continue;
-                }
-                visited_page_urls.insert(url.clone());
-
-                let res = self
-                    .fetch_source_url(
-                        &pagination.user_ns,
-                        &pagination.source,
-                        &url,
-                        &pagination.source.book_source_url,
-                    )
-                    .await?;
-                let (chapters, _) = self
-                    .parse_response_blocking(
-                        &pagination.user_ns,
-                        &pagination.source,
-                        &res,
-                        |p, s, b, u| p.chapter_list(s, b, u),
-                    )
-                    .await?;
-
-                // Check if this page is a duplicate (all chapters already seen)
-                // This handles cases where the first page URL differs from toc_url (e.g., different domain)
-                let all_seen = chapters
-                    .iter()
-                    .all(|ch| seen_chapter_urls.contains(&ch.url));
-                if all_seen && !chapters.is_empty() {
-                    tracing::debug!("Skipping duplicate page: {}", url);
-                    continue;
-                }
-
-                for ch in chapters {
-                    if seen_chapter_urls.contains(&ch.url) {
-                        continue;
-                    }
-                    seen_chapter_urls.insert(ch.url.clone());
-
-                    all_chapters.push(BookChapter {
-                        index: chapter_index,
-                        ..ch
-                    });
-                    chapter_index += 1;
-                }
-            }
-        } else if pending_urls.len() == 1 {
-            // Single next page link - follow sequentially
-            let mut current_url = pending_urls[0].clone();
-            loop {
-                if visited_page_urls.contains(&current_url) {
-                    break;
-                }
-                visited_page_urls.insert(current_url.clone());
-
-                let res = self
-                    .fetch_source_url(
-                        &pagination.user_ns,
-                        &pagination.source,
-                        &current_url,
-                        &pagination.source.book_source_url,
-                    )
-                    .await?;
-                let (chapters, next_urls) = self
-                    .parse_response_blocking(
-                        &pagination.user_ns,
-                        &pagination.source,
-                        &res,
-                        |p, s, b, u| p.chapter_list(s, b, u),
-                    )
-                    .await?;
-
-                // Check if this page is a duplicate
-                let all_seen = chapters
-                    .iter()
-                    .all(|ch| seen_chapter_urls.contains(&ch.url));
-                if all_seen && !chapters.is_empty() {
-                    tracing::debug!("Skipping duplicate page: {}", current_url);
-                    break; // Stop following pagination if we hit a duplicate page
-                }
-
-                for ch in chapters {
-                    if seen_chapter_urls.contains(&ch.url) {
-                        continue;
-                    }
-                    seen_chapter_urls.insert(ch.url.clone());
-
-                    all_chapters.push(BookChapter {
-                        index: chapter_index,
-                        ..ch
-                    });
-                    chapter_index += 1;
-                }
-
-                // Get next page
-                let next = next_urls
-                    .into_iter()
-                    .find(|u| !visited_page_urls.contains(u));
-                match next {
-                    Some(url) if !url.is_empty() => current_url = url,
-                    _ => break,
-                }
-            }
-        }
-
-        Ok(all_chapters)
-    }
-
-    async fn get_chapter_list_with_pagination(
+    /// 目录分页抓取的公共骨架：多分支（下拉选单多 URL）抓全、单链顺序跟进，
+    /// 整页重复熔断、章节 URL 去重都在此收口。
+    /// fetch_remaining_chapters 与 get_chapter_list_with_pagination 此前各持有
+    /// 一份逐行复制的 130 行实现，修 bug 必然 drift。
+    async fn fetch_paginated_chapters(
         &self,
         user_ns: &str,
         source: &BookSource,
-        toc_url: &str,
-    ) -> Result<(Vec<BookChapter>, Vec<String>), AppError> {
+        pending_urls: Vec<String>,
+        visited_page_urls: &mut std::collections::HashSet<String>,
+        seen_chapter_urls: &mut std::collections::HashSet<String>,
+        chapter_index: &mut i32,
+    ) -> Result<Vec<BookChapter>, AppError> {
         let mut all_chapters = Vec::new();
-        let mut visited_page_urls = std::collections::HashSet::new();
-        let mut seen_chapter_urls = std::collections::HashSet::new();
-        let mut chapter_index = 0i32;
-
-        // Fetch first page
-        let res = self
-            .fetch_source_url(user_ns, source, toc_url, &source.book_source_url)
-            .await?;
-        let (chapters, next_urls) = self
-            .parse_response_blocking(user_ns, source, &res, |p, s, b, u| p.chapter_list(s, b, u))
-            .await?;
-
-        visited_page_urls.insert(toc_url.to_string());
-
-        // Add first page chapters with deduplication
-        for ch in chapters {
-            if seen_chapter_urls.contains(&ch.url) {
-                continue;
-            }
-            seen_chapter_urls.insert(ch.url.clone());
-            all_chapters.push(BookChapter {
-                index: chapter_index,
-                ..ch
-            });
-            chapter_index += 1;
-        }
-
-        // Determine how to handle pagination
-        // Filter out already visited URLs
-        let pending_urls: Vec<String> = next_urls
+        let pending_urls: Vec<String> = pending_urls
             .into_iter()
             .filter(|u| !visited_page_urls.contains(u))
             .collect();
+
+        /// 页内公共动作：整页重复熔断 + 逐章去重追加。
+        macro_rules! absorb_page {
+            ($chapters:expr, $page_url:expr, $on_dup:expr) => {{
+                let all_seen = $chapters
+                    .iter()
+                    .all(|ch| seen_chapter_urls.contains(&ch.url));
+                if all_seen && !$chapters.is_empty() {
+                    tracing::debug!("Skipping duplicate page: {}", $page_url);
+                    $on_dup
+                }
+                for ch in $chapters {
+                    if seen_chapter_urls.contains(&ch.url) {
+                        continue;
+                    }
+                    seen_chapter_urls.insert(ch.url.clone());
+                    all_chapters.push(BookChapter {
+                        index: *chapter_index,
+                        ..ch
+                    });
+                    *chapter_index += 1;
+                }
+            }};
+        }
 
         if pending_urls.len() > 1 {
             // Multiple URLs from option dropdown - fetch all pages
@@ -1179,27 +1053,7 @@ impl BookService {
                     })
                     .await?;
 
-                // 整页重复熔断（与 fetch_remaining_chapters 一致）：
-                // 目录页全为已见章节时跳过，避免重定向/重发页被当作新章追加
-                let all_seen = chapters
-                    .iter()
-                    .all(|ch| seen_chapter_urls.contains(&ch.url));
-                if all_seen && !chapters.is_empty() {
-                    tracing::debug!("Skipping duplicate page: {}", url);
-                    continue;
-                }
-
-                for ch in chapters {
-                    if seen_chapter_urls.contains(&ch.url) {
-                        continue;
-                    }
-                    seen_chapter_urls.insert(ch.url.clone());
-                    all_chapters.push(BookChapter {
-                        index: chapter_index,
-                        ..ch
-                    });
-                    chapter_index += 1;
-                }
+                absorb_page!(chapters, url, continue);
             }
         } else if pending_urls.len() == 1 {
             // Single next page link - follow sequentially
@@ -1219,26 +1073,8 @@ impl BookService {
                     })
                     .await?;
 
-                // 整页重复即停（与 fetch_remaining_chapters 一致）
-                let all_seen = chapters
-                    .iter()
-                    .all(|ch| seen_chapter_urls.contains(&ch.url));
-                if all_seen && !chapters.is_empty() {
-                    tracing::debug!("Skipping duplicate page: {}", current_url);
-                    break;
-                }
-
-                for ch in chapters {
-                    if seen_chapter_urls.contains(&ch.url) {
-                        continue;
-                    }
-                    seen_chapter_urls.insert(ch.url.clone());
-                    all_chapters.push(BookChapter {
-                        index: chapter_index,
-                        ..ch
-                    });
-                    chapter_index += 1;
-                }
+                // 整页重复即停
+                absorb_page!(chapters, current_url, break);
 
                 // Get next page
                 let next = next_urls
@@ -1250,6 +1086,79 @@ impl BookService {
                 }
             }
         }
+
+        Ok(all_chapters)
+    }
+
+    /// Continue fetching remaining chapters from pagination state
+    pub async fn fetch_remaining_chapters(
+        &self,
+        pagination: ChapterPagination,
+    ) -> Result<Vec<BookChapter>, AppError> {
+        let mut visited_page_urls: std::collections::HashSet<String> =
+            pagination.visited_urls.iter().cloned().collect();
+        let mut seen_chapter_urls: std::collections::HashSet<String> =
+            pagination.seen_chapter_urls.iter().cloned().collect();
+        let mut chapter_index = pagination.next_index;
+        self.fetch_paginated_chapters(
+            &pagination.user_ns,
+            &pagination.source,
+            pagination.pending_urls,
+            &mut visited_page_urls,
+            &mut seen_chapter_urls,
+            &mut chapter_index,
+        )
+        .await
+    }
+
+    async fn get_chapter_list_with_pagination(
+        &self,
+        user_ns: &str,
+        source: &BookSource,
+        toc_url: &str,
+    ) -> Result<(Vec<BookChapter>, Vec<String>), AppError> {
+        // Fetch first page
+        let res = self
+            .fetch_source_url(user_ns, source, toc_url, &source.book_source_url)
+            .await?;
+        let (chapters, next_urls) = self
+            .parse_response_blocking(user_ns, source, &res, |p, s, b, u| p.chapter_list(s, b, u))
+            .await?;
+
+        let mut visited_page_urls = std::collections::HashSet::new();
+        visited_page_urls.insert(toc_url.to_string());
+        let mut seen_chapter_urls = std::collections::HashSet::new();
+        let mut chapter_index = 0i32;
+        let mut all_chapters = Vec::new();
+
+        // Add first page chapters with deduplication
+        for ch in chapters {
+            if seen_chapter_urls.contains(&ch.url) {
+                continue;
+            }
+            seen_chapter_urls.insert(ch.url.clone());
+            all_chapters.push(BookChapter {
+                index: chapter_index,
+                ..ch
+            });
+            chapter_index += 1;
+        }
+
+        let pending_urls: Vec<String> = next_urls
+            .into_iter()
+            .filter(|u| !visited_page_urls.contains(u))
+            .collect();
+        let mut rest = self
+            .fetch_paginated_chapters(
+                user_ns,
+                source,
+                pending_urls,
+                &mut visited_page_urls,
+                &mut seen_chapter_urls,
+                &mut chapter_index,
+            )
+            .await?;
+        all_chapters.append(&mut rest);
 
         Ok((all_chapters, visited_page_urls.into_iter().collect()))
     }
