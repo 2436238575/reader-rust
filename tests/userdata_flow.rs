@@ -194,7 +194,8 @@ async fn userdata_rejects_unsafe_or_invalid_names() {
                 serde_json::json!({ "name": name, "value": { "x": 1 } }),
             )
             .await;
-        assert_eq!(response.status(), 200, "非法名不应 5xx: {name}");
+        // 错误通道单轨化后：参数错误一律 HTTP 400 + isSuccess=false
+        assert_eq!(response.status(), 400, "非法名应 400: {name}");
         let body: serde_json::Value = response.json().await.unwrap();
         assert!(
             !body["isSuccess"].as_bool().unwrap(),
@@ -205,6 +206,7 @@ async fn userdata_rejects_unsafe_or_invalid_names() {
         let response = server
             .get(&format!("/reader3/getUserdata?name={query}"), Some(&token))
             .await;
+        assert_eq!(response.status(), 400, "非法名读取应 400: {name}");
         let body: serde_json::Value = response.json().await.unwrap();
         assert!(
             !body["isSuccess"].as_bool().unwrap(),

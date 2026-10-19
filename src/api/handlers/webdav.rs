@@ -45,10 +45,10 @@ pub async fn get_webdav_file_list(
     let parts = normalize_rel_path(&path)?;
     let full = join_parts(&home, &parts);
     if !full.exists() {
-        return Ok(Json(ApiResponse::err("路径不存在")));
+        return Err(AppError::BadRequest("路径不存在".to_string()));
     }
     if !full.is_dir() {
-        return Ok(Json(ApiResponse::err("路径不是目录")));
+        return Err(AppError::BadRequest("路径不是目录".to_string()));
     }
     let mut list = Vec::new();
     let mut dir = fs::read_dir(full)
@@ -173,12 +173,12 @@ pub async fn delete_webdav_file(
     let home = webdav_home(&state, &user_ns).await?;
     let path = req.path.unwrap_or_default();
     if path.is_empty() {
-        return Ok(Json(ApiResponse::err("参数错误")));
+        return Err(AppError::BadRequest("参数错误".to_string()));
     }
     let rel = normalize_rel_path(&path)?;
     let target = join_parts(&home, &rel);
     if !target.exists() {
-        return Ok(Json(ApiResponse::err("路径不存在")));
+        return Err(AppError::BadRequest("路径不存在".to_string()));
     }
     if target.is_dir() {
         fs::remove_dir_all(target)

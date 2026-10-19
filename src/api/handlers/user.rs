@@ -74,7 +74,7 @@ pub async fn get_userdata(
 ) -> Result<Json<ApiResponse<Value>>, AppError> {
     let name = q.name.unwrap_or_default();
     if !validate_userdata_name(&name) {
-        return Ok(Json(ApiResponse::err("文档名不合法")));
+        return Err(AppError::BadRequest("文档名不合法".to_string()));
     }
     let value = state
         .json_document_service
@@ -91,10 +91,10 @@ pub async fn save_userdata(
 ) -> Result<Json<ApiResponse<Value>>, AppError> {
     let name = req.name.unwrap_or_default();
     if !validate_userdata_name(&name) {
-        return Ok(Json(ApiResponse::err("文档名不合法")));
+        return Err(AppError::BadRequest("文档名不合法".to_string()));
     }
     let Some(value) = req.value else {
-        return Ok(Json(ApiResponse::err("缺少文档内容")));
+        return Err(AppError::BadRequest("缺少文档内容".to_string()));
     };
     state
         .json_document_service
@@ -195,7 +195,7 @@ pub async fn upload_file(
     };
     // 目录名只允许 [A-Za-z0-9_-]，避免 `..` 或分隔符进入路径
     let Some(file_type) = safe_path::sanitize_dir_segment(raw_file_type) else {
-        return Ok(Json(ApiResponse::err("文件类型不合法")));
+        return Err(AppError::BadRequest("文件类型不合法".to_string()));
     };
     // 与静态路由同源：静态服务把 ASSETS_DIR 挂在 /assets 下，
     // 写入端必须用同一个目录，否则自定义 ASSETS_DIR 后上传的文件取不到
@@ -211,7 +211,7 @@ pub async fn upload_file(
             .unwrap_or_else(|| "file".to_string());
         // 只取安全的纯文件名：拒绝 `..`、路径分隔符、绝对路径与 Windows 保留字符
         let Some(name) = safe_path::sanitize_file_name(&raw_name) else {
-            return Ok(Json(ApiResponse::err("文件名不合法")));
+            return Err(AppError::BadRequest("文件名不合法".to_string()));
         };
         // multipart 字段不受 DefaultBodyLimit 约束，必须逐块计数限量
         let data = match crate::api::handlers::multipart::read_limited_multipart_field(
@@ -222,7 +222,7 @@ pub async fn upload_file(
         .await
         {
             Ok(data) => data,
-            Err(e) => return Ok(Json(ApiResponse::err(e.to_string()))),
+            Err(e) => return Err(e),
         };
         // 写盘统一走 util::asset（消毒/越界检查/URL 形态与 AI 地图落盘共用一份）
         let url = match crate::util::asset::write_asset_file(
@@ -235,7 +235,7 @@ pub async fn upload_file(
         .await
         {
             Ok(url) => url,
-            Err(e) => return Ok(Json(ApiResponse::err(e.to_string()))),
+            Err(e) => return Err(e),
         };
         file_list.push(Value::String(url));
     }
@@ -250,11 +250,11 @@ pub async fn delete_file(
     let user_ns = user.0.ns.clone();
     let url = req.url.unwrap_or_default();
     if url.is_empty() {
-        return Ok(Json(ApiResponse::err("请输入文件链接")));
+        return Err(AppError::BadRequest("请输入文件链接".to_string()));
     }
     let prefix = format!("/assets/{}/", user_ns);
     if !url.starts_with(&prefix) {
-        return Ok(Json(ApiResponse::err("文件链接错误")));
+        return Err(AppError::BadRequest("文件链接错误".to_string()));
     }
     // 去掉 `/assets/` 前缀后做词法解析：相对路径必须**保留 user_ns 分量**，
     // 且解析结果不能逃出 assets 根目录
@@ -262,10 +262,10 @@ pub async fn delete_file(
     let relative = Path::new(&user_ns).join(&url[prefix.len()..]);
     // 上传时生成的链接不含 `..`，客户端再传回来时出现回溯一律视为非法
     if safe_path::contains_parent_dir(&relative) {
-        return Ok(Json(ApiResponse::err("文件链接错误")));
+        return Err(AppError::BadRequest("文件链接错误".to_string()));
     }
     let Some(full_path) = safe_path::resolve_within(&assets_root, &relative) else {
-        return Ok(Json(ApiResponse::err("文件链接错误")));
+        return Err(AppError::BadRequest("文件链接错误".to_string()));
     };
     if let Err(err) = fs::remove_file(&full_path).await {
         if err.kind() != std::io::ErrorKind::NotFound {
