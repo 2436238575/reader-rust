@@ -1891,16 +1891,18 @@ impl BookService {
     }
 
     /// 章节列表缓存目录：`<storage>/data/<ns>/chapters`。
+    /// 目录缓存：可再生数据，归位 cache/ 树下（data/ 只留用户资产 local_books）
     fn chapter_cache_dir(&self, user_ns: &str) -> PathBuf {
-        self.storage_dir.join("data").join(user_ns).join("chapters")
+        self.storage_dir.join("cache").join(user_ns).join("toc")
     }
 
     /// 书源搜索结果缓存目录：`<storage>/data/<ns>/book_sources`。
+    /// 换源候选缓存：可再生数据，归位 cache/ 树下
     fn book_sources_cache_dir(&self, user_ns: &str) -> PathBuf {
         self.storage_dir
-            .join("data")
+            .join("cache")
             .join(user_ns)
-            .join("book_sources")
+            .join("source_candidates")
     }
 
     /// 失效书源清单：`<storage>/cache/invalid_book_sources/<ns>.json`。
@@ -2112,11 +2114,11 @@ impl BookService {
         };
         let chapter_list = match user_ns {
             Some(ns) => dir_usage(&self.chapter_cache_dir(ns), usize::MAX).await,
-            None => self.data_subdir_usage("chapters").await,
+            None => self.cache_subdir_usage("toc").await,
         };
         let search_results = match user_ns {
             Some(ns) => dir_usage(&self.book_sources_cache_dir(ns), usize::MAX).await,
-            None => self.data_subdir_usage("book_sources").await,
+            None => self.cache_subdir_usage("source_candidates").await,
         };
         let review = match user_ns {
             Some(ns) => self.review_cache.user_usage(ns).await,
@@ -2131,11 +2133,13 @@ impl BookService {
         }))
     }
 
-    /// 汇总 `data/*/<name>` 各用户子目录的占用。
-    async fn data_subdir_usage(&self, name: &str) -> CacheUsage {
+    /// 汇总 `cache/*/<name>` 各用户子目录的占用。
+    ///（cache/ 顶层还混着 bookinfo/image/reviews 等非用户目录，join 不到
+    /// 目标子目录时贡献 0，不影响结果。）
+    async fn cache_subdir_usage(&self, name: &str) -> CacheUsage {
         use crate::storage::cache::file_cache::dir_usage;
         let mut total = CacheUsage::default();
-        let Ok(mut entries) = fs::read_dir(self.storage_dir.join("data")).await else {
+        let Ok(mut entries) = fs::read_dir(self.storage_dir.join("cache")).await else {
             return total;
         };
         while let Ok(Some(entry)) = entries.next_entry().await {
@@ -2431,18 +2435,18 @@ impl BookService {
 
     fn book_source_cache_path(&self, user_ns: &str, book_id: &str) -> PathBuf {
         self.storage_dir
-            .join("data")
+            .join("cache")
             .join(user_ns)
-            .join("book_sources")
+            .join("source_candidates")
             .join(format!("{}.json", book_id))
     }
 
     // Chapter list cache methods
     fn chapter_list_cache_path(&self, user_ns: &str, book_id: &str) -> PathBuf {
         self.storage_dir
-            .join("data")
+            .join("cache")
             .join(user_ns)
-            .join("chapters")
+            .join("toc")
             .join(format!("{}.json", book_id))
     }
 

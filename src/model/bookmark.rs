@@ -15,10 +15,3 @@ pub struct Bookmark {
     pub book_text: String,
     pub content: String,
 }
-
-impl Bookmark {
-    /// 同一本书同一位置视为同一条书签：重复保存覆盖，不产生重复条目。
-    pub fn identity(&self) -> (String, i32, i32) {
-        (self.book_id.clone(), self.chapter_index, self.chapter_pos)
-    }
-}

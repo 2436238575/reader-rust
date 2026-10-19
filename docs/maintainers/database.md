@@ -93,7 +93,10 @@
 
 ## json_documents
 
-通用 JSON 文档存取。书签、替换规则、书分组、AI 模型配置、userdata（最近阅读/阅读统计等）都存这张表，不各建新表。主键 `(user_ns, name)`。
+通用 JSON 文档存取。书分组、AI 模型配置、userdata（最近阅读/阅读统计等）存这张表，不各建新表。主键 `(user_ns, name)`。
+
+> 书签与替换规则曾是这里的两个文档，2026-10 拆为实体表（见下两节）——
+> 整文档读改写有并发互覆、无 delete、删书级联要全量过滤三个老问题。
 
 | 字段         | 类型    | 用途                                                          |
 | ------------ | ------- | ------------------------------------------------------------- |
@@ -101,6 +104,40 @@
 | `name`       | TEXT    | 文档名；userdata 类文档名走白名单校验（只允许字母数字与 `._-`） |
 | `json`       | TEXT    | 文档内容，整份 JSON                                           |
 | `updated_at` | INTEGER | 更新时间，毫秒时间戳                                          |
+
+## bookmarks
+
+书签。主键 `(user_ns, book_id, chapter_index, chapter_pos)`——同书同位置重复保存覆盖。普通索引 `(user_ns, book_id)`（删书级联用）。
+
+| 字段            | 类型    | 用途                                       |
+| --------------- | ------- | ------------------------------------------ |
+| `user_ns`       | TEXT    | 数据隔离键                                 |
+| `book_id`       | INTEGER | 关联 books 登记表                          |
+| `chapter_index` | INTEGER | 章节序号（身份键之一）                     |
+| `chapter_pos`   | INTEGER | 章内位置（身份键之一）                     |
+| `time`          | INTEGER | 创建/更新时间，毫秒时间戳                  |
+| `book_name`     | TEXT    | 书名快照（展示用，不参与判等）             |
+| `book_author`   | TEXT    | 作者快照（展示用）                         |
+| `chapter_name`  | TEXT    | 章节标题快照                               |
+| `book_text`     | TEXT    | 进度文案快照                               |
+| `content`       | TEXT    | 书签备注/摘录                              |
+
+## replace_rules
+
+替换规则。主键 `(user_ns, name)`（沿用阅读3.0 按名称 upsert 的判等语义）。
+
+| 字段          | 类型    | 用途                                                  |
+| ------------- | ------- | ----------------------------------------------------- |
+| `user_ns`     | TEXT    | 数据隔离键                                            |
+| `name`        | TEXT    | 规则名（身份键）                                      |
+| `id`          | INTEGER | 客户端带来的 id（时间戳），纯数据列                   |
+| `group_name`  | TEXT    | 分组名（列名避让 SQL 关键字 group）                   |
+| `pattern`     | TEXT    | 匹配规则                                              |
+| `replacement` | TEXT    | 替换内容                                              |
+| `scope`       | TEXT    | 作用域：`book:<bookId>` / `source:<bookSourceId>`，空为全局 |
+| `is_enabled`  | INTEGER | 布尔以 0/1 存                                         |
+| `is_regex`    | INTEGER | 布尔以 0/1 存                                         |
+| `rule_order`  | INTEGER | 排序权重（列名避让 SQL 关键字 order）                 |
 
 ## ai_book_memories
 
@@ -118,6 +155,6 @@ AI 书籍记忆（AI 资料编排产物）。主键 `(user_ns, book_id)`。
 
 - **书源存整份 JSON** 而不是打散成列——书源字段会随阅读3.0 规范演进，打散后每次演进都要改表；代价是无法按规则字段建索引。
 - **章节正文存文件而不是数据库**——单章动辄数十 KB 且数量极多，进库会让文件迅速膨胀并拖慢备份。正文缓存以 MD5 文件名落在 `storage/cache/` 下，数据库不存索引。
-- **`json_documents` 通用化**——零散键值（书签、替换规则、分组、配置）复用一张表，减少迁移次数。
+- **`json_documents` 通用化**——零散键值（分组、配置、userdata）复用一张表，减少迁移次数；有实体语义的（书签、替换规则）拆实体表。
 - **不声明外键**——表间一致性由 service 层维护（如删书时级联清书架行、书签、AI 记忆与图片记录）；`foreign_keys` pragma 虽开，但表结构里没有 FK 约束。
 - **时间戳单位不统一是历史现状**：`users` / `json_documents` / `ai_book_memories` 用毫秒，其余表用秒；`shelf_books` 里来自前端的字段（`dur_chapter_time`、`last_check_time`）随前端用毫秒。列的用途表里已逐列标注。

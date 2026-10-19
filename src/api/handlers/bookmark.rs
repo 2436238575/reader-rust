@@ -10,8 +10,7 @@ pub async fn get_bookmarks(
     State(state): State<AppState>,
     user: CurrentUser,
 ) -> Result<Json<ApiResponse<Value>>, AppError> {
-    let user_ns = user.0.ns.clone();
-    let list = read_list::<Bookmark>(&state, &user_ns, "bookmark.json").await?;
+    let list = state.bookmark_repo.list(&user.0.ns).await?;
     Ok(Json(ApiResponse::ok(
         serde_json::to_value(list).unwrap_or_default(),
     )))
@@ -22,29 +21,24 @@ pub async fn save_bookmark(
     user: CurrentUser,
     Json(bookmark): Json<Bookmark>,
 ) -> Result<Json<ApiResponse<Value>>, AppError> {
-    let user_ns = user.0.ns.clone();
     if bookmark.book_id.trim().is_empty() {
         return Err(AppError::BadRequest("bookId required".to_string()));
     }
-    let mut list = read_list::<Bookmark>(&state, &user_ns, "bookmark.json").await?;
-    upsert_bookmark(&mut list, bookmark);
-    write_list(&state, &user_ns, "bookmark.json", &list).await?;
-    Ok(Json(ApiResponse::ok(Value::String("".to_string()))))
+    state.bookmark_repo.upsert(&user.0.ns, &bookmark).await?;
+    Ok(Json(ApiResponse::ok(Value::String(String::new()))))
 }
 
 pub async fn save_bookmarks(
     State(state): State<AppState>,
     user: CurrentUser,
-    Json(mut bookmarks): Json<Vec<Bookmark>>,
+    Json(bookmarks): Json<Vec<Bookmark>>,
 ) -> Result<Json<ApiResponse<Value>>, AppError> {
-    let user_ns = user.0.ns.clone();
-    let mut list = read_list::<Bookmark>(&state, &user_ns, "bookmark.json").await?;
-    bookmarks.retain(|b| !b.book_id.trim().is_empty());
-    for b in bookmarks {
-        upsert_bookmark(&mut list, b);
+    for b in &bookmarks {
+        if !b.book_id.trim().is_empty() {
+            state.bookmark_repo.upsert(&user.0.ns, b).await?;
+        }
     }
-    write_list(&state, &user_ns, "bookmark.json", &list).await?;
-    Ok(Json(ApiResponse::ok(Value::String("".to_string()))))
+    Ok(Json(ApiResponse::ok(Value::String(String::new()))))
 }
 
 pub async fn delete_bookmark(
@@ -52,12 +46,16 @@ pub async fn delete_bookmark(
     user: CurrentUser,
     Json(bookmark): Json<Bookmark>,
 ) -> Result<Json<ApiResponse<Value>>, AppError> {
-    let user_ns = user.0.ns.clone();
-    let mut list = read_list::<Bookmark>(&state, &user_ns, "bookmark.json").await?;
-    let identity = bookmark.identity();
-    list.retain(|b| b.identity() != identity);
-    write_list(&state, &user_ns, "bookmark.json", &list).await?;
-    Ok(Json(ApiResponse::ok(Value::String("".to_string()))))
+    state
+        .bookmark_repo
+        .delete(
+            &user.0.ns,
+            &bookmark.book_id,
+            bookmark.chapter_index,
+            bookmark.chapter_pos,
+        )
+        .await?;
+    Ok(Json(ApiResponse::ok(Value::String(String::new()))))
 }
 
 pub async fn delete_bookmarks(
@@ -65,52 +63,24 @@ pub async fn delete_bookmarks(
     user: CurrentUser,
     Json(bookmarks): Json<Vec<Bookmark>>,
 ) -> Result<Json<ApiResponse<Value>>, AppError> {
-    let user_ns = user.0.ns.clone();
-    let mut list = read_list::<Bookmark>(&state, &user_ns, "bookmark.json").await?;
-    for b in bookmarks {
-        let identity = b.identity();
-        list.retain(|v| v.identity() != identity);
+    for b in &bookmarks {
+        state
+            .bookmark_repo
+            .delete(&user.0.ns, &b.book_id, b.chapter_index, b.chapter_pos)
+            .await?;
     }
-    write_list(&state, &user_ns, "bookmark.json", &list).await?;
-    Ok(Json(ApiResponse::ok(Value::String("".to_string()))))
+    Ok(Json(ApiResponse::ok(Value::String(String::new()))))
 }
 
 /// 删书联动：该书的书签一并删除（bookId 不再存在，书签留着也是孤儿）。
-pub(crate) async fn delete_bookmarks_for_book(state: &AppState, user_ns: &str, book_id: &str) {
-    if let Ok(mut list) = read_list::<Bookmark>(state, user_ns, "bookmark.json").await {
-        let before = list.len();
-        list.retain(|b| b.book_id != book_id);
-        if list.len() != before {
-            let _ = write_list(state, user_ns, "bookmark.json", &list).await;
-        }
-    }
-}
-
-async fn read_list<T: for<'de> serde::Deserialize<'de>>(
+pub(crate) async fn delete_bookmarks_for_book(
     state: &AppState,
     user_ns: &str,
-    name: &str,
-) -> Result<Vec<T>, AppError> {
-    state.json_document_service.read_list(user_ns, name).await
-}
-
-async fn write_list<T: serde::Serialize>(
-    state: &AppState,
-    user_ns: &str,
-    name: &str,
-    list: &Vec<T>,
+    book_id: &str,
 ) -> Result<(), AppError> {
     state
-        .json_document_service
-        .write_list(user_ns, name, list)
-        .await
-}
-
-fn upsert_bookmark(list: &mut Vec<Bookmark>, item: Bookmark) {
-    let identity = item.identity();
-    if let Some(pos) = list.iter().position(|v| v.identity() == identity) {
-        list[pos] = item;
-    } else {
-        list.push(item);
-    }
+        .bookmark_repo
+        .delete_for_book(user_ns, book_id)
+        .await?;
+    Ok(())
 }

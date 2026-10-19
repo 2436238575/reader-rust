@@ -25,6 +25,8 @@ pub struct AppState {
     pub local_txt_book_service: Arc<LocalTxtBookService>,
     pub local_epub_book_service: Arc<LocalEpubBookService>,
     pub json_document_service: Arc<JsonDocumentService>,
+    pub bookmark_repo: crate::storage::db::repo::BookmarkRepo,
+    pub replace_rule_repo: crate::storage::db::repo::ReplaceRuleRepo,
     pub image_service: Arc<ImageService>,
     pub ai_book_service: Arc<AiBookService>,
     pub ai_model_service: Arc<AiModelService>,

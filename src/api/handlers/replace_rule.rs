@@ -10,8 +10,7 @@ pub async fn get_replace_rules(
     State(state): State<AppState>,
     user: CurrentUser,
 ) -> Result<Json<ApiResponse<Value>>, AppError> {
-    let user_ns = user.0.ns.clone();
-    let list = read_list::<ReplaceRule>(&state, &user_ns, "replaceRule.json").await?;
+    let list = state.replace_rule_repo.list(&user.0.ns).await?;
     Ok(Json(ApiResponse::ok(
         serde_json::to_value(list).unwrap_or_default(),
     )))
@@ -22,32 +21,22 @@ pub async fn save_replace_rule(
     user: CurrentUser,
     Json(rule): Json<ReplaceRule>,
 ) -> Result<Json<ApiResponse<Value>>, AppError> {
-    let user_ns = user.0.ns.clone();
-    if rule.name.is_empty() {
-        return Err(AppError::BadRequest("名称不能为空".to_string()));
-    }
-    if rule.pattern.is_empty() {
-        return Err(AppError::BadRequest("替换规则不能为空".to_string()));
-    }
-    let mut list = read_list::<ReplaceRule>(&state, &user_ns, "replaceRule.json").await?;
-    upsert_by_key(&mut list, rule, |r| r.name.clone());
-    write_list(&state, &user_ns, "replaceRule.json", &list).await?;
-    Ok(Json(ApiResponse::ok(Value::String("".to_string()))))
+    validate_rule(&rule)?;
+    state.replace_rule_repo.upsert(&user.0.ns, &rule).await?;
+    Ok(Json(ApiResponse::ok(Value::String(String::new()))))
 }
 
 pub async fn save_replace_rules(
     State(state): State<AppState>,
     user: CurrentUser,
-    Json(mut rules): Json<Vec<ReplaceRule>>,
+    Json(rules): Json<Vec<ReplaceRule>>,
 ) -> Result<Json<ApiResponse<Value>>, AppError> {
-    let user_ns = user.0.ns.clone();
-    let mut list = read_list::<ReplaceRule>(&state, &user_ns, "replaceRule.json").await?;
-    rules.retain(|r| !r.name.is_empty() && !r.pattern.is_empty());
-    for r in rules {
-        upsert_by_key(&mut list, r, |v| v.name.clone());
+    for r in &rules {
+        if !r.name.is_empty() && !r.pattern.is_empty() {
+            state.replace_rule_repo.upsert(&user.0.ns, r).await?;
+        }
     }
-    write_list(&state, &user_ns, "replaceRule.json", &list).await?;
-    Ok(Json(ApiResponse::ok(Value::String("".to_string()))))
+    Ok(Json(ApiResponse::ok(Value::String(String::new()))))
 }
 
 pub async fn delete_replace_rule(
@@ -55,11 +44,11 @@ pub async fn delete_replace_rule(
     user: CurrentUser,
     Json(rule): Json<ReplaceRule>,
 ) -> Result<Json<ApiResponse<Value>>, AppError> {
-    let user_ns = user.0.ns.clone();
-    let mut list = read_list::<ReplaceRule>(&state, &user_ns, "replaceRule.json").await?;
-    list.retain(|r| r.name != rule.name);
-    write_list(&state, &user_ns, "replaceRule.json", &list).await?;
-    Ok(Json(ApiResponse::ok(Value::String("".to_string()))))
+    state
+        .replace_rule_repo
+        .delete_by_name(&user.0.ns, &rule.name)
+        .await?;
+    Ok(Json(ApiResponse::ok(Value::String(String::new()))))
 }
 
 pub async fn delete_replace_rules(
@@ -67,43 +56,21 @@ pub async fn delete_replace_rules(
     user: CurrentUser,
     Json(rules): Json<Vec<ReplaceRule>>,
 ) -> Result<Json<ApiResponse<Value>>, AppError> {
-    let user_ns = user.0.ns.clone();
-    let mut list = read_list::<ReplaceRule>(&state, &user_ns, "replaceRule.json").await?;
-    for r in rules {
-        list.retain(|v| v.name != r.name);
+    for r in &rules {
+        state
+            .replace_rule_repo
+            .delete_by_name(&user.0.ns, &r.name)
+            .await?;
     }
-    write_list(&state, &user_ns, "replaceRule.json", &list).await?;
-    Ok(Json(ApiResponse::ok(Value::String("".to_string()))))
+    Ok(Json(ApiResponse::ok(Value::String(String::new()))))
 }
 
-async fn read_list<T: for<'de> serde::Deserialize<'de>>(
-    state: &AppState,
-    user_ns: &str,
-    name: &str,
-) -> Result<Vec<T>, AppError> {
-    state.json_document_service.read_list(user_ns, name).await
-}
-
-async fn write_list<T: serde::Serialize>(
-    state: &AppState,
-    user_ns: &str,
-    name: &str,
-    list: &Vec<T>,
-) -> Result<(), AppError> {
-    state
-        .json_document_service
-        .write_list(user_ns, name, list)
-        .await
-}
-
-fn upsert_by_key<T, F>(list: &mut Vec<T>, item: T, key_fn: F)
-where
-    F: Fn(&T) -> String,
-{
-    let key = key_fn(&item);
-    if let Some(pos) = list.iter().position(|v| key_fn(v) == key) {
-        list[pos] = item;
-    } else {
-        list.push(item);
+fn validate_rule(rule: &ReplaceRule) -> Result<(), AppError> {
+    if rule.name.is_empty() {
+        return Err(AppError::BadRequest("名称不能为空".to_string()));
     }
+    if rule.pattern.is_empty() {
+        return Err(AppError::BadRequest("替换规则不能为空".to_string()));
+    }
+    Ok(())
 }

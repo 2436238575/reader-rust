@@ -207,10 +207,7 @@ pub fn build_router(state: AppState) -> Router {
             "/reader3/getInvalidBookSources",
             post(handlers::get_invalid_book_sources),
         )
-        .route(
-            "/reader3/cacheBookSSE",
-            get(handlers::cache_book_sse).post(handlers::cache_book_sse),
-        )
+        .route("/reader3/cacheBookSSE", get(handlers::cache_book_sse))
         .route(
             "/reader3/searchBookMultiSSE",
             get(handlers::search_book_multi_sse),
@@ -311,7 +308,6 @@ pub fn build_router(state: AppState) -> Router {
         .route("/reader3/saveUserdata", post(handlers::save_userdata))
         .route("/reader3/uploadFile", post(handlers::upload_file))
         .route("/reader3/deleteFile", post(handlers::delete_file))
-        .route("/reader3/getTxtTocRules", get(handlers::get_txt_toc_rules))
         .layer(middleware::from_fn_with_state(state.clone(), require_auth))
         .with_state(state.clone());
 

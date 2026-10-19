@@ -10,12 +10,15 @@
 
 | 层               | 位置                                                          | 说明                                          |
 | ---------------- | ------------------------------------------------------------- | --------------------------------------------- |
-| `content`        | `storage/cache/<ns>/<bookId>/<md5(chapterUrl)>.txt`           | 章节正文，按书一个目录                        |
+| `content`        | `storage/cache/<ns>/<bookId>/<md5前2位>/<md5(chapterUrl)>.txt`           | 章节正文，按书一个目录                        |
 | `cover`          | `storage/cache/image/<md5(去查询串地址)>.{bin,json}`          | 书源图片（封面、章节配图、评论配图）统一存放，全局共享；`.json` 记录含 `book_id`，供按书清理与回源自愈 |
-| `chapterList`    | `storage/data/<ns>/chapters/<bookId>.json`                    | 章节列表，1 小时 TTL                          |
-| `searchResults`  | `storage/data/<ns>/book_sources/<bookId>.json`                | 某本书在各书源中的换源候选搜索结果            |
+| `chapterList`    | `storage/cache/<ns>/toc/<bookId>.json`                        | 章节列表，1 小时 TTL                          |
+| `searchResults`  | `storage/cache/<ns>/source_candidates/<bookId>.json`          | 某本书在各书源中的换源候选搜索结果            |
 | `review`         | `storage/cache/reviews/<ns>/<bookId>/…`                       | 章评/段评，7 天 TTL                           |
 | `invalidSources` | `storage/cache/invalid_book_sources/<ns>.json`                | 失效书源清单                                  |
+
+> 正文缓存的键是 `md5(chapterUrl)`：换源后旧键缓存成为孤儿是必然结果
+> （新源的章节地址不同），不做主动清理，靠容量上限按最旧优先淘汰。
 | `bookInfo`       | `storage/cache/bookinfo/<ns>/<bookId>.json`                   | 书籍详情，1 小时 TTL（`refresh=1` 强刷）      |
 
 容量上限由 `CACHE_USER_LIMIT_BYTES`（默认 512MiB）与 `CACHE_COVER_LIMIT_BYTES`（默认 256MiB，图片目录：封面与配图共用）控制，超出时按修改时间最旧优先淘汰；设为 `0` 表示不限制。

@@ -132,7 +132,7 @@ pub async fn build_state(cfg: AppConfig) -> anyhow::Result<AppState> {
     let book_source_service = Arc::new(BookSourceService::new(repo));
     let local_txt_book_service = Arc::new(LocalTxtBookService::new(&cfg.storage_dir));
     let local_epub_book_service = Arc::new(LocalEpubBookService::new(&cfg.storage_dir));
-    let json_document_service = Arc::new(JsonDocumentService::new(pool.clone(), &cfg.storage_dir));
+    let json_document_service = Arc::new(JsonDocumentService::new(pool.clone()));
     let user_service = Arc::new(UserService::new(
         cfg.clone(),
         pool.clone(),
@@ -206,6 +206,8 @@ pub async fn build_state(cfg: AppConfig) -> anyhow::Result<AppState> {
         local_txt_book_service,
         local_epub_book_service,
         json_document_service,
+        bookmark_repo: db::repo::BookmarkRepo::new(pool.clone()),
+        replace_rule_repo: db::repo::ReplaceRuleRepo::new(pool.clone()),
         ai_book_service,
         ai_model_service,
         agent_sidecar_service,

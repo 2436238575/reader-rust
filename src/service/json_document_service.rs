@@ -1,45 +1,31 @@
-use std::path::PathBuf;
-
 use serde::{de::DeserializeOwned, Serialize};
 use serde_json::Value;
 use sqlx::{Row, SqlitePool};
-use tokio::fs;
 
 use crate::error::error::AppError;
 use crate::util::time::now_ts;
 
+/// 通用 JSON 文档存取（userdata、AI 模型配置等无结构键值）。
+///
+/// 书签与替换规则已拆成实体表（0002 迁移），不再走这张表；
+/// legacy 文件读穿（老部署 `data/<ns>/<name>`）已随破坏性升级口径移除。
 #[derive(Clone)]
 pub struct JsonDocumentService {
     pool: SqlitePool,
-    storage_dir: PathBuf,
 }
 
 impl JsonDocumentService {
-    pub fn new(pool: SqlitePool, storage_dir: &str) -> Self {
-        Self {
-            pool,
-            storage_dir: PathBuf::from(storage_dir),
-        }
+    pub fn new(pool: SqlitePool) -> Self {
+        Self { pool }
     }
 
     pub async fn get_value(&self, user_ns: &str, name: &str) -> Result<Option<Value>, AppError> {
-        if let Some(json) = self.get_raw(user_ns, name).await? {
-            let value =
-                serde_json::from_str(&json).map_err(|e| AppError::BadRequest(e.to_string()))?;
-            return Ok(Some(value));
-        }
-
-        let path = self.legacy_user_path(user_ns, name);
-        if !path.exists() {
+        let Some(json) = self.get_raw(user_ns, name).await? else {
             return Ok(None);
-        }
-        let json = fs::read_to_string(&path)
-            .await
-            .map_err(|e| AppError::Internal(e.into()))?;
-        let value = serde_json::from_str::<Value>(&json)
-            .map_err(|e| AppError::BadRequest(e.to_string()))?;
-        self.set_raw(user_ns, name, &json).await?;
-        Ok(Some(value))
+        };
+        serde_json::from_str(&json)
+            .map(Some)
+            .map_err(|e| AppError::BadRequest(e.to_string()))
     }
 
     pub async fn set_value<T: Serialize + ?Sized>(
@@ -93,9 +79,5 @@ impl JsonDocumentService {
         .execute(&self.pool)
         .await?;
         Ok(())
-    }
-
-    fn legacy_user_path(&self, user_ns: &str, name: &str) -> PathBuf {
-        self.storage_dir.join("data").join(user_ns).join(name)
     }
 }

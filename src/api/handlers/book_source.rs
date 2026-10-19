@@ -1071,7 +1071,7 @@ pub struct RemoteSourceParam {
 
 pub async fn read_remote_source_file(
     Json(param): Json<RemoteSourceParam>,
-) -> Result<Json<ApiResponse<Vec<String>>>, AppError> {
+) -> Result<Json<ApiResponse<Vec<BookSource>>>, AppError> {
     // 出站守卫：url 完全由调用方提供，必须挡掉内网目标
     let target = url_guard::ensure_outbound_url_str_allowed(&param.url)
         .await
@@ -1111,18 +1111,14 @@ pub async fn read_remote_source_file(
 
     tracing::debug!(count = sources.len(), "parsed remote book sources");
 
-    // Return as array of JSON strings (frontend expects each item to be a JSON string)
-    let json_str = serde_json::to_string(&sources)
-        .map_err(|e| AppError::BadRequest(format!("序列化书源失败: {}", e)))?;
-
-    Ok(Json(ApiResponse::ok(vec![json_str])))
+    Ok(Json(ApiResponse::ok(sources)))
 }
 
 use axum::extract::Multipart;
 
 pub async fn read_source_file(
     mut multipart: Multipart,
-) -> Result<Json<serde_json::Value>, AppError> {
+) -> Result<Json<ApiResponse<Vec<BookSource>>>, AppError> {
     while let Some(field) = multipart
         .next_field()
         .await
@@ -1143,7 +1139,7 @@ pub async fn read_source_file(
                         AppError::BadRequest("invalid book sources json format".to_string())
                     })
                     .and_then(extract_sources)?;
-                return Ok(Json(serde_json::to_value(sources).unwrap_or_default()));
+                return Ok(Json(ApiResponse::ok(sources)));
             }
         }
     }

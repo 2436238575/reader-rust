@@ -625,10 +625,36 @@ const SHELF_COLS: &str = "s.book_id, s.position, s.group_bits, s.dur_chapter_ind
      s.last_check_time, s.total_chapter_num, s.book_type, s.word_count, s.info_html, \
      s.toc_html, s.kind, s.update_time, s.can_re_name, s.download_urls, s.charset";
 
+/// 书架列表的窄列：intro/info_html/toc_html 是详情页级快照（单体可达几十 KB），
+/// 首屏书架用不到；500 本书全量带上就是每次打开多传几 MB。详情走 `get()`（全列）。
+const SHELF_LIST_COLS: &str = "s.book_id, s.position, s.group_bits, s.dur_chapter_index, \
+     s.dur_chapter_pos, s.dur_chapter_time, s.dur_chapter_title, s.cover_url, \
+     s.custom_cover_url, s.can_update, s.latest_chapter_title, \
+     s.last_check_time, s.total_chapter_num, s.book_type, s.word_count, \
+     s.kind, s.update_time, s.can_re_name, s.download_urls, s.charset";
+
 const SHELF_JOIN_COLS: &str = "b.book_url, b.book_source_id, b.toc_url, b.name, b.author, \
      bs.book_source_url AS origin_url, bs.book_source_name AS origin_name";
 
 fn map_shelf_entry(row: &sqlx::sqlite::SqliteRow) -> ShelfEntry {
+    map_shelf_entry_with(row, true)
+}
+
+/// 窄列行（SHELF_LIST_COLS）不取三个大文本字段，对应位置给 None。
+fn map_shelf_entry_list(row: &sqlx::sqlite::SqliteRow) -> ShelfEntry {
+    map_shelf_entry_with(row, false)
+}
+
+fn map_shelf_entry_with(row: &sqlx::sqlite::SqliteRow, wide: bool) -> ShelfEntry {
+    let (intro, info_html, toc_html) = if wide {
+        (
+            row.get::<Option<String>, _>("intro"),
+            row.get::<Option<String>, _>("info_html"),
+            row.get::<Option<String>, _>("toc_html"),
+        )
+    } else {
+        (None, None, None)
+    };
     ShelfEntry {
         shelf: ShelfBookRow {
             book_id: format_book_id(row.get::<i64, _>("book_id")),
@@ -641,14 +667,14 @@ fn map_shelf_entry(row: &sqlx::sqlite::SqliteRow) -> ShelfEntry {
             cover_url: row.get::<Option<String>, _>("cover_url"),
             custom_cover_url: row.get::<Option<String>, _>("custom_cover_url"),
             can_update: row.get::<Option<i64>, _>("can_update").map(|v| v != 0),
-            intro: row.get::<Option<String>, _>("intro"),
+            intro,
             latest_chapter_title: row.get::<Option<String>, _>("latest_chapter_title"),
             last_check_time: row.get::<Option<i64>, _>("last_check_time"),
             total_chapter_num: row.get::<Option<i32>, _>("total_chapter_num"),
             book_type: row.get::<Option<i32>, _>("book_type"),
             word_count: row.get::<Option<String>, _>("word_count"),
-            info_html: row.get::<Option<String>, _>("info_html"),
-            toc_html: row.get::<Option<String>, _>("toc_html"),
+            info_html,
+            toc_html,
             kind: row.get::<Option<String>, _>("kind"),
             update_time: row.get::<Option<String>, _>("update_time"),
             can_re_name: row.get::<Option<String>, _>("can_re_name"),
@@ -675,10 +701,10 @@ impl ShelfBookRepo {
         Self { pool }
     }
 
-    /// 书架全量，按 position 排序。
+    /// 书架全量（窄列），按 position 排序。
     pub async fn list(&self, user_ns: &str) -> Result<Vec<ShelfEntry>, AppError> {
         let rows = sqlx::query(&format!(
-            "SELECT {SHELF_COLS}, {SHELF_JOIN_COLS} FROM shelf_books s \
+            "SELECT {SHELF_LIST_COLS}, {SHELF_JOIN_COLS} FROM shelf_books s \
              JOIN books b ON b.user_ns = s.user_ns AND b.book_id = s.book_id \
              LEFT JOIN book_sources bs ON bs.user_ns = s.user_ns AND bs.book_source_id = b.book_source_id \
              WHERE s.user_ns = ?1 ORDER BY s.position"
@@ -686,7 +712,7 @@ impl ShelfBookRepo {
         .bind(user_ns)
         .fetch_all(&self.pool)
         .await?;
-        Ok(rows.iter().map(map_shelf_entry).collect())
+        Ok(rows.iter().map(map_shelf_entry_list).collect())
     }
 
     pub async fn get(&self, user_ns: &str, book_id: &str) -> Result<Option<ShelfEntry>, AppError> {
@@ -925,5 +951,306 @@ impl ShelfBookRepo {
             }
         }
         Ok(deleted)
+    }
+}
+
+// ─── 书签 / 替换规则（实体表，整文档读改写时代的终结） ─────────────────────
+
+#[derive(Clone)]
+pub struct BookmarkRepo {
+    pool: SqlitePool,
+}
+
+fn map_bookmark(row: &sqlx::sqlite::SqliteRow) -> crate::model::bookmark::Bookmark {
+    crate::model::bookmark::Bookmark {
+        book_id: format_book_id(row.get::<i64, _>("book_id")),
+        time: row.get::<i64, _>("time"),
+        book_name: row.get::<String, _>("book_name"),
+        book_author: row.get::<String, _>("book_author"),
+        chapter_index: row.get::<i32, _>("chapter_index"),
+        chapter_pos: row.get::<i32, _>("chapter_pos"),
+        chapter_name: row.get::<String, _>("chapter_name"),
+        book_text: row.get::<String, _>("book_text"),
+        content: row.get::<String, _>("content"),
+    }
+}
+
+const BOOKMARK_COLS: &str =
+    "book_id, time, book_name, book_author, chapter_index, chapter_pos, chapter_name, book_text, content";
+
+impl BookmarkRepo {
+    pub fn new(pool: SqlitePool) -> Self {
+        Self { pool }
+    }
+
+    /// 全部书签，按插入顺序（rowid）返回。
+    pub async fn list(
+        &self,
+        user_ns: &str,
+    ) -> Result<Vec<crate::model::bookmark::Bookmark>, AppError> {
+        let rows = sqlx::query(&format!(
+            "SELECT {BOOKMARK_COLS} FROM bookmarks WHERE user_ns=?1 ORDER BY rowid"
+        ))
+        .bind(user_ns)
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows.iter().map(map_bookmark).collect())
+    }
+
+    /// upsert 单条：同 (book_id, chapter_index, chapter_pos) 覆盖。
+    pub async fn upsert(
+        &self,
+        user_ns: &str,
+        b: &crate::model::bookmark::Bookmark,
+    ) -> Result<(), AppError> {
+        let Some(book_id) = parse_book_id(&b.book_id) else {
+            return Err(AppError::BadRequest(format!(
+                "bookId 格式非法: {:?}",
+                b.book_id
+            )));
+        };
+        sqlx::query(
+            "INSERT INTO bookmarks (user_ns, book_id, chapter_index, chapter_pos, time, book_name, book_author, chapter_name, book_text, content) \
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10) \
+             ON CONFLICT(user_ns, book_id, chapter_index, chapter_pos) DO UPDATE SET \
+             time=excluded.time, book_name=excluded.book_name, book_author=excluded.book_author, \
+             chapter_name=excluded.chapter_name, book_text=excluded.book_text, content=excluded.content",
+        )
+        .bind(user_ns)
+        .bind(book_id)
+        .bind(b.chapter_index)
+        .bind(b.chapter_pos)
+        .bind(b.time)
+        .bind(&b.book_name)
+        .bind(&b.book_author)
+        .bind(&b.chapter_name)
+        .bind(&b.book_text)
+        .bind(&b.content)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    pub async fn delete(
+        &self,
+        user_ns: &str,
+        book_id: &str,
+        chapter_index: i32,
+        chapter_pos: i32,
+    ) -> Result<(), AppError> {
+        let Some(id) = parse_book_id(book_id) else {
+            return Ok(());
+        };
+        sqlx::query(
+            "DELETE FROM bookmarks WHERE user_ns=?1 AND book_id=?2 AND chapter_index=?3 AND chapter_pos=?4",
+        )
+        .bind(user_ns)
+        .bind(id)
+        .bind(chapter_index)
+        .bind(chapter_pos)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    /// 删书级联：一句 DELETE，不再加载整个文档过滤。
+    pub async fn delete_for_book(&self, user_ns: &str, book_id: &str) -> Result<u64, AppError> {
+        let Some(id) = parse_book_id(book_id) else {
+            return Ok(0);
+        };
+        let result = sqlx::query("DELETE FROM bookmarks WHERE user_ns=?1 AND book_id=?2")
+            .bind(user_ns)
+            .bind(id)
+            .execute(&self.pool)
+            .await?;
+        Ok(result.rows_affected())
+    }
+}
+
+#[derive(Clone)]
+pub struct ReplaceRuleRepo {
+    pool: SqlitePool,
+}
+
+fn map_replace_rule(row: &sqlx::sqlite::SqliteRow) -> crate::model::replace_rule::ReplaceRule {
+    crate::model::replace_rule::ReplaceRule {
+        id: row.get::<i64, _>("id"),
+        name: row.get::<String, _>("name"),
+        group: row.get::<Option<String>, _>("group_name"),
+        pattern: row.get::<String, _>("pattern"),
+        replacement: row.get::<String, _>("replacement"),
+        scope: row.get::<Option<String>, _>("scope"),
+        is_enabled: row.get::<i64, _>("is_enabled") != 0,
+        is_regex: row.get::<i64, _>("is_regex") != 0,
+        order: row.get::<i64, _>("rule_order") as i32,
+    }
+}
+
+const REPLACE_RULE_COLS: &str =
+    "id, name, group_name, pattern, replacement, scope, is_enabled, is_regex, rule_order";
+
+impl ReplaceRuleRepo {
+    pub fn new(pool: SqlitePool) -> Self {
+        Self { pool }
+    }
+
+    /// 全部规则，按 rule_order 再按插入顺序。
+    pub async fn list(
+        &self,
+        user_ns: &str,
+    ) -> Result<Vec<crate::model::replace_rule::ReplaceRule>, AppError> {
+        let rows = sqlx::query(&format!(
+            "SELECT {REPLACE_RULE_COLS} FROM replace_rules WHERE user_ns=?1 ORDER BY rule_order, rowid"
+        ))
+        .bind(user_ns)
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows.iter().map(map_replace_rule).collect())
+    }
+
+    /// 按 (user_ns, name) upsert（沿用旧 JSON 时代的判等语义）。
+    pub async fn upsert(
+        &self,
+        user_ns: &str,
+        r: &crate::model::replace_rule::ReplaceRule,
+    ) -> Result<(), AppError> {
+        sqlx::query(
+            "INSERT INTO replace_rules (user_ns, name, id, group_name, pattern, replacement, scope, is_enabled, is_regex, rule_order) \
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10) \
+             ON CONFLICT(user_ns, name) DO UPDATE SET \
+             id=excluded.id, group_name=excluded.group_name, pattern=excluded.pattern, \
+             replacement=excluded.replacement, scope=excluded.scope, is_enabled=excluded.is_enabled, \
+             is_regex=excluded.is_regex, rule_order=excluded.rule_order",
+        )
+        .bind(user_ns)
+        .bind(&r.name)
+        .bind(r.id)
+        .bind(r.group.as_deref())
+        .bind(&r.pattern)
+        .bind(&r.replacement)
+        .bind(r.scope.as_deref())
+        .bind(if r.is_enabled { 1i64 } else { 0i64 })
+        .bind(if r.is_regex { 1i64 } else { 0i64 })
+        .bind(i64::from(r.order))
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    pub async fn delete_by_name(&self, user_ns: &str, name: &str) -> Result<(), AppError> {
+        sqlx::query("DELETE FROM replace_rules WHERE user_ns=?1 AND name=?2")
+            .bind(user_ns)
+            .bind(name)
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::model::bookmark::Bookmark;
+    use crate::model::replace_rule::ReplaceRule;
+
+    async fn test_pool() -> (SqlitePool, std::path::PathBuf) {
+        let dir = std::env::temp_dir().join(format!(
+            "reader-rust-repo-test-{}-{}",
+            std::process::id(),
+            crate::util::crypto::random_string(6)
+        ));
+        // init_pool 不建父目录，先落目录再开库
+        std::fs::create_dir_all(&dir).unwrap();
+        let url = format!("sqlite:{}?mode=rwc", dir.join("reader.db").display());
+        let pool = crate::storage::db::init_pool(&url).await.unwrap();
+        (pool, dir)
+    }
+
+    fn bookmark(book_id: &str, chapter_index: i32, chapter_pos: i32, text: &str) -> Bookmark {
+        Bookmark {
+            book_id: book_id.to_string(),
+            time: 1,
+            book_name: "书".into(),
+            book_author: "作者".into(),
+            chapter_index,
+            chapter_pos,
+            chapter_name: "章".into(),
+            book_text: text.into(),
+            content: String::new(),
+        }
+    }
+
+    #[tokio::test]
+    async fn bookmark_upsert_overwrites_same_position_and_cascades_on_book_delete() {
+        let (pool, dir) = test_pool().await;
+        let repo = BookmarkRepo::new(pool);
+
+        // 同书同位置覆盖、不同位置各存一条（修掉旧「一书一签」的覆盖 bug 后保持语义）
+        repo.upsert("u", &bookmark("book_1", 0, 0, "第一版"))
+            .await
+            .unwrap();
+        repo.upsert("u", &bookmark("book_1", 0, 0, "覆盖版"))
+            .await
+            .unwrap();
+        repo.upsert("u", &bookmark("book_1", 2, 5, "另一处"))
+            .await
+            .unwrap();
+        repo.upsert("u", &bookmark("book_2", 0, 0, "别的书"))
+            .await
+            .unwrap();
+
+        let list = repo.list("u").await.unwrap();
+        assert_eq!(list.len(), 3);
+        assert_eq!(
+            list.iter()
+                .find(|b| b.chapter_index == 0 && b.chapter_pos == 0 && b.book_id == "book_1")
+                .unwrap()
+                .book_text,
+            "覆盖版"
+        );
+
+        // 删书级联：一句 DELETE 清掉该书全部书签，别书不受影响
+        let deleted = repo.delete_for_book("u", "book_1").await.unwrap();
+        assert_eq!(deleted, 2);
+        let list = repo.list("u").await.unwrap();
+        assert_eq!(list.len(), 1);
+        assert_eq!(list[0].book_id, "book_2");
+
+        // 非法 bookId 是 no-op 而不是报错（删书路径对伪 id 宽容）
+        assert_eq!(repo.delete_for_book("u", "../x").await.unwrap(), 0);
+
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[tokio::test]
+    async fn replace_rule_upsert_by_name_and_ordering() {
+        let (pool, dir) = test_pool().await;
+        let repo = ReplaceRuleRepo::new(pool);
+
+        let rule = |name: &str, order: i32| ReplaceRule {
+            id: 1,
+            name: name.into(),
+            group: None,
+            pattern: "a".into(),
+            replacement: "b".into(),
+            scope: Some("book:book_1".into()),
+            is_enabled: true,
+            is_regex: false,
+            order,
+        };
+        repo.upsert("u", &rule("后加", 2)).await.unwrap();
+        repo.upsert("u", &rule("先排", 1)).await.unwrap();
+        // 同名覆盖
+        repo.upsert("u", &rule("先排", 3)).await.unwrap();
+
+        let list = repo.list("u").await.unwrap();
+        assert_eq!(list.len(), 2);
+        assert_eq!(list[0].name, "后加"); // rule_order=2 现在排前（先排被覆盖成 3）
+        assert_eq!(list[1].order, 3);
+
+        repo.delete_by_name("u", "后加").await.unwrap();
+        assert_eq!(repo.list("u").await.unwrap().len(), 1);
+
+        let _ = std::fs::remove_dir_all(dir);
     }
 }

@@ -1065,7 +1065,7 @@ pub async fn delete_book(
         return Err(AppError::BadRequest("书架书籍不存在".to_string()));
     }
     let _ = state.ai_book_service.delete(&user_ns, &book_id).await;
-    super::bookmark::delete_bookmarks_for_book(&state, &user_ns, &book_id).await;
+    super::bookmark::delete_bookmarks_for_book(&state, &user_ns, &book_id).await?;
     state.image_service.remove_by_book_id(&book_id).await;
     if let Some(book) = shelf_book {
         cleanup_local_book_files(&state, &user_ns, std::slice::from_ref(&book)).await;
@@ -1089,7 +1089,7 @@ pub async fn delete_books(
     let count = state.book_service.delete_books(&user_ns, &book_ids).await?;
     for book_id in &book_ids {
         let _ = state.ai_book_service.delete(&user_ns, book_id).await;
-        super::bookmark::delete_bookmarks_for_book(&state, &user_ns, book_id).await;
+        super::bookmark::delete_bookmarks_for_book(&state, &user_ns, book_id).await?;
         state.image_service.remove_by_book_id(book_id).await;
     }
     cleanup_local_book_files(&state, &user_ns, &shelf_books).await;
@@ -1551,24 +1551,16 @@ pub async fn search_book_multi_sse(
     let book_source_id = q.book_source_id;
     let book_source_group = q.book_source_group.clone().filter(|g| !g.trim().is_empty());
 
+    // 参数校验一律在建流前完成（400）：SSE 校验失败与流内运行期错误两条通道
+    // 合并为「能预检的走 HTTP 状态码」，前端少处理一种失败形态
+    if key.trim().is_empty() {
+        return Err(AppError::BadRequest("请输入搜索关键字".to_string()));
+    }
+
     let (tx, rx) = mpsc::channel::<Event>(16);
     let state_clone = state.clone();
 
     tokio::spawn(async move {
-        if key.trim().is_empty() {
-            let _ = tx
-                .send(
-                    Event::default()
-                        .event("error")
-                        .data(json_err("请输入搜索关键字")),
-                )
-                .await;
-            let _ = tx
-                .send(Event::default().event("end").data(json_end(last_index)))
-                .await;
-            return;
-        }
-
         let sources = if let Some(id) = book_source_id {
             match state_clone
                 .book_source_service
@@ -2425,10 +2417,6 @@ fn merge_book(target: &mut Book, info: Book) {
     if target.update_time.is_none() {
         target.update_time = info.update_time;
     }
-}
-
-pub async fn get_txt_toc_rules() -> Json<ApiResponse<Vec<serde_json::Value>>> {
-    Json(ApiResponse::ok(vec![]))
 }
 
 async fn cleanup_local_book_files(state: &AppState, user_ns: &str, books: &[Book]) {

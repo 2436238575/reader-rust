@@ -109,15 +109,23 @@ impl FileCache {
         let Ok(mut entries) = fs::read_dir(&dir).await else {
             return 0;
         };
+        // 分片结构：book 目录下是两层（shard 目录 → 章节文件）
         let mut count = 0u64;
         while let Ok(Some(entry)) = entries.next_entry().await {
-            if entry
-                .file_type()
-                .await
-                .map(|t| t.is_file())
-                .unwrap_or(false)
-            {
+            let Ok(ft) = entry.file_type().await else {
+                continue;
+            };
+            if ft.is_file() {
+                // 兼容平铺残留（老缓存目录）
                 count += 1;
+            } else if ft.is_dir() {
+                if let Ok(mut shard) = fs::read_dir(entry.path()).await {
+                    while let Ok(Some(f)) = shard.next_entry().await {
+                        if f.file_type().await.map(|t| t.is_file()).unwrap_or(false) {
+                            count += 1;
+                        }
+                    }
+                }
             }
         }
         count
@@ -150,7 +158,8 @@ impl FileCache {
 
     /// 全部用户已占用的缓存量。
     pub async fn total_usage(&self) -> CacheUsage {
-        dir_usage(&self.root, 2).await
+        // 分片后正文文件在 ns/book/shard/file 第四层，根目录起要下钻三层
+        dir_usage(&self.root, 3).await
     }
 
     /// 列出所有已产生缓存的用户命名空间。
@@ -195,9 +204,12 @@ impl FileCache {
         self.root.join(user_ns).join(book_key)
     }
 
+    /// 章节文件按 md5 前两位分片（`book_<n>/ab/abcdef….txt`）：
+    /// 2000 章的书平铺就是单目录 2000 个文件，淘汰扫描成本线性涨。
     fn chapter_path(&self, user_ns: &str, book_key: &str, chapter_key: &str) -> PathBuf {
         let name = md5_hex(chapter_key);
         self.book_path(user_ns, book_key)
+            .join(&name[..2])
             .join(name)
             .with_extension("txt")
     }
