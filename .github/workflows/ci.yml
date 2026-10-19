@@ -34,6 +34,10 @@ jobs:
       - name: test
         run: cargo test
 
+      # ts-rs 生成的前端类型在 cargo test 时刷新；未提交即模型漂移
+      - name: ts-rs bindings are committed
+        run: git diff --exit-code frontend/src/types/generated/
+
   frontend:
     runs-on: ubuntu-latest
     steps:

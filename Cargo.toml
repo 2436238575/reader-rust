@@ -55,3 +55,4 @@ dav-server = { version = "0.11", default-features = false, features = ["localfs"
 # 直通 dav-server 的请求体不走 axum 提取器，DefaultBodyLimit 对其无效，
 # 用 Limited 显式保持 WebDAV PUT 的体积上限。
 http-body-util = "0.1"
+ts-rs = "12.0.1"

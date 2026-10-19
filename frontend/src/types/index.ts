@@ -160,154 +160,18 @@ export interface ReviewResponse<T> {
 // ─── 书源 ───
 
 /** 以下 rule* 接口与 src/model/rule.rs 一一对应（全部字段可选的规则文本）。 */
-export interface SearchRule {
-  checkKeyWord?: string
-  bookList?: string
-  name?: string
-  author?: string
-  intro?: string
-  kind?: string
-  lastChapter?: string
-  updateTime?: string
-  bookUrl?: string
-  coverUrl?: string
-  wordCount?: string
-}
-
-/** 后端 ExploreRule = SearchRule 别名 */
-export type ExploreRule = SearchRule
-
-export interface BookInfoRule {
-  init?: string
-  name?: string
-  author?: string
-  intro?: string
-  kind?: string
-  lastChapter?: string
-  updateTime?: string
-  coverUrl?: string
-  wordCount?: string
-  tocUrl?: string
-  canReName?: string
-  downloadUrls?: string
-}
-
-export interface TocRule {
-  preUpdateJs?: string
-  init?: string
-  chapterList?: string
-  chapterName?: string
-  chapterUrl?: string
-  formatJs?: string
-  isVolume?: string
-  isVip?: string
-  isPay?: string
-  updateTime?: string
-  volumeName?: string
-  wordCount?: string
-  nextTocUrl?: string
-}
-
-export interface ContentRule {
-  content?: string
-  title?: string
-  nextContentUrl?: string
-  webJs?: string
-  sourceRegex?: string
-  replaceRegex?: string
-  imageStyle?: string
-  imageDecode?: string
-  payAction?: string
-}
-
-/** 评论规则字段（章评/段评共用这一套命名；段评另有 index* 概览三件套） */
-export interface ReviewRule {
-  reviewUrl?: string
-  avatarRule?: string
-  contentRule?: string
-  postTimeRule?: string
-  reviewQuoteUrl?: string
-  voteUpUrl?: string
-  voteDownUrl?: string
-  postReviewUrl?: string
-  postQuoteUrl?: string
-  deleteUrl?: string
-  listRule?: string
-  idRule?: string
-  nameRule?: string
-  diggRule?: string
-  replyCountRule?: string
-  totalRule?: string
-  hasMoreRule?: string
-  replyListRule?: string
-  replyNameRule?: string
-  replyContentRule?: string
-  replyPostTimeRule?: string
-  replyToRule?: string
-  authorRule?: string
-  authorDiggRule?: string
-  replyAuthorRule?: string
-  replyAuthorDiggRule?: string
-  imageRule?: string
-  replyImageRule?: string
-}
-
-export interface ParaReviewRule extends ReviewRule {
-  indexUrl?: string
-  indexListRule?: string
-  indexCountRule?: string
-  indexAuthorCommentedRule?: string
-}
-
-/** 章节配图规则（本项目扩展） */
-export interface ContentImageRule {
-  imageUrl?: string
-  listRule?: string
-  urlRule?: string
-  captionRule?: string
-  paraIndexRule?: string
-  widthRule?: string
-  heightRule?: string
-}
-
-export interface BookSource {
-  /** 后端分配的自增 id，书源的身份键；URL 只是数据字段与导入去重键 */
-  bookSourceId?: number
-  bookSourceName: string
-  bookSourceGroup?: string
-  bookSourceUrl: string
-  bookSourceType?: number
-  enabled?: boolean
-  enabledExplore?: boolean
-  enabledCookieJar?: boolean
-  customOrder?: number
-  weight?: number
-  bookUrlPattern?: string
-  searchUrl?: string
-  exploreUrl?: string
-  exploreScreen?: string
-  jsLib?: string
-  concurrentRate?: string
-  header?: string
-  loginUrl?: string
-  loginUi?: string
-  loginCheckJs?: string
-  coverDecodeJs?: string
-  lastUpdateTime?: number
-  respondTime?: number
-  bookSourceComment?: string
-  variableComment?: string
-  loadWithBaseUrl?: boolean
-  singleUrl?: boolean
-  ruleSearch?: SearchRule
-  ruleExplore?: ExploreRule
-  ruleBookInfo?: BookInfoRule
-  ruleToc?: TocRule
-  ruleContent?: ContentRule
-  ruleReview?: ReviewRule
-  ruleParaReview?: ParaReviewRule
-  ruleContentImage?: ContentImageRule
-}
+// 书源与规则类型由后端 ts-rs 生成（src/model/{book_source,rule}.rs，
+// `cargo test` 时刷新，勿手改）：与线上一致，可视化编辑器不再退化为
+// Record<string, unknown>。
+export type { SearchRule } from './generated/SearchRule'
+export type { SearchRule as ExploreRule } from './generated/SearchRule'
+export type { BookInfoRule } from './generated/BookInfoRule'
+export type { TocRule } from './generated/TocRule'
+export type { ContentRule } from './generated/ContentRule'
+export type { ReviewRule } from './generated/ReviewRule'
+export type { ParaReviewRule } from './generated/ParaReviewRule'
+export type { ContentImageRule } from './generated/ContentImageRule'
+export type { BookSource } from './generated/BookSource'
 
 export interface BookSourceTestResult {
   bookSourceId?: number

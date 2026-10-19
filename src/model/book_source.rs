@@ -7,66 +7,117 @@ use crate::model::rule::{
     SearchRule, TocRule,
 };
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default, ts_rs::TS)]
 #[serde(default, rename_all = "camelCase")]
+#[ts(
+    export,
+    export_to = "../frontend/src/types/generated/",
+    rename_all = "camelCase"
+)]
 pub struct BookSource {
     pub book_source_name: String,
+    #[ts(optional)]
     pub book_source_group: Option<String>,
     pub book_source_url: String,
     /// 后端分配的稳定自增 id，书源的身份键；URL 只是数据字段与导入去重键。
     /// 不落 json blob（由表列携带），装载/响应时注入。
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    #[ts(type = "number")]
     pub book_source_id: Option<i64>,
+    #[ts(optional)]
+    #[ts(type = "number")]
     pub book_source_type: Option<i32>,
+    #[ts(optional)]
     pub book_url_pattern: Option<String>,
+    #[ts(optional)]
+    #[ts(type = "number")]
     pub custom_order: Option<i32>,
+    #[ts(optional)]
     pub enabled: Option<bool>,
+    #[ts(optional)]
     pub enabled_explore: Option<bool>,
+    #[ts(optional)]
     pub enabled_cookie_jar: Option<bool>,
+    #[ts(optional)]
     pub js_lib: Option<String>,
+    #[ts(optional)]
     pub concurrent_rate: Option<String>,
+    #[ts(optional)]
     pub header: Option<String>,
+    #[ts(optional)]
     pub login_url: Option<String>,
+    #[ts(optional)]
     pub login_ui: Option<String>,
+    #[ts(optional)]
     pub login_check_js: Option<String>,
+    #[ts(optional)]
     pub cover_decode_js: Option<String>,
     #[serde(deserialize_with = "deserialize_i64_option")]
+    #[ts(optional)]
+    #[ts(type = "number")]
     pub last_update_time: Option<i64>,
+    #[ts(optional)]
+    #[ts(type = "number")]
     pub weight: Option<i32>,
+    #[ts(optional)]
     pub explore_url: Option<String>,
+    #[ts(optional)]
     pub explore_screen: Option<String>,
     #[serde(deserialize_with = "deserialize_rule_option")]
+    #[ts(optional)]
     pub rule_explore: Option<ExploreRule>,
+    #[ts(optional)]
     pub search_url: Option<String>,
     #[serde(deserialize_with = "deserialize_rule_option")]
+    #[ts(optional)]
     pub rule_search: Option<SearchRule>,
     #[serde(deserialize_with = "deserialize_rule_option")]
+    #[ts(optional)]
     pub rule_book_info: Option<BookInfoRule>,
     #[serde(deserialize_with = "deserialize_rule_option")]
+    #[ts(optional)]
     pub rule_toc: Option<TocRule>,
     #[serde(deserialize_with = "deserialize_rule_option")]
+    #[ts(optional)]
     pub rule_content: Option<ContentRule>,
     #[serde(deserialize_with = "deserialize_rule_option")]
+    #[ts(optional)]
     pub rule_review: Option<ReviewRule>,
     /// 段评规则（本项目扩展，阅读3.0 无此字段）。
     #[serde(deserialize_with = "deserialize_rule_option")]
+    #[ts(optional)]
     pub rule_para_review: Option<ParaReviewRule>,
     /// 章节配图规则（本项目扩展，阅读3.0 无此字段）。
     #[serde(deserialize_with = "deserialize_rule_option")]
+    #[ts(optional)]
     pub rule_content_image: Option<ContentImageRule>,
+    #[ts(optional)]
     pub book_source_comment: Option<String>,
+    #[ts(optional)]
     pub variable_comment: Option<String>,
     #[serde(deserialize_with = "deserialize_i64_option")]
+    #[ts(optional)]
+    #[ts(type = "number")]
     pub respond_time: Option<i64>,
+    #[ts(optional)]
     pub load_with_base_url: Option<bool>,
+    #[ts(optional)]
     pub single_url: Option<bool>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default, ts_rs::TS)]
 #[serde(default, rename_all = "camelCase")]
+#[ts(
+    export,
+    export_to = "../frontend/src/types/generated/",
+    rename_all = "camelCase"
+)]
 pub struct ExploreKind {
     pub title: String,
+    #[ts(optional)]
     pub url: Option<String>,
+    #[ts(optional, type = "unknown")]
     pub style: Option<Value>,
 }
 
