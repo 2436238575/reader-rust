@@ -8,9 +8,9 @@
 
 - **用户**：`uid` 自增，是存储命名空间的锚点（`user_ns = user_<uid>`）；`username` 只用于登录与展示。
 - **书源**：`book_source_id`（per user_ns 自增）是身份键；URL 只是数据字段与导入去重键。
-- **书籍**：`book_id`（`book_<n>`，per user_ns 自增）是稳定身份，不随换源变化；换源只改绑 `book_url` / `book_source_id`。
+- **书籍**：`book_id` 是稳定身份，不随换源变化；换源只改绑 `book_url` / `book_source_id`。库里存 INTEGER（rowid 单调自增），对外（API/缓存路径/日志）一律是 `book_<n>` 文本，转换在 repo 边界完成。
 
-所有表都按 `user_ns` 隔离；单用户部署下整库只有一个命名空间，但键结构保持多用户形态。id 分配统一走 `MAX(id)+1`——SQLite 单写者，配合事务安全。
+所有表都按 `user_ns` 隔离；单用户部署下整库只有一个命名空间，但键结构保持多用户形态。书源 id 分配走 `MAX(id)+1`（per user_ns，调用方持事务）；书籍 id 是 rowid 别名，不显式插入即由 SQLite 单调分配。
 
 ## users
 
@@ -40,14 +40,14 @@
 
 ## books
 
-书籍登记表。主键 `(user_ns, book_id)`，唯一索引 `(user_ns, book_url)`，普通索引 `(user_ns, book_source_id)`。
+书籍登记表。`book_id INTEGER PRIMARY KEY`（rowid 别名），唯一索引 `(user_ns, book_url)`，普通索引 `(user_ns, book_source_id)`。
 
 搜索/发现等列表产出即登记（响应才能带 bookId）；非在架的登记行由 `purgeCache`（scope=user）联动回收。
 
 | 字段              | 类型    | 用途                                                                       |
 | ----------------- | ------- | -------------------------------------------------------------------------- |
 | `user_ns`         | TEXT    | 数据隔离键                                                                 |
-| `book_id`         | TEXT    | 稳定身份键，形如 `book_<n>`；不随换源变化                                  |
+| `book_id`         | INTEGER | 稳定身份键（rowid 别名，单调自增）；对外格式化为 `book_<n>`，不随换源变化  |
 | `book_url`        | TEXT    | 上游书籍地址。同一地址永远解析到同一个 bookId（唯一索引保证）              |
 | `book_source_id`  | INTEGER | 当前绑定的书源 id；`NULL` 表示本地书（`local-txt:`/`local-epub:` 伪书源）  |
 | `toc_url`         | TEXT    | 目录地址；换源改绑时清空，下次访问重新抓取                                 |
@@ -65,7 +65,7 @@
 | 字段                   | 类型    | 用途                                                                 |
 | ---------------------- | ------- | -------------------------------------------------------------------- |
 | `user_ns`              | TEXT    | 数据隔离键                                                           |
-| `book_id`              | TEXT    | 关联 `books` 登记表                                                  |
+| `book_id`              | INTEGER | 关联 `books` 登记表                                                  |
 | `position`             | INTEGER | 书架排序；整架替换/拖拽排序时按数组序重写                            |
 | `group_bits`           | INTEGER | 分组位掩码（对应阅读3.0 的 `Book.group`）                            |
 | `dur_chapter_index`    | INTEGER | 阅读进度：章节序号                                                   |
@@ -109,7 +109,7 @@ AI 书籍记忆（AI 资料编排产物）。主键 `(user_ns, book_id)`。
 | 字段         | 类型    | 用途                                                                       |
 | ------------ | ------- | -------------------------------------------------------------------------- |
 | `user_ns`    | TEXT    | 数据隔离键                                                                 |
-| `book_id`    | TEXT    | 关联 `books` 登记表；换源后记忆天然保留                                    |
+| `book_id`    | INTEGER | 关联 `books` 登记表；换源后记忆天然保留                                    |
 | `book_url`   | TEXT    | 冗余校验列：WebDAV 恢复重建登记表后逐行比对，同 id 不同 URL 的记忆删除防串书 |
 | `json`       | TEXT    | 整份记忆 JSON                                                              |
 | `updated_at` | INTEGER | 更新时间，毫秒时间戳                                                       |

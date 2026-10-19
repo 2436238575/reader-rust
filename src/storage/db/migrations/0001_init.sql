@@ -37,22 +37,22 @@ CREATE TABLE IF NOT EXISTS book_sources (
 CREATE UNIQUE INDEX IF NOT EXISTS idx_book_sources_url
 ON book_sources(user_ns, book_source_url);
 
--- 书籍登记表：book_id（`book_<n>`，per user_ns 自增）是书籍的稳定身份键，
--- 不随换源变化；换源只改绑 book_url / book_source_id。
+-- 书籍登记表：book_id 是书籍的稳定身份键，不随换源变化；换源只改绑
+-- book_url / book_source_id。列存 INTEGER（rowid 别名，单调自增、无分配竞态），
+-- 对外（API/缓存路径/日志）一律格式化为 `book_<n>` 文本，转换在 repo 边界完成。
 -- (user_ns, book_url) 唯一：同一上游地址永远解析到同一个 bookId。
 -- book_source_id 为 NULL 表示本地书（local-txt:/local-epub: 伪书源）。
 -- 搜索/发现等列表产出即登记（响应才能带 bookId）；非在架登记行由 purgeCache 联动回收。
 CREATE TABLE IF NOT EXISTS books (
+    book_id INTEGER PRIMARY KEY,
     user_ns TEXT NOT NULL,
-    book_id TEXT NOT NULL,
     book_url TEXT NOT NULL,
     book_source_id INTEGER,
     toc_url TEXT,
     name TEXT NOT NULL DEFAULT '',
     author TEXT NOT NULL DEFAULT '',
     created_at INTEGER NOT NULL,
-    updated_at INTEGER NOT NULL,
-    PRIMARY KEY (user_ns, book_id)
+    updated_at INTEGER NOT NULL
 );
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_books_url
@@ -66,7 +66,7 @@ ON books(user_ns, book_source_id);
 -- JOIN books（必要时再 JOIN book_sources）注入，换源改绑只动 books 一行。
 CREATE TABLE IF NOT EXISTS shelf_books (
     user_ns TEXT NOT NULL,
-    book_id TEXT NOT NULL,
+    book_id INTEGER NOT NULL,
     -- 书架排序：整架替换/拖拽排序时按数组序重写
     position INTEGER NOT NULL,
     -- 分组位掩码（对应 Book.group）
@@ -113,7 +113,7 @@ CREATE TABLE IF NOT EXISTS json_documents (
 -- 校验「同 id 同书」防串书。
 CREATE TABLE IF NOT EXISTS ai_book_memories (
     user_ns TEXT NOT NULL,
-    book_id TEXT NOT NULL,
+    book_id INTEGER NOT NULL,
     book_url TEXT NOT NULL,
     json TEXT NOT NULL,
     updated_at INTEGER NOT NULL,

@@ -2,9 +2,11 @@ use sqlx::{Row, SqlitePool};
 
 use crate::error::error::AppError;
 use crate::model::ai_book::AiBookMemory;
+use crate::storage::db::repo::{format_book_id, parse_book_id};
 use crate::util::time::now_ts;
 
-/// AI 书籍记忆：按 bookId 键控（`book_id` 列存 `book_<n>`，关联 books 登记表）。
+/// AI 书籍记忆：按 bookId 键控（`book_id` 列存 INTEGER，关联 books 登记表；
+/// 对外仍是 `book_<n>` 文本，SQL 边界 parse/format）。
 /// `book_url` 列是冗余数据，供 WebDAV 恢复后校验「同 id 同书」防串书。
 #[derive(Clone)]
 pub struct AiBookService {
@@ -21,10 +23,13 @@ impl AiBookService {
         user_ns: &str,
         book_id: &str,
     ) -> Result<Option<AiBookMemory>, AppError> {
+        let Some(id) = parse_book_id(book_id) else {
+            return Ok(None);
+        };
         if let Some(row) =
             sqlx::query("SELECT json FROM ai_book_memories WHERE user_ns=?1 AND book_id=?2")
                 .bind(user_ns)
-                .bind(book_id)
+                .bind(id)
                 .fetch_optional(&self.pool)
                 .await?
         {
@@ -43,9 +48,8 @@ impl AiBookService {
         book_url: &str,
         mut memory: AiBookMemory,
     ) -> Result<AiBookMemory, AppError> {
-        if book_id.trim().is_empty() {
-            return Err(AppError::BadRequest("bookId required".to_string()));
-        }
+        let id = parse_book_id(book_id)
+            .ok_or_else(|| AppError::BadRequest(format!("bookId 格式非法: {book_id:?}")))?;
         if memory.book_url.trim().is_empty() {
             memory.book_url = book_url.to_string();
         }
@@ -64,7 +68,7 @@ impl AiBookService {
              ON CONFLICT(user_ns, book_id) DO UPDATE SET book_url=excluded.book_url, json=excluded.json, updated_at=excluded.updated_at",
         )
         .bind(user_ns)
-        .bind(book_id)
+        .bind(id)
         .bind(book_url)
         .bind(data)
         .bind(memory.updated_at)
@@ -74,9 +78,12 @@ impl AiBookService {
     }
 
     pub async fn delete(&self, user_ns: &str, book_id: &str) -> Result<bool, AppError> {
+        let Some(id) = parse_book_id(book_id) else {
+            return Ok(false);
+        };
         let result = sqlx::query("DELETE FROM ai_book_memories WHERE user_ns=?1 AND book_id=?2")
             .bind(user_ns)
-            .bind(book_id)
+            .bind(id)
             .execute(&self.pool)
             .await?;
         Ok(result.rows_affected() > 0)
@@ -93,7 +100,7 @@ impl AiBookService {
             .into_iter()
             .map(|r| {
                 (
-                    r.get::<String, _>("book_id"),
+                    format_book_id(r.get::<i64, _>("book_id")),
                     r.get::<String, _>("book_url"),
                 )
             })
