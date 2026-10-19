@@ -522,7 +522,7 @@ pub struct ShelfEntry {
 const SHELF_COLS: &str = "s.book_id, s.position, s.group_bits, s.dur_chapter_index, \
      s.dur_chapter_pos, s.dur_chapter_time, s.dur_chapter_title, s.cover_url, \
      s.custom_cover_url, s.can_update, s.intro, s.latest_chapter_title, \
-     s.last_check_time, s.total_chapter_num, s.type, s.word_count, s.info_html, \
+     s.last_check_time, s.total_chapter_num, s.book_type, s.word_count, s.info_html, \
      s.toc_html, s.kind, s.update_time, s.can_re_name, s.download_urls, s.charset";
 
 const SHELF_JOIN_COLS: &str = "b.book_url, b.book_source_id, b.toc_url, b.name, b.author, \
@@ -545,7 +545,7 @@ fn map_shelf_entry(row: &sqlx::sqlite::SqliteRow) -> ShelfEntry {
             latest_chapter_title: row.get::<Option<String>, _>("latest_chapter_title"),
             last_check_time: row.get::<Option<i64>, _>("last_check_time"),
             total_chapter_num: row.get::<Option<i32>, _>("total_chapter_num"),
-            book_type: row.get::<Option<i32>, _>("type"),
+            book_type: row.get::<Option<i32>, _>("book_type"),
             word_count: row.get::<Option<String>, _>("word_count"),
             info_html: row.get::<Option<String>, _>("info_html"),
             toc_html: row.get::<Option<String>, _>("toc_html"),
@@ -672,7 +672,7 @@ impl ShelfBookRepo {
             "INSERT INTO shelf_books (user_ns, book_id, position, group_bits, \
              dur_chapter_index, dur_chapter_pos, dur_chapter_time, dur_chapter_title, \
              cover_url, custom_cover_url, can_update, intro, latest_chapter_title, \
-             last_check_time, total_chapter_num, type, word_count, info_html, toc_html, \
+             last_check_time, total_chapter_num, book_type, word_count, info_html, toc_html, \
              kind, update_time, can_re_name, download_urls, charset, created_at, updated_at) \
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, \
              ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26) \
@@ -683,7 +683,7 @@ impl ShelfBookRepo {
              custom_cover_url=excluded.custom_cover_url, can_update=excluded.can_update, \
              intro=excluded.intro, latest_chapter_title=excluded.latest_chapter_title, \
              last_check_time=excluded.last_check_time, total_chapter_num=excluded.total_chapter_num, \
-             type=excluded.type, word_count=excluded.word_count, info_html=excluded.info_html, \
+             book_type=excluded.book_type, word_count=excluded.word_count, info_html=excluded.info_html, \
              toc_html=excluded.toc_html, kind=excluded.kind, update_time=excluded.update_time, \
              can_re_name=excluded.can_re_name, download_urls=excluded.download_urls, \
              charset=excluded.charset, updated_at=excluded.updated_at",

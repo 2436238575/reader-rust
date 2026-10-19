@@ -137,7 +137,7 @@ impl UserService {
             tracing::warn!("ADMIN_USERNAME 为空，退回默认值 admin");
             username = "admin".to_string();
         }
-        // 用户名就是 storage 命名空间，非法字符会塌缩成路径穿越面
+        // 用户名进 JWT sub 与日志，限制字符集避免歧义
         if !crate::auth::is_valid_user_ns(&username) {
             return Err(AppError::BadRequest(format!(
                 "ADMIN_USERNAME 只能包含小写字母、数字与下划线（当前: {username:?}）"
@@ -146,10 +146,10 @@ impl UserService {
         let preset = self.cfg.admin_password.trim().to_string();
 
         if let Some(mut user) = self.find_user(&username).await? {
-            if preset.is_empty() || verify_password_async(&preset, &user.password).await? {
+            if preset.is_empty() || verify_password_async(&preset, &user.password_hash).await? {
                 return Ok(());
             }
-            user.password = hash_password_async(&preset).await?;
+            user.password_hash = hash_password_async(&preset).await?;
             user.token_version += 1;
             self.upsert_user_row(&user).await?;
             self.invalidate_webdav_credentials(&username);
@@ -163,7 +163,7 @@ impl UserService {
         let user = User {
             uid: 0, // 由 upsert 分配
             username: username.clone(),
-            password: hash_password_async(&password).await?,
+            password_hash: hash_password_async(&password).await?,
             last_login_at: 0,
             created_at: now,
             token_version: 0,
@@ -279,7 +279,7 @@ impl UserService {
     ) -> Result<Value, AppError> {
         self.login_throttle_begin(username, client_ip)?;
         if let Some(mut user) = self.find_user(username).await? {
-            if !verify_password_async(password, &user.password).await? {
+            if !verify_password_async(password, &user.password_hash).await? {
                 return Err(AppError::BadRequest("用户名或密码错误".to_string()));
             }
             self.login_throttle_clear(username, client_ip);
@@ -379,11 +379,11 @@ impl UserService {
             .find_user(username)
             .await?
             .ok_or_else(|| AppError::BadRequest("用户不存在".to_string()))?;
-        if !verify_password_async(old_password, &user.password).await? {
+        if !verify_password_async(old_password, &user.password_hash).await? {
             return Err(AppError::BadRequest("当前密码错误".to_string()));
         }
 
-        user.password = hash_password_async(new_password).await?;
+        user.password_hash = hash_password_async(new_password).await?;
         user.token_version += 1;
         user.last_login_at = now_ms();
         self.upsert_user_row(&user).await?;
@@ -409,7 +409,7 @@ impl UserService {
         }
         // 与登录接口共享同一份限速：否则这是绕开登录锁定的平行爆破通道
         self.login_throttle_begin(username, client_ip)?;
-        if !verify_password_async(password, &user.password).await? {
+        if !verify_password_async(password, &user.password_hash).await? {
             return Ok(None);
         }
         self.login_throttle_clear(username, client_ip);
@@ -459,7 +459,7 @@ impl UserService {
 
     pub async fn find_user(&self, username: &str) -> Result<Option<User>, AppError> {
         let row = sqlx::query(
-            "SELECT uid, username, password, last_login_at, created_at, token_version FROM users \
+            "SELECT uid, username, password_hash, token_version, created_at, last_login_at FROM users \
              WHERE username=?1",
         )
         .bind(username)
@@ -491,27 +491,27 @@ impl UserService {
         User {
             uid: row.get("uid"),
             username: row.get("username"),
-            password: row.get("password"),
-            last_login_at: row.get("last_login_at"),
-            created_at: row.get("created_at"),
+            password_hash: row.get("password_hash"),
             token_version: row.get("token_version"),
+            created_at: row.get("created_at"),
+            last_login_at: row.get("last_login_at"),
         }
     }
 
     async fn upsert_user_row(&self, user: &User) -> Result<(), AppError> {
         sqlx::query(
-            "INSERT INTO users (username, password, last_login_at, created_at, token_version, uid) \
-             VALUES (?1, ?2, ?3, ?4, ?5, COALESCE(NULLIF(?6, 0), (SELECT COALESCE(MAX(uid), 0) + 1 FROM users))) \
-             ON CONFLICT(username) DO UPDATE SET password=excluded.password, \
-             last_login_at=excluded.last_login_at, created_at=excluded.created_at, \
-             token_version=excluded.token_version",
+            "INSERT INTO users (uid, username, password_hash, token_version, created_at, last_login_at) \
+             VALUES (COALESCE(NULLIF(?1, 0), (SELECT COALESCE(MAX(uid), 0) + 1 FROM users)), ?2, ?3, ?4, ?5, ?6) \
+             ON CONFLICT(username) DO UPDATE SET password_hash=excluded.password_hash, \
+             token_version=excluded.token_version, created_at=excluded.created_at, \
+             last_login_at=excluded.last_login_at",
         )
-        .bind(&user.username)
-        .bind(&user.password)
-        .bind(user.last_login_at)
-        .bind(user.created_at)
-        .bind(user.token_version)
         .bind(user.uid)
+        .bind(&user.username)
+        .bind(&user.password_hash)
+        .bind(user.token_version)
+        .bind(user.created_at)
+        .bind(user.last_login_at)
         .execute(&self.pool)
         .await?;
         Ok(())
@@ -595,13 +595,13 @@ mod tests {
 
         service.bootstrap_admin().await.unwrap();
         let user = service.find_user("reader1").await.unwrap().unwrap();
-        assert!(user.password.starts_with("$argon2id$"));
+        assert!(user.password_hash.starts_with("$argon2id$"));
         assert_eq!(user.token_version, 0);
 
         // 幂等：再次 bootstrap（仍无 ADMIN_PASSWORD）不动密码
         service.bootstrap_admin().await.unwrap();
         let again = service.find_user("reader1").await.unwrap().unwrap();
-        assert_eq!(again.password, user.password);
+        assert_eq!(again.password_hash, user.password_hash);
 
         let _ = fs::remove_dir_all(temp_dir).await;
     }
@@ -616,7 +616,7 @@ mod tests {
         service.bootstrap_admin().await.unwrap();
         let same = service.find_user("reader1").await.unwrap().unwrap();
         assert_eq!(same.token_version, before.token_version);
-        assert_eq!(same.password, before.password);
+        assert_eq!(same.password_hash, before.password_hash);
 
         // 预设密码变化：覆盖并自增版本号，旧口令失效
         service.cfg.admin_password = "newpassword456".to_string();

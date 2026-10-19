@@ -22,14 +22,14 @@ impl JsonDocumentService {
         }
     }
 
-    pub async fn get_value(&self, namespace: &str, name: &str) -> Result<Option<Value>, AppError> {
-        if let Some(json) = self.get_raw(namespace, name).await? {
+    pub async fn get_value(&self, user_ns: &str, name: &str) -> Result<Option<Value>, AppError> {
+        if let Some(json) = self.get_raw(user_ns, name).await? {
             let value =
                 serde_json::from_str(&json).map_err(|e| AppError::BadRequest(e.to_string()))?;
             return Ok(Some(value));
         }
 
-        let path = self.legacy_user_path(namespace, name);
+        let path = self.legacy_user_path(user_ns, name);
         if !path.exists() {
             return Ok(None);
         }
@@ -38,26 +38,26 @@ impl JsonDocumentService {
             .map_err(|e| AppError::Internal(e.into()))?;
         let value = serde_json::from_str::<Value>(&json)
             .map_err(|e| AppError::BadRequest(e.to_string()))?;
-        self.set_raw(namespace, name, &json).await?;
+        self.set_raw(user_ns, name, &json).await?;
         Ok(Some(value))
     }
 
     pub async fn set_value<T: Serialize + ?Sized>(
         &self,
-        namespace: &str,
+        user_ns: &str,
         name: &str,
         value: &T,
     ) -> Result<(), AppError> {
         let json = serde_json::to_string(value).map_err(|e| AppError::BadRequest(e.to_string()))?;
-        self.set_raw(namespace, name, &json).await
+        self.set_raw(user_ns, name, &json).await
     }
 
     pub async fn read_list<T: DeserializeOwned>(
         &self,
-        namespace: &str,
+        user_ns: &str,
         name: &str,
     ) -> Result<Vec<T>, AppError> {
-        let Some(value) = self.get_value(namespace, name).await? else {
+        let Some(value) = self.get_value(user_ns, name).await? else {
             return Ok(Vec::new());
         };
         serde_json::from_value(value).map_err(|e| AppError::BadRequest(e.to_string()))
@@ -65,28 +65,28 @@ impl JsonDocumentService {
 
     pub async fn write_list<T: Serialize>(
         &self,
-        namespace: &str,
+        user_ns: &str,
         name: &str,
         list: &Vec<T>,
     ) -> Result<(), AppError> {
-        self.set_value(namespace, name, list).await
+        self.set_value(user_ns, name, list).await
     }
 
-    async fn get_raw(&self, namespace: &str, name: &str) -> Result<Option<String>, AppError> {
-        let row = sqlx::query("SELECT json FROM json_documents WHERE namespace=?1 AND name=?2")
-            .bind(namespace)
+    async fn get_raw(&self, user_ns: &str, name: &str) -> Result<Option<String>, AppError> {
+        let row = sqlx::query("SELECT json FROM json_documents WHERE user_ns=?1 AND name=?2")
+            .bind(user_ns)
             .bind(name)
             .fetch_optional(&self.pool)
             .await?;
         Ok(row.map(|row| row.get::<String, _>("json")))
     }
 
-    async fn set_raw(&self, namespace: &str, name: &str, json: &str) -> Result<(), AppError> {
+    async fn set_raw(&self, user_ns: &str, name: &str, json: &str) -> Result<(), AppError> {
         sqlx::query(
-            "INSERT INTO json_documents (namespace, name, json, updated_at) VALUES (?1, ?2, ?3, ?4) \
-             ON CONFLICT(namespace, name) DO UPDATE SET json=excluded.json, updated_at=excluded.updated_at",
+            "INSERT INTO json_documents (user_ns, name, json, updated_at) VALUES (?1, ?2, ?3, ?4) \
+             ON CONFLICT(user_ns, name) DO UPDATE SET json=excluded.json, updated_at=excluded.updated_at",
         )
-        .bind(namespace)
+        .bind(user_ns)
         .bind(name)
         .bind(json)
         .bind(now_ts() * 1000)
@@ -95,7 +95,7 @@ impl JsonDocumentService {
         Ok(())
     }
 
-    fn legacy_user_path(&self, namespace: &str, name: &str) -> PathBuf {
-        self.storage_dir.join("data").join(namespace).join(name)
+    fn legacy_user_path(&self, user_ns: &str, name: &str) -> PathBuf {
+        self.storage_dir.join("data").join(user_ns).join(name)
     }
 }

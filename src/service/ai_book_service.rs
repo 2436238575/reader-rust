@@ -4,7 +4,7 @@ use crate::error::error::AppError;
 use crate::model::ai_book::AiBookMemory;
 use crate::util::time::now_ts;
 
-/// AI 书籍记忆：按 bookId 键控（`book_key` 列存 `book_<n>`）。
+/// AI 书籍记忆：按 bookId 键控（`book_id` 列存 `book_<n>`，关联 books 登记表）。
 /// `book_url` 列是冗余数据，供 WebDAV 恢复后校验「同 id 同书」防串书。
 #[derive(Clone)]
 pub struct AiBookService {
@@ -22,7 +22,7 @@ impl AiBookService {
         book_id: &str,
     ) -> Result<Option<AiBookMemory>, AppError> {
         if let Some(row) =
-            sqlx::query("SELECT json FROM ai_book_memories WHERE user_ns=?1 AND book_key=?2")
+            sqlx::query("SELECT json FROM ai_book_memories WHERE user_ns=?1 AND book_id=?2")
                 .bind(user_ns)
                 .bind(book_id)
                 .fetch_optional(&self.pool)
@@ -60,8 +60,8 @@ impl AiBookService {
         let data =
             serde_json::to_string(&memory).map_err(|e| AppError::BadRequest(e.to_string()))?;
         sqlx::query(
-            "INSERT INTO ai_book_memories (user_ns, book_key, book_url, json, updated_at) VALUES (?1, ?2, ?3, ?4, ?5) \
-             ON CONFLICT(user_ns, book_key) DO UPDATE SET book_url=excluded.book_url, json=excluded.json, updated_at=excluded.updated_at",
+            "INSERT INTO ai_book_memories (user_ns, book_id, book_url, json, updated_at) VALUES (?1, ?2, ?3, ?4, ?5) \
+             ON CONFLICT(user_ns, book_id) DO UPDATE SET book_url=excluded.book_url, json=excluded.json, updated_at=excluded.updated_at",
         )
         .bind(user_ns)
         .bind(book_id)
@@ -74,7 +74,7 @@ impl AiBookService {
     }
 
     pub async fn delete(&self, user_ns: &str, book_id: &str) -> Result<bool, AppError> {
-        let result = sqlx::query("DELETE FROM ai_book_memories WHERE user_ns=?1 AND book_key=?2")
+        let result = sqlx::query("DELETE FROM ai_book_memories WHERE user_ns=?1 AND book_id=?2")
             .bind(user_ns)
             .bind(book_id)
             .execute(&self.pool)
@@ -85,7 +85,7 @@ impl AiBookService {
     /// 列出全部记忆的 `(book_id, book_url)`：WebDAV 恢复重建登记表后，
     /// 由调用方逐行比对，book_url 与新登记同 id 行不一致的记忆删除（防串书）。
     pub async fn list_keys(&self, user_ns: &str) -> Result<Vec<(String, String)>, AppError> {
-        let rows = sqlx::query("SELECT book_key, book_url FROM ai_book_memories WHERE user_ns=?1")
+        let rows = sqlx::query("SELECT book_id, book_url FROM ai_book_memories WHERE user_ns=?1")
             .bind(user_ns)
             .fetch_all(&self.pool)
             .await?;
@@ -93,7 +93,7 @@ impl AiBookService {
             .into_iter()
             .map(|r| {
                 (
-                    r.get::<String, _>("book_key"),
+                    r.get::<String, _>("book_id"),
                     r.get::<String, _>("book_url"),
                 )
             })
