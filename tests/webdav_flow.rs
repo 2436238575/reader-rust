@@ -91,7 +91,7 @@ impl TestServer {
 
     /// 用户 WebDAV 家目录（storage/webdav/<用户名>/）。
     fn home(&self) -> PathBuf {
-        self.temp_dir.join("webdav").join(TEST_USERNAME)
+        self.temp_dir.join("webdav").join("user_1")
     }
 }
 
@@ -224,7 +224,7 @@ async fn mkcol_put_get_head_roundtrip() {
         .unwrap();
     assert_eq!(res.text().await.unwrap(), "v2");
 
-    // 落盘位置不变：storage/webdav/<用户名>/ 下的相对路径（JSON 接口依赖同一布局）
+    // 落盘位置不变：storage/webdav/user_<uid>/ 下的相对路径（JSON 接口依赖同一布局）
     assert_eq!(
         std::fs::read_to_string(app.home().join("dir").join("a.txt")).unwrap(),
         "v2"

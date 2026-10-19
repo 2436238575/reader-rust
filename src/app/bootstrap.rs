@@ -105,6 +105,7 @@ pub async fn build_state(cfg: AppConfig) -> anyhow::Result<AppState> {
     let pool = db::init_pool(&cfg.database_url).await?;
     let repo = db::repo::BookSourceRepo::new(pool.clone());
     let book_repo = db::repo::BookRepo::new(pool.clone());
+    let shelf_repo = db::repo::ShelfBookRepo::new(pool.clone());
 
     let http = HttpClient::new(cfg.request_timeout_secs, None)?;
     let parser = RuleEngine::new()?;
@@ -121,7 +122,7 @@ pub async fn build_state(cfg: AppConfig) -> anyhow::Result<AppState> {
         cfg.cache_cover_limit_bytes,
     ));
     let book_service = Arc::new(
-        BookService::new(http, parser, cache, &cfg.storage_dir, book_repo)
+        BookService::new(http, parser, cache, &cfg.storage_dir, book_repo, shelf_repo)
             .with_user_book_limit(cfg.user_book_limit)
             .with_user_local_book_limit(cfg.user_local_book_limit)
             .with_review_cache(cfg.review_cache_ttl_secs, cfg.review_cache_user_limit_bytes),

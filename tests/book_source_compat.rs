@@ -35,7 +35,8 @@ async fn test_book_service(storage_dir: &std::path::Path) -> BookService {
         RuleEngine::new().unwrap(),
         FileCache::new(storage_dir.join("cache"), 0),
         storage_dir.to_str().unwrap(),
-        reader_rust::storage::db::repo::BookRepo::new(pool),
+        reader_rust::storage::db::repo::BookRepo::new(pool.clone()),
+        reader_rust::storage::db::repo::ShelfBookRepo::new(pool),
     )
 }
 

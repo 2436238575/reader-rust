@@ -474,3 +474,284 @@ impl BookSourceRepo {
             .collect())
     }
 }
+
+// ─── 书架（shelf_books 全列展开） ─────────────────────────────────────────
+
+/// shelf_books 的一行：书架状态与元数据快照。身份与绑定字段（bookUrl/origin/
+/// tocUrl/name/author/bookSourceId）不在此表——读取时 JOIN books 注入。
+#[derive(Debug, Clone, Default)]
+pub struct ShelfBookRow {
+    pub book_id: String,
+    pub position: i64,
+    pub group_bits: Option<i64>,
+    pub dur_chapter_index: Option<i32>,
+    pub dur_chapter_pos: Option<i32>,
+    pub dur_chapter_time: Option<i64>,
+    pub dur_chapter_title: Option<String>,
+    pub cover_url: Option<String>,
+    pub custom_cover_url: Option<String>,
+    pub can_update: Option<bool>,
+    pub intro: Option<String>,
+    pub latest_chapter_title: Option<String>,
+    pub last_check_time: Option<i64>,
+    pub total_chapter_num: Option<i32>,
+    pub book_type: Option<i32>,
+    pub word_count: Option<String>,
+    pub info_html: Option<String>,
+    pub toc_html: Option<String>,
+    pub kind: Option<String>,
+    pub update_time: Option<String>,
+    pub can_re_name: Option<String>,
+    pub download_urls: Option<String>,
+    pub charset: Option<String>,
+}
+
+/// JOIN books 后的完整书架条目：书架行 + 登记表行 + 书源（若有）。
+#[derive(Debug, Clone)]
+pub struct ShelfEntry {
+    pub shelf: ShelfBookRow,
+    pub book_url: String,
+    pub book_source_id: Option<i64>,
+    pub toc_url: Option<String>,
+    pub name: String,
+    pub author: String,
+    pub origin_url: Option<String>,
+    pub origin_name: Option<String>,
+}
+
+const SHELF_COLS: &str = "s.book_id, s.position, s.group_bits, s.dur_chapter_index, \
+     s.dur_chapter_pos, s.dur_chapter_time, s.dur_chapter_title, s.cover_url, \
+     s.custom_cover_url, s.can_update, s.intro, s.latest_chapter_title, \
+     s.last_check_time, s.total_chapter_num, s.type, s.word_count, s.info_html, \
+     s.toc_html, s.kind, s.update_time, s.can_re_name, s.download_urls, s.charset";
+
+const SHELF_JOIN_COLS: &str = "b.book_url, b.book_source_id, b.toc_url, b.name, b.author, \
+     bs.book_source_url AS origin_url, bs.book_source_name AS origin_name";
+
+fn map_shelf_entry(row: &sqlx::sqlite::SqliteRow) -> ShelfEntry {
+    ShelfEntry {
+        shelf: ShelfBookRow {
+            book_id: row.get::<String, _>("book_id"),
+            position: row.get::<i64, _>("position"),
+            group_bits: row.get::<Option<i64>, _>("group_bits"),
+            dur_chapter_index: row.get::<Option<i32>, _>("dur_chapter_index"),
+            dur_chapter_pos: row.get::<Option<i32>, _>("dur_chapter_pos"),
+            dur_chapter_time: row.get::<Option<i64>, _>("dur_chapter_time"),
+            dur_chapter_title: row.get::<Option<String>, _>("dur_chapter_title"),
+            cover_url: row.get::<Option<String>, _>("cover_url"),
+            custom_cover_url: row.get::<Option<String>, _>("custom_cover_url"),
+            can_update: row.get::<Option<i64>, _>("can_update").map(|v| v != 0),
+            intro: row.get::<Option<String>, _>("intro"),
+            latest_chapter_title: row.get::<Option<String>, _>("latest_chapter_title"),
+            last_check_time: row.get::<Option<i64>, _>("last_check_time"),
+            total_chapter_num: row.get::<Option<i32>, _>("total_chapter_num"),
+            book_type: row.get::<Option<i32>, _>("type"),
+            word_count: row.get::<Option<String>, _>("word_count"),
+            info_html: row.get::<Option<String>, _>("info_html"),
+            toc_html: row.get::<Option<String>, _>("toc_html"),
+            kind: row.get::<Option<String>, _>("kind"),
+            update_time: row.get::<Option<String>, _>("update_time"),
+            can_re_name: row.get::<Option<String>, _>("can_re_name"),
+            download_urls: row.get::<Option<String>, _>("download_urls"),
+            charset: row.get::<Option<String>, _>("charset"),
+        },
+        book_url: row.get::<String, _>("book_url"),
+        book_source_id: row.get::<Option<i64>, _>("book_source_id"),
+        toc_url: row.get::<Option<String>, _>("toc_url"),
+        name: row.get::<String, _>("name"),
+        author: row.get::<String, _>("author"),
+        origin_url: row.get::<Option<String>, _>("origin_url"),
+        origin_name: row.get::<Option<String>, _>("origin_name"),
+    }
+}
+
+#[derive(Clone)]
+pub struct ShelfBookRepo {
+    pool: SqlitePool,
+}
+
+impl ShelfBookRepo {
+    pub fn new(pool: SqlitePool) -> Self {
+        Self { pool }
+    }
+
+    /// 书架全量，按 position 排序。
+    pub async fn list(&self, user_ns: &str) -> Result<Vec<ShelfEntry>, AppError> {
+        let rows = sqlx::query(&format!(
+            "SELECT {SHELF_COLS}, {SHELF_JOIN_COLS} FROM shelf_books s \
+             JOIN books b ON b.user_ns = s.user_ns AND b.book_id = s.book_id \
+             LEFT JOIN book_sources bs ON bs.user_ns = s.user_ns AND bs.book_source_id = b.book_source_id \
+             WHERE s.user_ns = ?1 ORDER BY s.position"
+        ))
+        .bind(user_ns)
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows.iter().map(map_shelf_entry).collect())
+    }
+
+    pub async fn get(&self, user_ns: &str, book_id: &str) -> Result<Option<ShelfEntry>, AppError> {
+        let row = sqlx::query(&format!(
+            "SELECT {SHELF_COLS}, {SHELF_JOIN_COLS} FROM shelf_books s \
+             JOIN books b ON b.user_ns = s.user_ns AND b.book_id = s.book_id \
+             LEFT JOIN book_sources bs ON bs.user_ns = s.user_ns AND bs.book_source_id = b.book_source_id \
+             WHERE s.user_ns = ?1 AND s.book_id = ?2"
+        ))
+        .bind(user_ns)
+        .bind(book_id)
+        .fetch_optional(&self.pool)
+        .await?;
+        Ok(row.as_ref().map(map_shelf_entry))
+    }
+
+    /// upsert 单条：position 为 None 时，既有行保留原位、新行排到末尾。
+    pub async fn upsert(
+        &self,
+        user_ns: &str,
+        mut row: ShelfBookRow,
+        position: Option<i64>,
+    ) -> Result<(), AppError> {
+        let position = match position {
+            Some(p) => p,
+            None => {
+                let existing: Option<i64> = sqlx::query_scalar(
+                    "SELECT position FROM shelf_books WHERE user_ns=?1 AND book_id=?2",
+                )
+                .bind(user_ns)
+                .bind(&row.book_id)
+                .fetch_optional(&self.pool)
+                .await?;
+                match existing {
+                    Some(p) => p,
+                    None => {
+                        let max: Option<i64> = sqlx::query_scalar(
+                            "SELECT MAX(position) FROM shelf_books WHERE user_ns=?1",
+                        )
+                        .bind(user_ns)
+                        .fetch_one(&self.pool)
+                        .await?;
+                        max.unwrap_or(0) + 1
+                    }
+                }
+            }
+        };
+        row.position = position;
+        self.insert_row(&self.pool, user_ns, &row).await
+    }
+
+    /// 整架替换：单事务清空重写，position 按数组序。
+    pub async fn replace_all(
+        &self,
+        user_ns: &str,
+        rows: Vec<ShelfBookRow>,
+    ) -> Result<(), AppError> {
+        let mut tx = self.pool.begin().await?;
+        sqlx::query("DELETE FROM shelf_books WHERE user_ns=?1")
+            .bind(user_ns)
+            .execute(&mut *tx)
+            .await?;
+        for (index, mut row) in rows.into_iter().enumerate() {
+            row.position = (index + 1) as i64;
+            self.insert_row(&mut *tx, user_ns, &row).await?;
+        }
+        tx.commit().await?;
+        Ok(())
+    }
+
+    /// 单行写入（upsert 与 replace_all 共用）。
+    async fn insert_row<'e, E>(
+        &self,
+        executor: E,
+        user_ns: &str,
+        row: &ShelfBookRow,
+    ) -> Result<(), AppError>
+    where
+        E: sqlx::Executor<'e, Database = sqlx::Sqlite>,
+    {
+        let now = now_ts();
+        sqlx::query(
+            "INSERT INTO shelf_books (user_ns, book_id, position, group_bits, \
+             dur_chapter_index, dur_chapter_pos, dur_chapter_time, dur_chapter_title, \
+             cover_url, custom_cover_url, can_update, intro, latest_chapter_title, \
+             last_check_time, total_chapter_num, type, word_count, info_html, toc_html, \
+             kind, update_time, can_re_name, download_urls, charset, created_at, updated_at) \
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, \
+             ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26) \
+             ON CONFLICT(user_ns, book_id) DO UPDATE SET position=excluded.position, \
+             group_bits=excluded.group_bits, dur_chapter_index=excluded.dur_chapter_index, \
+             dur_chapter_pos=excluded.dur_chapter_pos, dur_chapter_time=excluded.dur_chapter_time, \
+             dur_chapter_title=excluded.dur_chapter_title, cover_url=excluded.cover_url, \
+             custom_cover_url=excluded.custom_cover_url, can_update=excluded.can_update, \
+             intro=excluded.intro, latest_chapter_title=excluded.latest_chapter_title, \
+             last_check_time=excluded.last_check_time, total_chapter_num=excluded.total_chapter_num, \
+             type=excluded.type, word_count=excluded.word_count, info_html=excluded.info_html, \
+             toc_html=excluded.toc_html, kind=excluded.kind, update_time=excluded.update_time, \
+             can_re_name=excluded.can_re_name, download_urls=excluded.download_urls, \
+             charset=excluded.charset, updated_at=excluded.updated_at",
+        )
+        .bind(user_ns)
+        .bind(&row.book_id)
+        .bind(row.position)
+        .bind(row.group_bits)
+        .bind(row.dur_chapter_index)
+        .bind(row.dur_chapter_pos)
+        .bind(row.dur_chapter_time)
+        .bind(row.dur_chapter_title.as_deref())
+        .bind(row.cover_url.as_deref())
+        .bind(row.custom_cover_url.as_deref())
+        .bind(row.can_update.map(|v| if v { 1i64 } else { 0i64 }))
+        .bind(row.intro.as_deref())
+        .bind(row.latest_chapter_title.as_deref())
+        .bind(row.last_check_time)
+        .bind(row.total_chapter_num)
+        .bind(row.book_type)
+        .bind(row.word_count.as_deref())
+        .bind(row.info_html.as_deref())
+        .bind(row.toc_html.as_deref())
+        .bind(row.kind.as_deref())
+        .bind(row.update_time.as_deref())
+        .bind(row.can_re_name.as_deref())
+        .bind(row.download_urls.as_deref())
+        .bind(row.charset.as_deref())
+        .bind(now)
+        .bind(now)
+        .execute(executor)
+        .await?;
+        Ok(())
+    }
+
+    pub async fn delete(&self, user_ns: &str, book_id: &str) -> Result<bool, AppError> {
+        let result = sqlx::query("DELETE FROM shelf_books WHERE user_ns=?1 AND book_id=?2")
+            .bind(user_ns)
+            .bind(book_id)
+            .execute(&self.pool)
+            .await?;
+        Ok(result.rows_affected() > 0)
+    }
+
+    pub async fn delete_many(&self, user_ns: &str, book_ids: &[String]) -> Result<u64, AppError> {
+        let mut deleted = 0u64;
+        for id in book_ids {
+            if self.delete(user_ns, id).await? {
+                deleted += 1;
+            }
+        }
+        Ok(deleted)
+    }
+
+    pub async fn count(&self, user_ns: &str) -> Result<i64, AppError> {
+        let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM shelf_books WHERE user_ns=?1")
+            .bind(user_ns)
+            .fetch_one(&self.pool)
+            .await?;
+        Ok(count)
+    }
+
+    /// 恢复语义：登记表清表时书架同步清空。
+    pub async fn wipe(&self, user_ns: &str) -> Result<(), AppError> {
+        sqlx::query("DELETE FROM shelf_books WHERE user_ns=?1")
+            .bind(user_ns)
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
+}

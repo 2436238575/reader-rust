@@ -18,7 +18,7 @@ use crate::storage::cache::file_cache::{
     remove_dir_counting_files, remove_file_counting, CacheUsage, FileCache,
 };
 use crate::storage::cache::review_cache::ReviewCache;
-use crate::storage::db::repo::{BookRepo, RegisterBook};
+use crate::storage::db::repo::{BookRepo, RegisterBook, ShelfBookRepo, ShelfBookRow, ShelfEntry};
 use crate::util::bounded_map::BoundedMap;
 use crate::util::hash::md5_hex;
 use crate::util::text::{normalize_source_url, repair_encoded_url};
@@ -50,6 +50,7 @@ pub struct BookService {
     review_cache: ReviewCache,
     storage_dir: PathBuf,
     book_repo: BookRepo,
+    shelf_repo: ShelfBookRepo,
     source_cookies: Arc<RwLock<HashMap<String, String>>>,
     rate_states: Arc<RwLock<HashMap<String, RateState>>>,
     /// 最近抓到的章节正文响应体，用于求值评论 URL（见 `chapter_source_body`）。
@@ -61,9 +62,6 @@ pub struct BookService {
     /// 正在后台补全目录的 `(user_ns, book_id)` 集合：防止同一本书并发触发
     /// 两个补全任务（竞态下各自抓全部分页并各 append 一次，缓存里出现重复章节）。
     pending_toc_fills: Arc<Mutex<HashSet<(String, String)>>>,
-    /// 书架 JSON 的读-改-写串行化：进度上报与 saveBook 并发时
-    /// last-writer-wins 会丢一方更新。单用户场景竞争极少，一把全局锁足够。
-    shelf_lock: Arc<tokio::sync::Mutex<()>>,
 }
 
 /// 内存里暂存的章节正文响应体。
@@ -254,6 +252,7 @@ impl BookService {
         cache: FileCache,
         storage_dir: &str,
         book_repo: BookRepo,
+        shelf_repo: ShelfBookRepo,
     ) -> Self {
         let storage_dir = PathBuf::from(storage_dir);
         let review_cache = ReviewCache::new(
@@ -268,13 +267,13 @@ impl BookService {
             review_cache,
             storage_dir,
             book_repo,
+            shelf_repo,
             source_cookies: Arc::new(RwLock::new(HashMap::new())),
             rate_states: Arc::new(RwLock::new(HashMap::new())),
             recent_bodies: Arc::new(RwLock::new(HashMap::new())),
             user_book_limit: 0,
             user_local_book_limit: 0,
             pending_toc_fills: Arc::new(Mutex::new(HashSet::new())),
-            shelf_lock: Arc::new(tokio::sync::Mutex::new(())),
         }
     }
 
@@ -2152,7 +2151,8 @@ impl BookService {
     }
 
     pub async fn get_bookshelf(&self, user_ns: &str) -> Result<Vec<Book>, AppError> {
-        self.read_bookshelf(user_ns).await
+        let entries = self.shelf_repo.list(user_ns).await?;
+        Ok(entries.into_iter().map(assemble_shelf_book).collect())
     }
 
     /// 按 bookId 取书架条目。
@@ -2161,35 +2161,29 @@ impl BookService {
         user_ns: &str,
         book_id: &str,
     ) -> Result<Option<Book>, AppError> {
-        let list = self.read_bookshelf(user_ns).await?;
-        Ok(list
-            .into_iter()
-            .find(|b| b.book_id.as_deref() == Some(book_id)))
+        Ok(self
+            .shelf_repo
+            .get(user_ns, book_id)
+            .await?
+            .map(assemble_shelf_book))
     }
 
-    /// 就地更新一本书（按 bookId 匹配）：单次读-改-写整个书架文件。
-    ///
-    /// 进度上报这类高频更新用它避免 `get_shelf_book` + `save_book` 的两次
-    /// 全量读取；`update` 里只改必要的字段，改动是否落盘由调用方先做
-    /// 无变化判断（本方法总是写盘）。
+    /// 就地更新一本书（按 bookId）：单行读-改-写。
     pub async fn update_shelf_book(
         &self,
         user_ns: &str,
         book_id: &str,
         update: impl FnOnce(&mut Book),
     ) -> Result<Option<Book>, AppError> {
-        let _shelf = self.shelf_lock.lock().await;
-        let mut list = self.read_bookshelf(user_ns).await?;
-        let Some(book) = list
-            .iter_mut()
-            .find(|b| b.book_id.as_deref() == Some(book_id))
-        else {
+        let Some(entry) = self.shelf_repo.get(user_ns, book_id).await? else {
             return Ok(None);
         };
-        update(book);
-        let updated = book.clone();
-        self.write_bookshelf(user_ns, &list).await?;
-        Ok(Some(updated))
+        let mut book = assemble_shelf_book(entry);
+        update(&mut book);
+        self.shelf_repo
+            .upsert(user_ns, shelf_row_of(&book), None)
+            .await?;
+        Ok(Some(book))
     }
 
     pub async fn save_book(&self, user_ns: &str, mut book: Book) -> Result<Book, AppError> {
@@ -2212,18 +2206,9 @@ impl BookService {
             .await?;
         book.book_id = Some(book_id.clone());
 
-        let _shelf = self.shelf_lock.lock().await;
-        let mut list = self.read_bookshelf(user_ns).await?;
-        let mut exist_idx: Option<usize> = None;
-        for (i, b) in list.iter().enumerate() {
-            if books_match_for_save(b, &book) {
-                exist_idx = Some(i);
-                break;
-            }
-        }
-
-        if let Some(i) = exist_idx {
-            let exist = list[i].clone();
+        // 既有条目：进度/分组等字段缺省时继承（saveBook 语义是 upsert 更新）
+        if let Some(existing) = self.shelf_repo.get(user_ns, &book_id).await? {
+            let exist = assemble_shelf_book(existing);
             if book.dur_chapter_index.is_none() {
                 book.dur_chapter_index = exist.dur_chapter_index;
             }
@@ -2245,22 +2230,27 @@ impl BookService {
             if book.group.is_none() {
                 book.group = exist.group;
             }
-            list[i] = book.clone();
         } else {
             // 书架上限只对「新入架」计数，已有书的更新不受限
             let limit = self.user_book_limit as usize;
-            if limit > 0 && list.len() >= limit {
-                return Err(AppError::BadRequest(format!(
-                    "书架书籍数量不能超过 {limit} 本"
-                )));
+            if limit > 0 {
+                let count = self.shelf_repo.count(user_ns).await?;
+                if count >= limit as i64 {
+                    return Err(AppError::BadRequest(format!(
+                        "书架书籍数量不能超过 {limit} 本"
+                    )));
+                }
             }
             // 本地书限额同样对「新入架」生效：saveBook 直构 local-* 书
             // 可绕过上传 handler 里的检查
             let local_limit = self.user_local_book_limit as usize;
             if local_limit > 0 && is_local_book_url(&book.book_url) {
-                let local_count = list
+                let local_count = self
+                    .shelf_repo
+                    .list(user_ns)
+                    .await?
                     .iter()
-                    .filter(|b| is_local_book_url(&b.book_url) && b.book_url != book.book_url)
+                    .filter(|e| is_local_book_url(&e.book_url) && e.shelf.book_id != book_id)
                     .count();
                 if local_count >= local_limit {
                     return Err(AppError::BadRequest(format!(
@@ -2268,14 +2258,15 @@ impl BookService {
                     )));
                 }
             }
-            list.push(book.clone());
         }
 
-        self.write_bookshelf(user_ns, &list).await?;
+        self.shelf_repo
+            .upsert(user_ns, shelf_row_of(&book), None)
+            .await?;
         Ok(book)
     }
 
-    /// 整架替换（含 WebDAV 恢复）。`restore=true` 时先清空书籍登记表再按
+    /// 整架替换（含 WebDAV 恢复）。`restore=true` 时先清空登记表与书架再按
     /// 备份自带的 bookId 逐条重建——空表无冲突，恢复后书签等按 id 引用的
     /// 数据依然对齐。
     pub async fn save_books(
@@ -2284,10 +2275,10 @@ impl BookService {
         books: Vec<Book>,
         restore: bool,
     ) -> Result<Vec<Book>, AppError> {
-        let _shelf = self.shelf_lock.lock().await;
-        // 登记表清重建与书架写入同锁：恢复语义是全量覆盖，两个存储不能半路不一致
+        // 登记表与书架一起清重建：恢复语义是全量覆盖，两个存储不能半路不一致
         if restore {
             self.book_repo.wipe(user_ns).await?;
+            self.shelf_repo.wipe(user_ns).await?;
         }
         let mut normalized = Vec::with_capacity(books.len());
         for mut book in books {
@@ -2329,19 +2320,15 @@ impl BookService {
                 )));
             }
         }
-        self.write_bookshelf(user_ns, &normalized).await?;
+        let rows = normalized.iter().map(shelf_row_of).collect();
+        self.shelf_repo.replace_all(user_ns, rows).await?;
         Ok(normalized)
     }
 
     /// 按 bookId 从书架删除；连带清掉该书的全部按书缓存与登记行。
     pub async fn delete_book(&self, user_ns: &str, book_id: &str) -> Result<bool, AppError> {
-        let _shelf = self.shelf_lock.lock().await;
-        let mut list = self.read_bookshelf(user_ns).await?;
-        let orig_len = list.len();
-        list.retain(|b| b.book_id.as_deref() != Some(book_id));
-        let deleted = list.len() != orig_len;
+        let deleted = self.shelf_repo.delete(user_ns, book_id).await?;
         if deleted {
-            self.write_bookshelf(user_ns, &list).await?;
             let _ = self.clear_book_related_cache(user_ns, book_id).await;
             let _ = self.book_repo.delete(user_ns, book_id).await;
         }
@@ -2353,24 +2340,14 @@ impl BookService {
         user_ns: &str,
         book_ids: &[String],
     ) -> Result<usize, AppError> {
-        let _shelf = self.shelf_lock.lock().await;
-        let mut list = self.read_bookshelf(user_ns).await?;
-        let mut deleted = 0usize;
-        for book_id in book_ids {
-            let before = list.len();
-            list.retain(|b| b.book_id.as_deref() != Some(book_id.as_str()));
-            if list.len() != before {
-                deleted += 1;
-            }
-        }
+        let deleted = self.shelf_repo.delete_many(user_ns, book_ids).await?;
         if deleted > 0 {
-            self.write_bookshelf(user_ns, &list).await?;
             for book_id in book_ids {
                 let _ = self.clear_book_related_cache(user_ns, book_id).await;
                 let _ = self.book_repo.delete(user_ns, book_id).await;
             }
         }
-        Ok(deleted)
+        Ok(deleted as usize)
     }
 
     /// 某本书已缓存的章节数：数缓存目录里的文件即可。
@@ -2458,64 +2435,6 @@ impl BookService {
             .join(user_ns)
             .join("book_sources")
             .join(format!("{}.json", book_id))
-    }
-
-    fn bookshelf_path(&self, user_ns: &str) -> PathBuf {
-        self.storage_dir
-            .join("data")
-            .join(user_ns)
-            .join("bookshelf.json")
-    }
-
-    async fn read_bookshelf(&self, user_ns: &str) -> Result<Vec<Book>, AppError> {
-        let path = self.bookshelf_path(user_ns);
-        if !path.exists() {
-            return Ok(Vec::new());
-        }
-        let data = fs::read_to_string(&path)
-            .await
-            .map_err(|e| AppError::Internal(e.into()))?;
-        let mut list: Vec<Book> = match serde_json::from_str(&data) {
-            Ok(list) => list,
-            Err(primary_err) => {
-                let recovered = recover_bookshelf_entries(&data)
-                    .ok_or_else(|| AppError::BadRequest(primary_err.to_string()))?;
-                tracing::warn!(
-                    "recovered malformed bookshelf for user_ns={}, path={}, entries={}",
-                    user_ns,
-                    path.display(),
-                    recovered.len()
-                );
-                self.write_bookshelf(user_ns, &recovered).await?;
-                recovered
-            }
-        };
-        for book in &mut list {
-            sanitize_book_urls(book);
-        }
-        Ok(list)
-    }
-
-    async fn write_bookshelf(&self, user_ns: &str, list: &Vec<Book>) -> Result<(), AppError> {
-        let path = self.bookshelf_path(user_ns);
-        if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent)
-                .await
-                .map_err(|e| AppError::Internal(e.into()))?;
-        }
-        let data = serde_json::to_string(list).map_err(|e| AppError::BadRequest(e.to_string()))?;
-        // 临时文件 + 同盘 rename 保证原子性：进程中途死掉不会留下截断的 JSON，
-        // 读书架的一方也见不到半个文件（并发写仍是 last-writer-wins，
-        // 但至少不会损坏文件本身）
-        let tmp = path.with_extension("json.tmp");
-        fs::write(&tmp, data)
-            .await
-            .map_err(|e| AppError::Internal(e.into()))?;
-        if let Err(e) = fs::rename(&tmp, &path).await {
-            let _ = fs::remove_file(&tmp).await;
-            return Err(AppError::Internal(e.into()));
-        }
-        Ok(())
     }
 
     // Chapter list cache methods
@@ -2963,15 +2882,6 @@ fn cookie_domain(source_url: &str) -> String {
     }
 }
 
-/// saveBook 的「同一本书」判定：bookId 优先（稳定身份），bookUrl 兜底
-///（登记表 UNIQUE(user_ns, book_url) 保证同地址同书）。
-fn books_match_for_save(existing: &Book, incoming: &Book) -> bool {
-    if let (Some(a), Some(b)) = (&existing.book_id, &incoming.book_id) {
-        return a == b;
-    }
-    existing.book_url == incoming.book_url
-}
-
 fn sanitize_book_urls(book: &mut Book) {
     book.book_url = repair_encoded_url(&book.book_url);
     book.origin = normalize_source_url(&book.origin);
@@ -2983,48 +2893,90 @@ fn sanitize_book_urls(book: &mut Book) {
     }
 }
 
-fn recover_bookshelf_entries(data: &str) -> Option<Vec<Book>> {
-    let mut recovered = Vec::new();
-    let mut seen = HashSet::new();
-    let stream = serde_json::Deserializer::from_str(data).into_iter::<serde_json::Value>();
-
-    for item in stream {
-        let value = match item {
-            Ok(value) => value,
-            Err(err) => {
-                tracing::warn!("bookshelf recovery stream stopped: {}", err);
-                break;
-            }
-        };
-        match value {
-            serde_json::Value::Array(items) => {
-                for entry in items {
-                    if let Ok(book) = serde_json::from_value::<Book>(entry) {
-                        push_recovered_book(&mut recovered, &mut seen, book);
-                    }
-                }
-            }
-            serde_json::Value::Object(_) => {
-                if let Ok(book) = serde_json::from_value::<Book>(value) {
-                    push_recovered_book(&mut recovered, &mut seen, book);
-                }
-            }
-            _ => {}
-        }
+/// 本地书的伪书源标记：登记表里它们的 book_source_id 为 NULL。
+fn local_origin_of(book_url: &str) -> (String, Option<String>) {
+    if crate::service::local_txt_book::is_local_txt_url(book_url) {
+        return (
+            crate::service::local_txt_book::LOCAL_TXT_ORIGIN.to_string(),
+            Some("本地 TXT".to_string()),
+        );
     }
+    if crate::service::local_epub_book::is_local_epub_url(book_url) {
+        return (
+            crate::service::local_epub_book::LOCAL_EPUB_ORIGIN.to_string(),
+            Some("本地 EPUB".to_string()),
+        );
+    }
+    (String::new(), None)
+}
 
-    if recovered.is_empty() {
-        None
-    } else {
-        Some(recovered)
+/// 书架行 + 登记表/书源 JOIN 结果 → 前端 Book 对象。
+fn assemble_shelf_book(entry: ShelfEntry) -> Book {
+    let (origin, origin_name) = match (entry.origin_url, entry.origin_name) {
+        (Some(url), name) => (url, name),
+        (None, _) => local_origin_of(&entry.book_url),
+    };
+    let shelf = entry.shelf;
+    Book {
+        book_id: Some(shelf.book_id),
+        book_source_id: entry.book_source_id,
+        name: entry.name,
+        author: entry.author,
+        book_url: entry.book_url,
+        origin,
+        origin_name,
+        cover_url: shelf.cover_url,
+        toc_url: entry.toc_url,
+        charset: shelf.charset,
+        custom_cover_url: shelf.custom_cover_url,
+        can_update: shelf.can_update,
+        dur_chapter_index: shelf.dur_chapter_index,
+        dur_chapter_pos: shelf.dur_chapter_pos,
+        dur_chapter_time: shelf.dur_chapter_time,
+        dur_chapter_title: shelf.dur_chapter_title,
+        intro: shelf.intro,
+        latest_chapter_title: shelf.latest_chapter_title,
+        last_check_time: shelf.last_check_time,
+        total_chapter_num: shelf.total_chapter_num,
+        r#type: shelf.book_type,
+        group: shelf.group_bits,
+        word_count: shelf.word_count,
+        info_html: shelf.info_html,
+        toc_html: shelf.toc_html,
+        kind: shelf.kind,
+        update_time: shelf.update_time,
+        can_re_name: shelf.can_re_name,
+        download_urls: shelf.download_urls,
     }
 }
 
-fn push_recovered_book(recovered: &mut Vec<Book>, seen: &mut HashSet<String>, mut book: Book) {
-    sanitize_book_urls(&mut book);
-    let key = format!("{}::{}", book.book_url, book.origin);
-    if seen.insert(key) {
-        recovered.push(book);
+/// Book → 书架行。身份/绑定字段（bookUrl/origin/tocUrl/name/author/bookSourceId）
+/// 不落 shelf_books——它们在 books 登记表里，读取时 JOIN 注入。
+fn shelf_row_of(book: &Book) -> ShelfBookRow {
+    ShelfBookRow {
+        book_id: book.book_id.clone().unwrap_or_default(),
+        position: 0, // 由 repo 层在 upsert 时解析（既有行保留原位，新行排末）
+        group_bits: book.group,
+        dur_chapter_index: book.dur_chapter_index,
+        dur_chapter_pos: book.dur_chapter_pos,
+        dur_chapter_time: book.dur_chapter_time,
+        dur_chapter_title: book.dur_chapter_title.clone(),
+        cover_url: book.cover_url.clone(),
+        custom_cover_url: book.custom_cover_url.clone(),
+        can_update: book.can_update,
+        intro: book.intro.clone(),
+        latest_chapter_title: book.latest_chapter_title.clone(),
+        last_check_time: book.last_check_time,
+        total_chapter_num: book.total_chapter_num,
+        book_type: book.r#type,
+        word_count: book.word_count.clone(),
+        info_html: book.info_html.clone(),
+        toc_html: book.toc_html.clone(),
+        kind: book.kind.clone(),
+        update_time: book.update_time.clone(),
+        can_re_name: book.can_re_name.clone(),
+        download_urls: book.download_urls.clone(),
+        charset: book.charset.clone(),
     }
 }
 
@@ -3032,7 +2984,7 @@ fn push_recovered_book(recovered: &mut Vec<Book>, seen: &mut HashSet<String>, mu
 mod tests {
     use super::*;
     use crate::storage::db;
-    use crate::storage::db::repo::BookRepo;
+    use crate::storage::db::repo::{BookRepo, ShelfBookRepo};
 
     async fn test_service(storage_dir: &std::path::Path) -> BookService {
         // init_pool 不会建父目录，先落目录再开库
@@ -3048,7 +3000,8 @@ mod tests {
             RuleEngine::new().unwrap(),
             FileCache::new(storage_dir.join("cache"), 0),
             storage_dir.to_str().unwrap(),
-            BookRepo::new(pool),
+            BookRepo::new(pool.clone()),
+            ShelfBookRepo::new(pool),
         )
     }
 

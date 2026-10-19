@@ -218,7 +218,7 @@ impl TestServer {
     fn book_cache_file(&self, chapter_url: &str) -> PathBuf {
         self.temp_dir
             .join("cache")
-            .join("reader1")
+            .join("user_1")
             .join(&self.book_id)
             .join(format!("{}.txt", md5_hex(chapter_url)))
     }
@@ -322,7 +322,7 @@ async fn content_without_book_id_is_rejected() {
     let orphan = server
         .temp_dir
         .join("cache")
-        .join("reader1")
+        .join("user_1")
         .join(md5_hex(&server.chapter_url(0)));
     assert!(
         !orphan.exists(),

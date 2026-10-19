@@ -62,7 +62,8 @@ async fn chapter_list_requests_include_legacy_source_headers() {
         RuleEngine::new().unwrap(),
         cache,
         storage_dir.to_str().unwrap(),
-        reader_rust::storage::db::repo::BookRepo::new(pool),
+        reader_rust::storage::db::repo::BookRepo::new(pool.clone()),
+        reader_rust::storage::db::repo::ShelfBookRepo::new(pool),
     );
 
     let source = BookSource {

@@ -43,7 +43,8 @@ async fn yckceo_live_non_webview_sources_end_to_end() {
         RuleEngine::new().expect("rule engine"),
         FileCache::new(cache_root.join("cache"), 0),
         cache_root.to_string_lossy().as_ref(),
-        reader_rust::storage::db::repo::BookRepo::new(pool),
+        reader_rust::storage::db::repo::BookRepo::new(pool.clone()),
+        reader_rust::storage::db::repo::ShelfBookRepo::new(pool),
     );
 
     let mut attempted = Vec::new();
@@ -400,7 +401,8 @@ async fn yckceo_live_chapter_images_survive_content_parsing() {
         RuleEngine::new().expect("rule engine"),
         FileCache::new(cache_root.join("cache"), 0),
         cache_root.to_string_lossy().as_ref(),
-        reader_rust::storage::db::repo::BookRepo::new(pool),
+        reader_rust::storage::db::repo::BookRepo::new(pool.clone()),
+        reader_rust::storage::db::repo::ShelfBookRepo::new(pool),
     );
 
     let mut checked = 0usize;
