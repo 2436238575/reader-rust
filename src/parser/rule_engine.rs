@@ -135,19 +135,8 @@ impl RuleEngine {
             }
 
             let mode = self.detect_mode(list_rule, body);
-            let mut results = match mode {
-                ParseMode::JsonPath => {
-                    self.search_books_json(source, body, base_url, &rule, list_rule)
-                }
-                ParseMode::XPath => {
-                    self.search_books_xpath(source, body, base_url, &rule, list_rule)
-                }
-                ParseMode::Js => self.search_books_js(source, body, base_url, &rule, list_rule),
-                ParseMode::Regex => {
-                    self.search_books_regex(source, body, base_url, &rule, list_rule)
-                }
-                ParseMode::Css => self.search_books_html(source, body, base_url, &rule, list_rule),
-            };
+            let mut results =
+                self.dispatch_book_list(mode, source, body, base_url, &rule, list_rule);
 
             if results.is_empty()
                 && source
@@ -185,24 +174,33 @@ impl RuleEngine {
                 .unwrap_or_else(|| source.rule_search.clone().unwrap_or_default());
             let (list_rule, reverse) = normalize_list_rule(rule.book_list.as_deref().unwrap_or(""));
             let mode = self.detect_mode(list_rule, body);
-            let mut results = match mode {
-                ParseMode::JsonPath => {
-                    self.search_books_json(source, body, base_url, &rule, list_rule)
-                }
-                ParseMode::XPath => {
-                    self.search_books_xpath(source, body, base_url, &rule, list_rule)
-                }
-                ParseMode::Js => self.search_books_js(source, body, base_url, &rule, list_rule),
-                ParseMode::Regex => {
-                    self.search_books_regex(source, body, base_url, &rule, list_rule)
-                }
-                ParseMode::Css => self.search_books_html(source, body, base_url, &rule, list_rule),
-            };
+            let mut results =
+                self.dispatch_book_list(mode, source, body, base_url, &rule, list_rule);
             if reverse {
                 results.reverse();
             }
             dedupe_books(results)
         })
+    }
+
+    /// 搜索/发现共用的按模式分发：两者列表与字段规则同构，
+    /// 差别只在规则来源与详情页回退，分发本身不该写两份。
+    fn dispatch_book_list(
+        &self,
+        mode: ParseMode,
+        source: &BookSource,
+        body: &str,
+        base_url: &str,
+        rule: &SearchRule,
+        list_rule: &str,
+    ) -> Vec<SearchBook> {
+        match mode {
+            ParseMode::JsonPath => self.search_books_json(source, body, base_url, rule, list_rule),
+            ParseMode::XPath => self.search_books_xpath(source, body, base_url, rule, list_rule),
+            ParseMode::Js => self.search_books_js(source, body, base_url, rule, list_rule),
+            ParseMode::Regex => self.search_books_regex(source, body, base_url, rule, list_rule),
+            ParseMode::Css => self.search_books_html(source, body, base_url, rule, list_rule),
+        }
     }
 
     pub fn book_info(
@@ -2088,6 +2086,62 @@ fn parse_book_info_json(
     }
 }
 
+/// 目录列表解析的公共骨架：三种解析模式（CSS/XPath/JSONPath）的
+/// 「逐条目取八个字段 → URL 绝对化去重 → 组 BookChapter」循环完全同构，
+/// 差别只在条目集合的产出与字段求值器。此前同一段循环逐字写了三份，
+/// 修 bug 必然 drift。
+fn parse_chapter_list_core<I>(
+    items: Vec<I>,
+    base_url: &str,
+    rule: &TocRule,
+    mut eval_field: impl FnMut(Option<&str>, &I) -> Option<String>,
+) -> Vec<BookChapter> {
+    let mut seen_urls = std::collections::HashSet::new();
+    let mut out = Vec::with_capacity(items.len());
+    for item in items {
+        let title = eval_field(rule.chapter_name.as_deref(), &item).unwrap_or_default();
+        let url = eval_field(rule.chapter_url.as_deref(), &item).unwrap_or_default();
+        let tag = eval_field(rule.update_time.as_deref(), &item);
+        let volume = chapter_meta(eval_field(rule.volume_name.as_deref(), &item));
+        let word_count = chapter_meta(eval_field(rule.word_count.as_deref(), &item));
+        let is_volume = eval_field(rule.is_volume.as_deref(), &item)
+            .map(is_truthy)
+            .unwrap_or(false);
+        let is_vip = eval_field(rule.is_vip.as_deref(), &item)
+            .map(is_truthy)
+            .unwrap_or(false);
+        let is_pay = eval_field(rule.is_pay.as_deref(), &item)
+            .map(is_truthy)
+            .unwrap_or(false);
+        let url_abs = finalize_chapter_url(base_url, &url, &title, is_volume, out.len());
+
+        if seen_urls.contains(&url_abs) {
+            continue;
+        }
+        seen_urls.insert(url_abs.clone());
+        out.push(BookChapter {
+            title,
+            url: url_abs,
+            index: out.len() as i32,
+            tag,
+            is_vip,
+            is_pay,
+            is_volume,
+            volume,
+            word_count,
+        });
+    }
+    out
+}
+
+/// 下一页目录地址的公共收尾：去空串 + 相对地址绝对化。
+fn resolve_next_toc_urls(raw: Vec<String>, base_url: &str) -> Vec<String> {
+    raw.into_iter()
+        .filter(|u| !u.is_empty())
+        .map(|u| resolve_url(base_url, &u))
+        .collect()
+}
+
 fn parse_chapter_list_html(
     body: &str,
     base_url: &str,
@@ -2107,86 +2161,13 @@ fn parse_chapter_list_html(
     }
 
     let items = html::select_list(&doc, strip_mode_prefix(list_sel));
+    let out = parse_chapter_list_core(items, base_url, rule, |rule_text, el| {
+        rule_text.and_then(|r| eval_field_html_with_ctx(r, el, base_url, ctx))
+    });
 
-    // Use a set to deduplicate chapters by URL
-    let mut seen_urls = std::collections::HashSet::new();
-    let mut out = Vec::with_capacity(items.len());
-
-    for el in items {
-        let title = rule
-            .chapter_name
-            .as_ref()
-            .and_then(|r| eval_field_html_with_ctx(r, &el, base_url, ctx))
-            .unwrap_or_default();
-        let url = rule
-            .chapter_url
-            .as_ref()
-            .and_then(|r| eval_field_html_with_ctx(r, &el, base_url, ctx))
-            .unwrap_or_default();
-        let tag = rule
-            .update_time
-            .as_ref()
-            .and_then(|r| eval_field_html_with_ctx(r, &el, base_url, ctx));
-        let volume = chapter_meta(
-            rule.volume_name
-                .as_ref()
-                .and_then(|r| eval_field_html_with_ctx(r, &el, base_url, ctx)),
-        );
-        let word_count = chapter_meta(
-            rule.word_count
-                .as_ref()
-                .and_then(|r| eval_field_html_with_ctx(r, &el, base_url, ctx)),
-        );
-        let is_volume = rule
-            .is_volume
-            .as_ref()
-            .and_then(|r| eval_field_html_with_ctx(r, &el, base_url, ctx))
-            .map(is_truthy)
-            .unwrap_or(false);
-        let is_vip = rule
-            .is_vip
-            .as_ref()
-            .and_then(|r| eval_field_html_with_ctx(r, &el, base_url, ctx))
-            .map(is_truthy)
-            .unwrap_or(false);
-        let is_pay = rule
-            .is_pay
-            .as_ref()
-            .and_then(|r| eval_field_html_with_ctx(r, &el, base_url, ctx))
-            .map(is_truthy)
-            .unwrap_or(false);
-        let url_abs = finalize_chapter_url(base_url, &url, &title, is_volume, out.len());
-
-        // Skip duplicate chapters (same URL)
-        if seen_urls.contains(&url_abs) {
-            continue;
-        }
-
-        seen_urls.insert(url_abs.clone());
-
-        out.push(BookChapter {
-            title,
-            url: url_abs,
-            index: out.len() as i32,
-            tag,
-            is_vip,
-            is_pay,
-            is_volume,
-            volume,
-            word_count,
-        });
-    }
-
-    // Extract next_toc_url(s)
-    let rule_str = rule.next_toc_url.as_deref().unwrap_or("");
-    let raw_urls: Vec<String> = html::select_text_list(&doc, rule_str);
-    let next_urls: Vec<String> = raw_urls
-        .into_iter()
-        .filter(|u| !u.is_empty())
-        .map(|u| resolve_url(base_url, &u))
-        .collect();
-
-    (out, next_urls)
+    let raw_urls: Vec<String> =
+        html::select_text_list(&doc, rule.next_toc_url.as_deref().unwrap_or(""));
+    (out, resolve_next_toc_urls(raw_urls, base_url))
 }
 
 fn parse_chapter_list_xpath(
@@ -2207,82 +2188,16 @@ fn parse_chapter_list_xpath(
     );
     let items = xpath_select_nodes(scope, strip_mode_prefix(list_rule));
 
-    let mut seen_urls = std::collections::HashSet::new();
-    let mut out = Vec::with_capacity(items.len());
-    for item in items {
-        let title = eval_field_xpath_with_ctx(
-            rule.chapter_name.as_deref().unwrap_or(""),
-            item,
-            base_url,
-            ctx,
-        )
-        .unwrap_or_default();
-        let url = eval_field_xpath_with_ctx(
-            rule.chapter_url.as_deref().unwrap_or(""),
-            item,
-            base_url,
-            ctx,
-        )
-        .unwrap_or_default();
-        let tag = eval_field_xpath_with_ctx(
-            rule.update_time.as_deref().unwrap_or(""),
-            item,
-            base_url,
-            ctx,
-        );
-        let volume = chapter_meta(eval_field_xpath_with_ctx(
-            rule.volume_name.as_deref().unwrap_or(""),
-            item,
-            base_url,
-            ctx,
-        ));
-        let word_count = chapter_meta(eval_field_xpath_with_ctx(
-            rule.word_count.as_deref().unwrap_or(""),
-            item,
-            base_url,
-            ctx,
-        ));
-        let is_volume =
-            eval_field_xpath_with_ctx(rule.is_volume.as_deref().unwrap_or(""), item, base_url, ctx)
-                .map(is_truthy)
-                .unwrap_or(false);
-        let is_vip =
-            eval_field_xpath_with_ctx(rule.is_vip.as_deref().unwrap_or(""), item, base_url, ctx)
-                .map(is_truthy)
-                .unwrap_or(false);
-        let is_pay =
-            eval_field_xpath_with_ctx(rule.is_pay.as_deref().unwrap_or(""), item, base_url, ctx)
-                .map(is_truthy)
-                .unwrap_or(false);
-        let url_abs = finalize_chapter_url(base_url, &url, &title, is_volume, out.len());
-        if seen_urls.contains(&url_abs) {
-            continue;
-        }
-        seen_urls.insert(url_abs.clone());
-        out.push(BookChapter {
-            title,
-            url: url_abs,
-            index: out.len() as i32,
-            tag,
-            is_vip,
-            is_pay,
-            is_volume,
-            volume,
-            word_count,
-        });
-    }
+    let out = parse_chapter_list_core(items, base_url, rule, |rule_text, item| {
+        eval_field_xpath_with_ctx(rule_text.unwrap_or(""), *item, base_url, ctx)
+    });
 
-    let next_urls = rule
+    let raw_urls = rule
         .next_toc_url
         .as_deref()
         .map(|xpath| xpath_eval_strings(scope, xpath))
-        .unwrap_or_default()
-        .into_iter()
-        .filter(|u| !u.is_empty())
-        .map(|u| resolve_url(base_url, &u))
-        .collect();
-
-    (out, next_urls)
+        .unwrap_or_default();
+    (out, resolve_next_toc_urls(raw_urls, base_url))
 }
 
 fn parse_chapter_list_json(
@@ -2299,89 +2214,19 @@ fn parse_chapter_list_json(
     let scope = select_json_scope(&v, rule.init.as_deref(), base_url, ctx);
     let items = jsonpath::jsonpath_query_combined(&scope, strip_mode_prefix(list_rule));
 
-    let mut seen_urls = std::collections::HashSet::new();
-    let mut out = Vec::with_capacity(items.len());
-    for item in items {
-        let title = eval_field_json_with_ctx(
-            rule.chapter_name.as_deref().unwrap_or(""),
-            &item,
-            base_url,
-            ctx,
-        )
-        .unwrap_or_default();
-        let url = eval_field_json_with_ctx(
-            rule.chapter_url.as_deref().unwrap_or(""),
-            &item,
-            base_url,
-            ctx,
-        )
-        .unwrap_or_default();
-        let tag = eval_field_json_with_ctx(
-            rule.update_time.as_deref().unwrap_or(""),
-            &item,
-            base_url,
-            ctx,
-        );
-        let volume = chapter_meta(eval_field_json_with_ctx(
-            rule.volume_name.as_deref().unwrap_or(""),
-            &item,
-            base_url,
-            ctx,
-        ));
-        let word_count = chapter_meta(eval_field_json_with_ctx(
-            rule.word_count.as_deref().unwrap_or(""),
-            &item,
-            base_url,
-            ctx,
-        ));
-        let is_volume = eval_field_json_with_ctx(
-            rule.is_volume.as_deref().unwrap_or(""),
-            &item,
-            base_url,
-            ctx,
-        )
-        .map(is_truthy)
-        .unwrap_or(false);
-        let is_vip =
-            eval_field_json_with_ctx(rule.is_vip.as_deref().unwrap_or(""), &item, base_url, ctx)
-                .map(is_truthy)
-                .unwrap_or(false);
-        let is_pay =
-            eval_field_json_with_ctx(rule.is_pay.as_deref().unwrap_or(""), &item, base_url, ctx)
-                .map(is_truthy)
-                .unwrap_or(false);
-        let url_abs = finalize_chapter_url(base_url, &url, &title, is_volume, out.len());
+    let out = parse_chapter_list_core(items, base_url, rule, |rule_text, item| {
+        eval_field_json_with_ctx(rule_text.unwrap_or(""), item, base_url, ctx)
+    });
 
-        if seen_urls.contains(&url_abs) {
-            continue;
-        }
-        seen_urls.insert(url_abs.clone());
-
-        out.push(BookChapter {
-            title,
-            url: url_abs,
-            index: out.len() as i32,
-            tag,
-            is_vip,
-            is_pay,
-            is_volume,
-            volume,
-            word_count,
-        });
-    }
-
-    let next_urls: Vec<String> = rule
+    let raw_urls: Vec<String> = rule
         .next_toc_url
         .as_ref()
         .map(|r| jsonpath::jsonpath_query_combined(&scope, r))
         .unwrap_or_default()
         .into_iter()
         .filter_map(|v| v.as_str().map(|s| s.to_string()))
-        .filter(|u| !u.is_empty())
-        .map(|u| resolve_url(base_url, &u))
         .collect();
-
-    (out, next_urls)
+    (out, resolve_next_toc_urls(raw_urls, base_url))
 }
 
 fn select_json_scope(
