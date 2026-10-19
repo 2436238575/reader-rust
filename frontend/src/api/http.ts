@@ -2,15 +2,7 @@ import axios from 'axios'
 import type { ApiResponse } from '../types'
 import { readAccessToken } from '../utils/secureAccess'
 import { API_BASE } from '../utils/appBase'
-
-let lastNeedLoginDispatchAt = 0
-
-function dispatchNeedLogin() {
-  const now = Date.now()
-  if (now - lastNeedLoginDispatchAt < 1500) return
-  lastNeedLoginDispatchAt = now
-  window.dispatchEvent(new CustomEvent('need-login'))
-}
+import { notifyNeedLogin } from '../utils/authEvents'
 
 const http = axios.create({
   baseURL: API_BASE,
@@ -47,7 +39,7 @@ http.interceptors.response.use(
     // 未登录/令牌失效统一为 HTTP 401，据此拉起登录框；
     // errorMsg 是用户可读的文案，直接作为错误信息抛出
     if (error.response?.status === 401) {
-      dispatchNeedLogin()
+      notifyNeedLogin()
     }
     if (data && typeof data === 'object') {
       if (typeof data.errorMsg === 'string' && data.errorMsg.trim()) {

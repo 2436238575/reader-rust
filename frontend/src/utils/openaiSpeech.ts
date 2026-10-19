@@ -1,3 +1,4 @@
+import { notifyNeedLogin } from './authEvents'
 import { summarizeHttpErrorBody } from './httpError'
 import { API_BASE } from './appBase'
 import { buildAuthHeaders as buildReaderJwtHeaders } from './secureAccess'
@@ -97,6 +98,8 @@ export async function requestOpenAISpeechAudio({
         })
 
   if (!response.ok) {
+    // 裸 fetch 不过 axios 拦截器，401 要自己拉起登录框
+    if (response.status === 401) notifyNeedLogin()
     throw new Error(await readSpeechError(response))
   }
 
