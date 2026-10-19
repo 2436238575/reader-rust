@@ -75,6 +75,11 @@ const DEFAULT_USER_NS: &str = "public";
 type Aes128CbcDecryptor = cbc::Decryptor<Aes128>;
 thread_local! {
     static ACTIVE_JS_LIB: RefCell<Option<String>> = const { RefCell::new(None) };
+    /// 每线程一个复用的 QuickJS Runtime：此前每次求值都 `Runtime::new()` +
+    /// 注册全部 intrinsics，一个 20 条结果的搜索页就能建上百个 Runtime。
+    /// Runtime 不可跨线程（QuickJS 约束），thread_local 是天然池化边界；
+    /// 每次求值在其上新建 `Context::full`（全新全局对象，求值间天然隔离）。
+    static JS_RUNTIME: RefCell<Option<Runtime>> = const { RefCell::new(None) };
     /// 当前求值所属的用户命名空间。
     static ACTIVE_USER_NS: RefCell<Option<String>> = const { RefCell::new(None) };
     /// 当前书源的 JSON 文本；JS 里的 `source` 就是它（规格 §10）。
@@ -271,234 +276,246 @@ fn eval_js_inner_with_source(
     bindings: Option<&HashMap<String, JsonValue>>,
     read_globals: Option<&[&str]>,
 ) -> anyhow::Result<(String, HashMap<String, JsonValue>)> {
-    let rt = Runtime::new()?;
-    // 资源上限：内存 / 调用栈 / 执行时间（超时由中断处理器打断）
-    rt.set_memory_limit(JS_MEMORY_LIMIT_BYTES);
-    rt.set_max_stack_size(JS_MAX_STACK_BYTES);
-    let deadline = Instant::now() + JS_EVAL_TIMEOUT;
-    rt.set_interrupt_handler(Some(Box::new(move || Instant::now() >= deadline)));
-    let ctx = Context::full(&rt)?;
-    ctx.with(|ctx| {
-        let globals = ctx.globals();
-        let input_value = input.unwrap_or("");
-        let base_url_value = base_url.unwrap_or("");
-        let shared_js = active_js_lib_script()?;
-
-        globals.set("input", input_value)?;
-        globals.set("result", input_value)?;
-        globals.set("src", input_value)?;
-        globals.set("base_url", base_url_value)?;
-        globals.set("baseUrl", base_url_value)?;
-        if let Some(key) = key {
-            globals.set("key", key)?;
+    JS_RUNTIME.with(|cell| {
+        {
+            let mut slot = cell.borrow_mut();
+            if slot.is_none() {
+                let rt = Runtime::new()?;
+                rt.set_memory_limit(JS_MEMORY_LIMIT_BYTES);
+                rt.set_max_stack_size(JS_MAX_STACK_BYTES);
+                *slot = Some(rt);
+            }
         }
-        if let Some(page) = page {
-            globals.set("page", page)?;
-        }
+        let rt_ref = cell.borrow();
+        let rt = rt_ref.as_ref().expect("runtime just initialized");
+        // 资源上限幂等重设 + 每次求值重挂中断（deadline 是每次新的）
+        rt.set_memory_limit(JS_MEMORY_LIMIT_BYTES);
+        rt.set_max_stack_size(JS_MAX_STACK_BYTES);
+        let deadline = Instant::now() + JS_EVAL_TIMEOUT;
+        rt.set_interrupt_handler(Some(Box::new(move || Instant::now() >= deadline)));
+        let ctx = Context::full(rt)?;
+        ctx.with(|ctx| {
+            let globals = ctx.globals();
+            let input_value = input.unwrap_or("");
+            let base_url_value = base_url.unwrap_or("");
+            let shared_js = active_js_lib_script()?;
 
-        // Default url variable for Legado compatibility
-        globals.set("url", base_url_value)?;
+            globals.set("input", input_value)?;
+            globals.set("result", input_value)?;
+            globals.set("src", input_value)?;
+            globals.set("base_url", base_url_value)?;
+            globals.set("baseUrl", base_url_value)?;
+            if let Some(key) = key {
+                globals.set("key", key)?;
+            }
+            if let Some(page) = page {
+                globals.set("page", page)?;
+            }
 
-        // Stubs for Legado compatibility
-        // 书源对象：有 `with_book_source` 上下文时是真实书源，否则退化成只带 key 的空壳。
-        match active_source_json().and_then(|json| ctx.json_parse(json).ok()) {
-            Some(value) => globals.set("source", value)?,
-            None => globals.set("source", Object::new(ctx.clone())?)?,
-        }
-        let source_obj: Object = globals.get("source")?;
-        // `key`/`getKey()` 是既有的兼容绑定：优先用调用方给的（URL 规则会传书源 URL），
-        // 否则回退到书源自己的 `bookSourceUrl`。
-        let source_key_val = match source_key {
-            Some(key) => key.to_string(),
-            None => source_obj
-                .get::<_, Option<String>>("bookSourceUrl")
-                .unwrap_or_default()
-                .unwrap_or_default(),
-        };
-        let sk_clone = source_key_val.clone();
-        source_obj.set("key", source_key_val)?;
-        source_obj.set("getKey", Func::new(move || sk_clone.clone()))?;
+            // Default url variable for Legado compatibility
+            globals.set("url", base_url_value)?;
 
-        let cookie_obj = Object::new(ctx.clone())?;
-        cookie_obj.set(
-            "removeCookie",
-            Func::new(|_key: String| -> String { "".to_string() }),
-        )?;
-        globals.set("cookie", cookie_obj)?;
-
-        let cache_obj = Object::new(ctx.clone())?;
-        cache_obj.set(
-            "get",
-            Func::new(|key: String| -> Option<String> { kv_get_scoped(&key) }),
-        )?;
-        cache_obj.set(
-            "put",
-            Func::new(|key: String, val: String| -> bool {
-                kv_put_scoped(&key, &val);
-                true
-            }),
-        )?;
-        globals.set("cache", cache_obj)?;
-
-        let java_obj = Object::new(ctx.clone())?;
-        java_obj.set(
-            "ajax",
-            Func::new(|spec: String| -> String { java_ajax(&spec).unwrap_or_default() }),
-        )?;
-        java_obj.set(
-            "md5Encode",
-            Func::new(|input: String| -> String { md5_hex(&input) }),
-        )?;
-        java_obj.set(
-            "timeFormat",
-            Func::new(|timestamp: i64| -> String { java_time_format(timestamp) }),
-        )?;
-        java_obj.set("androidId", Func::new(|| -> String { device_id() }))?;
-        java_obj.set("deviceID", Func::new(|| -> String { device_id() }))?;
-        java_obj.set(
-            "get",
-            Func::new(|url: String| -> String {
-                java_request_simple("GET", &url, None).unwrap_or_default()
-            }),
-        )?;
-        java_obj.set(
-            "post",
-            Func::new(|url: String, body: String| -> String {
-                java_request_simple("POST", &url, Some(body)).unwrap_or_default()
-            }),
-        )?;
-        java_obj.set(
-            "put",
-            Func::new(|url: String, body: String| -> String {
-                java_request_simple("PUT", &url, Some(body)).unwrap_or_default()
-            }),
-        )?;
-        java_obj.set(
-            "base64Encode",
-            Func::new(|input: String| -> String {
-                base64::engine::general_purpose::STANDARD.encode(input)
-            }),
-        )?;
-        java_obj.set(
-            "base64Decode",
-            Func::new(|input: String| -> String {
-                base64::engine::general_purpose::STANDARD
-                    .decode(input)
-                    .ok()
-                    .and_then(|bytes| String::from_utf8(bytes).ok())
+            // Stubs for Legado compatibility
+            // 书源对象：有 `with_book_source` 上下文时是真实书源，否则退化成只带 key 的空壳。
+            match active_source_json().and_then(|json| ctx.json_parse(json).ok()) {
+                Some(value) => globals.set("source", value)?,
+                None => globals.set("source", Object::new(ctx.clone())?)?,
+            }
+            let source_obj: Object = globals.get("source")?;
+            // `key`/`getKey()` 是既有的兼容绑定：优先用调用方给的（URL 规则会传书源 URL），
+            // 否则回退到书源自己的 `bookSourceUrl`。
+            let source_key_val = match source_key {
+                Some(key) => key.to_string(),
+                None => source_obj
+                    .get::<_, Option<String>>("bookSourceUrl")
                     .unwrap_or_default()
-            }),
-        )?;
-        java_obj.set(
-            "aesBase64DecodeToString",
-            Func::new(
-                |input: String, key: String, algorithm: String, iv: String| -> String {
-                    java_aes_base64_decode_to_string(&input, &key, &algorithm, &iv)
-                },
-            ),
-        )?;
-        java_obj.set(
-            "encodeURIComponent",
-            Func::new(|input: String| -> String { js_encode_uri_component(&input) }),
-        )?;
-        java_obj.set(
-            "decodeURIComponent",
-            Func::new(|input: String| -> String { js_decode_uri_component(&input) }),
-        )?;
-        java_obj.set(
-            "encodeURI",
-            Func::new(|input: String| -> String { js_encode_uri(&input) }),
-        )?;
-        java_obj.set(
-            "decodeURI",
-            Func::new(|input: String| -> String { js_decode_uri(&input) }),
-        )?;
-        java_obj.set(
-            "now",
-            Func::new(|| -> i64 { chrono::Utc::now().timestamp_millis() }),
-        )?;
-        java_obj.set(
-            "uuid",
-            Func::new(|| -> String { Uuid::new_v4().to_string() }),
-        )?;
-        // 通知/UI 类方法在服务端没有对应动作。注册成空操作而不是留空，
-        // 否则书源里一句 `java.log(...)` 就会抛 TypeError、让整条规则失效
-        // （规格 §10 允许 UI 类函数实现为空操作，但要求文档声明）。
-        java_obj.set("log", Func::new(|_message: String| {}))?;
-        java_obj.set("toast", Func::new(|_message: String| {}))?;
-        java_obj.set("openUrl", Func::new(|_url: String| {}))?;
-        globals.set("java", java_obj)?;
+                    .unwrap_or_default(),
+            };
+            let sk_clone = source_key_val.clone();
+            source_obj.set("key", source_key_val)?;
+            source_obj.set("getKey", Func::new(move || sk_clone.clone()))?;
 
-        globals.set(
-            "kv_get",
-            Func::new(|key: String| -> Option<String> { kv_get_scoped(&key) }),
-        )?;
-        globals.set(
-            "kv_put",
-            Func::new(|key: String, val: String| -> bool {
-                kv_put_scoped(&key, &val);
-                true
-            }),
-        )?;
-        globals.set(
-            "regex_replace",
-            Func::new(
-                |input: String, pattern: String, replace: String| -> String {
-                    apply_regex_replace(&input, &pattern, &replace)
-                },
-            ),
-        )?;
-        globals.set(
-            "strip_ws",
-            Func::new(|input: String| -> String { strip_whitespace(&input) }),
-        )?;
+            let cookie_obj = Object::new(ctx.clone())?;
+            cookie_obj.set(
+                "removeCookie",
+                Func::new(|_key: String| -> String { "".to_string() }),
+            )?;
+            globals.set("cookie", cookie_obj)?;
 
-        globals.set("book", Object::new(ctx.clone())?)?;
-        globals.set("chapter", Object::new(ctx.clone())?)?;
-        globals.set("title", "")?;
-        globals.set("nextChapterUrl", "")?;
-        globals.set("rssArticle", Object::new(ctx.clone())?)?;
+            let cache_obj = Object::new(ctx.clone())?;
+            cache_obj.set(
+                "get",
+                Func::new(|key: String| -> Option<String> { kv_get_scoped(&key) }),
+            )?;
+            cache_obj.set(
+                "put",
+                Func::new(|key: String, val: String| -> bool {
+                    kv_put_scoped(&key, &val);
+                    true
+                }),
+            )?;
+            globals.set("cache", cache_obj)?;
 
-        if let Some(bindings) = bindings {
-            for (key, value) in bindings {
-                let js_value = ctx.json_parse(value.to_string())?;
-                globals.set(key.as_str(), js_value)?;
-            }
-        }
+            let java_obj = Object::new(ctx.clone())?;
+            java_obj.set(
+                "ajax",
+                Func::new(|spec: String| -> String { java_ajax(&spec).unwrap_or_default() }),
+            )?;
+            java_obj.set(
+                "md5Encode",
+                Func::new(|input: String| -> String { md5_hex(&input) }),
+            )?;
+            java_obj.set(
+                "timeFormat",
+                Func::new(|timestamp: i64| -> String { java_time_format(timestamp) }),
+            )?;
+            java_obj.set("androidId", Func::new(|| -> String { device_id() }))?;
+            java_obj.set("deviceID", Func::new(|| -> String { device_id() }))?;
+            java_obj.set(
+                "get",
+                Func::new(|url: String| -> String {
+                    java_request_simple("GET", &url, None).unwrap_or_default()
+                }),
+            )?;
+            java_obj.set(
+                "post",
+                Func::new(|url: String, body: String| -> String {
+                    java_request_simple("POST", &url, Some(body)).unwrap_or_default()
+                }),
+            )?;
+            java_obj.set(
+                "put",
+                Func::new(|url: String, body: String| -> String {
+                    java_request_simple("PUT", &url, Some(body)).unwrap_or_default()
+                }),
+            )?;
+            java_obj.set(
+                "base64Encode",
+                Func::new(|input: String| -> String {
+                    base64::engine::general_purpose::STANDARD.encode(input)
+                }),
+            )?;
+            java_obj.set(
+                "base64Decode",
+                Func::new(|input: String| -> String {
+                    base64::engine::general_purpose::STANDARD
+                        .decode(input)
+                        .ok()
+                        .and_then(|bytes| String::from_utf8(bytes).ok())
+                        .unwrap_or_default()
+                }),
+            )?;
+            java_obj.set(
+                "aesBase64DecodeToString",
+                Func::new(
+                    |input: String, key: String, algorithm: String, iv: String| -> String {
+                        java_aes_base64_decode_to_string(&input, &key, &algorithm, &iv)
+                    },
+                ),
+            )?;
+            java_obj.set(
+                "encodeURIComponent",
+                Func::new(|input: String| -> String { js_encode_uri_component(&input) }),
+            )?;
+            java_obj.set(
+                "decodeURIComponent",
+                Func::new(|input: String| -> String { js_decode_uri_component(&input) }),
+            )?;
+            java_obj.set(
+                "encodeURI",
+                Func::new(|input: String| -> String { js_encode_uri(&input) }),
+            )?;
+            java_obj.set(
+                "decodeURI",
+                Func::new(|input: String| -> String { js_decode_uri(&input) }),
+            )?;
+            java_obj.set(
+                "now",
+                Func::new(|| -> i64 { chrono::Utc::now().timestamp_millis() }),
+            )?;
+            java_obj.set(
+                "uuid",
+                Func::new(|| -> String { Uuid::new_v4().to_string() }),
+            )?;
+            // 通知/UI 类方法在服务端没有对应动作。注册成空操作而不是留空，
+            // 否则书源里一句 `java.log(...)` 就会抛 TypeError、让整条规则失效
+            // （规格 §10 允许 UI 类函数实现为空操作，但要求文档声明）。
+            java_obj.set("log", Func::new(|_message: String| {}))?;
+            java_obj.set("toast", Func::new(|_message: String| {}))?;
+            java_obj.set("openUrl", Func::new(|_url: String| {}))?;
+            globals.set("java", java_obj)?;
 
-        if !shared_js.trim().is_empty() {
-            eval_script(ctx.clone(), &shared_js)?;
-        }
+            globals.set(
+                "kv_get",
+                Func::new(|key: String| -> Option<String> { kv_get_scoped(&key) }),
+            )?;
+            globals.set(
+                "kv_put",
+                Func::new(|key: String, val: String| -> bool {
+                    kv_put_scoped(&key, &val);
+                    true
+                }),
+            )?;
+            globals.set(
+                "regex_replace",
+                Func::new(
+                    |input: String, pattern: String, replace: String| -> String {
+                        apply_regex_replace(&input, &pattern, &replace)
+                    },
+                ),
+            )?;
+            globals.set(
+                "strip_ws",
+                Func::new(|input: String| -> String { strip_whitespace(&input) }),
+            )?;
 
-        let v = eval_script(ctx.clone(), script)?;
+            globals.set("book", Object::new(ctx.clone())?)?;
+            globals.set("chapter", Object::new(ctx.clone())?)?;
+            globals.set("title", "")?;
+            globals.set("nextChapterUrl", "")?;
+            globals.set("rssArticle", Object::new(ctx.clone())?)?;
 
-        let result = if v.is_null() || v.is_undefined() {
-            String::new()
-        } else if let Some(s) = v.clone().into_string() {
-            let s: rquickjs::String<'_> = s;
-            s.to_string()
-                .map(|value| value.to_string())
-                .unwrap_or_default()
-        } else {
-            match ctx.json_stringify(v) {
-                Ok(Some(json)) => json.to_string().unwrap_or_default(),
-                _ => String::new(),
-            }
-        };
-        if result.len() > JS_MAX_RESULT_BYTES {
-            anyhow::bail!("JS 返回结果过大: {} 字节", result.len());
-        }
-
-        let mut globals_out = HashMap::new();
-        if let Some(names) = read_globals {
-            for name in names {
-                if let Some(value) = global_to_json(&ctx, name) {
-                    globals_out.insert((*name).to_string(), value);
+            if let Some(bindings) = bindings {
+                for (key, value) in bindings {
+                    let js_value = ctx.json_parse(value.to_string())?;
+                    globals.set(key.as_str(), js_value)?;
                 }
             }
-        }
 
-        Ok((result, globals_out))
+            if !shared_js.trim().is_empty() {
+                eval_script(ctx.clone(), &shared_js)?;
+            }
+
+            let v = eval_script(ctx.clone(), script)?;
+
+            let result = if v.is_null() || v.is_undefined() {
+                String::new()
+            } else if let Some(s) = v.clone().into_string() {
+                let s: rquickjs::String<'_> = s;
+                s.to_string()
+                    .map(|value| value.to_string())
+                    .unwrap_or_default()
+            } else {
+                match ctx.json_stringify(v) {
+                    Ok(Some(json)) => json.to_string().unwrap_or_default(),
+                    _ => String::new(),
+                }
+            };
+            if result.len() > JS_MAX_RESULT_BYTES {
+                anyhow::bail!("JS 返回结果过大: {} 字节", result.len());
+            }
+
+            let mut globals_out = HashMap::new();
+            if let Some(names) = read_globals {
+                for name in names {
+                    if let Some(value) = global_to_json(&ctx, name) {
+                        globals_out.insert((*name).to_string(), value);
+                    }
+                }
+            }
+
+            Ok((result, globals_out))
+        })
     })
 }
 
