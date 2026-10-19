@@ -116,8 +116,9 @@ mod tests {
 
     fn user() -> AuthUser {
         AuthUser {
+            uid: 1,
             username: "reader1".to_string(),
-            ns: "reader1".to_string(),
+            ns: "user_1".to_string(),
             ver: 1,
             scope: None,
             proxy_source: None,
@@ -126,9 +127,9 @@ mod tests {
 
     #[test]
     fn defaults_to_the_callers_own_namespace() {
-        assert_eq!(target_ns(&user(), None).unwrap(), "reader1");
-        assert_eq!(target_ns(&user(), Some("  ")).unwrap(), "reader1");
-        assert_eq!(target_ns(&user(), Some("reader1")).unwrap(), "reader1");
+        assert_eq!(target_ns(&user(), None).unwrap(), "user_1");
+        assert_eq!(target_ns(&user(), Some("  ")).unwrap(), "user_1");
+        assert_eq!(target_ns(&user(), Some("user_1")).unwrap(), "user_1");
     }
 
     #[test]
