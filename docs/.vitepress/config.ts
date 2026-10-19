@@ -94,6 +94,7 @@ export default defineConfig({
           items: [
             { text: '概述', link: '/maintainers/' },
             { text: '架构说明', link: '/maintainers/architecture' },
+            { text: '数据库', link: '/maintainers/database' },
             { text: '发布流程', link: '/maintainers/release' },
             { text: '开发约定', link: '/maintainers/development' },
           ],

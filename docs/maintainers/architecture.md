@@ -105,9 +105,9 @@ JS 求值本身带资源上限：内存 128MiB、调用栈 1MiB、单次求值 5
 
 | 位置                  | 职责                                                                          |
 | --------------------- | ----------------------------------------------------------------------------- |
-| `db/mod.rs`           | sqlx 连接池（5 条连接），启动时自动跑迁移                                     |
-| `db/migrations/`      | 三个迁移：`0001_init`、`0002_add_user_ns`、`0003_users_and_account_documents` |
-| `cache/file_cache.rs` | 章节正文文件缓存，文件名用 MD5，数据库只存索引                                |
+| `db/mod.rs`           | sqlx 连接池（10 条连接），启动时自动跑迁移                                     |
+| `db/migrations/`      | 单一迁移 `0001_init.sql`：当前全部表结构（历史迁移已并入，详见[数据库](/maintainers/database)） |
+| `cache/file_cache.rs` | 章节正文文件缓存，文件名用 MD5，数据库不存索引                                |
 | `fs/`                 | `storage/` 与 `assets/` 的文件操作                                            |
 
 ### 其他
@@ -119,10 +119,10 @@ JS 求值本身带资源上限：内存 128MiB、调用栈 1MiB、单次求值 5
 
 ## 一次搜索请求的完整链路
 
-以 `GET /reader3/searchBook?key=xxx&bookSourceUrl=yyy` 为例：
+以 `GET /reader3/searchBook?key=xxx&bookSourceId=1` 为例：
 
 1. `router.rs` 匹配到 `handlers::search_book`
-2. handler 从 `AppState` 取出 `BookService`，提取 `key` 与目标书源
+2. handler 从 `AppState` 取出 `BookService`，提取 `key` 与目标书源 id
 3. `book_service` 查找书源配置（请求已由 `require_auth` 中间件完成鉴权，handler 直接从请求扩展取身份）
 4. 书源 `searchUrl` 经 `url_analyzer` 展开占位符 → 得到真实 URL
 5. `crawler` 发起请求（自动按响应头解码字符集）
@@ -150,7 +150,7 @@ JS 求值本身带资源上限：内存 128MiB、调用栈 1MiB、单次求值 5
 
 ### 令牌
 
-登录成功后签发标准 JWT，载荷为 `{ sub, ns, iat, exp, ver }`。传递方式只有两种：
+登录成功后签发标准 JWT，载荷为 `{ sub, uid, iat, exp, ver }`（`sub` 是用户名，仅登录与展示；`uid` 是自增身份 id）。传递方式只有两种：
 
 | 传法     | 位置                          | 用途                            |
 | -------- | ----------------------------- | ------------------------------- |
@@ -183,7 +183,7 @@ JWT 本身无状态，但服务端每个请求都比对 `users.token_version`：
 
 ### `user_ns` 的作用
 
-`user_ns` 是数据隔离键，当前恒等于用户名（JWT 的 `ns` claim，由中间件校验字符集后使用，因为它直接参与 storage 路径拼接）。`book_sources` 表用 `(user_ns, book_source_url)` 作复合主键；书架、缓存、AI 资料等也按 `user_ns` 隔离——单用户下整个存储空间只有一个命名空间，这套键结构原样保留，handler 不需要感知。
+`user_ns` 是数据隔离键，恒等于 `user_<uid>`（`uid` 是 users 表的自增身份 id，进 JWT claims）。`book_sources` 表用 `(user_ns, book_source_id)` 作复合主键；书架、缓存、AI 资料等也按 `user_ns` 隔离——单用户下整个存储空间只有一个命名空间，这套键结构原样保留，handler 不需要感知。
 
 `__app__` 是内部保留命名空间，用于全局 AI 模型配置。
 
@@ -224,15 +224,14 @@ SQLite 表：
 
 | 表                 | 主键                         | 用途                                                 |
 | ------------------ | ---------------------------- | ---------------------------------------------------- |
-| `book_sources`     | `(user_ns, book_source_url)` | 书源配置（整份 JSON 存储；`book_source_id` 唯一索引是自增身份键） |
+| `users`            | `uid`                        | 唯一账号与 `token_version`（撤销版本号）；`uid` 是存储命名空间锚点（`user_<uid>`） |
+| `book_sources`     | `(user_ns, book_source_id)`  | 书源配置（整份 JSON 存储；`book_source_id` 是自增身份键，URL 唯一索引作导入去重） |
 | `books`            | `(user_ns, book_id)`         | 书籍登记表（`book_<n>`，绑定书源 id，换源只改绑）    |
 | `shelf_books`      | `(user_ns, book_id)`         | 书架（全列展开进度/分组/排序/元数据快照，JOIN books 注入绑定字段） |
-| `users`            | `username`                   | 唯一账号与 `token_version`（撤销版本号）；自增 `uid` 是存储命名空间锚点（`user_<uid>`） |
-| `json_documents`   | `(namespace, name)`          | 通用 JSON 文档存取（用户配置、书源变量等复用这张表） |
-| `ai_book_memories` | `(user_ns, book_key)`        | AI 资料（book_key 存 bookId）                        |
+| `json_documents`   | `(user_ns, name)`            | 通用 JSON 文档存取（用户配置、书签、替换规则等复用这张表） |
+| `ai_book_memories` | `(user_ns, book_id)`         | AI 资料（`book_id` 关联登记表，`book_url` 冗余列供恢复校验） |
 
-> `book_cache` / `chapter_cache` 两张表曾随 0001 迁移创建，但从未被代码读写
-> （书籍元信息按需抓取、章节正文走文件缓存）——已由 0004 迁移删除。
+逐字段说明见[数据库](/maintainers/database)。
 
 设计取舍：
 
