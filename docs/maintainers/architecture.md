@@ -226,7 +226,8 @@ SQLite 表：
 | ------------------ | ---------------------------- | ---------------------------------------------------- |
 | `book_sources`     | `(user_ns, book_source_url)` | 书源配置（整份 JSON 存储；`book_source_id` 唯一索引是自增身份键） |
 | `books`            | `(user_ns, book_id)`         | 书籍登记表（`book_<n>`，绑定书源 id，换源只改绑）    |
-| `users`            | `username`                   | 唯一账号与 `token_version`（撤销版本号）             |
+| `shelf_books`      | `(user_ns, book_id)`         | 书架（全列展开进度/分组/排序/元数据快照，JOIN books 注入绑定字段） |
+| `users`            | `username`                   | 唯一账号与 `token_version`（撤销版本号）；自增 `uid` 是存储命名空间锚点（`user_<uid>`） |
 | `json_documents`   | `(namespace, name)`          | 通用 JSON 文档存取（用户配置、书源变量等复用这张表） |
 | `ai_book_memories` | `(user_ns, book_key)`        | AI 资料（book_key 存 bookId）                        |
 

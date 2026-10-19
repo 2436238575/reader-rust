@@ -161,7 +161,7 @@ src/
     url_guard.rs          出站请求守卫（SSRF 防护）
   model/                  BookSource 等数据结构，15 文件约 1000 行
   storage/               SQLite（sqlx）+ 文件缓存，8 文件约 800 行
-    db/migrations/        0001_init + 0002_book_source_id + 0003_books_registry
+    db/migrations/        0001_init + 0002_book_source_id + 0003_books_registry + 0004_users_uid + 0005_shelf_books
     cache/file_cache.rs   章节内容文件缓存，以 MD5 命名；无 TTL，按容量淘汰
     cache/review_cache.rs 评论缓存；**有 TTL**（默认 7 天），按容量淘汰
   app/                    配置加载与启动引导
@@ -214,7 +214,7 @@ HTTP 请求
 - `/reader3/aiProxyImage` 目前**无前端调用方**（AI 资料的地图图片改由后端直接下载落盘到
   `ASSETS_DIR`），端点保留备用。
 
-鉴权说明：**单用户**，使用 **JWT（HS256）**。唯一账号由启动时的 bootstrap 创建：用户名取 `ADMIN_USERNAME`，密码取 `ADMIN_PASSWORD`（非空则每次启动强制覆盖，兼作找回通道），都为空则首启随机生成并打印到启动日志；不提供注册、用户管理与角色/权限分层——登录即拥有全部能力。登录返回的 `accessToken` 是标准 JWT，载荷为 `{ sub, ns, iat, exp, ver }`（`bookSourceProxy` 注入被代理页面的令牌额外带 `scope`/`bsid`，是只能访问代理路径、绑定单个书源 id 的 30 分钟限定令牌）。传递方式只有两种：`Authorization: Bearer <jwt>` 头，或查询参数 `accessToken`（SSE 与 `<img>` 无法设置请求头，只能走查询串）。中间件位于 `src/auth/middleware.rs`，分 `require_auth` / `optional_auth` 两档，在 `api/router.rs` 里按分组挂载；handler 通过 `CurrentUser` 提取器取身份，不再自行解析凭据。撤销靠 `users.token_version`：改密码自增版本号即作废该账号所有旧令牌。
+鉴权说明：**单用户**，使用 **JWT（HS256）**。唯一账号由启动时的 bootstrap 创建：用户名取 `ADMIN_USERNAME`，密码取 `ADMIN_PASSWORD`（非空则每次启动强制覆盖，兼作找回通道），都为空则首启随机生成并打印到启动日志；不提供注册、用户管理与角色/权限分层——登录即拥有全部能力。登录返回的 `accessToken` 是标准 JWT，载荷为 `{ sub, uid, iat, exp, ver }`（`sub` 是用户名，仅登录与展示；`uid` 是自增身份 id，存储命名空间一律用 `user_<uid>`；`bookSourceProxy` 注入被代理页面的令牌额外带 `scope`/`bsid`，是只能访问代理路径、绑定单个书源 id 的 30 分钟限定令牌）。传递方式只有两种：`Authorization: Bearer <jwt>` 头，或查询参数 `accessToken`（SSE 与 `<img>` 无法设置请求头，只能走查询串）。中间件位于 `src/auth/middleware.rs`，分 `require_auth` / `optional_auth` 两档，在 `api/router.rs` 里按分组挂载；handler 通过 `CurrentUser` 提取器取身份，不再自行解析凭据。撤销靠 `users.token_version`（按 uid 比对）：改密码自增版本号即作废该账号所有旧令牌。
 
 ### 静态资源与 404
 
@@ -329,7 +329,7 @@ id = `md5(去掉查询串的地址)`；抓取失败时按登记时的书籍上�
 ## 数据与存储
 
 - SQLite 通过 `sqlx` 访问，连接池 10 条连接，开启 WAL（`synchronous=NORMAL`），启动时自动执行 `src/storage/db/migrations/` 下的迁移。
-- 主要表：`book_sources`（书源 JSON，`(user_ns, book_source_url)` 主键 + `(user_ns, book_source_id)` 唯一索引；**`book_source_id` 是书源的身份键**，自增分配，导入/订阅按 URL 去重时保号）、`books`（**书籍登记表**：`(user_ns, book_id)` 主键 + `(user_ns, book_url)` 唯一索引；`book_id` 形如 `book_<n>`，绑定 `book_source_id`，换源只改绑不改 id；本地书 source_id 为 NULL）、`users`、`json_documents`、`ai_book_memories`（`book_key` 存 bookId）。
+- 主要表：`book_sources`（书源 JSON，`(user_ns, book_source_url)` 主键 + `(user_ns, book_source_id)` 唯一索引；**`book_source_id` 是书源的身份键**，自增分配，导入/订阅按 URL 去重时保号）、`books`（**书籍登记表**：`(user_ns, book_id)` 主键 + `(user_ns, book_url)` 唯一索引；`book_id` 形如 `book_<n>`，绑定 `book_source_id`，换源只改绑不改 id；本地书 source_id 为 NULL）、`shelf_books`（**书架**，`(user_ns, book_id)` 主键，全列展开进度/分组/排序/元数据快照，读取时 JOIN books 注入 bookUrl/origin 等绑定字段）、`users`（自增 `uid` 是身份锚点，命名空间一律 `user_<uid>`；username 仅登录与展示）、`json_documents`、`ai_book_memories`（`book_key` 存 bookId）。
 - **身份模型（2026-10 重构，破坏性）**：请求的身份参数只认 `bookId`（书籍）与 `bookSourceId`（书源）；`bookUrl`/`bookSourceUrl`/`origin` 只是数据字段（爬虫取数、导入去重）。搜索/发现产出即登记（响应必带 bookId）；书籍级接口经 `resolve_book`（handlers/book.rs）由 bookId 解析出当前绑定的 bookUrl + 书源。升级存量部署：删除 `storage/` 后重启重建。
 - 章节正文以文件形式缓存于 `storage/cache/<ns>/<bookId>/<md5(chapterUrl)>.txt`；目录缓存 `data/<ns>/chapters/<bookId>.json`（1h TTL）；书籍详情缓存 `cache/bookinfo/<ns>/<bookId>.json`（1h TTL，`refresh=1` 强刷）；换源候选 `data/<ns>/book_sources/<bookId>.json`。
 - 缓存**大多不按时间过期**，只在显式调用 `POST /reader3/purgeCache` 或超出容量上限时回收；占用可用 `GET /reader3/cacheStats` 查看。`scope=book` 按 bookId 清全部按书缓存并连带该书的图片；`scope=user` 额外回收非在架书籍的登记行。

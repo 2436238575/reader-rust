@@ -36,6 +36,7 @@ POST /reader3/login
   "isSuccess": true,
   "data": {
     "accessToken": "<JWT>",
+    "uid": 1,
     "username": "用户名",
     "lastLoginAt": 0,
     "createdAt": 0
@@ -43,6 +44,8 @@ POST /reader3/login
   "errorMsg": ""
 }
 ```
+
+`uid` 是后端分配的自增身份 id；存储命名空间一律用 `user_<uid>`，username 仅登录与展示。
 
 ## 退出登录
 
@@ -63,7 +66,7 @@ GET /reader3/getUserInfo
 响应 `data` 形如：
 
 ```json
-{ "userInfo": { "username": "用户名", "lastLoginAt": 0, "createdAt": 0 } }
+{ "userInfo": { "uid": 1, "username": "用户名", "lastLoginAt": 0, "createdAt": 0 } }
 ```
 
 `userInfo` 不含任何凭据字段。
