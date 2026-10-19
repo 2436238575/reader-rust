@@ -108,6 +108,7 @@ import { searchBookMultiSSE } from '../api/search'
 import { saveBook } from '../api/bookshelf'
 import { useOpenBook } from '../composables/useOpenBook'
 import { splitBookSourceGroups } from '../utils/sourceSelection'
+import { consumeSSE } from '../utils/sse'
 import BookGrid from './BookGrid.vue'
 import BookDetailModal from './BookDetailModal.vue'
 import type { Book, SearchBook, SearchBookDisplay } from '../types'
@@ -274,22 +275,26 @@ function doSearch(key: string) {
     }
   }
 
-  eventSource.addEventListener('end', () => {
-    shelfStore.isSearching = false
-    closeEventSource()
+  // error/end/传输层失败统一走 consumeSSE：后端 error 帧的 errorMsg 直接 toast，
+  // 不再让用户只看到「搜索失败」（此前 addEventListener('error') 与 onerror
+  // 双注册干同一件事且都不读 event.data）
+  consumeSSE(eventSource, {
+    onEnd: () => {
+      shelfStore.isSearching = false
+      closeEventSource()
+    },
+    onErrorMessage: (msg) => {
+      shelfStore.isSearching = false
+      searchFailed.value = true
+      appStore.showToast(msg, 'error')
+      closeEventSource()
+    },
+    onTransportError: () => {
+      shelfStore.isSearching = false
+      searchFailed.value = true
+      closeEventSource()
+    },
   })
-
-  eventSource.addEventListener('error', () => {
-    shelfStore.isSearching = false
-    searchFailed.value = true
-    closeEventSource()
-  })
-
-  eventSource.onerror = () => {
-    shelfStore.isSearching = false
-    searchFailed.value = true
-    closeEventSource()
-  }
 }
 
 function retrySearch() {

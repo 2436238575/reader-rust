@@ -1,5 +1,6 @@
 import { ref, computed, onUnmounted } from 'vue'
 import { getAvailableBookSourceSSE } from '../api/search'
+import { consumeSSE } from '../utils/sse'
 import { useAppStore } from '../stores/app'
 import { useSourceStore } from '../stores/source'
 import type { SearchBook } from '../types'
@@ -27,7 +28,6 @@ type AvailableSourceMode = 'initial' | 'loadMore'
 
 type AvailableSourceSSEPayload = {
   data?: SearchBook[]
-  books?: SearchBook[]
   lastIndex?: number
   hasMore?: boolean
 }
@@ -102,14 +102,7 @@ export function useAvailableSources(getCurrent: () => AvailableSourceCurrent | n
 
   onUnmounted(closeStream)
 
-  function parsePayload(event: MessageEvent): AvailableSourceSSEPayload | null {
-    try {
-      return JSON.parse(event.data) as AvailableSourceSSEPayload
-    } catch (error) {
-      console.error('parse getAvailableBookSourceSSE payload failed', error)
-      return null
-    }
-  }
+
 
   function mergeCandidates(candidates: SearchBook[]) {
     const current = getCurrent()
@@ -132,11 +125,7 @@ export function useAvailableSources(getCurrent: () => AvailableSourceCurrent | n
 
   function applyPayload(payload: AvailableSourceSSEPayload | null) {
     if (!payload) return
-    const incoming = Array.isArray(payload.data)
-      ? payload.data
-      : Array.isArray(payload.books)
-        ? payload.books
-        : []
+    const incoming = Array.isArray(payload.data) ? payload.data : []
 
     if (typeof payload.lastIndex === 'number') {
       lastIndex.value = payload.lastIndex
@@ -159,22 +148,27 @@ export function useAvailableSources(getCurrent: () => AvailableSourceCurrent | n
     })
     stream = sse
 
-    sse.onmessage = (event) => {
-      if (stream !== sse) return
-      applyPayload(parsePayload(event))
-    }
-
-    sse.addEventListener('end', (event) => {
-      if (stream !== sse) return
-      applyPayload(parsePayload(event as MessageEvent))
-      finishStream(sse, mode, beforeCount)
+    consumeSSE<AvailableSourceSSEPayload, AvailableSourceSSEPayload>(sse, {
+      onMessage: (payload) => {
+        if (stream !== sse) return
+        applyPayload(payload)
+      },
+      onEnd: (payload) => {
+        if (stream !== sse) return
+        applyPayload(payload)
+        finishStream(sse, mode, beforeCount)
+      },
+      // 后端 error 帧：把 errorMsg 给用户看，不再只 console.error
+      onErrorMessage: (msg) => {
+        if (stream !== sse) return
+        appStore.showToast(msg, 'error')
+        finishStream(sse, mode, beforeCount, true)
+      },
+      onTransportError: () => {
+        if (stream !== sse) return
+        finishStream(sse, mode, beforeCount, true)
+      },
     })
-
-    sse.onerror = (event) => {
-      if (stream !== sse) return
-      console.error('getAvailableBookSourceSSE failed', event)
-      finishStream(sse, mode, beforeCount, true)
-    }
   }
 
   function finishStream(

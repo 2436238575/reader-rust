@@ -117,6 +117,7 @@
 </template>
 
 <script setup lang="ts">
+import { consumeSSE } from '../../utils/sse'
 import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useReaderStore } from '../../stores/reader'
 import { useAppStore } from '../../stores/app'
@@ -200,28 +201,31 @@ function startServerCaching(count: number) {
     }
   }
 
-  sse.addEventListener('end', async (event) => {
-    try {
-      const data = JSON.parse((event as MessageEvent).data)
-      currentStatus.value = `服务端缓存完成，累计 ${data.cachedCount || 0} 章`
-      progress.value = 100
-    } finally {
-      closeSSE()
-      await refreshStats()
-      window.setTimeout(() => {
-        working.value = false
-      }, 800)
-    }
-  })
-
-  sse.onerror = async () => {
-    currentStatus.value = '服务端缓存已中断'
+  const finish = async (status: string, done: boolean) => {
+    currentStatus.value = status
+    if (done) progress.value = 100
     closeSSE()
     await refreshStats()
-    window.setTimeout(() => {
-      working.value = false
-    }, 1200)
+    window.setTimeout(
+      () => {
+        working.value = false
+      },
+      done ? 800 : 1200
+    )
   }
+
+  consumeSSE<unknown, { cachedCount?: number }>(sse, {
+    onEnd: async (data) => {
+      await finish(`服务端缓存完成，累计 ${data?.cachedCount || 0} 章`, true)
+    },
+    // 后端 error 帧带用户可读 errorMsg；传输层失败才是「中断」
+    onErrorMessage: async (msg) => {
+      await finish(`服务端缓存失败：${msg}`, false)
+    },
+    onTransportError: async () => {
+      await finish('服务端缓存已中断', false)
+    },
+  })
 }
 
 async function startBrowserCaching(count: number) {
