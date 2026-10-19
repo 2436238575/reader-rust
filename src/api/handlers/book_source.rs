@@ -400,12 +400,14 @@ pub async fn book_source_proxy(
         &state,
         &source,
         &user_ns,
-        Some(page_token.as_str()),
-        &method,
-        &headers,
-        &target_url,
-        upstream_referer.as_deref(),
-        body,
+        ProxyRequest {
+            access_token: Some(page_token.as_str()),
+            method: &method,
+            headers: &headers,
+            target_url: &target_url,
+            upstream_referer: upstream_referer.as_deref(),
+            body,
+        },
     )
     .await?;
 
@@ -529,17 +531,30 @@ fn extract_upstream_referer(headers: &HeaderMap) -> Option<String> {
     params.get("url").cloned().map(|v| repair_encoded_url(&v))
 }
 
+/// 代理转发的请求侧参数包（clippy too_many_arguments 收敛）。
+struct ProxyRequest<'a> {
+    access_token: Option<&'a str>,
+    method: &'a Method,
+    headers: &'a HeaderMap,
+    target_url: &'a str,
+    upstream_referer: Option<&'a str>,
+    body: Bytes,
+}
+
 async fn forward_book_source_request(
     state: &AppState,
     source: &BookSource,
     user_ns: &str,
-    access_token: Option<&str>,
-    method: &Method,
-    headers: &HeaderMap,
-    target_url: &str,
-    upstream_referer: Option<&str>,
-    body: Bytes,
+    req: ProxyRequest<'_>,
 ) -> Result<Response, AppError> {
+    let ProxyRequest {
+        access_token,
+        method,
+        headers,
+        target_url,
+        upstream_referer,
+        body,
+    } = req;
     let client = state
         .book_service
         .http_client(user_ns)
