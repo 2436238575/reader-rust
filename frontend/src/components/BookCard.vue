@@ -129,7 +129,7 @@
 import { computed, ref } from 'vue'
 import { getCoverUrl } from '../api/bookshelf'
 import { isLocalBook } from '../utils/localBook'
-import type { Book, SearchBook } from '../types'
+import type { Book, SearchBook, ShelfBook } from '../types'
 
 const props = defineProps<{
   book: Book | SearchBook
@@ -170,7 +170,7 @@ function handleCoverClick() {
 
 const coverFailed = ref(false)
 
-const asBook = computed(() => props.book as Book)
+const asBook = computed(() => props.book as ShelfBook)
 const asSearchBook = computed(() => props.book as SearchBook)
 
 const coverSrc = computed(() => {

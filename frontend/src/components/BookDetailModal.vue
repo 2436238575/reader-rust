@@ -171,16 +171,16 @@ import { useBookshelfStore } from '../stores/bookshelf'
 import { useAppStore } from '../stores/app'
 import { useSourceNameResolver } from '../composables/useAvailableSources'
 import BookSourceSwitchPanel from './BookSourceSwitchPanel.vue'
-import type { Book, SearchBook, BookChapter } from '../types'
+import type { Book, SearchBookDisplay, SearchBook, BookChapter } from '../types'
 
 const props = defineProps<{
   modelValue: boolean
-  book: Book | SearchBook | null
+  book: Book | SearchBookDisplay | null
 }>()
 
 const emit = defineEmits<{
   'update:modelValue': [value: boolean]
-  switched: [book: Book | SearchBook]
+  switched: [book: Book | SearchBookDisplay]
 }>()
 
 useEscClose(toRef(props, 'modelValue'), () => emit('update:modelValue', false))
@@ -194,7 +194,7 @@ const resolveSourceName = useSourceNameResolver()
 
 // 弹窗内的工作副本：换源后指向新书；重开弹窗时从 props 重新取，
 // 父组件的 selectedBook 不必跟着换源结果走
-const book = ref<Book | SearchBook | null>(null)
+const book = ref<Book | SearchBookDisplay | null>(null)
 const showSourcePanel = ref(false)
 const switchingSource = ref(false)
 
@@ -314,7 +314,7 @@ async function handleSourceSwitch(candidate: SearchBook) {
   if (!current || switchingSource.value) return
   switchingSource.value = true
   try {
-    let switched: Book | SearchBook
+    let switched: Book | SearchBookDisplay
     if (current.bookId && shelfStore.books.some((item) => item.bookId === current.bookId)) {
       // 书架书：后端换源落库（bookId 不变），返回换源后的完整书籍
       if (!candidate.bookId) throw new Error('候选缺少 bookId')

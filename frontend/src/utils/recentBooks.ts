@@ -1,4 +1,4 @@
-import type { Book } from '../types'
+import type { Book, ShelfBook } from '../types'
 import { safeLocalSet } from './storage'
 import { getUserdata, saveUserdata } from '../api/userdata'
 
@@ -9,7 +9,7 @@ const MAX_RECENT_BOOKS = 100
 // 连续保存（快速开书/切章）合并为一次后端写入
 const PUSH_DEBOUNCE_MS = 2000
 
-export interface RecentReadBook extends Book {
+export interface RecentReadBook extends ShelfBook {
   recentReadAt: number
 }
 

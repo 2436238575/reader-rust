@@ -2,7 +2,8 @@
 export interface ApiResponse<T = unknown> {
   isSuccess: boolean
   errorMsg: string
-  data: T
+  /** 后端是 Option<T>：isSuccess=false 时恒为 null（http.ts 失败分支已 reject，不会消费到） */
+  data: T | null
 }
 
 // ─── 书籍 ───
@@ -39,10 +40,22 @@ export interface Book {
   kind?: string
   updateTime?: string
   cachedChapterCount?: number
+}
+
+/** 书架视图注入前端合成字段后的 Book（后端不下发这些字段）。 */
+export interface ShelfBook extends Book {
+  /** 浏览器本地已缓存章节数（前端按 IndexedDB 统计注入） */
   browserCachedChapterCount?: number
 }
 
 // ─── 搜索结果 ───
+/** 搜索结果的展示形态：originName/originGroup 是前端按命中书源就地合成的，
+ *  后端响应里没有这两个字段（勿当线上字段依赖）。 */
+export interface SearchBookDisplay extends SearchBook {
+  originName?: string
+  originGroup?: string
+}
+
 export interface SearchBook {
   /** 产出即登记的 bookId；详情/目录/正文/入架一律用它 */
   bookId?: string
@@ -52,8 +65,6 @@ export interface SearchBook {
   author: string
   bookUrl: string
   origin: string
-  originName?: string
-  originGroup?: string
   coverUrl?: string
   intro?: string
   kind?: string
@@ -147,6 +158,118 @@ export interface ReviewResponse<T> {
 }
 
 // ─── 书源 ───
+
+/** 以下 rule* 接口与 src/model/rule.rs 一一对应（全部字段可选的规则文本）。 */
+export interface SearchRule {
+  checkKeyWord?: string
+  bookList?: string
+  name?: string
+  author?: string
+  intro?: string
+  kind?: string
+  lastChapter?: string
+  updateTime?: string
+  bookUrl?: string
+  coverUrl?: string
+  wordCount?: string
+}
+
+/** 后端 ExploreRule = SearchRule 别名 */
+export type ExploreRule = SearchRule
+
+export interface BookInfoRule {
+  init?: string
+  name?: string
+  author?: string
+  intro?: string
+  kind?: string
+  lastChapter?: string
+  updateTime?: string
+  coverUrl?: string
+  wordCount?: string
+  tocUrl?: string
+  canReName?: string
+  downloadUrls?: string
+}
+
+export interface TocRule {
+  preUpdateJs?: string
+  init?: string
+  chapterList?: string
+  chapterName?: string
+  chapterUrl?: string
+  formatJs?: string
+  isVolume?: string
+  isVip?: string
+  isPay?: string
+  updateTime?: string
+  volumeName?: string
+  wordCount?: string
+  nextTocUrl?: string
+}
+
+export interface ContentRule {
+  content?: string
+  title?: string
+  nextContentUrl?: string
+  webJs?: string
+  sourceRegex?: string
+  replaceRegex?: string
+  imageStyle?: string
+  imageDecode?: string
+  payAction?: string
+}
+
+/** 评论规则字段（章评/段评共用这一套命名；段评另有 index* 概览三件套） */
+export interface ReviewRule {
+  reviewUrl?: string
+  avatarRule?: string
+  contentRule?: string
+  postTimeRule?: string
+  reviewQuoteUrl?: string
+  voteUpUrl?: string
+  voteDownUrl?: string
+  postReviewUrl?: string
+  postQuoteUrl?: string
+  deleteUrl?: string
+  listRule?: string
+  idRule?: string
+  nameRule?: string
+  diggRule?: string
+  replyCountRule?: string
+  totalRule?: string
+  hasMoreRule?: string
+  replyListRule?: string
+  replyNameRule?: string
+  replyContentRule?: string
+  replyPostTimeRule?: string
+  replyToRule?: string
+  authorRule?: string
+  authorDiggRule?: string
+  replyAuthorRule?: string
+  replyAuthorDiggRule?: string
+  imageRule?: string
+  replyImageRule?: string
+}
+
+export interface ParaReviewRule extends ReviewRule {
+  indexUrl?: string
+  indexListRule?: string
+  indexCountRule?: string
+  indexAuthorCommentedRule?: string
+}
+
+/** 章节配图规则（本项目扩展） */
+export interface ContentImageRule {
+  imageUrl?: string
+  listRule?: string
+  urlRule?: string
+  captionRule?: string
+  paraIndexRule?: string
+  widthRule?: string
+  heightRule?: string
+}
+
 export interface BookSource {
   /** 后端分配的自增 id，书源的身份键；URL 只是数据字段与导入去重键 */
   bookSourceId?: number
@@ -159,20 +282,31 @@ export interface BookSource {
   enabledCookieJar?: boolean
   customOrder?: number
   weight?: number
+  bookUrlPattern?: string
   searchUrl?: string
   exploreUrl?: string
+  exploreScreen?: string
+  jsLib?: string
+  concurrentRate?: string
   header?: string
   loginUrl?: string
+  loginUi?: string
   loginCheckJs?: string
+  coverDecodeJs?: string
+  lastUpdateTime?: number
+  respondTime?: number
+  bookSourceComment?: string
+  variableComment?: string
   loadWithBaseUrl?: boolean
   singleUrl?: boolean
-  ruleSearch?: Record<string, unknown>
-  ruleExplore?: Record<string, unknown>
-  ruleBookInfo?: Record<string, unknown>
-  ruleToc?: Record<string, unknown>
-  ruleContent?: Record<string, unknown>
-  ruleReview?: Record<string, unknown>
-  ruleParaReview?: Record<string, unknown>
+  ruleSearch?: SearchRule
+  ruleExplore?: ExploreRule
+  ruleBookInfo?: BookInfoRule
+  ruleToc?: TocRule
+  ruleContent?: ContentRule
+  ruleReview?: ReviewRule
+  ruleParaReview?: ParaReviewRule
+  ruleContentImage?: ContentImageRule
 }
 
 export interface BookSourceTestResult {

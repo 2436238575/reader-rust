@@ -60,7 +60,7 @@ export function deleteInvalidBookSources() {
 }
 
 export function readRemoteSourceFile(url: string) {
-  return http.post<string[]>('/readRemoteSourceFile', { url }).then((r) => r.data)
+  return http.post<BookSource[]>('/readRemoteSourceFile', { url }).then((r) => r.data)
 }
 
 export function readSourceFile(file: File) {

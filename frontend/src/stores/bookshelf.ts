@@ -10,7 +10,7 @@ import {
   deleteBookGroup as apiDeleteBookGroup,
   saveBooks as apiSaveBooks,
 } from '../api/bookshelf'
-import type { Book, BookGroup, SearchBook } from '../types'
+import type { Book, BookGroup, SearchBookDisplay, ShelfBook } from '../types'
 import { deleteBrowserBookCache, listBrowserCacheSummary } from '../utils/browserCache'
 import { isLocalBook } from '../utils/localBook'
 import { useAppStore } from './app'
@@ -24,7 +24,7 @@ import {
 
 export const useBookshelfStore = defineStore('bookshelf', () => {
   // ─── Bookshelf ───
-  const books = ref<Book[]>([])
+  const books = ref<ShelfBook[]>([])
   const recentBooks = ref<Book[]>([])
   // 最近阅读的过滤关键词，由顶栏搜索框在最近页写入
   const recentFilter = ref('')
@@ -203,7 +203,7 @@ export const useBookshelfStore = defineStore('bookshelf', () => {
   }
 
   // ─── Search ───
-  const searchResults = ref<SearchBook[]>([])
+  const searchResults = ref<SearchBookDisplay[]>([])
   const isSearching = ref(false)
   const searchKey = ref('')
   const searchScope = ref<'all' | 'group' | 'source'>('source')

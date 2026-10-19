@@ -110,7 +110,7 @@ import { useOpenBook } from '../composables/useOpenBook'
 import { splitBookSourceGroups } from '../utils/sourceSelection'
 import BookGrid from './BookGrid.vue'
 import BookDetailModal from './BookDetailModal.vue'
-import type { Book, SearchBook } from '../types'
+import type { Book, SearchBook, SearchBookDisplay } from '../types'
 
 import { storeToRefs } from 'pinia'
 
@@ -171,7 +171,7 @@ const sourceOptions = computed(() => {
     })
 })
 
-const displayResults = computed<SearchBook[]>(() => {
+const displayResults = computed<SearchBookDisplay[]>(() => {
   // SSE 插入时已补齐源信息（见 onmessage），这里直接复用原对象，
   // 保证同一结果跨批次对象身份稳定，BookGrid 的 keyed diff 才能跳过
   return results.value.map((book) => {
@@ -179,8 +179,8 @@ const displayResults = computed<SearchBook[]>(() => {
     const source = sourceById.value.get(book.bookSourceId)
     return {
       ...book,
-      originName: book.originName || source?.bookSourceName || book.origin,
-      originGroup: book.originGroup || source?.bookSourceGroup,
+      originName: source?.bookSourceName || book.origin,
+      originGroup: source?.bookSourceGroup,
     }
   })
 })
@@ -247,15 +247,17 @@ function doSearch(key: string) {
       if (data.data && Array.isArray(data.data)) {
         // 去重集合跨消息维护：此前每条 SSE 消息都重建一次全量 Set（O(已到条数)）
         if (!searchSeen) searchSeen = new Set()
-        const annotate = (b: SearchBook) => {
+        // originName/originGroup 是前端按命中书源就地合成的展示字段
+        //（后端 SearchBook 里没有），合成后即 SearchBookDisplay
+        const annotate = (b: SearchBook): SearchBookDisplay => {
           const source = sourceById.value.get(b.bookSourceId)
           return {
             ...b,
-            originName: b.originName || source?.bookSourceName || b.origin,
-            originGroup: b.originGroup || source?.bookSourceGroup,
+            originName: source?.bookSourceName || b.origin,
+            originGroup: source?.bookSourceGroup,
           }
         }
-        const newBooks: SearchBook[] = []
+        const newBooks: SearchBookDisplay[] = []
         for (const b of data.data as SearchBook[]) {
           // 产出即登记：bookId 已按 bookUrl 去重
           const dedupeKey = b.bookId || `${b.origin}::${b.bookUrl}`

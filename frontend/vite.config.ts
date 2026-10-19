@@ -18,7 +18,7 @@ export default defineConfig(({ mode }) => {
   // 转发前剥掉前缀，与文档里的 nginx 写法（`proxy_pass http://后端/;`）保持一致
   const proxy = {
     [`${base}reader3`]: {
-      target: 'http://127.0.0.1:8080',
+      target: 'http://127.0.0.1:18080',
       changeOrigin: true,
       rewrite: (path: string) =>
         base === '/' || !path.startsWith(base) ? path : `/${path.slice(base.length)}`,
