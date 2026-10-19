@@ -13,7 +13,7 @@ use crate::util::text::normalize_source_url;
 use once_cell::sync::Lazy;
 use serde_json::{json, Value};
 use std::collections::HashMap;
-use sxd_xpath::{Context as XPathContext, Factory as XPathFactory, Value as XPathValue};
+use sxd_xpath::{Context as XPathContext, Value as XPathValue};
 
 /// 规则模板/占位符的固定正则：热路径上对每个元素每个字段都会用到，
 /// 每次调用重新编译是纯浪费（2000 章目录页此前要编译数万次）。
@@ -2908,8 +2908,8 @@ fn xpath_select_nodes<'a>(
         return result;
     }
     let context = XPathContext::new();
-    match XPathFactory::new().build(xpath) {
-        Ok(Some(expr)) => match expr.evaluate(&context, node) {
+    match html::compile_xpath(xpath) {
+        Some(expr) => match expr.evaluate(&context, node) {
             Ok(XPathValue::Nodeset(ns)) => ns.document_order(),
             _ => vec![],
         },
@@ -2928,8 +2928,8 @@ fn xpath_eval_strings(node: sxd_xpath::nodeset::Node<'_>, xpath: &str) -> Vec<St
         return html::combine_string_parts(op, &combo.parts, |part| xpath_eval_strings(node, part));
     }
     let context = XPathContext::new();
-    match XPathFactory::new().build(xpath) {
-        Ok(Some(expr)) => match expr.evaluate(&context, node) {
+    match html::compile_xpath(xpath) {
+        Some(expr) => match expr.evaluate(&context, node) {
             Ok(XPathValue::Nodeset(ns)) => ns
                 .document_order()
                 .into_iter()

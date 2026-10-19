@@ -14,6 +14,37 @@ static CSS_SELECTOR_CACHE: Lazy<Mutex<HashMap<String, Option<Selector>>>> =
 
 const CSS_SELECTOR_CACHE_MAX: usize = 1024;
 
+/// XPath 编译缓存：正则与 CSS 选择器都有编译缓存，唯独 XPath 每个元素
+/// 每个字段都 `Factory::new().build` 现编译——目录/列表页的重复编译是大头。
+/// sxd_xpath::XPath 非 Send/Sync（内部是 Box<dyn Expression>），只能
+/// thread_local 缓存；求值本来就跑在阻塞线程池，线程复用率足够。
+const XPATH_CACHE_MAX: usize = 1024;
+thread_local! {
+    static XPATH_CACHE: std::cell::RefCell<
+        HashMap<String, Option<std::rc::Rc<sxd_xpath::XPath>>>,
+    > = std::cell::RefCell::new(HashMap::new());
+}
+
+/// 编译 XPath（带缓存）；非法表达式缓存 None，避免反复重编译同一条坏规则。
+pub fn compile_xpath(xpath: &str) -> Option<std::rc::Rc<sxd_xpath::XPath>> {
+    XPATH_CACHE.with(|cell| {
+        let mut cache = cell.borrow_mut();
+        if let Some(hit) = cache.get(xpath) {
+            return hit.clone();
+        }
+        let built = sxd_xpath::Factory::new()
+            .build(xpath)
+            .ok()
+            .flatten()
+            .map(std::rc::Rc::new);
+        if cache.len() >= XPATH_CACHE_MAX {
+            cache.clear();
+        }
+        cache.insert(xpath.to_string(), built.clone());
+        built
+    })
+}
+
 fn cached_selector(css: &str) -> Option<Selector> {
     let mut cache = CSS_SELECTOR_CACHE.lock().unwrap_or_else(|e| e.into_inner());
     if let Some(parsed) = cache.get(css) {
@@ -965,8 +996,8 @@ pub fn select_xpath(html: &str, xpath: &str) -> Vec<String> {
     let document = package.as_document();
     let context = sxd_xpath::Context::new();
 
-    match sxd_xpath::Factory::new().build(xpath) {
-        Ok(Some(xpath_expr)) => match xpath_expr.evaluate(&context, document.root()) {
+    match compile_xpath(xpath) {
+        Some(xpath_expr) => match xpath_expr.evaluate(&context, document.root()) {
             Ok(value) => match value {
                 sxd_xpath::Value::Nodeset(ns) => ns
                     .document_order()
