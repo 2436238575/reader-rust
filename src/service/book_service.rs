@@ -1277,7 +1277,16 @@ impl BookService {
         let mut current_url = chapter_url.to_string();
 
         // Follow pagination to get all content pages
+        // 页数上限：环检测只能挡住重复 URL，恶意/病态书源持续产新 URL 时
+        // 单次取正文会发出无限请求。正常分页章节（2-5 页）远够不着上限。
+        const MAX_CONTENT_PAGES: usize = 50;
         loop {
+            if visited_urls.len() >= MAX_CONTENT_PAGES {
+                tracing::warn!(
+                    "get_content hit MAX_CONTENT_PAGES ({MAX_CONTENT_PAGES}), truncating: book={book_id}"
+                );
+                break;
+            }
             if visited_urls.contains(&current_url) {
                 tracing::debug!("get_content detected loop, breaking");
                 break;
@@ -1392,8 +1401,17 @@ impl BookService {
         if !bodies.contains_key(&key) && bodies.len() >= RECENT_BODY_LIMIT {
             let now = Instant::now();
             bodies.retain(|_, entry| now.duration_since(entry.stored_at) < RECENT_BODY_TTL);
-            if bodies.len() >= RECENT_BODY_LIMIT {
-                bodies.clear();
+            // 仍满则逐出最旧一条：整表清空会把刚记住的相邻章节响应一并丢掉，
+            // 打开评论时被迫重新抓取
+            while bodies.len() >= RECENT_BODY_LIMIT {
+                let Some(oldest_key) = bodies
+                    .iter()
+                    .min_by_key(|(_, entry)| entry.stored_at)
+                    .map(|(k, _)| k.clone())
+                else {
+                    break;
+                };
+                bodies.remove(&oldest_key);
             }
         }
         bodies.insert(
@@ -2218,38 +2236,17 @@ impl BookService {
             if book.group.is_none() {
                 book.group = exist.group;
             }
-        } else {
-            // 书架上限只对「新入架」计数，已有书的更新不受限
-            let limit = self.user_book_limit as usize;
-            if limit > 0 {
-                let count = self.shelf_repo.count(user_ns).await?;
-                if count >= limit as i64 {
-                    return Err(AppError::BadRequest(format!(
-                        "书架书籍数量不能超过 {limit} 本"
-                    )));
-                }
-            }
-            // 本地书限额同样对「新入架」生效：saveBook 直构 local-* 书
-            // 可绕过上传 handler 里的检查
-            let local_limit = self.user_local_book_limit as usize;
-            if local_limit > 0 && is_local_book_url(&book.book_url) {
-                let local_count = self
-                    .shelf_repo
-                    .list(user_ns)
-                    .await?
-                    .iter()
-                    .filter(|e| is_local_book_url(&e.book_url) && e.shelf.book_id != book_id)
-                    .count();
-                if local_count >= local_limit {
-                    return Err(AppError::BadRequest(format!(
-                        "本地书籍数量不能超过 {local_limit} 本"
-                    )));
-                }
-            }
         }
 
+        // 存在性检查、限额与写入收进同一事务（消除 count 与 upsert 分离的并发超限窗口）
         self.shelf_repo
-            .upsert(user_ns, shelf_row_of(&book), None)
+            .upsert_with_limit(
+                user_ns,
+                shelf_row_of(&book),
+                i64::from(self.user_book_limit),
+                i64::from(self.user_local_book_limit),
+                is_local_book_url(&book.book_url),
+            )
             .await?;
         Ok(book)
     }
@@ -2510,20 +2507,15 @@ impl BookService {
         Ok(())
     }
 
-    /// 标记某本书的目录后台补全开始；已在进行中时返回 `false`（调用方跳过 spawn）。
-    pub fn try_begin_toc_fill(&self, user_ns: &str, book_id: &str) -> bool {
-        self.pending_toc_fills
-            .lock()
-            .unwrap()
-            .insert((user_ns.to_string(), book_id.to_string()))
-    }
-
-    /// 标记目录后台补全结束（无论成败都必须调用）。
-    pub fn end_toc_fill(&self, user_ns: &str, book_id: &str) {
-        self.pending_toc_fills
-            .lock()
-            .unwrap()
-            .remove(&(user_ns.to_string(), book_id.to_string()));
+    /// 尝试开始某本书的目录后台补全；成功返回守卫，守卫 drop（含任务 panic）
+    /// 时自动释放标志位——手动成对调用的旧写法在任务中断时会永久锁死该书。
+    pub fn try_begin_toc_fill(&self, user_ns: &str, book_id: &str) -> Option<TocFillGuard> {
+        let key = (user_ns.to_string(), book_id.to_string());
+        let inserted = self.pending_toc_fills.lock().unwrap().insert(key.clone());
+        inserted.then(|| TocFillGuard {
+            pending: Arc::clone(&self.pending_toc_fills),
+            key,
+        })
     }
 
     pub async fn append_chapter_list_cache(
@@ -2983,6 +2975,18 @@ fn shelf_row_of(book: &Book) -> ShelfBookRow {
     }
 }
 
+/// toc_fill 进行中守卫：RAII，drop 即释放（含 spawn 任务 panic/取消）。
+pub struct TocFillGuard {
+    pending: Arc<Mutex<HashSet<(String, String)>>>,
+    key: (String, String),
+}
+
+impl Drop for TocFillGuard {
+    fn drop(&mut self) {
+        self.pending.lock().unwrap().remove(&self.key);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -3042,15 +3046,18 @@ mod tests {
             .unwrap();
         assert_eq!(again.len(), 4);
 
-        // 进行中守卫
-        assert!(service.try_begin_toc_fill(ns, book_id));
+        // 进行中守卫（RAII：drop 即释放）
+        let guard = service.try_begin_toc_fill(ns, book_id);
+        assert!(guard.is_some());
         assert!(
-            !service.try_begin_toc_fill(ns, book_id),
+            service.try_begin_toc_fill(ns, book_id).is_none(),
             "同一本书不允许并发补全"
         );
-        service.end_toc_fill(ns, book_id);
-        assert!(service.try_begin_toc_fill(ns, book_id), "结束后可再次开始");
-        service.end_toc_fill(ns, book_id);
+        drop(guard);
+        assert!(
+            service.try_begin_toc_fill(ns, book_id).is_some(),
+            "守卫释放后可再次开始"
+        );
         let _ = std::fs::remove_dir_all(&storage_dir);
     }
 

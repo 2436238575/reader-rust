@@ -108,6 +108,8 @@ pub async fn build_state(cfg: AppConfig) -> anyhow::Result<AppState> {
     let shelf_repo = db::repo::ShelfBookRepo::new(pool.clone());
 
     let http = HttpClient::new(cfg.request_timeout_secs, None)?;
+    // 书源 JS 的 java.ajax 等内部请求与主抓取共用同一超时口径
+    crate::parser::js::set_js_http_timeout(cfg.request_timeout_secs);
     let parser = RuleEngine::new()?;
     let cache = FileCache::new(
         format!("{}/cache", cfg.storage_dir),

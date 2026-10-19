@@ -23,8 +23,10 @@ use uuid::Uuid;
 /// 键一律经过 [`scoped_key`] 加用户前缀，避免不同书源/不同用户的键互相覆盖
 /// 或读取到他人写入的值。
 static JS_KV: Lazy<Mutex<BoundedMap<String>>> =
-    Lazy::new(|| Mutex::new(BoundedMap::new(JS_KV_MAX_ENTRIES)));
-static JS_LIB_CACHE: Lazy<Mutex<BoundedMap<String>>> =
+    Lazy::new(|| Mutex::new(BoundedMap::with_bytes(JS_KV_MAX_ENTRIES, JS_KV_MAX_BYTES)));
+/// jsLib 缓存带 TTL：远程 jsLib 原地更新时，无 TTL 的进程内缓存会永久用旧版
+const JS_LIB_CACHE_TTL: Duration = Duration::from_secs(3600);
+static JS_LIB_CACHE: Lazy<Mutex<BoundedMap<(String, std::time::Instant)>>> =
     Lazy::new(|| Mutex::new(BoundedMap::new(JS_LIB_CACHE_MAX_ENTRIES)));
 /// 全局 KV / jsLib 缓存的条目上限。
 ///
@@ -32,6 +34,8 @@ static JS_LIB_CACHE: Lazy<Mutex<BoundedMap<String>>> =
 /// 书源可以把进程内存吃光。超出上限时整表清空——书源 KV 只用于跨请求缓存，
 /// 清空只影响性能，不会破坏正确性。
 const JS_KV_MAX_ENTRIES: usize = 4096;
+/// KV 总字节上限：value 由书源决定大小，只限条数内存仍可无界增长
+const JS_KV_MAX_BYTES: usize = 8 * 1024 * 1024;
 const JS_LIB_CACHE_MAX_ENTRIES: usize = 256;
 /// 书源 JS 的运行时资源上限。
 ///
@@ -43,14 +47,29 @@ const JS_MAX_STACK_BYTES: usize = 1024 * 1024;
 const JS_EVAL_TIMEOUT: Duration = Duration::from_secs(5);
 /// 单次求值允许返回的最大字符串长度。
 const JS_MAX_RESULT_BYTES: usize = 32 * 1024 * 1024;
-/// `java.ajax` 等内部请求的超时。
-const JS_HTTP_TIMEOUT: Duration = Duration::from_secs(30);
+/// `java.ajax` 等内部请求的超时（秒）。默认与 `REQUEST_TIMEOUT_SECS` 的代码默认
+/// 一致；app 启动时按实际配置覆盖（见 `set_js_http_timeout`）。
+/// 注意：JS 求值的 5s 中断只约束纯 JS 执行，原生函数（如 java.ajax）不受其管——
+/// 一次求值最坏耗时 ≈ 5s 纯 JS + 每次 HTTP 请求各这么长。
+static JS_HTTP_TIMEOUT_SECS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(15);
+
+/// 启动引导按 REQUEST_TIMEOUT_SECS 覆盖 JS 内部请求超时。
+pub fn set_js_http_timeout(secs: u64) {
+    JS_HTTP_TIMEOUT_SECS.store(secs.max(1), std::sync::atomic::Ordering::Relaxed);
+}
+
+fn js_http_timeout() -> Duration {
+    Duration::from_secs(JS_HTTP_TIMEOUT_SECS.load(std::sync::atomic::Ordering::Relaxed))
+}
 /// 书源 JS 内 `java.ajax/get/post/put` 使用的客户端池。
 ///
 /// 同样按用户命名空间隔离：否则 A 用户在站点登录得到的会话 Cookie
 /// 会被 B 用户书源的 `java.ajax` 自动带上。
-static JS_HTTP_CLIENTS: Lazy<Mutex<HashMap<String, Client>>> =
-    Lazy::new(|| Mutex::new(HashMap::new()));
+/// 命名空间 client 池上限：超出整表清空重建（单用户常态只有 1-2 个条目，
+/// 上限只是防失控的保险）
+const JS_HTTP_CLIENT_MAX: usize = 8;
+static JS_HTTP_CLIENTS: Lazy<Mutex<BoundedMap<Client>>> =
+    Lazy::new(|| Mutex::new(BoundedMap::new(JS_HTTP_CLIENT_MAX)));
 /// 未显式指定命名空间时的归属（封面等匿名请求同此）。
 const DEFAULT_USER_NS: &str = "public";
 type Aes128CbcDecryptor = cbc::Decryptor<Aes128>;
@@ -125,7 +144,7 @@ fn kv_put_scoped(key: &str, value: &str) {
     JS_KV
         .lock()
         .unwrap_or_else(|e| e.into_inner())
-        .insert(scoped, value.to_string());
+        .insert_sized(scoped, value.to_string());
 }
 
 /// 每个命名空间一个稳定的设备标识（模拟阅读 App 的 deviceID）。
@@ -147,9 +166,10 @@ fn js_http_client() -> Client {
             return client.clone();
         }
     }
+    // BoundedMap 满时 FIFO 逐出最旧命名空间的 client（其 Cookie jar 一并失效）
     let client = Client::builder()
         .cookie_store(true)
-        .timeout(JS_HTTP_TIMEOUT)
+        .timeout(js_http_timeout())
         .gzip(true)
         .brotli(true)
         .deflate(true)
@@ -160,7 +180,8 @@ fn js_http_client() -> Client {
         .build()
         .expect("failed to build JS HTTP client");
     let mut map = JS_HTTP_CLIENTS.lock().unwrap_or_else(|e| e.into_inner());
-    map.entry(ns).or_insert(client).clone()
+    map.insert(ns, client.clone());
+    client
 }
 
 pub fn eval_js(script: &str, input: &str, base_url: &str) -> anyhow::Result<String> {
@@ -637,13 +658,16 @@ fn active_js_lib_script() -> anyhow::Result<String> {
         return Ok(String::new());
     };
     let cache_key = md5_hex(&js_lib);
-    if let Some(cached) = JS_LIB_CACHE
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .get(&cache_key)
-        .cloned()
     {
-        return Ok(cached);
+        let mut cache = JS_LIB_CACHE.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some((script, cached_at)) = cache.get(&cache_key) {
+            if cached_at.elapsed() < JS_LIB_CACHE_TTL {
+                return Ok(script.clone());
+            }
+            // 过期条目摘掉，重新编译（远程 jsLib 原地更新的场景）
+            let key = cache_key.clone();
+            cache.remove(&key);
+        }
     }
 
     let compiled = compile_js_lib(&js_lib)?;
@@ -651,7 +675,7 @@ fn active_js_lib_script() -> anyhow::Result<String> {
         JS_LIB_CACHE
             .lock()
             .unwrap_or_else(|e| e.into_inner())
-            .insert(cache_key, compiled.clone());
+            .insert(cache_key, (compiled.clone(), std::time::Instant::now()));
     }
     Ok(compiled)
 }

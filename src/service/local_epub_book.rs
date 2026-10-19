@@ -109,132 +109,26 @@ impl LocalEpubBookService {
     ) -> Result<Book, AppError> {
         validate_epub_upload(file_name, bytes.len())?;
         let safe_file_name = sanitize_epub_file_name(file_name);
-        // 解压是 CPU 密集的同步工作，移出 tokio worker，避免大 EPUB 阻塞请求处理
-        let (files, bytes) = tokio::task::spawn_blocking(move || {
-            read_epub_files(&bytes).map(|files| (files, bytes))
-        })
-        .await
-        .map_err(|e| AppError::Internal(anyhow::anyhow!("EPUB 解析任务失败: {e}")))??;
-        let rootfile =
-            parse_container_rootfile(&read_text_file(&files, "META-INF/container.xml")?)?;
-        let opf_text = read_text_file(&files, &rootfile)?;
-        let opf_base = parent_zip_dir(&rootfile);
-        let package = parse_opf(&opf_text, &opf_base)?;
-
         let hash = md5_bytes_hex(
             format!("{}:{}:", user_ns, safe_file_name).as_bytes(),
             &bytes,
         );
         let book_url = format!("{}:{}", LOCAL_EPUB_ORIGIN, hash);
         let book_dir = self.book_dir(user_ns, &book_url)?;
-
-        if book_dir.exists() {
-            fs::remove_dir_all(&book_dir)
-                .await
-                .map_err(|e| AppError::Internal(e.into()))?;
-        }
-        fs::create_dir_all(book_dir.join("chapters"))
-            .await
-            .map_err(|e| AppError::Internal(e.into()))?;
-        fs::create_dir_all(book_dir.join("assets"))
-            .await
-            .map_err(|e| AppError::Internal(e.into()))?;
         let byte_len = bytes.len();
-        fs::write(book_dir.join("original.epub"), bytes)
+
+        // 解压+清洗+落盘全是同步工作，整体移进阻塞线程：流式逐条目处理，
+        // 峰值内存 ≈ 原始包 + 单个条目，而不是「整包解压 + 原文」双份驻留。
+        let index = {
+            let book_dir = book_dir.clone();
+            let book_url = book_url.clone();
+            let safe_file_name = safe_file_name.clone();
+            tokio::task::spawn_blocking(move || {
+                import_epub_blocking(&bytes, &book_dir, &book_url, &safe_file_name, byte_len)
+            })
             .await
-            .map_err(|e| AppError::Internal(e.into()))?;
-
-        let asset_paths = collect_asset_paths(&package, &files);
-        let mut stored_assets = Vec::new();
-        for path in &asset_paths {
-            if let Some(data) = files.get(path) {
-                let content_type = content_type_for_path(path);
-                let target = safe_child_path(&book_dir.join("assets"), path)?;
-                if let Some(parent) = target.parent() {
-                    fs::create_dir_all(parent)
-                        .await
-                        .map_err(|e| AppError::Internal(e.into()))?;
-                }
-                fs::write(target, data)
-                    .await
-                    .map_err(|e| AppError::Internal(e.into()))?;
-                stored_assets.push(StoredEpubAsset {
-                    path: path.clone(),
-                    content_type,
-                });
-            }
-        }
-
-        let title_map = load_title_map(&files, &package);
-        let mut chapters = Vec::new();
-        let mut char_len = 0usize;
-        let mut seen_chapter_paths = HashSet::new();
-        for idref in &package.spine {
-            let Some(item) = package.manifest.get(idref) else {
-                continue;
-            };
-            if !is_html_media_type(&item.media_type)
-                || !seen_chapter_paths.insert(item.path.clone())
-            {
-                continue;
-            }
-            let Some(raw) = files.get(&item.path) else {
-                continue;
-            };
-            let html = decode_utf8_lossy(raw);
-            let title = title_map
-                .get(&item.path)
-                .cloned()
-                .or_else(|| extract_html_title(&html))
-                .unwrap_or_else(|| format!("第 {} 章", chapters.len() + 1));
-            let content = sanitize_chapter_html(&html, &item.path, &book_url, &asset_paths);
-            char_len += plain_text_len(&content);
-            let index = chapters.len();
-            let file_name = format!("{index}.html");
-            fs::write(book_dir.join("chapters").join(&file_name), content)
-                .await
-                .map_err(|e| AppError::Internal(e.into()))?;
-            chapters.push(StoredEpubChapter {
-                title,
-                url: build_epub_chapter_url(&book_url, index),
-                index: index as i32,
-                file_name,
-            });
-        }
-
-        if chapters.is_empty() {
-            return Err(AppError::BadRequest("EPUB 未找到可阅读章节".to_string()));
-        }
-
-        let cover_url = resolve_cover_path(&package)
-            .filter(|path| asset_paths.contains(path))
-            .map(|path| build_asset_url(&book_url, &path));
-        let name = package
-            .title
-            .clone()
-            .filter(|value| !value.trim().is_empty())
-            .unwrap_or_else(|| book_name_from_epub_file_name(&safe_file_name));
-        let author = package
-            .author
-            .clone()
-            .filter(|value| !value.trim().is_empty())
-            .unwrap_or_else(|| "本地导入".to_string());
-        let index = StoredEpubIndex {
-            book_url: book_url.clone(),
-            name: name.clone(),
-            author: author.clone(),
-            file_name: safe_file_name,
-            byte_len,
-            char_len,
-            cover_url: cover_url.clone(),
-            chapters,
-            assets: stored_assets,
-        };
-        let data =
-            serde_json::to_string_pretty(&index).map_err(|e| AppError::Internal(e.into()))?;
-        fs::write(book_dir.join("manifest.json"), data)
-            .await
-            .map_err(|e| AppError::Internal(e.into()))?;
+            .map_err(|e| AppError::Internal(anyhow::anyhow!("EPUB 解析任务失败: {e}")))?
+        }?;
 
         Ok(book_from_index(index))
     }
@@ -371,45 +265,173 @@ fn book_name_from_epub_file_name(file_name: &str) -> String {
         .to_string()
 }
 
-fn read_epub_files(bytes: &[u8]) -> Result<HashMap<String, Vec<u8>>, AppError> {
-    let cursor = Cursor::new(bytes);
+/// 流式读取 zip 单个条目：按实际解压输出扣预算（zip 头里的声明大小是
+/// 攻击者可控值，「声明 1 字节、实际膨胀数 GB」靠 `take(remaining + 1)` 检出）。
+/// 条目不存在返回 Ok(None)。
+fn read_epub_entry(
+    archive: &mut zip::ZipArchive<Cursor<&[u8]>>,
+    path: &str,
+    budget: &mut u64,
+) -> Result<Option<Vec<u8>>, AppError> {
+    let mut file = match archive.by_name(path) {
+        Ok(file) => file,
+        Err(zip::result::ZipError::FileNotFound) => return Ok(None),
+        Err(_) => return Err(AppError::BadRequest("EPUB 文件损坏".to_string())),
+    };
+    if !file.is_file() {
+        return Ok(None);
+    }
+    if file.enclosed_name().is_none() {
+        return Err(AppError::BadRequest("EPUB 包含非法路径".to_string()));
+    }
+    let remaining = budget.saturating_add(1);
+    let mut data = Vec::new();
+    (&mut file)
+        .take(remaining)
+        .read_to_end(&mut data)
+        .map_err(|_| AppError::BadRequest("EPUB 文件损坏".to_string()))?;
+    if data.len() as u64 > *budget {
+        return Err(AppError::BadRequest("EPUB 解压后体积过大".to_string()));
+    }
+    *budget -= data.len() as u64;
+    Ok(Some(data))
+}
+
+/// import 的阻塞段：流式解 zip、清洗、直接落盘（std::fs，在 spawn_blocking 里跑）。
+fn import_epub_blocking(
+    bytes: &[u8],
+    book_dir: &Path,
+    book_url: &str,
+    safe_file_name: &str,
+    byte_len: usize,
+) -> Result<StoredEpubIndex, AppError> {
+    let cursor: Cursor<&[u8]> = Cursor::new(bytes);
     let mut archive = zip::ZipArchive::new(cursor)
         .map_err(|_| AppError::BadRequest("EPUB 文件损坏".to_string()))?;
     if archive.len() > MAX_EPUB_FILE_COUNT {
         return Err(AppError::BadRequest("EPUB 文件数量过多".to_string()));
     }
-
-    let mut files = HashMap::new();
-    let mut unpacked_bytes = 0u64;
+    // 全条目名字扫描：流式读取只碰 manifest 引用的条目，恶意条目不会被写出，
+    // 但包含路径穿越条目的包直接整体拒收（纵深防御）
     for i in 0..archive.len() {
-        let mut file = archive
+        let file = archive
             .by_index(i)
             .map_err(|_| AppError::BadRequest("EPUB 文件损坏".to_string()))?;
         if !file.is_file() {
             continue;
         }
-        let Some(enclosed) = file.enclosed_name().map(|path| path.to_path_buf()) else {
+        let Some(enclosed) = file.enclosed_name().map(|p| p.to_path_buf()) else {
             return Err(AppError::BadRequest("EPUB 包含非法路径".to_string()));
         };
-        let Some(path) = normalize_pathbuf(&enclosed) else {
+        if normalize_pathbuf(&enclosed).is_none() {
             return Err(AppError::BadRequest("EPUB 包含非法路径".to_string()));
-        };
-        // 限额必须按实际解压输出累计：zip 头里的 file.size() 只是攻击者可控的声明值，
-        // 「声明 1 字节、实际膨胀数 GB」的条目可以绕过基于声明值的检查（解压炸弹）。
-        // take(remaining + 1) 让实际输出超出预算时能被可靠检出。
-        let remaining = MAX_EPUB_UNPACKED_BYTES.saturating_sub(unpacked_bytes);
-        let mut data = Vec::new();
-        (&mut file)
-            .take(remaining.saturating_add(1))
-            .read_to_end(&mut data)
-            .map_err(|_| AppError::BadRequest("EPUB 文件损坏".to_string()))?;
-        if data.len() as u64 > remaining {
-            return Err(AppError::BadRequest("EPUB 解压后体积过大".to_string()));
         }
-        unpacked_bytes += data.len() as u64;
-        files.insert(path, data);
     }
-    Ok(files)
+    let mut budget = MAX_EPUB_UNPACKED_BYTES;
+
+    let container = read_epub_entry(&mut archive, "META-INF/container.xml", &mut budget)?
+        .ok_or_else(|| AppError::BadRequest("EPUB 缺少 container.xml".to_string()))?;
+    let rootfile = parse_container_rootfile(&decode_utf8_lossy(&container))?;
+    let opf = read_epub_entry(&mut archive, &rootfile, &mut budget)?
+        .ok_or_else(|| AppError::BadRequest("EPUB 缺少 OPF".to_string()))?;
+    let opf_base = parent_zip_dir(&rootfile);
+    let package = parse_opf(&decode_utf8_lossy(&opf), &opf_base)?;
+
+    let title_map = load_title_map_streamed(&mut archive, &package, &mut budget);
+    let asset_paths = collect_asset_paths(&package);
+
+    // 目录重建（同一本书重复导入覆盖）
+    if book_dir.exists() {
+        std::fs::remove_dir_all(book_dir).map_err(|e| AppError::Internal(e.into()))?;
+    }
+    std::fs::create_dir_all(book_dir.join("chapters")).map_err(|e| AppError::Internal(e.into()))?;
+    std::fs::create_dir_all(book_dir.join("assets")).map_err(|e| AppError::Internal(e.into()))?;
+    std::fs::write(book_dir.join("original.epub"), bytes)
+        .map_err(|e| AppError::Internal(e.into()))?;
+
+    // 配图逐条目落盘
+    let mut stored_assets = Vec::new();
+    for path in &asset_paths {
+        if let Some(data) = read_epub_entry(&mut archive, path, &mut budget)? {
+            let content_type = content_type_for_path(path);
+            let target = safe_child_path(&book_dir.join("assets"), path)?;
+            if let Some(parent) = target.parent() {
+                std::fs::create_dir_all(parent).map_err(|e| AppError::Internal(e.into()))?;
+            }
+            std::fs::write(target, data).map_err(|e| AppError::Internal(e.into()))?;
+            stored_assets.push(StoredEpubAsset {
+                path: path.clone(),
+                content_type,
+            });
+        }
+    }
+
+    // 章节按 spine 顺序流式处理：读一条、清洗、写一条
+    let mut chapters = Vec::new();
+    let mut char_len = 0usize;
+    let mut seen_chapter_paths = HashSet::new();
+    for idref in &package.spine {
+        let Some(item) = package.manifest.get(idref) else {
+            continue;
+        };
+        if !is_html_media_type(&item.media_type) || !seen_chapter_paths.insert(item.path.clone()) {
+            continue;
+        }
+        let Some(raw) = read_epub_entry(&mut archive, &item.path, &mut budget)? else {
+            continue;
+        };
+        let html = decode_utf8_lossy(&raw);
+        let title = title_map
+            .get(&item.path)
+            .cloned()
+            .or_else(|| extract_html_title(&html))
+            .unwrap_or_else(|| format!("第 {} 章", chapters.len() + 1));
+        let content = sanitize_chapter_html(&html, &item.path, book_url, &asset_paths);
+        char_len += plain_text_len(&content);
+        let index = chapters.len();
+        let file_name = format!("{index}.html");
+        std::fs::write(book_dir.join("chapters").join(&file_name), content)
+            .map_err(|e| AppError::Internal(e.into()))?;
+        chapters.push(StoredEpubChapter {
+            title,
+            url: build_epub_chapter_url(book_url, index),
+            index: index as i32,
+            file_name,
+        });
+    }
+
+    if chapters.is_empty() {
+        return Err(AppError::BadRequest("EPUB 未找到可阅读章节".to_string()));
+    }
+
+    let cover_url = resolve_cover_path(&package)
+        .filter(|path| asset_paths.contains(path))
+        .map(|path| build_asset_url(book_url, &path));
+    let name = package
+        .title
+        .clone()
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or_else(|| book_name_from_epub_file_name(safe_file_name));
+    let author = package
+        .author
+        .clone()
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or_else(|| "本地导入".to_string());
+    let index = StoredEpubIndex {
+        book_url: book_url.to_string(),
+        name,
+        author,
+        file_name: safe_file_name.to_string(),
+        byte_len,
+        char_len,
+        cover_url,
+        chapters,
+        assets: stored_assets,
+    };
+    let data = serde_json::to_string_pretty(&index).map_err(|e| AppError::Internal(e.into()))?;
+    std::fs::write(book_dir.join("manifest.json"), data)
+        .map_err(|e| AppError::Internal(e.into()))?;
+    Ok(index)
 }
 
 fn parse_container_rootfile(xml: &str) -> Result<String, AppError> {
@@ -534,14 +556,15 @@ fn parse_opf_element(package: &mut EpubPackage, e: &BytesStart<'_>, opf_base: &s
     }
 }
 
-fn load_title_map(
-    files: &HashMap<String, Vec<u8>>,
+fn load_title_map_streamed(
+    archive: &mut zip::ZipArchive<Cursor<&[u8]>>,
     package: &EpubPackage,
+    budget: &mut u64,
 ) -> HashMap<String, String> {
     if let Some(nav_id) = &package.nav_id {
         if let Some(item) = package.manifest.get(nav_id) {
-            if let Some(data) = files.get(&item.path) {
-                let map = parse_nav_titles(&decode_utf8_lossy(data), &parent_zip_dir(&item.path));
+            if let Ok(Some(data)) = read_epub_entry(archive, &item.path, budget) {
+                let map = parse_nav_titles(&decode_utf8_lossy(&data), &parent_zip_dir(&item.path));
                 if !map.is_empty() {
                     return map;
                 }
@@ -551,8 +574,8 @@ fn load_title_map(
 
     if let Some(ncx_id) = &package.ncx_id {
         if let Some(item) = package.manifest.get(ncx_id) {
-            if let Some(data) = files.get(&item.path) {
-                return parse_ncx_titles(&decode_utf8_lossy(data), &parent_zip_dir(&item.path));
+            if let Ok(Some(data)) = read_epub_entry(archive, &item.path, budget) {
+                return parse_ncx_titles(&decode_utf8_lossy(&data), &parent_zip_dir(&item.path));
             }
         }
     }
@@ -871,10 +894,7 @@ fn strip_dangerous_html_fallback(
         .into_owned()
 }
 
-fn collect_asset_paths(
-    package: &EpubPackage,
-    _files: &HashMap<String, Vec<u8>>,
-) -> HashSet<String> {
+fn collect_asset_paths(package: &EpubPackage) -> HashSet<String> {
     let mut assets = HashSet::new();
     for item in package.manifest.values() {
         if item.media_type.starts_with("image/") || is_image_path(&item.path) {
@@ -910,16 +930,6 @@ fn resolve_cover_path(package: &EpubPackage) -> Option<String> {
                 })
                 .map(|item| item.path.clone())
         })
-}
-
-fn read_text_file<'a>(
-    files: &'a HashMap<String, Vec<u8>>,
-    path: &str,
-) -> Result<Cow<'a, str>, AppError> {
-    let data = files
-        .get(path)
-        .ok_or_else(|| AppError::BadRequest(format!("EPUB 缺少文件 {path}")))?;
-    Ok(String::from_utf8_lossy(data))
 }
 
 fn book_from_index(index: StoredEpubIndex) -> Book {
@@ -1254,19 +1264,24 @@ mod tests {
     }
 
     #[test]
-    fn read_epub_files_rejects_output_over_limit_regardless_of_declared_size() {
+    fn streamed_entry_read_rejects_output_over_limit_regardless_of_declared_size() {
         let payload = vec![0u8; (MAX_EPUB_UNPACKED_BYTES + 1024) as usize];
         let honest = build_zip_with_entry("OEBPS/big.xhtml", &payload);
         drop(payload);
 
         // 对照：声明值诚实的超大条目必须被拒
-        assert!(read_epub_files(&honest).is_err());
+        let mut archive = zip::ZipArchive::new(Cursor::new(&honest[..])).unwrap();
+        let mut budget = MAX_EPUB_UNPACKED_BYTES;
+        assert!(read_epub_entry(&mut archive, "OEBPS/big.xhtml", &mut budget).is_err());
 
-        // 关键场景：声明大小被篡改为 1 字节。旧实现按声明值累计，会放行；
+        // 关键场景：声明大小被篡改为 1 字节。按声明值累计会放行；
         // 按实际解压输出限流的实现必须仍然拒绝。
         let mut forged = honest.clone();
         forge_declared_size(&mut forged);
-        let err = read_epub_files(&forged).expect_err("forged bomb must be rejected");
+        let mut archive = zip::ZipArchive::new(Cursor::new(&forged[..])).unwrap();
+        let mut budget = MAX_EPUB_UNPACKED_BYTES;
+        let err = read_epub_entry(&mut archive, "OEBPS/big.xhtml", &mut budget)
+            .expect_err("forged bomb must be rejected");
         assert!(
             matches!(err, AppError::BadRequest(ref msg) if msg.contains("体积过大")),
             "unexpected error: {err:?}"
@@ -1274,12 +1289,17 @@ mod tests {
     }
 
     #[test]
-    fn read_epub_files_accepts_small_archive() {
+    fn streamed_entry_read_accepts_small_archive() {
         let bytes = build_zip_with_entry("OEBPS/a.xhtml", b"<html>ok</html>");
-        let files = read_epub_files(&bytes).unwrap();
-        assert_eq!(
-            files.get("OEBPS/a.xhtml").map(|v| v.as_slice()),
-            Some(&b"<html>ok</html>"[..])
+        let mut archive = zip::ZipArchive::new(Cursor::new(&bytes[..])).unwrap();
+        let mut budget = MAX_EPUB_UNPACKED_BYTES;
+        let data = read_epub_entry(&mut archive, "OEBPS/a.xhtml", &mut budget).unwrap();
+        assert_eq!(data.as_deref(), Some(&b"<html>ok</html>"[..]));
+        // 不存在的条目是 Ok(None)
+        assert!(
+            read_epub_entry(&mut archive, "OEBPS/missing.xhtml", &mut budget)
+                .unwrap()
+                .is_none()
         );
     }
 }

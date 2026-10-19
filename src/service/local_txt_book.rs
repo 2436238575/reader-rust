@@ -41,7 +41,6 @@ pub struct ParsedTxtChapter {
     pub index: i32,
     pub start: usize,
     pub end: usize,
-    pub content: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -110,7 +109,6 @@ pub fn parse_txt_chapters(book_url: &str, text: &str) -> Vec<ParsedTxtChapter> {
             index: 0,
             start: 0,
             end: trim_chapter_end(text, first_start),
-            content: text[..trim_chapter_end(text, first_start)].to_string(),
         });
     }
 
@@ -128,7 +126,6 @@ pub fn parse_txt_chapters(book_url: &str, text: &str) -> Vec<ParsedTxtChapter> {
             index,
             start: content_start,
             end,
-            content: text[content_start..end].to_string(),
         });
         if *title_start >= text.len() {
             break;
@@ -145,6 +142,16 @@ pub fn parse_txt_chapters(book_url: &str, text: &str) -> Vec<ParsedTxtChapter> {
 pub fn decode_txt_bytes(bytes: &[u8]) -> String {
     if bytes.starts_with(&[0xEF, 0xBB, 0xBF]) {
         return String::from_utf8_lossy(&bytes[3..]).into_owned();
+    }
+    // UTF-16 LE/BE BOM（Windows 记事本「Unicode」保存的产物）：
+    // 缺这两个分支会落进 GB18030 解出乱码
+    if bytes.starts_with(&[0xFF, 0xFE]) {
+        let (decoded, _, _) = encoding_rs::UTF_16LE.decode(&bytes[2..]);
+        return decoded.into_owned();
+    }
+    if bytes.starts_with(&[0xFE, 0xFF]) {
+        let (decoded, _, _) = encoding_rs::UTF_16BE.decode(&bytes[2..]);
+        return decoded.into_owned();
     }
     match std::str::from_utf8(bytes) {
         Ok(value) => value.to_string(),
@@ -460,7 +467,6 @@ fn fallback_chapter(book_url: &str, text: &str) -> Vec<ParsedTxtChapter> {
         index: 0,
         start: 0,
         end: text.len(),
-        content: text.to_string(),
     }]
 }
 
@@ -525,5 +531,34 @@ fn map_local_txt_read_error(err: std::io::Error) -> AppError {
         AppError::BadRequest("本地 TXT 不存在".to_string())
     } else {
         AppError::Internal(err.into())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::decode_txt_bytes;
+
+    #[test]
+    fn decodes_utf16_le_and_be_bom() {
+        let text = "第一章 开始
+正文内容";
+        let le: Vec<u8> = [0xFF, 0xFE]
+            .into_iter()
+            .chain(text.encode_utf16().flat_map(|u| u.to_le_bytes()))
+            .collect();
+        assert_eq!(decode_txt_bytes(&le), text);
+        let be: Vec<u8> = [0xFE, 0xFF]
+            .into_iter()
+            .chain(text.encode_utf16().flat_map(|u| u.to_be_bytes()))
+            .collect();
+        assert_eq!(decode_txt_bytes(&be), text);
+    }
+
+    #[test]
+    fn utf8_and_gb18030_paths_unchanged() {
+        assert_eq!(decode_txt_bytes("你好".as_bytes()), "你好");
+        let mut bom = vec![0xEF, 0xBB, 0xBF];
+        bom.extend_from_slice("你好".as_bytes());
+        assert_eq!(decode_txt_bytes(&bom), "你好");
     }
 }

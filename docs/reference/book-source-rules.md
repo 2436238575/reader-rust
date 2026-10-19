@@ -908,6 +908,11 @@ div.book[!0,-1]
 
 ## 10. 内容规则 JS 运行时
 
+> 本实现的资源边界：纯 JS 执行受 5 秒中断、128MiB 内存、1MiB 栈限制；
+> `java.ajax` 等原生 HTTP 调用不受 5 秒中断约束，单次请求超时与
+> `REQUEST_TIMEOUT_SECS`（默认 15 秒）一致——一次求值最坏耗时
+> ≈ 5s 纯 JS + 每次 HTTP 请求各一个请求超时。
+
 `RuleEvaluator.evalJS()` MUST 绑定：
 
 | 变量             | 值                                  |

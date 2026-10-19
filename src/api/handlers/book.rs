@@ -544,14 +544,19 @@ pub async fn get_chapter_list(
     // If there are more pages to fetch, do it in background.
     // 同一本书的补全任务并发去重：双击/刷新在首屏落盘前竞态时，
     // 两个任务会各自抓全部分页并互相覆盖，缓存里出现重复章节。
-    if !pagination.pending_urls.is_empty()
-        && state.book_service.try_begin_toc_fill(&user_ns, &book_id)
-    {
+    let toc_guard = if !pagination.pending_urls.is_empty() {
+        state.book_service.try_begin_toc_fill(&user_ns, &book_id)
+    } else {
+        None
+    };
+    if let Some(toc_guard) = toc_guard {
         let state_clone = state.clone();
         let user_ns_clone = user_ns.clone();
         let book_id_clone = book_id.clone();
 
         tokio::spawn(async move {
+            // RAII：任务结束/panic 都自动释放补全标志位
+            let _toc_guard = toc_guard;
             tracing::debug!("starting background chapter fetch");
             let remaining = match state_clone
                 .book_service
@@ -582,9 +587,6 @@ pub async fn get_chapter_list(
                     }
                 }
             }
-            state_clone
-                .book_service
-                .end_toc_fill(&user_ns_clone, &book_id_clone);
         });
     }
 
@@ -1444,7 +1446,7 @@ pub async fn get_shelf_book_with_cache_info(
                     let toc_url = toc_url.unwrap_or_else(|| book.book_url.clone());
                     // 与 getChapterList 的后台补全共享同一把进行中守卫，
                     // 避免两条路径同时抓同一本书的目录并互相覆盖
-                    if state_clone
+                    if let Some(_toc_guard) = state_clone
                         .book_service
                         .try_begin_toc_fill(&user_ns_clone, &book_id)
                     {
@@ -1452,9 +1454,6 @@ pub async fn get_shelf_book_with_cache_info(
                             .book_service
                             .get_chapter_list(&user_ns_clone, &book_id, &source, &toc_url)
                             .await;
-                        state_clone
-                            .book_service
-                            .end_toc_fill(&user_ns_clone, &book_id);
                     }
                 }
             }

@@ -2,6 +2,7 @@ use crate::util::hash::md5_hex;
 use once_cell::sync::Lazy;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::SystemTime;
 use tokio::fs;
@@ -64,8 +65,15 @@ impl FileCache {
             fs::create_dir_all(parent).await?;
         }
         // 先写临时文件再改名：并发读到的要么是旧内容、要么是新内容，
-        // 不会是两次写入拼起来的半截正文（缓存无 TTL，写坏会一直脏下去）
-        let tmp = path.with_extension("txt.tmp");
+        // 不会是两次写入拼起来的半截正文（缓存无 TTL，写坏会一直脏下去）。
+        // tmp 名带进程 id + 纳秒 + 自增序号：同一章节的并发 put 各写各的临时文件，
+        // 不会互踩（固定 tmp 名在并发下会让「tmp+rename 防半截」失效）。
+        static TMP_SEQ: AtomicU64 = AtomicU64::new(0);
+        let tmp = path.with_extension(format!(
+            "txt.tmp.{}.{}",
+            std::process::id(),
+            TMP_SEQ.fetch_add(1, Ordering::Relaxed)
+        ));
         fs::write(&tmp, value).await?;
         fs::rename(&tmp, &path).await?;
         self.enforce_user_capacity(user_ns, value.len() as u64)

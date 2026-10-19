@@ -744,6 +744,72 @@ impl ShelfBookRepo {
         self.insert_row(&self.pool, user_ns, &row).await
     }
 
+    /// 带限额的 upsert（saveBook 路径）：存在性检查、书架/本地书限额与写入
+    /// 收进同一事务，消除 count 与 upsert 分离的 TOCTOU 窗口。
+    /// `is_local` 由调用方按 book_url 前缀预判（本地书走 local-txt:/local-epub:）。
+    pub async fn upsert_with_limit(
+        &self,
+        user_ns: &str,
+        mut row: ShelfBookRow,
+        shelf_limit: i64,
+        local_limit: i64,
+        is_local: bool,
+    ) -> Result<(), AppError> {
+        let book_id_num = parse_book_id(&row.book_id)
+            .ok_or_else(|| AppError::BadRequest(format!("bookId 格式非法: {:?}", row.book_id)))?;
+        let mut tx = self.pool.begin().await?;
+        let existing_pos: Option<i64> =
+            sqlx::query_scalar("SELECT position FROM shelf_books WHERE user_ns=?1 AND book_id=?2")
+                .bind(user_ns)
+                .bind(book_id_num)
+                .fetch_optional(&mut *tx)
+                .await?;
+        if existing_pos.is_none() {
+            // 限额只对「新入架」计数，已有书的更新不受限
+            if shelf_limit > 0 {
+                let count: i64 =
+                    sqlx::query_scalar("SELECT COUNT(*) FROM shelf_books WHERE user_ns=?1")
+                        .bind(user_ns)
+                        .fetch_one(&mut *tx)
+                        .await?;
+                if count >= shelf_limit {
+                    return Err(AppError::BadRequest(format!(
+                        "书架书籍数量不能超过 {shelf_limit} 本"
+                    )));
+                }
+            }
+            if local_limit > 0 && is_local {
+                let local_count: i64 = sqlx::query_scalar(
+                    "SELECT COUNT(*) FROM shelf_books s JOIN books b \
+                     ON b.user_ns = s.user_ns AND b.book_id = s.book_id \
+                     WHERE s.user_ns=?1 AND (b.book_url LIKE 'local-txt:%' OR b.book_url LIKE 'local-epub:%')",
+                )
+                .bind(user_ns)
+                .fetch_one(&mut *tx)
+                .await?;
+                if local_count >= local_limit {
+                    return Err(AppError::BadRequest(format!(
+                        "本地书籍数量不能超过 {local_limit} 本"
+                    )));
+                }
+            }
+        }
+        row.position = match existing_pos {
+            Some(p) => p,
+            None => {
+                let max: Option<i64> =
+                    sqlx::query_scalar("SELECT MAX(position) FROM shelf_books WHERE user_ns=?1")
+                        .bind(user_ns)
+                        .fetch_one(&mut *tx)
+                        .await?;
+                max.unwrap_or(0) + 1
+            }
+        };
+        self.insert_row(&mut *tx, user_ns, &row).await?;
+        tx.commit().await?;
+        Ok(())
+    }
+
     /// 事务版整架替换（save_books 跨表原子性用）。
     pub async fn replace_all_on(
         &self,
@@ -859,13 +925,5 @@ impl ShelfBookRepo {
             }
         }
         Ok(deleted)
-    }
-
-    pub async fn count(&self, user_ns: &str) -> Result<i64, AppError> {
-        let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM shelf_books WHERE user_ns=?1")
-            .bind(user_ns)
-            .fetch_one(&self.pool)
-            .await?;
-        Ok(count)
     }
 }

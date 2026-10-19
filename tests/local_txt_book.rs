@@ -1,5 +1,7 @@
 use reader_rust::service::local_txt_book::{build_chapter_url, parse_txt_chapters};
 
+// 章节正文不再随解析结果复制（省一倍整书内存）；断言改用 start..end 现切原文。
+
 #[test]
 fn txt_parser_splits_common_chapter_headings() {
     let text = "序言\n这里是序言。\n第1章 初见\n第一章正文。\n第二章 重逢\n第二章正文。\n";
@@ -9,11 +11,20 @@ fn txt_parser_splits_common_chapter_headings() {
     assert_eq!(chapters.len(), 3);
     assert_eq!(chapters[0].title, "序章");
     assert_eq!(chapters[0].url, "local-txt:abc123#0");
-    assert_eq!(chapters[0].content.trim(), "序言\n这里是序言。");
+    assert_eq!(
+        text[chapters[0].start..chapters[0].end].trim(),
+        "序言\n这里是序言。"
+    );
     assert_eq!(chapters[1].title, "第1章 初见");
-    assert_eq!(chapters[1].content.trim(), "第一章正文。");
+    assert_eq!(
+        text[chapters[1].start..chapters[1].end].trim(),
+        "第一章正文。"
+    );
     assert_eq!(chapters[2].title, "第二章 重逢");
-    assert_eq!(chapters[2].content.trim(), "第二章正文。");
+    assert_eq!(
+        text[chapters[2].start..chapters[2].end].trim(),
+        "第二章正文。"
+    );
 }
 
 #[test]
@@ -24,9 +35,15 @@ fn txt_parser_splits_no_space_chapter_headings() {
 
     assert_eq!(chapters.len(), 2);
     assert_eq!(chapters[0].title, "第一章初见");
-    assert_eq!(chapters[0].content.trim(), "第一章正文。");
+    assert_eq!(
+        text[chapters[0].start..chapters[0].end].trim(),
+        "第一章正文。"
+    );
     assert_eq!(chapters[1].title, "第2章重逢");
-    assert_eq!(chapters[1].content.trim(), "第二章正文。");
+    assert_eq!(
+        text[chapters[1].start..chapters[1].end].trim(),
+        "第二章正文。"
+    );
 }
 
 #[test]
@@ -38,7 +55,7 @@ fn txt_parser_falls_back_to_single_body_chapter() {
     assert_eq!(chapters.len(), 1);
     assert_eq!(chapters[0].title, "正文");
     assert_eq!(chapters[0].url, "local-txt:book#0");
-    assert_eq!(chapters[0].content, text);
+    assert_eq!(&text[chapters[0].start..chapters[0].end], text);
 }
 
 #[test]
@@ -49,9 +66,12 @@ fn txt_parser_allows_empty_chapters_between_adjacent_headings() {
 
     assert_eq!(chapters.len(), 2);
     assert_eq!(chapters[0].title, "第1章 空章");
-    assert_eq!(chapters[0].content, "");
+    assert_eq!(&text[chapters[0].start..chapters[0].end], "");
     assert_eq!(chapters[1].title, "第二章 正文");
-    assert_eq!(chapters[1].content.trim(), "第二章内容。");
+    assert_eq!(
+        text[chapters[1].start..chapters[1].end].trim(),
+        "第二章内容。"
+    );
 }
 
 #[test]
