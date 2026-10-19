@@ -1,10 +1,8 @@
-use axum::{
-    extract::{Query, State},
-    Json,
-};
+use axum::{extract::State, Json};
 use serde::Deserialize;
 use serde_json::Value;
 
+use crate::api::extract::QueryOrBody;
 use crate::api::handlers::book::resolve_book;
 use crate::api::AppState;
 use crate::auth::CurrentUser;
@@ -20,33 +18,6 @@ use crate::service::image_service::ImageService;
 pub struct ChapterImageRequest {
     pub book_id: Option<String>,
     pub chapter_url: Option<String>,
-}
-
-/// 把 POST 表单参数合并进查询参数。
-fn merge_body(mut req: ChapterImageRequest, body: &axum::body::Bytes) -> ChapterImageRequest {
-    if body.is_empty() {
-        return req;
-    }
-    if let Ok(v) = serde_json::from_slice::<ChapterImageRequest>(body) {
-        if req.book_id.is_none() {
-            req.book_id = v.book_id;
-        }
-        if req.chapter_url.is_none() {
-            req.chapter_url = v.chapter_url;
-        }
-        return req;
-    }
-    let Ok(text) = std::str::from_utf8(body) else {
-        return req;
-    };
-    for (key, value) in url::form_urlencoded::parse(text.as_bytes()) {
-        match key.as_ref() {
-            "bookId" => req.book_id = Some(value.into_owned()),
-            "chapterUrl" => req.chapter_url = Some(value.into_owned()),
-            _ => {}
-        }
-    }
-    req
 }
 
 fn required(value: &Option<String>, name: &str) -> Result<String, AppError> {
@@ -65,10 +36,8 @@ fn required(value: &Option<String>, name: &str) -> Result<String, AppError> {
 pub async fn get_chapter_images(
     State(state): State<AppState>,
     user: CurrentUser,
-    Query(q): Query<ChapterImageRequest>,
-    body: axum::body::Bytes,
+    QueryOrBody(req): QueryOrBody<ChapterImageRequest>,
 ) -> Result<Json<ApiResponse<Value>>, AppError> {
-    let req = merge_body(q, &body);
     let user_ns = user.0.ns.clone();
     let book_id = required(&req.book_id, "bookId")?;
     let chapter_url = required(&req.chapter_url, "chapterUrl")?;

@@ -1,11 +1,8 @@
-use axum::{
-    body::Bytes,
-    extract::{Query, State},
-    Json,
-};
+use axum::{extract::State, Json};
 use serde::Deserialize;
 use serde_json::Value;
 
+use crate::api::extract::QueryOrBody;
 use crate::api::AppState;
 use crate::auth::CurrentUser;
 use crate::error::error::{ApiResponse, AppError};
@@ -20,11 +17,9 @@ pub struct AiBookMemoryRequest {
 pub async fn get_ai_book_memory(
     State(state): State<AppState>,
     user: CurrentUser,
-    Query(q): Query<AiBookMemoryRequest>,
-    body: Bytes,
+    QueryOrBody(req): QueryOrBody<AiBookMemoryRequest>,
 ) -> Result<Json<ApiResponse<Value>>, AppError> {
     let user_ns = user.0.ns.clone();
-    let req = parse_ai_book_request(q, body)?;
     let book_id = required_book_id(req.book_id)?;
     ensure_shelf_book(&state, &user_ns, &book_id).await?;
     let mut memory = state.ai_book_service.get(&user_ns, &book_id).await?;
@@ -69,11 +64,9 @@ pub async fn save_ai_book_memory(
 pub async fn delete_ai_book_memory(
     State(state): State<AppState>,
     user: CurrentUser,
-    Query(q): Query<AiBookMemoryRequest>,
-    body: Bytes,
+    QueryOrBody(req): QueryOrBody<AiBookMemoryRequest>,
 ) -> Result<Json<ApiResponse<Value>>, AppError> {
     let user_ns = user.0.ns.clone();
-    let req = parse_ai_book_request(q, body)?;
     let book_id = required_book_id(req.book_id)?;
     ensure_shelf_book(&state, &user_ns, &book_id).await?;
     let deleted = state.ai_book_service.delete(&user_ns, &book_id).await?;
@@ -92,26 +85,6 @@ async fn ensure_shelf_book(
         .get_shelf_book(user_ns, book_id)
         .await?
         .ok_or_else(|| AppError::BadRequest("书籍未加入书架".to_string()))
-}
-
-fn parse_ai_book_request(
-    q: AiBookMemoryRequest,
-    body: Bytes,
-) -> Result<AiBookMemoryRequest, AppError> {
-    if body.is_empty() {
-        return Ok(q);
-    }
-    if let Ok(v) = serde_json::from_slice::<AiBookMemoryRequest>(&body) {
-        return Ok(v);
-    }
-    let text = std::str::from_utf8(&body).map_err(|e| AppError::BadRequest(e.to_string()))?;
-    let mut req = q;
-    for (k, v) in url::form_urlencoded::parse(text.as_bytes()) {
-        if k.as_ref() == "bookId" {
-            req.book_id = Some(v.into_owned());
-        }
-    }
-    Ok(req)
 }
 
 fn required_book_id(book_id: Option<String>) -> Result<String, AppError> {

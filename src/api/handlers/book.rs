@@ -1,3 +1,4 @@
+use crate::api::extract::QueryOrBody;
 use crate::api::handlers::image::ok_with_cover_routes;
 use crate::api::handlers::multipart::read_limited_multipart_field;
 use crate::api::AppState;
@@ -13,7 +14,6 @@ use crate::service::local_txt_book::{
 };
 use crate::util::text::{normalize_source_url, repair_encoded_url};
 use axum::body::Body;
-use axum::body::Bytes;
 use axum::http::header;
 use axum::response::sse::{Event, KeepAlive};
 use axum::response::{Response, Sse};
@@ -195,26 +195,9 @@ pub struct SetBookSourceRequest {
 pub async fn search_book(
     State(state): State<AppState>,
     user: CurrentUser,
-    Query(q): Query<SearchBookRequest>,
-    body: axum::body::Bytes,
+    QueryOrBody(req): QueryOrBody<SearchBookRequest>,
 ) -> Result<Json<ApiResponse<serde_json::Value>>, AppError> {
     let user_ns = user.0.ns.clone();
-
-    let mut req = q;
-    if !body.is_empty() {
-        if let Ok(v) = serde_json::from_slice::<SearchBookRequest>(&body) {
-            req = v;
-        } else if let Ok(s) = std::str::from_utf8(&body) {
-            for (k, v) in url::form_urlencoded::parse(s.as_bytes()) {
-                match k.as_ref() {
-                    "key" => req.key = Some(v.into_owned()),
-                    "page" => req.page = v.parse::<i32>().ok(),
-                    "bookSourceId" => req.book_source_id = v.parse::<i64>().ok(),
-                    _ => {}
-                }
-            }
-        }
-    }
 
     let key = req
         .key
@@ -235,11 +218,9 @@ pub async fn search_book(
 pub async fn search_book_multi(
     State(state): State<AppState>,
     user: CurrentUser,
-    Query(q): Query<SearchBookMultiRequest>,
-    body: Option<Json<SearchBookMultiRequest>>,
+    QueryOrBody(req): QueryOrBody<SearchBookMultiRequest>,
 ) -> Result<Json<ApiResponse<serde_json::Value>>, AppError> {
     let user_ns = user.0.ns.clone();
-    let req = if let Some(b) = body { b.0 } else { q };
     let key = req
         .key
         .ok_or_else(|| AppError::BadRequest("key required".to_string()))?;
@@ -345,33 +326,9 @@ fn merge_search_results(
 pub async fn explore_book(
     State(state): State<AppState>,
     user: CurrentUser,
-    Query(q): Query<ExploreBookRequest>,
-    body: Bytes,
+    QueryOrBody(req): QueryOrBody<ExploreBookRequest>,
 ) -> Result<Json<ApiResponse<serde_json::Value>>, AppError> {
     let user_ns = user.0.ns.clone();
-    let mut req = q;
-    if !body.is_empty() {
-        if let Ok(v) = serde_json::from_slice::<ExploreBookRequest>(&body) {
-            req = v;
-        } else if let Ok(s) = std::str::from_utf8(&body) {
-            let mut rule_find_url: Option<String> = None;
-            let mut page: Option<i32> = None;
-            let mut book_source_id: Option<i64> = None;
-            for (k, v) in url::form_urlencoded::parse(s.as_bytes()) {
-                match k.as_ref() {
-                    "ruleFindUrl" => rule_find_url = Some(v.into_owned()),
-                    "page" => page = v.parse::<i32>().ok(),
-                    "bookSourceId" => book_source_id = v.parse::<i64>().ok(),
-                    _ => {}
-                }
-            }
-            if rule_find_url.is_some() || page.is_some() || book_source_id.is_some() {
-                req.rule_find_url = rule_find_url.or(req.rule_find_url);
-                req.page = page.or(req.page);
-                req.book_source_id = book_source_id.or(req.book_source_id);
-            }
-        }
-    }
     let rule_find_url = req
         .rule_find_url
         .ok_or_else(|| AppError::BadRequest("ruleFindUrl required".to_string()))?;
@@ -387,25 +344,9 @@ pub async fn explore_book(
 pub async fn get_book_info(
     State(state): State<AppState>,
     user: CurrentUser,
-    Query(q): Query<BookInfoRequest>,
-    body: axum::body::Bytes,
+    QueryOrBody(req): QueryOrBody<BookInfoRequest>,
 ) -> Result<Json<ApiResponse<serde_json::Value>>, AppError> {
     let user_ns = user.0.ns.clone();
-
-    let mut req = q;
-    if !body.is_empty() {
-        if let Ok(v) = serde_json::from_slice::<BookInfoRequest>(&body) {
-            req = v;
-        } else if let Ok(s) = std::str::from_utf8(&body) {
-            for (k, v) in url::form_urlencoded::parse(s.as_bytes()) {
-                match k.as_ref() {
-                    "bookId" => req.book_id = Some(v.into_owned()),
-                    "refresh" => req.refresh = v.parse::<i32>().ok(),
-                    _ => {}
-                }
-            }
-        }
-    }
 
     let book_id = req
         .book_id
@@ -448,25 +389,9 @@ pub async fn get_book_info(
 pub async fn get_chapter_list(
     State(state): State<AppState>,
     user: CurrentUser,
-    Query(q): Query<ChapterListRequest>,
-    body: axum::body::Bytes,
+    QueryOrBody(req): QueryOrBody<ChapterListRequest>,
 ) -> Result<Json<ApiResponse<serde_json::Value>>, AppError> {
     let user_ns = user.0.ns.clone();
-
-    let mut req = q;
-    if !body.is_empty() {
-        if let Ok(v) = serde_json::from_slice::<ChapterListRequest>(&body) {
-            req = v;
-        } else if let Ok(s) = std::str::from_utf8(&body) {
-            for (k, v) in url::form_urlencoded::parse(s.as_bytes()) {
-                match k.as_ref() {
-                    "bookId" => req.book_id = Some(v.into_owned()),
-                    "refresh" => req.refresh = v.parse::<i32>().ok(),
-                    _ => {}
-                }
-            }
-        }
-    }
 
     let book_id = req
         .book_id
@@ -598,39 +523,9 @@ pub async fn get_chapter_list(
 pub async fn get_book_content(
     State(state): State<AppState>,
     user: CurrentUser,
-    Query(q): Query<BookContentRequest>,
-    body: axum::body::Bytes,
+    QueryOrBody(req): QueryOrBody<BookContentRequest>,
 ) -> Result<Json<ApiResponse<serde_json::Value>>, AppError> {
     let user_ns = user.0.ns.clone();
-
-    let mut req = q;
-    if !body.is_empty() {
-        if let Ok(v) = serde_json::from_slice::<BookContentRequest>(&body) {
-            // Merge with query params
-            if req.chapter_url.is_none() {
-                req.chapter_url = v.chapter_url;
-            }
-            if req.book_id.is_none() {
-                req.book_id = v.book_id;
-            }
-            if req.index.is_none() {
-                req.index = v.index;
-            }
-            if req.refresh.is_none() {
-                req.refresh = v.refresh;
-            }
-        } else if let Ok(s) = std::str::from_utf8(&body) {
-            for (k, v) in url::form_urlencoded::parse(s.as_bytes()) {
-                match k.as_ref() {
-                    "chapterUrl" => req.chapter_url = Some(v.into_owned()),
-                    "bookId" => req.book_id = Some(v.into_owned()),
-                    "index" => req.index = v.parse().ok(),
-                    "refresh" => req.refresh = v.parse().ok(),
-                    _ => {}
-                }
-            }
-        }
-    }
 
     let do_refresh = req.refresh.unwrap_or(0) > 0;
 
@@ -707,23 +602,9 @@ pub async fn get_book_content(
 pub async fn delete_book_cache(
     State(state): State<AppState>,
     user: CurrentUser,
-    Query(q): Query<DeleteCacheRequest>,
-    body: axum::body::Bytes,
+    QueryOrBody(req): QueryOrBody<DeleteCacheRequest>,
 ) -> Result<Json<ApiResponse<serde_json::Value>>, AppError> {
     let user_ns = user.0.ns.clone();
-
-    let mut req = q;
-    if !body.is_empty() {
-        if let Ok(v) = serde_json::from_slice::<DeleteCacheRequest>(&body) {
-            req = v;
-        } else if let Ok(s) = std::str::from_utf8(&body) {
-            for (k, v) in url::form_urlencoded::parse(s.as_bytes()) {
-                if k.as_ref() == "bookId" {
-                    req.book_id = Some(v.into_owned());
-                }
-            }
-        }
-    }
 
     let book_id = req
         .book_id
@@ -1042,25 +923,9 @@ async fn prune_mismatched_ai_memories(state: &AppState, user_ns: &str) {
 pub async fn set_book_source(
     State(state): State<AppState>,
     user: CurrentUser,
-    Query(q): Query<SetBookSourceRequest>,
-    body: Bytes,
+    QueryOrBody(req): QueryOrBody<SetBookSourceRequest>,
 ) -> Result<Json<ApiResponse<Value>>, AppError> {
     let user_ns = user.0.ns.clone();
-
-    let mut req = q;
-    if !body.is_empty() {
-        if let Ok(v) = serde_json::from_slice::<SetBookSourceRequest>(&body) {
-            req = v;
-        } else if let Ok(s) = std::str::from_utf8(&body) {
-            for (k, v) in url::form_urlencoded::parse(s.as_bytes()) {
-                match k.as_ref() {
-                    "bookId" => req.book_id = Some(v.into_owned()),
-                    "targetBookId" => req.target_book_id = Some(v.into_owned()),
-                    _ => {}
-                }
-            }
-        }
-    }
 
     let book_id = req
         .book_id
@@ -1234,11 +1099,9 @@ pub async fn delete_books(
 pub async fn save_book_progress(
     State(state): State<AppState>,
     user: CurrentUser,
-    Query(q): Query<SaveBookProgressRequest>,
-    body: Option<Json<SaveBookProgressRequest>>,
+    QueryOrBody(req): QueryOrBody<SaveBookProgressRequest>,
 ) -> Result<Json<ApiResponse<Value>>, AppError> {
     let user_ns = user.0.ns.clone();
-    let req = if let Some(b) = body { b.0 } else { q };
     let book_id = req
         .book_id
         .filter(|v| !v.trim().is_empty())
@@ -1345,11 +1208,9 @@ pub async fn save_book_progress(
 pub async fn get_shelf_book(
     State(state): State<AppState>,
     user: CurrentUser,
-    Query(q): Query<GetShelfBookRequest>,
-    body: Option<Json<GetShelfBookRequest>>,
+    QueryOrBody(req): QueryOrBody<GetShelfBookRequest>,
 ) -> Result<Json<ApiResponse<Value>>, AppError> {
     let user_ns = user.0.ns.clone();
-    let req = if let Some(b) = body { b.0 } else { q };
     let book_id = req
         .book_id
         .filter(|v| !v.trim().is_empty())
@@ -1515,11 +1376,9 @@ pub async fn get_invalid_book_sources(
 pub async fn cache_book_sse(
     State(state): State<AppState>,
     user: CurrentUser,
-    Query(q): Query<CacheBookRequest>,
-    body: Option<Json<CacheBookRequest>>,
+    QueryOrBody(req): QueryOrBody<CacheBookRequest>,
 ) -> Result<Sse<impl futures::Stream<Item = Result<Event, Infallible>>>, AppError> {
     let user_ns = user.0.ns.clone();
-    let req = if let Some(b) = body { b.0 } else { q };
     let book_id = req
         .book_id
         .filter(|v| !v.trim().is_empty())
@@ -2001,11 +1860,9 @@ pub async fn search_book_source_sse(
 pub async fn get_available_book_source(
     State(state): State<AppState>,
     user: CurrentUser,
-    Query(q): Query<GetAvailableBookSourceRequest>,
-    body: Option<Json<GetAvailableBookSourceRequest>>,
+    QueryOrBody(req): QueryOrBody<GetAvailableBookSourceRequest>,
 ) -> Result<Json<ApiResponse<Value>>, AppError> {
     let user_ns = user.0.ns.clone();
-    let req = if let Some(b) = body { b.0 } else { q };
     let refresh = req.refresh.unwrap_or(0) > 0;
     let paged_request =
         !should_use_available_source_cache(refresh, req.result_limit, req.last_index);

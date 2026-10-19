@@ -1,10 +1,8 @@
-use axum::{
-    extract::{Query, State},
-    Json,
-};
+use axum::{extract::State, Json};
 use serde::Deserialize;
 use serde_json::Value;
 
+use crate::api::extract::QueryOrBody;
 use crate::api::handlers::book::resolve_book;
 use crate::api::AppState;
 use crate::auth::CurrentUser;
@@ -45,57 +43,6 @@ struct ReviewContext {
     count: i32,
     sort: ReviewSort,
     refresh: bool,
-}
-
-/// 把 POST 表单参数合并进查询参数。
-fn merge_body(mut req: ReviewRequest, body: &axum::body::Bytes) -> ReviewRequest {
-    if body.is_empty() {
-        return req;
-    }
-    if let Ok(v) = serde_json::from_slice::<ReviewRequest>(body) {
-        if req.book_id.is_none() {
-            req.book_id = v.book_id;
-        }
-        if req.chapter_url.is_none() {
-            req.chapter_url = v.chapter_url;
-        }
-        if req.page.is_none() {
-            req.page = v.page;
-        }
-        if req.count.is_none() {
-            req.count = v.count;
-        }
-        if req.para_index.is_none() {
-            req.para_index = v.para_index;
-        }
-        if req.sort.is_none() {
-            req.sort = v.sort;
-        }
-        if req.author_only.is_none() {
-            req.author_only = v.author_only;
-        }
-        if req.refresh.is_none() {
-            req.refresh = v.refresh;
-        }
-        return req;
-    }
-    let Ok(text) = std::str::from_utf8(body) else {
-        return req;
-    };
-    for (key, value) in url::form_urlencoded::parse(text.as_bytes()) {
-        match key.as_ref() {
-            "bookId" => req.book_id = Some(value.into_owned()),
-            "chapterUrl" => req.chapter_url = Some(value.into_owned()),
-            "page" => req.page = value.parse().ok(),
-            "count" => req.count = value.parse().ok(),
-            "paraIndex" => req.para_index = value.parse().ok(),
-            "sort" => req.sort = Some(value.into_owned()),
-            "authorOnly" => req.author_only = Some(matches!(value.as_ref(), "1" | "true")),
-            "refresh" => req.refresh = value.parse().ok(),
-            _ => {}
-        }
-    }
-    req
 }
 
 /// 解析请求里的书籍与书源，得到一次评论查询的全部上下文。
@@ -156,10 +103,8 @@ async fn ok_json_with_images<T: serde::Serialize>(
 pub async fn get_chapter_comments(
     State(state): State<AppState>,
     user: CurrentUser,
-    Query(q): Query<ReviewRequest>,
-    body: axum::body::Bytes,
+    QueryOrBody(req): QueryOrBody<ReviewRequest>,
 ) -> Result<Json<ApiResponse<Value>>, AppError> {
-    let req = merge_body(q, &body);
     let user_ns = user.0.ns.clone();
     let author_only = req.author_only.unwrap_or(false);
     let ctx = resolve_context(&state, &user_ns, req).await?;
@@ -199,10 +144,8 @@ pub async fn get_chapter_comments(
 pub async fn get_para_comment_index(
     State(state): State<AppState>,
     user: CurrentUser,
-    Query(q): Query<ReviewRequest>,
-    body: axum::body::Bytes,
+    QueryOrBody(req): QueryOrBody<ReviewRequest>,
 ) -> Result<Json<ApiResponse<Value>>, AppError> {
-    let req = merge_body(q, &body);
     let user_ns = user.0.ns.clone();
     let ctx = resolve_context(&state, &user_ns, req).await?;
     let result = state
@@ -223,10 +166,8 @@ pub async fn get_para_comment_index(
 pub async fn get_para_comments(
     State(state): State<AppState>,
     user: CurrentUser,
-    Query(q): Query<ReviewRequest>,
-    body: axum::body::Bytes,
+    QueryOrBody(req): QueryOrBody<ReviewRequest>,
 ) -> Result<Json<ApiResponse<Value>>, AppError> {
-    let req = merge_body(q, &body);
     let para_index = req
         .para_index
         .filter(|v| *v >= 0)
