@@ -114,7 +114,7 @@ docker compose up -d
 ## 自行构建镜像
 
 ::: warning Dockerfile 内不编译 Rust
-`Dockerfile`（arm64）与 `Dockerfile.x86`（amd64）都**只做拷贝**，不执行 `cargo build`。必须先在本机构建出二进制和前端产物，再构建镜像。
+`Dockerfile` **只做拷贝**，不执行 `cargo build`。必须先在本机构建出二进制和前端产物，再构建镜像；amd64/arm64 用 `--build-arg TARGET_TRIPLE=` 区分。
 
 ```bash
 # 1. 构建前端
@@ -127,8 +127,8 @@ cargo build --release --target x86_64-unknown-linux-musl
 cargo build --release --target aarch64-unknown-linux-musl
 
 # 3. 构建镜像（必须显式指定 platform）
-podman build --platform linux/amd64 -t yourname/reader-rust:latest -f Dockerfile.x86 .
-podman build --platform linux/arm64 -t yourname/reader-rust:latest-aarch64 -f Dockerfile .
+podman build --platform linux/amd64 --build-arg TARGET_TRIPLE=x86_64-unknown-linux-musl -t yourname/reader-rust:latest .
+podman build --platform linux/arm64 --build-arg TARGET_TRIPLE=aarch64-unknown-linux-musl -t yourname/reader-rust:latest-aarch64 .
 ```
 
 交叉编译的 linker 配置在仓库根目录的 `.cargo/config.toml` 中。

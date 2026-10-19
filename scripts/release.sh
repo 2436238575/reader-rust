@@ -168,8 +168,8 @@ git push origin "$current_branch"
 git push origin "$TAG"
 
 echo "Building Docker images..."
-podman build --platform linux/amd64 -t "${DOCKER_REPO}:${TAG}-x86_64" -f Dockerfile.x86 .
-podman build --platform linux/arm64 -t "${DOCKER_REPO}:${TAG}-aarch64" -f Dockerfile .
+podman build --platform linux/amd64 --build-arg TARGET_TRIPLE=x86_64-unknown-linux-musl -t "${DOCKER_REPO}:${TAG}-x86_64" -f Dockerfile .
+podman build --platform linux/arm64 --build-arg TARGET_TRIPLE=aarch64-unknown-linux-musl -t "${DOCKER_REPO}:${TAG}-aarch64" -f Dockerfile .
 
 echo "Verifying image architectures..."
 arch_x86="$(podman image inspect "${DOCKER_REPO}:${TAG}-x86_64" --format '{{.Architecture}} {{.Os}}')"

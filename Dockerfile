@@ -1,10 +1,14 @@
-# Dockerfile for aarch64 - using pre-built binary
-# Build binary first: cargo build --release --target aarch64-unknown-linux-musl
-# Build frontend first: cd frontend && npm install && npm run build
+# Dockerfile（amd64/arm64 通用）——只做拷贝，不执行 cargo build。
+# 先在本机构建：cargo build --release --target <triple> 与 cd frontend && npm run build
+# 构建镜像时用 --build-arg TARGET_TRIPLE=<triple> 指定目标（默认 x86_64 musl）。
+
+ARG TARGET_TRIPLE=x86_64-unknown-linux-musl
 
 FROM ghcr.io/astral-sh/uv:0.12.21 AS uv
 
 FROM alpine:3.19
+
+ARG TARGET_TRIPLE
 
 RUN apk add --no-cache ca-certificates tzdata \
     && addgroup -S app && adduser -S -G app app
@@ -12,7 +16,7 @@ RUN apk add --no-cache ca-certificates tzdata \
 WORKDIR /app
 
 # Copy pre-built binary
-COPY target/aarch64-unknown-linux-musl/release/reader-rust /app/reader-rust
+COPY target/${TARGET_TRIPLE}/release/reader-rust /app/reader-rust
 
 # Copy frontend dist
 COPY frontend/dist /app/web/dist

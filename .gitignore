@@ -38,3 +38,13 @@ dist-pkg/
 # Python sidecar 本地环境
 sidecar/.venv/
 .pytest_cache/
+
+# setuptools 构建副产物（uv sync / pip install -e 生成）
+sidecar/*.egg-info/
+
+work/
+
+# 发布/测试产物与本地杂散
+*.tar.gz
+TestBookSource.json
+Untitled-*.json

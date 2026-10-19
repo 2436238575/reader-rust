@@ -216,11 +216,14 @@ impl TestServer {
 
     /// 正文缓存应当落到的文件：`cache/<ns>/<bookId>/<md5(chapterUrl)>.txt`
     fn book_cache_file(&self, chapter_url: &str) -> PathBuf {
+        // 分片：cache/<ns>/<bookId>/<md5前两位>/<md5>.txt
+        let hash = md5_hex(chapter_url);
         self.temp_dir
             .join("cache")
             .join("user_1")
             .join(&self.book_id)
-            .join(format!("{}.txt", md5_hex(chapter_url)))
+            .join(&hash[..2])
+            .join(format!("{hash}.txt"))
     }
 
     fn hits_for(&self, path: &str) -> usize {

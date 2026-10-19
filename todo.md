@@ -88,14 +88,12 @@
 
 **接受 / 部署卫生**：
 
-- 出站守卫 DNS 校验与实际连接分离（TOCTOU），理论可 DNS rebinding；需连接层 IP 钉扎，reqwest 未暴露
 - 登录限速为进程内状态（多实例部署需共享存储）
 - token 进 URL 查询串（SSE/`<img>` 的结构约束；访问日志已只记 path 不记 query）
-- bookshelf.json 原子写已修，并发写仍 last-writer-wins（需文件锁或 SQLite 化才彻底）
 - `getBookContent` 以 `/read/`、`/chapter/` 子串启发式判 URL 类型，可被书源 URL 结构误触发
-- 进程内小缓存（正则/JS KV/jsLib/exploreUrl）都有条目上限，但清空是整表操作，极端情况下会退化为反复重算
+- 进程内小缓存（正则/JS KV/jsLib/exploreUrl）有条目上限，JS KV 另有 8MiB 字节上限；淘汰为 FIFO 逐出最旧
 - ServeDir 跟随符号链接、WEB_ROOT fallback 暴露全部文件、Windows 下 `jwt_secret` 无 ACL：部署目录不要混入敏感内容
-- 依赖遗留：sqlx 0.7.4 待升级 0.8（`rustls-webpki` 0.101 的三条 advisory 随之解决）；`rsa`（经 jsonwebtoken 拉入，HS256-only 不可达）无修复版本
+- 依赖遗留：`rsa`（经 jsonwebtoken 拉入，HS256-only 不可达）无修复版本；sqlx 已升 0.8
 
 **公网部署要点**：`ALLOW_PRIVATE_NETWORK=false`（已是默认值），并显式配置 `ADMIN_PASSWORD`（或首启后到设置里改密）
 （旧的 `SECURE` 开关已随 JWT 重构删除）
