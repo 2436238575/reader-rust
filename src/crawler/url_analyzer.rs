@@ -228,7 +228,9 @@ pub fn absolute_url(base: &str, url: &str) -> String {
     if url.trim().is_empty() {
         return base;
     }
-    if url.starts_with("javascript") {
+    // javascript: 协议一律拒掉：大小写不敏感（`JavaScript:` 也拦），
+    // 且必须带冒号——`javascriptx` 是合法路径段，不能误伤
+    if url.len() >= "javascript:".len() && url[..11].eq_ignore_ascii_case("javascript:") {
         return String::new();
     }
     if url.starts_with("data:") || url.starts_with("http://") || url.starts_with("https://") {
@@ -675,4 +677,23 @@ fn parse_header_token(chars: &[char], index: &mut usize, stop_at_colon: bool) ->
         .collect::<String>()
         .trim()
         .to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn absolute_url_rejects_javascript_case_insensitively() {
+        assert_eq!(absolute_url("https://a.com/", "javascript:alert(1)"), "");
+        assert_eq!(absolute_url("https://a.com/", "JavaScript:alert(1)"), "");
+        assert_eq!(absolute_url("https://a.com/", "JAVASCRIPT:alert(1)"), "");
+    }
+
+    #[test]
+    fn absolute_url_keeps_lookalike_paths() {
+        // 不带冒号的 javascriptx 是合法路径段，不能被误伤
+        let out = absolute_url("https://a.com/dir/", "javascriptx");
+        assert!(out.ends_with("javascriptx"), "got: {out}");
+    }
 }

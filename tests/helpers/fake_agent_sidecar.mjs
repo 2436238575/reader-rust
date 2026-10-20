@@ -6,6 +6,7 @@
 // - 章节标题含「搜索」→ 先发 search_read_content 工具调用（toIndex=99），
 //   把服务端钳制后的 range 与命中数写进 summary
 // - 章节标题含「卡住」→ 不回帧（供看门狗超时 / 取消测试挂起）
+// - 章节标题含「闪退」→ 往 stderr 写一行后 process.exit(1)（供 EOF 错误路径测试）
 // - 其他章节 → 发 get_completed_chapter 工具调用，把正文长度累计进 summary
 // - 作者名含「地图失败」→ redraw_map 返回错误；否则返回 b64 地图
 import { createInterface } from 'node:readline'
@@ -62,6 +63,12 @@ async function handleRun(job) {
     if (title.includes('卡住')) {
       // 永不回复：供看门狗超时与取消测试使用（进程保持可被 kill）
       return
+    }
+
+    if (title.includes('闪退')) {
+      // 模拟 sidecar 崩溃：stderr 留痕后 EOF（测试 EOF 错误路径不 panic、任务槽能释放）
+      console.error('FAKE_CRASH: simulated sidecar crash')
+      process.exit(1)
     }
 
     if (title.includes('搜索')) {

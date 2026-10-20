@@ -354,6 +354,55 @@ async fn agent_task_watchdog_kills_stuck_chapter() {
 }
 
 #[tokio::test]
+async fn agent_task_sidecar_eof_releases_active_slot() {
+    if !node_available() {
+        eprintln!("skip: Node 不可用，无法运行假 sidecar");
+        return;
+    }
+    let server = TestServer::start(30).await;
+    let token = server.login().await;
+
+    // 「闪退」章节让假 sidecar 直接 process.exit(1)：走 EOF 错误路径。
+    // 这条路径曾经在 async 上下文里调 blocking_lock 直接 panic，
+    // panic 跳过 spawn 尾部的清理，active 槽永久占用，后续任务全部 409。
+    let content = "\
+第一章 闪退
+这章会让 sidecar 崩溃。";
+    let (book_id, _) = server.upload_txt(&token, "闪退测试.txt", content).await;
+
+    let response = server
+        .start_task(&token, &book_id, "update_to_current", Some(0))
+        .await;
+    assert_eq!(response.status().as_u16(), 200);
+
+    let snapshot = server.wait_task_done(&token).await;
+    assert_eq!(snapshot["running"], json!(false));
+    let last_error = snapshot["lastError"].as_str().unwrap_or_default();
+    assert!(
+        last_error.contains("sidecar 意外退出"),
+        "EOF 路径应报意外退出：{snapshot}"
+    );
+    // stderr 末尾应带进错误里（证明读到了 tail 而不是 panic）
+    assert!(
+        last_error.contains("FAKE_CRASH"),
+        "错误应含 sidecar stderr 末尾：{snapshot}"
+    );
+
+    // 关键回归：active 槽已释放，再次提交不应该是 409
+    let retry = server
+        .start_task(&token, &book_id, "update_to_current", Some(0))
+        .await;
+    assert_eq!(
+        retry.status().as_u16(),
+        200,
+        "任务槽应已释放，不应 409：{}",
+        retry.status()
+    );
+    let snapshot = server.wait_task_done(&token).await;
+    assert_eq!(snapshot["running"], json!(false));
+}
+
+#[tokio::test]
 async fn agent_task_cancel_kills_process_and_rejects_duplicate() {
     if !node_available() {
         eprintln!("skip: Node 不可用，无法运行假 sidecar");

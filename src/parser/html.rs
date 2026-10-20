@@ -444,9 +444,10 @@ fn expand_range(len: usize, start: Option<i32>, end: Option<i32>, step: i32) -> 
     start = start.clamp(0, len_i32 - 1);
     end = end.clamp(0, len_i32 - 1);
 
+    // step == i32::MIN 时 -step 在 debug 构建溢出 panic，提前归一到 1
     let step = if step > 0 {
         step as usize
-    } else if -step < len_i32 {
+    } else if step != i32::MIN && -step < len_i32 {
         (step + len_i32).max(1) as usize
     } else {
         1
@@ -1240,5 +1241,12 @@ mod tests {
             Some("abc".to_string())
         );
         assert_eq!(select_text(&doc, "a@href"), Some("/book/1".to_string()));
+    }
+
+    #[test]
+    fn test_expand_range_step_i32_min_does_not_overflow() {
+        // step == i32::MIN 时 -step 在 debug 构建会溢出 panic，应归一为步长 1
+        let indices = expand_range(5, None, None, i32::MIN);
+        assert_eq!(indices, vec![0, 1, 2, 3, 4]);
     }
 }

@@ -750,18 +750,18 @@ impl AgentSidecarService {
                     }
                 }
             }
-            // EOF：sidecar 崩溃/被杀——把它的 stderr 末尾带进错误
-            Err(AppError::Internal(anyhow::anyhow!("sidecar 意外退出"))).map_err(|e| {
-                let tail = stderr_tail.blocking_lock();
-                if tail.is_empty() {
-                    e
-                } else {
-                    AppError::Internal(anyhow::anyhow!(
-                        "sidecar 意外退出；子进程 stderr 末尾：{}",
-                        tail.join(" ┃ ")
-                    ))
-                }
-            })
+            // EOF：sidecar 崩溃/被杀——把它的 stderr 末尾带进错误。
+            // 在 async 上下文里必须 .lock().await：tokio 的 blocking_lock 在运行时内会
+            // panic，panic 沿 spawn 展开会跳过 start_task 尾部的清理，active 槽永久占用。
+            let tail = stderr_tail.lock().await;
+            if tail.is_empty() {
+                Err(AppError::Internal(anyhow::anyhow!("sidecar 意外退出")))
+            } else {
+                Err(AppError::Internal(anyhow::anyhow!(
+                    "sidecar 意外退出；子进程 stderr 末尾：{}",
+                    tail.join(" ┃ ")
+                )))
+            }
         })
         .await;
 
@@ -1124,7 +1124,13 @@ impl AgentSidecarService {
         let first_line = match timeout(handshake_timeout, rx.recv()).await {
             Ok(Some(line)) => Some(line),
             Ok(None) => None,
-            Err(_) => return Err(handshake_failed(&stderr_tail, "sidecar 握手超时（10 秒）").await),
+            Err(_) => {
+                return Err(handshake_failed(
+                    &stderr_tail,
+                    &format!("sidecar 握手超时（{} 秒）", handshake_timeout.as_secs()),
+                )
+                .await)
+            }
         };
         let Some(first_line) = first_line else {
             return Err(handshake_failed(&stderr_tail, "sidecar 在握手前就退出了").await);

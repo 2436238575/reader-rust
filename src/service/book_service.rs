@@ -2986,14 +2986,22 @@ mod tests {
             },
         );
 
+        // 两个起始点已占满限额：必须等到最旧起点滑出窗口（~200ms）后放行。
+        // 只断言「20ms 内不通过」证明不了会等——窗口滑出后仍卡住也能让旧断言蒙混过关
+        let began = Instant::now();
         let result = tokio::time::timeout(
-            Duration::from_millis(20),
+            Duration::from_millis(2000),
             service.wait_for_window_rate("source", 2, 200),
         )
         .await;
 
         let _ = tokio::fs::remove_dir_all(&storage_dir).await;
-        assert!(result.is_err());
+        assert!(result.is_ok(), "窗口滑出后应放行而非卡住");
+        assert!(
+            began.elapsed() >= Duration::from_millis(180),
+            "应等到窗口滑出（200ms）才放行，实际 {:?}",
+            began.elapsed()
+        );
     }
 
     fn make_book(url: &str) -> Book {

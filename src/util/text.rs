@@ -56,12 +56,14 @@ pub fn normalize_source_url(input: &str) -> String {
 
 pub fn repair_encoded_url(input: &str) -> String {
     let normalized = normalize_source_url(input);
+    // 前置检查列表必须与下面的替换列表一致：漏了 %23 会导致只含 %23 的
+    // URL 提前返回、永远修不到；%26/%23 是全数字编码，没有大小写变体
     if !(normalized.contains("%3F")
         || normalized.contains("%3f")
         || normalized.contains("%26")
-        || normalized.contains("%26")
         || normalized.contains("%3D")
-        || normalized.contains("%3d"))
+        || normalized.contains("%3d")
+        || normalized.contains("%23"))
     {
         return normalized;
     }
@@ -73,5 +75,18 @@ pub fn repair_encoded_url(input: &str) -> String {
         .replace("%3D", "=")
         .replace("%3d", "=")
         .replace("%23", "#")
-        .replace("%23", "#")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn repair_encoded_url_fixes_fragment_only_urls() {
+        // 只含 %23（无 %3F/%26/%3D）的 URL 以前会因前置检查漏项直接原样返回
+        assert_eq!(
+            repair_encoded_url("https://a.com/b%23frag"),
+            "https://a.com/b#frag"
+        );
+    }
 }

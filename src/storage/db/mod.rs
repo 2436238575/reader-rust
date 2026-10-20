@@ -9,6 +9,10 @@ use std::str::FromStr;
 pub async fn init_pool(database_url: &str) -> anyhow::Result<SqlitePool> {
     // WAL：读不阻塞写（默认 DELETE 模式下写事务会阻塞全部读）；
     // synchronous=NORMAL 是 WAL 的官方推荐档位（掉电只可能丢最后一个事务，不损坏库）。
+    //
+    // 写事务一律 BEGIN IMMEDIATE（见 repo.rs）：WAL 下它只在写者间串行，
+    // 不阻塞并发读；而 DEFERRED 先读后写会在升级写锁时因快照过期直接
+    // SQLITE_BUSY_SNAPSHOT（busy_timeout 管不到），表现为并发写偶发 500。
     let options = SqliteConnectOptions::from_str(database_url)?
         .create_if_missing(true)
         .foreign_keys(true)

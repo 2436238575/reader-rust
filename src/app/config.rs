@@ -117,11 +117,13 @@ impl Default for AppConfig {
 
 pub fn load() -> anyhow::Result<AppConfig> {
     // dotenvy 遇到解析不了的行会**中断加载**——之前的变量生效、之后的全丢，
-    // 且这类问题有默认值兜底很难察觉。失败必须打 WARN（含逗号等特殊字符的
+    // 且这类问题有默认值兜底很难察觉。失败必须告警（含逗号等特殊字符的
     // 值要用双引号包裹），不能 .ok() 吞掉。
+    // 注意这里不能用 tracing：本函数在 tracing subscriber 安装之前运行，
+    // warn! 会被静默丢弃，只能走 eprintln!。
     if let Err(error) = dotenvy::dotenv() {
-        tracing::warn!(
-            ".env 加载中断：{error}。该行之后的变量全部未生效——含逗号/空格等特殊字符的值请用双引号包裹"
+        eprintln!(
+            "WARN .env 加载中断：{error}。该行之后的变量全部未生效——含逗号/空格等特殊字符的值请用双引号包裹"
         );
     }
     let defaults = AppConfig::default();
