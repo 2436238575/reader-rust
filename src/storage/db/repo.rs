@@ -100,7 +100,7 @@ impl BookRepo {
         user_ns: &str,
         items: &[RegisterBook<'_>],
     ) -> Result<std::collections::HashMap<String, String>, AppError> {
-        let mut tx = self.pool.begin().await?;
+        let mut tx = self.pool.begin_with("BEGIN IMMEDIATE").await?;
         let mut out = std::collections::HashMap::with_capacity(items.len());
         for item in items {
             let existing: Option<i64> =
@@ -124,7 +124,7 @@ impl BookRepo {
 
     /// 开事务：save_books 的整架替换/恢复需要跨 books+shelf_books 的原子性。
     pub async fn begin(&self) -> Result<sqlx::Transaction<'_, sqlx::Sqlite>, AppError> {
-        Ok(self.pool.begin().await?)
+        Ok(self.pool.begin_with("BEGIN IMMEDIATE").await?)
     }
 
     /// 事务版 wipe。
@@ -461,7 +461,7 @@ impl BookSourceRepo {
         user_ns: &str,
         entries: &[(BookSource, String, Option<i64>)],
     ) -> Result<(), AppError> {
-        let mut tx = self.pool.begin().await?;
+        let mut tx = self.pool.begin_with("BEGIN IMMEDIATE").await?;
         for (source, json, desired_id) in entries {
             let existing: Option<i64> = sqlx::query_scalar(
                 "SELECT book_source_id FROM book_sources WHERE user_ns=?1 AND book_source_url=?2",
@@ -783,7 +783,7 @@ impl ShelfBookRepo {
     ) -> Result<(), AppError> {
         let book_id_num = parse_book_id(&row.book_id)
             .ok_or_else(|| AppError::BadRequest(format!("bookId 格式非法: {:?}", row.book_id)))?;
-        let mut tx = self.pool.begin().await?;
+        let mut tx = self.pool.begin_with("BEGIN IMMEDIATE").await?;
         let existing_pos: Option<i64> =
             sqlx::query_scalar("SELECT position FROM shelf_books WHERE user_ns=?1 AND book_id=?2")
                 .bind(user_ns)

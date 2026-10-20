@@ -13,6 +13,8 @@ pub async fn init_pool(database_url: &str) -> anyhow::Result<SqlitePool> {
         .create_if_missing(true)
         .foreign_keys(true)
         .journal_mode(SqliteJournalMode::Wal)
+        // 写锁等待 5s：WAL 下并发写者排队而不是立刻 SQLITE_BUSY
+        .busy_timeout(std::time::Duration::from_secs(5))
         .synchronous(SqliteSynchronous::Normal);
     // 鉴权中间件与业务 handler 各占一条连接，批量缓存/搜索并发 24 起步，5 条容易排队。
     let pool = SqlitePoolOptions::new()
