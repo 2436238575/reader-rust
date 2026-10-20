@@ -367,6 +367,12 @@ import { isIosWebkit } from '../utils/platform'
 import { countBrowserBookCache } from '../utils/browserCache'
 import { APP_VIEWPORT_CHANGE_EVENT, syncViewportSize } from '../utils/viewport'
 import { isReaderInteractiveClickTarget, resolveReaderTapZone } from '../utils/readerClick'
+import {
+  buildServerSavedPosition as buildServerPosition,
+  getPositionStorageKey,
+  normalizePositionTimestamp,
+  type SavedReadingPosition,
+} from '../utils/readingPosition'
 import { DUAL_PAGE_MIN_WIDTH, useHorizontalPaging } from '../composables/useHorizontalPaging'
 import {
   appendLocalEpubAssetAuth,
@@ -415,16 +421,7 @@ const router = useRouter()
 const store = useReaderStore()
 const appStore = useAppStore()
 const sourceStore = useSourceStore()
-const READER_POSITION_PREFIX = 'reader-position:'
 const SERVER_PROGRESS_AUTOSAVE_MS = 10000
-
-interface SavedReadingPosition {
-  chapterIndex: number
-  progress: number
-  paragraphIndex?: number
-  paragraphProgress?: number
-  updatedAt: number
-}
 
 const CONTINUOUS_POSITION_ANCHOR_RATIO = 0.12
 
@@ -1090,31 +1087,12 @@ function scrollToBottom() {
   }
 }
 
-function getPositionStorageKey() {
-  return store.book?.bookId ? `${READER_POSITION_PREFIX}${store.book.bookId}` : ''
-}
-
-function normalizePositionTimestamp(value?: number | null) {
-  if (typeof value !== 'number' || Number.isNaN(value) || value <= 0) return 0
-  return value < 1_000_000_000_000 ? value * 1000 : value
-}
-
 function buildServerSavedPosition(): SavedReadingPosition | null {
-  if (!store.book) return null
-  if (store.book.durChapterIndex !== store.currentIndex) return null
-  const rawPos = typeof store.book.durChapterPos === 'number' ? store.book.durChapterPos : 0
-  const progress = rawPos > 1 ? rawPos / 10000 : rawPos
-  return {
-    chapterIndex: store.currentIndex,
-    progress: Math.max(0, Math.min(1, progress || 0)),
-    // 用打开书时捕获的服务端保存时间：book.durChapterTime 在打开章节时已被
-    // 刷成 Date.now()，直接用它会让服务端在这场比较里永远「更新」
-    updatedAt: normalizePositionTimestamp(store.serverProgressTime || store.book.durChapterTime),
-  }
+  return buildServerPosition(store.book, store.currentIndex, store.serverProgressTime)
 }
 
 function loadSavedReadingPosition() {
-  const key = getPositionStorageKey()
+  const key = getPositionStorageKey(store.book?.bookId)
   if (!key) {
     pendingRestorePosition.value = null
     pendingRestoreAttempts = 0
@@ -1182,7 +1160,7 @@ function loadSavedReadingPosition() {
 }
 
 function saveReadingPosition(options: { force?: boolean } = {}) {
-  const key = getPositionStorageKey()
+  const key = getPositionStorageKey(store.book?.bookId)
   const container = scrollContainerRef.value
   const suppressed = !options.force && Date.now() < suppressPositionSaveUntil
   if (!key || !container || store.loading || !store.book || suppressed) {
