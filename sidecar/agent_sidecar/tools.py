@@ -35,6 +35,9 @@ from .types import BookRef, ChapterRef
 log = logging.getLogger(__name__)
 
 DEFAULT_CHAPTER_WINDOW = 24000
+# limit 的上界：没有上界时模型（或被正文注入带偏的模型）可以传 limit=10**8
+# 把整本书灌进上下文——prompt 注入直接放大成 token 成本
+MAX_CHAPTER_WINDOW = 48000
 MAX_SEARCH_SNIPPETS = 5
 SEARCH_SNIPPET_CHARS = 240
 
@@ -288,7 +291,7 @@ def _tool_get_chapter(args: dict[str, Any], ctx: ToolContext) -> ToolOutcome:
     offset = _read_int(args, "offset", 0)
     limit = _read_int(args, "limit", DEFAULT_CHAPTER_WINDOW)
     offset = max(0, offset)
-    limit = max(1, limit)
+    limit = max(1, min(limit, MAX_CHAPTER_WINDOW))
     window = content[offset : offset + limit]
 
     return ToolOutcome(

@@ -326,3 +326,64 @@ def test_save_patch_without_memory_key_is_rejected(base_memory):
     assert outcome.final is False
     assert outcome.content["ok"] is False
     assert "memory 键" in outcome.content["error"]
+
+
+def test_bad_json_content_is_nudged_and_retried(base_memory):
+    # 模型首轮回纯文本（很常见）：把解析错误回喂让它重答，而不是一次炸掉整批
+    client = ScriptedClient(
+        [
+            {"choices": [{"message": {"content": "我先说一下我的看法……"}}]},
+            content_response(
+                {"memory": {"summary": "重答后的摘要。"}, "shouldRegenerateMap": False}
+            ),
+        ]
+    )
+    result = run_job(make_job(memory=base_memory), FakeChannel(), client)
+    assert result["memory"]["summary"] == "重答后的摘要。"
+    assert len(client.requests) == 2
+    # 第二轮请求里带 nudge 消息
+    second = json.dumps(client.requests[1], ensure_ascii=False)
+    assert "无法解析为 JSON" in second
+
+
+def test_bad_json_beyond_nudges_raises(base_memory):
+    from agent_sidecar.loop import MAX_JSON_NUDGES, MAX_ROUNDS
+
+    bad = {"choices": [{"message": {"content": "依然是纯文本"}}]}
+    client = ScriptedClient([bad for _ in range(MAX_ROUNDS)])
+    with pytest.raises(Exception, match="无法解析"):
+        run_job(make_job(memory=base_memory), FakeChannel(), client)
+    # nudge 用完后最多再消耗完剩余轮次，不会无限循环
+    assert len(client.requests) <= MAX_JSON_NUDGES + MAX_ROUNDS
+
+
+def test_get_chapter_limit_is_capped(base_memory):
+    from agent_sidecar.tools import MAX_CHAPTER_WINDOW, ToolContext, execute_tool_call
+
+    content = "正文字符" * 30000  # 120000 字符，远超上界
+    channel = FakeChannel(tool_results=[_chapter_tool_result(content)])
+    ctx = ToolContext(
+        book=make_job().book,
+        chapter=make_job().chapter,
+        chapters=[],
+        memory=base_memory,
+        channel=channel,
+    )
+    tool_call = {
+        "id": "call-1",
+        "function": {
+            "name": "get_completed_chapter",
+            # 模型（或被正文注入带偏的模型）传 limit=10**8 想把整本书灌进上下文
+            "arguments": json.dumps({"limit": 10**8}),
+        },
+    }
+    outcome = execute_tool_call(tool_call, ctx)
+    assert outcome.content["ok"] is True
+    assert len(outcome.content["chapter"]["content"]) == MAX_CHAPTER_WINDOW
+    assert outcome.content["truncated"] is True
+
+
+def test_system_rules_declare_tool_content_untrusted():
+    from agent_sidecar.prompts import SYSTEM_RULES
+
+    assert any("不可信数据" in rule for rule in SYSTEM_RULES)

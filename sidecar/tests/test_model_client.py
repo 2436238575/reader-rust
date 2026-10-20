@@ -82,7 +82,8 @@ def test_retries_429_then_succeeds():
     assert sleeps == [1.0]
 
 
-def test_retries_5xx_up_to_ten_attempts_then_raises():
+def test_retries_5xx_within_budget_then_raises():
+    # 重试预算对齐 Rust 章节看门狗（默认 600s）：3 次尝试 + 短退避
     attempts = {"n": 0}
     sleeps: list[float] = []
 
@@ -92,8 +93,8 @@ def test_retries_5xx_up_to_ten_attempts_then_raises():
 
     with pytest.raises(ModelError, match="upstream down"):
         _client(handler, sleeps).chat(_endpoint(), {})
-    assert attempts["n"] == 10
-    assert sleeps == [1.0, 2.0, 4.0, 8.0, 16.0, 30.0, 30.0, 30.0, 30.0]
+    assert attempts["n"] == 3
+    assert sleeps == [1.0, 2.0]
 
 
 def test_4xx_is_not_retried():
@@ -154,7 +155,18 @@ def test_network_error_is_wrapped_and_retried():
 
     with pytest.raises(ModelError, match="网络请求失败"):
         _client(handler, []).chat(_endpoint(), {})
-    assert attempts["n"] == 10
+    assert attempts["n"] == 3
+
+
+def test_oversized_response_is_rejected():
+    from agent_sidecar.model_client import MAX_RESPONSE_BYTES
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        # 失控上游：body 超过上限时必须在读取阶段就被掐断
+        return httpx.Response(200, content=b"x" * (MAX_RESPONSE_BYTES + 1))
+
+    with pytest.raises(ModelError, match="大小上限"):
+        _client(handler).chat(_endpoint(), {})
 
 
 def test_unready_endpoint_raises_without_request():

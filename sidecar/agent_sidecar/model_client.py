@@ -6,10 +6,16 @@ Rust 拿到的就是解析后的 endpoint（baseUrl/apiKey/model/useFullUrl）�
 
 所有对外错误都收敛为 ModelError，消息经过凭据脱敏——key 不进日志、
 不进事件流。
+
+重试预算与 Rust 侧的章节看门狗（AGENT_SIDECAR_CHAPTER_TIMEOUT_SECS，
+默认 600s）对齐：最坏情况 3 次尝试 ×（connect 10s + write 30s + read 150s）
++ 退避 3s ≈ 573s < 600s——Python 退避跑完之前 Rust 不会先把进程杀掉，
+错误能带着真实原因回去，而不是被看门狗截成一句「超时」。
 """
 
 from __future__ import annotations
 
+import json
 import time
 from typing import Callable
 
@@ -18,9 +24,12 @@ import httpx
 from .errors import sanitize_error_message, summarize_http_error_body
 from .types import ModelEndpoint
 
-# 10 次尝试：上游偶发 429/5xx 常见，退避拉到 30s 封顶
-MAX_ATTEMPTS = 10
-RETRY_DELAYS = (1.0, 2.0, 4.0, 8.0, 16.0, 30.0, 30.0, 30.0, 30.0)
+# 3 次尝试 + 短退避：预算对齐 Rust 章节看门狗（见模块 docstring）
+MAX_ATTEMPTS = 3
+RETRY_DELAYS = (1.0, 2.0)
+# 模型响应体上限：正常补全响应在 KB 量级，8MB 已极端宽裕；
+# response.json() 会把整个 body 读进内存，失控上游必须有闸门
+MAX_RESPONSE_BYTES = 8 * 1024 * 1024
 
 CHAT_PATH = "/v1/chat/completions"
 IMAGES_PATH = "/v1/images/generations"
@@ -43,7 +52,7 @@ class ModelClient:
     ) -> None:
         self._client = httpx.Client(
             transport=transport,
-            timeout=httpx.Timeout(180.0, connect=10.0, write=30.0),
+            timeout=httpx.Timeout(150.0, connect=10.0, write=30.0),
         )
         self._secrets = [s for s in (secrets or []) if s and s.strip()]
         self._sleep = sleep
@@ -72,7 +81,11 @@ class ModelClient:
         last_error: ModelError | None = None
         for attempt in range(MAX_ATTEMPTS):
             try:
-                response = self._client.post(url, json=payload, headers=headers)
+                # 流式读 + 字节上限：response.json() 会把整个 body 无界读进内存
+                with self._client.stream("POST", url, json=payload, headers=headers) as response:
+                    status_code = response.status_code
+                    content_type = response.headers.get("content-type") or ""
+                    body = _read_capped(response, MAX_RESPONSE_BYTES)
             except httpx.HTTPError as error:
                 last_error = ModelError(
                     sanitize_error_message(f"{fallback}：网络请求失败：{error}", [api_key])
@@ -82,18 +95,18 @@ class ModelClient:
                     continue
                 raise last_error from error
 
-            if response.status_code == 429 or response.status_code >= 500:
-                last_error = self._error_from_response(response, fallback, api_key)
+            if status_code == 429 or status_code >= 500:
+                last_error = self._error_from_body(status_code, content_type, body, fallback, api_key)
                 if attempt < MAX_ATTEMPTS - 1:
                     self._sleep(RETRY_DELAYS[min(attempt, len(RETRY_DELAYS) - 1)])
                     continue
                 raise last_error
 
-            if response.status_code >= 400:
-                raise self._error_from_response(response, fallback, api_key)
+            if status_code >= 400:
+                raise self._error_from_body(status_code, content_type, body, fallback, api_key)
 
             try:
-                return response.json()
+                return json.loads(body)
             except ValueError as error:
                 raise ModelError(sanitize_error_message(f"{fallback}：响应不是有效 JSON", [api_key])) from error
 
@@ -104,27 +117,41 @@ class ModelClient:
         if not endpoint.ready():
             raise ModelError("模型未配置（baseUrl/model 为空）")
 
-    def _error_from_response(self, response: httpx.Response, fallback: str, api_key: str) -> ModelError:
-        message = read_model_error(response, fallback)
+    def _error_from_body(
+        self, status_code: int, content_type: str, body: bytes, fallback: str, api_key: str
+    ) -> ModelError:
+        message = read_model_error_body(status_code, content_type, body, fallback)
         return ModelError(sanitize_error_message(message, [api_key]))
 
 
-def read_model_error(response: httpx.Response, fallback: str) -> str:
-    """移植自 aiBookGeneration.ts:1166-1181。"""
+def _read_capped(response: httpx.Response, limit: int) -> bytes:
+    chunks: list[bytes] = []
+    total = 0
+    for chunk in response.iter_bytes():
+        total += len(chunk)
+        if total > limit:
+            raise ModelError(f"模型响应超出大小上限（{limit // (1024 * 1024)}MB）")
+        chunks.append(chunk)
+    return b"".join(chunks)
+
+
+def read_model_error_body(status_code: int, content_type: str, body: bytes, fallback: str) -> str:
+    """从已读到的响应体提取用户可读错误（移植自 aiBookGeneration.ts:1166-1181）。"""
     try:
-        content_type = response.headers.get("content-type") or ""
         if "application/json" in content_type:
             try:
-                data = response.json()
+                data = json.loads(body)
             except ValueError:
-                return f"{fallback} ({response.status_code})"
+                return f"{fallback} ({status_code})"
             if isinstance(data, dict):
                 error = data.get("error")
                 if isinstance(error, dict) and isinstance(error.get("message"), str) and error["message"]:
                     return str(error["message"])
                 if isinstance(data.get("errorMsg"), str) and data["errorMsg"]:
                     return str(data["errorMsg"])
-            return f"{fallback} ({response.status_code})"
-        return summarize_http_error_body(response.text, fallback, status=response.status_code)
+            return f"{fallback} ({status_code})"
+        return summarize_http_error_body(
+            body.decode("utf-8", errors="replace"), fallback, status=status_code
+        )
     except Exception:  # noqa: BLE001 — 读错误体本身的异常一律回退到状态码消息
-        return f"{fallback} ({response.status_code})"
+        return f"{fallback} ({status_code})"

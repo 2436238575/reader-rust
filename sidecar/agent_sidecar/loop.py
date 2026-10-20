@@ -27,6 +27,14 @@ log = logging.getLogger(__name__)
 
 MAX_ROUNDS = 5
 MAX_INPUT_CHARS = 300_000
+# 模型首轮回纯文本/坏 JSON 很常见：回喂解析错误让它重答，而不是一次失败
+# 就炸掉整批任务
+MAX_JSON_NUDGES = 2
+
+JSON_NUDGE_MESSAGE = (
+    "你的回复无法解析为 JSON。请只输出一个合法的 JSON 对象"
+    "（不要代码块围栏、不要任何多余文字），或调用 save_memory_patch 工具提交。"
+)
 
 
 def run_job(job: JobRequest, channel: StdioChannel | None, client: ModelClient) -> dict[str, Any]:
@@ -72,6 +80,7 @@ def _run_chapter_update(
     messages = build_prompt_messages(job.book.name, chapter.title, chapter.index)
     input_chars = 0
     forced_injected = False
+    json_nudges = 0
 
     for step in range(MAX_ROUNDS):
         budget_exhausted = input_chars >= MAX_INPUT_CHARS
@@ -134,8 +143,20 @@ def _run_chapter_update(
 
         content = message.get("content")
         if content:
-            raw = parse_json_content(str(content))
-            update = coerce_model_update(raw, job.memory, book_dict, chapter_dict)
+            try:
+                raw = parse_json_content(str(content))
+                update = coerce_model_update(raw, job.memory, book_dict, chapter_dict)
+            except ValueError as error:
+                json_nudges += 1
+                if json_nudges > MAX_JSON_NUDGES:
+                    raise ModelError(f"模型多次返回无法解析的内容：{error}") from error
+                # nudge-and-retry：把错误回喂给模型，让它用合法 JSON 重答
+                messages.append({"role": "assistant", "content": str(content)})
+                messages.append({"role": "user", "content": JSON_NUDGE_MESSAGE})
+                if is_final_round:
+                    # nudge 已没有机会被回答：报真实原因，别落成轮次限制
+                    raise ModelError(f"模型返回了无法解析的内容：{error}") from error
+                continue
             return _chapter_result(update)
 
     raise ModelError("AI 资料生成超过工具调用轮次限制")
