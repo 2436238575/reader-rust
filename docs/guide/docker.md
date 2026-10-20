@@ -113,20 +113,11 @@ docker compose up -d
 
 ## 自行构建镜像
 
-::: warning Dockerfile 内不编译 Rust
-`Dockerfile` **只做拷贝**，不执行 `cargo build`。必须先在本机构建出二进制和前端产物，再构建镜像；amd64/arm64 用 `--build-arg TARGET_TRIPLE=` 区分。
+::: warning 构建耗时
+`Dockerfile` 是**全链路多阶段构建**：前端 node 阶段 `npm ci + build`，后端 muslrust 阶段 `cargo build --release`，运行时 alpine 只装产物——源码进、镜像出，可复现，不依赖本机预编译。首次构建约 10 分钟以上（耗在后端 musl 编译），后续命中层缓存很快。
 
 ```bash
-# 1. 构建前端
-cd frontend && npm install && npm run build && cd ..
-
-# 2. 注册 musl 目标并交叉编译后端
-rustup target add x86_64-unknown-linux-musl
-rustup target add aarch64-unknown-linux-musl
-cargo build --release --target x86_64-unknown-linux-musl
-cargo build --release --target aarch64-unknown-linux-musl
-
-# 3. 构建镜像（必须显式指定 platform）
+# 构建镜像（必须显式指定 platform；TARGET_TRIPLE 与之对应）
 podman build --platform linux/amd64 --build-arg TARGET_TRIPLE=x86_64-unknown-linux-musl -t yourname/reader-rust:latest .
 podman build --platform linux/arm64 --build-arg TARGET_TRIPLE=aarch64-unknown-linux-musl -t yourname/reader-rust:latest-aarch64 .
 ```

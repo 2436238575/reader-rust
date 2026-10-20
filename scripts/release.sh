@@ -142,17 +142,8 @@ npm version "$SEMVER" --no-git-tag-version --allow-same-version >/dev/null
   npm version "$SEMVER" --no-git-tag-version --allow-same-version >/dev/null
 )
 
-echo "Building frontend..."
-(
-  cd frontend
-  npm install
-  npm run build
-)
-
-echo "Building Rust binaries..."
-cargo build --release --target x86_64-unknown-linux-musl
-cargo build --release --target aarch64-unknown-linux-musl
-
+# 前端与后端都在 Docker 多阶段构建里从源码编译（可复现）；
+# 本机不再预编译（编译正确性由 CI 的 cargo test + npm run build 兜底）。
 echo "Creating commit and tag..."
 git add Cargo.toml Cargo.lock package.json package-lock.json frontend/package.json frontend/package-lock.json
 if git diff --cached --quiet; then
