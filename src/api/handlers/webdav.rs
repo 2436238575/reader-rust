@@ -114,10 +114,10 @@ pub async fn upload_file_to_webdav(
     let mut file_list = Vec::new();
     let mut path = "/".to_string();
 
-    while let Some(field) = multipart
-        .next_field()
-        .await
-        .map_err(|e| AppError::BadRequest(e.to_string()))?
+    let mut field_count = 0usize;
+    while let Some(field) =
+        crate::api::handlers::multipart::next_field_limited(&mut multipart, &mut field_count)
+            .await?
     {
         let name = field.name().unwrap_or_default().to_string();
         if name == "path" {

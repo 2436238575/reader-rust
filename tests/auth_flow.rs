@@ -413,3 +413,56 @@ async fn get_user_info_reports_no_session_when_anonymous() {
     assert!(body["data"]["userInfo"].get("accessToken").is_none());
     assert!(body["data"]["userInfo"].get("password").is_none());
 }
+
+#[tokio::test]
+async fn multipart_upload_rejects_excessive_field_count() {
+    let server = TestServer::start().await;
+    let token = server.login().await;
+
+    // 单字段有字节限量，但字段数没有上限时，一个请求挂上千个字段照样打爆配额。
+    // 统一上限 20 个字段（api/handlers/multipart.rs::MAX_MULTIPART_FIELDS）
+    let boundary = "----fieldlimitboundary";
+    let mut body = String::new();
+    for index in 0..25 {
+        body.push_str(&format!(
+            "--{boundary}\r\nContent-Disposition: form-data; name=\"f{index}\"\r\n\r\nx\r\n"
+        ));
+    }
+    body.push_str(&format!("--{boundary}--\r\n"));
+
+    let response = server
+        .client
+        .post(server.url("/reader3/uploadTxtBook"))
+        .bearer_auth(&token)
+        .header(
+            "Content-Type",
+            format!("multipart/form-data; boundary={boundary}"),
+        )
+        .body(body)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 400, "超字段数上限应 400");
+    let body: serde_json::Value = response.json().await.unwrap();
+    assert_eq!(body["isSuccess"], serde_json::json!(false));
+
+    // 正常单字段上传不受影响
+    let mut body = String::new();
+    body.push_str(&format!(
+        "--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"正常.txt\"\r\nContent-Type: text/plain\r\n\r\n第一章 开始\n正文。\r\n"
+    ));
+    body.push_str(&format!("--{boundary}--\r\n"));
+    let response = server
+        .client
+        .post(server.url("/reader3/uploadTxtBook"))
+        .bearer_auth(&token)
+        .header(
+            "Content-Type",
+            format!("multipart/form-data; boundary={boundary}"),
+        )
+        .body(body)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200, "正常上传不应被误伤");
+}

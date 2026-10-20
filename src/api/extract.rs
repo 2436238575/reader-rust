@@ -38,21 +38,56 @@ where
             .await
             .map_err(|e| AppError::BadRequest(format!("请求体读取失败: {e}")))?;
         if !bytes.is_empty() {
-            let mut is_json = false;
-            if let Ok(Value::Object(map)) = serde_json::from_slice::<Value>(&bytes) {
-                is_json = true;
-                for (k, v) in map {
-                    if v.is_null() {
-                        merged.remove(&k);
-                    } else {
-                        merged.insert(k, v);
+            let content_type = parts
+                .headers
+                .get(axum::http::header::CONTENT_TYPE)
+                .and_then(|v| v.to_str().ok())
+                .unwrap_or("")
+                .to_ascii_lowercase();
+            let is_json_ct =
+                content_type.starts_with("application/json") || content_type.contains("+json");
+            let is_form_ct = content_type.starts_with("application/x-www-form-urlencoded");
+
+            let parsed_json = if is_form_ct {
+                None
+            } else {
+                serde_json::from_slice::<Value>(&bytes).ok()
+            };
+            match parsed_json {
+                Some(Value::Object(map)) => {
+                    for (k, v) in map {
+                        if v.is_null() {
+                            merged.remove(&k);
+                        } else {
+                            merged.insert(k, v);
+                        }
                     }
                 }
-            }
-            if !is_json {
-                if let Ok(text) = std::str::from_utf8(&bytes) {
-                    for (k, v) in url::form_urlencoded::parse(text.as_bytes()) {
-                        merged.insert(k.into_owned(), Value::String(v.into_owned()));
+                Some(_) => {
+                    return Err(AppError::BadRequest(
+                        "请求体必须是 JSON 对象或表单".to_string(),
+                    ));
+                }
+                None => {
+                    if is_json_ct {
+                        // 声明了 JSON 却解析不了（典型是截断）：静默落回 query 会让
+                        // 客户端以为 body 生效了——明确报 400 而不是给错误参数
+                        return Err(AppError::BadRequest("JSON 请求体解析失败".to_string()));
+                    }
+                    // 无 content-type 的兜底：只接受「长得像表单」的 body（含 =），
+                    // 其余（乱码/截断 JSON/二进制）一律 400 不猜
+                    let text = std::str::from_utf8(&bytes).ok();
+                    match text.filter(|t| t.contains('=')) {
+                        Some(text) => {
+                            for (k, v) in url::form_urlencoded::parse(text.as_bytes()) {
+                                merged.insert(k.into_owned(), Value::String(v.into_owned()));
+                            }
+                        }
+                        None => {
+                            return Err(AppError::BadRequest(
+                                "无法识别的请求体（既不是 JSON 也不是表单）".to_string(),
+                            ));
+                        }
                     }
                 }
             }
@@ -185,5 +220,55 @@ mod tests {
     fn empty_body_keeps_query() {
         let req = parse("key=x&page=7", None);
         assert_eq!(req.page, Some(7));
+    }
+
+    // ─── 请求级用例：走真实 FromRequest（body 识别/拒绝语义） ───
+
+    fn build_request(query: &str, body: &str, content_type: Option<&str>) -> Request {
+        let mut builder = Request::builder().method("POST").uri(format!("/x?{query}"));
+        if let Some(ct) = content_type {
+            builder = builder.header(axum::http::header::CONTENT_TYPE, ct);
+        }
+        builder
+            .body(axum::body::Body::from(body.to_string()))
+            .unwrap()
+    }
+
+    #[tokio::test]
+    async fn malformed_json_with_json_content_type_is_rejected() {
+        // 截断 JSON：静默落回 query 会让客户端以为 body 生效了
+        let req = build_request("page=1", r#"{"page":2"#, Some("application/json"));
+        let result = QueryOrBody::<Req>::from_request(req, &()).await;
+        assert!(result.is_err(), "坏 JSON body 应 400 而不是静默落回 query");
+    }
+
+    #[tokio::test]
+    async fn garbage_body_without_content_type_is_rejected() {
+        let req = build_request("page=1", "garbage-without-equals", None);
+        let result = QueryOrBody::<Req>::from_request(req, &()).await;
+        assert!(result.is_err(), "无法识别的 body 应 400");
+    }
+
+    #[tokio::test]
+    async fn json_body_without_content_type_still_works() {
+        let req = build_request("page=1", r#"{"page":5}"#, None);
+        let parsed = QueryOrBody::<Req>::from_request(req, &()).await.unwrap();
+        assert_eq!(parsed.0.page, Some(5));
+    }
+
+    #[tokio::test]
+    async fn form_body_without_content_type_still_merges() {
+        let req = build_request("key=x", "page=3&refresh=false", None);
+        let parsed = QueryOrBody::<Req>::from_request(req, &()).await.unwrap();
+        assert_eq!(parsed.0.page, Some(3));
+        assert_eq!(parsed.0.key.as_deref(), Some("x"));
+        assert_eq!(parsed.0.refresh, Some(false));
+    }
+
+    #[tokio::test]
+    async fn json_array_body_is_rejected() {
+        let req = build_request("page=1", r#"[1,2,3]"#, Some("application/json"));
+        let result = QueryOrBody::<Req>::from_request(req, &()).await;
+        assert!(result.is_err(), "非对象 JSON 无法做字段级合并，应 400");
     }
 }

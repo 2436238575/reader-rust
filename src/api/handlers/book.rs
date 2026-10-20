@@ -674,10 +674,10 @@ pub async fn upload_txt_book(
 
     let mut file_name = String::new();
     let mut bytes: Option<Vec<u8>> = None;
-    while let Some(field) = multipart
-        .next_field()
-        .await
-        .map_err(|e| AppError::BadRequest(e.to_string()))?
+    let mut field_count = 0usize;
+    while let Some(field) =
+        crate::api::handlers::multipart::next_field_limited(&mut multipart, &mut field_count)
+            .await?
     {
         let field_name = field.name().unwrap_or_default().to_string();
         if field_name != "file" {
@@ -725,10 +725,10 @@ pub async fn upload_epub_book(
 
     let mut file_name = String::new();
     let mut bytes: Option<Vec<u8>> = None;
-    while let Some(field) = multipart
-        .next_field()
-        .await
-        .map_err(|e| AppError::BadRequest(e.to_string()))?
+    let mut field_count = 0usize;
+    while let Some(field) =
+        crate::api::handlers::multipart::next_field_limited(&mut multipart, &mut field_count)
+            .await?
     {
         let field_name = field.name().unwrap_or_default().to_string();
         if field_name != "file" {

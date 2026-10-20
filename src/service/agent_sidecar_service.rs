@@ -104,6 +104,10 @@ pub struct AgentTaskSnapshot {
     pub current_chapter_index: Option<i32>,
     pub target_chapter_index: Option<i32>,
     pub last_error: Option<String>,
+    /// 任务归属的用户命名空间：status/cancel 据此隔离，不下发到客户端。
+    /// 单用户部署下恒等于唯一账号，这层是为多用户部署形态留的防线
+    #[serde(skip)]
+    pub owner_ns: String,
 }
 
 impl AgentTaskSnapshot {
@@ -117,6 +121,7 @@ impl AgentTaskSnapshot {
             current_chapter_index: None,
             target_chapter_index: None,
             last_error: None,
+            owner_ns: String::new(),
         }
     }
 }
@@ -124,6 +129,7 @@ impl AgentTaskSnapshot {
 struct ActiveTask {
     cancel: Arc<AtomicBool>,
     child: Arc<AsyncMutex<Option<Child>>>,
+    owner_ns: String,
 }
 
 /// 任务类型。
@@ -265,6 +271,7 @@ impl AgentSidecarService {
         let task = Arc::new(ActiveTask {
             cancel: Arc::new(AtomicBool::new(false)),
             child: Arc::new(AsyncMutex::new(None)),
+            owner_ns: user_ns.to_string(),
         });
         {
             let mut active = self.active.lock().await;
@@ -284,6 +291,7 @@ impl AgentSidecarService {
                 current_chapter_index: None,
                 target_chapter_index,
                 last_error: None,
+                owner_ns: user_ns.to_string(),
             });
         }
 
@@ -337,17 +345,24 @@ impl AgentSidecarService {
         Ok(job_id)
     }
 
-    pub async fn status(&self) -> AgentTaskSnapshot {
+    /// 状态快照只对任务归属者可见：其他用户的视角永远是 idle
+    /// （单用户部署下恒为同一人，这层为多用户形态兜底）
+    pub async fn status(&self, user_ns: &str) -> AgentTaskSnapshot {
         self.registry
             .lock()
             .await
             .clone()
+            .filter(|snapshot| snapshot.owner_ns == user_ns)
             .unwrap_or_else(AgentTaskSnapshot::empty)
     }
 
-    pub async fn cancel_task(&self) -> bool {
+    /// 取消只对任务归属者生效；他人调用视为无任务可取消
+    pub async fn cancel_task(&self, user_ns: &str) -> bool {
         let active = self.active.lock().await.clone();
         if let Some(task) = active {
+            if task.owner_ns != user_ns {
+                return false;
+            }
             task.cancel.store(true, Ordering::SeqCst);
             if let Some(mut child) = task.child.lock().await.take() {
                 let _ = child.kill().await;
@@ -1212,10 +1227,11 @@ async fn download_map_image(url: &str) -> Result<Vec<u8>, AppError> {
             return Err(AppError::BadRequest("地图图片超过大小上限".to_string()));
         }
     }
-    let bytes = response.bytes().await?;
-    if bytes.len() as u64 > MAX_MAP_IMAGE_BYTES {
-        return Err(AppError::BadRequest("地图图片超过大小上限".to_string()));
-    }
+    // 边收边限量：Content-Length 缺失/伪造（chunked 流）时 .bytes() 会把整个
+    // 失控上游先读进内存才轮得到大小判断
+    let bytes = crate::crawler::fetcher::read_body_limited(response, MAX_MAP_IMAGE_BYTES)
+        .await
+        .map_err(|e| AppError::BadRequest(format!("地图图片超过大小上限：{e}")))?;
     Ok(bytes.to_vec())
 }
 

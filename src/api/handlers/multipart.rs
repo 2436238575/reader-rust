@@ -1,7 +1,32 @@
 //! multipart 表单的共享读取工具。
 
 use crate::error::error::AppError;
-use axum::extract::multipart::Field;
+use axum::extract::{multipart::Field, Multipart};
+
+/// 单个 multipart 请求的字段数上限：单字段的字节限量管不住
+/// 「一个请求挂上千个字段」（每字段都吃内存/磁盘配额）。
+pub(crate) const MAX_MULTIPART_FIELDS: usize = 20;
+
+/// 取下一个字段并计数；超过 [`MAX_MULTIPART_FIELDS`] 直接 400。
+pub(crate) async fn next_field_limited<'a>(
+    multipart: &'a mut Multipart,
+    count: &mut usize,
+) -> Result<Option<Field<'a>>, AppError> {
+    let Some(field) = multipart
+        .next_field()
+        .await
+        .map_err(|e| AppError::BadRequest(e.to_string()))?
+    else {
+        return Ok(None);
+    };
+    *count += 1;
+    if *count > MAX_MULTIPART_FIELDS {
+        return Err(AppError::BadRequest(format!(
+            "一次最多上传 {MAX_MULTIPART_FIELDS} 个文件/字段"
+        )));
+    }
+    Ok(Some(field))
+}
 
 /// 流式读取单个 multipart 字段并在超过 `max_bytes` 时中止。
 ///

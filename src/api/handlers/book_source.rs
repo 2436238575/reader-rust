@@ -1119,10 +1119,9 @@ use axum::extract::Multipart;
 pub async fn read_source_file(
     mut multipart: Multipart,
 ) -> Result<Json<ApiResponse<Vec<BookSource>>>, AppError> {
-    while let Some(field) = multipart
-        .next_field()
-        .await
-        .map_err(|e| AppError::BadRequest(e.to_string()))?
+    let mut field_count = 0usize;
+    while let Some(field) =
+        super::multipart::next_field_limited(&mut multipart, &mut field_count).await?
     {
         if let Some(file_name) = field.file_name() {
             if file_name.ends_with(".json") || file_name.ends_with(".txt") {

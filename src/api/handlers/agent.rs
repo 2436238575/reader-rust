@@ -59,9 +59,9 @@ pub async fn run_agent_task(
 
 pub async fn get_agent_task_status(
     State(state): State<AppState>,
-    _user: CurrentUser,
+    user: CurrentUser,
 ) -> Result<Json<ApiResponse<Value>>, AppError> {
-    let snapshot = state.agent_sidecar_service.status().await;
+    let snapshot = state.agent_sidecar_service.status(&user.0.ns).await;
     Ok(Json(ApiResponse::ok(
         serde_json::to_value(snapshot).unwrap_or_default(),
     )))
@@ -69,9 +69,9 @@ pub async fn get_agent_task_status(
 
 pub async fn cancel_agent_task(
     State(state): State<AppState>,
-    _user: CurrentUser,
+    user: CurrentUser,
 ) -> Result<Json<ApiResponse<Value>>, AppError> {
-    let cancelled = state.agent_sidecar_service.cancel_task().await;
+    let cancelled = state.agent_sidecar_service.cancel_task(&user.0.ns).await;
     Ok(Json(ApiResponse::ok(
         serde_json::json!({ "cancelled": cancelled }),
     )))

@@ -62,13 +62,46 @@ pub async fn run() -> anyhow::Result<()> {
     }
     tracing::info!("listening on {}", addr);
     let listener = tokio::net::TcpListener::bind(addr).await?;
-    axum::serve(
+
+    // watch 广播停机信号：graceful shutdown 与排空死线各持一个接收端
+    let (shutdown_tx, _) = tokio::sync::watch::channel(false);
+    let mut graceful_rx = shutdown_tx.subscribe();
+    let mut deadline_rx = shutdown_tx.subscribe();
+    tokio::spawn(async move {
+        shutdown_signal().await;
+        let _ = shutdown_tx.send(true);
+    });
+
+    let serve = axum::serve(
         listener,
         app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
     )
-    .with_graceful_shutdown(shutdown_signal())
-    .await?;
-    tracing::info!("server stopped gracefully");
+    .with_graceful_shutdown(async move {
+        let _ = graceful_rx.wait_for(|signalled| *signalled).await;
+    });
+    // WithGracefulShutdown 是 IntoFuture 不是 Future，包一层 async 才能进 select!
+    let mut serve = std::pin::pin!(async move { serve.await });
+
+    // 优雅排空必须有硬上限：SSE 长连接（搜索/缓存/调试共 6 个端点）不会自然
+    // 结束，等它们就是把进程挂到客户端断开或被 SIGKILL；挂住期间批量任务还在写。
+    // 信号后最多留 10 秒给在途普通请求，超时直接退出。
+    const GRACEFUL_DRAIN_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+    let drain_deadline = async move {
+        let _ = deadline_rx.wait_for(|signalled| *signalled).await;
+        tokio::time::sleep(GRACEFUL_DRAIN_TIMEOUT).await;
+    };
+
+    tokio::select! {
+        result = &mut serve => {
+            result?;
+            tracing::info!("server stopped gracefully");
+        }        _ = drain_deadline => {
+            tracing::warn!(
+                "优雅关闭超时（{} 秒），强制退出（仍有长连接未结束）",
+                GRACEFUL_DRAIN_TIMEOUT.as_secs()
+            );
+        }
+    }
     Ok(())
 }
 

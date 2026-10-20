@@ -196,13 +196,45 @@ async fn response_from_upstream(upstream: reqwest::Response) -> Result<Response,
         .get(reqwest::header::CONTENT_TYPE)
         .and_then(|v| v.to_str().ok())
         .and_then(|v| HeaderValue::from_str(v).ok());
-    let body = crate::crawler::fetcher::read_body_limited(upstream, MAX_PROXY_RESPONSE_BYTES)
-        .await
-        .map_err(|e| AppError::BadRequest(e.to_string()))?;
     if !status.is_success() {
+        // 错误响应体小、且要拼进用户可读文案：整读限量
+        let body = crate::crawler::fetcher::read_body_limited(upstream, MAX_PROXY_RESPONSE_BYTES)
+            .await
+            .map_err(|e| AppError::BadRequest(e.to_string()))?;
         return Ok(build_upstream_error_response(status, &body));
     }
-    Ok(build_response(status, content_type, body))
+    // 成功响应流式转发：整包缓冲会把 stream:true 的客户端（TTS 大音频、长文本）
+    // 憋到上游结束才一次性吐出，还会撞整包上限。流上累计计数做截断兜底：
+    // 超限即掐断（客户端收到截断响应，比整包进内存强）
+    let mut total = 0u64;
+    let capped = futures::stream::StreamExt::map(upstream.bytes_stream(), move |item| {
+        item.map_err(std::io::Error::other).and_then(|chunk| {
+            total += chunk.len() as u64;
+            if total > MAX_PROXY_RESPONSE_BYTES {
+                return Err(std::io::Error::other("上游响应超过代理大小限制"));
+            }
+            Ok(chunk)
+        })
+    });
+    Ok(build_stream_response(status, content_type, capped))
+}
+
+fn build_stream_response<S>(
+    status: reqwest::StatusCode,
+    content_type: Option<HeaderValue>,
+    stream: S,
+) -> Response
+where
+    S: futures::Stream<Item = Result<bytes::Bytes, std::io::Error>> + Send + 'static,
+{
+    let status = StatusCode::from_u16(status.as_u16()).unwrap_or(StatusCode::BAD_GATEWAY);
+    let mut response = (status, axum::body::Body::from_stream(stream)).into_response();
+    if let Some(content_type) = content_type {
+        response
+            .headers_mut()
+            .insert(header::CONTENT_TYPE, content_type);
+    }
+    response
 }
 
 fn build_response(

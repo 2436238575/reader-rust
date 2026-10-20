@@ -15,6 +15,9 @@ pub async fn read_body_limited(
     mut res: reqwest::Response,
     limit: u64,
 ) -> anyhow::Result<bytes::Bytes> {
+    // 提前退出用的是响应头 Content-Length：自动解压开启时它是压缩后的线上字节数，
+    // 并不等于解压后大小，所以这只是省一次无用读取的快路径——
+    // 真正的防线在下面循环里按实际收到的（解压后）字节计数
     if let Some(len) = res.content_length() {
         if len > limit {
             anyhow::bail!("响应体过大: {len} 字节（上限 {limit}）");

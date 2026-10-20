@@ -739,6 +739,9 @@ impl ShelfBookRepo {
         mut row: ShelfBookRow,
         position: Option<i64>,
     ) -> Result<(), AppError> {
+        // 读 position/MAX 与插入收进同一事务：并发 upsert 同书时读-改-写分离
+        // 是 last-writer-wins，还会算出相同 position（BEGIN IMMEDIATE 串行化写者）
+        let mut tx = self.pool.begin_with("BEGIN IMMEDIATE").await?;
         let position = match position {
             Some(p) => p,
             None => {
@@ -750,7 +753,7 @@ impl ShelfBookRepo {
                 )
                 .bind(user_ns)
                 .bind(id)
-                .fetch_optional(&self.pool)
+                .fetch_optional(&mut *tx)
                 .await?;
                 match existing {
                     Some(p) => p,
@@ -759,7 +762,7 @@ impl ShelfBookRepo {
                             "SELECT MAX(position) FROM shelf_books WHERE user_ns=?1",
                         )
                         .bind(user_ns)
-                        .fetch_one(&self.pool)
+                        .fetch_one(&mut *tx)
                         .await?;
                         max.unwrap_or(0) + 1
                     }
@@ -767,7 +770,9 @@ impl ShelfBookRepo {
             }
         };
         row.position = position;
-        self.insert_row(&self.pool, user_ns, &row).await
+        self.insert_row(&mut *tx, user_ns, &row).await?;
+        tx.commit().await?;
+        Ok(())
     }
 
     /// 带限额的 upsert（saveBook 路径）：存在性检查、书架/本地书限额与写入

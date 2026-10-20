@@ -200,10 +200,10 @@ pub async fn upload_file(
     // 与静态路由同源：静态服务把 ASSETS_DIR 挂在 /assets 下，
     // 写入端必须用同一个目录，否则自定义 ASSETS_DIR 后上传的文件取不到
     let mut file_list = Vec::new();
-    while let Some(field) = multipart
-        .next_field()
-        .await
-        .map_err(|e| AppError::BadRequest(e.to_string()))?
+    let mut field_count = 0usize;
+    while let Some(field) =
+        crate::api::handlers::multipart::next_field_limited(&mut multipart, &mut field_count)
+            .await?
     {
         let raw_name = field
             .file_name()
