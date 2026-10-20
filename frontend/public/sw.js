@@ -1,7 +1,7 @@
-const SHELL_CACHE = 'reader-shell-v1-0-2'
-const RUNTIME_CACHE = 'reader-runtime-v1-0-2'
-const API_CACHE = 'reader-api-v1-0-2'
-const IMAGE_CACHE = 'reader-image-v1-0-2'
+const SHELL_CACHE = 'reader-shell-v1-0-3'
+const RUNTIME_CACHE = 'reader-runtime-v1-0-3'
+const API_CACHE = 'reader-api-v1-0-3'
+const IMAGE_CACHE = 'reader-image-v1-0-3'
 // 部署前缀按 SW 自身的位置推导（`/read/sw.js` → `/read/`）：
 // public/ 下的文件不经过构建处理，写死根路径在子路径部署下会全部 404
 const BASE = new URL('./', self.location).pathname
@@ -58,19 +58,47 @@ self.addEventListener('message', (event) => {
   }
 })
 
+// 各缓存库的条目上限：keys() 按插入序返回，超出时逐出最旧一批。
+// 没有上限时图片库会随阅读无限增长（图片本体是最占空间的一类）
+const CACHE_ENTRY_LIMITS = {
+  [RUNTIME_CACHE]: 80,
+  [API_CACHE]: 60,
+  [IMAGE_CACHE]: 300,
+}
+
+// 缓存键一律剥掉 accessToken 查询参数：令牌是易变凭据，不该持久化进
+// Cache API；也避免换令牌后同一张图/同一份响应缓存多份
+function cacheKeyOf(url) {
+  const parsed = new URL(url)
+  parsed.searchParams.delete('accessToken')
+  return parsed.toString()
+}
+
+async function putWithLimit(cacheName, key, response) {
+  const cache = await caches.open(cacheName)
+  await cache.put(key, response)
+  const limit = CACHE_ENTRY_LIMITS[cacheName]
+  if (!limit) return
+  const keys = await cache.keys()
+  const excess = keys.length - limit
+  for (const oldKey of keys.slice(0, excess)) {
+    await cache.delete(oldKey)
+  }
+}
+
 // 只读接口：联网成功即刷新缓存，断网/服务端不可达时回退缓存
 function networkFirstApi(request) {
   return fetch(request)
     .then((response) => {
       if (response.ok) {
         const copy = response.clone()
-        caches.open(API_CACHE).then((cache) => cache.put(request, copy))
+        putWithLimit(API_CACHE, cacheKeyOf(request.url), copy)
       }
       return response
     })
     .catch(() =>
       caches.open(API_CACHE).then((cache) =>
-        cache.match(request).then((cached) => {
+        cache.match(cacheKeyOf(request.url)).then((cached) => {
           if (cached) return cached
           // 没有缓存可回退时把网络错误原样抛回去，让前端走自己的错误处理
           return Promise.reject(new Error('offline and no cached response'))
@@ -91,7 +119,7 @@ self.addEventListener('fetch', (event) => {
       fetch(request)
         .then((response) => {
           const copy = response.clone()
-          caches.open(RUNTIME_CACHE).then((cache) => cache.put(request, copy))
+          putWithLimit(RUNTIME_CACHE, request, copy)
           return response
         })
         .catch(
@@ -104,14 +132,16 @@ self.addEventListener('fetch', (event) => {
     return
   }
 
-  // 图片管道：id 即内容寻址（md5），同 id 内容不变，cache-first 安全
+  // 图片管道：id 即内容寻址（md5），同 id 内容不变，cache-first 安全；
+  // 缓存键经 cacheKeyOf 剥掉令牌
   if (url.pathname.startsWith(`${BASE}reader3/image/`)) {
+    const key = cacheKeyOf(request.url)
     event.respondWith(
       caches.open(IMAGE_CACHE).then((cache) =>
-        cache.match(request).then((cached) => {
+        cache.match(key).then((cached) => {
           if (cached) return cached
           return fetch(request).then((response) => {
-            if (response.ok) cache.put(request, response.clone())
+            if (response.ok) putWithLimit(IMAGE_CACHE, key, response.clone())
             return response
           })
         })
@@ -137,7 +167,7 @@ self.addEventListener('fetch', (event) => {
         if (cached) return cached
         return fetch(request).then((response) => {
           const copy = response.clone()
-          caches.open(RUNTIME_CACHE).then((cache) => cache.put(request, copy))
+          putWithLimit(RUNTIME_CACHE, request, copy)
           return response
         })
       })

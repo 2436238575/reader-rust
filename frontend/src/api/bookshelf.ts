@@ -129,7 +129,11 @@ export function getCoverUrl(coverUrl?: string) {
 }
 
 /// 给需要鉴权的直链（本地书资源、封面、配图等）补上令牌与部署前缀。
+/// 令牌只发给本站路径：完整的 http(s) 地址指向第三方主机，拼上 accessToken
+/// 等于把登录态随浏览器取图送出去——外源 URL 原样返回（约定上后端已把书源
+/// 图片收口为 /reader3/image/<id>，走到这里的外源地址是兜底场景，宁可不渲染）。
 export function withAuthQuery(url: string) {
+  if (/^https?:\/\//i.test(url)) return url
   const [path, rawQuery = ''] = url.split('?')
   const params = new URLSearchParams(rawQuery)
   appendAuthQueryParams(params)

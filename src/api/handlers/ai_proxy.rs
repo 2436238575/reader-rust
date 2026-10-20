@@ -177,6 +177,15 @@ pub async fn ai_proxy_image(Json(req): Json<AiProxyImageRequest>) -> Result<Resp
     if !status.is_success() {
         return Ok(build_upstream_error_response(status, &body));
     }
+    // 上游 Content-Type 原样透传是自 XSS 面（客户端可控 url 让上游回
+    // text/html）：图片代理只放行 image/*，其余类型一律拒绝
+    let is_image = content_type
+        .as_ref()
+        .and_then(|v| v.to_str().ok())
+        .is_some_and(|ct| ct.to_ascii_lowercase().starts_with("image/"));
+    if !is_image {
+        return Err(AppError::BadRequest("上游返回的不是图片".to_string()));
+    }
     Ok(build_response(status, content_type, body))
 }
 

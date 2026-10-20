@@ -64,4 +64,31 @@ describe('sanitizeUntrustedHtml', () => {
   it('keeps plain text untouched', () => {
     expect(sanitizeUntrustedHtml('纯文本正文')).toBe('纯文本正文')
   })
+
+  it('strips overlay-capable CSS from style attributes', () => {
+    const out = sanitizeUntrustedHtml(
+      '<div style="position:fixed;inset:0;z-index:9999;background:#fff;color:#000">钓鱼</div>'
+    )
+    expect(out).not.toContain('position')
+    expect(out).not.toContain('z-index')
+    // 排版类声明保留
+    expect(out).toContain('background')
+    expect(out).toContain('color')
+    expect(out).toContain('钓鱼')
+  })
+
+  it('strips remote-loading CSS from style attributes', () => {
+    const out = sanitizeUntrustedHtml(
+      '<p style="background-image:url(https://evil.example/t.png);text-indent:2em">t</p>'
+    )
+    expect(out).not.toContain('url(')
+    expect(out).toContain('text-indent')
+  })
+
+  it('strips absolute/sticky positioning too', () => {
+    expect(sanitizeUntrustedHtml('<p style="position:absolute;top:0">t</p>')).not.toContain(
+      'position'
+    )
+    expect(sanitizeUntrustedHtml('<p style="POSITION:sticky">t</p>')).not.toContain('position')
+  })
 })
