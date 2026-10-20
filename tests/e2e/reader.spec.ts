@@ -152,8 +152,9 @@ test.describe('Standard E2E: reader', () => {
     // 输入有匹配关键词：搜索会定位到首个命中所在页（这是功能不是 bug）
     await searchInput.fill('正文')
     await expect.poll(async () => transformOf(), { timeout: 5_000 }).not.toBe(pagedTransform)
-    // 关闭面板：停在命中页不归零
+    // 关闭面板：ESC 关搜索（键盘关闭链回归锚点），停在命中页不归零
     await page.keyboard.press('Escape')
+    await expect(searchInput).toBeHidden()
     const locatedTransform = await transformOf()
     await expect.poll(async () => transformOf()).toBe(locatedTransform)
 

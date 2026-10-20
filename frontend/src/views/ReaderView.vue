@@ -361,10 +361,8 @@ import { onBeforeRouteLeave, useRouter } from 'vue-router'
 import { useReaderStore, fontPresets } from '../stores/reader'
 import { useAppStore } from '../stores/app'
 import { useSourceStore } from '../stores/source'
-import { getBookInfo } from '../api/bookshelf'
 import { applySystemTheme } from '../utils/systemUi'
 import { isIosWebkit } from '../utils/platform'
-import { countBrowserBookCache } from '../utils/browserCache'
 import { APP_VIEWPORT_CHANGE_EVENT, syncViewportSize } from '../utils/viewport'
 import { isReaderInteractiveClickTarget, resolveReaderTapZone } from '../utils/readerClick'
 import {
@@ -398,6 +396,12 @@ import { useReaderSearch } from '../composables/useReaderSearch'
 import { useReaderSelection } from '../composables/useReaderSelection'
 import { useContinuousReading } from '../composables/useContinuousReading'
 import { useReaderAutoPlayback } from '../composables/useReaderAutoPlayback'
+import { useOfflineBanner } from '../composables/useOfflineBanner'
+import { useCommentPanelGlue } from '../composables/useCommentPanelGlue'
+import { useOverlayHistory } from '../composables/useOverlayHistory'
+import { useReaderKeyboard } from '../composables/useReaderKeyboard'
+import { useReaderTtsControls } from '../composables/useReaderTtsControls'
+import { useBookInfoModal } from '../composables/useBookInfoModal'
 
 const ReaderCatalog = defineAsyncComponent(() => import('../components/reader/ReaderCatalog.vue'))
 const ReadSettings = defineAsyncComponent(() => import('../components/reader/ReadSettings.vue'))
@@ -450,7 +454,6 @@ const scrollContainerRef = ref<HTMLElement>()
 const chapterTextRef = ref<HTMLElement>()
 const showControls = ref(false)
 const isMobile = ref(false)
-let speechTimerTicker: number | null = null
 let suppressNextTapUntil = 0
 let restorePositionTimer: number | null = null
 let persistPositionTimer: number | null = null
@@ -493,24 +496,22 @@ const touchState = ref({
   moving: false,
   horizontalLocked: false,
 })
-const showBookInfo = ref(false)
-const bookInfoBook = ref<Book | null>(null)
-const showTTSPanel = ref(false)
-const ttsPanelDismissed = ref(false)
-const offlineCachedCount = ref(0)
-const speechTimerNow = ref(Date.now())
-const speechTimerText = computed(() => {
-  if (!store.speechStopAt) return ''
-  const remainMs = store.speechStopAt - speechTimerNow.value
-  if (remainMs <= 0) return ''
-  const totalMinutes = Math.ceil(remainMs / 60000)
-  if (totalMinutes >= 60) {
-    const hours = Math.floor(totalMinutes / 60)
-    const minutes = totalMinutes % 60
-    return minutes ? `${hours}小时${minutes}分钟后停止` : `${hours}小时后停止`
-  }
-  return `${totalMinutes}分钟后停止`
-})
+const { offlineBannerText, scheduleRefreshOfflineCacheState, disposeOfflineBanner } =
+  useOfflineBanner(store, appStore)
+// 评论面板（showCommentPanel 等）、书籍详情（showBookInfo 等）、
+// TTS 面板（showTTSPanel 等）的状态由各自 composable 提供，见下方实例化
+const {
+  showCommentPanel,
+  commentMode,
+  commentParaIndex,
+  commentParaText,
+  commentParaAuthorMarked,
+  openChapterComments,
+  openParaComments,
+  closeCommentPanel,
+} = useCommentPanelGlue(store)
+const { showBookInfo, bookInfoBook, openInfo, handleBookSwitched, openAiBook } =
+  useBookInfoModal(store, appStore, router)
 const {
   showSearch,
   searchQuery,
@@ -564,31 +565,6 @@ const {
   computed(() => ({ selectAction: config.value.selectAction })),
   scrollContainerRef
 )
-
-const offlineBannerText = computed(() => {
-  if (appStore.isOnline) return ''
-  if (offlineCachedCount.value > 0) {
-    return `离线模式：当前书已缓存 ${offlineCachedCount.value} 章，可继续阅读已缓存章节`
-  }
-  return '离线模式：当前书尚未缓存到浏览器，未缓存章节将无法打开'
-})
-
-async function refreshOfflineCacheState() {
-  if (!store.book?.bookId) {
-    offlineCachedCount.value = 0
-    return
-  }
-  offlineCachedCount.value = await countBrowserBookCache(store.book.bookId).catch(() => 0)
-}
-
-let refreshOfflineCacheStateTimer: number | null = null
-
-function scheduleRefreshOfflineCacheState() {
-  if (refreshOfflineCacheStateTimer) clearTimeout(refreshOfflineCacheStateTimer)
-  refreshOfflineCacheStateTimer = window.setTimeout(() => {
-    void refreshOfflineCacheState()
-  }, 120)
-}
 
 // resize 与 viewport 事件双通道都会调 checkMedia：合并到同一帧，
 // 否则拖拽窗口/键盘弹起会连续多次全量分页
@@ -782,33 +758,6 @@ function handleChapterTextClick(event: MouseEvent) {
 
 /* ─── 图片放大预览 ─── */
 const previewImage = ref('')
-
-/* ─── 评论面板 ─── */
-const showCommentPanel = ref(false)
-const commentMode = ref<'chapter' | 'para'>('chapter')
-const commentParaIndex = ref(0)
-const commentParaText = computed(
-  () => store.paraReviewCountByIndex.get(commentParaIndex.value)?.text || ''
-)
-// 概览没标记 authorCommented 的段落，作者扫描注定空手，「只看作者」入口不显示
-const commentParaAuthorMarked = computed(
-  () => store.paraReviewCountByIndex.get(commentParaIndex.value)?.authorCommented === true
-)
-
-function openChapterComments() {
-  commentMode.value = 'chapter'
-  showCommentPanel.value = true
-}
-
-function openParaComments(paraIndex: number) {
-  commentMode.value = 'para'
-  commentParaIndex.value = paraIndex
-  showCommentPanel.value = true
-}
-
-function closeCommentPanel() {
-  showCommentPanel.value = false
-}
 
 /**
  * 渲染某一章的正文 HTML。
@@ -1508,6 +1457,82 @@ const {
   prevChapter
 )
 
+// TTS 面板粘合（开关/暂停切换/参数调整）收进 composable
+const {
+  showTTSPanel,
+  ttsPanelDismissed,
+  speechTimerText,
+  handleTTS,
+  closeTTSPanel,
+  toggleSpeechFromPanel,
+  handleStopTTS,
+  changeVoice,
+  changeOpenAIVoice,
+  adjustSpeechRate,
+  adjustSpeechPitch,
+  setSpeechTimer,
+} = useReaderTtsControls(store, {
+  startSpeech,
+  cancelSpeechTransition,
+  restartSpeechFromCurrentParagraph,
+})
+
+// 覆盖层历史栈：面板打开压入同 URL 历史标记，返回键只关最上层面板
+// （panels 顺序即 ESC/返回键的关闭优先级）
+const { handleOverlayPopState } = useOverlayHistory([
+    { isOpen: computed(() => !!store.activePanel), close: () => store.closePanel() },
+    { isOpen: showSearch, close: closeSearch },
+    { isOpen: showCommentPanel, close: () => (showCommentPanel.value = false) },
+    { isOpen: computed(() => !!previewImage.value), close: () => (previewImage.value = '') },
+    { isOpen: showTTSPanel, close: closeTTSPanel },
+    { isOpen: showBookInfo, close: () => (showBookInfo.value = false) },
+  ])
+
+const { handleKeydown } = useReaderKeyboard(
+  store,
+  appStore,
+  {
+    // ESC 关闭链顺序（优先级从高到低）：面板 → 选字菜单 → 搜索 → 评论 →
+    // 图片预览 → TTS 面板 → 书籍详情 → 点按控制条 → 退出阅读页
+    escChain: [
+      { isOpen: () => !!store.activePanel, close: () => store.closePanel() },
+      { isOpen: () => selectionMenu.value.visible, close: hideSelectionMenu },
+      { isOpen: () => showSearch.value, close: closeSearch },
+      { isOpen: () => showCommentPanel.value, close: () => (showCommentPanel.value = false) },
+      { isOpen: () => !!previewImage.value, close: () => (previewImage.value = '') },
+      { isOpen: () => showTTSPanel.value, close: closeTTSPanel },
+      { isOpen: () => showBookInfo.value, close: () => (showBookInfo.value = false) },
+    ],
+    isBlockingOverlayOpen: () =>
+      !!(
+        store.activePanel ||
+        showSearch.value ||
+        showCommentPanel.value ||
+        showBookInfo.value ||
+        previewImage.value
+      ),
+    isControlsVisible: () => showControls.value,
+    hideControls: () => (showControls.value = false),
+  },
+  {
+    goBack,
+    pageForward,
+    pageBackward,
+    nextChapter,
+    prevChapter,
+    scrollToTop,
+    scrollToBottom,
+    scrollPageVertical: (direction) => {
+      const container = scrollContainerRef.value
+      if (!container) return
+      container.scrollBy({ top: direction * container.clientHeight * 0.8, behavior: 'smooth' })
+    },
+    isHorizontalPageMode: () => isHorizontalPageMode.value,
+    hasScrollContainer: () => !!scrollContainerRef.value,
+    interruptAutoScroll,
+  }
+)
+
 // Click behavior
 function handleBackgroundClick(e: Event) {
   // If clicked directly on the reader-view wrapper, toggle controls
@@ -1792,336 +1817,9 @@ function openCachePanel() {
   store.togglePanel('cache')
 }
 
-// Keyboard shortcuts
-function handleKeydown(e: KeyboardEvent) {
-  const activeElement = document.activeElement as HTMLElement | null
-  const tagName = activeElement?.tagName?.toLowerCase()
-  const isEditing =
-    tagName === 'input' ||
-    tagName === 'textarea' ||
-    tagName === 'select' ||
-    !!activeElement?.isContentEditable
-
-  // Escape 优先于输入框守卫：焦点在搜索框里时也要能 ESC 关面板（先交还焦点）
-  if (e.key === 'Escape') {
-    // App 级弹窗（设置抽屉/缓存库）开着时交给弹窗自己的
-    // ESC 处理（useEscClose），别穿透落到阅读器的关闭链/goBack
-    if (appStore.showSettingsDrawer || appStore.showCacheLibrary) return
-    if (isEditing) activeElement?.blur()
-    if (store.activePanel) {
-      store.closePanel()
-      return
-    }
-    if (selectionMenu.value.visible) {
-      hideSelectionMenu()
-      return
-    }
-    if (showSearch.value) {
-      closeSearch()
-      return
-    }
-    if (showCommentPanel.value) {
-      showCommentPanel.value = false
-      return
-    }
-    if (previewImage.value) {
-      previewImage.value = ''
-      return
-    }
-    if (showTTSPanel.value) {
-      closeTTSPanel()
-      return
-    }
-    if (showBookInfo.value) {
-      showBookInfo.value = false
-      return
-    }
-    if (showControls.value) {
-      showControls.value = false
-      return
-    }
-    // If nothing is open, go back
-    goBack()
-    return
-  }
-  if (isEditing) return
-
-  // 焦点停在按钮/链接上时按空格会同时触发原生点击与翻页：放行原生行为
-  if ((tagName === 'button' || tagName === 'a') && e.key === ' ') return
-
-  // 覆盖型面板打开时，翻页/滚屏键不穿透到背后的正文
-  // （TTS 面板是悬浮小条，不拦——边听边用键盘翻页是正常用法）
-  if (
-    store.activePanel ||
-    showSearch.value ||
-    showCommentPanel.value ||
-    showBookInfo.value ||
-    previewImage.value
-  )
-    return
-
-  // 滚屏/翻页键视为手动接管：先停自动滚动，再继续本次按键动作
-  if (
-    store.isAutoScrolling &&
-    [
-      ' ',
-      'Space',
-      'ArrowUp',
-      'ArrowDown',
-      'ArrowLeft',
-      'ArrowRight',
-      'PageUp',
-      'PageDown',
-      'Home',
-      'End',
-    ].includes(e.key)
-  ) {
-    interruptAutoScroll()
-  }
-
-  const container = scrollContainerRef.value
-  if (!container) return
-
-  const h = container.clientHeight
-
-  switch (e.key) {
-    case ' ':
-    case 'Space':
-      e.preventDefault()
-      pageForward()
-      break
-    case 'ArrowDown':
-    case 'PageDown':
-      e.preventDefault()
-      if (isHorizontalPageMode.value) {
-        pageForward()
-      } else {
-        container.scrollBy({ top: h * 0.8, behavior: 'smooth' })
-      }
-      break
-    case 'ArrowUp':
-    case 'PageUp':
-      e.preventDefault()
-      if (isHorizontalPageMode.value) {
-        pageBackward()
-      } else {
-        container.scrollBy({ top: -(h * 0.8), behavior: 'smooth' })
-      }
-      break
-    case 'ArrowRight':
-      e.preventDefault()
-      nextChapter()
-      break
-    case 'ArrowLeft':
-      e.preventDefault()
-      prevChapter()
-      break
-    case 'Home':
-      e.preventDefault()
-      scrollToTop()
-      break
-    case 'End':
-      e.preventDefault()
-      scrollToBottom()
-      break
-  }
-}
-
-/* ─── 移动端返回键/手势：先关面板，不直接退出阅读页 ─── */
-// 覆盖型面板打开时压入一条同 URL 的历史标记；返回键弹掉标记时只关最上层面板。
-// UI 途径（按钮/ESC/遮罩）关闭时主动 history.back() 把标记消费掉，保持返回语义一致。
-// 瞬时元素（点按控制条、选字菜单）不参与：它们自动消失，压栈反而会吃掉返回键。
-const anyOverlayPanelOpen = computed(
-  () =>
-    !!(
-      store.activePanel ||
-      showSearch.value ||
-      showTTSPanel.value ||
-      showCommentPanel.value ||
-      showBookInfo.value ||
-      previewImage.value
-    )
-)
-
-let panelHistoryActive = false
-let consumingPanelHistory = false
-
-// 与 ESC 关闭链同序（不含 goBack）
-function closeTopmostOverlayPanel() {
-  if (store.activePanel) store.closePanel()
-  else if (showSearch.value) closeSearch()
-  else if (showCommentPanel.value) showCommentPanel.value = false
-  else if (previewImage.value) previewImage.value = ''
-  else if (showTTSPanel.value) closeTTSPanel()
-  else if (showBookInfo.value) showBookInfo.value = false
-}
-
-watch(anyOverlayPanelOpen, (open) => {
-  if (open && !panelHistoryActive) {
-    history.pushState({ ...(history.state ?? {}), __readerOverlay: true }, '')
-    panelHistoryActive = true
-  } else if (!open && panelHistoryActive && !consumingPanelHistory) {
-    consumingPanelHistory = true
-    history.back()
-  }
-})
-
-function handleOverlayPopState() {
-  if (consumingPanelHistory) {
-    consumingPanelHistory = false
-    panelHistoryActive = false
-    return
-  }
-  if (!panelHistoryActive) return
-  panelHistoryActive = false
-  closeTopmostOverlayPanel()
-}
-
 // Toolbar actions
 async function toggleBookmark() {
   store.togglePanel('bookmark')
-}
-
-function handleTTS() {
-  // 朗读中/暂停中点工具栏按钮＝暂停/继续（按钮 title 就是这么承诺的），
-  // 同时打开面板；未开始时才只是打开面板
-  if (store.isSpeaking || store.isPaused) {
-    toggleSpeechFromPanel()
-    return
-  }
-  ttsPanelDismissed.value = false
-  showTTSPanel.value = true
-}
-
-function closeTTSPanel() {
-  showTTSPanel.value = false
-  ttsPanelDismissed.value = true
-}
-
-function toggleSpeechFromPanel() {
-  ttsPanelDismissed.value = false
-  showTTSPanel.value = true
-  // 暂停态恢复优先（pauseTTS 是 toggle）：此前 isSpeaking=false 会走成从头重读
-  if (store.isPaused) {
-    store.pauseTTS()
-    return
-  }
-  if (!store.isSpeaking) {
-    startSpeech()
-    return
-  }
-  cancelSpeechTransition()
-  store.pauseTTS()
-}
-
-function handleStopTTS() {
-  cancelSpeechTransition()
-  store.stopTTS()
-}
-
-watch(
-  () => store.isAutoScrolling,
-  (val) => {
-    if (val && isHorizontalPageMode.value) {
-      // 横翻容器没有纵向滚动条：像素模式会立刻「到底」疯狂连翻，
-      // 段落模式的纵向滚动定位也无意义——明确拦下并告知，而不是假装在滚
-      store.isAutoScrolling = false
-      appStore.showToast('左右翻页模式不支持自动阅读', 'warning')
-      return
-    }
-    if (val) startAutoScroll()
-    else stopAutoScroll()
-  }
-)
-
-function changeVoice(name: string) {
-  store.setVoiceName(name)
-  ttsPanelDismissed.value = false
-  showTTSPanel.value = true
-  if (store.isSpeaking && !store.isPaused) {
-    restartSpeechFromCurrentParagraph()
-  }
-}
-
-function changeOpenAIVoice(voiceId: string) {
-  if (store.speechConfig.openaiSource === 'server') return
-  store.setOpenAISpeechVoice(voiceId)
-  ttsPanelDismissed.value = false
-  showTTSPanel.value = true
-  if (store.isSpeaking && !store.isPaused) {
-    restartSpeechFromCurrentParagraph()
-  }
-}
-
-function adjustSpeechRate(delta: number) {
-  const next = Math.max(
-    0.5,
-    Math.min(3, parseFloat((store.speechConfig.speechRate + delta).toFixed(1)))
-  )
-  store.setSpeechRate(next)
-  ttsPanelDismissed.value = false
-  showTTSPanel.value = true
-  if (store.isSpeaking && !store.isPaused) {
-    restartSpeechFromCurrentParagraph()
-  }
-}
-
-function adjustSpeechPitch(delta: number) {
-  const next = Math.max(
-    0.5,
-    Math.min(2, parseFloat((store.speechConfig.speechPitch + delta).toFixed(1)))
-  )
-  store.setSpeechPitch(next)
-  ttsPanelDismissed.value = false
-  showTTSPanel.value = true
-  if (store.isSpeaking && !store.isPaused) {
-    restartSpeechFromCurrentParagraph()
-  }
-}
-
-function setSpeechTimer(minutes: number) {
-  store.setSpeechStopTimer(minutes)
-  ttsPanelDismissed.value = false
-  showTTSPanel.value = true
-}
-async function openInfo() {
-  if (!store.book) return
-  showBookInfo.value = true
-  bookInfoBook.value = {
-    ...store.book,
-    durChapterIndex: store.currentIndex,
-    durChapterTitle: store.currentChapter?.title || store.book.durChapterTitle,
-  }
-  try {
-    if (!store.book.bookId) return
-    const latest = await getBookInfo(store.book.bookId)
-    bookInfoBook.value = {
-      ...store.book,
-      ...latest,
-      durChapterIndex: store.currentIndex,
-      durChapterTitle:
-        store.currentChapter?.title || latest.durChapterTitle || store.book.durChapterTitle,
-    }
-  } catch {
-    appStore.showToast('获取书籍详情失败，已显示当前缓存信息', 'warning')
-  }
-}
-
-// 详情弹窗内换源成功：后台书籍已落库，但当前阅读会话还握着旧源的 book 对象，
-// 不刷新的话弹窗一关，阅读区仍是旧源的报错。用换源结果重开一次会话（含目录）。
-async function handleBookSwitched(updated: Book | SearchBook) {
-  const b = updated as Book
-  bookInfoBook.value = b
-  await store.loadBook(b).catch(() => undefined)
-  await store.loadChapter(b.durChapterIndex ?? 0)
-}
-
-function openAiBook() {
-  if (!store.book) return
-  router.push({
-    name: 'ai-book',
-    query: { bookId: store.book.bookId },
-  })
 }
 
 onBeforeRouteLeave(() => {
@@ -2159,9 +1857,6 @@ onMounted(async () => {
   if (typeof window !== 'undefined' && window.speechSynthesis) {
     window.speechSynthesis.onvoiceschanged = () => store.fetchVoices()
   }
-  speechTimerTicker = window.setInterval(() => {
-    speechTimerNow.value = Date.now()
-  }, 15000)
   await Promise.all([store.fetchBookmarks(), store.fetchReplaceRules()])
   // 换源入口需要按启用书源数决定是否展示；会话内只拉一次（source store 缓存）
   if (!sourceStore.sources.length) {
@@ -2192,10 +1887,9 @@ onUnmounted(() => {
   window.removeEventListener('pagehide', handlePageHide)
   window.removeEventListener('beforeunload', handleBeforeUnload)
   document.removeEventListener('visibilitychange', handleVisibilityChange)
-  if (speechTimerTicker) clearInterval(speechTimerTicker)
   if (restorePositionTimer) clearTimeout(restorePositionTimer)
   if (persistPositionTimer) clearTimeout(persistPositionTimer)
-  if (refreshOfflineCacheStateTimer) clearTimeout(refreshOfflineCacheStateTimer)
+  disposeOfflineBanner()
   if (rebuildHorizontalTimer) clearTimeout(rebuildHorizontalTimer)
   clearRestoreStabilizers()
   disposeSelection()
