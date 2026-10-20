@@ -473,9 +473,50 @@ export const useReaderStore = defineStore('reader', () => {
     }
   }
 
-  function getReadHistoryStorageKey(currentBook?: Book | null) {
-    if (!currentBook?.bookId) return ''
-    return `${READER_READ_HISTORY_PREFIX}${currentBook.bookId}`
+  // 已读标记本地存储：单 key 文档 { [bookId]: string[] }。
+  // 旧版是每书一个 key（前缀 + bookId），书多了污染 localStorage 键空间；
+  // 首次访问时把旧键一次性合并迁移进单文档
+  const READER_READ_HISTORY_KEY = 'reader-read-history'
+
+  function readReadHistoryDoc(): Record<string, string[]> {
+    try {
+      const raw = localStorage.getItem(READER_READ_HISTORY_KEY)
+      if (!raw) return {}
+      const parsed = JSON.parse(raw)
+      return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {}
+    } catch {
+      return {}
+    }
+  }
+
+  function migrateLegacyReadHistoryKeys() {
+    const legacy: Record<string, string[]> = {}
+    const staleKeys: string[] = []
+    for (let index = 0; index < localStorage.length; index += 1) {
+      const key = localStorage.key(index)
+      if (!key || !key.startsWith(READER_READ_HISTORY_PREFIX)) continue
+      try {
+        const parsed = JSON.parse(localStorage.getItem(key) || '[]')
+        if (Array.isArray(parsed)) {
+          legacy[key.slice(READER_READ_HISTORY_PREFIX.length)] = parsed.filter(
+            (item): item is string => typeof item === 'string'
+          )
+        }
+      } catch {
+        // 坏数据按空处理，键照样清
+      }
+      staleKeys.push(key)
+    }
+    if (!staleKeys.length) return
+    const doc = readReadHistoryDoc()
+    for (const [bookId, keys] of Object.entries(legacy)) {
+      // 与已有分片做并集（新文档可能已被别的书写过）
+      doc[bookId] = Array.from(new Set([...(doc[bookId] || []), ...keys]))
+    }
+    safeLocalSet(READER_READ_HISTORY_KEY, JSON.stringify(doc))
+    for (const key of staleKeys) {
+      localStorage.removeItem(key)
+    }
   }
 
   function buildReadChapterKey(
@@ -492,33 +533,25 @@ export const useReaderStore = defineStore('reader', () => {
   }
 
   function loadReadChapterHistory(currentBook?: Book | null) {
-    const storageKey = getReadHistoryStorageKey(currentBook)
-    if (!storageKey) {
+    const bookId = currentBook?.bookId
+    if (!bookId) {
       readChapterKeys.value = new Set()
       return
     }
-    try {
-      const raw = localStorage.getItem(storageKey)
-      if (raw) {
-        const parsed = JSON.parse(raw)
-        readChapterKeys.value = new Set(
-          Array.isArray(parsed) ? parsed.filter((item) => typeof item === 'string') : []
-        )
-      } else {
-        readChapterKeys.value = new Set()
-      }
-    } catch {
-      readChapterKeys.value = new Set()
-    }
+    migrateLegacyReadHistoryKeys()
+    const doc = readReadHistoryDoc()
+    readChapterKeys.value = new Set(Array.isArray(doc[bookId]) ? doc[bookId] : [])
     // 已读标记存在 localStorage，天然单浏览器；与后端文档做并集合并实现跨浏览器同步。
     // 注意本地为空时也必须同步（那正是「另一台浏览器」的场景）
     void syncReadChapterHistoryFromBackend(currentBook)
   }
 
   function persistReadChapterHistory(currentBook?: Book | null) {
-    const storageKey = getReadHistoryStorageKey(currentBook)
-    if (!storageKey) return
-    safeLocalSet(storageKey, JSON.stringify(Array.from(readChapterKeys.value)))
+    const bookId = currentBook?.bookId
+    if (!bookId) return
+    const doc = readReadHistoryDoc()
+    doc[bookId] = Array.from(readChapterKeys.value)
+    safeLocalSet(READER_READ_HISTORY_KEY, JSON.stringify(doc))
     scheduleReadHistoryPush(currentBook)
   }
 
@@ -780,7 +813,11 @@ export const useReaderStore = defineStore('reader', () => {
         chapterUrl: chapter.url,
         chapterTitle: chapter.title,
         content: chapterContent,
-      }).catch(() => undefined)
+      }).catch((error) => {
+        // 写不进浏览器缓存（配额写满且无可淘汰）不该静默：阅读功能本身不受影响，
+        // 但「缓存永远 0 章」这种症状没有日志就完全无法定位
+        console.warn('[reader] 浏览器章节缓存写入失败', error)
+      })
     }
 
     return chapterContent

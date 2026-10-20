@@ -639,6 +639,11 @@ export function useReaderTts(content: Ref<string>) {
         if (currentOpenAIAudio === audio) {
           currentOpenAIAudio = null
         }
+        // 失败路径同样要 revoke：漏掉的话每次播放失败泄一个整章 mp3 blob
+        if (currentOpenAIAudioUrl) {
+          URL.revokeObjectURL(currentOpenAIAudioUrl)
+          currentOpenAIAudioUrl = ''
+        }
         if (!isCurrentTTSSession(sessionId)) return
         isSpeaking.value = false
         isPaused.value = false
@@ -648,6 +653,10 @@ export function useReaderTts(content: Ref<string>) {
       }
 
       return audio.play().catch((error: Error) => {
+        if (currentOpenAIAudioUrl) {
+          URL.revokeObjectURL(currentOpenAIAudioUrl)
+          currentOpenAIAudioUrl = ''
+        }
         if (!isCurrentTTSSession(sessionId)) return
         isSpeechLoading.value = false
         isSpeaking.value = false
@@ -668,6 +677,8 @@ export function useReaderTts(content: Ref<string>) {
     const key = buildOpenAIAudioCacheKey(rawText)
     const cached = preloadedOpenAIAudio.value.find((entry) => entry.key === key)
     if (cached) {
+      // 消费即出队：blob 已交给播放器，留在队列里只是白占内存（上限 8 条常驻）
+      preloadedOpenAIAudio.value = preloadedOpenAIAudio.value.filter((entry) => entry.key !== key)
       void Promise.resolve(playBlob(cached.blob, controller))
       return
     }

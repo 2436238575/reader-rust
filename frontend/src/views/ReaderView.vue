@@ -278,28 +278,33 @@
           :key="chapter.index"
           class="chapter-content continuous-chapter"
           :data-chapter-index="chapter.index"
+          :style="chapter.prunedHeight ? { minHeight: chapter.prunedHeight + 'px' } : undefined"
         >
-          <div class="chapter-title">{{ chapter.title }}</div>
+          <!-- 上部裁剪的占位章：保高度不渲染内容，回到视口附近时回载 -->
+          <div v-if="chapter.prunedHeight" class="chapter-placeholder">{{ chapter.title }}</div>
+          <template v-else>
+            <div class="chapter-title">{{ chapter.title }}</div>
 
-          <div
-            class="chapter-text"
-            data-role="continuous"
-            :data-chapter-index="chapter.index"
-            :style="{
-              '--p-spacing': config.paragraphSpacing + 'em',
-            }"
-            v-html="chapter.html"
-            @click="handleChapterTextClick"
-          ></div>
+            <div
+              class="chapter-text"
+              data-role="continuous"
+              :data-chapter-index="chapter.index"
+              :style="{
+                '--p-spacing': config.paragraphSpacing + 'em',
+              }"
+              v-html="chapter.html"
+              @click="handleChapterTextClick"
+            ></div>
 
-          <div
-            v-if="chapter.index === continuousChapters[continuousChapters.length - 1]?.index"
-            class="chapter-footer"
-          >
-            <button class="next-btn" :disabled="!store.hasNext" @click="nextChapter">
-              {{ store.hasNext ? '继续加载下一章' : '已经到底了' }}
-            </button>
-          </div>
+            <div
+              v-if="chapter.index === continuousChapters[continuousChapters.length - 1]?.index"
+              class="chapter-footer"
+            >
+              <button class="next-btn" :disabled="!store.hasNext" @click="nextChapter">
+                {{ store.hasNext ? '继续加载下一章' : '已经到底了' }}
+              </button>
+            </div>
+          </template>
         </section>
 
         <div v-if="continuousLoadingNext" class="continuous-loading-inline">正在加载下一章...</div>
@@ -880,6 +885,7 @@ const {
   loadContinuousNext,
   getContinuousSections,
   pruneReadChapters,
+  rehydrateContinuousChapter,
   clearContinuousChapters,
   disposeContinuousReading,
 } = useContinuousReading(
@@ -1653,7 +1659,10 @@ function handleScroll() {
         Math.min(1, (container.scrollTop - activeSection.offsetTop) / sectionRange)
       )
       if (activeChapter) {
-        if (store.currentIndex !== activeIndex || store.content !== activeChapter.content) {
+        if (activeChapter.prunedHeight != null) {
+          // 上部裁剪的占位章进入锚线：回载真实内容，绝不同步它的空 content 进 store
+          void rehydrateContinuousChapter(activeIndex)
+        } else if (store.currentIndex !== activeIndex || store.content !== activeChapter.content) {
           setContinuousActiveChapter(activeIndex, activeChapter.content, progress)
         } else {
           store.setChapterScrollProgress(progress)
@@ -2289,8 +2298,9 @@ watch(
     () => config.value.paragraphSpacing,
     () => config.value.firstLineIndent,
     () => config.value.showChapterImages,
-    showSearch,
-    searchQuery,
+    // showSearch/searchQuery 曾是依赖：开搜索面板、每敲一个字都会把横翻页码
+    // 归零丢回本章首页。搜索高亮走 DOM 级处理（highlightSearchText），
+    // 重排由 formattedContent 的 watch 覆盖，这里不需要也不该归零
   ],
   () => {
     if (isHorizontalPageMode.value) {
@@ -2615,6 +2625,14 @@ watch(
   min-height: auto;
   padding-top: 48px;
   padding-bottom: 24px;
+}
+
+/* 上部裁剪的占位章：只留一个淡标题撑住高度，回到视口附近即回载真实内容 */
+.chapter-placeholder {
+  color: var(--color-text-secondary, #999);
+  font-size: var(--text-sm);
+  opacity: 0.5;
+  user-select: none;
 }
 
 .load-error {

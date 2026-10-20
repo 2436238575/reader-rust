@@ -69,7 +69,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, ref } from 'vue'
+import { computed, nextTick, onBeforeUnmount, ref } from 'vue'
 import BookCard from './BookCard.vue'
 import type { Book, SearchBook } from '../types'
 
@@ -425,6 +425,9 @@ function stopAutoScroll() {
     autoScrollFrame = null
   }
 }
+
+// 拖到一半切路由时组件卸载：rAF 循环没有别的停止通道，会空转整会话
+onBeforeUnmount(stopAutoScroll)
 
 function measureTouchDragMetrics(bookUrl: string, clientX?: number, clientY?: number) {
   const item = itemRefs.value[bookUrl]

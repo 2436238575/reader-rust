@@ -180,6 +180,38 @@ export async function setBrowserCachedChapter(params: {
   chapterTitle?: string
   content: string
 }) {
+  try {
+    return await writeChapterRecord(params)
+  } catch (error) {
+    // 配额写满：淘汰最久未更新的一本（非当前书）再试一次；
+    // 没有可淘汰的或重试仍失败，错误原样上抛（调用方中断任务）
+    if (!isQuotaExceeded(error)) throw error
+    const evicted = await evictOldestOtherBook(params.bookId)
+    if (!evicted) throw error
+    return writeChapterRecord(params)
+  }
+}
+
+function isQuotaExceeded(error: unknown) {
+  return error instanceof DOMException && error.name === 'QuotaExceededError'
+}
+
+/// 淘汰最久未更新的一本书的整书缓存；无可淘汰时返回 false
+async function evictOldestOtherBook(currentBookId: string): Promise<boolean> {
+  // listBrowserCacheSummary 按 updatedAt 倒序，最后一个最旧
+  const summaries = await listBrowserCacheSummary()
+  const oldest = [...summaries].reverse().find((item) => item.bookId !== currentBookId)
+  if (!oldest) return false
+  await deleteBrowserBookCache(oldest.bookId)
+  return true
+}
+
+function writeChapterRecord(params: {
+  bookId: string
+  chapterUrl: string
+  chapterTitle?: string
+  content: string
+}) {
   return withStores('readwrite', async ({ chapters, summary }) => {
     const key = cacheKey(params.bookId, params.chapterUrl)
     const size = new Blob([params.content]).size
