@@ -22,7 +22,7 @@ Reader-Rust 是 [阅读3.0](https://github.com/hectorqin/reader) 的 Rust 重写
 cargo run                      # 开发模式运行，默认监听 0.0.0.0:8080
 cargo build                    # 调试构建
 cargo build --release          # 发布构建
-cargo test                     # 全部测试（Rust 侧共 273 个，另有 2 个真实网络用例默认忽略）
+cargo test                     # 全部测试（Rust 侧共 309 个，另有 2 个真实网络用例默认忽略）
 cargo test <关键字>             # 按名称过滤测试
 cargo clippy --all-targets     # 静态检查
 cargo fmt                      # 格式化
@@ -119,7 +119,7 @@ cp .env.example .env
 | `AGENT_SIDECAR_ENABLED`              | `true`                    | AI 资料编排 sidecar 开关；关闭后 AI 资料更新接口返回明确错误                                            |
 | `AGENT_SIDECAR_COMMAND`              | `python -m agent_sidecar` | sidecar 启动命令，进程 cwd 为 `sidecar/`；保持默认时若 `sidecar/.venv` 存在自动优先其 Python，自定义（含 Docker ENV）则不兜底 |
 | `AGENT_SIDECAR_UV`                   | 空                        | uv 二进制路径；非空/PATH 可探测时由 uv 自动管理依赖（推荐），都没有时降级为 AGENT_SIDECAR_COMMAND      |
-| `AGENT_SIDECAR_CHAPTER_TIMEOUT_SECS` | `600`                     | 单章处理超时；超时即终止 sidecar 进程并中止批量任务                                                     |
+| `AGENT_SIDECAR_CHAPTER_TIMEOUT_SECS` | `600`                     | 单章处理超时；超时即终止 sidecar 进程并中止批量任务（sidecar 内模型重试预算已对齐此值，错误会带真实原因回来而不是被截成超时）                                                     |
 
 三点需要注意：
 
@@ -308,6 +308,8 @@ id = `md5(去掉查询串的地址)`；抓取失败时按登记时的书籍上�
 | `%%`   | 并列取值                               |
 
 组合符在 CSS、XPath、**JsonPath**、**元素级字段**（列表项里的 `name`/`author` 等）与**列表正则**上都生效；
+JsonPath 方言是 **RFC 9535**（jsonpath-rfc9535 crate；`=~` 请改用 `match()`/`search()`）；
+XPath 有资源上限（长度 8KB / 嵌套 64 层 / 总步数 100、`//` 50），超限拒绝求值（防解析爆栈与 `//a` 链求值爆炸）。
 列表正则的 `&&` 是逐级下钻（前一段的完整匹配串喂给下一段，见规格 §9.3）。
 
 字段级可用显式前缀强制指定解析方式：`@css:`、`@json:`、`@xpath:`、`@regex:`、`@js:`/`<js>`。
@@ -354,9 +356,9 @@ id = `md5(去掉查询串的地址)`；抓取失败时按登记时的书籍上�
 
 ## 测试
 
-Rust 侧共 **272 个测试**（183 个内联单元测试 + 89 个集成用例，另有 2 个 `#[ignore]` 的真实网络用例），分布为：
+Rust 侧共 **309 个测试**（217 个内联单元测试 + 92 个集成用例，另有 2 个 `#[ignore]` 的真实网络用例），分布为：
 
-- `tests/` 下 16 个集成测试文件（89 个用例），其中 `book_source_compat.rs` 用例最多（17 个）；
+- `tests/` 下 16 个集成测试文件（92 个用例），其中 `book_source_compat.rs` 用例最多（17 个）；
   `auth_flow.rs`、`review_flow.rs`、`chapter_image_flow.rs`、`image_pipeline.rs` 与
   `webdav_flow.rs` 起真实监听端口，前者覆盖 401、静态回落、缓存清理与改密吊销令牌，
   中间三个各用一个假上游覆盖评论规则（7 天缓存、按类型清理）、章节配图（配图规则、
@@ -368,7 +370,7 @@ Rust 侧共 **272 个测试**（183 个内联单元测试 + 89 个集成用例�
   （机器上需要有 Node）；
 - `src/` 内的内联单元测试模块（179 个）。
 
-sidecar 使用 pytest（90 个用例，
+sidecar 使用 pytest（95 个用例，
 见「常用命令」），含从旧前端实现 1:1 移植的领域规则用例与新增编排能力用例。
 
 需要注意：

@@ -113,7 +113,9 @@ POST /reader3/aiProxy
 
 > **注意**：`useServerConfig=false`（客户端自带端点，含 `fullUrl=true` 任意路径）等价于向任意地址发 POST 的通用代理——单用户下登录者即所有者，不再收敛；出站安全由 `ALLOW_PRIVATE_NETWORK=false`（默认）兜底。
 
-响应为上游响应体原样透传（上限 32MB，非 JSON 包装）。所有目标地址经过出站守卫（`ALLOW_PRIVATE_NETWORK=false` 时拒绝私网/环回/链路本地地址，含重定向逐跳检查）。
+成功响应**流式透传**（上游边发边转发，`stream: true` 的客户端按块收到数据；
+流上累计超过 32MB 即掐断）。错误响应（上游非 2xx）整读限量后返回用户可读
+摘要。所有目标地址经过出站守卫（`ALLOW_PRIVATE_NETWORK=false` 时拒绝私网/环回/链路本地地址，含重定向逐跳检查）。
 
 ### 图片代理
 
@@ -121,7 +123,7 @@ POST /reader3/aiProxy
 POST /reader3/aiProxyImage
 ```
 
-请求体：`{ "url": "https://..." }`。拉取远程图片并回传（上限 20MB），用于绕开图片防盗链。URL 仅允许 http/https 且过出站守卫。
+请求体：`{ "url": "https://..." }`。拉取远程图片并回传（上限 20MB），用于绕开图片防盗链。URL 仅允许 http/https 且过出站守卫；**上游响应的 Content-Type 必须是 `image/*`**，否则 400（防自 XSS：可控 URL 返回 HTML 不透传）。
 
 > **未实现调用方**：本端点目前无前端调用方（AI 资料的地图图片改由后端直接下载落盘到
 > `ASSETS_DIR`，依据：`src/service/agent_sidecar_service.rs`），端点保留备用。
