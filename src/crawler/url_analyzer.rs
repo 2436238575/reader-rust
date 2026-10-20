@@ -229,8 +229,9 @@ pub fn absolute_url(base: &str, url: &str) -> String {
         return base;
     }
     // javascript: 协议一律拒掉：大小写不敏感（`JavaScript:` 也拦），
-    // 且必须带冒号——`javascriptx` 是合法路径段，不能误伤
-    if url.len() >= "javascript:".len() && url[..11].eq_ignore_ascii_case("javascript:") {
+    // 且必须带冒号——`javascriptx` 是合法路径段，不能误伤。
+    // 按字节比较：中文开头的 URL 直接切 str 会撞上非字符边界 panic
+    if url.len() >= 11 && url.as_bytes()[..11].eq_ignore_ascii_case(b"javascript:") {
         return String::new();
     }
     if url.starts_with("data:") || url.starts_with("http://") || url.starts_with("https://") {

@@ -87,12 +87,8 @@ thread_local! {
 }
 
 pub fn with_js_lib<T>(js_lib: Option<&str>, f: impl FnOnce() -> T) -> T {
-    ACTIVE_JS_LIB.with(|cell| {
-        let previous = cell.replace(js_lib.map(|value| value.to_string()));
-        let result = f();
-        cell.replace(previous);
-        result
-    })
+    let _guard = swap_tl(&ACTIVE_JS_LIB, js_lib.map(|value| value.to_string()));
+    f()
 }
 
 /// 在「书源上下文」里执行闭包：顺带挂上 jsLib，并让 JS 里的 `source` 拿到这个
@@ -103,12 +99,8 @@ pub fn with_js_lib<T>(js_lib: Option<&str>, f: impl FnOnce() -> T) -> T {
 /// 在 async 侧设置是无效的）。
 pub fn with_book_source<T>(source: &BookSource, f: impl FnOnce() -> T) -> T {
     let json = serde_json::to_string(source).ok();
-    ACTIVE_SOURCE.with(|cell| {
-        let previous = cell.replace(json);
-        let result = with_js_lib(source.js_lib.as_deref(), f);
-        cell.replace(previous);
-        result
-    })
+    let _source_guard = swap_tl(&ACTIVE_SOURCE, json);
+    with_js_lib(source.js_lib.as_deref(), f)
 }
 
 fn active_source_json() -> Option<String> {
@@ -120,12 +112,33 @@ fn active_source_json() -> Option<String> {
 /// 书源 JS 的 `cache`/`kv`/`java.*` 都会读取当前命名空间做隔离；
 /// 未设置时归入 [`DEFAULT_USER_NS`]，绝不与其他用户共享。
 pub fn with_user_ns<T>(user_ns: &str, f: impl FnOnce() -> T) -> T {
-    ACTIVE_USER_NS.with(|cell| {
-        let previous = cell.replace(Some(user_ns.to_string()));
-        let result = f();
-        cell.replace(previous);
-        result
-    })
+    let _guard = swap_tl(&ACTIVE_USER_NS, Some(user_ns.to_string()));
+    f()
+}
+
+/// thread_local 的换值-恢复守卫。此前是手写 `replace → f() → replace`：
+/// 闭包 panic 时恢复那一步被跳过，旧值（比如上个用户的 ns）残留在阻塞线程上，
+/// 下一个复用该线程的请求就会读到串号上下文。Drop 在 panic 展开时同样执行。
+struct TlRestoreGuard<T: 'static> {
+    key: &'static std::thread::LocalKey<RefCell<Option<T>>>,
+    previous: Option<T>,
+}
+
+impl<T: 'static> Drop for TlRestoreGuard<T> {
+    fn drop(&mut self) {
+        let previous = self.previous.take();
+        self.key.with(|cell| {
+            cell.replace(previous);
+        });
+    }
+}
+
+fn swap_tl<T: 'static>(
+    key: &'static std::thread::LocalKey<RefCell<Option<T>>>,
+    value: Option<T>,
+) -> TlRestoreGuard<T> {
+    let previous = key.with(|cell| cell.replace(value));
+    TlRestoreGuard { key, previous }
 }
 
 fn current_user_ns() -> String {
@@ -886,6 +899,16 @@ mod tests {
         );
         // 字符串方法 / 正则等常用能力不受资源上限影响
         assert_eq!(eval_js("'a,b,c'.split(',').length", "", "").unwrap(), "3");
+    }
+
+    #[test]
+    fn thread_local_context_restores_after_closure_panic() {
+        // 闭包 panic 时旧值也要恢复（unwind 走 Drop），不能把上个用户的
+        // 命名空间残留在阻塞线程上让下一个请求串号
+        let _ = std::panic::catch_unwind(|| {
+            with_user_ns("user_victim", || panic!("boom"));
+        });
+        assert_eq!(current_user_ns(), DEFAULT_USER_NS);
     }
 
     #[test]

@@ -1,3 +1,4 @@
+use jsonpath_rfc9535::JsonPath;
 use serde_json::Value;
 use std::sync::LazyLock;
 
@@ -11,20 +12,21 @@ pub fn jsonpath_query(value: &Value, rule: &str) -> Vec<Value> {
     if let Some(rendered) = render_embedded_paths(value, rule) {
         return vec![Value::String(rendered)];
     }
-    if let Ok(res) = jsonpath_lib::select(value, rule) {
-        let mut out = Vec::new();
-        for item in res {
-            match item {
-                Value::Array(items) => {
-                    out.extend(items.iter().cloned());
-                }
-                other => out.push(other.clone()),
+    // RFC 9535 方言：解析失败（非法表达式）与查询失败一样返回空，
+    // 与旧 jsonpath_lib 的 Err 分支行为一致
+    let Ok(query) = JsonPath::parse(rule) else {
+        return vec![];
+    };
+    let mut out = Vec::new();
+    for item in query.query_values(value) {
+        match item {
+            Value::Array(items) => {
+                out.extend(items.iter().cloned());
             }
+            other => out.push(other.clone()),
         }
-        out
-    } else {
-        vec![]
     }
+    out
 }
 
 pub fn jsonpath_first_string(value: &Value, rule: &str) -> Option<String> {

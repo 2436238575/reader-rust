@@ -1,16 +1,17 @@
 use once_cell::sync::Lazy;
 use scraper::{ElementRef, Html, Selector};
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::sync::Mutex;
 
 use crate::parser::rule_analyzer::split_top_level;
+use crate::util::bounded_map::BoundedMap;
 
 /// CSS 选择器编译缓存：同一条规则对每个元素每个字段都会命中，
 /// `Selector::parse` 不便宜（千章目录页此前要重复编译数万次）。
-/// 键为选择器文本，解析失败也缓存（`None`）；满 1024 条整表清空，
+/// 键为选择器文本，解析失败也缓存（`None`）；满 1024 条按 FIFO 逐出最旧，
 /// 与 `util::text` 的 REGEX_CACHE 同策略。
-static CSS_SELECTOR_CACHE: Lazy<Mutex<HashMap<String, Option<Selector>>>> =
-    Lazy::new(|| Mutex::new(HashMap::new()));
+static CSS_SELECTOR_CACHE: Lazy<Mutex<BoundedMap<Option<Selector>>>> =
+    Lazy::new(|| Mutex::new(BoundedMap::new(CSS_SELECTOR_CACHE_MAX)));
 
 const CSS_SELECTOR_CACHE_MAX: usize = 1024;
 
@@ -21,8 +22,8 @@ const CSS_SELECTOR_CACHE_MAX: usize = 1024;
 const XPATH_CACHE_MAX: usize = 1024;
 thread_local! {
     static XPATH_CACHE: std::cell::RefCell<
-        HashMap<String, Option<std::rc::Rc<sxd_xpath::XPath>>>,
-    > = std::cell::RefCell::new(HashMap::new());
+        BoundedMap<Option<std::rc::Rc<sxd_xpath::XPath>>>,
+    > = std::cell::RefCell::new(BoundedMap::new(XPATH_CACHE_MAX));
 }
 
 /// 编译 XPath（带缓存）；非法表达式缓存 None，避免反复重编译同一条坏规则。
@@ -37,9 +38,6 @@ pub fn compile_xpath(xpath: &str) -> Option<std::rc::Rc<sxd_xpath::XPath>> {
             .ok()
             .flatten()
             .map(std::rc::Rc::new);
-        if cache.len() >= XPATH_CACHE_MAX {
-            cache.clear();
-        }
         cache.insert(xpath.to_string(), built.clone());
         built
     })
@@ -51,9 +49,6 @@ fn cached_selector(css: &str) -> Option<Selector> {
         return parsed.clone();
     }
     let parsed = Selector::parse(css).ok();
-    if cache.len() >= CSS_SELECTOR_CACHE_MAX {
-        cache.clear();
-    }
     cache.insert(css.to_string(), parsed.clone());
     parsed
 }
@@ -892,15 +887,26 @@ pub const MAX_XPATH_EXPR_LEN: usize = 8 * 1024;
 /// 表达式（如数千层 `((((...))))`) 会撑爆线程栈、直接终止整个进程（栈溢出在
 /// Rust 里不可捕获），所以必须在 build 之前拦掉。
 pub const MAX_XPATH_EXPR_NESTING: usize = 64;
+/// XPath 位置路径的步数上限（每个 `/`、`//` 算一步）。
+///
+/// 嵌套深度防的是解析器递归爆栈，步数防的是**求值**爆炸：8KB 内可写约 2700 段
+/// `//a`，每段是一次后代枚举，复杂度 O(步数 × N²)，单条恶意规则即可长期占住
+/// 阻塞线程。正常书源规则步数在个位数到二十，100 步已留出数量级余量。
+pub const MAX_XPATH_TOTAL_STEPS: usize = 100;
+/// `//` 后代枚举步的单独上限：后代枚举是最贵的一步，单独收紧。
+pub const MAX_XPATH_DESCENT_STEPS: usize = 50;
 
-/// 表达式是否在安全界限内（长度 + 嵌套深度）。字符串字面量内的括号不计。
+/// 表达式是否在安全界限内（长度 + 嵌套深度 + 步数）。字符串字面量内的字符不计。
 pub fn xpath_within_limits(xpath: &str) -> bool {
     if xpath.len() > MAX_XPATH_EXPR_LEN {
         return false;
     }
     let mut depth = 0usize;
+    let mut total_steps = 0usize;
+    let mut descent_steps = 0usize;
     let mut in_string = false;
     let mut quote = '\0';
+    let mut prev_slash = false;
     for ch in xpath.chars() {
         match ch {
             '"' | '\'' if in_string && ch == quote => in_string = false,
@@ -915,8 +921,20 @@ pub fn xpath_within_limits(xpath: &str) -> bool {
                 }
             }
             ')' | ']' if !in_string => depth = depth.saturating_sub(1),
+            '/' if !in_string => {
+                total_steps += 1;
+                if prev_slash {
+                    descent_steps += 1;
+                }
+                prev_slash = true;
+                if total_steps > MAX_XPATH_TOTAL_STEPS || descent_steps > MAX_XPATH_DESCENT_STEPS {
+                    return false;
+                }
+                continue;
+            }
             _ => {}
         }
+        prev_slash = false;
     }
     true
 }
@@ -1248,5 +1266,25 @@ mod tests {
         // step == i32::MIN 时 -step 在 debug 构建会溢出 panic，应归一为步长 1
         let indices = expand_range(5, None, None, i32::MIN);
         assert_eq!(indices, vec![0, 1, 2, 3, 4]);
+    }
+
+    #[test]
+    fn test_xpath_limits_reject_descent_chain() {
+        // 正常规则：少量 / 与 // 步，放行
+        assert!(xpath_within_limits("//div[@class='list']//a/@href"));
+        assert!(xpath_within_limits("/html/body/div[1]/ul/li/a"));
+
+        // //a 链：每段一次后代枚举，2700 段即可长期占住阻塞线程
+        let chain = "//a".repeat(MAX_XPATH_DESCENT_STEPS + 10);
+        assert!(!xpath_within_limits(&chain), "// 链应被拦：{}", chain.len());
+
+        // 单 / 深链超总步数上限同样拦
+        let deep = "/a".repeat(MAX_XPATH_TOTAL_STEPS + 10);
+        assert!(!xpath_within_limits(&deep), "深链应被拦");
+
+        // 字符串字面量里的 // 不计步数（如 contains(@href,'http://x')）
+        assert!(xpath_within_limits(
+            "//a[contains(@href,'http://example.com//x')]/@href"
+        ));
     }
 }
