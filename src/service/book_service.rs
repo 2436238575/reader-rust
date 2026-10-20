@@ -3014,6 +3014,31 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn bookshelf_list_keeps_intro_but_drops_heavy_snapshots() {
+        // 窄列拆分（SHELF_LIST_COLS）只该去掉 info_html/toc_html 两个大快照；
+        // intro 是详情弹窗直接吃列表对象的字段，丢了书架上的书简介全空
+        let storage_dir =
+            std::env::temp_dir().join(format!("reader-rust-shelf-intro-{}", std::process::id()));
+        let service = test_service(&storage_dir).await;
+
+        let mut book = make_book("intro-book");
+        book.intro = Some("这是一本测试书的简介。".to_string());
+        service.save_book("u", book).await.unwrap();
+
+        let shelf = service.get_bookshelf("u").await.unwrap();
+        assert_eq!(shelf.len(), 1);
+        assert_eq!(
+            shelf[0].intro.as_deref(),
+            Some("这是一本测试书的简介。"),
+            "书架列表必须带 intro"
+        );
+        // 大快照字段仍然不进列表（窄列的意义所在）
+        assert!(shelf[0].info_html.is_none() || shelf[0].info_html.as_deref() == Some(""));
+
+        let _ = tokio::fs::remove_dir_all(&storage_dir).await;
+    }
+
+    #[tokio::test]
     async fn shelf_limit_holds_under_concurrent_saves() {
         let storage_dir =
             std::env::temp_dir().join(format!("reader-rust-limit-race-{}", std::process::id()));

@@ -625,11 +625,13 @@ const SHELF_COLS: &str = "s.book_id, s.position, s.group_bits, s.dur_chapter_ind
      s.last_check_time, s.total_chapter_num, s.book_type, s.word_count, s.info_html, \
      s.toc_html, s.kind, s.update_time, s.can_re_name, s.download_urls, s.charset";
 
-/// 书架列表的窄列：intro/info_html/toc_html 是详情页级快照（单体可达几十 KB），
+/// 书架列表的窄列：info_html/toc_html 是详情页级快照（单体可达几十 KB），
 /// 首屏书架用不到；500 本书全量带上就是每次打开多传几 MB。详情走 `get()`（全列）。
+/// intro 保留：它只有几百字纯文本，而详情弹窗（BookDetailModal）直接吃书架列表
+/// 对象——窄列去掉它会让书架里的书简介全空。
 const SHELF_LIST_COLS: &str = "s.book_id, s.position, s.group_bits, s.dur_chapter_index, \
      s.dur_chapter_pos, s.dur_chapter_time, s.dur_chapter_title, s.cover_url, \
-     s.custom_cover_url, s.can_update, s.latest_chapter_title, \
+     s.custom_cover_url, s.can_update, s.intro, s.latest_chapter_title, \
      s.last_check_time, s.total_chapter_num, s.book_type, s.word_count, \
      s.kind, s.update_time, s.can_re_name, s.download_urls, s.charset";
 
@@ -640,20 +642,20 @@ fn map_shelf_entry(row: &sqlx::sqlite::SqliteRow) -> ShelfEntry {
     map_shelf_entry_with(row, true)
 }
 
-/// 窄列行（SHELF_LIST_COLS）不取三个大文本字段，对应位置给 None。
+/// 窄列行（SHELF_LIST_COLS）不取两个大文本快照字段，对应位置给 None；
+/// intro 窄列也带（详情弹窗直接吃列表对象，见 SHELF_LIST_COLS 注释）。
 fn map_shelf_entry_list(row: &sqlx::sqlite::SqliteRow) -> ShelfEntry {
     map_shelf_entry_with(row, false)
 }
 
 fn map_shelf_entry_with(row: &sqlx::sqlite::SqliteRow, wide: bool) -> ShelfEntry {
-    let (intro, info_html, toc_html) = if wide {
+    let (info_html, toc_html) = if wide {
         (
-            row.get::<Option<String>, _>("intro"),
             row.get::<Option<String>, _>("info_html"),
             row.get::<Option<String>, _>("toc_html"),
         )
     } else {
-        (None, None, None)
+        (None, None)
     };
     ShelfEntry {
         shelf: ShelfBookRow {
@@ -667,7 +669,7 @@ fn map_shelf_entry_with(row: &sqlx::sqlite::SqliteRow, wide: bool) -> ShelfEntry
             cover_url: row.get::<Option<String>, _>("cover_url"),
             custom_cover_url: row.get::<Option<String>, _>("custom_cover_url"),
             can_update: row.get::<Option<i64>, _>("can_update").map(|v| v != 0),
-            intro,
+            intro: row.get::<Option<String>, _>("intro"),
             latest_chapter_title: row.get::<Option<String>, _>("latest_chapter_title"),
             last_check_time: row.get::<Option<i64>, _>("last_check_time"),
             total_chapter_num: row.get::<Option<i32>, _>("total_chapter_num"),
