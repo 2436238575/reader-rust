@@ -184,7 +184,7 @@ POST /reader3/readRemoteSourceFile
 POST /reader3/readSourceFile
 ```
 
-上传 `multipart/form-data` 文件（`.json` 或 `.txt`），返回解析出的书源对象数组。
+上传 `multipart/form-data` 文件（`.json` 或 `.txt`），返回解析出的书源对象数组。单文件上限 32MB；单请求 multipart 字段数上限 20 个（超限 400）。
 
 ## 书源代理
 

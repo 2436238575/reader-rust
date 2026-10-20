@@ -281,7 +281,7 @@ POST /reader3/deleteBooks
 POST /reader3/uploadTxtBook
 ```
 
-`multipart/form-data`，字段名 `file`。文件上限 50MB，按章节正则自动切分。受 `USER_LOCAL_BOOK_LIMIT` 约束。响应 `data` 为入架后的书籍对象（含 `bookId`）。
+`multipart/form-data`，字段名 `file`。文件上限 50MB，按章节正则自动切分；单请求 multipart 字段数上限 20 个（超限 400）。受 `USER_LOCAL_BOOK_LIMIT` 约束。响应 `data` 为入架后的书籍对象（含 `bookId`）。
 
 ## 上传本地 EPUB 书籍
 
@@ -289,7 +289,7 @@ POST /reader3/uploadTxtBook
 POST /reader3/uploadEpubBook
 ```
 
-`multipart/form-data`，字段名 `file`。文件上限 80MB；EPUB 条目数上限 3000，解压后总体积上限 300MB（按实际解压输出计）。受 `USER_LOCAL_BOOK_LIMIT` 约束。响应 `data` 为入架后的书籍对象（含 `bookId`）。
+`multipart/form-data`，字段名 `file`。文件上限 80MB；EPUB 条目数上限 3000，解压后总体积上限 300MB（按实际解压输出计）；单请求 multipart 字段数上限 20 个（超限 400）。受 `USER_LOCAL_BOOK_LIMIT` 约束。响应 `data` 为入架后的书籍对象（含 `bookId`）。
 
 ## 多书源搜索（流式）
 

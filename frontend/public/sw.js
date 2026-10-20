@@ -119,12 +119,12 @@ self.addEventListener('fetch', (event) => {
       fetch(request)
         .then((response) => {
           const copy = response.clone()
-          putWithLimit(RUNTIME_CACHE, request, copy)
+          putWithLimit(RUNTIME_CACHE, cacheKeyOf(request.url), copy)
           return response
         })
         .catch(
           async () =>
-            (await caches.match(request)) ||
+            (await caches.match(cacheKeyOf(request.url))) ||
             caches.match(`${BASE}offline.html`) ||
             caches.match(`${BASE}index.html`)
         )
@@ -163,11 +163,11 @@ self.addEventListener('fetch', (event) => {
     /\.(png|svg|css|js|ico)$/.test(url.pathname)
   ) {
     event.respondWith(
-      caches.match(request).then((cached) => {
+      caches.match(cacheKeyOf(request.url)).then((cached) => {
         if (cached) return cached
         return fetch(request).then((response) => {
           const copy = response.clone()
-          putWithLimit(RUNTIME_CACHE, request, copy)
+          putWithLimit(RUNTIME_CACHE, cacheKeyOf(request.url), copy)
           return response
         })
       })

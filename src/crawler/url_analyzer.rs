@@ -697,4 +697,18 @@ mod tests {
         let out = absolute_url("https://a.com/dir/", "javascriptx");
         assert!(out.ends_with("javascriptx"), "got: {out}");
     }
+
+    #[test]
+    fn absolute_url_handles_multibyte_prefix_without_panic() {
+        // 中文字符开头的相对地址：javascript: 检查按字节切片，直接切 str 会在
+        // 非字符边界 panic（曾真实发生，被 compat 用例抓住）
+        let out = absolute_url("https://a.com/", "斗破苍穹");
+        assert!(
+            out.contains("%E6%96%97") || out.ends_with("斗破苍穹"),
+            "got: {out}"
+        );
+        // 中文开头、长度跨过 11 字节边界的也要覆盖
+        let out = absolute_url("https://a.com/", "斗破苍穹武动乾坤");
+        assert!(!out.is_empty());
+    }
 }

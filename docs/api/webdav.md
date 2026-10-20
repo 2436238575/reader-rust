@@ -30,7 +30,7 @@ GET /reader3/getWebdavFile?path=/a.txt
 POST /reader3/uploadFileToWebdav
 ```
 
-`multipart/form-data`：`path` 字段为目标目录（缺省 `/`），`file` 字段为文件。单文件上限 100MB。响应 `data` 为已写入条目数组。
+`multipart/form-data`：`path` 字段为目标目录（缺省 `/`），`file` 字段为文件。单文件上限 100MB；单请求 multipart 字段数上限 20 个（超限 400）。响应 `data` 为已写入条目数组。
 
 ### 删除文件
 

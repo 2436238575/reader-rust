@@ -130,4 +130,96 @@ mod tests {
         // 正常 JSONPath 不受影响
         assert_eq!(jsonpath_first_string(&doc, "$.a"), Some("1".to_string()));
     }
+
+    // ─── RFC 9535 方言覆盖（jsonpath-rfc9535 换库的行为锚点） ───
+
+    #[test]
+    fn book_source_shapes_basics() {
+        let doc = json!({
+            "data": {
+                "list": [
+                    {"name": "书甲", "author": "甲", "id": 1},
+                    {"name": "书乙", "author": "乙", "id": 2},
+                ],
+                "total": 2
+            }
+        });
+        // 列表通配：书源列表规则的最常见形态
+        let names = jsonpath_query(&doc, "$.data.list[*].name");
+        assert_eq!(names, vec![json!("书甲"), json!("书乙")]);
+        // 数组节点整体命中时拍平一层（旧 jsonpath_lib 行为，适配层保留）
+        let list = jsonpath_query(&doc, "$.data.list");
+        assert_eq!(list.len(), 2);
+        // 标量
+        assert_eq!(
+            jsonpath_first_string(&doc, "$.data.total"),
+            Some("2".to_string())
+        );
+        // 下标与倒数下标
+        assert_eq!(
+            jsonpath_first_string(&doc, "$.data.list[0].author"),
+            Some("甲".to_string())
+        );
+        assert_eq!(
+            jsonpath_first_string(&doc, "$.data.list[-1].name"),
+            Some("书乙".to_string())
+        );
+    }
+
+    #[test]
+    fn book_source_shapes_filters_and_descendants() {
+        let doc = json!({
+            "store": {
+                "book": [
+                    {"title": "A", "price": 5},
+                    {"title": "B", "price": 12, "isbn": "x"}
+                ]
+            }
+        });
+        // 带括号的过滤（旧书源写法 ?(@.x)）与存在性过滤
+        assert_eq!(
+            jsonpath_first_string(&doc, "$.store.book[?(@.price < 10)].title"),
+            Some("A".to_string())
+        );
+        assert_eq!(
+            jsonpath_first_string(&doc, "$.store.book[?(@.isbn)].title"),
+            Some("B".to_string())
+        );
+        // 深层扫描
+        let titles = jsonpath_query(&doc, "$..title");
+        assert_eq!(titles, vec![json!("A"), json!("B")]);
+    }
+
+    #[test]
+    fn regex_dialect_migration_is_explicit() {
+        let doc = json!({"items": [{"name": "斗破苍穹"}, {"name": "其他"}]});
+        // 旧方言的 =~ 在 RFC 9535 里不是合法语法：解析失败返回空（不是 panic、
+        // 不是假命中）——书源作者能看到的症状是「规则取不到值」
+        assert!(jsonpath_query(&doc, "$.items[?(@.name =~ /斗破/)].name").is_empty());
+        // 标准替代：match()/search() 函数
+        assert_eq!(
+            jsonpath_first_string(&doc, "$.items[?search(@.name, \"斗破\")].name"),
+            Some("斗破苍穹".to_string())
+        );
+    }
+
+    #[test]
+    fn combinators_still_work_on_rfc_dialect() {
+        let doc = json!({"a": {"x": "1"}, "b": {"y": "2"}});
+        // && 拼接
+        assert_eq!(
+            jsonpath_query_combined(&doc, "$.a.x&&$.b.y"),
+            vec![json!("1"), json!("2")]
+        );
+        // || 首个非空（组合符只在 query_combined 层拆分，first_string 不管组合）
+        assert_eq!(
+            jsonpath_query_combined(&doc, "$.missing||$.a.x"),
+            vec![json!("1")]
+        );
+        // %% 交错
+        assert_eq!(
+            jsonpath_query_combined(&doc, "$.a.x%%$.b.y"),
+            vec![json!("1"), json!("2")]
+        );
+    }
 }
