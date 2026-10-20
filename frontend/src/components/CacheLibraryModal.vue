@@ -129,6 +129,7 @@
 </template>
 
 <script setup lang="ts">
+import { consumeSSE } from '../utils/sse'
 import { computed, ref, watch, toRef } from 'vue'
 import { useEscClose } from '../composables/useEscClose'
 import { useBookshelfStore } from '../stores/bookshelf'
@@ -317,17 +318,18 @@ function cacheServer(book: Book) {
   if (!bookId || cachingUrls.value.has(bookId)) return
   cachingUrls.value.add(bookId)
   const sse = cacheBookSSE({ bookId, count: cacheCount.value, concurrentCount: 8 })
-  sse.addEventListener('end', async () => {
+  const finish = async (message: string, kind: 'success' | 'error') => {
     sse.close()
     cachingUrls.value.delete(book.bookId || '')
-    appStore.showToast(`"${book.name}" 已缓存到服务器`, 'success')
+    appStore.showToast(message, kind)
     await refreshData()
-  })
-  sse.onerror = () => {
-    sse.close()
-    cachingUrls.value.delete(book.bookId || '')
-    appStore.showToast(`"${book.name}" 服务端缓存失败`, 'error')
   }
+  consumeSSE(sse, {
+    onEnd: () => finish(`"${book.name}" 已缓存到服务器`, 'success'),
+    // 后端 error 帧带用户可读 errorMsg；传输层失败才是「中断」
+    onErrorMessage: (msg) => finish(`"${book.name}" 服务端缓存失败：${msg}`, 'error'),
+    onTransportError: () => finish(`"${book.name}" 服务端缓存失败`, 'error'),
+  })
 }
 
 async function cacheBrowser(book: Book) {

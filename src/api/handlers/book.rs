@@ -1707,76 +1707,31 @@ pub async fn search_book_source_sse(
     let concurrent = std::cmp::max(search_size * 2, 24);
     let book_source_group = q.book_source_group.clone().filter(|g| !g.trim().is_empty());
 
+    // 参数与前置状态校验一律在建流前完成（400）：流内只余运行期错误
+    if book_id.trim().is_empty() {
+        return Err(AppError::BadRequest("bookId required".to_string()));
+    }
+    let book = match state.book_service.get_shelf_book(&user_ns, &book_id).await {
+        Ok(Some(b)) => b,
+        _ => return Err(AppError::BadRequest("书籍未加入书架".to_string())),
+    };
+    let sources = match state.book_source_service.list(&user_ns).await {
+        Ok(mut list) => {
+            if let Some(ref group) = book_source_group {
+                list.retain(|s| s.book_source_group.as_deref().unwrap_or("").contains(group));
+            }
+            if list.is_empty() {
+                return Err(AppError::BadRequest("未配置书源或分组为空".to_string()));
+            }
+            list
+        }
+        _ => return Err(AppError::BadRequest("未配置书源".to_string())),
+    };
+
     let (tx, rx) = mpsc::channel::<Event>(16);
     let state_clone = state.clone();
 
     tokio::spawn(async move {
-        if book_id.trim().is_empty() {
-            let _ = tx
-                .send(
-                    Event::default()
-                        .event("error")
-                        .data(json_err("bookId required")),
-                )
-                .await;
-            let _ = tx
-                .send(Event::default().event("end").data(json_end(last_index)))
-                .await;
-            return;
-        }
-
-        let book = match state_clone
-            .book_service
-            .get_shelf_book(&user_ns, &book_id)
-            .await
-        {
-            Ok(Some(b)) => b,
-            _ => {
-                let _ = tx
-                    .send(
-                        Event::default()
-                            .event("error")
-                            .data(json_err("书籍信息错误")),
-                    )
-                    .await;
-                let _ = tx
-                    .send(Event::default().event("end").data(json_end(last_index)))
-                    .await;
-                return;
-            }
-        };
-
-        let sources = match state_clone.book_source_service.list(&user_ns).await {
-            Ok(mut list) => {
-                if let Some(ref group) = book_source_group {
-                    list.retain(|s| s.book_source_group.as_deref().unwrap_or("").contains(group));
-                }
-                if list.is_empty() {
-                    let _ = tx
-                        .send(
-                            Event::default()
-                                .event("error")
-                                .data(json_err("未配置书源或分组为空")),
-                        )
-                        .await;
-                    let _ = tx
-                        .send(Event::default().event("end").data(json_end(last_index)))
-                        .await;
-                    return;
-                }
-                list
-            }
-            _ => {
-                let _ = tx
-                    .send(Event::default().event("error").data(json_err("未配置书源")))
-                    .await;
-                let _ = tx
-                    .send(Event::default().event("end").data(json_end(last_index)))
-                    .await;
-                return;
-            }
-        };
-
         let mut idx = last_index + 1;
         let mut last_idx = last_index;
         let mut total = 0usize;
@@ -2225,35 +2180,23 @@ pub async fn book_source_debug_sse(
     let book_source_id = q.book_source_id;
     let keyword = q.keyword.unwrap_or_default();
 
+    // 参数与书源存在性校验在建流前完成（400），流内只余运行期错误
+    let Some(source_id) = book_source_id else {
+        return Err(AppError::BadRequest("未配置书源".to_string()));
+    };
+    let source = match state
+        .book_source_service
+        .get_by_id(&user_ns, source_id)
+        .await
+    {
+        Ok(Some(s)) => s,
+        _ => return Err(AppError::BadRequest("未配置书源".to_string())),
+    };
+
     let (tx, rx) = mpsc::channel::<Event>(16);
     let state_clone = state.clone();
 
     tokio::spawn(async move {
-        let Some(source_id) = book_source_id else {
-            let _ = tx
-                .send(Event::default().event("error").data(json_err("未配置书源")))
-                .await;
-            let _ = tx
-                .send(Event::default().event("end").data(json_end(0)))
-                .await;
-            return;
-        };
-        let source = match state_clone
-            .book_source_service
-            .get_by_id(&user_ns, source_id)
-            .await
-        {
-            Ok(Some(s)) => s,
-            _ => {
-                let _ = tx
-                    .send(Event::default().event("error").data(json_err("未配置书源")))
-                    .await;
-                let _ = tx
-                    .send(Event::default().event("end").data(json_end(0)))
-                    .await;
-                return;
-            }
-        };
         let keyword = if keyword.trim().is_empty() {
             source
                 .rule_search

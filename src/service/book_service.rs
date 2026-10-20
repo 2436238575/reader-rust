@@ -1799,14 +1799,12 @@ impl BookService {
         self.storage_dir.join("cache").join(user_ns).join("cover")
     }
 
-    /// 章节列表缓存目录：`<storage>/data/<ns>/chapters`。
-    /// 目录缓存：可再生数据，归位 cache/ 树下（data/ 只留用户资产 local_books）
+    /// 目录缓存：可再生数据，归位 cache/ 树下（`<storage>/cache/<ns>/toc`）。
     fn chapter_cache_dir(&self, user_ns: &str) -> PathBuf {
         self.storage_dir.join("cache").join(user_ns).join("toc")
     }
 
-    /// 书源搜索结果缓存目录：`<storage>/data/<ns>/book_sources`。
-    /// 换源候选缓存：可再生数据，归位 cache/ 树下
+    /// 换源候选缓存：可再生数据，归位 cache/ 树下（`<storage>/cache/<ns>/source_candidates`）。
     fn book_sources_cache_dir(&self, user_ns: &str) -> PathBuf {
         self.storage_dir
             .join("cache")
@@ -3005,6 +3003,35 @@ mod tests {
             name: format!("书 {url}"),
             ..Default::default()
         }
+    }
+
+    #[tokio::test]
+    async fn shelf_limit_holds_under_concurrent_saves() {
+        let storage_dir =
+            std::env::temp_dir().join(format!("reader-rust-limit-race-{}", std::process::id()));
+        let service = std::sync::Arc::new(test_service(&storage_dir).await.with_user_book_limit(2));
+
+        // 限额检查与写入在同一事务（upsert_with_limit）：并发 8 本只能进 2 本
+        let mut handles = Vec::new();
+        for i in 0..8 {
+            let svc = service.clone();
+            handles.push(tokio::spawn(async move {
+                svc.save_book("u", make_book(&format!("race-{i}"))).await
+            }));
+        }
+        let mut ok = 0usize;
+        let mut rejected = 0usize;
+        for h in handles {
+            match h.await.unwrap() {
+                Ok(_) => ok += 1,
+                Err(_) => rejected += 1,
+            }
+        }
+        assert_eq!(ok, 2, "限额 2 下并发 8 本只能成 2 本");
+        assert_eq!(rejected, 6);
+        assert_eq!(service.get_bookshelf("u").await.unwrap().len(), 2);
+
+        let _ = tokio::fs::remove_dir_all(&storage_dir).await;
     }
 
     #[tokio::test]

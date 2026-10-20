@@ -48,6 +48,23 @@ async fn start_upstream() -> (String, HitCounter) {
                 Json(json!({ "data": { "data": { "content": format!("章节 {item} 的正文") } } }))
             }),
         )
+        // 无限翻页源：每页都给不同的下一页地址（病态书源场景）
+        .route(
+            "/content_paged",
+            get(|headers: axum::http::HeaderMap| async move {
+                let host = headers
+                    .get("host")
+                    .and_then(|v| v.to_str().ok())
+                    .unwrap_or_default()
+                    .to_string();
+                Json(json!({
+                    "data": { "data": {
+                        "content": "一页正文",
+                        "next": format!("http://{host}/content_paged?t={}", uuid::Uuid::new_v4()),
+                    } }
+                }))
+            }),
+        )
         .route(
             "/__hits",
             get(
@@ -332,4 +349,72 @@ async fn content_without_book_id_is_rejected() {
         "不该产生孤儿缓存目录: {}",
         orphan.display()
     );
+}
+
+#[tokio::test]
+async fn content_pagination_stops_at_page_cap() {
+    let server = TestServer::start().await;
+
+    // 挂一个带 nextContentUrl 规则的书源（翻页地址每次都不同 → 环检测挡不住）
+    let source = json!({
+        "bookSourceName": "无限翻页源",
+        "bookSourceUrl": server.upstream_url,
+        "enabled": true,
+        "ruleContent": {
+            "content": "$.data.data.content",
+            "nextContentUrl": "$.data.data.next"
+        },
+        "ruleToc": {
+            "chapterList": "$.data.list[*]",
+            "chapterName": "$.title",
+            "chapterUrl": "$.url"
+        }
+    });
+    let resp = server
+        .client
+        .post(format!("{}/reader3/saveBookSource", server.base_url))
+        .bearer_auth(&server.token)
+        .json(&source)
+        .send()
+        .await
+        .unwrap();
+    let source_id: i64 = resp.json::<Value>().await.unwrap()["data"]["bookSourceId"]
+        .as_i64()
+        .unwrap();
+
+    // 入架一本书（目录随便指，正文直接打无限翻页端点）
+    let book = json!({
+        "name": "无限翻页书",
+        "author": "作者",
+        "bookUrl": format!("{}/info?book_id=paged", server.upstream_url),
+        "bookSourceId": source_id,
+        "tocUrl": format!("{}/catalog?book_id=paged", server.upstream_url),
+    });
+    let resp = server
+        .client
+        .post(format!("{}/reader3/saveBook", server.base_url))
+        .bearer_auth(&server.token)
+        .json(&book)
+        .send()
+        .await
+        .unwrap();
+    let book_id = resp.json::<Value>().await.unwrap()["data"]["bookId"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    let content = server
+        .post(
+            "getBookContent",
+            json!({
+                "bookId": book_id,
+                "chapterUrl": format!("{}/content_paged", server.upstream_url),
+            }),
+        )
+        .await;
+
+    // 上限 50 页截断：上游被恰好打 50 次，正文恰好 50 页拼起来
+    assert_eq!(server.hits_for("/content_paged"), 50, "翻页必须被上限截断");
+    let pages = content.as_str().unwrap().matches("一页正文").count();
+    assert_eq!(pages, 50, "正文应恰好拼 50 页");
 }

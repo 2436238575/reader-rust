@@ -90,11 +90,12 @@
 <script setup lang="ts">
 import { ref, watch } from 'vue'
 import { useAppStore } from '../../stores/app'
+import type { SourceKeyPath } from '../../types'
 
 type FieldType = 'text' | 'textarea' | 'number' | 'checkbox' | 'select'
 
 type FieldDef = {
-  key: string // 点路径，如 ruleSearch.name
+  key: SourceKeyPath // 点路径，如 ruleSearch.name；取值空间与后端 BookSource 对齐
   label: string
   type?: FieldType
   placeholder?: string

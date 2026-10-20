@@ -10,6 +10,10 @@
 // MessageEvent` 区分（原生 error 是 plain Event、无 data）。参数校验失败
 // 一律在建流前返回 HTTP 400，不会出现在流里。
 //
+import { API_BASE } from './appBase'
+import { notifyNeedLogin } from './authEvents'
+import { readAccessToken } from './secureAccess'
+
 // 此前各消费方（SearchResults/useAvailableSources/CacheManager）重复注册
 // addEventListener('error') + onerror 且都不读 event.data，后端精心发的
 // errorMsg 被丢弃，用户只看到「搜索失败」。统一在此封装。
@@ -46,6 +50,18 @@ export function parseSseJson<T>(raw: string | undefined | null): T | null {
   }
 }
 
+/** 传输层失败时探测是不是 401：EventSource 拿不到响应状态码，
+ *  只能补一个轻量 GET 探明（401 → 拉登录框，与 axios 拦截器同通道）。 */
+function probeUnauthorized() {
+  fetch(`${API_BASE}/getUserInfo`, {
+    headers: { Authorization: `Bearer ${readAccessToken(localStorage) ?? ''}` },
+  })
+    .then((resp) => {
+      if (resp.status === 401) notifyNeedLogin()
+    })
+    .catch(() => undefined)
+}
+
 export function consumeSSE<TMsg = unknown, TEnd = unknown>(
   es: EventSource,
   handlers: ConsumeSseHandlers<TMsg, TEnd>
@@ -62,6 +78,7 @@ export function consumeSSE<TMsg = unknown, TEnd = unknown>(
       const msg = parseSseErrorMsg(event.data) ?? '服务返回了未知错误'
       handlers.onErrorMessage?.(msg, event as MessageEvent<string>)
     } else {
+      probeUnauthorized()
       handlers.onTransportError?.(event)
     }
   })

@@ -161,8 +161,9 @@ export interface ReviewResponse<T> {
 
 /** 以下 rule* 接口与 src/model/rule.rs 一一对应（全部字段可选的规则文本）。 */
 // 书源与规则类型由后端 ts-rs 生成（src/model/{book_source,rule}.rs，
-// `cargo test` 时刷新，勿手改）：与线上一致，可视化编辑器不再退化为
-// Record<string, unknown>。
+// `cargo test` 时刷新，勿手改）：与线上一致。可视化编辑器的字段配置
+// 键经 SourceKeyPath 对这些类型编译期校验（draft 本体是 JSON 树编辑的
+// 动态容器，保持 Record<string, unknown> 是刻意的）。
 export type { SearchRule } from './generated/SearchRule'
 export type { SearchRule as ExploreRule } from './generated/SearchRule'
 export type { BookInfoRule } from './generated/BookInfoRule'
@@ -172,6 +173,28 @@ export type { ReviewRule } from './generated/ReviewRule'
 export type { ParaReviewRule } from './generated/ParaReviewRule'
 export type { ContentImageRule } from './generated/ContentImageRule'
 export type { BookSource } from './generated/BookSource'
+
+import type { BookSource as BookSourceType } from './generated/BookSource'
+import type { SearchRule as SearchRuleType } from './generated/SearchRule'
+import type { BookInfoRule as BookInfoRuleType } from './generated/BookInfoRule'
+import type { TocRule as TocRuleType } from './generated/TocRule'
+import type { ContentRule as ContentRuleType } from './generated/ContentRule'
+import type { ReviewRule as ReviewRuleType } from './generated/ReviewRule'
+import type { ParaReviewRule as ParaReviewRuleType } from './generated/ParaReviewRule'
+import type { ContentImageRule as ContentImageRuleType } from './generated/ContentImageRule'
+
+/** 书源可视化编辑器的合法字段路径：顶层键 + 各规则对象的「rule 名.字段名」。
+ *  写错字段名会在编译期报错（此前 key 是纯 string，拼错静默落空）。 */
+export type SourceKeyPath =
+  | (keyof BookSourceType & string)
+  | `ruleSearch.${keyof SearchRuleType & string}`
+  | `ruleExplore.${keyof SearchRuleType & string}`
+  | `ruleBookInfo.${keyof BookInfoRuleType & string}`
+  | `ruleToc.${keyof TocRuleType & string}`
+  | `ruleContent.${keyof ContentRuleType & string}`
+  | `ruleReview.${keyof ReviewRuleType & string}`
+  | `ruleParaReview.${keyof ParaReviewRuleType & string}`
+  | `ruleContentImage.${keyof ContentImageRuleType & string}`
 
 export interface BookSourceTestResult {
   bookSourceId?: number
