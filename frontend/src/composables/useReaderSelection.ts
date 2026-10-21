@@ -247,11 +247,10 @@ export function useReaderSelection(
     }
   }
 
-  /** 把选中文本加为常驻关键词高亮（默认当前书） */
-  function addSelectionKeywordHighlight() {
-    const selection = window.getSelection?.()
-    const text = (activeSelectionText.value || selection?.toString().trim() || '').trim()
-    if (!text || !store.book) return
+  /** 把文本加为常驻关键词高亮（默认当前书）；选区与划线菜单共用 */
+  function addKeywordHighlightForText(rawText: string): boolean {
+    const text = rawText.trim()
+    if (!text || !store.book) return false
     const bookId = store.book.bookId
     const exists = store.keywordRules.some(
       (rule) =>
@@ -260,7 +259,7 @@ export function useReaderSelection(
     )
     if (exists) {
       appStore.showToast('该词已在高亮列表中', 'warning')
-      return
+      return false
     }
     store.saveKeywordRules([
       ...store.keywordRules,
@@ -274,6 +273,33 @@ export function useReaderSelection(
         updatedAt: Date.now(),
       },
     ])
+    return true
+  }
+
+  /** 按文本加替换规则；选区与划线菜单共用 */
+  async function saveReplaceRuleForText(text: string, mode: 'book' | 'source') {
+    if (!store.book) return
+    const scope =
+      mode === 'source' ? `source:${store.book.bookSourceId}` : `book:${store.book.bookId}`
+    await saveReplaceRule({
+      id: 0,
+      name: `${mode === 'source' ? '书源替换' : '本书替换'} ${store.replaceRules.length + 1}`,
+      pattern: text,
+      replacement: '',
+      scope,
+      isEnabled: true,
+      isRegex: false,
+      order: store.replaceRules.length + 1,
+    })
+    await store.fetchReplaceRules()
+  }
+
+  /** 把选中文本加为常驻关键词高亮（默认当前书） */
+  function addSelectionKeywordHighlight() {
+    const selection = window.getSelection?.()
+    const text = (activeSelectionText.value || selection?.toString().trim() || '').trim()
+    if (!text || !store.book) return
+    if (!addKeywordHighlightForText(text)) return
     selection?.removeAllRanges()
     activeSelectionText.value = ''
     hideSelectionMenu()
@@ -326,6 +352,89 @@ export function useReaderSelection(
     window.getSelection?.()?.removeAllRanges()
   }
 
+  /* ─── 已回显划线的操作菜单（点击/右键/长按打开） ─── */
+  const underlineMenu = ref({
+    visible: false,
+    /** 被点那一段的文本（高亮/替换动作用；跨段划线的其余段不混进来） */
+    text: '',
+    top: 0,
+    left: 0,
+    chapterIndex: 0,
+    chapterPos: 0,
+  })
+
+  function openUnderlineMenu(
+    x: number,
+    y: number,
+    text: string,
+    chapterIndex: number,
+    chapterPos: number
+  ) {
+    hideSelectionMenu()
+    suppressSelectionCloseUntil.value = Date.now() + 250
+    const safeTop =
+      8 +
+      Math.max(
+        0,
+        parseFloat(
+          getComputedStyle(document.documentElement).getPropertyValue('--safe-area-top')
+        ) || 0
+      )
+    underlineMenu.value = {
+      visible: true,
+      text,
+      // 菜单约 4 行高、240px 宽，钳在视口内
+      top: Math.max(safeTop, Math.min(window.innerHeight - 190, y + 12)),
+      left: Math.max(8, Math.min(window.innerWidth - 240, x - 110)),
+      chapterIndex,
+      chapterPos,
+    }
+  }
+
+  function closeUnderlineMenu() {
+    underlineMenu.value.visible = false
+  }
+
+  /** 划线菜单的删除：按 (chapterIndex, chapterPos, kind) 定位回书签条目 */
+  async function deleteUnderlineFromMenu() {
+    const { chapterIndex, chapterPos } = underlineMenu.value
+    const bm = store.bookmarks.find(
+      (b) =>
+        b.kind === 'underline' &&
+        b.chapterIndex === chapterIndex &&
+        (b.chapterPos ?? 0) === chapterPos
+    )
+    if (!bm) {
+      closeUnderlineMenu()
+      return
+    }
+    if (!confirm('确定删除这条划线吗？')) return
+    try {
+      await store.removeBookmark(bm)
+      closeUnderlineMenu()
+      appStore.showToast('已删除划线', 'success')
+    } catch (error) {
+      appStore.showToast((error as Error).message || '删除划线失败', 'error')
+    }
+  }
+
+  function underlineMenuAddHighlight() {
+    if (addKeywordHighlightForText(underlineMenu.value.text)) {
+      appStore.showToast('已加入高亮（当前书籍）', 'success')
+    }
+    closeUnderlineMenu()
+  }
+
+  async function underlineMenuAddReplaceRule(mode: 'book' | 'source') {
+    try {
+      await saveReplaceRuleForText(underlineMenu.value.text, mode)
+      appStore.showToast(mode === 'source' ? '已加入书源替换规则' : '已加入本书替换规则', 'success')
+    } catch {
+      appStore.showToast('加入替换规则失败', 'error')
+    }
+    closeUnderlineMenu()
+  }
+
   function disposeSelection() {
     if (selectionMenuUpdateTimer) {
       clearTimeout(selectionMenuUpdateTimer)
@@ -347,6 +456,12 @@ export function useReaderSelection(
     addSelectionBookmark,
     addSelectionReplaceRule,
     addSelectionKeywordHighlight,
+    underlineMenu,
+    openUnderlineMenu,
+    closeUnderlineMenu,
+    deleteUnderlineFromMenu,
+    underlineMenuAddHighlight,
+    underlineMenuAddReplaceRule,
     clearSelectionState,
     disposeSelection,
   }

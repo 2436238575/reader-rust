@@ -68,18 +68,21 @@ describe('highlightKeywords', () => {
 })
 
 describe('applyUnderlineMarks', () => {
-  it('摘录命中处包 span.reader-underline，原文不变', () => {
+  const u = (text: string, chapterPos = 1000) => ({ text, chapterPos })
+
+  it('摘录命中处包 span.reader-underline 并带 chapterPos，原文不变', () => {
     const el = root('<p>他走进了那座古庙，灯还亮着。</p>')
-    applyUnderlineMarks(el, ['那座古庙'])
-    const span = el.querySelector('span.reader-underline')
+    applyUnderlineMarks(el, [u('那座古庙', 3456)])
+    const span = el.querySelector<HTMLElement>('span.reader-underline')
     expect(span).not.toBeNull()
     expect(span!.textContent).toBe('那座古庙')
+    expect(span!.dataset.chapterPos).toBe('3456')
     expect(el.textContent).toBe('他走进了那座古庙，灯还亮着。')
   })
 
   it('同一摘录重复出现只标第一处；多条摘录各标各的', () => {
     const el = root('<p>甲来了。乙走了。甲又来了。</p>')
-    applyUnderlineMarks(el, ['甲来', '乙走'])
+    applyUnderlineMarks(el, [u('甲来'), u('乙走')])
     const spans = el.querySelectorAll('span.reader-underline')
     expect(spans).toHaveLength(2)
     expect(spans[0].textContent).toBe('甲来')
@@ -88,37 +91,39 @@ describe('applyUnderlineMarks', () => {
 
   it('空白数量不一致也能命中（空白段放宽匹配），不命中不动 DOM', () => {
     const el = root('<p>甲  乙　丙</p><p>无关</p>')
-    applyUnderlineMarks(el, ['甲 乙 丙', '找不到的词'])
+    applyUnderlineMarks(el, [u('甲 乙 丙'), u('找不到的词')])
     expect(el.querySelectorAll('span.reader-underline')).toHaveLength(1)
     expect(el.textContent).toBe('甲  乙　丙无关')
   })
 
   it('太短（<2 字符）的摘录忽略；不进 SCRIPT/MARK 内部', () => {
     const el = root('<p>甲乙</p><style>.甲{}</style>')
-    applyUnderlineMarks(el, ['甲', '乙'])
+    applyUnderlineMarks(el, [u('甲'), u('乙')])
     expect(el.querySelectorAll('span.reader-underline')).toHaveLength(0)
   })
 
   it('划线 span 内的文本仍可被搜索/关键词标记（叠加共存）', () => {
     const el = root('<p>他走进了那座古庙。</p>')
-    applyUnderlineMarks(el, ['那座古庙'])
+    applyUnderlineMarks(el, [u('那座古庙')])
     highlightSearchText(el, '古庙')
     const span = el.querySelector('span.reader-underline')
     expect(span?.querySelector('mark.search-highlight')?.textContent).toBe('古庙')
   })
 
-  it('跨段划线按行拆开：每段各标一处', () => {
+  it('跨段划线按行拆开：每段各标一处，共享同一 chapterPos', () => {
     const el = root('<p>第一段的后半在这里收尾。</p><p>第二段开头接着讲。</p>')
-    applyUnderlineMarks(el, ['后半在这里收尾。\n第二段开头接着讲'])
-    const spans = el.querySelectorAll('span.reader-underline')
+    applyUnderlineMarks(el, [u('后半在这里收尾。\n第二段开头接着讲', 7777)])
+    const spans = el.querySelectorAll<HTMLElement>('span.reader-underline')
     expect(spans).toHaveLength(2)
     expect(spans[0].textContent).toBe('后半在这里收尾。')
     expect(spans[1].textContent).toBe('第二段开头接着讲')
+    expect(spans[0].dataset.chapterPos).toBe('7777')
+    expect(spans[1].dataset.chapterPos).toBe('7777')
   })
 
   it('跨三段的长划线：中间整段也标', () => {
     const el = root('<p>开头甲段</p><p>整整一段乙</p><p>丙收尾了</p>')
-    applyUnderlineMarks(el, ['甲段\n整整一段乙\n丙收'])
+    applyUnderlineMarks(el, [u('甲段\n整整一段乙\n丙收')])
     const spans = el.querySelectorAll('span.reader-underline')
     expect(spans).toHaveLength(3)
     expect(spans[1].textContent).toBe('整整一段乙')

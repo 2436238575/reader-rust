@@ -354,6 +354,35 @@
       </div>
     </Transition>
 
+    <!-- 已回显划线的操作菜单：与选区菜单同形态，「加入划线」换成「删除划线」 -->
+    <Transition name="fade">
+      <div
+        v-if="underlineMenu.visible"
+        class="selection-menu"
+        @click.stop
+        :style="{
+          top: underlineMenu.top + 'px',
+          left: underlineMenu.left + 'px',
+          background: chromeTheme.popup,
+          color: chromeTheme.fontColor,
+        }"
+      >
+        <div class="selection-menu-text">
+          {{
+            underlineMenu.text.length > 48
+              ? underlineMenu.text.slice(0, 48) + '...'
+              : underlineMenu.text
+          }}
+        </div>
+        <div class="selection-menu-actions">
+          <button class="danger-action" @click="deleteUnderlineFromMenu">删除划线</button>
+          <button @click="underlineMenuAddHighlight">加入高亮</button>
+          <button @click="underlineMenuAddReplaceRule('book')">按本书替换</button>
+          <button @click="underlineMenuAddReplaceRule('source')">按书源替换</button>
+        </div>
+      </div>
+    </Transition>
+
     <BookDetailModal v-model="showBookInfo" :book="bookInfoBook" @switched="handleBookSwitched" />
 
     <ImageLightbox :src="previewImage" @close="previewImage = ''" />
@@ -382,6 +411,7 @@ import {
   renderParaCommentBubble,
   splitParagraphLines,
   type BaseRenderOptions,
+  type UnderlineMarkSpec,
 } from '../utils/chapterRender'
 import type { ChapterImage, ParaReviewCount } from '../types'
 import {
@@ -550,6 +580,12 @@ const {
   addSelectionBookmark,
   addSelectionReplaceRule,
   addSelectionKeywordHighlight,
+  underlineMenu,
+  openUnderlineMenu,
+  closeUnderlineMenu,
+  deleteUnderlineFromMenu,
+  underlineMenuAddHighlight,
+  underlineMenuAddReplaceRule,
   clearSelectionState,
   disposeSelection,
 } = useReaderSelection(
@@ -640,12 +676,12 @@ function decorateChapterHtml(baseHtml: string, withBubbles: boolean, chapterInde
   return wrapper.innerHTML
 }
 
-/** 某章的全部划线摘录文本（回显用），来自书签列表里 kind=underline 的条目。 */
-function underlineTextsForChapter(chapterIndex: number): string[] {
+/** 某章的全部划线（回显用）：摘录文本 + 书签定位键 chapterPos。 */
+function underlineTextsForChapter(chapterIndex: number): UnderlineMarkSpec[] {
   return store.bookmarks
     .filter((bm) => bm.kind === 'underline' && bm.chapterIndex === chapterIndex)
-    .map((bm) => bm.bookText || '')
-    .filter((text) => text.trim().length >= 2)
+    .map((bm) => ({ text: bm.bookText || '', chapterPos: bm.chapterPos ?? 0 }))
+    .filter((mark) => mark.text.trim().length >= 2)
 }
 
 /** 生效中的常驻关键词（启用 + scope 命中当前书），供装饰层上底色。 */
@@ -757,8 +793,36 @@ const chapterImageMap = computed(() => {
   return map
 })
 
+/** 从事件目标解析划线：span 上的 chapterPos + 所在章（连续模式读祖先 section 的章号）。 */
+function resolveUnderlineTarget(target: HTMLElement | null) {
+  const span = target?.closest?.('.reader-underline') as HTMLElement | null
+  if (!span) return null
+  const chapterPos = Number(span.dataset.chapterPos)
+  if (!Number.isFinite(chapterPos)) return null
+  const sectionIndex = span
+    .closest('section.continuous-chapter')
+    ?.getAttribute('data-chapter-index')
+  const chapterIndex = sectionIndex != null ? Number(sectionIndex) : store.currentIndex
+  if (!Number.isFinite(chapterIndex)) return null
+  return { text: span.textContent || '', chapterIndex, chapterPos }
+}
+
 function handleChapterTextClick(event: MouseEvent) {
+  if (Date.now() < suppressNextTapUntil) return
   const target = event.target as HTMLElement | null
+  // 已回显的划线：点开操作菜单（删除划线/加入高亮/替换规则）
+  const underline = resolveUnderlineTarget(target)
+  if (underline) {
+    event.stopPropagation()
+    openUnderlineMenu(
+      event.clientX,
+      event.clientY,
+      underline.text,
+      underline.chapterIndex,
+      underline.chapterPos
+    )
+    return
+  }
   const bubble = target?.closest('.para-comment-bubble') as HTMLElement | null
   if (bubble) {
     event.stopPropagation()
@@ -1211,6 +1275,19 @@ function handleBackgroundClick(e: Event) {
 }
 
 function handleContextMenu(event: MouseEvent) {
+  // 右键点在已回显的划线上：打开划线操作菜单（不受选区模式影响）
+  const underline = resolveUnderlineTarget(event.target as HTMLElement | null)
+  if (underline) {
+    event.preventDefault()
+    openUnderlineMenu(
+      event.clientX,
+      event.clientY,
+      underline.text,
+      underline.chapterIndex,
+      underline.chapterPos
+    )
+    return
+  }
   // 「右键菜单」模式：选区上右键唤出操作菜单
   if (config.value.selectAction === 'contextmenu') {
     if (showSelectionMenuAt(event)) {
@@ -1226,6 +1303,10 @@ function handleGlobalClick(e: MouseEvent) {
   if (store.activePanel) return
   if (Date.now() < suppressNextTapUntil) return
   if (Date.now() < suppressSelectionCloseUntil.value) return
+  if (underlineMenu.value.visible) {
+    closeUnderlineMenu()
+    return
+  }
   if (selectionMenu.value.visible) {
     hideSelectionMenu()
     return
@@ -1382,9 +1463,21 @@ function handleScroll() {
   serverProgressAutoSaveScheduler.schedule()
 }
 
+/** 划线长按菜单：起点落在划线上时起 500ms 定时器，移动/抬起即取消 */
+let underlineLongPressTimer: number | null = null
+
+function cancelUnderlineLongPress() {
+  if (underlineLongPressTimer) {
+    clearTimeout(underlineLongPressTimer)
+    underlineLongPressTimer = null
+  }
+}
+
 function handleTouchStart(event: TouchEvent) {
   interruptAutoScroll()
   hideSelectionMenu()
+  closeUnderlineMenu()
+  cancelUnderlineLongPress()
   const touch = event.touches[0]
   if (!touch) return
   touchState.value = {
@@ -1394,9 +1487,34 @@ function handleTouchStart(event: TouchEvent) {
     moving: true,
     horizontalLocked: false,
   }
+  const underline = resolveUnderlineTarget(event.target as HTMLElement | null)
+  if (underline) {
+    const { clientX, clientY } = touch
+    underlineLongPressTimer = window.setTimeout(() => {
+      underlineLongPressTimer = null
+      // 触发的这次按压不再走翻页/点按链
+      suppressNextTapUntil = Date.now() + 900
+      touchState.value.moving = false
+      openUnderlineMenu(
+        clientX,
+        clientY,
+        underline.text,
+        underline.chapterIndex,
+        underline.chapterPos
+      )
+    }, 500)
+  }
 }
 
 function handleTouchMove(event: TouchEvent) {
+  const pressTouch = event.touches[0]
+  if (pressTouch && underlineLongPressTimer) {
+    const moved = Math.hypot(
+      pressTouch.clientX - touchState.value.startX,
+      pressTouch.clientY - touchState.value.startY
+    )
+    if (moved > 10) cancelUnderlineLongPress()
+  }
   if (!isMobile.value || !isHorizontalPageMode.value || !touchState.value.moving) return
   const selectedText = window.getSelection?.()?.toString().trim()
   if (selectedText) return
@@ -1413,6 +1531,7 @@ function handleTouchMove(event: TouchEvent) {
 }
 
 function handleTouchEnd(event: TouchEvent) {
+  cancelUnderlineLongPress()
   if (!isMobile.value || !isHorizontalPageMode.value || !touchState.value.moving) {
     touchState.value.moving = false
     return
@@ -2320,6 +2439,11 @@ watch(
   cursor: pointer;
 }
 
+/* 划线菜单里的删除动作：红色与全站 danger 一致 */
+.selection-menu-actions button.danger-action {
+  background: #ef4444;
+}
+
 /* 右键菜单形态：竖排列表，占满整宽，像原生上下文菜单 */
 .selection-menu.as-context-menu {
   display: flex;
@@ -2379,10 +2503,11 @@ watch(
   padding: 0 1px;
 }
 
-/* 划线回显：主题色下划线，与关键词底色/搜索高亮可叠加 */
+/* 划线回显：主题色下划线，与关键词底色/搜索高亮可叠加；可点击打开操作菜单 */
 :deep(.reader-underline) {
   border-bottom: 2px solid var(--color-primary, #c97f3a);
   padding-bottom: 1px;
+  cursor: pointer;
 }
 
 @media (max-width: 767px) {

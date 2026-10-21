@@ -214,8 +214,16 @@ export interface KeywordMarkSpec {
   color: string
 }
 
+export interface UnderlineMarkSpec {
+  /** 划线摘录文本（可含换行 = 跨段） */
+  text: string
+  /** 对应书签条目的 chapterPos（万分比进度），落在 span 上供点击定位回原条目 */
+  chapterPos: number
+}
+
 /**
- * 划线回显：把划线摘录文本在正文里包成 `<span class="reader-underline">`。
+ * 划线回显：把划线摘录文本在正文里包成 `<span class="reader-underline">`，
+ * span 带 `data-chapter-pos` 指向对应书签条目（点击/右键/长按打开操作菜单用）。
  *
  * 注入顺序要在搜索/关键词高亮**之前**：span 不在 walker 的排除名单里，
  * 后续两个高亮还能进 span 内部叠加（下划线 + 底色共存）；反过来的话
@@ -223,15 +231,20 @@ export interface KeywordMarkSpec {
  *
  * 跨段划线：选区摘录里的换行正好对应段落边界（浏览器对跨段选区
  * `toString()` 给 `\n`），按行拆开——每行是各自段落内的连续子串，
- * 走同一个单文本节点匹配，每行标一处。
+ * 走同一个单文本节点匹配，每行标一处（共享同一个 chapterPos）。
  *
  * 已知局限：同一行摘录在一章里重复出现时只标第一处。
  */
-export function applyUnderlineMarks(root: HTMLElement, texts: string[]) {
-  const anchors = texts
-    .flatMap((text) => text.split(/\n+/))
-    .map((text) => text.replace(/\s+/g, ' ').trim())
-    .filter((text) => text.length >= 2)
+export function applyUnderlineMarks(root: HTMLElement, marks: UnderlineMarkSpec[]) {
+  // 拆行后 (行文本, chapterPos) 逐条作为独立 anchor
+  const anchors = marks
+    .flatMap((mark) =>
+      mark.text.split(/\n+/).map((line) => ({
+        text: line.replace(/\s+/g, ' ').trim(),
+        chapterPos: mark.chapterPos,
+      }))
+    )
+    .filter((anchor) => anchor.text.length >= 2)
   if (!anchors.length) return
   const marked = new Set<string>()
   const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
@@ -252,10 +265,10 @@ export function applyUnderlineMarks(root: HTMLElement, texts: string[]) {
     const value = node.textContent || ''
     if (!value.trim()) continue
     for (const anchor of anchors) {
-      if (marked.has(anchor)) continue
+      if (marked.has(anchor.text)) continue
       // 摘录的空白与正文渲染后的空白数量可能不一致，把空白段放宽成 \s+，
       // 让命中坐标直接落在原文上（不归一化原文，避免坐标错位）
-      const pattern = anchor.split(/\s+/).map(escapeRegExp).join('\\s+')
+      const pattern = anchor.text.split(/\s+/).map(escapeRegExp).join('\\s+')
       const match = new RegExp(pattern).exec(value)
       if (!match) continue
       const before = value.slice(0, match.index)
@@ -265,12 +278,13 @@ export function applyUnderlineMarks(root: HTMLElement, texts: string[]) {
       if (before) fragment.appendChild(document.createTextNode(before))
       const span = document.createElement('span')
       span.className = 'reader-underline'
+      span.dataset.chapterPos = String(anchor.chapterPos)
       span.textContent = hit
       fragment.appendChild(span)
       const afterNode = after ? document.createTextNode(after) : null
       if (afterNode) fragment.appendChild(afterNode)
       node.parentNode?.replaceChild(fragment, node)
-      marked.add(anchor)
+      marked.add(anchor.text)
       // after 段是新建文本节点、不在预收集列表里：推回队列尾部，
       // 让同节点里排在后面的其他划线也能命中
       if (afterNode) {
