@@ -228,6 +228,9 @@ pub async fn build_state(cfg: AppConfig) -> anyhow::Result<AppState> {
         probe_service.probe().await;
     });
 
+    let chapter_edit_service =
+        Arc::new(crate::service::chapter_edit_service::ChapterEditService::new(&cfg.storage_dir));
+
     Ok(AppState {
         config: cfg,
         image_service,
@@ -238,6 +241,7 @@ pub async fn build_state(cfg: AppConfig) -> anyhow::Result<AppState> {
         book_group_service,
         local_txt_book_service,
         local_epub_book_service,
+        chapter_edit_service,
         json_document_service,
         bookmark_repo: db::repo::BookmarkRepo::new(pool.clone()),
         replace_rule_repo: db::repo::ReplaceRuleRepo::new(pool.clone()),

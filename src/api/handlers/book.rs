@@ -85,6 +85,28 @@ pub struct BookContentRequest {
     pub book_id: Option<String>,
     pub index: Option<i32>,
     pub refresh: Option<i32>,
+    /// `upstream`：只读上游基准（网络书的正文缓存 / 本地书原文），
+    /// 不读编辑版、不抓上游——章节编辑 diff 的基准通道。
+    pub variant: Option<String>,
+}
+
+/// 编辑版优先：有编辑版时阅读器看的是编辑版，上游缓存只做 diff 基准。
+/// refresh=1 仍会重抓上游更新缓存（基准），但返回值以编辑版为准。
+async fn apply_chapter_edit_overlay(
+    state: &AppState,
+    user_ns: &str,
+    book_id: &str,
+    chapter_url: &str,
+    upstream: String,
+) -> String {
+    match state
+        .chapter_edit_service
+        .get_chapter_edit(user_ns, book_id, chapter_url)
+        .await
+    {
+        Ok(Some(edited)) => edited,
+        _ => upstream,
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -528,6 +550,7 @@ pub async fn get_book_content(
     let user_ns = user.0.ns.clone();
 
     let do_refresh = req.refresh.unwrap_or(0) > 0;
+    let want_upstream = req.variant.as_deref() == Some("upstream");
 
     if req.chapter_url.as_deref().is_some_and(is_local_txt_url) {
         let url = req
@@ -544,6 +567,18 @@ pub async fn get_book_content(
         } else {
             repair_encoded_url(url)
         };
+        // 编辑版优先（本地书的 diff 基准是原文，编辑不改原文件）
+        if let Some(book_id) = req.book_id.as_deref().filter(|v| !v.trim().is_empty()) {
+            if !want_upstream {
+                if let Ok(Some(edited)) = state
+                    .chapter_edit_service
+                    .get_chapter_edit(&user_ns, book_id, &chapter_url)
+                    .await
+                {
+                    return Ok(Json(ApiResponse::ok(serde_json::Value::String(edited))));
+                }
+            }
+        }
         let content = state
             .local_txt_book_service
             .get_content(&user_ns, &chapter_url)
@@ -566,6 +601,17 @@ pub async fn get_book_content(
         } else {
             repair_encoded_url(url)
         };
+        if let Some(book_id) = req.book_id.as_deref().filter(|v| !v.trim().is_empty()) {
+            if !want_upstream {
+                if let Ok(Some(edited)) = state
+                    .chapter_edit_service
+                    .get_chapter_edit(&user_ns, book_id, &chapter_url)
+                    .await
+                {
+                    return Ok(Json(ApiResponse::ok(serde_json::Value::String(edited))));
+                }
+            }
+        }
         let content = state
             .local_epub_book_service
             .get_content(&user_ns, &chapter_url)
@@ -584,6 +630,28 @@ pub async fn get_book_content(
         .ok_or_else(|| AppError::BadRequest("chapterUrl required".to_string()))?;
     let resolved = resolve_book(&state, &user_ns, &book_id).await?;
 
+    // diff 基准通道：只读上游缓存，不抓上游、不读编辑版
+    if want_upstream {
+        let cached = state
+            .book_service
+            .get_cached_content(&user_ns, &book_id, &chapter_url)
+            .await?;
+        return Ok(Json(ApiResponse::ok(serde_json::Value::String(
+            cached.unwrap_or_default(),
+        ))));
+    }
+
+    // 编辑版短路：不进抓取链路（FileCache 里的基准原样保留）
+    if !do_refresh {
+        if let Ok(Some(edited)) = state
+            .chapter_edit_service
+            .get_chapter_edit(&user_ns, &book_id, &chapter_url)
+            .await
+        {
+            return Ok(Json(ApiResponse::ok(serde_json::Value::String(edited))));
+        }
+    }
+
     // If refresh is requested, delete this chapter's cache before fetching
     if do_refresh {
         let _ = state
@@ -596,6 +664,9 @@ pub async fn get_book_content(
         .book_service
         .get_content(&user_ns, &book_id, &resolved.source, &chapter_url)
         .await?;
+    // 强刷后基准已更新，阅读仍以编辑版为准
+    let content =
+        apply_chapter_edit_overlay(&state, &user_ns, &book_id, &chapter_url, content).await;
     Ok(Json(ApiResponse::ok(serde_json::Value::String(content))))
 }
 
@@ -1067,6 +1138,11 @@ pub async fn delete_book(
     let _ = state.ai_book_service.delete(&user_ns, &book_id).await;
     super::bookmark::delete_bookmarks_for_book(&state, &user_ns, &book_id).await?;
     state.image_service.remove_by_book_id(&book_id).await;
+    // 章节编辑版（data/ 下的用户资产）随书级联删除
+    state
+        .chapter_edit_service
+        .delete_book_edits(&user_ns, &book_id)
+        .await;
     if let Some(book) = shelf_book {
         cleanup_local_book_files(&state, &user_ns, std::slice::from_ref(&book)).await;
     }
@@ -1091,6 +1167,10 @@ pub async fn delete_books(
         let _ = state.ai_book_service.delete(&user_ns, book_id).await;
         super::bookmark::delete_bookmarks_for_book(&state, &user_ns, book_id).await?;
         state.image_service.remove_by_book_id(book_id).await;
+        state
+            .chapter_edit_service
+            .delete_book_edits(&user_ns, book_id)
+            .await;
     }
     cleanup_local_book_files(&state, &user_ns, &shelf_books).await;
     Ok(Json(ApiResponse::ok(serde_json::json!({"deleted": count}))))

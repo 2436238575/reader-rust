@@ -2372,6 +2372,16 @@ impl BookService {
             .join(format!("{}.json", book_id))
     }
 
+    /// 只读本章的正文缓存（不触发上游抓取）：章节编辑版的 diff 基准通道。
+    pub async fn get_cached_content(
+        &self,
+        user_ns: &str,
+        book_id: &str,
+        chapter_url: &str,
+    ) -> Result<Option<String>, AppError> {
+        Ok(self.cache.get(user_ns, book_id, chapter_url).await?)
+    }
+
     /// 缓存内全文检索：只扫已缓存章节的正文文件（可再生数据），不触发任何
     /// 上游请求。本地书不走这套缓存，自然不在检索范围。`query` 是纯文本
     /// 子串匹配（大小写不敏感），不做正则语法——用户输错正则不该炸掉搜索。

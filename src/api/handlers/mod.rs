@@ -7,6 +7,7 @@ mod book_group;
 mod book_source;
 mod bookmark;
 mod cache;
+mod chapter_edit;
 mod chapter_image;
 mod image;
 mod multipart;
@@ -27,6 +28,9 @@ pub use bookmark::{
     delete_bookmark, delete_bookmarks, get_bookmarks, save_bookmark, save_bookmarks,
 };
 pub use cache::{cache_stats, purge_cache};
+pub use chapter_edit::{
+    delete_chapter_edit, get_chapter_edit, list_chapter_edits, save_chapter_edit,
+};
 pub use chapter_image::get_chapter_images;
 pub use image::{get_book_cover, get_image};
 pub use replace_rule::{

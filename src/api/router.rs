@@ -186,6 +186,22 @@ pub fn build_router(state: AppState) -> Router {
             get(handlers::get_chapter_images).post(handlers::get_chapter_images),
         )
         .route(
+            "/reader3/saveChapterEdit",
+            post(handlers::save_chapter_edit),
+        )
+        .route(
+            "/reader3/getChapterEdit",
+            get(handlers::get_chapter_edit).post(handlers::get_chapter_edit),
+        )
+        .route(
+            "/reader3/listChapterEdits",
+            get(handlers::list_chapter_edits).post(handlers::list_chapter_edits),
+        )
+        .route(
+            "/reader3/deleteChapterEdit",
+            post(handlers::delete_chapter_edit),
+        )
+        .route(
             "/reader3/getChapterComments",
             get(handlers::get_chapter_comments).post(handlers::get_chapter_comments),
         )
