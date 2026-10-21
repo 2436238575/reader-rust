@@ -40,6 +40,23 @@ GET /reader3/getBookContent
   正常返回空串；未声明则返回 **HTTP 404** + `正文为空：书源规则可能已失效，或上游页面结构有变化`。
   空正文不会进缓存。
 
+**章节编辑版（叠加层）**：用户可以把整章正文编辑后存到自己的数据目录
+（`data/<ns>/edited_chapters/`，与可再生缓存分离，purgeCache 不碰）。本章存在编辑版时
+本接口优先返回编辑版（`refresh=1` 仍重抓上游更新缓存基准，但返回值以编辑版为准）；
+`variant=upstream` 只读上游基准（网络书的正文缓存 / 本地书原文），不读编辑版、不抓上游，
+无缓存时返回空串——这是阅读器 diff 视图的基准通道。
+
+相关端点：
+
+```text
+POST /reader3/saveChapterEdit      { bookId, chapterUrl, chapterIndex, chapterTitle, content }
+GET  /reader3/getChapterEdit       ?bookId&chapterUrl（无编辑版时 data 为 null）
+GET  /reader3/listChapterEdits     ?bookId → { urls: string[] }
+POST /reader3/deleteChapterEdit    { bookId, chapterUrl }（删除即恢复上游版本）
+```
+
+单章内容上限 2MB；删书时编辑版目录随书级联删除。
+
 ## 获取章节配图
 
 ```text

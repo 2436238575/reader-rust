@@ -231,6 +231,56 @@ test.describe('Standard E2E: reader', () => {
     await expect(section1.getByText('这一章的正文段落足够长').first()).toBeVisible()
   })
 
+  test('chapter edit overlays content, marks catalog, and diff panel renders', async ({
+    page,
+  }) => {
+    const { name } = await seedLocalTxtBook(page)
+    await openBookFromShelf(page, name)
+    // 等第一章正文渲染出来
+    await expect(page.getByText('第一章正文内容。').first()).toBeVisible()
+
+    // 打开编辑器（设置抽屉 → 编辑本章正文）
+    await page.locator('.sidebar-item', { hasText: '设置' }).first().click()
+    await page.locator('.opt-btn', { hasText: '编辑本章正文' }).click()
+    const editor = page.locator('.editor-textarea')
+    await expect(editor).toBeVisible()
+    await editor.fill('第一章正文内容。\n这一整段是新加上去的。\n编辑版独家段落。')
+    await page.getByRole('button', { name: '保存修改' }).click()
+
+    // 正文换成编辑版 + diff 标记出现（新增段左绿竖线）
+    await expect(page.getByText('这一整段是新加上去的。').first()).toBeVisible()
+    await expect(page.locator('p.diff-added').first()).toBeVisible()
+
+    // 目录里出现「已编辑」徽章（编辑器关后设置抽屉仍在，先 ESC 回正文再开目录）
+    await page.keyboard.press('Escape')
+    await page.locator('.sidebar-item', { hasText: '目录' }).first().click()
+    await expect(page.locator('.status-badge.edited', { hasText: '已编辑' })).toBeVisible()
+    await page.keyboard.press('Escape')
+
+    // diff 面板：设置 → 查看与上游的差异
+    await page.locator('.sidebar-item', { hasText: '设置' }).first().click()
+    await page.getByRole('button', { name: '查看与上游的差异' }).click()
+    const panel = page.locator('.diff-modal')
+    await expect(panel).toBeVisible()
+    // 新增段绿底行在面板里
+    await expect(panel.locator('.diff-row.add', { hasText: '这一整段是新加上去的。' })).toBeVisible()
+    // 统计行有 +2 段
+    await expect(panel.locator('.stat-add')).toContainText('+2')
+    await page.keyboard.press('Escape')
+
+    // 编辑器里恢复上游版本
+    await page.locator('.sidebar-item', { hasText: '设置' }).first().click()
+    await page.locator('.opt-btn', { hasText: '编辑本章正文' }).click()
+    await expect(page.getByText('本章已编辑', { exact: false })).toBeVisible()
+    page.on('dialog', (dialog) => void dialog.accept())
+    await page.getByRole('button', { name: '恢复上游版本' }).click()
+
+    // 正文回到上游版（第一章原文），编辑内容与标记都消失
+    await expect(page.getByText('第一章正文内容。').first()).toBeVisible()
+    await expect(page.getByText('编辑版独家段落。')).toHaveCount(0)
+    await expect(page.locator('p.diff-added')).toHaveCount(0)
+  })
+
   test('mobile long-press on underline opens action menu and deletes it', async ({ page }) => {
     // 移动视口（isMobile 按 767px 断点）；长按靠手动 dispatch TouchEvent，
     // 不需要 context 级 hasTouch
