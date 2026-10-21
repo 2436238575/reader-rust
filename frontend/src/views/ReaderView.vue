@@ -31,7 +31,11 @@
             @jump-chapter="jumpFromCatalog"
             @jump-bookmark="jumpToBookmark"
           />
-          <ReadSettings v-else-if="store.activePanel === 'settings'" @edit-chapter="openChapterEditor" />
+          <ReadSettings
+            v-else-if="store.activePanel === 'settings'"
+            @edit-chapter="openChapterEditor"
+            @view-diff="openDiffPanel"
+          />
           <ReaderBookshelf v-else-if="store.activePanel === 'bookshelf'" />
           <ReaderSource v-else-if="store.activePanel === 'source'" />
           <ReplaceRuleManager v-else-if="store.activePanel === 'rule'" />
@@ -395,6 +399,14 @@
 
     <ChapterEditorModal v-model="showChapterEditor" @changed="handleChapterEditChanged" />
 
+    <ChapterDiffPanel
+      v-model="showDiffPanel"
+      :ops="currentChapterDiffOps"
+      :loading="diffPanelLoading"
+      @edit="openChapterEditor"
+      @changed="handleChapterEditChanged"
+    />
+
     <ImageLightbox :src="previewImage" @close="previewImage = ''" />
   </div>
 </template>
@@ -472,6 +484,9 @@ const CommentPanel = defineAsyncComponent(() => import('../components/reader/Com
 const ImageLightbox = defineAsyncComponent(() => import('../components/reader/ImageLightbox.vue'))
 const ChapterEditorModal = defineAsyncComponent(
   () => import('../components/reader/ChapterEditorModal.vue')
+)
+const ChapterDiffPanel = defineAsyncComponent(
+  () => import('../components/reader/ChapterDiffPanel.vue')
 )
 
 const router = useRouter()
@@ -741,7 +756,12 @@ async function ensureChapterDiff(chapterIndex: number) {
     chapterDiffCache.delete(chapterIndex)
     return
   }
-  if (chapterDiffCache.has(chapterIndex) || chapterDiffPending.has(chapterIndex)) return
+  if (chapterDiffCache.has(chapterIndex)) return
+  // 正在算：调用方（diff 面板）要拿结果，等它完成而不是早退
+  while (chapterDiffPending.has(chapterIndex)) {
+    await new Promise((resolve) => setTimeout(resolve, 50))
+  }
+  if (chapterDiffCache.has(chapterIndex)) return
   chapterDiffPending.add(chapterIndex)
   try {
     const [editResp, upstream] = await Promise.all([
@@ -781,10 +801,29 @@ async function handleRefreshContent() {
 
 /* ─── 章节正文编辑 ─── */
 const showChapterEditor = ref(false)
+const showDiffPanel = ref(false)
+const diffPanelLoading = ref(false)
+/** 当前章的 diff 操作序列（chapterDiffCache 是响应式的，面板跟着重算） */
+const currentChapterDiffOps = computed(
+  () => chapterDiffCache.get(store.currentIndex) ?? null
+)
 
 function openChapterEditor() {
   if (!store.currentChapter) return
+  showDiffPanel.value = false
   showChapterEditor.value = true
+}
+
+/** 「查看本章改动」：先确保 diff 已算，再开面板 */
+async function openDiffPanel() {
+  if (!store.currentChapter) return
+  showDiffPanel.value = true
+  diffPanelLoading.value = true
+  try {
+    await ensureChapterDiff(store.currentIndex)
+  } finally {
+    diffPanelLoading.value = false
+  }
 }
 
 /** 编辑保存/恢复上游后：重载本章（后端返回最新状态）+ 重算 diff */

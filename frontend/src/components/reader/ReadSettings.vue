@@ -569,6 +569,13 @@
       </div>
 
       <div class="setting-row">
+        <label>本章改动</label>
+        <button class="opt-btn wide" :disabled="!currentChapterEdited" @click="emit('viewDiff')">
+          {{ currentChapterEdited ? '查看与上游的差异' : '本章未修改' }}
+        </button>
+      </div>
+
+      <div class="setting-row">
         <label>内容净化</label>
         <button class="opt-btn wide" @click="store.openPanel('rule', 'settings')">
           管理净化规则
@@ -599,7 +606,15 @@ const appStore = useAppStore()
 const emit = defineEmits<{
   /** 「编辑本章正文」入口（弹窗挂阅读器视图层） */
   editChapter: []
+  /** 「查看本章改动」入口（diff 面板） */
+  viewDiff: []
 }>()
+
+/** 当前章是否有编辑版（目录徽章同源） */
+const currentChapterEdited = computed(() => {
+  const chapter = store.currentChapter
+  return !!chapter && store.editedChapterKeys.has(chapter.url)
+})
 const config = computed(() => store.config)
 const theme = computed(() => store.currentTheme)
 const serverModelLoaded = ref(false)
