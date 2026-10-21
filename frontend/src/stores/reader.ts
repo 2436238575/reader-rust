@@ -1,6 +1,4 @@
 ﻿import { defineStore } from 'pinia'
-import { API_BASE } from '../utils/appBase'
-import { buildAuthHeaders } from '../utils/secureAccess'
 import { safeLocalSet } from '../utils/storage'
 import { ref, computed, reactive, watch } from 'vue'
 import { useAppStore } from './app'
@@ -10,7 +8,6 @@ import {
   getChapterList,
   getBookContent,
   getChapterImages,
-  saveBookProgress,
   setBookSource as apiSetBookSource,
 } from '../api/bookshelf'
 import {
@@ -40,18 +37,9 @@ import {
 import { isLocalBook } from '../utils/localBook'
 import { saveRecentReadBook } from '../utils/recentBooks'
 import { useReaderTts } from '../composables/useReaderTts'
+import { createReaderProgress } from './readerProgress'
 
-const READER_SESSION_KEY = 'reader-last-session'
 const READER_READ_HISTORY_PREFIX = 'reader-read-history:'
-const SERVER_PROGRESS_SCALE = 10000
-
-interface PersistedReaderSession {
-  book: Book
-  chapters: BookChapter[]
-  currentIndex: number
-  chapterScrollProgress: number
-  updatedAt: number
-}
 
 /* ─── Reading config type ─── */
 export interface ReadConfig {
@@ -174,8 +162,28 @@ export const useReaderStore = defineStore('reader', () => {
   const isAutoScrolling = ref(false)
   const chapterScrollProgress = ref(0)
   const readChapterKeys = ref<Set<string>>(new Set())
-  const progressDirty = ref(false)
-  const lastServerProgressKey = ref('')
+  const progress = createReaderProgress({
+    book,
+    chapters,
+    currentIndex,
+    chapterScrollProgress,
+    shelfStore,
+  })
+  const {
+    serverProgressTime,
+    progressDirty,
+    lastServerProgressKey,
+    decodeServerProgress,
+    markProgressDirty,
+    saveReaderSession,
+    scheduleReaderSessionSave,
+    flushReaderSessionSave,
+    syncLocalBookProgress,
+    getPersistedReaderSession,
+    persistProgress,
+    flushProgressToServer,
+    flushProgressToServerKeepalive,
+  } = progress
 
   const currentChapter = computed(() => chapters.value[currentIndex.value] || null)
   const hasNext = computed(() => currentIndex.value < chapters.value.length - 1)
@@ -344,96 +352,6 @@ export const useReaderStore = defineStore('reader', () => {
     },
     { immediate: true }
   )
-
-  function saveReaderSession() {
-    if (!book.value || !chapters.value.length) return
-    const base = {
-      book: book.value,
-      currentIndex: currentIndex.value,
-      chapterScrollProgress: chapterScrollProgress.value,
-      updatedAt: Date.now(),
-    }
-    const full: PersistedReaderSession = { ...base, chapters: chapters.value }
-    // 整本目录可能有几 MB：配额写满时降级为不带目录的瘦身会话，恢复时重新拉目录
-    if (!safeLocalSet(READER_SESSION_KEY, JSON.stringify(full))) {
-      safeLocalSet(READER_SESSION_KEY, JSON.stringify({ ...base, chapters: [] }))
-    }
-  }
-
-  function encodeServerProgress(progress = chapterScrollProgress.value) {
-    return Math.max(
-      0,
-      Math.min(
-        SERVER_PROGRESS_SCALE,
-        Math.round(Math.max(0, Math.min(1, progress)) * SERVER_PROGRESS_SCALE)
-      )
-    )
-  }
-
-  function decodeServerProgress(position?: number | null) {
-    if (typeof position !== 'number' || Number.isNaN(position)) return 0
-    const normalized = position > 1 ? position / SERVER_PROGRESS_SCALE : position
-    return Math.max(0, Math.min(1, normalized))
-  }
-
-  function currentServerProgressPayload(
-    index = currentIndex.value,
-    progress = chapterScrollProgress.value
-  ) {
-    if (!book.value?.bookId) return null
-    return {
-      bookId: book.value.bookId,
-      index,
-      position: encodeServerProgress(progress),
-    }
-  }
-
-  function markProgressDirty() {
-    progressDirty.value = true
-  }
-
-  // 滚动事件每秒可触发数十次：把整本目录序列化进 localStorage 的会话保存
-  // 必须防抖（阅读位置本身另有 120ms 防抖的本地保存与服务端 10s 节流上报，
-  // 这里的会话只服务「回到上次阅读页」的恢复，晚 300ms 无感）
-  const READER_SESSION_SAVE_DEBOUNCE_MS = 300
-  let sessionSaveTimer: ReturnType<typeof setTimeout> | null = null
-
-  function scheduleReaderSessionSave() {
-    if (sessionSaveTimer) clearTimeout(sessionSaveTimer)
-    sessionSaveTimer = setTimeout(() => {
-      sessionSaveTimer = null
-      syncLocalBookProgress()
-      saveReaderSession()
-    }, READER_SESSION_SAVE_DEBOUNCE_MS)
-  }
-
-  function flushReaderSessionSave() {
-    if (!sessionSaveTimer) return
-    clearTimeout(sessionSaveTimer)
-    sessionSaveTimer = null
-    syncLocalBookProgress()
-    saveReaderSession()
-  }
-
-  function syncLocalBookProgress(progress = chapterScrollProgress.value) {
-    if (!book.value) return
-    const encodedProgress = encodeServerProgress(progress)
-    book.value.durChapterPos = encodedProgress
-    const shelfBook = shelfStore.books.find((item) => item.bookId === book.value?.bookId)
-    if (shelfBook) {
-      shelfBook.durChapterPos = encodedProgress
-    }
-  }
-
-  function getPersistedReaderSession(): PersistedReaderSession | null {
-    try {
-      const raw = localStorage.getItem(READER_SESSION_KEY)
-      if (!raw) return null
-      return JSON.parse(raw) as PersistedReaderSession
-    } catch {
-      return null
-    }
-  }
 
   async function restorePersistedSession() {
     const session = getPersistedReaderSession()
@@ -641,7 +559,6 @@ export const useReaderStore = defineStore('reader', () => {
   // book.durChapterTime 刷成 Date.now()（书架排序需要），本地/服务端进度
   // 比新旧时若直接用被刷新的值，服务端会靠这个伪造的新鲜时间戳「永远获胜」，
   // 离线读了几章没同步成功的本地进度就被误判为旧数据丢弃
-  const serverProgressTime = ref(0)
 
   async function loadBook(b: Book) {
     // 连点两本书时目录响应可能乱序到达：只认最后一次打开的书。
@@ -719,49 +636,6 @@ export const useReaderStore = defineStore('reader', () => {
     safeLocalSet('reader-currentIndex', String(index))
     saveReaderSession()
     markProgressDirty()
-  }
-
-  async function persistProgress(
-    index = currentIndex.value,
-    progress = chapterScrollProgress.value
-  ) {
-    const payload = currentServerProgressPayload(index, progress)
-    if (!payload) return
-    await saveBookProgress(payload)
-      .then(() => {
-        progressDirty.value = false
-        lastServerProgressKey.value = `${payload.bookId}::${payload.index}::${payload.position}`
-      })
-      .catch(() => undefined)
-  }
-
-  async function flushProgressToServer(force = false) {
-    const payload = currentServerProgressPayload()
-    if (!payload) return
-    const nextKey = `${payload.bookId}::${payload.index}::${payload.position}`
-    if (!force && !progressDirty.value && lastServerProgressKey.value === nextKey) return
-    await persistProgress(payload.index, chapterScrollProgress.value)
-  }
-
-  function flushProgressToServerKeepalive(force = false) {
-    const payload = currentServerProgressPayload()
-    if (!payload || typeof fetch === 'undefined') return
-    const nextKey = `${payload.bookId}::${payload.index}::${payload.position}`
-    if (!force && !progressDirty.value && lastServerProgressKey.value === nextKey) return
-
-    const headers: Record<string, string> = {
-      'Content-Type': 'application/json',
-      ...buildAuthHeaders(),
-    }
-
-    void fetch(`${API_BASE}/saveBookProgress`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify(payload),
-      keepalive: true,
-    }).catch(() => undefined)
-    progressDirty.value = false
-    lastServerProgressKey.value = nextKey
   }
 
   async function fetchChapterContent(index: number, forceRefresh = false) {
