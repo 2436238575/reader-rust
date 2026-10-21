@@ -1055,18 +1055,32 @@ export const useReaderStore = defineStore('reader', () => {
     }
   }
 
-  async function addBookmark(pos: number = 0, snippet: string = '') {
-    if (!book.value?.bookId || !currentChapter.value) return
+  /**
+   * pos 是万分比章内进度（0–10000）：章书签恒 0（调用方不传）；
+   * 划线传收藏那一刻的章内进度，kind='underline'。
+   * 连续模式下划线可能落在非当前章，chapterIndex 由调用方显式覆盖。
+   */
+  async function addBookmark(
+    pos: number = 0,
+    snippet: string = '',
+    kind: 'bookmark' | 'underline' = 'bookmark',
+    chapterIndex?: number
+  ) {
+    if (!book.value?.bookId) return
+    const targetIndex = chapterIndex ?? currentIndex.value
+    const chapter = chapters.value[targetIndex]
+    if (!chapter) return
     const b: Bookmark = {
       bookId: book.value.bookId,
       bookName: book.value.name,
       bookAuthor: book.value.author,
-      chapterIndex: currentIndex.value,
-      chapterName: currentChapter.value.title,
+      chapterIndex: targetIndex,
+      chapterName: chapter.title,
       chapterPos: pos,
       bookText: snippet || content.value.slice(0, 50).replace(/<[^>]+>/g, ''),
       time: Date.now(),
       content: '',
+      kind,
     }
     await saveBookmark(b)
     await fetchBookmarks()

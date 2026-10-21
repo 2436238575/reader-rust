@@ -107,20 +107,21 @@
 
 ## bookmarks
 
-书签。主键 `(user_ns, book_id, chapter_index, chapter_pos)`——同书同位置重复保存覆盖。普通索引 `(user_ns, book_id)`（删书级联用）。
+书签/划线。主键 `(user_ns, book_id, chapter_index, chapter_pos, kind)`——同书同位置同类型重复保存覆盖；kind 进主键后章书签与章首划线（pos=0）不再互撞。普通索引 `(user_ns, book_id)`（删书级联用）。
 
-| 字段            | 类型    | 用途                                       |
-| --------------- | ------- | ------------------------------------------ |
-| `user_ns`       | TEXT    | 数据隔离键                                 |
-| `book_id`       | INTEGER | 关联 books 登记表                          |
-| `chapter_index` | INTEGER | 章节序号（身份键之一）                     |
-| `chapter_pos`   | INTEGER | 章内位置（身份键之一）                     |
-| `time`          | INTEGER | 创建/更新时间，毫秒时间戳                  |
-| `book_name`     | TEXT    | 书名快照（展示用，不参与判等）             |
-| `book_author`   | TEXT    | 作者快照（展示用）                         |
-| `chapter_name`  | TEXT    | 章节标题快照                               |
-| `book_text`     | TEXT    | 进度文案快照                               |
-| `content`       | TEXT    | 书签备注/摘录                              |
+| 字段            | 类型    | 用途                                                                 |
+| --------------- | ------- | -------------------------------------------------------------------- |
+| `user_ns`       | TEXT    | 数据隔离键                                                           |
+| `book_id`       | INTEGER | 关联 books 登记表                                                    |
+| `chapter_index` | INTEGER | 章节序号（身份键之一）                                               |
+| `chapter_pos`   | INTEGER | 万分比章内进度 0–10000（身份键之一；章书签恒 0，划线取收藏时进度）   |
+| `kind`          | TEXT    | 类型（身份键之一）：`bookmark` 章书签 / `underline` 划线             |
+| `time`          | INTEGER | 创建/更新时间，毫秒时间戳                                            |
+| `book_name`     | TEXT    | 书名快照（展示用，不参与判等）                                       |
+| `book_author`   | TEXT    | 作者快照（展示用）                                                   |
+| `chapter_name`  | TEXT    | 章节标题快照                                                         |
+| `book_text`     | TEXT    | 进度文案/划线摘录快照                                                |
+| `content`       | TEXT    | 书签备注/摘录                                                        |
 
 ## replace_rules
 

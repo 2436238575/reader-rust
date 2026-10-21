@@ -342,7 +342,7 @@
       >
         <div class="selection-menu-text">{{ selectionMenu.text }}</div>
         <div class="selection-menu-actions">
-          <button @click="addSelectionBookmark">加入书签</button>
+          <button @click="addSelectionBookmark">加入划线</button>
           <button @click="addSelectionReplaceRule('book')">按本书替换</button>
           <button @click="addSelectionReplaceRule('source')">按书源替换</button>
         </div>
@@ -365,6 +365,7 @@ import { applySystemTheme } from '../utils/systemUi'
 import { isIosWebkit } from '../utils/platform'
 import { APP_VIEWPORT_CHANGE_EVENT, syncViewportSize } from '../utils/viewport'
 import { isReaderInteractiveClickTarget, resolveReaderTapZone } from '../utils/readerClick'
+import { chapterPosToProgress } from '../utils/bookmarks'
 import { DUAL_PAGE_MIN_WIDTH, useHorizontalPaging } from '../composables/useHorizontalPaging'
 import {
   appendLocalEpubAssetAuth,
@@ -992,16 +993,17 @@ async function jumpFromCatalog(targetIndex: number) {
 }
 
 // 书签跳转：loadChapter 会把进度归 0 并按服务端/本地记录恢复，
-// 书签的 chapterPos 优先级更高——等正文加载完后用恢复通道落到收藏位置
+// 书签的 chapterPos（万分比章内进度）优先级更高——等正文加载完后用恢复通道落到收藏位置
 async function jumpToBookmark(bm: { chapterIndex?: number; chapterPos?: number }) {
   const targetIndex = bm.chapterIndex
   if (targetIndex === undefined || targetIndex < 0 || targetIndex >= store.chapters.length) return
+  const progress = chapterPosToProgress(bm.chapterPos)
 
   if (!isContinuousMode.value) {
     await store.loadChapter(targetIndex)
     queueRestorePosition({
       chapterIndex: targetIndex,
-      progress: Math.max(0, Math.min(1, bm.chapterPos || 0)),
+      progress,
       updatedAt: Date.now(),
     })
     scheduleRestoreReadingPosition()
@@ -1010,6 +1012,15 @@ async function jumpToBookmark(bm: { chapterIndex?: number; chapterPos?: number }
   }
 
   await rebuildContinuousAtChapter(targetIndex)
+  // 连续模式此前直接丢弃 chapterPos（只到章首），划线同样落到收藏位置
+  if (progress > 0) {
+    queueRestorePosition({
+      chapterIndex: targetIndex,
+      progress,
+      updatedAt: Date.now(),
+    })
+    scheduleRestoreReadingPosition()
+  }
   store.closePanel()
 }
 

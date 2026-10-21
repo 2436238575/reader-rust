@@ -53,6 +53,7 @@ pub async fn delete_bookmark(
             &bookmark.book_id,
             bookmark.chapter_index,
             bookmark.chapter_pos,
+            &bookmark.kind,
         )
         .await?;
     Ok(Json(ApiResponse::ok(Value::String(String::new()))))
@@ -66,7 +67,13 @@ pub async fn delete_bookmarks(
     for b in &bookmarks {
         state
             .bookmark_repo
-            .delete(&user.0.ns, &b.book_id, b.chapter_index, b.chapter_pos)
+            .delete(
+                &user.0.ns,
+                &b.book_id,
+                b.chapter_index,
+                b.chapter_pos,
+                &b.kind,
+            )
             .await?;
     }
     Ok(Json(ApiResponse::ok(Value::String(String::new()))))

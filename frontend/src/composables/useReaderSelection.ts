@@ -3,6 +3,7 @@ import type { ComputedRef, Ref } from 'vue'
 import type { useReaderStore } from '../stores/reader'
 import type { useAppStore } from '../stores/app'
 import { saveReplaceRule } from '../api/replaceRule'
+import { progressToChapterPos } from '../utils/bookmarks'
 
 type ReaderStore = ReturnType<typeof useReaderStore>
 type AppStore = ReturnType<typeof useAppStore>
@@ -160,19 +161,60 @@ export function useReaderSelection(
     }
   }
 
+  /**
+   * 划线锚点（万分比章内进度 0–10000）：优先按选区在文档流里的真实位置换算，
+   * 换算不了退化为当前阅读进度。横翻容器 overflow-y 隐藏、scrollTop 恒 0，
+   * 直接用分页器维护的章内进度（store.chapterScrollProgress 三模式都是章内语义）。
+   * 连续模式下选区可能落在非当前章，把所在章的 chapterIndex 一并带回。
+   */
+  function computeSelectionAnchor(): { chapterPos: number; chapterIndex?: number } {
+    const fallback = progressToChapterPos(store.chapterScrollProgress)
+    const container = scrollContainerRef.value
+    const selection = window.getSelection?.()
+    if (!container || !selection || selection.rangeCount === 0) return { chapterPos: fallback }
+    const range = selection.getRangeAt(0)
+    const rect = range.getBoundingClientRect()
+    if (!rect.width && !rect.height) return { chapterPos: fallback }
+
+    const containerRect = container.getBoundingClientRect()
+    // 选区中心在容器内容流里的绝对纵坐标
+    const center = container.scrollTop + (rect.top - containerRect.top) + rect.height / 2
+
+    // 连续模式：选区所在的章 section 直接给章内进度与章号
+    const startEl =
+      range.startContainer.nodeType === Node.TEXT_NODE
+        ? range.startContainer.parentElement
+        : (range.startContainer as HTMLElement | null)
+    const sectionEl = startEl?.closest?.('section.continuous-chapter') as HTMLElement | null
+    if (sectionEl?.dataset.chapterIndex != null) {
+      const chapterIndex = Number(sectionEl.dataset.chapterIndex)
+      const sectionRange = Math.max(1, sectionEl.offsetHeight)
+      const progress = Math.max(0, Math.min(1, (center - sectionEl.offsetTop) / sectionRange))
+      return {
+        chapterPos: progressToChapterPos(progress),
+        chapterIndex: Number.isFinite(chapterIndex) ? chapterIndex : undefined,
+      }
+    }
+
+    // 竖滚单章：容器可滚动范围内按选区中心换算；横翻 scrollable<=0 走 fallback
+    const scrollable = container.scrollHeight - container.clientHeight
+    if (scrollable <= 0) return { chapterPos: fallback }
+    return { chapterPos: progressToChapterPos(center / scrollable) }
+  }
+
   async function addSelectionBookmark() {
     const selection = window.getSelection?.()
     const text = activeSelectionText.value || selection?.toString().trim() || ''
     if (!text) return
     try {
-      const pos = scrollContainerRef.value?.scrollTop || 0
-      await store.addBookmark(pos, text)
+      const anchor = computeSelectionAnchor()
+      await store.addBookmark(anchor.chapterPos, text, 'underline', anchor.chapterIndex)
       selection?.removeAllRanges()
       activeSelectionText.value = ''
       hideSelectionMenu()
-      appStore.showToast('已加入书签', 'success')
+      appStore.showToast('已加入划线', 'success')
     } catch {
-      appStore.showToast('加入书签失败', 'error')
+      appStore.showToast('加入划线失败', 'error')
     }
   }
 

@@ -979,11 +979,12 @@ fn map_bookmark(row: &sqlx::sqlite::SqliteRow) -> crate::model::bookmark::Bookma
         chapter_name: row.get::<String, _>("chapter_name"),
         book_text: row.get::<String, _>("book_text"),
         content: row.get::<String, _>("content"),
+        kind: row.get::<String, _>("kind"),
     }
 }
 
 const BOOKMARK_COLS: &str =
-    "book_id, time, book_name, book_author, chapter_index, chapter_pos, chapter_name, book_text, content";
+    "book_id, time, book_name, book_author, chapter_index, chapter_pos, chapter_name, book_text, content, kind";
 
 impl BookmarkRepo {
     pub fn new(pool: SqlitePool) -> Self {
@@ -1004,7 +1005,7 @@ impl BookmarkRepo {
         Ok(rows.iter().map(map_bookmark).collect())
     }
 
-    /// upsert 单条：同 (book_id, chapter_index, chapter_pos) 覆盖。
+    /// upsert 单条：同 (book_id, chapter_index, chapter_pos, kind) 覆盖。
     pub async fn upsert(
         &self,
         user_ns: &str,
@@ -1016,10 +1017,16 @@ impl BookmarkRepo {
                 b.book_id
             )));
         };
+        // 模型层 serde default 已兜「缺 kind」，这里再兜一层空串（直接构造的结构体）
+        let kind = if b.kind.is_empty() {
+            "bookmark"
+        } else {
+            b.kind.as_str()
+        };
         sqlx::query(
-            "INSERT INTO bookmarks (user_ns, book_id, chapter_index, chapter_pos, time, book_name, book_author, chapter_name, book_text, content) \
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10) \
-             ON CONFLICT(user_ns, book_id, chapter_index, chapter_pos) DO UPDATE SET \
+            "INSERT INTO bookmarks (user_ns, book_id, chapter_index, chapter_pos, kind, time, book_name, book_author, chapter_name, book_text, content) \
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11) \
+             ON CONFLICT(user_ns, book_id, chapter_index, chapter_pos, kind) DO UPDATE SET \
              time=excluded.time, book_name=excluded.book_name, book_author=excluded.book_author, \
              chapter_name=excluded.chapter_name, book_text=excluded.book_text, content=excluded.content",
         )
@@ -1027,6 +1034,7 @@ impl BookmarkRepo {
         .bind(book_id)
         .bind(b.chapter_index)
         .bind(b.chapter_pos)
+        .bind(kind)
         .bind(b.time)
         .bind(&b.book_name)
         .bind(&b.book_author)
@@ -1044,17 +1052,20 @@ impl BookmarkRepo {
         book_id: &str,
         chapter_index: i32,
         chapter_pos: i32,
+        kind: &str,
     ) -> Result<(), AppError> {
         let Some(id) = parse_book_id(book_id) else {
             return Ok(());
         };
+        let kind = if kind.is_empty() { "bookmark" } else { kind };
         sqlx::query(
-            "DELETE FROM bookmarks WHERE user_ns=?1 AND book_id=?2 AND chapter_index=?3 AND chapter_pos=?4",
+            "DELETE FROM bookmarks WHERE user_ns=?1 AND book_id=?2 AND chapter_index=?3 AND chapter_pos=?4 AND kind=?5",
         )
         .bind(user_ns)
         .bind(id)
         .bind(chapter_index)
         .bind(chapter_pos)
+        .bind(kind)
         .execute(&self.pool)
         .await?;
         Ok(())
@@ -1184,6 +1195,7 @@ mod tests {
             chapter_name: "章".into(),
             book_text: text.into(),
             content: String::new(),
+            kind: "bookmark".into(),
         }
     }
 
@@ -1227,6 +1239,71 @@ mod tests {
         assert_eq!(repo.delete_for_book("u", "../x").await.unwrap(), 0);
 
         let _ = std::fs::remove_dir_all(dir);
+    }
+
+    /// kind 进主键：章书签（pos=0）与章首划线（pos=0）不再互撞互删，
+    /// 同章多条划线按不同进度共存。（issues 第 9 条：横翻下曾全撞 (章,0) 互覆）
+    #[tokio::test]
+    async fn bookmark_kinds_coexist_and_delete_is_scoped_by_kind() {
+        let (pool, dir) = test_pool().await;
+        let repo = BookmarkRepo::new(pool);
+
+        let underline = |pos: i32, text: &str| Bookmark {
+            kind: "underline".into(),
+            ..bookmark("book_1", 3, pos, text)
+        };
+
+        repo.upsert("u", &bookmark("book_1", 3, 0, "章书签"))
+            .await
+            .unwrap();
+        repo.upsert("u", &underline(0, "章首划线")).await.unwrap();
+        repo.upsert("u", &underline(5000, "中段划线"))
+            .await
+            .unwrap();
+        // 同 kind 同位置仍覆盖（同段重复划线去重）
+        repo.upsert("u", &underline(5000, "中段划线-改"))
+            .await
+            .unwrap();
+
+        let list = repo.list("u").await.unwrap();
+        assert_eq!(list.len(), 3);
+        assert!(list.iter().any(|b| b.kind == "underline"
+            && b.chapter_pos == 5000
+            && b.book_text == "中段划线-改"));
+
+        // 删划线不带走同章同位的章书签
+        repo.delete("u", "book_1", 3, 0, "underline").await.unwrap();
+        let list = repo.list("u").await.unwrap();
+        assert_eq!(list.len(), 2);
+        assert!(list
+            .iter()
+            .all(|b| !(b.kind == "underline" && b.chapter_pos == 0)));
+        assert!(list
+            .iter()
+            .any(|b| b.kind == "bookmark" && b.chapter_pos == 0));
+
+        // 空 kind 兜底 bookmark（直接构造结构体的路径）
+        let legacy = Bookmark {
+            kind: String::new(),
+            ..bookmark("book_1", 5, 0, "空kind")
+        };
+        repo.upsert("u", &legacy).await.unwrap();
+        repo.delete("u", "book_1", 5, 0, "").await.unwrap();
+        assert!(repo
+            .list("u")
+            .await
+            .unwrap()
+            .iter()
+            .all(|b| b.chapter_index != 5));
+
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn bookmark_kind_defaults_to_bookmark_when_missing() {
+        let b: Bookmark =
+            serde_json::from_str(r#"{"bookId":"book_1","chapterIndex":0,"chapterPos":0}"#).unwrap();
+        assert_eq!(b.kind, "bookmark");
     }
 
     #[tokio::test]

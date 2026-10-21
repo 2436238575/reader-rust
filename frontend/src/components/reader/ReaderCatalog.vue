@@ -5,16 +5,23 @@
         <div
           class="tab"
           :class="{ active: activeTab === 'chapters' }"
-          @click="activeTab = 'chapters'"
+          @click="switchTab('chapters')"
         >
           目录
         </div>
         <div
           class="tab"
           :class="{ active: activeTab === 'bookmarks' }"
-          @click="activeTab = 'bookmarks'"
+          @click="switchTab('bookmarks')"
         >
           书签
+        </div>
+        <div
+          class="tab"
+          :class="{ active: activeTab === 'underlines' }"
+          @click="switchTab('underlines')"
+        >
+          划线
         </div>
       </div>
       <div class="header-actions">
@@ -36,8 +43,14 @@
       </div>
     </div>
 
-    <div v-if="activeTab === 'bookmarks'" class="bookmark-toolbar">
-      <button class="bookmark-action primary" @click="addCurrentBookmark">添加当前页书签</button>
+    <div v-if="activeTab !== 'chapters'" class="bookmark-toolbar">
+      <button
+        v-if="activeTab === 'bookmarks'"
+        class="bookmark-action primary"
+        @click="addCurrentBookmark"
+      >
+        添加当前页书签
+      </button>
       <button
         class="bookmark-action"
         :class="{ danger: bookmarkEditMode && selectedBookmarkKeys.size > 0 }"
@@ -147,10 +160,10 @@
 
     <!-- Bookmarks List -->
     <div v-show="activeTab === 'bookmarks'" class="list-container">
-      <div v-if="!store.bookmarks.length" class="empty">暂无书签</div>
+      <div v-if="!chapterBookmarks.length" class="empty">暂无书签</div>
       <div
         v-else
-        v-for="(bm, idx) in store.bookmarks"
+        v-for="(bm, idx) in chapterBookmarks"
         :key="idx"
         class="list-item bookmark-item"
         :class="{ selected: isBookmarkSelected(bm) }"
@@ -169,7 +182,41 @@
           <span class="bm-time">{{ formatDate(bm.time) }}</span>
         </div>
         <div class="bm-snippet">{{ bm.bookText }}</div>
-        <button v-if="!bookmarkEditMode" class="bm-delete" @click.stop="store.removeBookmark(bm)">
+        <button v-if="!bookmarkEditMode" class="bm-delete" @click.stop="handleDeleteBookmark(bm)">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path
+              d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"
+            />
+          </svg>
+        </button>
+      </div>
+    </div>
+
+    <!-- Underlines List -->
+    <div v-show="activeTab === 'underlines'" class="list-container">
+      <div v-if="!underlineBookmarks.length" class="empty">暂无划线</div>
+      <div
+        v-else
+        v-for="(bm, idx) in underlineBookmarks"
+        :key="idx"
+        class="list-item bookmark-item"
+        :class="{ selected: isBookmarkSelected(bm) }"
+        @click="goToBookmark(bm)"
+      >
+        <button
+          v-if="bookmarkEditMode"
+          class="bookmark-check"
+          :class="{ checked: isBookmarkSelected(bm) }"
+          @click.stop="toggleBookmarkSelection(bm)"
+        >
+          ✓
+        </button>
+        <div class="bm-header">
+          <span class="bm-chapter">{{ bm.chapterName }}</span>
+          <span class="bm-time">{{ formatDate(bm.time) }}</span>
+        </div>
+        <div class="bm-snippet underline-snippet">{{ bm.bookText }}</div>
+        <button v-if="!bookmarkEditMode" class="bm-delete" @click.stop="handleDeleteBookmark(bm)">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <path
               d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"
@@ -188,12 +235,13 @@ import { useAppStore } from '../../stores/app'
 import type { Bookmark } from '../../types'
 import { listBrowserCachedChapterUrls } from '../../utils/browserCache'
 import { isLocalBook } from '../../utils/localBook'
+import { bookmarkKindOf, splitBookmarksByKind } from '../../utils/bookmarks'
 import { formatMonthDayTime, formatChapterTag, formatChapterWordCount } from '../../utils/format'
 import type { BookChapter } from '../../types'
 
 const props = withDefaults(
   defineProps<{
-    initialTab?: 'chapters' | 'bookmarks'
+    initialTab?: 'chapters' | 'bookmarks' | 'underlines'
   }>(),
   {
     initialTab: 'chapters',
@@ -204,10 +252,12 @@ const emit = defineEmits<{
   jumpBookmark: [bookmark: Bookmark]
 }>()
 
+type CatalogTab = 'chapters' | 'bookmarks' | 'underlines'
+
 const store = useReaderStore()
 const appStore = useAppStore()
 const theme = computed(() => store.currentTheme)
-const activeTab = ref<'chapters' | 'bookmarks'>(props.initialTab)
+const activeTab = ref<CatalogTab>(props.initialTab)
 const listRef = ref<HTMLElement>()
 const bookmarkEditMode = ref(false)
 const selectedBookmarkKeys = ref<Set<string>>(new Set())
@@ -278,15 +328,27 @@ onMounted(() => {
   void refreshCachedChapterState()
 })
 
+/** 旧数据没有 kind 字段，按章书签归组 */
+const bookmarkKind = bookmarkKindOf
+
+const chapterBookmarks = computed(() => splitBookmarksByKind(store.bookmarks).bookmarks)
+const underlineBookmarks = computed(() => splitBookmarksByKind(store.bookmarks).underlines)
+
+function switchTab(tab: CatalogTab) {
+  if (activeTab.value === tab) return
+  activeTab.value = tab
+  // 批量编辑状态不跨 tab 携带，避免在另一个列表里看不见选中的项
+  bookmarkEditMode.value = false
+  selectedBookmarkKeys.value.clear()
+}
+
 watch(
   () => props.initialTab,
   (tab) => {
     activeTab.value = tab
-    if (tab !== 'bookmarks') {
+    if (tab === 'chapters') {
       bookmarkEditMode.value = false
       selectedBookmarkKeys.value.clear()
-    }
-    if (tab === 'chapters') {
       void refreshCachedChapterState()
     }
   }
@@ -366,7 +428,7 @@ async function goToBookmark(bm: Bookmark) {
 }
 
 function getBookmarkKey(bm: Bookmark) {
-  return `${bm.bookName}|${bm.bookAuthor}|${bm.chapterIndex}|${bm.chapterPos}|${bm.time}|${bm.bookText}`
+  return `${bm.bookName}|${bm.bookAuthor}|${bm.chapterIndex}|${bm.chapterPos}|${bookmarkKind(bm)}|${bm.time}|${bm.bookText}`
 }
 
 function isBookmarkSelected(bm: Bookmark) {
@@ -391,6 +453,18 @@ async function addCurrentBookmark() {
   }
 }
 
+/** 单条删除补二次确认（与批量删除、删书、删书源同一惯例） */
+async function handleDeleteBookmark(bm: Bookmark) {
+  const label = bookmarkKind(bm) === 'underline' ? '划线' : '书签'
+  if (!confirm(`确定删除这条${label}吗？`)) return
+  try {
+    await store.removeBookmark(bm)
+    appStore.showToast(`已删除${label}`, 'success')
+  } catch (error) {
+    appStore.showToast((error as Error).message || `删除${label}失败`, 'error')
+  }
+}
+
 async function handleBatchAction() {
   if (!bookmarkEditMode.value) {
     bookmarkEditMode.value = true
@@ -400,17 +474,25 @@ async function handleBatchAction() {
     bookmarkEditMode.value = false
     return
   }
-  const items = store.bookmarks.filter((bookmark) =>
+  // 只取当前 tab 类型的条目：选集带 kind 不撞键，但批量删除不跨类型
+  const source = activeTab.value === 'underlines' ? underlineBookmarks.value : chapterBookmarks.value
+  const items = source.filter((bookmark) =>
     selectedBookmarkKeys.value.has(getBookmarkKey(bookmark))
   )
-  if (!confirm(`确定删除选中的 ${items.length} 条书签吗？`)) return
+  if (!items.length) {
+    bookmarkEditMode.value = false
+    selectedBookmarkKeys.value.clear()
+    return
+  }
+  const label = activeTab.value === 'underlines' ? '划线' : '书签'
+  if (!confirm(`确定删除选中的 ${items.length} 条${label}吗？`)) return
   try {
     await store.removeBookmarks(items)
     selectedBookmarkKeys.value.clear()
     bookmarkEditMode.value = false
-    appStore.showToast(`已删除 ${items.length} 条书签`, 'success')
+    appStore.showToast(`已删除 ${items.length} 条${label}`, 'success')
   } catch (error) {
-    appStore.showToast((error as Error).message || '删除书签失败', 'error')
+    appStore.showToast((error as Error).message || `删除${label}失败`, 'error')
   }
 }
 
@@ -807,6 +889,13 @@ const formatDate = formatMonthDayTime
   -webkit-box-orient: vertical;
   overflow: hidden;
   line-height: 1.5;
+}
+
+/* 划线列表的主角是摘录文本本身，提到主字号 */
+.underline-snippet {
+  font-size: var(--text-sm);
+  opacity: 0.85;
+  -webkit-line-clamp: 3;
 }
 
 .bm-delete {

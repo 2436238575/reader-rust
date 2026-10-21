@@ -237,16 +237,19 @@ export interface UserInfo {
 
 // ─── 书签 ───
 export interface Bookmark {
-  /** 所属书籍的 bookId；身份 = bookId + chapterIndex + chapterPos（一书可多条） */
+  /** 所属书籍的 bookId；身份 = bookId + chapterIndex + chapterPos + kind（一书可多条） */
   bookId: string
   time?: number
   bookName: string
   bookAuthor: string
   chapterIndex?: number
+  /** 万分比章内进度（0–10000）：章书签恒 0，划线取收藏那一刻的章内进度 */
   chapterPos?: number
   chapterName?: string
   bookText?: string
   content?: string
+  /** 类型：章书签 / 划线（选文字收藏）；缺省按章书签处理 */
+  kind?: 'bookmark' | 'underline'
 }
 
 // ─── 净化规则 ───
