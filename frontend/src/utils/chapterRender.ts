@@ -215,6 +215,71 @@ export interface KeywordMarkSpec {
 }
 
 /**
+ * 划线回显：把划线摘录文本在正文里包成 `<span class="reader-underline">`。
+ *
+ * 注入顺序要在搜索/关键词高亮**之前**：span 不在 walker 的排除名单里，
+ * 后续两个高亮还能进 span 内部叠加（下划线 + 底色共存）；反过来的话
+ * mark 会挡住划线匹配。
+ *
+ * 已知局限：跨段落的划线在 DOM 里是多个文本节点，这里只做单文本节点
+ * 匹配——跨段划线不显示（位置信息仍在，跳转不受影响）。同一段摘录重复
+ * 出现时只标第一处。
+ */
+export function applyUnderlineMarks(root: HTMLElement, texts: string[]) {
+  const anchors = texts
+    .map((text) => text.replace(/\s+/g, ' ').trim())
+    .filter((text) => text.length >= 2)
+  if (!anchors.length) return
+  const marked = new Set<string>()
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
+    acceptNode(node) {
+      const parent = node.parentElement
+      if (!parent || ['MARK', 'SCRIPT', 'STYLE'].includes(parent.tagName)) {
+        return NodeFilter.FILTER_REJECT
+      }
+      return NodeFilter.FILTER_ACCEPT
+    },
+  })
+  const nodes: Text[] = []
+  while (walker.nextNode()) {
+    nodes.push(walker.currentNode as Text)
+  }
+  for (let i = 0; i < nodes.length; i++) {
+    const node = nodes[i]
+    const value = node.textContent || ''
+    if (!value.trim()) continue
+    for (const anchor of anchors) {
+      if (marked.has(anchor)) continue
+      // 摘录的空白与正文渲染后的空白数量可能不一致，把空白段放宽成 \s+，
+      // 让命中坐标直接落在原文上（不归一化原文，避免坐标错位）
+      const pattern = anchor.split(/\s+/).map(escapeRegExp).join('\\s+')
+      const match = new RegExp(pattern).exec(value)
+      if (!match) continue
+      const before = value.slice(0, match.index)
+      const hit = match[0]
+      const after = value.slice(match.index + hit.length)
+      const fragment = document.createDocumentFragment()
+      if (before) fragment.appendChild(document.createTextNode(before))
+      const span = document.createElement('span')
+      span.className = 'reader-underline'
+      span.textContent = hit
+      fragment.appendChild(span)
+      const afterNode = after ? document.createTextNode(after) : null
+      if (afterNode) fragment.appendChild(afterNode)
+      node.parentNode?.replaceChild(fragment, node)
+      marked.add(anchor)
+      // after 段是新建文本节点、不在预收集列表里：推回队列尾部，
+      // 让同节点里排在后面的其他划线也能命中
+      if (afterNode) {
+        nodes.push(afterNode)
+      }
+      break // 本条划线已标记，处理下一条节点
+    }
+  }
+}
+
+
+/**
  * 常驻关键词高亮：命中处包 `<mark class="kw-highlight">` 并上底色。
  *
  * 调用点要排在 highlightSearchText 之后：TreeWalker 不进已有 MARK 内部，

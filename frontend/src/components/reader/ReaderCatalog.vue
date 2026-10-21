@@ -944,8 +944,10 @@ const formatDate = formatMonthDayTime
 .bm-header {
   width: 100%;
   display: flex;
-  justify-content: space-between;
-  align-items: center;
+  /* 书签/划线总览统一左对齐：章节名与时间同行依次排 */
+  justify-content: flex-start;
+  align-items: baseline;
+  gap: 10px;
 }
 
 .bm-chapter {

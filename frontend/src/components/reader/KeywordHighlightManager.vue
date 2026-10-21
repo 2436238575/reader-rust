@@ -134,8 +134,10 @@ function openEdit(rule?: KeywordHighlightRule) {
         keyword: '',
         color: DEFAULT_KEYWORD_COLOR,
         enabled: true,
-        scope: 'global',
-        bookId: undefined,
+        // 新增默认只标当前书（最常见的意图是标记本书的角色/地名）；
+        // 没打开书籍时退化为全局
+        scope: store.book ? 'book' : 'global',
+        bookId: store.book?.bookId,
       }
 }
 

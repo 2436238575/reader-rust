@@ -347,6 +347,7 @@
         <div class="selection-menu-text">{{ selectionMenu.text }}</div>
         <div class="selection-menu-actions">
           <button @click="addSelectionBookmark">加入划线</button>
+          <button @click="addSelectionKeywordHighlight">加入高亮</button>
           <button @click="addSelectionReplaceRule('book')">按本书替换</button>
           <button @click="addSelectionReplaceRule('source')">按书源替换</button>
         </div>
@@ -373,6 +374,7 @@ import { chapterPosToProgress } from '../utils/bookmarks'
 import { DUAL_PAGE_MIN_WIDTH, useHorizontalPaging } from '../composables/useHorizontalPaging'
 import {
   appendLocalEpubAssetAuth,
+  applyUnderlineMarks,
   buildBaseChapterHtml,
   highlightKeywords,
   highlightSearchText,
@@ -547,6 +549,7 @@ const {
   handleSelectionChange,
   addSelectionBookmark,
   addSelectionReplaceRule,
+  addSelectionKeywordHighlight,
   clearSelectionState,
   disposeSelection,
 } = useReaderSelection(
@@ -608,10 +611,13 @@ const baseChapterHtml = computed(() =>
   buildBaseChapterHtml(store.displayContent || '', baseRenderOpts.value)
 )
 
-// 装饰层：章节配图 + 段评气泡 + 本地 EPUB 资源改写 + 搜索高亮，作用在基础 HTML 之上
-function decorateChapterHtml(baseHtml: string, withBubbles: boolean) {
+// 装饰层：划线回显 + 章节配图 + 段评气泡 + 本地 EPUB 资源改写 + 搜索/关键词高亮，
+// 作用在基础 HTML 之上。划线包的是 span（不在 walker 排除名单），最先注入——
+// 后续搜索/关键词的 mark 还能进 span 内部叠加（下划线 + 底色共存）
+function decorateChapterHtml(baseHtml: string, withBubbles: boolean, chapterIndex?: number) {
   const wrapper = document.createElement('div')
   wrapper.innerHTML = baseHtml
+  applyUnderlineMarks(wrapper, underlineTextsForChapter(chapterIndex ?? store.currentIndex))
   if (withBubbles) {
     // 配图先插：段评气泡按 `<p>` 顺序定位，figure 不是 <p> 不影响它，
     // 但气泡会往段落里塞计数，得赶在它之前比对段落原文
@@ -634,6 +640,14 @@ function decorateChapterHtml(baseHtml: string, withBubbles: boolean) {
   return wrapper.innerHTML
 }
 
+/** 某章的全部划线摘录文本（回显用），来自书签列表里 kind=underline 的条目。 */
+function underlineTextsForChapter(chapterIndex: number): string[] {
+  return store.bookmarks
+    .filter((bm) => bm.kind === 'underline' && bm.chapterIndex === chapterIndex)
+    .map((bm) => bm.bookText || '')
+    .filter((text) => text.trim().length >= 2)
+}
+
 /** 生效中的常驻关键词（启用 + scope 命中当前书），供装饰层上底色。 */
 const activeKeywordMarks = computed(() =>
   store.keywordRules
@@ -646,14 +660,14 @@ const activeKeywordMarks = computed(() =>
     .map((rule) => ({ keyword: rule.keyword, color: rule.color }))
 )
 
-function formatChapterHtml(rawText: string, withParaComments = false) {
+function formatChapterHtml(rawText: string, withParaComments = false, chapterIndex?: number) {
   const base = withParaComments
     ? baseChapterHtml.value
     : buildBaseChapterHtml(rawText, baseRenderOpts.value)
   // 空正文不能提前短路：纯图章节（出版书「文前」）没有文字，章节配图在
   // 装饰层插入。非气泡路径维持短路——连续滚动模式自己按当前章插配图。
   if (!base && !withParaComments) return ''
-  return decorateChapterHtml(base, withParaComments)
+  return decorateChapterHtml(base, withParaComments, chapterIndex)
 }
 
 /**
@@ -770,7 +784,7 @@ const previewImage = ref('')
  * 连续滚动模式下只有当前章该插配图，前后预加载的章节不插。
  */
 function renderChapterHtml(rawText: string, chapterIndex?: number) {
-  const html = formatChapterHtml(store.processContentForDisplay(rawText || ''))
+  const html = formatChapterHtml(store.processContentForDisplay(rawText || ''), false, chapterIndex)
   if (chapterIndex === undefined) return html
   const images = chapterIndex === store.currentIndex ? chapterImageMap.value : null
   if (!images?.size) return html
@@ -1752,6 +1766,8 @@ watch(
     () => store.replaceRules,
     // 常驻关键词高亮配置变化：重跑装饰层上色（与搜索高亮同链）
     () => store.keywordRules,
+    // 划线增删：回显的摘录文本集合变了要重跑装饰层
+    () => store.bookmarks,
   ],
   () => {
     if (isContinuousMode.value) {
@@ -2368,6 +2384,12 @@ watch(
   border-radius: 2px;
   color: inherit;
   padding: 0 1px;
+}
+
+/* 划线回显：主题色下划线，与关键词底色/搜索高亮可叠加 */
+:deep(.reader-underline) {
+  border-bottom: 2px solid var(--color-primary, #c97f3a);
+  padding-bottom: 1px;
 }
 
 @media (max-width: 767px) {

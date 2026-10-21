@@ -4,6 +4,7 @@ import type { useReaderStore } from '../stores/reader'
 import type { useAppStore } from '../stores/app'
 import { saveReplaceRule } from '../api/replaceRule'
 import { progressToChapterPos } from '../utils/bookmarks'
+import { DEFAULT_KEYWORD_COLOR, newKeywordRuleId } from '../utils/keywordHighlights'
 
 type ReaderStore = ReturnType<typeof useReaderStore>
 type AppStore = ReturnType<typeof useAppStore>
@@ -246,6 +247,39 @@ export function useReaderSelection(
     }
   }
 
+  /** 把选中文本加为常驻关键词高亮（默认当前书） */
+  function addSelectionKeywordHighlight() {
+    const selection = window.getSelection?.()
+    const text = (activeSelectionText.value || selection?.toString().trim() || '').trim()
+    if (!text || !store.book) return
+    const bookId = store.book.bookId
+    const exists = store.keywordRules.some(
+      (rule) =>
+        rule.keyword === text &&
+        (rule.scope === 'global' || (rule.scope === 'book' && rule.bookId === bookId))
+    )
+    if (exists) {
+      appStore.showToast('该词已在高亮列表中', 'warning')
+      return
+    }
+    store.saveKeywordRules([
+      ...store.keywordRules,
+      {
+        id: newKeywordRuleId(),
+        keyword: text,
+        color: DEFAULT_KEYWORD_COLOR,
+        enabled: true,
+        scope: 'book',
+        bookId,
+        updatedAt: Date.now(),
+      },
+    ])
+    selection?.removeAllRanges()
+    activeSelectionText.value = ''
+    hideSelectionMenu()
+    appStore.showToast('已加入高亮（当前书籍）', 'success')
+  }
+
   /** 右键菜单模式：在选区上右键时唤出菜单（定位跟随光标），返回是否已唤出。 */
   function showSelectionMenuAt(event: MouseEvent): boolean {
     if (config.value.selectAction !== 'contextmenu') return false
@@ -312,6 +346,7 @@ export function useReaderSelection(
     updateSelectionMenu,
     addSelectionBookmark,
     addSelectionReplaceRule,
+    addSelectionKeywordHighlight,
     clearSelectionState,
     disposeSelection,
   }
