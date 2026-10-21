@@ -405,6 +405,7 @@ import { isIosWebkit } from '../utils/platform'
 import { APP_VIEWPORT_CHANGE_EVENT, syncViewportSize } from '../utils/viewport'
 import { isReaderInteractiveClickTarget, resolveReaderTapZone } from '../utils/readerClick'
 import { chapterPosToProgress } from '../utils/bookmarks'
+import { darkenKeywordColor } from '../utils/keywordHighlights'
 import { DUAL_PAGE_MIN_WIDTH, useHorizontalPaging } from '../composables/useHorizontalPaging'
 import {
   appendLocalEpubAssetAuth,
@@ -689,7 +690,9 @@ function underlineTextsForChapter(chapterIndex: number): UnderlineMarkSpec[] {
     .filter((mark) => mark.text.trim().length >= 2)
 }
 
-/** 生效中的常驻关键词（启用 + scope 命中当前书），供装饰层上底色。 */
+/** 生效中的常驻关键词（启用 + scope 命中当前书），供装饰层上底色。
+ *  夜间模式底色转成同色相的暗色变体：色盘值是浅色主题下调的半透明浅色，
+ *  直接盖在深底上和浅色正文对比度太低。 */
 const activeKeywordMarks = computed(() =>
   store.keywordRules
     .filter(
@@ -698,7 +701,10 @@ const activeKeywordMarks = computed(() =>
         rule.keyword.trim() &&
         (rule.scope === 'global' || (!!store.book?.bookId && rule.bookId === store.book.bookId))
     )
-    .map((rule) => ({ keyword: rule.keyword, color: rule.color }))
+    .map((rule) => ({
+      keyword: rule.keyword,
+      color: store.isNight ? darkenKeywordColor(rule.color) : rule.color,
+    }))
 )
 
 function formatChapterHtml(rawText: string, withParaComments = false, chapterIndex?: number) {
@@ -1900,6 +1906,8 @@ watch(
     () => store.keywordRules,
     // 划线增删：回显的摘录文本集合变了要重跑装饰层
     () => store.bookmarks,
+    // 夜间切换：关键词底色要换成暗色变体（连续模式的章缓存要刷）
+    () => store.isNight,
   ],
   () => {
     if (isContinuousMode.value) {

@@ -128,3 +128,21 @@ export function persistAndPushKeywordRules(rules: KeywordHighlightRule[]) {
 export function newKeywordRuleId(): string {
   return `kw-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`
 }
+
+/**
+ * 夜间模式的高亮底色变体：色盘值是按浅色主题调的半透明浅色，
+ * 直接盖在深色背景上和浅色正文的对比度太低。压暗三通道、抬高不透明度，
+ * 得到同色相的深色底（深底 + 浅色正文才读得清）。
+ * 解析失败的原样返回（不挡渲染）。
+ */
+export function darkenKeywordColor(color: string): string {
+  const hex = color.trim().replace(/^#/, '')
+  if (!/^[0-9a-fA-F]{6}([0-9a-fA-F]{2})?$/.test(hex)) return color
+  const r = parseInt(hex.slice(0, 2), 16)
+  const g = parseInt(hex.slice(2, 4), 16)
+  const b = parseInt(hex.slice(4, 6), 16)
+  const a = hex.length === 8 ? parseInt(hex.slice(6, 8), 16) / 255 : 1
+  const dim = (channel: number) => Math.round(channel * 0.42)
+  const alpha = Math.min(0.75, Math.max(0.55, a + 0.2))
+  return `rgba(${dim(r)}, ${dim(g)}, ${dim(b)}, ${alpha.toFixed(2)})`
+}

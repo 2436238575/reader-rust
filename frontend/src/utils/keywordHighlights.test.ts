@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  darkenKeywordColor,
   mergeKeywordRules,
   newKeywordRuleId,
   sanitizeKeywordRules,
@@ -62,5 +63,21 @@ describe('mergeKeywordRules', () => {
 describe('newKeywordRuleId', () => {
   it('两次生成不重复', () => {
     expect(newKeywordRuleId()).not.toBe(newKeywordRuleId())
+  })
+})
+
+describe('darkenKeywordColor', () => {
+  it('半透明浅色压暗成同色相深色底，不透明通道抬高', () => {
+    // #ffd54a80 = rgb(255,213,74) alpha 0.5
+    expect(darkenKeywordColor('#ffd54a80')).toBe('rgba(107, 89, 31, 0.70)')
+  })
+
+  it('不带透明通道的六位 hex 按不透明处理', () => {
+    expect(darkenKeywordColor('#ffd54a')).toBe('rgba(107, 89, 31, 0.75)')
+  })
+
+  it('无法解析的原样返回', () => {
+    expect(darkenKeywordColor('red')).toBe('red')
+    expect(darkenKeywordColor('')).toBe('')
   })
 })
