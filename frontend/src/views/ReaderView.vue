@@ -2304,6 +2304,7 @@ watch(
 
 .selection-menu-actions {
   display: grid;
+  /* 2×2：加入划线 / 加入高亮 一行，按本书替换 / 按书源替换 一行 */
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 8px;
   padding: 0 12px 12px;
@@ -2317,10 +2318,6 @@ watch(
   color: #fff;
   font-size: var(--text-sm);
   cursor: pointer;
-}
-
-.selection-menu-actions button:first-child {
-  grid-column: 1 / -1;
 }
 
 /* 右键菜单形态：竖排列表，占满整宽，像原生上下文菜单 */
@@ -2363,10 +2360,6 @@ watch(
 
 .selection-menu.as-context-menu .selection-menu-actions button:hover {
   background: rgba(128, 128, 128, 0.12);
-}
-
-.selection-menu.as-context-menu .selection-menu-actions button:first-child {
-  grid-column: auto;
 }
 
 :deep(.search-highlight) {

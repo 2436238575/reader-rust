@@ -916,6 +916,9 @@ const formatDate = formatMonthDayTime
   gap: 6px;
   position: relative;
   padding-left: 48px;
+  /* .list-item 的 align-items:center 在纵向布局下会把内容块水平居中，
+     书签/划线总览要统一左对齐（内容块拉满整宽，文本自然靠左） */
+  align-items: stretch;
 }
 
 .bookmark-item.selected {

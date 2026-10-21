@@ -221,12 +221,15 @@ export interface KeywordMarkSpec {
  * 后续两个高亮还能进 span 内部叠加（下划线 + 底色共存）；反过来的话
  * mark 会挡住划线匹配。
  *
- * 已知局限：跨段落的划线在 DOM 里是多个文本节点，这里只做单文本节点
- * 匹配——跨段划线不显示（位置信息仍在，跳转不受影响）。同一段摘录重复
- * 出现时只标第一处。
+ * 跨段划线：选区摘录里的换行正好对应段落边界（浏览器对跨段选区
+ * `toString()` 给 `\n`），按行拆开——每行是各自段落内的连续子串，
+ * 走同一个单文本节点匹配，每行标一处。
+ *
+ * 已知局限：同一行摘录在一章里重复出现时只标第一处。
  */
 export function applyUnderlineMarks(root: HTMLElement, texts: string[]) {
   const anchors = texts
+    .flatMap((text) => text.split(/\n+/))
     .map((text) => text.replace(/\s+/g, ' ').trim())
     .filter((text) => text.length >= 2)
   if (!anchors.length) return

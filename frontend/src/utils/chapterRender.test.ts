@@ -106,4 +106,21 @@ describe('applyUnderlineMarks', () => {
     const span = el.querySelector('span.reader-underline')
     expect(span?.querySelector('mark.search-highlight')?.textContent).toBe('古庙')
   })
+
+  it('跨段划线按行拆开：每段各标一处', () => {
+    const el = root('<p>第一段的后半在这里收尾。</p><p>第二段开头接着讲。</p>')
+    applyUnderlineMarks(el, ['后半在这里收尾。\n第二段开头接着讲'])
+    const spans = el.querySelectorAll('span.reader-underline')
+    expect(spans).toHaveLength(2)
+    expect(spans[0].textContent).toBe('后半在这里收尾。')
+    expect(spans[1].textContent).toBe('第二段开头接着讲')
+  })
+
+  it('跨三段的长划线：中间整段也标', () => {
+    const el = root('<p>开头甲段</p><p>整整一段乙</p><p>丙收尾了</p>')
+    applyUnderlineMarks(el, ['甲段\n整整一段乙\n丙收'])
+    const spans = el.querySelectorAll('span.reader-underline')
+    expect(spans).toHaveLength(3)
+    expect(spans[1].textContent).toBe('整整一段乙')
+  })
 })
