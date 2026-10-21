@@ -56,10 +56,8 @@
       v-if="!isMobile"
       :is-speaking="store.isSpeaking"
       :is-paused="store.isPaused"
-      @bookmark="toggleBookmark"
       @search="toggleSearch"
       @info="openInfo"
-      @ai="openAiBook"
       @tts="handleTTS"
       @prev="prevChapter"
       @next="nextChapter"
@@ -77,10 +75,8 @@
       @scrollBottom="scrollToBottom"
       @prev="prevChapter"
       @next="nextChapter"
-      @bookmark="toggleBookmark"
       @search="openSearch"
       @info="openInfo"
-      @ai="openAiBook"
       @tts="handleTTS"
       @progress="openCachePanel"
       @edit="openChapterEditor"
@@ -562,7 +558,7 @@ const {
   openParaComments,
   closeCommentPanel,
 } = useCommentPanelGlue(store)
-const { showBookInfo, bookInfoBook, openInfo, handleBookSwitched, openAiBook } =
+const { showBookInfo, bookInfoBook, openInfo, handleBookSwitched } =
   useBookInfoModal(store, appStore, router)
 const {
   showSearch,
@@ -1746,11 +1742,6 @@ function handleTouchEnd(event: TouchEvent) {
 
 function openCachePanel() {
   store.togglePanel('cache')
-}
-
-// Toolbar actions
-async function toggleBookmark() {
-  store.togglePanel('bookmark')
 }
 
 onBeforeRouteLeave(() => {
