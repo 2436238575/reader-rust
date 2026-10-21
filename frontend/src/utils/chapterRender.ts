@@ -208,3 +208,64 @@ export function highlightSearchText(root: HTMLElement, query: string) {
     node.parentNode?.replaceChild(fragment, node)
   })
 }
+
+export interface KeywordMarkSpec {
+  keyword: string
+  color: string
+}
+
+/**
+ * 常驻关键词高亮：命中处包 `<mark class="kw-highlight">` 并上底色。
+ *
+ * 调用点要排在 highlightSearchText 之后：TreeWalker 不进已有 MARK 内部，
+ * 搜索高亮先注入，重叠时搜索赢（用户正在找的词优先显眼）。多个关键词按
+ * 数组顺序逐趟标记，先注入的关键词在重叠命中处赢。
+ *
+ * 已知限制（与搜索高亮一致）：横翻分页器对含内联标签的段落走字符切分
+ * 重建，跨页切段里 mark 会丢，整段放进一页时正常。
+ */
+export function highlightKeywords(root: HTMLElement, specs: KeywordMarkSpec[]) {
+  for (const spec of specs) {
+    const keyword = spec.keyword.trim()
+    if (!keyword || !spec.color) continue
+    const regex = new RegExp(escapeRegExp(keyword), 'gi')
+    const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
+      acceptNode(node) {
+        const parent = node.parentElement
+        if (!parent || ['MARK', 'SCRIPT', 'STYLE'].includes(parent.tagName)) {
+          return NodeFilter.FILTER_REJECT
+        }
+        regex.lastIndex = 0
+        return regex.test(node.textContent || '')
+          ? NodeFilter.FILTER_ACCEPT
+          : NodeFilter.FILTER_REJECT
+      },
+    })
+    const nodes: Text[] = []
+    while (walker.nextNode()) {
+      nodes.push(walker.currentNode as Text)
+    }
+    nodes.forEach((node) => {
+      const value = node.textContent || ''
+      regex.lastIndex = 0
+      const fragment = document.createDocumentFragment()
+      let cursor = 0
+      for (const match of value.matchAll(regex)) {
+        const index = match.index ?? 0
+        if (index > cursor) {
+          fragment.appendChild(document.createTextNode(value.slice(cursor, index)))
+        }
+        const mark = document.createElement('mark')
+        mark.className = 'kw-highlight'
+        mark.style.backgroundColor = spec.color
+        mark.textContent = match[0]
+        fragment.appendChild(mark)
+        cursor = index + match[0].length
+      }
+      if (cursor < value.length) {
+        fragment.appendChild(document.createTextNode(value.slice(cursor)))
+      }
+      node.parentNode?.replaceChild(fragment, node)
+    })
+  }
+}

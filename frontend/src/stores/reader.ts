@@ -36,6 +36,12 @@ import {
 } from '../utils/browserCache'
 import { isLocalBook } from '../utils/localBook'
 import { saveRecentReadBook } from '../utils/recentBooks'
+import {
+  loadLocalKeywordRules,
+  persistAndPushKeywordRules,
+  syncKeywordRulesFromBackend,
+  type KeywordHighlightRule,
+} from '../utils/keywordHighlights'
 import { useReaderTts } from '../composables/useReaderTts'
 import { createReaderProgress } from './readerProgress'
 
@@ -133,7 +139,15 @@ export const fontPresets = [
 
 export const useReaderStore = defineStore('reader', () => {
   type ReaderPanel =
-    'catalog' | 'settings' | 'bookshelf' | 'source' | 'bookmark' | 'rule' | 'cache' | null
+    | 'catalog'
+    | 'settings'
+    | 'bookshelf'
+    | 'source'
+    | 'bookmark'
+    | 'rule'
+    | 'keyword'
+    | 'cache'
+    | null
   const appStore = useAppStore()
   const shelfStore = useBookshelfStore()
   const aiBookStore = useAiBookStore()
@@ -147,6 +161,9 @@ export const useReaderStore = defineStore('reader', () => {
   const loadError = ref('')
   const bookmarks = ref<Bookmark[]>([])
   const replaceRules = ref<ReplaceRule[]>([])
+  /* 常驻关键词高亮：配置存 userdata（keyword-highlights 文档），
+     localStorage 是同步镜像；阅读器渲染管线消费它给正文上底色 */
+  const keywordRules = ref<KeywordHighlightRule[]>(loadLocalKeywordRules())
   /* 评论（章评 / 段评）：由书源规则决定是否可用 */
   const reviewEnabled = ref(false)
   const paraReviewEnabled = ref(false)
@@ -1039,6 +1056,18 @@ export const useReaderStore = defineStore('reader', () => {
     }
   }
 
+  /* ─── 常驻关键词高亮 ─── */
+  /** 管理面板的写入入口：本地镜像 + 防抖推后端（读-改-写整文档） */
+  function saveKeywordRules(rules: KeywordHighlightRule[]) {
+    keywordRules.value = rules
+    persistAndPushKeywordRules(rules)
+  }
+
+  /** 拉后端文档合并进本地（进阅读器时调一次；离线静默保持本地） */
+  async function syncKeywordRules() {
+    keywordRules.value = await syncKeywordRulesFromBackend(keywordRules.value)
+  }
+
   /* ─── Bookmarks ─── */
   async function fetchBookmarks() {
     try {
@@ -1196,6 +1225,9 @@ export const useReaderStore = defineStore('reader', () => {
     markChapterAsRead,
     replaceRules,
     fetchReplaceRules,
+    keywordRules,
+    saveKeywordRules,
+    syncKeywordRules,
     switchSource,
     preloadNextChapter,
     preloadAroundChapter,

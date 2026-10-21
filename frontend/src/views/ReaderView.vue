@@ -32,6 +32,7 @@
           <ReaderBookshelf v-else-if="store.activePanel === 'bookshelf'" />
           <ReaderSource v-else-if="store.activePanel === 'source'" />
           <ReplaceRuleManager v-else-if="store.activePanel === 'rule'" />
+          <KeywordHighlightManager v-else-if="store.activePanel === 'keyword'" />
           <CacheManager v-else-if="store.activePanel === 'cache'" />
         </div>
       </Transition>
@@ -370,6 +371,7 @@ import { DUAL_PAGE_MIN_WIDTH, useHorizontalPaging } from '../composables/useHori
 import {
   appendLocalEpubAssetAuth,
   buildBaseChapterHtml,
+  highlightKeywords,
   highlightSearchText,
   insertChapterImages,
   renderParaCommentBubble,
@@ -406,6 +408,9 @@ const ReaderBookshelf = defineAsyncComponent(
 const ReaderSource = defineAsyncComponent(() => import('../components/reader/ReaderSource.vue'))
 const ReplaceRuleManager = defineAsyncComponent(
   () => import('../components/reader/ReplaceRuleManager.vue')
+)
+const KeywordHighlightManager = defineAsyncComponent(
+  () => import('../components/reader/KeywordHighlightManager.vue')
 )
 const CacheManager = defineAsyncComponent(() => import('../components/reader/CacheManager.vue'))
 const BookDetailModal = defineAsyncComponent(() => import('../components/BookDetailModal.vue'))
@@ -618,8 +623,22 @@ function decorateChapterHtml(baseHtml: string, withBubbles: boolean) {
   }
   appendLocalEpubAssetAuth(wrapper)
   highlightSearchText(wrapper, showSearch.value ? searchQuery.value : '')
+  // 常驻关键词高亮排在搜索之后：搜索高亮先注入的 mark 受 walker 保护，重叠时搜索赢
+  highlightKeywords(wrapper, activeKeywordMarks.value)
   return wrapper.innerHTML
 }
+
+/** 生效中的常驻关键词（启用 + scope 命中当前书），供装饰层上底色。 */
+const activeKeywordMarks = computed(() =>
+  store.keywordRules
+    .filter(
+      (rule) =>
+        rule.enabled &&
+        rule.keyword.trim() &&
+        (rule.scope === 'global' || (!!store.book?.bookId && rule.bookId === store.book.bookId))
+    )
+    .map((rule) => ({ keyword: rule.keyword, color: rule.color }))
+)
 
 function formatChapterHtml(rawText: string, withParaComments = false) {
   const base = withParaComments
@@ -1485,6 +1504,8 @@ onMounted(async () => {
     window.speechSynthesis.onvoiceschanged = () => store.fetchVoices()
   }
   await Promise.all([store.fetchBookmarks(), store.fetchReplaceRules()])
+  // 关键词高亮配置：本地镜像已就绪（store 初始化即读），后端合并不挡渲染
+  void store.syncKeywordRules()
   // 换源入口需要按启用书源数决定是否展示；会话内只拉一次（source store 缓存）
   if (!sourceStore.sources.length) {
     void sourceStore.fetchSources().catch(() => undefined)
@@ -1723,6 +1744,8 @@ watch(
     () => config.value.showChapterImages,
     () => config.value.chineseMode,
     () => store.replaceRules,
+    // 常驻关键词高亮配置变化：重跑装饰层上色（与搜索高亮同链）
+    () => store.keywordRules,
   ],
   () => {
     if (isContinuousMode.value) {
@@ -2332,6 +2355,13 @@ watch(
 
 :deep(.search-highlight.current-match) {
   background: orange;
+}
+
+/* 常驻关键词标记：底色由内联 style 给（用户配置的色盘值），这里只管形状 */
+:deep(.kw-highlight) {
+  border-radius: 2px;
+  color: inherit;
+  padding: 0 1px;
 }
 
 @media (max-width: 767px) {

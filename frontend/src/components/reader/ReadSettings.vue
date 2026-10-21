@@ -546,6 +546,13 @@
           管理净化规则
         </button>
       </div>
+
+      <div class="setting-row">
+        <label>关键词高亮</label>
+        <button class="opt-btn wide" @click="store.openPanel('keyword', 'settings')">
+          管理关键词标记
+        </button>
+      </div>
     </div>
   </div>
 </template>
