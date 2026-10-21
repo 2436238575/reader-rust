@@ -29,6 +29,7 @@ import type {
   ReviewPage,
 } from '../types'
 import {
+  deleteBrowserCachedChapter,
   getBrowserCachedChapter,
   getBrowserCatalog,
   setBrowserCachedChapter,
@@ -994,6 +995,26 @@ export const useReaderStore = defineStore('reader', () => {
     }
   }
 
+  /** 编辑版保存/删除后重载本章：清预载与浏览器缓存，重新走后端（编辑版优先），
+   *  与 refreshContent 同构但不强刷上游。 */
+  async function reloadChapterAfterEdit(index = currentIndex.value) {
+    const chapter = chapters.value[index]
+    if (!chapter || !book.value?.bookId) return
+    preloadedContent.value.delete(index)
+    await deleteBrowserCachedChapter(book.value.bookId, chapter.url).catch(() => undefined)
+    await refreshEditedChapterKeys()
+    const loadSeq = ++chapterLoadSeq
+    loading.value = true
+    try {
+      const chapterContent = await fetchChapterContent(index, false)
+      if (chapterContent == null) return
+      if (loadSeq !== chapterLoadSeq || index !== currentIndex.value) return
+      setActiveChapterState(index, chapterContent, chapterScrollProgress.value)
+    } finally {
+      loading.value = false
+    }
+  }
+
   async function refreshContent() {
     if (!book.value || !chapters.value[currentIndex.value]) return
     // 快照当前章节：await 期间用户可能已翻章，旧正文不能盖到新章上。
@@ -1215,6 +1236,7 @@ export const useReaderStore = defineStore('reader', () => {
     fetchChapterContent,
     setActiveChapterState,
     refreshContent,
+    reloadChapterAfterEdit,
     nextChapter,
     prevChapter,
     clear,

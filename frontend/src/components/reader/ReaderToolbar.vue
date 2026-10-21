@@ -26,6 +26,12 @@
         <path d="M15 11v5" />
       </svg>
     </button>
+    <button class="tb-btn" @click="$emit('edit')" title="编辑本章正文">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <path d="M12 20h9" />
+        <path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z" />
+      </svg>
+    </button>
     <button
       class="tb-btn"
       :class="{ spinning: store.loading }"
@@ -155,6 +161,7 @@ defineEmits<{
   next: []
   progress: []
   refresh: []
+  edit: []
 }>()
 </script>
 

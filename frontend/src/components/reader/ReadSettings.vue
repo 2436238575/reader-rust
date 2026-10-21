@@ -562,6 +562,13 @@
       </div>
 
       <div class="setting-row">
+        <label>编辑正文</label>
+        <button class="opt-btn wide" @click="emit('editChapter')">
+          编辑本章正文
+        </button>
+      </div>
+
+      <div class="setting-row">
         <label>内容净化</label>
         <button class="opt-btn wide" @click="store.openPanel('rule', 'settings')">
           管理净化规则
@@ -588,6 +595,11 @@ import { DUAL_PAGE_MIN_WIDTH } from '../../composables/useHorizontalPaging'
 const store = useReaderStore()
 const aiBookStore = useAiBookStore()
 const appStore = useAppStore()
+
+const emit = defineEmits<{
+  /** 「编辑本章正文」入口（弹窗挂阅读器视图层） */
+  editChapter: []
+}>()
 const config = computed(() => store.config)
 const theme = computed(() => store.currentTheme)
 const serverModelLoaded = ref(false)

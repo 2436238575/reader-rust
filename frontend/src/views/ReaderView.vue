@@ -31,7 +31,7 @@
             @jump-chapter="jumpFromCatalog"
             @jump-bookmark="jumpToBookmark"
           />
-          <ReadSettings v-else-if="store.activePanel === 'settings'" />
+          <ReadSettings v-else-if="store.activePanel === 'settings'" @edit-chapter="openChapterEditor" />
           <ReaderBookshelf v-else-if="store.activePanel === 'bookshelf'" />
           <ReaderSource v-else-if="store.activePanel === 'source'" />
           <ReplaceRuleManager v-else-if="store.activePanel === 'rule'" />
@@ -61,6 +61,7 @@
       @next="nextChapter"
       @progress="openCachePanel"
       @refresh="handleRefreshContent"
+      @edit="openChapterEditor"
     />
 
     <!-- Mobile Controls (Click to toggle) -->
@@ -78,6 +79,7 @@
       @ai="openAiBook"
       @tts="handleTTS"
       @progress="openCachePanel"
+      @edit="openChapterEditor"
     />
 
     <ReaderTtsPanel
@@ -391,6 +393,8 @@
 
     <BookDetailModal v-model="showBookInfo" :book="bookInfoBook" @switched="handleBookSwitched" />
 
+    <ChapterEditorModal v-model="showChapterEditor" @changed="handleChapterEditChanged" />
+
     <ImageLightbox :src="previewImage" @close="previewImage = ''" />
   </div>
 </template>
@@ -466,6 +470,9 @@ const ReaderSearchPanel = defineAsyncComponent(
 )
 const CommentPanel = defineAsyncComponent(() => import('../components/reader/CommentPanel.vue'))
 const ImageLightbox = defineAsyncComponent(() => import('../components/reader/ImageLightbox.vue'))
+const ChapterEditorModal = defineAsyncComponent(
+  () => import('../components/reader/ChapterEditorModal.vue')
+)
 
 const router = useRouter()
 const store = useReaderStore()
@@ -771,6 +778,22 @@ async function handleRefreshContent() {
   // 基准（上游缓存）可能刚被刷新：diff 重算
   invalidateChapterDiff(store.currentIndex)
 }
+
+/* ─── 章节正文编辑 ─── */
+const showChapterEditor = ref(false)
+
+function openChapterEditor() {
+  if (!store.currentChapter) return
+  showChapterEditor.value = true
+}
+
+/** 编辑保存/恢复上游后：重载本章（后端返回最新状态）+ 重算 diff */
+async function handleChapterEditChanged() {
+  const index = store.currentIndex
+  await store.reloadChapterAfterEdit(index)
+  invalidateChapterDiff(index)
+}
+
 
 function formatChapterHtml(rawText: string, withParaComments = false, chapterIndex?: number) {
   const base = withParaComments
