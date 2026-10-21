@@ -60,6 +60,7 @@
       @prev="prevChapter"
       @next="nextChapter"
       @progress="openCachePanel"
+      @refresh="handleRefreshContent"
     />
 
     <!-- Mobile Controls (Click to toggle) -->
@@ -395,7 +396,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch, onMounted, onUnmounted, nextTick, defineAsyncComponent } from 'vue'
+import { ref, computed, reactive, watch, onMounted, onUnmounted, nextTick, defineAsyncComponent } from 'vue'
 import { onBeforeRouteLeave, useRouter } from 'vue-router'
 import { useReaderStore, fontPresets } from '../stores/reader'
 import { useAppStore } from '../stores/app'
@@ -406,9 +407,13 @@ import { APP_VIEWPORT_CHANGE_EVENT, syncViewportSize } from '../utils/viewport'
 import { isReaderInteractiveClickTarget, resolveReaderTapZone } from '../utils/readerClick'
 import { chapterPosToProgress } from '../utils/bookmarks'
 import { darkenKeywordColor } from '../utils/keywordHighlights'
+import { diffParagraphs, splitToParagraphs, type ParagraphDiffOp } from '../utils/chapterDiff'
+import { getChapterEdit } from '../api/chapterEdit'
+import { getBookContent } from '../api/bookshelf'
 import { DUAL_PAGE_MIN_WIDTH, useHorizontalPaging } from '../composables/useHorizontalPaging'
 import {
   appendLocalEpubAssetAuth,
+  applyDiffMarks,
   applyUnderlineMarks,
   buildBaseChapterHtml,
   highlightKeywords,
@@ -659,7 +664,13 @@ const baseChapterHtml = computed(() =>
 function decorateChapterHtml(baseHtml: string, withBubbles: boolean, chapterIndex?: number) {
   const wrapper = document.createElement('div')
   wrapper.innerHTML = baseHtml
-  applyUnderlineMarks(wrapper, underlineTextsForChapter(chapterIndex ?? store.currentIndex))
+  const targetChapterIndex = chapterIndex ?? store.currentIndex
+  // diff 标记在装饰层最前：它改段级 class 与段内 span，后续 walker 都能穿过
+  if (config.value.showDiffMarks) {
+    const ops = chapterDiffCache.get(targetChapterIndex)
+    if (ops) applyDiffMarks(wrapper, ops)
+  }
+  applyUnderlineMarks(wrapper, underlineTextsForChapter(targetChapterIndex))
   if (withBubbles) {
     // 配图先插：段评气泡按 `<p>` 顺序定位，figure 不是 <p> 不影响它，
     // 但气泡会往段落里塞计数，得赶在它之前比对段落原文
@@ -706,6 +717,60 @@ const activeKeywordMarks = computed(() =>
       color: store.isNight ? darkenKeywordColor(rule.color) : rule.color,
     }))
 )
+
+/* ─── 编辑版 diff（正文标记与 diff 面板共用） ───
+ * reactive Map：set/delete 触发依赖它的 computed 重算（横翻 formattedContent
+ * 经 decorateChapterHtml 读取它，自动跟着重建）；连续模式要手动刷章缓存。 */
+const chapterDiffCache = reactive(new Map<number, ParagraphDiffOp[] | null>())
+const chapterDiffPending = new Set<number>()
+
+/** 懒算某章的 diff：仅当该章有编辑版。两版都过替换规则+繁简转换再切段，
+ *  与渲染管线的段落口径对齐。 */
+async function ensureChapterDiff(chapterIndex: number) {
+  const chapter = store.chapters[chapterIndex]
+  const bookId = store.book?.bookId
+  if (!chapter || !bookId) return
+  if (!store.editedChapterKeys.has(chapter.url)) {
+    chapterDiffCache.delete(chapterIndex)
+    return
+  }
+  if (chapterDiffCache.has(chapterIndex) || chapterDiffPending.has(chapterIndex)) return
+  chapterDiffPending.add(chapterIndex)
+  try {
+    const [editResp, upstream] = await Promise.all([
+      getChapterEdit(bookId, chapter.url),
+      getBookContent({ bookId, chapterUrl: chapter.url, index: chapterIndex, variant: 'upstream' }),
+    ])
+    const edited = editResp?.content
+    if (edited == null) {
+      chapterDiffCache.set(chapterIndex, null)
+      return
+    }
+    const ops = diffParagraphs(
+      splitToParagraphs(store.processContentForDisplay(upstream)),
+      splitToParagraphs(store.processContentForDisplay(edited))
+    )
+    chapterDiffCache.set(chapterIndex, ops.length ? ops : null)
+  } catch {
+    chapterDiffCache.set(chapterIndex, null)
+  } finally {
+    chapterDiffPending.delete(chapterIndex)
+    // diff 到位后重渲：横翻靠 chapterDiffCache 响应式自动重建，连续模式手动刷
+    if (isContinuousMode.value) syncContinuousChapterHtml()
+  }
+}
+
+/** 编辑保存/删除/刷新基准后：作废该章缓存并重算。 */
+function invalidateChapterDiff(chapterIndex: number) {
+  chapterDiffCache.delete(chapterIndex)
+  void ensureChapterDiff(chapterIndex)
+}
+
+async function handleRefreshContent() {
+  await store.refreshContent()
+  // 基准（上游缓存）可能刚被刷新：diff 重算
+  invalidateChapterDiff(store.currentIndex)
+}
 
 function formatChapterHtml(rawText: string, withParaComments = false, chapterIndex?: number) {
   const base = withParaComments
@@ -1664,6 +1729,8 @@ onMounted(async () => {
   await Promise.all([store.fetchBookmarks(), store.fetchReplaceRules()])
   // 关键词高亮配置：本地镜像已就绪（store 初始化即读），后端合并不挡渲染
   void store.syncKeywordRules()
+  // 已编辑章清单：目录徽章、预加载绕过与 diff 标记都靠它
+  void store.refreshEditedChapterKeys()
   // 换源入口需要按启用书源数决定是否展示；会话内只拉一次（source store 缓存）
   if (!sourceStore.sources.length) {
     void sourceStore.fetchSources().catch(() => undefined)
@@ -1890,6 +1957,28 @@ watch(
   () => {
     loadSavedReadingPosition()
     scheduleRefreshOfflineCacheState()
+    chapterDiffCache.clear()
+    void store.refreshEditedChapterKeys()
+  }
+)
+
+// diff 懒算触发：当前章/已编辑清单/开关变化时算当前章；
+// 连续模式对渲染中的各章都算（它们在视口里就该带标记）
+watch(
+  [
+    () => store.currentIndex,
+    () => store.editedChapterKeys,
+    () => config.value.showDiffMarks,
+    () => continuousChapters.value.map((chapter) => chapter.index).join(','),
+  ],
+  () => {
+    if (!config.value.showDiffMarks) return
+    void ensureChapterDiff(store.currentIndex)
+    if (isContinuousMode.value) {
+      for (const chapter of continuousChapters.value) {
+        void ensureChapterDiff(chapter.index)
+      }
+    }
   }
 )
 
@@ -1906,8 +1995,10 @@ watch(
     () => store.keywordRules,
     // 划线增删：回显的摘录文本集合变了要重跑装饰层
     () => store.bookmarks,
-    // 夜间切换：关键词底色要换成暗色变体（连续模式的章缓存要刷）
+    // 夜间切换：关键词底色要换成暗色变体（连续模式章缓存要刷）
     () => store.isNight,
+    // diff 标记开关：关掉时重跑装饰层摘掉标记
+    () => config.value.showDiffMarks,
   ],
   () => {
     if (isContinuousMode.value) {
@@ -2534,6 +2625,50 @@ watch(
 /* 「忽略」模式下划线只读，不给可点暗示 */
 .select-action-ignore :deep(.reader-underline) {
   cursor: default;
+}
+
+/* ─── 编辑版 diff 标记（vscode 风） ─── */
+/* 新增段：左绿竖线 */
+:deep(p.diff-added) {
+  border-left: 3px solid #22c55e;
+  padding-left: 8px;
+}
+
+/* 段内改动：左蓝竖线 */
+:deep(p.diff-modified) {
+  border-left: 3px solid #3b82f6;
+  padding-left: 8px;
+}
+
+/* 段内相对原段增加的部分：虚线下划线 */
+:deep(span.diff-ins) {
+  text-decoration: underline dotted #22c55e;
+  text-underline-offset: 3px;
+}
+
+/* 段内减少处：零宽红竖线（title 带被删原文） */
+:deep(span.diff-del-marker) {
+  display: inline-block;
+  width: 0;
+  height: 1em;
+  border-left: 2px solid #ef4444;
+  vertical-align: -0.15em;
+  margin: 0 1px;
+}
+
+/* 大段删除：删除块后第一个未变段的左上角红箭头（绝对定位零占位，不影响分页测量） */
+:deep(p.diff-del-after) {
+  position: relative;
+}
+
+:deep(p.diff-del-after)::before {
+  content: '◀';
+  position: absolute;
+  left: -18px;
+  top: 0.15em;
+  color: #ef4444;
+  font-size: 0.8em;
+  line-height: 1;
 }
 
 @media (max-width: 767px) {

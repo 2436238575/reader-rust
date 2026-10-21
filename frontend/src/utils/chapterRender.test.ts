@@ -1,6 +1,12 @@
 // @vitest-environment jsdom
 import { describe, expect, it } from 'vitest'
-import { applyUnderlineMarks, highlightKeywords, highlightSearchText } from './chapterRender'
+import {
+  applyDiffMarks,
+  applyUnderlineMarks,
+  highlightKeywords,
+  highlightSearchText,
+} from './chapterRender'
+import { diffParagraphs } from './chapterDiff'
 
 function root(html: string): HTMLElement {
   const el = document.createElement('div')
@@ -127,5 +133,53 @@ describe('applyUnderlineMarks', () => {
     const spans = el.querySelectorAll('span.reader-underline')
     expect(spans).toHaveLength(3)
     expect(spans[1].textContent).toBe('整整一段乙')
+  })
+})
+
+describe('applyDiffMarks', () => {
+  const opsFor = (base: string[], edited: string[]) => diffParagraphs(base, edited)
+
+  it('新增段打 diff-added，未变段不动', () => {
+    const el = root('<p>甲段</p><p>新加的段</p><p>乙段</p>')
+    applyDiffMarks(el, opsFor(['甲段', '乙段'], ['甲段', '新加的段', '乙段']))
+    const ps = el.querySelectorAll('p')
+    expect(ps[1].classList.contains('diff-added')).toBe(true)
+    expect(ps[0].className).toBe('')
+    expect(ps[2].className).toBe('')
+  })
+
+  it('段内改动：diff-modified + 增加部分虚线 span + 删除点红竖线', () => {
+    // 渲染的正文是编辑版；基准里的「进」被改成「出」
+    const el = root('<p>甲段</p><p>他走出了那座古庙。</p>')
+    applyDiffMarks(el, opsFor(['甲段', '他走进了那座古庙。'], ['甲段', '他走出了那座古庙。']))
+    const p = el.querySelectorAll('p')[1]
+    expect(p.classList.contains('diff-modified')).toBe(true)
+    expect(p.querySelector('span.diff-ins')?.textContent).toBe('出')
+    const marker = p.querySelector<HTMLElement>('span.diff-del-marker')
+    expect(marker).not.toBeNull()
+    expect(marker!.title).toContain('进')
+    // 原文不变（标记只是包裹）
+    expect(p.textContent).toContain('他走出了那座古庙。')
+  })
+
+  it('大段删除：删除块后第一个未变段打 diff-del-after；文末删除标最后一段', () => {
+    const el = root('<p>甲段</p><p>乙段</p>')
+    // 基准 [甲,删1,删2,乙]，编辑版 [甲,乙]：删除块夹在中间
+    applyDiffMarks(el, opsFor(['甲段', '删一', '删二', '乙段'], ['甲段', '乙段']))
+    const ps = el.querySelectorAll('p')
+    expect(ps[1].classList.contains('diff-del-after')).toBe(true)
+    expect(ps[0].classList.contains('diff-del-after')).toBe(false)
+
+    const el2 = root('<p>甲段</p><p>乙段</p>')
+    applyDiffMarks(el2, opsFor(['甲段', '乙段', '删尾'], ['甲段', '乙段']))
+    const ps2 = el2.querySelectorAll('p')
+    expect(ps2[1].classList.contains('diff-del-after')).toBe(true)
+  })
+
+  it('diff 标记后划线/搜索仍能穿过 span 匹配', () => {
+    const el = root('<p>他走出了那座古庙。</p>')
+    applyDiffMarks(el, opsFor(['他走进了那座古庙。'], ['他走出了那座古庙。']))
+    highlightSearchText(el, '古庙')
+    expect(el.querySelector('mark.search-highlight')?.textContent).toBe('古庙')
   })
 })

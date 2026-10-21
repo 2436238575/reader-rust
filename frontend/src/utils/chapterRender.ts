@@ -5,6 +5,7 @@
 import { withAuthQuery } from '../api/bookshelf'
 import { sanitizeUntrustedHtml } from './sanitize'
 import type { ChapterImage, ParaReviewCount } from '../types'
+import { inlineDiff, type ParagraphDiffOp } from './chapterDiff'
 
 /** 基础渲染的排版选项（来自阅读器配置）。 */
 export interface BaseRenderOptions {
@@ -82,6 +83,71 @@ export function buildBaseChapterHtml(rawText: string, opts: BaseRenderOptions) {
       .join('')
   }
   return wrapper.innerHTML
+}
+
+/**
+ * 编辑版与上游基准的 diff 标记（vscode git diff 风）：
+ *
+ * - 新增段：段落左绿竖线（`p.diff-added`）
+ * - 段内改动：段落左蓝竖线（`p.diff-modified`）+ 相对原段增加的部分包
+ *   `span.diff-ins`（虚线下划线），减少处在删除点插零宽 `span.diff-del-marker`
+ *   （红竖线，title 带被删原文）
+ * - 大段删除：删除块后第一个未变段打 `p.diff-del-after`，`::before` 红箭头
+ *   （删除块在文末时标最后一个段）
+ *
+ * 在装饰层**最前**跑（applyUnderlineMarks 之前）：它改的是段级 class 与
+ * 段内 span，后续划线/搜索/关键词的 TreeWalker 都能穿过 span 继续匹配。
+ * 只动 class 与内联 span、不新增顶层块、不含 SVG——横翻分页器的块级
+ * 切分与高度测量完全不受影响。
+ */
+export function applyDiffMarks(wrapper: HTMLElement, ops: ParagraphDiffOp[]) {
+  if (!ops.length) return
+  const paragraphs = Array.from(wrapper.querySelectorAll('p')) as HTMLElement[]
+  if (!paragraphs.length) return
+  let pendingDelete = false
+  for (const op of ops) {
+    if (op.type === 'del') {
+      pendingDelete = true
+      continue
+    }
+    const index = op.editedIndex
+    if (index == null) continue
+    const paragraph = paragraphs[index]
+    if (!paragraph) continue
+    if (pendingDelete) {
+      paragraph.classList.add('diff-del-after')
+      pendingDelete = false
+    }
+    if (op.type === 'add') {
+      paragraph.classList.add('diff-added')
+      continue
+    }
+    if (op.type !== 'modify') continue
+    paragraph.classList.add('diff-modified')
+    const diff = inlineDiff(op.baseText || '', paragraph.textContent || '')
+    if (!diff.removed && !diff.added) continue
+    const fragment = document.createDocumentFragment()
+    if (diff.prefix) fragment.appendChild(document.createTextNode(diff.prefix))
+    if (diff.removed) {
+      const marker = document.createElement('span')
+      marker.className = 'diff-del-marker'
+      marker.title = `删除：${diff.removed.length > 30 ? `${diff.removed.slice(0, 30)}…` : diff.removed}`
+      fragment.appendChild(marker)
+    }
+    if (diff.added) {
+      const ins = document.createElement('span')
+      ins.className = 'diff-ins'
+      ins.textContent = diff.added
+      fragment.appendChild(ins)
+    }
+    if (diff.suffix) fragment.appendChild(document.createTextNode(diff.suffix))
+    paragraph.textContent = ''
+    paragraph.appendChild(fragment)
+  }
+  // 删除块在文末：标最后一个段
+  if (pendingDelete) {
+    paragraphs[paragraphs.length - 1].classList.add('diff-del-after')
+  }
 }
 
 export function renderParaCommentBubble(item: ParaReviewCount) {

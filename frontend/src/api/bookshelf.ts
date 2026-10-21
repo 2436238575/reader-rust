@@ -69,6 +69,8 @@ export function getBookContent(params: {
   chapterUrl: string
   index?: number
   refresh?: number
+  /** `upstream`：只读上游基准（缓存/本地原文），不读编辑版、不抓上游（diff 通道） */
+  variant?: 'upstream'
 }) {
   return http.post<string>('/getBookContent', params).then((r) => r.data)
 }

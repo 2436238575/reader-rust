@@ -36,6 +36,7 @@ import {
 } from '../utils/browserCache'
 import { isLocalBook } from '../utils/localBook'
 import { saveRecentReadBook } from '../utils/recentBooks'
+import { listChapterEdits } from '../api/chapterEdit'
 import {
   loadLocalKeywordRules,
   persistAndPushKeywordRules,
@@ -70,6 +71,8 @@ export interface ReadConfig {
   enablePreload: boolean
   /** 显示章节配图（书源配图规则取回的图，以及正文 HTML 里的 <img>） */
   showChapterImages: boolean
+  /** 已编辑章节的正文 diff 标记（绿/蓝竖线、红箭头、段内虚线） */
+  showDiffMarks: boolean
   /** 评论里回复的配图形态：缩略图直接显示，或番茄式「查看图片」文字链 */
   replyImageStyle: 'thumbnail' | 'link'
 }
@@ -95,6 +98,7 @@ const defaultConfig: ReadConfig = {
   specialMode: 'normal',
   enablePreload: true,
   showChapterImages: true,
+  showDiffMarks: true,
   replyImageStyle: 'thumbnail',
 }
 
@@ -179,6 +183,21 @@ export const useReaderStore = defineStore('reader', () => {
   const isAutoScrolling = ref(false)
   const chapterScrollProgress = ref(0)
   const readChapterKeys = ref<Set<string>>(new Set())
+  /// 已编辑章节的 chapterUrl 集：阅读链路对这些章跳过浏览器缓存直走后端
+  /// （后端会优先返回编辑版），目录面板与正文 diff 标记也用它
+  const editedChapterKeys = ref<Set<string>>(new Set())
+
+  async function refreshEditedChapterKeys() {
+    if (!book.value?.bookId) {
+      editedChapterKeys.value = new Set()
+      return
+    }
+    try {
+      editedChapterKeys.value = new Set(await listChapterEdits(book.value.bookId))
+    } catch {
+      /* 离线/失败时保持现状 */
+    }
+  }
   const progress = createReaderProgress({
     book,
     chapters,
@@ -666,7 +685,9 @@ export const useReaderStore = defineStore('reader', () => {
     const bookId = book.value.bookId
 
     const isLocal = isLocalBook(book.value)
-    const useBrowserCache = !isLocal
+    // 已编辑章跳过浏览器缓存：后端会优先返回编辑版，缓存里的旧版只会挡住它
+    const isEdited = editedChapterKeys.value.has(chapter.url)
+    const useBrowserCache = !isLocal && !isEdited
     const browserCached = useBrowserCache
       ? await getBrowserCachedChapter(bookId, chapter.url).catch(() => null)
       : null
@@ -1233,6 +1254,8 @@ export const useReaderStore = defineStore('reader', () => {
     replaceRules,
     fetchReplaceRules,
     keywordRules,
+    editedChapterKeys,
+    refreshEditedChapterKeys,
     saveKeywordRules,
     syncKeywordRules,
     switchSource,

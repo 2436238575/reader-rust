@@ -29,7 +29,7 @@
     <button
       class="tb-btn"
       :class="{ spinning: store.loading }"
-      @click="store.refreshContent()"
+      @click="$emit('refresh')"
       title="刷新"
     >
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -154,6 +154,7 @@ defineEmits<{
   prev: []
   next: []
   progress: []
+  refresh: []
 }>()
 </script>
 

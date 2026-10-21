@@ -171,6 +171,27 @@
         </div>
       </div>
 
+      <!-- 编辑过章节的正文改动标记（绿/蓝竖线、红箭头、段内虚线） -->
+      <div class="setting-row">
+        <label>改动标记</label>
+        <div class="btn-group">
+          <button
+            class="opt-btn"
+            :class="{ active: config.showDiffMarks }"
+            @click="store.updateConfig('showDiffMarks', true)"
+          >
+            显示
+          </button>
+          <button
+            class="opt-btn"
+            :class="{ active: !config.showDiffMarks }"
+            @click="store.updateConfig('showDiffMarks', false)"
+          >
+            隐藏
+          </button>
+        </div>
+      </div>
+
       <!-- 评论里回复的配图形态 -->
       <div class="setting-row">
         <label>回复配图</label>

@@ -174,6 +174,13 @@ export async function getBrowserCachedChapter(bookId: string, chapterUrl: string
   })
 }
 
+/** 删单章的浏览器缓存（编辑版保存/删除后调用，让下一次读取回源拿最新） */
+export async function deleteBrowserCachedChapter(bookId: string, chapterUrl: string) {
+  return withStore('readwrite', async (store) => {
+    await requestToPromise(store.delete(cacheKey(bookId, chapterUrl)))
+  })
+}
+
 export async function setBrowserCachedChapter(params: {
   bookId: string
   chapterUrl: string
