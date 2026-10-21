@@ -1120,6 +1120,12 @@ export const useReaderStore = defineStore('reader', () => {
     await fetchBookmarks()
   }
 
+  /** 更新备注（content 列）：upsert 主键不变，只覆写备注字段 */
+  async function updateBookmarkNote(b: Bookmark, note: string) {
+    await saveBookmark({ ...b, content: note })
+    await fetchBookmarks()
+  }
+
   async function removeBookmarks(items: Bookmark[]) {
     if (!items.length) return
     await apiDeleteBookmarks(items)
@@ -1219,6 +1225,7 @@ export const useReaderStore = defineStore('reader', () => {
     fetchBookmarks,
     addBookmark,
     removeBookmark,
+    updateBookmarkNote,
     removeBookmarks,
     readChapterKeys,
     isChapterRead,

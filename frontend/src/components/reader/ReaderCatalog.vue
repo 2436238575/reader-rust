@@ -182,13 +182,40 @@
           <span class="bm-time">{{ formatDate(bm.time) }}</span>
         </div>
         <div class="bm-snippet">{{ bm.bookText }}</div>
-        <button v-if="!bookmarkEditMode" class="bm-delete" @click.stop="handleDeleteBookmark(bm)">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <path
-              d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"
-            />
-          </svg>
-        </button>
+        <div v-if="bm.content && editingNoteKey !== getBookmarkKey(bm)" class="bm-note">
+          {{ bm.content }}
+        </div>
+        <div v-if="editingNoteKey === getBookmarkKey(bm)" class="bm-note-editor" @click.stop>
+          <textarea
+            v-model="editingNoteText"
+            rows="2"
+            placeholder="写点备注..."
+            @keydown.esc.stop="cancelNoteEdit"
+          ></textarea>
+          <div class="bm-note-actions">
+            <button class="note-btn primary" @click.stop="saveNoteEdit(bm)">保存</button>
+            <button class="note-btn" @click.stop="cancelNoteEdit">取消</button>
+          </div>
+        </div>
+        <div v-if="!bookmarkEditMode" class="bm-ops">
+          <button
+            class="bm-edit"
+            :title="bm.content ? '编辑备注' : '添加备注'"
+            @click.stop="startNoteEdit(bm)"
+          >
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M12 20h9" />
+              <path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z" />
+            </svg>
+          </button>
+          <button class="bm-delete" @click.stop="handleDeleteBookmark(bm)">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path
+                d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"
+              />
+            </svg>
+          </button>
+        </div>
       </div>
     </div>
 
@@ -216,13 +243,40 @@
           <span class="bm-time">{{ formatDate(bm.time) }}</span>
         </div>
         <div class="bm-snippet underline-snippet">{{ bm.bookText }}</div>
-        <button v-if="!bookmarkEditMode" class="bm-delete" @click.stop="handleDeleteBookmark(bm)">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <path
-              d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"
-            />
-          </svg>
-        </button>
+        <div v-if="bm.content && editingNoteKey !== getBookmarkKey(bm)" class="bm-note">
+          {{ bm.content }}
+        </div>
+        <div v-if="editingNoteKey === getBookmarkKey(bm)" class="bm-note-editor" @click.stop>
+          <textarea
+            v-model="editingNoteText"
+            rows="2"
+            placeholder="写点备注..."
+            @keydown.esc.stop="cancelNoteEdit"
+          ></textarea>
+          <div class="bm-note-actions">
+            <button class="note-btn primary" @click.stop="saveNoteEdit(bm)">保存</button>
+            <button class="note-btn" @click.stop="cancelNoteEdit">取消</button>
+          </div>
+        </div>
+        <div v-if="!bookmarkEditMode" class="bm-ops">
+          <button
+            class="bm-edit"
+            :title="bm.content ? '编辑备注' : '添加备注'"
+            @click.stop="startNoteEdit(bm)"
+          >
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M12 20h9" />
+              <path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z" />
+            </svg>
+          </button>
+          <button class="bm-delete" @click.stop="handleDeleteBookmark(bm)">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path
+                d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"
+              />
+            </svg>
+          </button>
+        </div>
       </div>
     </div>
   </div>
@@ -462,6 +516,30 @@ async function handleDeleteBookmark(bm: Bookmark) {
     appStore.showToast(`已删除${label}`, 'success')
   } catch (error) {
     appStore.showToast((error as Error).message || `删除${label}失败`, 'error')
+  }
+}
+
+/* ─── 备注编辑（写 Bookmark.content 列） ─── */
+const editingNoteKey = ref('')
+const editingNoteText = ref('')
+
+function startNoteEdit(bm: Bookmark) {
+  editingNoteKey.value = getBookmarkKey(bm)
+  editingNoteText.value = bm.content || ''
+}
+
+function cancelNoteEdit() {
+  editingNoteKey.value = ''
+  editingNoteText.value = ''
+}
+
+async function saveNoteEdit(bm: Bookmark) {
+  try {
+    await store.updateBookmarkNote(bm, editingNoteText.value.trim())
+    cancelNoteEdit()
+    appStore.showToast('备注已保存', 'success')
+  } catch (error) {
+    appStore.showToast((error as Error).message || '备注保存失败', 'error')
   }
 }
 
@@ -898,30 +976,96 @@ const formatDate = formatMonthDayTime
   -webkit-line-clamp: 3;
 }
 
-.bm-delete {
+.bm-ops {
   position: absolute;
   right: 12px;
   bottom: 12px;
+  display: flex;
+  gap: 6px;
+  opacity: 0;
+  transition: 0.2s;
+}
+
+.bookmark-item:hover .bm-ops,
+.bm-ops:focus-within {
+  opacity: 1;
+}
+
+.bm-edit,
+.bm-delete {
   width: 28px;
   height: 28px;
   display: flex;
   align-items: center;
   justify-content: center;
-  opacity: 0;
-  background: rgba(255, 0, 0, 0.05);
-  color: #ef4444;
   border: none;
   border-radius: 4px;
   cursor: pointer;
   transition: 0.2s;
 }
 
-.bookmark-item:hover .bm-delete {
-  opacity: 1;
+.bm-edit {
+  background: rgba(0, 0, 0, 0.05);
+  color: inherit;
 }
 
+.bm-delete {
+  background: rgba(255, 0, 0, 0.05);
+  color: #ef4444;
+}
+
+.bm-edit svg,
 .bm-delete svg {
   width: 14px;
   height: 14px;
+}
+
+.bm-note {
+  font-size: var(--text-xs);
+  opacity: 0.75;
+  background: rgba(201, 127, 58, 0.08);
+  border-left: 2px solid var(--color-primary, #c97f3a);
+  padding: 4px 8px;
+  border-radius: 4px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.bm-note-editor textarea {
+  width: 100%;
+  box-sizing: border-box;
+  background: rgba(0, 0, 0, 0.04);
+  border: 1px solid rgba(0, 0, 0, 0.1);
+  border-radius: 8px;
+  padding: 6px 10px;
+  color: inherit;
+  font-size: var(--text-xs);
+  font-family: inherit;
+  outline: none;
+  resize: vertical;
+}
+
+.bm-note-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 6px;
+}
+
+.note-btn {
+  font-size: var(--text-xs);
+  padding: 3px 12px;
+  border-radius: 6px;
+  border: 1px solid var(--color-border, rgba(0, 0, 0, 0.12));
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}
+
+.note-btn.primary {
+  background: var(--color-primary, #c97f3a);
+  border-color: var(--color-primary, #c97f3a);
+  color: #fff;
 }
 </style>
