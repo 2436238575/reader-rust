@@ -1298,29 +1298,26 @@ function handleScroll() {
     ) {
       loadContinuousNext()
     }
+  } else if (container && isHorizontalPageMode.value) {
+    // 横翻的滚动事件只可能来自 resize/对齐抖动（页面由 transform 驱动）：
+    // 归位后复用翻页时那套进度/末页态/预加载/保存/上报链路，不再平行写第二遍
+    updateHorizontalMetrics()
+    const maxPage = Math.max(0, horizontalPages.value.length - 1)
+    horizontalPageIndex.value = Math.max(0, Math.min(maxPage, horizontalPageIndex.value))
+    if (container.scrollLeft !== 0) {
+      container.scrollTo({ left: 0, behavior: 'auto' })
+    }
+    if (showControls.value && !store.activePanel) {
+      showControls.value = false
+    }
+    syncHorizontalPageState()
+    return
   } else if (container) {
     const maxScroll = Math.max(1, container.scrollHeight - container.clientHeight)
-    const progress = isHorizontalPageMode.value
-      ? (() => {
-          const maxPage = Math.max(0, horizontalPages.value.length - 1)
-          return maxPage <= 0 ? 1 : horizontalPageIndex.value / maxPage
-        })()
-      : container.scrollHeight <= container.clientHeight
-        ? 1
-        : container.scrollTop / maxScroll
+    const progress =
+      container.scrollHeight <= container.clientHeight ? 1 : container.scrollTop / maxScroll
     store.setChapterScrollProgress(progress)
-    if (isHorizontalPageMode.value) {
-      updateHorizontalMetrics()
-      const maxPage = Math.max(0, horizontalPages.value.length - 1)
-      horizontalPageIndex.value = Math.max(0, Math.min(maxPage, horizontalPageIndex.value))
-      if (container.scrollLeft !== 0) {
-        container.scrollTo({ left: 0, behavior: 'auto' })
-      }
-      updateHorizontalEndState()
-      if (config.value.enablePreload && maxPage > 0 && horizontalPageIndex.value >= maxPage - 1) {
-        store.preloadAroundChapter(store.currentIndex)
-      }
-    } else if (
+    if (
       config.value.enablePreload &&
       container.scrollHeight - (container.scrollTop + container.clientHeight) <
         container.clientHeight * 1.5
@@ -1519,6 +1516,13 @@ onUnmounted(() => {
   applySystemTheme(appStore.theme)
   store.closePanel()
 })
+
+/* ─── watch 群：每条链注释自己的存在理由 ───
+ * 扇出最重的两条：store.content（段落重置 → 连续模式就地改/重建 → 自动播放 →
+ * 搜索重跑 → 离线横幅 → 位置恢复）与 store.currentIndex（读档 → 重置 → 裁剪 →
+ * 预加载 → 连续同步 → 离线横幅 → 位置恢复）。改这两条链时先数清扇出。
+ * 注意 watchers 各自独立触发，合并会改变触发时序——不要为省行数合并。
+ */
 
 watch(
   () => config.value.autoPageMode,
