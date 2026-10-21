@@ -184,6 +184,8 @@
               该书的评论排序由站点决定，这里只重排了已加载的 {{ items.length }} 条
             </p>
 
+            <!-- 滚动到底自动加载下一页；按钮保留作兜底（IO 不可用或想手动点时） -->
+            <div v-if="hasMore" ref="sentinelRef" class="comment-sentinel" aria-hidden="true"></div>
             <button v-if="hasMore" class="comment-more" :disabled="loading" @click="loadMore">
               {{ loading ? '加载中...' : '加载更多' }}
             </button>
@@ -388,6 +390,8 @@ async function fetchPage(target: number) {
       bookId: props.bookId,
       chapterUrl: props.chapterUrl,
       page: target,
+      // 一次 50 条（后端 clamp 上限正好 50），少点两次「加载更多」
+      count: 50,
       sort: sort.value,
       authorOnly: authorOnly.value || undefined,
     }
@@ -461,6 +465,27 @@ async function loadMore() {
   await nextTick()
   restoreScrollAnchor(anchor)
 }
+
+/* ─── 滚动到底自动加载（IntersectionObserver 哨兵） ─── */
+const sentinelRef = ref<HTMLElement>()
+
+function onSentinelVisible(entries: IntersectionObserverEntry[]) {
+  if (!entries.some((entry) => entry.isIntersecting)) return
+  if (!props.show || !hasMore.value || loading.value || authorOnly.value) return
+  void loadMore()
+}
+
+// 哨兵随 hasMore 出现/销毁（v-if），ref 变化时重建观察；
+// rootMargin 让「还差 200px 到底」就提前拉下一页，滚动顺滑无顿挫
+watch(sentinelRef, (el, _, onCleanup) => {
+  if (!el || typeof IntersectionObserver === 'undefined') return
+  const observer = new IntersectionObserver(onSentinelVisible, {
+    root: listRef.value ?? null,
+    rootMargin: '200px',
+  })
+  observer.observe(el)
+  onCleanup(() => observer.disconnect())
+})
 
 interface ScrollAnchor {
   key: string
@@ -942,6 +967,13 @@ function formatReviewTime(raw: string) {
 .comment-digg svg {
   width: 13px;
   height: 13px;
+}
+
+/* 哨兵：零占位，只为让 IntersectionObserver 在接近底部时触发 */
+.comment-sentinel {
+  height: 1px;
+  margin-top: 4px;
+  pointer-events: none;
 }
 
 .comment-more {

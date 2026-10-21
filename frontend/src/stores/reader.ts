@@ -87,7 +87,7 @@ const defaultConfig: ReadConfig = {
   selectAction: 'ignore',
   chineseMode: 'simplified',
   specialMode: 'normal',
-  enablePreload: false,
+  enablePreload: true,
   showChapterImages: true,
   replyImageStyle: 'thumbnail',
 }
