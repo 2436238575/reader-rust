@@ -365,12 +365,6 @@ import { applySystemTheme } from '../utils/systemUi'
 import { isIosWebkit } from '../utils/platform'
 import { APP_VIEWPORT_CHANGE_EVENT, syncViewportSize } from '../utils/viewport'
 import { isReaderInteractiveClickTarget, resolveReaderTapZone } from '../utils/readerClick'
-import {
-  buildServerSavedPosition as buildServerPosition,
-  getPositionStorageKey,
-  normalizePositionTimestamp,
-  type SavedReadingPosition,
-} from '../utils/readingPosition'
 import { DUAL_PAGE_MIN_WIDTH, useHorizontalPaging } from '../composables/useHorizontalPaging'
 import {
   appendLocalEpubAssetAuth,
@@ -381,7 +375,6 @@ import {
   splitParagraphLines,
   type BaseRenderOptions,
 } from '../utils/chapterRender'
-import { safeLocalSet } from '../utils/storage'
 import type { ChapterImage, ParaReviewCount } from '../types'
 import {
   createReaderProgressAutoSaveScheduler,
@@ -402,6 +395,7 @@ import { useOverlayHistory } from '../composables/useOverlayHistory'
 import { useReaderKeyboard } from '../composables/useReaderKeyboard'
 import { useReaderTtsControls } from '../composables/useReaderTtsControls'
 import { useBookInfoModal } from '../composables/useBookInfoModal'
+import { useReadingPosition, CONTINUOUS_POSITION_ANCHOR_RATIO } from '../composables/useReadingPosition'
 
 const ReaderCatalog = defineAsyncComponent(() => import('../components/reader/ReaderCatalog.vue'))
 const ReadSettings = defineAsyncComponent(() => import('../components/reader/ReadSettings.vue'))
@@ -427,15 +421,7 @@ const appStore = useAppStore()
 const sourceStore = useSourceStore()
 const SERVER_PROGRESS_AUTOSAVE_MS = 10000
 
-const CONTINUOUS_POSITION_ANCHOR_RATIO = 0.12
 
-// 排查阅读位置恢复问题时临时打开
-const POSITION_DEBUG = false
-
-function debugPositionLog(message: string, payload?: unknown) {
-  if (!POSITION_DEBUG) return
-  console.debug(`[reader-position] ${message}`, payload ?? '')
-}
 
 const config = computed(() => store.config)
 const theme = computed(() => store.currentTheme)
@@ -455,14 +441,6 @@ const chapterTextRef = ref<HTMLElement>()
 const showControls = ref(false)
 const isMobile = ref(false)
 let suppressNextTapUntil = 0
-let restorePositionTimer: number | null = null
-let persistPositionTimer: number | null = null
-const pendingRestorePosition = ref<SavedReadingPosition | null>(null)
-let pendingRestoreAttempts = 0
-let suppressPositionSaveUntil = 0
-let suppressContinuousScrollSyncUntil = 0
-let suppressContinuousAutoLoadUntil = 0
-const restoreStabilizeTimers: number[] = []
 const serverProgressAutoSaveScheduler = createReaderProgressAutoSaveScheduler({
   intervalMs: SERVER_PROGRESS_AUTOSAVE_MS,
   flush: () => store.flushProgressToServer(),
@@ -842,6 +820,32 @@ const {
   scrollContainerRef
 )
 
+// 阅读位置的保存与恢复（本地+服务端选新、三模式分支、重试与抑制窗）收进 composable
+const {
+  pendingRestorePosition,
+  queueRestorePosition,
+  loadSavedReadingPosition,
+  saveReadingPosition,
+  scheduleSaveReadingPosition,
+  scheduleRestoreReadingPosition,
+  suppressContinuousInteractions,
+  isContinuousScrollSyncSuppressed,
+  isContinuousAutoLoadSuppressed,
+  disposeReadingPosition,
+} = useReadingPosition({
+  store,
+  scrollContainerRef,
+  chapterTextRef,
+  isContinuousMode,
+  isHorizontalPageMode,
+  iosWebkit,
+  horizontalPages,
+  horizontalPageIndex,
+  suppressHorizontalTransitionOnce,
+  updateHorizontalEndState,
+  continuousChapters,
+})
+
 function syncHorizontalPageState() {
   const maxPage = Math.max(0, horizontalPages.value.length - 1)
   const progress = maxPage <= 0 ? 1 : horizontalPageIndex.value / maxPage
@@ -945,12 +949,11 @@ async function prevChapter(toChapterEnd = false) {
     if (toChapterEnd) {
       // 「章头再翻上一页」是在往回读：落到上一章章末，而不是章头。
       // 走恢复通道（与书签跳转同路）——横翻落最后一页、竖滚滚到底
-      pendingRestorePosition.value = {
+      queueRestorePosition({
         chapterIndex: targetIndex,
         progress: 1,
         updatedAt: Date.now(),
-      }
-      pendingRestoreAttempts = 0
+      })
       scheduleRestoreReadingPosition()
       return
     }
@@ -996,12 +999,11 @@ async function jumpToBookmark(bm: { chapterIndex?: number; chapterPos?: number }
 
   if (!isContinuousMode.value) {
     await store.loadChapter(targetIndex)
-    pendingRestorePosition.value = {
+    queueRestorePosition({
       chapterIndex: targetIndex,
       progress: Math.max(0, Math.min(1, bm.chapterPos || 0)),
       updatedAt: Date.now(),
-    }
-    pendingRestoreAttempts = 0
+    })
     scheduleRestoreReadingPosition()
     store.closePanel()
     return
@@ -1012,8 +1014,7 @@ async function jumpToBookmark(bm: { chapterIndex?: number; chapterPos?: number }
 }
 
 async function rebuildContinuousAtChapter(targetIndex: number) {
-  suppressContinuousScrollSyncUntil = Date.now() + 500
-  suppressContinuousAutoLoadUntil = Date.now() + 500
+  suppressContinuousInteractions(500)
   await initializeContinuousChapters(targetIndex, false)
 }
 
@@ -1034,388 +1035,6 @@ function scrollToBottom() {
       behavior: 'smooth',
     })
   }
-}
-
-function buildServerSavedPosition(): SavedReadingPosition | null {
-  return buildServerPosition(store.book, store.currentIndex, store.serverProgressTime)
-}
-
-function loadSavedReadingPosition() {
-  const key = getPositionStorageKey(store.book?.bookId)
-  if (!key) {
-    pendingRestorePosition.value = null
-    pendingRestoreAttempts = 0
-    debugPositionLog('skip load: no storage key')
-    return
-  }
-  try {
-    const raw = localStorage.getItem(key)
-    const localSaved = raw ? (JSON.parse(raw) as SavedReadingPosition) : null
-    const serverSaved = buildServerSavedPosition()
-
-    let selected: SavedReadingPosition | null = null
-    let source: 'local' | 'server' | 'none' = 'none'
-
-    if (localSaved && localSaved.chapterIndex === store.currentIndex) {
-      selected = localSaved
-      source = 'local'
-    }
-
-    if (serverSaved && serverSaved.chapterIndex === store.currentIndex) {
-      if (
-        !selected ||
-        normalizePositionTimestamp(serverSaved.updatedAt) >
-          normalizePositionTimestamp(selected.updatedAt)
-      ) {
-        selected = serverSaved
-        source = 'server'
-      }
-    }
-
-    if (!selected) {
-      pendingRestorePosition.value = null
-      pendingRestoreAttempts = 0
-      clearRestoreStabilizers()
-      debugPositionLog(raw ? 'ignored saved position' : 'no saved position', {
-        key,
-        currentIndex: store.currentIndex,
-        localSaved,
-        serverSaved,
-      })
-      return
-    }
-
-    pendingRestorePosition.value = selected
-    pendingRestoreAttempts = 0
-    clearRestoreStabilizers()
-    debugPositionLog('loaded saved position', {
-      key,
-      saved: selected,
-      source,
-      localSaved,
-      serverSaved,
-      currentIndex: store.currentIndex,
-      accepted: !!pendingRestorePosition.value,
-    })
-    if (pendingRestorePosition.value) {
-      suppressPositionSaveUntil = Date.now() + 2500
-    }
-  } catch {
-    pendingRestorePosition.value = null
-    pendingRestoreAttempts = 0
-    clearRestoreStabilizers()
-    debugPositionLog('failed to parse saved position', { key })
-  }
-}
-
-function saveReadingPosition(options: { force?: boolean } = {}) {
-  const key = getPositionStorageKey(store.book?.bookId)
-  const container = scrollContainerRef.value
-  const suppressed = !options.force && Date.now() < suppressPositionSaveUntil
-  if (!key || !container || store.loading || !store.book || suppressed) {
-    debugPositionLog('skip save', {
-      key,
-      hasContainer: !!container,
-      loading: store.loading,
-      hasBook: !!store.book,
-      suppressed,
-      currentIndex: store.currentIndex,
-    })
-    return
-  }
-
-  const basePosition: SavedReadingPosition = {
-    chapterIndex: store.currentIndex,
-    progress: store.chapterScrollProgress,
-    updatedAt: Date.now(),
-  }
-
-  const anchorRatio = isContinuousMode.value ? CONTINUOUS_POSITION_ANCHOR_RATIO : 0.3
-  const anchorViewportY =
-    container.getBoundingClientRect().top + container.clientHeight * anchorRatio
-  if (isContinuousMode.value && continuousChapters.value.length) {
-    const section = container.querySelector(
-      `.continuous-chapter[data-chapter-index="${store.currentIndex}"]`
-    ) as HTMLElement | null
-    const paragraphs = Array.from(
-      section?.querySelectorAll('.chapter-text p') || []
-    ) as HTMLElement[]
-    if (paragraphs.length) {
-      let activeParagraph = paragraphs[0]
-      let paragraphIndex = 0
-      paragraphs.forEach((paragraph, index) => {
-        if (paragraph.getBoundingClientRect().top <= anchorViewportY) {
-          activeParagraph = paragraph
-          paragraphIndex = index
-        }
-      })
-      const rect = activeParagraph.getBoundingClientRect()
-      const paragraphProgress =
-        rect.height > 0 ? Math.max(0, Math.min(1, (anchorViewportY - rect.top) / rect.height)) : 0
-      basePosition.paragraphIndex = paragraphIndex
-      basePosition.paragraphProgress = paragraphProgress
-    }
-  } else if (!isHorizontalPageMode.value) {
-    const paragraphs = Array.from(
-      chapterTextRef.value?.querySelectorAll('p') || []
-    ) as HTMLElement[]
-    if (paragraphs.length) {
-      let activeParagraph = paragraphs[0]
-      let paragraphIndex = 0
-      paragraphs.forEach((paragraph, index) => {
-        if (paragraph.getBoundingClientRect().top <= anchorViewportY) {
-          activeParagraph = paragraph
-          paragraphIndex = index
-        }
-      })
-      const rect = activeParagraph.getBoundingClientRect()
-      const paragraphProgress =
-        rect.height > 0 ? Math.max(0, Math.min(1, (anchorViewportY - rect.top) / rect.height)) : 0
-      basePosition.paragraphIndex = paragraphIndex
-      basePosition.paragraphProgress = paragraphProgress
-    }
-  }
-
-  safeLocalSet(key, JSON.stringify(basePosition))
-  debugPositionLog('saved position', { key, position: basePosition })
-}
-
-function scheduleSaveReadingPosition() {
-  if (persistPositionTimer) clearTimeout(persistPositionTimer)
-  persistPositionTimer = window.setTimeout(() => {
-    saveReadingPosition()
-  }, 120)
-}
-
-function restoreReadingPosition() {
-  return restoreReadingPositionInternal(pendingRestorePosition.value, true)
-}
-
-function clearRestoreStabilizers() {
-  while (restoreStabilizeTimers.length) {
-    const timer = restoreStabilizeTimers.pop()
-    if (typeof timer === 'number') clearTimeout(timer)
-  }
-}
-
-function scheduleRestoreStabilization(saved: SavedReadingPosition) {
-  clearRestoreStabilizers()
-  if (!iosWebkit || isHorizontalPageMode.value) return
-  ;[140, 320, 680].forEach((delay) => {
-    const timer = window.setTimeout(() => {
-      if (store.loading || !scrollContainerRef.value || saved.chapterIndex !== store.currentIndex)
-        return
-      void nextTick(() => {
-        restoreReadingPositionInternal(saved, false)
-      })
-    }, delay)
-    restoreStabilizeTimers.push(timer)
-  })
-}
-
-function restoreReadingPositionInternal(saved: SavedReadingPosition | null, finalize: boolean) {
-  const container = scrollContainerRef.value
-  if (!saved || !container || saved.chapterIndex !== store.currentIndex) {
-    debugPositionLog('restore aborted', {
-      hasSaved: !!saved,
-      hasContainer: !!container,
-      savedChapterIndex: saved?.chapterIndex,
-      currentIndex: store.currentIndex,
-    })
-    return false
-  }
-
-  if (isHorizontalPageMode.value) {
-    // 横翻由 transform 分页驱动：写 scrollLeft 会被对齐/翻页逻辑立刻归零（此前的
-    // 恢复因此是死代码，横翻离开再回来永远在第 1 页）。恢复 = 按进度落到第几页
-    const maxPage = Math.max(0, horizontalPages.value.length - 1)
-    if (store.loading || maxPage <= 0) {
-      debugPositionLog('restore waiting: horizontal pages not ready', {
-        saved,
-        loading: store.loading,
-        pageCount: horizontalPages.value.length,
-      })
-      return false
-    }
-    suppressHorizontalTransitionOnce()
-    horizontalPageIndex.value = Math.max(
-      0,
-      Math.min(maxPage, Math.round(maxPage * Math.max(0, Math.min(1, saved.progress || 0))))
-    )
-    updateHorizontalEndState()
-    if (finalize) {
-      pendingRestorePosition.value = null
-      pendingRestoreAttempts = 0
-    }
-    debugPositionLog('restored horizontal position', {
-      saved,
-      pageIndex: horizontalPageIndex.value,
-    })
-    return true
-  }
-
-  const anchorOffset =
-    container.clientHeight * (isContinuousMode.value ? CONTINUOUS_POSITION_ANCHOR_RATIO : 0.3)
-  let targetTop = 0
-
-  if (isContinuousMode.value) {
-    if (store.loading || !continuousChapters.value.length) {
-      debugPositionLog('restore waiting: continuous content not ready', {
-        saved,
-        loading: store.loading,
-        continuousCount: continuousChapters.value.length,
-      })
-      return false
-    }
-    const section = container.querySelector(
-      `.continuous-chapter[data-chapter-index="${saved.chapterIndex}"]`
-    ) as HTMLElement | null
-    if (!section) {
-      debugPositionLog('restore failed: section not found', {
-        saved,
-        availableSections: Array.from(container.querySelectorAll('.continuous-chapter')).map(
-          (el) => (el as HTMLElement).dataset.chapterIndex
-        ),
-      })
-      return false
-    }
-    const paragraphs = Array.from(section.querySelectorAll('.chapter-text p')) as HTMLElement[]
-    if (typeof saved.paragraphIndex === 'number' && !paragraphs.length) {
-      debugPositionLog('restore waiting: continuous paragraphs not ready', {
-        saved,
-        sectionIndex: saved.chapterIndex,
-      })
-      return false
-    }
-    if (paragraphs.length && typeof saved.paragraphIndex === 'number') {
-      const paragraph =
-        paragraphs[Math.max(0, Math.min(paragraphs.length - 1, saved.paragraphIndex))]
-      const top =
-        paragraph.getBoundingClientRect().top -
-        container.getBoundingClientRect().top +
-        container.scrollTop
-      const paragraphProgress = Math.max(0, Math.min(1, saved.paragraphProgress || 0))
-      targetTop = Math.max(
-        section.offsetTop,
-        top + paragraph.offsetHeight * paragraphProgress - anchorOffset
-      )
-    } else {
-      const nextSection = section.nextElementSibling as HTMLElement | null
-      const sectionHeight = Math.max(
-        1,
-        (nextSection ? nextSection.offsetTop : container.scrollHeight) - section.offsetTop
-      )
-      if (
-        (saved.progress || 0) > 0 &&
-        sectionHeight <= Math.max(1, container.clientHeight * 0.25)
-      ) {
-        debugPositionLog('restore waiting: continuous section height not ready', {
-          saved,
-          sectionHeight,
-          clientHeight: container.clientHeight,
-        })
-        return false
-      }
-      targetTop = Math.max(
-        section.offsetTop,
-        section.offsetTop + sectionHeight * Math.max(0, Math.min(1, saved.progress || 0))
-      )
-    }
-  } else {
-    const paragraphs = Array.from(
-      chapterTextRef.value?.querySelectorAll('p') || []
-    ) as HTMLElement[]
-    if (store.loading || !chapterTextRef.value) {
-      debugPositionLog('restore waiting: chapter content not ready', {
-        saved,
-        loading: store.loading,
-        hasChapterText: !!chapterTextRef.value,
-      })
-      return false
-    }
-    if (typeof saved.paragraphIndex === 'number' && !paragraphs.length) {
-      debugPositionLog('restore waiting: chapter paragraphs not ready', {
-        saved,
-      })
-      return false
-    }
-    if (paragraphs.length && typeof saved.paragraphIndex === 'number') {
-      const paragraph =
-        paragraphs[Math.max(0, Math.min(paragraphs.length - 1, saved.paragraphIndex))]
-      const top =
-        paragraph.getBoundingClientRect().top -
-        container.getBoundingClientRect().top +
-        container.scrollTop
-      const paragraphProgress = Math.max(0, Math.min(1, saved.paragraphProgress || 0))
-      targetTop = top + paragraph.offsetHeight * paragraphProgress - anchorOffset
-    } else {
-      const maxScroll = Math.max(0, container.scrollHeight - container.clientHeight)
-      if ((saved.progress || 0) > 0 && maxScroll <= 4) {
-        debugPositionLog('restore waiting: max scroll not ready', {
-          saved,
-          scrollHeight: container.scrollHeight,
-          clientHeight: container.clientHeight,
-          maxScroll,
-        })
-        return false
-      }
-      targetTop = maxScroll * Math.max(0, Math.min(1, saved.progress || 0))
-    }
-  }
-
-  // 恢复定位要瞬时完成：'auto' 会跟随容器 CSS 的 scroll-behavior:smooth，
-  // 恢复一个几千像素的位置会爬行数秒，看起来像卡在旧位置
-  container.scrollTo({ top: Math.max(0, targetTop), behavior: 'instant' as ScrollBehavior })
-  if (finalize) {
-    pendingRestorePosition.value = null
-    pendingRestoreAttempts = 0
-    const suppressMs = isContinuousMode.value && iosWebkit ? 1600 : 500
-    suppressContinuousScrollSyncUntil = Date.now() + suppressMs
-    suppressContinuousAutoLoadUntil = Date.now() + suppressMs
-    scheduleRestoreStabilization(saved)
-  }
-  suppressPositionSaveUntil = Date.now() + 400
-  debugPositionLog('restored vertical position', {
-    saved,
-    targetTop,
-    isContinuous: isContinuousMode.value,
-    finalize,
-  })
-  return true
-}
-
-function scheduleRestoreReadingPosition() {
-  if (restorePositionTimer) clearTimeout(restorePositionTimer)
-  debugPositionLog('schedule restore', {
-    attempts: pendingRestoreAttempts,
-    hasPending: !!pendingRestorePosition.value,
-    currentIndex: store.currentIndex,
-  })
-  restorePositionTimer = window.setTimeout(
-    () => {
-      void nextTick(() => {
-        const restored = restoreReadingPosition()
-        if (!restored && pendingRestorePosition.value && pendingRestoreAttempts < 12) {
-          pendingRestoreAttempts += 1
-          debugPositionLog('restore retry', {
-            attempts: pendingRestoreAttempts,
-            pending: pendingRestorePosition.value,
-            currentIndex: store.currentIndex,
-          })
-          scheduleRestoreReadingPosition()
-        } else if (!restored) {
-          debugPositionLog('restore gave up', {
-            attempts: pendingRestoreAttempts,
-            pending: pendingRestorePosition.value,
-            currentIndex: store.currentIndex,
-          })
-          pendingRestorePosition.value = null
-          pendingRestoreAttempts = 0
-        }
-      })
-    },
-    pendingRestoreAttempts === 0 ? 0 : 80
-  )
 }
 
 // 点按/滚轮/按键打断自动滚动的时间戳：打断后紧接着的那次 tap 只表示
@@ -1633,7 +1252,7 @@ function handleScroll() {
   hideSelectionMenu()
   const container = scrollContainerRef.value
   if (container && isContinuousMode.value && continuousChapters.value.length) {
-    if (Date.now() < suppressContinuousScrollSyncUntil) {
+    if (isContinuousScrollSyncSuppressed()) {
       scheduleSaveReadingPosition()
       return
     }
@@ -1674,7 +1293,7 @@ function handleScroll() {
     }
 
     if (
-      Date.now() >= suppressContinuousAutoLoadUntil &&
+      !isContinuousAutoLoadSuppressed() &&
       container.scrollHeight - (container.scrollTop + container.clientHeight) < 480
     ) {
       loadContinuousNext()
@@ -1887,11 +1506,9 @@ onUnmounted(() => {
   window.removeEventListener('pagehide', handlePageHide)
   window.removeEventListener('beforeunload', handleBeforeUnload)
   document.removeEventListener('visibilitychange', handleVisibilityChange)
-  if (restorePositionTimer) clearTimeout(restorePositionTimer)
-  if (persistPositionTimer) clearTimeout(persistPositionTimer)
   disposeOfflineBanner()
   if (rebuildHorizontalTimer) clearTimeout(rebuildHorizontalTimer)
-  clearRestoreStabilizers()
+  disposeReadingPosition()
   disposeSelection()
   disposeContinuousReading()
   disposeAutoPlayback()
@@ -1919,12 +1536,11 @@ watch(
     // 切换前记下当前章内进度（竖滚/横翻都在持续维护 chapterScrollProgress），
     // 交给结尾的 scheduleRestoreReadingPosition 在新模式下恢复，而不是回章首
     if (store.book && store.chapterScrollProgress > 0) {
-      pendingRestorePosition.value = {
+      queueRestorePosition({
         chapterIndex: store.currentIndex,
         progress: store.chapterScrollProgress,
         updatedAt: Date.now(),
-      }
-      pendingRestoreAttempts = 0
+      })
     }
     clearSelectionState()
     if (isContinuousMode.value) {
@@ -1987,12 +1603,11 @@ watch(
 watch([() => config.value.pageWidth, isDualPageMode], () => {
   if (!isHorizontalPageMode.value) return
   if (store.book && store.chapterScrollProgress > 0) {
-    pendingRestorePosition.value = {
+    queueRestorePosition({
       chapterIndex: store.currentIndex,
       progress: store.chapterScrollProgress,
       updatedAt: Date.now(),
-    }
-    pendingRestoreAttempts = 0
+    })
   }
   scheduleRebuildHorizontalPages()
   scheduleRestoreReadingPosition()
