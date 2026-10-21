@@ -29,6 +29,19 @@ pub enum AppError {
     /// 409：已有同类任务进行中（AI 资料批量更新为单任务串行）。
     #[error("conflict: {0}")]
     Conflict(String),
+    /// 502：上游站点失败——返回了错误状态码（403/404/限流等），或网络层
+    /// 超时/连接失败。
+    ///
+    /// 与 `Internal` 分开是因为这是**上游站点**的问题：用户需要看到
+    /// 「上游 403」这样的真实原因，否则书源被风控时只会看到一句
+    /// "internal error"，还以为书本身没内容。
+    #[error("upstream status {status}: {message}")]
+    Upstream {
+        /// 上游状态码；网络层失败（没有响应）时为 0
+        status: u16,
+        /// 用户可读文案（直接进 errorMsg 被前端 toast）
+        message: String,
+    },
     #[error("internal error")]
     Internal(anyhow::Error),
     #[error("db error")]
@@ -37,15 +50,30 @@ pub enum AppError {
     Http(#[from] reqwest::Error),
 }
 
-/// `anyhow::Error` → `AppError`，并把出站策略拒绝挑出来单独归类。
+/// `anyhow::Error` → `AppError`，并把出站策略拒绝与上游网络错误挑出来单独归类。
 ///
 /// 抓取链路上错误一路以 `anyhow` 传播（`fetch` 返回 `anyhow::Result`），
 /// 在这里统一做一次类型判别，比在每个调用点手写 `map_err` 更不容易漏。
+/// reqwest 错误的 Display 会带完整 URL（可能含敏感参数），对外文案只给
+/// 泛化原因，细节留在服务端日志。
 impl From<anyhow::Error> for AppError {
     fn from(error: anyhow::Error) -> Self {
         match error.downcast::<crate::crawler::url_guard::OutboundBlocked>() {
             Ok(blocked) => AppError::Blocked(blocked.0),
-            Err(error) => AppError::Internal(error),
+            Err(error) => match error.downcast::<reqwest::Error>() {
+                Ok(err) => {
+                    let status = err.status().map(|s| s.as_u16()).unwrap_or(0);
+                    let message = if err.is_timeout() {
+                        "上游站点连接超时".to_string()
+                    } else if err.is_connect() {
+                        "无法连接上游站点".to_string()
+                    } else {
+                        format!("上游请求失败（HTTP {status}）")
+                    };
+                    AppError::Upstream { status, message }
+                }
+                Err(error) => AppError::Internal(error),
+            },
         }
     }
 }
@@ -84,6 +112,7 @@ impl IntoResponse for AppError {
             AppError::BadRequest(msg) => (StatusCode::BAD_REQUEST, msg.clone()),
             AppError::Blocked(msg) => (StatusCode::BAD_REQUEST, msg.clone()),
             AppError::Conflict(msg) => (StatusCode::CONFLICT, msg.clone()),
+            AppError::Upstream { message, .. } => (StatusCode::BAD_GATEWAY, message.clone()),
             AppError::Db(_) => (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "database error".to_string(),
@@ -141,5 +170,29 @@ mod tests {
         // 内部错误仍然只对外暴露笼统文案
         let response = AppError::Internal(anyhow::anyhow!("secret detail")).into_response();
         assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+    }
+
+    #[test]
+    fn upstream_status_is_reported_with_readable_message() {
+        // 上游 403 必须是可读的 502 + 真实状态码，而不是 "internal error"
+        let error = AppError::Upstream {
+            status: 403,
+            message: "上游站点返回错误（HTTP 403）".to_string(),
+        };
+        let response = error.into_response();
+        assert_eq!(response.status(), StatusCode::BAD_GATEWAY);
+    }
+
+    #[test]
+    fn reqwest_errors_in_anyhow_become_upstream_without_leaking_url() {
+        // 抓取链路（anyhow）里的网络错误归 Upstream；reqwest 的 Display
+        // 会带完整 URL（可能含敏感参数），对外只给泛化文案。
+        // reqwest::Error 没有公开构造器，用无效 URL 的 build 失败制造一个。
+        let err = reqwest::Client::new()
+            .get("ht tp://invalid url")
+            .build()
+            .unwrap_err();
+        let error: AppError = anyhow::Error::new(err).into();
+        assert!(matches!(error, AppError::Upstream { .. }));
     }
 }

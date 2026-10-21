@@ -408,6 +408,10 @@ impl BookService {
     }
 
     /// 在阻塞线程池里执行书源登录检查 JS。
+    ///
+    /// 出口统一校验状态码：上游 403/404/限流在此之前被当成成功结果继续
+    /// 解析，错误页 HTML 解析出空串后「成功」返回空白章节。JS 先跑
+    /// （书源有机会改写响应自救），之后仍非 2xx 才透传为可读错误。
     async fn login_check_blocking(
         &self,
         user_ns: &str,
@@ -416,7 +420,9 @@ impl BookService {
     ) -> Result<FetchResponse, AppError> {
         let user_ns = user_ns.to_string();
         let source = source.clone();
-        parse_blocking(move || with_user_ns(&user_ns, || apply_login_check_js(&source, res))).await
+        parse_blocking(move || with_user_ns(&user_ns, || apply_login_check_js(&source, res)))
+            .await
+            .and_then(ensure_successful_response)
     }
 
     /// 在阻塞线程池里对 (source, body, url) 跑一段同步解析。
@@ -1246,7 +1252,16 @@ impl BookService {
         }
 
         tracing::debug!("get_content final content len={}", all_content.len());
-        if !all_content.is_empty() {
+        if all_content.is_empty() {
+            // 空正文分两种：书源声明了配图规则的纯图章节（正文本来就可能为空，
+            // 配图走 ruleContentImage），与「规则失效/上游异常」的真空。
+            // 后者此前照常返回成功，用户对着空白章节看不出原因。
+            if source.rule_content_image.is_none() {
+                return Err(AppError::NotFound(
+                    "正文为空：书源规则可能已失效，或上游页面结构有变化".to_string(),
+                ));
+            }
+        } else {
             let _ = self
                 .cache
                 .put(user_ns, book_id, chapter_url, &all_content)
@@ -2503,7 +2518,9 @@ fn apply_login_check_js(source: &BookSource, res: FetchResponse) -> FetchRespons
         match eval_js_with_bindings(script, &res.body, &res.url, &bindings) {
             Ok(output) if !output.trim().is_empty() => {
                 if let Ok(next) = serde_json::from_str::<StrResponse>(&output) {
-                    FetchResponse::from(next)
+                    let mut next = FetchResponse::from(next);
+                    inherit_missing_status_fields(&output, &res, &mut next);
+                    next
                 } else {
                     FetchResponse {
                         body: output,
@@ -2521,6 +2538,37 @@ fn apply_login_check_js(source: &BookSource, res: FetchResponse) -> FetchRespons
                 res
             }
         }
+    })
+}
+
+/// JS 改写响应只给了部分字段时，状态维度继承原响应——serde 缺省会把
+/// `is_successful` 填成 false、`code` 填成 0，否则改写后的成功页会被
+/// 出口校验误判为上游失败。
+fn inherit_missing_status_fields(output: &str, original: &FetchResponse, next: &mut FetchResponse) {
+    let Ok(serde_json::Value::Object(map)) = serde_json::from_str::<serde_json::Value>(output)
+    else {
+        next.is_successful = original.is_successful;
+        next.status = original.status;
+        return;
+    };
+    let has = |keys: &[&str]| keys.iter().any(|key| map.contains_key(*key));
+    if !has(&["is_successful", "isSuccessful"]) {
+        next.is_successful = original.is_successful;
+    }
+    if !has(&["code", "status"]) {
+        next.status = original.status;
+    }
+}
+
+/// 上游失败状态码（403/404/限流…）透传为可读错误，不再让错误页 HTML
+/// 进解析管线产出「成功但空白」的结果。
+fn ensure_successful_response(res: FetchResponse) -> Result<FetchResponse, AppError> {
+    if res.is_successful {
+        return Ok(res);
+    }
+    Err(AppError::Upstream {
+        status: res.status,
+        message: format!("上游站点返回错误（HTTP {}）", res.status),
     })
 }
 
@@ -2903,6 +2951,54 @@ mod tests {
     use super::*;
     use crate::storage::db;
     use crate::storage::db::repo::{BookRepo, ShelfBookRepo};
+
+    fn fetch_response(status: u16, is_successful: bool) -> FetchResponse {
+        FetchResponse {
+            url: "http://example.com".into(),
+            status,
+            body: String::new(),
+            content_type: None,
+            headers: vec![],
+            is_successful,
+        }
+    }
+
+    #[test]
+    fn ensure_successful_response_passes_2xx_and_flags_failures() {
+        assert!(ensure_successful_response(fetch_response(200, true)).is_ok());
+
+        let err = ensure_successful_response(fetch_response(403, false)).unwrap_err();
+        match err {
+            AppError::Upstream { status, message } => {
+                assert_eq!(status, 403);
+                assert!(message.contains("403"));
+            }
+            other => panic!("应为 Upstream，实际 {other:?}"),
+        }
+    }
+
+    #[test]
+    fn inherit_missing_status_fields_keeps_original_status_when_js_omits_them() {
+        // 与 apply_login_check_js 同一条路径：JS 输出先按 StrResponse 解析再继承
+        let rewrite = |output: &str, original: &FetchResponse| {
+            let mut next =
+                FetchResponse::from(serde_json::from_str::<StrResponse>(output).unwrap());
+            inherit_missing_status_fields(output, original, &mut next);
+            next
+        };
+        let original = fetch_response(200, true);
+
+        // JS 只回 body：状态维度继承原响应，否则改写后的成功页被误判为失败
+        let next = rewrite(r#"{"body":"改写后"}"#, &original);
+        assert!(next.is_successful);
+        assert_eq!(next.status, 200);
+        assert_eq!(next.body, "改写后");
+
+        // JS 显式给了状态字段（camelCase 序列化）：尊重 JS 的值，包括显式标记失败
+        let next = rewrite(r#"{"body":"x","code":404,"isSuccessful":false}"#, &original);
+        assert!(!next.is_successful);
+        assert_eq!(next.status, 404);
+    }
 
     async fn test_service(storage_dir: &std::path::Path) -> BookService {
         // init_pool 不会建父目录，先落目录再开库
