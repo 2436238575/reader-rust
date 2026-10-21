@@ -230,4 +230,70 @@ test.describe('Standard E2E: reader', () => {
       .toBe(1)
     await expect(section1.getByText('这一章的正文段落足够长').first()).toBeVisible()
   })
+
+  test('mobile long-press on underline opens action menu and deletes it', async ({ page }) => {
+    // 移动视口（isMobile 按 767px 断点）；长按靠手动 dispatch TouchEvent，
+    // 不需要 context 级 hasTouch
+    await page.setViewportSize({ width: 390, height: 844 })
+    const { bookId, name } = await seedLocalTxtBook(page)
+    // 预置一条划线书签（第一章正文含「第一章正文内容」）
+    const saved = await page.evaluate(async (bookId) => {
+      const token = localStorage.getItem('accessToken')
+      const resp = await fetch('/reader3/saveBookmark', {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          bookId,
+          bookName: '测试书',
+          bookAuthor: '本地导入',
+          chapterIndex: 0,
+          chapterPos: 1000,
+          chapterName: '第一章 开始',
+          bookText: '第一章正文内容',
+          kind: 'underline',
+          time: Date.now(),
+        }),
+      })
+      // selectAction 默认 ignore（只读）；切到 popup 让划线可交互
+      const cfg = JSON.parse(localStorage.getItem('readConfig') || '{}')
+      cfg.selectAction = 'popup'
+      localStorage.setItem('readConfig', JSON.stringify(cfg))
+      return resp.ok
+    }, bookId)
+    expect(saved).toBe(true)
+    await openBookFromShelf(page, name)
+
+    const underline = page.locator('span.reader-underline', { hasText: '第一章正文内容' })
+    await expect(underline).toHaveCount(1)
+
+    // 长按：touchstart 后按住 700ms（菜单 500ms 触发），再抬手
+    await underline.evaluate((el) => {
+      const r = el.getBoundingClientRect()
+      const touch = new Touch({
+        identifier: 1,
+        target: el,
+        clientX: r.x + 5,
+        clientY: r.y + 5,
+      })
+      el.dispatchEvent(
+        new TouchEvent('touchstart', { touches: [touch], bubbles: true, cancelable: true })
+      )
+    })
+    await page.waitForTimeout(700)
+    await underline.evaluate((el) => {
+      el.dispatchEvent(new TouchEvent('touchend', { bubbles: true, cancelable: true }))
+    })
+
+    const menu = page.locator('.selection-menu')
+    await expect(menu).toBeVisible()
+    await expect(menu.getByRole('button', { name: '删除划线' })).toBeVisible()
+    await expect(menu.getByRole('button', { name: '加入高亮' })).toBeVisible()
+
+    page.on('dialog', (dialog) => void dialog.accept())
+    await menu.getByRole('button', { name: '删除划线' }).click()
+    await expect(underline).toHaveCount(0)
+  })
 })

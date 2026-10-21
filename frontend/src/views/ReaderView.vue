@@ -1,7 +1,10 @@
 ﻿<template>
   <div
     class="reader-view"
-    :class="{ 'disable-system-callout': disableSystemCallout }"
+    :class="{
+      'disable-system-callout': disableSystemCallout,
+      'select-action-ignore': config.selectAction === 'ignore',
+    }"
     :style="{
       background: theme.body,
       color: theme.fontColor,
@@ -354,11 +357,13 @@
       </div>
     </Transition>
 
-    <!-- 已回显划线的操作菜单：与选区菜单同形态，「加入划线」换成「删除划线」 -->
+    <!-- 已回显划线的操作菜单：与选区菜单同形态（胶囊/右键竖排跟随选字模式），
+         「加入划线」换成「删除划线」 -->
     <Transition name="fade">
       <div
         v-if="underlineMenu.visible"
         class="selection-menu"
+        :class="{ 'as-context-menu': underlineMenu.variant === 'context' }"
         @click.stop
         :style="{
           top: underlineMenu.top + 'px',
@@ -810,18 +815,21 @@ function resolveUnderlineTarget(target: HTMLElement | null) {
 function handleChapterTextClick(event: MouseEvent) {
   if (Date.now() < suppressNextTapUntil) return
   const target = event.target as HTMLElement | null
-  // 已回显的划线：点开操作菜单（删除划线/加入高亮/替换规则）
-  const underline = resolveUnderlineTarget(target)
-  if (underline) {
-    event.stopPropagation()
-    openUnderlineMenu(
-      event.clientX,
-      event.clientY,
-      underline.text,
-      underline.chapterIndex,
-      underline.chapterPos
-    )
-    return
+  // 已回显的划线：点开操作菜单。只在「操作弹窗」模式下响应点击——
+  // 「右键菜单」模式下划线归右键开，「忽略」模式下划线只读
+  if (config.value.selectAction === 'popup') {
+    const underline = resolveUnderlineTarget(target)
+    if (underline) {
+      event.stopPropagation()
+      openUnderlineMenu(
+        event.clientX,
+        event.clientY,
+        underline.text,
+        underline.chapterIndex,
+        underline.chapterPos
+      )
+      return
+    }
   }
   const bubble = target?.closest('.para-comment-bubble') as HTMLElement | null
   if (bubble) {
@@ -1275,21 +1283,21 @@ function handleBackgroundClick(e: Event) {
 }
 
 function handleContextMenu(event: MouseEvent) {
-  // 右键点在已回显的划线上：打开划线操作菜单（不受选区模式影响）
-  const underline = resolveUnderlineTarget(event.target as HTMLElement | null)
-  if (underline) {
-    event.preventDefault()
-    openUnderlineMenu(
-      event.clientX,
-      event.clientY,
-      underline.text,
-      underline.chapterIndex,
-      underline.chapterPos
-    )
-    return
-  }
-  // 「右键菜单」模式：选区上右键唤出操作菜单
+  // 「右键菜单」模式：右键点在已回显的划线上，打开划线操作菜单（竖排形态）
   if (config.value.selectAction === 'contextmenu') {
+    const underline = resolveUnderlineTarget(event.target as HTMLElement | null)
+    if (underline) {
+      event.preventDefault()
+      openUnderlineMenu(
+        event.clientX,
+        event.clientY,
+        underline.text,
+        underline.chapterIndex,
+        underline.chapterPos
+      )
+      return
+    }
+    // 选区上右键唤出操作菜单
     if (showSelectionMenuAt(event)) {
       event.preventDefault()
     }
@@ -1487,8 +1495,13 @@ function handleTouchStart(event: TouchEvent) {
     moving: true,
     horizontalLocked: false,
   }
-  const underline = resolveUnderlineTarget(event.target as HTMLElement | null)
+  const underline =
+    config.value.selectAction !== 'ignore'
+      ? resolveUnderlineTarget(event.target as HTMLElement | null)
+      : null
   if (underline) {
+    // 移动端没有右键通道：长按是触屏上打开划线菜单的方式，
+    // 「忽略」模式下划线只读不拦截
     const { clientX, clientY } = touch
     underlineLongPressTimer = window.setTimeout(() => {
       underlineLongPressTimer = null
@@ -2508,6 +2521,11 @@ watch(
   border-bottom: 2px solid var(--color-primary, #c97f3a);
   padding-bottom: 1px;
   cursor: pointer;
+}
+
+/* 「忽略」模式下划线只读，不给可点暗示 */
+.select-action-ignore :deep(.reader-underline) {
+  cursor: default;
 }
 
 @media (max-width: 767px) {

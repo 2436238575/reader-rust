@@ -361,6 +361,8 @@ export function useReaderSelection(
     left: 0,
     chapterIndex: 0,
     chapterPos: 0,
+    /** 形态跟随选字操作模式：popup 胶囊 / context 右键竖排 */
+    variant: 'popup' as 'popup' | 'context',
   })
 
   function openUnderlineMenu(
@@ -372,6 +374,7 @@ export function useReaderSelection(
   ) {
     hideSelectionMenu()
     suppressSelectionCloseUntil.value = Date.now() + 250
+    const isContext = config.value.selectAction === 'contextmenu'
     const safeTop =
       8 +
       Math.max(
@@ -383,11 +386,16 @@ export function useReaderSelection(
     underlineMenu.value = {
       visible: true,
       text,
-      // 菜单约 4 行高、240px 宽，钳在视口内
-      top: Math.max(safeTop, Math.min(window.innerHeight - 190, y + 12)),
-      left: Math.max(8, Math.min(window.innerWidth - 240, x - 110)),
+      // 胶囊约 4 行高、240px 宽，钳在视口内；竖排形态以点击点为左上角
+      top: isContext
+        ? Math.max(safeTop, Math.min(window.innerHeight - 190, y))
+        : Math.max(safeTop, Math.min(window.innerHeight - 190, y + 12)),
+      left: isContext
+        ? Math.max(8, Math.min(window.innerWidth - 230, x))
+        : Math.max(8, Math.min(window.innerWidth - 240, x - 110)),
       chapterIndex,
       chapterPos,
+      variant: isContext ? 'context' : 'popup',
     }
   }
 
