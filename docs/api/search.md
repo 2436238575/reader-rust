@@ -63,6 +63,49 @@ GET /reader3/searchBookMulti
 
 跨多书源搜索并按书名+作者合并结果（合并条目的 `bookSourceIds` 汇出所有命中的书源 ID）。
 
+## 缓存内全文搜索
+
+```text
+GET /reader3/searchCachedContent
+```
+
+在**已缓存的章节正文**里检索关键词（可再生缓存数据，不触发任何上游请求）。与上面的
+`searchBook*` 完全无关——那些是向书源发起远程搜书，这条是「在已下载的内容里找词」。
+本地书走另一套存储（`data/local_books`），不在检索范围。
+
+查询参数（也可 `POST`，JSON 或 form-urlencoded）：
+
+| 参数         | 类型   | 必填 | 说明                                       |
+| ------------ | ------ | ---- | ------------------------------------------ |
+| `bookId`     | string | 是   | 书籍 ID                                    |
+| `query`      | string | 是   | 纯文本子串（大小写不敏感），最长 100 字符  |
+| `maxResults` | number | 否   | 命中章节数上限，默认 50，最大 200          |
+
+响应：命中按章聚合，每章最多 3 条上下文摘要；`coverage` 如实标注检索覆盖面
+（只有缓存过的章节参与，阅读进度没走到/没手动缓存的章节不在其内）：
+
+```json
+{
+  "isSuccess": true,
+  "data": {
+    "results": [
+      {
+        "chapterIndex": 2,
+        "chapterTitle": "第三章",
+        "chapterUrl": "https://...",
+        "snippets": ["…命中词前后约 40 字符的上下文…"]
+      }
+    ],
+    "cachedChapters": 12,
+    "totalChapters": 120,
+    "truncated": false
+  },
+  "errorMsg": ""
+}
+```
+
+`truncated: true` 表示命中达到上限被截断，后面可能还有结果。
+
 ## 发现页
 
 ```text

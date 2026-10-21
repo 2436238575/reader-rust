@@ -6,35 +6,53 @@
       :style="{ background: theme.popup, color: theme.fontColor }"
     >
       <div class="reader-search-header">
-        <div class="reader-search-title">章节搜索</div>
+        <div class="reader-search-title">搜索</div>
         <button @click="$emit('close')" class="close-search">×</button>
+      </div>
+      <div class="search-scope-row">
+        <button
+          class="scope-btn"
+          :class="{ active: scope === 'chapter' }"
+          @click="$emit('update:scope', 'chapter')"
+        >
+          当前章
+        </button>
+        <button
+          class="scope-btn"
+          :class="{ active: scope === 'book' }"
+          @click="$emit('update:scope', 'book')"
+        >
+          全书
+        </button>
       </div>
       <div class="reader-search-form">
         <input
           :value="query"
-          placeholder="搜索当前章节内容..."
+          :placeholder="scope === 'book' ? '搜索全书已缓存章节...' : '搜索当前章节内容...'"
           ref="inputRef"
           @input="$emit('update:query', ($event.target as HTMLInputElement).value)"
           @keyup.enter="$emit('search')"
         />
-        <button class="search-submit" @click="$emit('search')" :disabled="!query">搜索</button>
+        <button class="search-submit" @click="$emit('search')" :disabled="!query || loading">
+          {{ loading ? '搜索中' : '搜索' }}
+        </button>
       </div>
       <div class="search-status-row">
-        <span v-if="count">{{ activeIndex + 1 }} / {{ count }}</span>
-        <span v-else>{{ status }}</span>
-        <div class="search-actions">
+        <span v-if="count && scope === 'chapter'">{{ activeIndex + 1 }} / {{ count }}</span>
+        <span v-else class="search-status-text">{{ status }}</span>
+        <div class="search-actions" v-if="scope === 'chapter'">
           <button @click="$emit('prev')" :disabled="!count">↑</button>
           <button @click="$emit('next')" :disabled="!count">↓</button>
         </div>
       </div>
       <div class="reader-search-results">
         <div v-if="!query" class="search-empty">输入关键词开始搜索</div>
-        <div v-else-if="!results.length" class="search-empty">当前章节没有匹配内容</div>
+        <div v-else-if="!results.length && !loading" class="search-empty">没有匹配内容</div>
         <button
           v-for="(result, idx) in results"
           :key="`${result.chapterIndex}-${idx}-${result.snippet}`"
           class="search-result-item"
-          :class="{ active: idx === activeIndex }"
+          :class="{ active: scope === 'chapter' && idx === activeIndex }"
           @click="$emit('jump', result, idx)"
         >
           <div class="search-result-title">{{ result.chapterTitle }}</div>
@@ -47,7 +65,7 @@
 
 <script setup lang="ts">
 import { ref, watch } from 'vue'
-import type { SearchResultItem } from '../../composables/useReaderSearch'
+import type { ReaderSearchScope, SearchResultItem } from '../../composables/useReaderSearch'
 import type { ThemePreset } from '../../stores/reader'
 
 const props = defineProps<{
@@ -58,6 +76,10 @@ const props = defineProps<{
   activeIndex: number
   count: number
   status: string
+  /** 搜索范围：当前章（客户端匹配）/ 全书（后端缓存检索） */
+  scope: ReaderSearchScope
+  /** 全书检索进行中 */
+  loading: boolean
 }>()
 
 const emit = defineEmits<{
@@ -66,6 +88,7 @@ const emit = defineEmits<{
   next: []
   prev: []
   'update:query': [value: string]
+  'update:scope': [value: ReaderSearchScope]
   jump: [result: SearchResultItem, idx: number]
 }>()
 
@@ -187,6 +210,36 @@ watch(
   opacity: 0.55;
   padding: 28px 12px;
   font-size: var(--text-sm);
+}
+
+.search-scope-row {
+  display: flex;
+  gap: 8px;
+}
+
+.scope-btn {
+  flex: 1;
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  background: transparent;
+  color: inherit;
+  padding: 6px 0;
+  border-radius: 8px;
+  font-size: var(--text-xs);
+  cursor: pointer;
+  opacity: 0.7;
+}
+
+.scope-btn.active {
+  background: var(--color-primary);
+  border-color: var(--color-primary);
+  color: #fff;
+  opacity: 1;
+}
+
+.search-status-text {
+  font-size: var(--text-xs);
+  opacity: 0.7;
+  line-height: 1.5;
 }
 
 .search-actions {

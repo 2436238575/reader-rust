@@ -136,10 +136,11 @@ src/
   main.rs / lib.rs        入口，各十余行
   api/                    路由与 HTTP 处理（axum），19 文件约 7000 行
     router.rs             全部路由定义 + 鉴权分组（唯一真相来源）
-    handlers/             15 个领域模块：book、book_source、user、bookmark、
+    handlers/             16 个领域模块：book、book_source、user、bookmark、
                           book_group、ai_book、ai_model、ai_proxy、agent、replace_rule、
                           image、webdav、cache（缓存清理与统计）、chapter_image、
-                          review（章评/段评）；另有共享的 multipart.rs（限量读取工具）。
+                          review（章评/段评）、search_cache（缓存内全文检索，只扫
+                          已缓存章节、不触发上游请求）；另有共享的 multipart.rs（限量读取工具）。
                           webdav 的协议语义（PROPFIND/PUT/LOCK 等）由 dav-server
                           crate 实现，本模块只做 Basic 认证、按用户隔离目录与
                           Windows 路径加固
@@ -360,9 +361,9 @@ XPath 有资源上限（长度 8KB / 嵌套 64 层 / 总步数 100、`//` 50）�
 
 ## 测试
 
-Rust 侧共 **323 个测试**（227 个内联单元测试 + 96 个集成用例，另有 2 个 `#[ignore]` 的真实网络用例），分布为：
+Rust 侧共 **328 个测试**（227 个内联单元测试 + 101 个集成用例，另有 2 个 `#[ignore]` 的真实网络用例），分布为：
 
-- `tests/` 下 17 个集成测试文件（96 个用例），其中 `book_source_compat.rs` 用例最多（17 个）；
+- `tests/` 下 18 个集成测试文件（101 个用例），其中 `book_source_compat.rs` 用例最多（17 个）；
   `auth_flow.rs`、`review_flow.rs`、`chapter_image_flow.rs`、`image_pipeline.rs` 与
   `webdav_flow.rs` 起真实监听端口，前者覆盖 401、静态回落、缓存清理与改密吊销令牌，
   中间三个各用一个假上游覆盖评论规则（7 天缓存、按类型清理）、章节配图（配图规则、

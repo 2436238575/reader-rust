@@ -37,6 +37,24 @@ pub fn strip_whitespace(s: &str) -> String {
     s.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
+/// 剥掉 HTML 标签并把连续空白并成单个空格（错误摘要/全文检索的摘要用）。
+pub fn strip_html_tags(value: &str) -> String {
+    let mut output = String::with_capacity(value.len());
+    let mut in_tag = false;
+    for ch in value.chars() {
+        match ch {
+            '<' => in_tag = true,
+            '>' => {
+                in_tag = false;
+                output.push(' ');
+            }
+            _ if !in_tag => output.push(ch),
+            _ => {}
+        }
+    }
+    output.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
 pub fn apply_regex_replace(input: &str, pattern: &str, replace: &str) -> String {
     // 走编译缓存：该函数对同一书源规则的每次调用模式都相同
     match compiled_regex(pattern) {

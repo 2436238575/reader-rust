@@ -96,7 +96,7 @@ pub async fn cache_stats(
 }
 
 /// 解析目标命名空间：默认自己；显式指定时必须合法（ns 直接拼进 storage 路径）。
-fn target_ns(user: &AuthUser, requested: Option<&str>) -> Result<String, AppError> {
+pub(crate) fn target_ns(user: &AuthUser, requested: Option<&str>) -> Result<String, AppError> {
     let Some(ns) = non_empty(requested) else {
         return Ok(user.ns.clone());
     };

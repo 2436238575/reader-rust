@@ -1,5 +1,6 @@
 import { computed, nextTick, ref } from 'vue'
 import type { useReaderStore } from '../stores/reader'
+import { searchCachedContent } from '../api/search'
 
 type ReaderStore = ReturnType<typeof useReaderStore>
 
@@ -7,6 +8,14 @@ export interface SearchResultItem {
   chapterIndex: number
   chapterTitle: string
   snippet: string
+}
+
+export type ReaderSearchScope = 'chapter' | 'book'
+
+export interface BookSearchCoverage {
+  cachedChapters: number
+  totalChapters: number
+  truncated: boolean
 }
 
 interface ReaderSearchOptions {
@@ -25,6 +34,10 @@ export function useReaderSearch(store: ReaderStore, options: ReaderSearchOptions
   const bookSearchStatus = ref('')
   const pendingSearchResult = ref<SearchResultItem | null>(null)
   const searchCount = computed(() => searchResults.value.length)
+  /** 搜索范围：当前章（纯客户端正则）/ 全书（后端缓存内检索） */
+  const searchScope = ref<ReaderSearchScope>('chapter')
+  const bookSearchLoading = ref(false)
+  const bookSearchCoverage = ref<BookSearchCoverage | null>(null)
 
   // 输入框的 focus 由 ReaderSearchPanel 自己负责
   function toggleSearch() {
@@ -45,6 +58,9 @@ export function useReaderSearch(store: ReaderStore, options: ReaderSearchOptions
     searchResults.value = []
     bookSearchStatus.value = ''
     pendingSearchResult.value = null
+    searchScope.value = 'chapter'
+    bookSearchLoading.value = false
+    bookSearchCoverage.value = null
   }
 
   function buildSearchSnippet(text: string, keyword: string, startIndex: number) {
@@ -100,13 +116,75 @@ export function useReaderSearch(store: ReaderStore, options: ReaderSearchOptions
       : '当前章节没有匹配内容'
   }
 
+  /** 全书搜索：后端在已缓存章节正文里检索（不触发任何上游请求）。 */
+  async function runBookSearch() {
+    searchIndex.value = 0
+    const query = searchQuery.value.trim()
+    const bookId = store.book?.bookId
+    if (!query || !bookId) {
+      searchResults.value = []
+      bookSearchCoverage.value = null
+      bookSearchStatus.value = ''
+      return
+    }
+    bookSearchLoading.value = true
+    bookSearchCoverage.value = null
+    try {
+      const outcome = await searchCachedContent(bookId, query)
+      // 后端按章聚合 snippets，这里展平成与章内搜索同形态的逐条结果
+      // （跳转定位靠 snippet 前缀匹配，同章多条各自可点）
+      searchResults.value = outcome.results.flatMap((hit) =>
+        hit.snippets.map((snippet) => ({
+          chapterIndex: hit.chapterIndex,
+          chapterTitle: hit.chapterTitle,
+          snippet,
+        }))
+      )
+      bookSearchCoverage.value = {
+        cachedChapters: outcome.cachedChapters,
+        totalChapters: outcome.totalChapters,
+        truncated: outcome.truncated,
+      }
+      const base = searchResults.value.length
+        ? `共 ${searchResults.value.length} 条结果`
+        : '没有匹配内容'
+      const coverageText = outcome.totalChapters
+        ? `（已检索 ${outcome.cachedChapters}/${outcome.totalChapters} 个已缓存章节${outcome.truncated ? '，结果过多已截断' : ''}）`
+        : '（本书还没有已缓存的章节可供检索）'
+      bookSearchStatus.value = base + coverageText
+      if (searchResults.value.length) {
+        const first = searchResults.value[0]
+        await jumpToSearchResult(first, 0)
+      }
+    } catch (error) {
+      searchResults.value = []
+      bookSearchStatus.value = (error as Error)?.message || '全书搜索失败'
+    } finally {
+      bookSearchLoading.value = false
+    }
+  }
+
   function runSearch() {
     if (!searchQuery.value.trim()) {
       searchResults.value = []
       bookSearchStatus.value = ''
       return
     }
+    if (searchScope.value === 'book') {
+      void runBookSearch()
+      return
+    }
     runChapterSearch()
+  }
+
+  /** 切换范围：已加载的结果集与另一套不兼容，清掉重来 */
+  function setSearchScope(scope: ReaderSearchScope) {
+    if (searchScope.value === scope) return
+    searchScope.value = scope
+    searchResults.value = []
+    searchIndex.value = 0
+    bookSearchCoverage.value = null
+    bookSearchStatus.value = ''
   }
 
   function scrollToMatch(allowRetry = true) {
@@ -119,7 +197,8 @@ export function useReaderSearch(store: ReaderStore, options: ReaderSearchOptions
       }
       let targetIndex = searchIndex.value
       if (pendingSearchResult.value) {
-        const snippet = pendingSearchResult.value.snippet.replace(/\.\.\./g, '').trim()
+        // 章内搜索摘要用英文三点、后端全书摘要用中文省略号，都剥掉再取前缀匹配
+        const snippet = pendingSearchResult.value.snippet.replace(/\.\.\.|…/g, '').trim()
         const foundIndex = Array.from(matches).findIndex((match) => {
           const line = (match.parentElement?.innerText || '').replace(/\s+/g, ' ').trim()
           return !!snippet && line.includes(snippet.slice(0, Math.min(12, snippet.length)))
@@ -160,7 +239,8 @@ export function useReaderSearch(store: ReaderStore, options: ReaderSearchOptions
   }
 
   function handleContentUpdated() {
-    if (showSearch.value && searchQuery.value) {
+    // 内容更新只重跑当前章的纯客户端匹配；全书结果集来自后端缓存检索，不随翻章失效
+    if (showSearch.value && searchQuery.value && searchScope.value === 'chapter') {
       runChapterSearch()
     }
   }
@@ -175,10 +255,14 @@ export function useReaderSearch(store: ReaderStore, options: ReaderSearchOptions
     searchIndex,
     searchCount,
     bookSearchStatus,
+    searchScope,
+    bookSearchLoading,
+    bookSearchCoverage,
     toggleSearch,
     openSearch,
     closeSearch,
     runSearch,
+    setSearchScope,
     nextSearchResult,
     prevSearchResult,
     jumpToSearchResult,

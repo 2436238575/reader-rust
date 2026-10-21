@@ -2372,6 +2372,64 @@ impl BookService {
             .join(format!("{}.json", book_id))
     }
 
+    /// 缓存内全文检索：只扫已缓存章节的正文文件（可再生数据），不触发任何
+    /// 上游请求。本地书不走这套缓存，自然不在检索范围。`query` 是纯文本
+    /// 子串匹配（大小写不敏感），不做正则语法——用户输错正则不该炸掉搜索。
+    pub async fn search_cached_content(
+        &self,
+        user_ns: &str,
+        book_id: &str,
+        query: &str,
+        max_results: usize,
+    ) -> Result<CachedSearchOutcome, AppError> {
+        let chapters = self
+            .load_chapter_list_cache(user_ns, book_id)
+            .await?
+            .unwrap_or_default();
+        let searchable: Vec<&BookChapter> = chapters
+            .iter()
+            .filter(|chapter| !chapter.is_volume && !chapter.url.is_empty())
+            .collect();
+        let re = regex::Regex::new(&format!("(?i){}", regex::escape(query)))
+            .map_err(|e| AppError::BadRequest(format!("搜索词不可用: {e}")))?;
+
+        let mut outcome = CachedSearchOutcome {
+            results: Vec::new(),
+            cached_chapters: 0,
+            total_chapters: searchable.len(),
+            truncated: false,
+        };
+        for chapter in searchable {
+            let Ok(Some(body)) = self.cache.get(user_ns, book_id, &chapter.url).await else {
+                continue;
+            };
+            outcome.cached_chapters += 1;
+            // 缓存里可能是 HTML 正文：剥掉标签再匹配，摘要才不带尖括号
+            let text = crate::util::text::strip_html_tags(&body);
+            let mut snippets = Vec::new();
+            for m in re.find_iter(&text) {
+                snippets.push(build_search_snippet(&text, m.start(), m.end()));
+                if snippets.len() >= MAX_SNIPPETS_PER_CHAPTER {
+                    break;
+                }
+            }
+            if snippets.is_empty() {
+                continue;
+            }
+            outcome.results.push(CachedSearchHit {
+                chapter_index: chapter.index,
+                chapter_title: chapter.title.clone(),
+                chapter_url: chapter.url.clone(),
+                snippets,
+            });
+            if outcome.results.len() >= max_results {
+                outcome.truncated = true;
+                break;
+            }
+        }
+        Ok(outcome)
+    }
+
     pub async fn load_chapter_list_cache(
         &self,
         user_ns: &str,
@@ -2497,6 +2555,57 @@ impl BookService {
         let _ = self.review_cache.remove_book(user_ns, book_id).await;
         Ok(())
     }
+}
+
+/// 单章的命中摘要数上限：一章命中太多时前三条足够判断要不要跳过去。
+const MAX_SNIPPETS_PER_CHAPTER: usize = 3;
+
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CachedSearchHit {
+    pub chapter_index: i32,
+    pub chapter_title: String,
+    pub chapter_url: String,
+    pub snippets: Vec<String>,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CachedSearchOutcome {
+    pub results: Vec<CachedSearchHit>,
+    /// 实际参与检索（有正文缓存文件）的章节数
+    pub cached_chapters: usize,
+    /// 目录里的可检索章节总数（不含分卷行与无 URL 章）
+    pub total_chapters: usize,
+    /// 命中达到上限被截断：后面可能还有结果
+    pub truncated: bool,
+}
+
+/// 命中处前后各取约 40 字符做摘要（按 char 边界切，不劈开多字节字符）。
+fn build_search_snippet(text: &str, match_start: usize, match_end: usize) -> String {
+    const CTX_CHARS: usize = 40;
+    let start = text[..match_start]
+        .char_indices()
+        .rev()
+        .take(CTX_CHARS)
+        .last()
+        .map(|(i, _)| i)
+        .unwrap_or(0);
+    let end = text[match_end..]
+        .char_indices()
+        .take(CTX_CHARS)
+        .last()
+        .map(|(i, c)| match_end + i + c.len_utf8())
+        .unwrap_or(text.len());
+    let mut snippet = String::new();
+    if start > 0 {
+        snippet.push('…');
+    }
+    snippet.push_str(text[start..end].trim());
+    if end < text.len() {
+        snippet.push('…');
+    }
+    snippet
 }
 
 fn apply_login_check_js(source: &BookSource, res: FetchResponse) -> FetchResponse {

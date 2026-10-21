@@ -204,6 +204,10 @@ pub fn build_router(state: AppState) -> Router {
         .route("/reader3/purgeCache", post(handlers::purge_cache))
         .route("/reader3/cacheStats", get(handlers::cache_stats))
         .route(
+            "/reader3/searchCachedContent",
+            get(handlers::search_cached_content).post(handlers::search_cached_content),
+        )
+        .route(
             "/reader3/getInvalidBookSources",
             post(handlers::get_invalid_book_sources),
         )

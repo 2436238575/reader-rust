@@ -320,11 +320,14 @@
       :active-index="searchIndex"
       :count="searchCount"
       :status="bookSearchStatus"
+      :scope="searchScope"
+      :loading="bookSearchLoading"
       @close="closeSearch"
       @search="runSearch"
       @next="nextSearchResult"
       @prev="prevSearchResult"
       @update:query="searchQuery = $event"
+      @update:scope="setSearchScope"
       @jump="jumpToSearchResult"
     />
 
@@ -503,10 +506,13 @@ const {
   searchIndex,
   searchCount,
   bookSearchStatus,
+  searchScope,
+  bookSearchLoading,
   toggleSearch,
   openSearch,
   closeSearch,
   runSearch,
+  setSearchScope,
   nextSearchResult,
   prevSearchResult,
   jumpToSearchResult,

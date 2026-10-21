@@ -97,24 +97,7 @@ fn extract_error_detail(body: &str) -> String {
         }
     }
 
-    truncate_error_detail(&strip_html_tags(body))
-}
-
-fn strip_html_tags(value: &str) -> String {
-    let mut output = String::with_capacity(value.len());
-    let mut in_tag = false;
-    for ch in value.chars() {
-        match ch {
-            '<' => in_tag = true,
-            '>' => {
-                in_tag = false;
-                output.push(' ');
-            }
-            _ if !in_tag => output.push(ch),
-            _ => {}
-        }
-    }
-    output.split_whitespace().collect::<Vec<_>>().join(" ")
+    truncate_error_detail(&crate::util::text::strip_html_tags(body))
 }
 
 fn truncate_error_detail(value: &str) -> String {

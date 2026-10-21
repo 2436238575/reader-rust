@@ -1,4 +1,33 @@
 import { createAuthedEventSource } from '../utils/secureAccess'
+import http from './http'
+
+/** 缓存内全文检索的单章命中（后端 searchCachedContent） */
+export interface CachedSearchHit {
+  chapterIndex: number
+  chapterTitle: string
+  chapterUrl: string
+  snippets: string[]
+}
+
+export interface CachedSearchOutcome {
+  results: CachedSearchHit[]
+  /** 实际参与检索（有正文缓存文件）的章节数 */
+  cachedChapters: number
+  /** 目录里的可检索章节总数 */
+  totalChapters: number
+  /** 命中达到上限被截断：后面可能还有结果 */
+  truncated: boolean
+}
+
+/**
+ * 缓存内全文检索：只扫已缓存章节（可再生数据），不触发任何上游请求；
+ * 本地书不在检索范围。
+ */
+export function searchCachedContent(bookId: string, query: string, maxResults?: number) {
+  return http
+    .post<CachedSearchOutcome>('/searchCachedContent', { bookId, query, maxResults })
+    .then((r) => r.data)
+}
 
 /**
  * SSE-based multi-source search. Returns an EventSource.
