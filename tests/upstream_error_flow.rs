@@ -9,7 +9,8 @@ use reader_rust::app::config::AppConfig;
 use serde_json::{json, Value};
 use std::path::PathBuf;
 
-/// 假上游：/ok 正常正文、/missing 返回 403、/empty 返回 200 但正文为空。
+/// 假上游：/ok 正常正文、/missing 返回 403、/empty 返回 200 但正文为空、
+/// /info 返回目录（cacheBookSSE 用例需要）。
 async fn start_upstream() -> String {
     let app = Router::new()
         .route(
@@ -27,6 +28,12 @@ async fn start_upstream() -> String {
         .route(
             "/empty",
             get(|| async { Json(json!({ "data": { "content": "" } })) }),
+        )
+        .route(
+            "/info",
+            get(|| async {
+                Json(json!({ "data": { "chapters": [{ "title": "第1章", "url": "/ok" }] } }))
+            }),
         );
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -37,13 +44,18 @@ async fn start_upstream() -> String {
     format!("http://{addr}")
 }
 
-/// 无配图规则的普通书源。
+/// 无配图规则的普通书源（带目录规则，cacheBookSSE 用例要用）。
 fn plain_source(upstream_url: &str) -> Value {
     json!({
         "bookSourceName": "假书源",
         "bookSourceUrl": upstream_url,
         "concurrentRate": "0",
         "enabled": true,
+        "ruleToc": {
+            "chapterList": "$.data.chapters[*]",
+            "chapterName": "$.title",
+            "chapterUrl": "$.url"
+        },
         "ruleContent": { "content": "$.data.content" }
     })
 }
@@ -243,6 +255,36 @@ async fn empty_content_with_image_rule_stays_successful() {
     assert_eq!(status, StatusCode::OK);
     assert_eq!(payload["isSuccess"], json!(true));
     assert_eq!(payload["data"], json!(""));
+}
+
+#[tokio::test]
+async fn sse_responses_disable_proxy_buffering() {
+    // 经 nginx 反代时默认 proxy_buffering 会把事件流攒到结束才转发
+    //（直连正常、反代「进度一下走完」）；SSE 响应必须带这个头
+    let server = TestServer::start(plain_source("")).await;
+    let resp = server
+        .client
+        .get(format!("{}/reader3/cacheBookSSE", server.base_url))
+        .bearer_auth(&server.token)
+        .query(&[("bookId", server.book_id.as_str()), ("count", "1")])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    assert_eq!(
+        resp.headers()
+            .get("x-accel-buffering")
+            .and_then(|v| v.to_str().ok()),
+        Some("no")
+    );
+    assert!(
+        resp.headers()
+            .get("content-type")
+            .and_then(|v| v.to_str().ok())
+            .is_some_and(|v| v.starts_with("text/event-stream")),
+        "应当是 SSE 响应"
+    );
+    // 不消费流：drop 即断开
 }
 
 #[tokio::test]

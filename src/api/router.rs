@@ -398,6 +398,10 @@ pub fn build_router(state: AppState) -> Router {
         .merge(api)
         .merge(static_web)
         .layer(DefaultBodyLimit::max(100 * 1024 * 1024))
+        // SSE 响应统一加 X-Accel-Buffering: no：nginx 默认 proxy_buffering on，
+        // 会把整条事件流攒到结束才一次性转发——直连后端进度逐帧正常、经反代
+        // 就变成「缓存结束后进度一下走完」。这个头是 nginx 关流式缓冲的标准开关。
+        .layer(middleware::from_fn(disallow_proxy_buffering))
         // 自定义 span：只记录 method + path，不记 query string。
         // accessToken 允许经查询参数传递（SSE 无法设置请求头），
         // 默认 span 记录完整 URI 等于把凭据写进访问日志。
@@ -413,4 +417,24 @@ pub fn build_router(state: AppState) -> Router {
         .layer(PropagateRequestIdLayer::x_request_id())
         .layer(SetRequestIdLayer::x_request_id(MakeRequestUuid))
         .layer(build_cors_layer(&state.config.cors_allowed_origins))
+}
+
+/// 给 SSE 响应加 `X-Accel-Buffering: no`（见上方的调用处注释）。
+async fn disallow_proxy_buffering(
+    request: axum::extract::Request,
+    next: middleware::Next,
+) -> axum::response::Response {
+    let mut response = next.run(request).await;
+    let is_sse = response
+        .headers()
+        .get(axum::http::header::CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+        .is_some_and(|value| value.starts_with("text/event-stream"));
+    if is_sse {
+        response.headers_mut().insert(
+            axum::http::header::HeaderName::from_static("x-accel-buffering"),
+            axum::http::header::HeaderValue::from_static("no"),
+        );
+    }
+    response
 }
