@@ -56,6 +56,7 @@
       v-if="!isMobile"
       :is-speaking="store.isSpeaking"
       :is-paused="store.isPaused"
+      :chapter-edited="currentChapterEdited"
       @search="toggleSearch"
       @info="openInfo"
       @tts="handleTTS"
@@ -63,7 +64,7 @@
       @next="nextChapter"
       @progress="openCachePanel"
       @refresh="handleRefreshContent"
-      @edit="openChapterEditor"
+      @edit="openChapterEditOrDiff"
     />
 
     <!-- Mobile Controls (Click to toggle) -->
@@ -79,7 +80,7 @@
       @info="openInfo"
       @tts="handleTTS"
       @progress="openCachePanel"
-      @edit="openChapterEditor"
+      @edit="openChapterEditOrDiff"
     />
 
     <ReaderTtsPanel
@@ -91,6 +92,7 @@
       :is-speaking="store.isSpeaking"
       :is-loading="store.isSpeechLoading"
       :is-paused="store.isPaused"
+      :chapter-edited="currentChapterEdited"
       :voices="store.voiceList"
       :voice-name="store.speechConfig.voiceName"
       :rate="store.speechConfig.speechRate"
@@ -803,11 +805,26 @@ const diffPanelLoading = ref(false)
 const currentChapterDiffOps = computed(
   () => chapterDiffCache.get(store.currentIndex) ?? null
 )
+/** 当前章是否有编辑版（决定工具栏编辑按钮的去向） */
+const currentChapterEdited = computed(() => {
+  const chapter = store.currentChapter
+  return !!chapter && store.editedChapterKeys.has(chapter.url)
+})
 
 function openChapterEditor() {
   if (!store.currentChapter) return
   showDiffPanel.value = false
   showChapterEditor.value = true
+}
+
+/** 工具栏编辑按钮分流：本章没改过 → 编辑器；改过 → diff 面板 */
+function openChapterEditOrDiff() {
+  if (!store.currentChapter) return
+  if (currentChapterEdited.value) {
+    void openDiffPanel()
+    return
+  }
+  openChapterEditor()
 }
 
 /** 「查看本章改动」：先确保 diff 已算，再开面板 */
