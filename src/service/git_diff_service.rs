@@ -140,6 +140,14 @@ impl GitDiffService {
             ));
         }
 
+        // 并发闸门先于写临时文件：否则排队中的请求各自先写 32MB 落盘，
+        // 闸门外的等待者照样把磁盘/IO 打满（闸门形同虚设）
+        let _permit = self
+            .semaphore
+            .acquire()
+            .await
+            .map_err(|e| AppError::Internal(anyhow::anyhow!("diff 并发闸门已关闭: {e}")))?;
+
         let temp_dir = std::env::temp_dir();
         let tag = format!(
             "reader-git-diff-{}-{}",
@@ -155,16 +163,14 @@ impl GitDiffService {
         }
         .await;
         if let Err(e) = write_result {
+            // 写失败（含第二个文件没写成）：两个路径都清一遍，不留半成品
+            let _ = tokio::fs::remove_file(&base_path).await;
+            let _ = tokio::fs::remove_file(&edited_path).await;
             return Err(AppError::Internal(e.into()));
         }
 
-        // 并发闸门 + kill_on_drop：超时分支会把子进程杀掉（否则超时只warn不杀，
+        // kill_on_drop：超时分支会把子进程杀掉（否则超时只warn不杀，
         // Windows 下文件还被占着删不掉，泄漏 tmp 文件）
-        let _permit = self
-            .semaphore
-            .acquire()
-            .await
-            .map_err(|e| AppError::Internal(anyhow::anyhow!("diff 并发闸门已关闭: {e}")))?;
         let run = tokio::time::timeout(
             GIT_DIFF_TIMEOUT,
             Command::new("git")
