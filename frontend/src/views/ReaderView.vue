@@ -400,6 +400,7 @@
     <ChapterDiffPanel
       v-model="showDiffPanel"
       :ops="currentChapterDiffOps"
+      :too-large="chapterDiffTooLarge.has(store.currentIndex)"
       :loading="diffPanelLoading"
       @edit="openChapterEditor"
       @changed="handleChapterEditChanged"
@@ -742,6 +743,9 @@ const activeKeywordMarks = computed(() =>
  * reactive Map：set/delete 触发依赖它的 computed 重算（横翻 formattedContent
  * 经 decorateChapterHtml 读取它，自动跟着重建）；连续模式要手动刷章缓存。 */
 const chapterDiffCache = reactive(new Map<number, ParagraphDiffOp[] | null>())
+/** diff 因规模超限（LCS 16M 单元上限）没算的章：面板要显示「差异过大未对比」，
+ *  与「本章没有差异」区分开 */
+const chapterDiffTooLarge = reactive(new Set<number>())
 const chapterDiffPending = new Set<number>()
 
 /** 懒算某章的 diff：仅当该章有编辑版。两版都过替换规则+繁简转换再切段，
@@ -752,6 +756,7 @@ async function ensureChapterDiff(chapterIndex: number) {
   if (!chapter || !bookId) return
   if (!store.editedChapterKeys.has(chapter.url)) {
     chapterDiffCache.delete(chapterIndex)
+    chapterDiffTooLarge.delete(chapterIndex)
     return
   }
   if (chapterDiffCache.has(chapterIndex)) return
@@ -769,6 +774,7 @@ async function ensureChapterDiff(chapterIndex: number) {
     const edited = editResp?.content
     if (edited == null) {
       chapterDiffCache.set(chapterIndex, null)
+      chapterDiffTooLarge.delete(chapterIndex)
       return
     }
     // 与渲染同口径：两版都过替换规则+繁简转换再切段
@@ -784,9 +790,13 @@ async function ensureChapterDiff(chapterIndex: number) {
       /* 回退本地 */
     }
     if (!ops) ops = diffParagraphs(baseParas, editedParas)
+    // null = LCS 超单元上限没算（不是「没有差异」），面板据此换文案
+    if (ops === null) chapterDiffTooLarge.add(chapterIndex)
+    else chapterDiffTooLarge.delete(chapterIndex)
     chapterDiffCache.set(chapterIndex, ops?.length ? ops : null)
   } catch {
     chapterDiffCache.set(chapterIndex, null)
+    chapterDiffTooLarge.delete(chapterIndex)
   } finally {
     chapterDiffPending.delete(chapterIndex)
     // diff 到位后重渲：横翻靠 chapterDiffCache 响应式自动重建，连续模式手动刷

@@ -28,6 +28,9 @@
           </div>
 
           <div v-if="loading" class="diff-loading">正在计算差异...</div>
+          <div v-else-if="tooLarge" class="diff-loading">
+            章节差异过大，未做对比（可点「编辑本章」直接对照修改）
+          </div>
           <div v-else-if="!ops?.length" class="diff-loading">本章没有差异</div>
           <div v-else class="diff-body">
             <template v-for="(row, rowIndex) in rows" :key="rowIndex">
@@ -100,6 +103,8 @@ const props = defineProps<{
   modelValue: boolean
   /** 当前章的 diff 操作序列（父组件的 chapterDiffCache 供给） */
   ops: ParagraphDiffOp[] | null
+  /** 差异规模超限没算（LCS 上限）：显示「差异过大未对比」而不是「没有差异」 */
+  tooLarge: boolean
   loading: boolean
 }>()
 const emit = defineEmits<{

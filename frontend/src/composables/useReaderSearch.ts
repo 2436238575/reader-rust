@@ -1,4 +1,4 @@
-import { computed, nextTick, ref } from 'vue'
+import { computed, nextTick, onScopeDispose, ref } from 'vue'
 import type { useReaderStore } from '../stores/reader'
 import { searchCachedContent } from '../api/search'
 
@@ -200,6 +200,9 @@ export function useReaderSearch(store: ReaderStore, options: ReaderSearchOptions
       scrollRetryTimer = null
     }
   }
+
+  // 路由离开/组件卸载时也清：定时器在组件销毁后触发会拿着死引用操作 DOM
+  onScopeDispose(clearScrollRetryTimer)
 
   function scrollToMatch(allowRetry = true) {
     nextTick(() => {
