@@ -8,13 +8,17 @@ use crate::error::error::AppError;
 use serde::Serialize;
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::sync::OnceLock;
 use tokio::process::Command;
 
 /// 每侧段落数与单段长度上限：防超大输入把临时文件和 git 拖垮。
 const MAX_DIFF_PARAGRAPHS: usize = 20_000;
 const MAX_PARAGRAPH_BYTES: usize = 8192;
+/// 双侧合计字节上限：段数×单段字节两个维度在极端值下仍能凑出超大输入
+///（2 万段 × 8KB ≈ 160MB），总量再压一道。
+const MAX_TOTAL_BYTES: usize = 32 * 1024 * 1024;
 const GIT_DIFF_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
+/// 同一时刻最多 4 个 git 进程（每个都要读写临时文件 + 全量 diff）。
+const MAX_CONCURRENT_GIT: usize = 4;
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
@@ -61,21 +65,38 @@ impl DiffOp {
     }
 }
 
-#[derive(Clone, Default)]
+#[derive(Clone)]
 pub struct GitDiffService {
-    /// git 可用性只探测一次（进程级缓存）；None = 未探测
-    available: Arc<OnceLock<bool>>,
+    /// git 可用性探测缓存：(结果, 探测时刻)。false 结果 60s 后重试——
+    /// 用户中途装上 git 不用重启进程。
+    available: Arc<std::sync::Mutex<Option<(bool, std::time::Instant)>>>,
+    /// 并发闸门：同一时刻最多 MAX_CONCURRENT_GIT 个 git 进程
+    semaphore: Arc<tokio::sync::Semaphore>,
+}
+
+impl Default for GitDiffService {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl GitDiffService {
     pub fn new() -> Self {
-        Self::default()
+        Self {
+            available: Arc::new(std::sync::Mutex::new(None)),
+            semaphore: Arc::new(tokio::sync::Semaphore::new(MAX_CONCURRENT_GIT)),
+        }
     }
 
-    /// 系统里有没有 git。没有时在日志里警告一次（探测只跑一次）。
+    /// 系统里有没有 git。false 结果缓存 60s，之后重新探测。
     async fn git_available(&self) -> bool {
-        if let Some(available) = self.available.get() {
-            return *available;
+        {
+            let cached = self.available.lock().unwrap();
+            if let Some((available, at)) = *cached {
+                if available || at.elapsed() < std::time::Duration::from_secs(60) {
+                    return available;
+                }
+            }
         }
         let available = Command::new("git")
             .arg("--version")
@@ -84,12 +105,10 @@ impl GitDiffService {
             .map(|output| output.status.success())
             .unwrap_or(false);
         if !available {
-            tracing::warn!(
-                "系统未找到可用的 git，章节 diff 回退到前端本地计算；安装 git 后重启可启用后端 diff"
-            );
+            tracing::info!("系统未找到可用的 git，章节 diff 回退到前端本地计算");
         }
-        let _ = self.available.set(available);
-        *self.available.get().unwrap_or(&available)
+        *self.available.lock().unwrap() = Some((available, std::time::Instant::now()));
+        available
     }
 
     /// 对两份段落数组跑 git diff。返回 None 表示 git 不可用或执行失败（前端回退）。
@@ -98,8 +117,11 @@ impl GitDiffService {
         base: &[String],
         edited: &[String],
     ) -> Result<Option<Vec<DiffOp>>, AppError> {
+        let total_bytes: usize = base.iter().map(|p| p.len()).sum::<usize>()
+            + edited.iter().map(|p| p.len()).sum::<usize>();
         if base.len() > MAX_DIFF_PARAGRAPHS
             || edited.len() > MAX_DIFF_PARAGRAPHS
+            || total_bytes > MAX_TOTAL_BYTES
             || base.iter().any(|p| p.len() > MAX_PARAGRAPH_BYTES)
             || edited.iter().any(|p| p.len() > MAX_PARAGRAPH_BYTES)
         {
@@ -127,9 +149,8 @@ impl GitDiffService {
         let base_path: PathBuf = temp_dir.join(format!("{tag}-a.txt"));
         let edited_path: PathBuf = temp_dir.join(format!("{tag}-b.txt"));
         let write_result = async {
-            // 一段一行；末尾补换行避免 "\ No newline at end of file" 噪音行
-            tokio::fs::write(&base_path, format!("{}\n", base.join("\n"))).await?;
-            tokio::fs::write(&edited_path, format!("{}\n", edited.join("\n"))).await?;
+            write_private_file(&base_path, format!("{}\n", base.join("\n")).as_bytes()).await?;
+            write_private_file(&edited_path, format!("{}\n", edited.join("\n")).as_bytes()).await?;
             Ok::<(), std::io::Error>(())
         }
         .await;
@@ -137,6 +158,13 @@ impl GitDiffService {
             return Err(AppError::Internal(e.into()));
         }
 
+        // 并发闸门 + kill_on_drop：超时分支会把子进程杀掉（否则超时只warn不杀，
+        // Windows 下文件还被占着删不掉，泄漏 tmp 文件）
+        let _permit = self
+            .semaphore
+            .acquire()
+            .await
+            .map_err(|e| AppError::Internal(anyhow::anyhow!("diff 并发闸门已关闭: {e}")))?;
         let run = tokio::time::timeout(
             GIT_DIFF_TIMEOUT,
             Command::new("git")
@@ -146,24 +174,31 @@ impl GitDiffService {
                 .arg("--")
                 .arg(&base_path)
                 .arg(&edited_path)
+                .kill_on_drop(true)
                 .output(),
         )
         .await;
-        let _ = tokio::fs::remove_file(&base_path).await;
-        let _ = tokio::fs::remove_file(&edited_path).await;
+        // 先等一个 tick 让 kill_on_drop 生效，再删临时文件（Windows 下进程退出
+        // 到文件句柄释放有延迟，删除失败再补一次）
+        for path in [&base_path, &edited_path] {
+            if tokio::fs::remove_file(path).await.is_err() {
+                tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+                let _ = tokio::fs::remove_file(path).await;
+            }
+        }
 
         let output = match run {
             Ok(Ok(output)) => output,
             Ok(Err(e)) => return Err(AppError::Internal(e.into())),
             Err(_) => {
-                tracing::warn!("git diff 执行超时（{GIT_DIFF_TIMEOUT:?}），回退前端本地 diff");
+                tracing::debug!("git diff 执行超时（{GIT_DIFF_TIMEOUT:?}），回退前端本地 diff");
                 return Ok(None);
             }
         };
         // git diff --no-index：退出码 0=无差异，1=有差异，其余=错误
         let status = output.status.code().unwrap_or(-1);
         if status != 0 && status != 1 {
-            tracing::warn!(
+            tracing::debug!(
                 "git diff 执行失败（退出码 {status}）：{}",
                 String::from_utf8_lossy(&output.stderr)
                     .chars()
@@ -176,10 +211,32 @@ impl GitDiffService {
         match parse_unified_diff(&text, base, edited) {
             Ok(ops) => Ok(Some(ops)),
             Err(reason) => {
-                tracing::warn!("git diff 输出解析失败（{reason}），回退前端本地 diff");
+                tracing::debug!("git diff 输出解析失败（{reason}），回退前端本地 diff");
                 Ok(None)
             }
         }
+    }
+}
+
+/// 写临时文件：Unix 下收紧到 0600（多用户主机上别让人读到正文）。
+async fn write_private_file(path: &PathBuf, bytes: &[u8]) -> Result<(), std::io::Error> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        tokio::fs::OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .mode(0o600)
+            .open(path)
+            .await?
+            .write_all(bytes)
+            .await?;
+        return Ok(());
+    }
+    #[cfg(not(unix))]
+    {
+        tokio::fs::write(path, bytes).await
     }
 }
 
