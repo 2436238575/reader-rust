@@ -2467,7 +2467,6 @@ impl BookService {
         };
         let started = std::time::Instant::now();
         let mut scanned_bytes = 0u64;
-        let total = scan_list.len();
         for (position, chapter) in scan_list.iter().enumerate() {
             // 耗时预算：超时按已扫部分截断返回
             if started.elapsed() > MAX_SCAN_DURATION {
@@ -2533,8 +2532,10 @@ impl BookService {
                 edited,
             });
             if outcome.results.len() >= max_results {
-                // 命中上限恰好落在最后一章时不算截断（后面没有更多可扫的了）
-                outcome.truncated = position + 1 < total;
+                // 命中上限中断：分母用全书可检索章节总数，不是截断后的扫描
+                // 清单长度——5000 章上限之外还可能有缓存章节（旧实现会把
+                // 初始的 truncated=true 覆盖成 false）
+                outcome.truncated = hit_limit_leaves_more(position, total_in_book);
                 break;
             }
         }
@@ -2678,6 +2679,14 @@ const MAX_SNIPPETS_PER_CHAPTER: usize = 3;
 fn book_id_path_segment(book_id: &str) -> String {
     crate::storage::db::repo::canonical_book_id(book_id)
         .unwrap_or_else(|| "__invalid_book__".to_string())
+}
+
+/// 命中数达到上限而中断时，是否还有未扫的章节。
+/// 分母必须是全书可检索章节总数（`total_in_book`），而不是按 5000 章上限
+/// 裁剪后的扫描清单长度：全书超过上限时，最后一次命中可能恰好落在扫描
+/// 清单的末尾，但上限之外还有章节没看过。
+fn hit_limit_leaves_more(position: usize, total_in_book: usize) -> bool {
+    position + 1 < total_in_book
 }
 
 #[derive(Debug, Clone, serde::Serialize)]
@@ -3618,6 +3627,20 @@ mod tests {
 
         pool.close().await;
         let _ = std::fs::remove_dir_all(&storage_dir);
+    }
+
+    /// 命中上限中断的截断判定：分母是全书章节总数，不是 5000 章扫描上限
+    /// 裁剪后的长度。全书 5001 章、最后一章命中时仍要报截断（旧实现会
+    /// 把初始的 truncated=true 覆盖成 false）。
+    #[test]
+    fn hit_limit_boundary_uses_the_real_book_total() {
+        assert!(super::hit_limit_leaves_more(4999, 5001), "上限之外还有章节");
+        assert!(
+            !super::hit_limit_leaves_more(4999, 5000),
+            "恰好全书最后一章不应误报"
+        );
+        assert!(!super::hit_limit_leaves_more(2, 3));
+        assert!(super::hit_limit_leaves_more(0, 2));
     }
 
     #[tokio::test]
