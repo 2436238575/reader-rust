@@ -10,6 +10,10 @@ use std::path::Path;
 
 /// 清掉 %TEMP% 下往期测试的遗留目录（`reader-rust-` 前缀、超过 10 分钟）。
 /// 只动老目录：正在跑的并行测试进程产生的目录是新的，不会被误删。
+///
+/// 共享模块：不同测试 crate 用到的函数不一样（有的只建目录不建服务），
+/// 单个 crate 里未使用属正常，别让 clippy 的 dead_code 闸门误报。
+#[allow(dead_code)]
 pub fn clean_stale_temp_dirs() {
     let cutoff = std::time::SystemTime::now() - std::time::Duration::from_secs(600);
     let Ok(entries) = std::fs::read_dir(std::env::temp_dir()) else {
@@ -36,6 +40,7 @@ pub fn clean_stale_temp_dirs() {
 
 /// 测试结尾的目录删除：重试几次等句柄释放；仍失败就留给下一次启动时清，
 /// 不要再 `let _ =` 一次了事。
+#[allow(dead_code)]
 pub fn remove_dir_retried(path: impl AsRef<Path>) {
     for _ in 0..5 {
         if std::fs::remove_dir_all(path.as_ref()).is_ok() {
