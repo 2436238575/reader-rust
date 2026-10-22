@@ -1,8 +1,8 @@
 //! 章节正文编辑版的端到端行为：
 //! - 编辑版优先于一切缓存与上游（本地书原文切片 / 网络书 FileCache）；
 //! - `refresh=1` 重抓上游更新缓存基准，但返回值仍是编辑版；
-//! - `variant=upstream` 只读基准（diff 通道）；删除编辑版即恢复上游版本；
-//! - 删书级联清掉编辑版目录。
+//! - 编辑版 diff 随正文一起返回（`data.content / data.edited / data.diff`）；
+//! - 删除编辑版即恢复上游版本；删书级联清掉编辑版目录。
 
 mod common;
 use axum::{http::StatusCode, routing::get, Json, Router};
@@ -21,6 +21,11 @@ struct TestServer {
 }
 
 async fn boot() -> TestServer {
+    boot_with_git_path("").await
+}
+
+/// `git_path` 传不存在的路径可模拟「服务器没装 git」。
+async fn boot_with_git_path(git_path: &str) -> TestServer {
     common::clean_stale_temp_dirs();
     let temp_dir =
         std::env::temp_dir().join(format!("reader-rust-edit-flow-{}", uuid::Uuid::new_v4()));
@@ -38,6 +43,7 @@ async fn boot() -> TestServer {
         admin_password: "password123".to_string(),
         rate_limit_disabled: true,
         allow_private_network: true,
+        git_path: git_path.to_string(),
         ..AppConfig::default()
     };
     let state = build_state(cfg).await.unwrap();
@@ -137,16 +143,12 @@ impl TestServer {
         payload["data"].clone()
     }
 
-    async fn get_content(&self, book_id: &str, chapter_url: &str, extra: Value) -> String {
+    async fn get_content(&self, book_id: &str, chapter_url: &str, extra: Value) -> Value {
         let mut body = json!({ "bookId": book_id, "chapterUrl": chapter_url, "index": 0 });
         body.as_object_mut()
             .unwrap()
             .extend(extra.as_object().unwrap().clone());
-        self.post("getBookContent", body)
-            .await
-            .as_str()
-            .unwrap()
-            .to_string()
+        self.post("getBookContent", body).await
     }
 }
 
@@ -167,9 +169,20 @@ async fn local_book_edit_overlays_original_and_delete_restores() {
         .await;
     let chapter_url = chapters[0]["url"].as_str().unwrap().to_string();
 
-    // 未编辑前：原文
+    // 未编辑前：原文，不带 diff
     let before = server.get_content(book_id, &chapter_url, json!({})).await;
-    assert!(before.contains("原始正文第一句"), "实际: {before}");
+    assert!(
+        before["content"]
+            .as_str()
+            .unwrap()
+            .contains("原始正文第一句"),
+        "实际: {before}"
+    );
+    assert_eq!(before["edited"], json!(false));
+    assert!(
+        before.get("diff").is_none(),
+        "没编辑过不该算 diff: {before}"
+    );
 
     // 保存编辑版
     server
@@ -185,15 +198,22 @@ async fn local_book_edit_overlays_original_and_delete_restores() {
         )
         .await;
 
-    // 阅读链路返回编辑版；基准通道返回原文；清单能列出
+    // 阅读链路返回编辑版，并随正文带回与原文的 diff；清单能列出
     let after = server.get_content(book_id, &chapter_url, json!({})).await;
-    assert_eq!(after, "编辑后的整章正文。");
-    let upstream = server
-        .get_content(book_id, &chapter_url, json!({ "variant": "upstream" }))
-        .await;
+    assert_eq!(after["content"], json!("编辑后的整章正文。"));
+    assert_eq!(after["edited"], json!(true));
+    let ops = after["diff"]["ops"]
+        .as_array()
+        .unwrap_or_else(|| panic!("编辑版应带 diff: {after}"));
+    let base_texts: Vec<&str> = ops
+        .iter()
+        .filter_map(|op| op["baseText"].as_str())
+        .collect();
     assert!(
-        upstream.contains("原始正文第一句"),
-        "基准应是原文: {upstream}"
+        base_texts
+            .iter()
+            .any(|text| text.contains("原始正文第一句")),
+        "diff 基准应是原文: {after}"
     );
     let list = server
         .post("listChapterEdits", json!({ "bookId": book_id }))
@@ -208,7 +228,12 @@ async fn local_book_edit_overlays_original_and_delete_restores() {
         )
         .await;
     let restored = server.get_content(book_id, &chapter_url, json!({})).await;
-    assert!(restored.contains("原始正文第一句"));
+    assert!(restored["content"]
+        .as_str()
+        .unwrap()
+        .contains("原始正文第一句"));
+    assert_eq!(restored["edited"], json!(false));
+    assert!(restored.get("diff").is_none());
 
     // 再编辑后删书：编辑版目录被级联清掉
     server
@@ -387,7 +412,8 @@ async fn network_book_refresh_updates_base_but_returns_edit() {
 
     // 首抓：上游第一版进缓存
     let first = server.get_content(&book_id, &chapter_url, json!({})).await;
-    assert_eq!(first, "上游第一版正文");
+    assert_eq!(first["content"], json!("上游第一版正文"));
+    assert_eq!(first["edited"], json!(false));
 
     // 保存编辑版后：阅读返回编辑版
     server
@@ -403,42 +429,68 @@ async fn network_book_refresh_updates_base_but_returns_edit() {
         )
         .await;
     let edited = server.get_content(&book_id, &chapter_url, json!({})).await;
-    assert_eq!(edited, "我的编辑版");
+    assert_eq!(edited["content"], json!("我的编辑版"));
+    assert_eq!(edited["edited"], json!(true));
 
     // 上游出第二版 + refresh=1：基准更新到第二版，阅读仍是编辑版
     *version.lock().unwrap() = "上游第二版正文";
     let after_refresh = server
         .get_content(&book_id, &chapter_url, json!({ "refresh": 1 }))
         .await;
-    assert_eq!(after_refresh, "我的编辑版");
-    let upstream_now = server
-        .get_content(&book_id, &chapter_url, json!({ "variant": "upstream" }))
-        .await;
-    assert_eq!(upstream_now, "上游第二版正文", "基准应已更新到第二版");
+    assert_eq!(after_refresh["content"], json!("我的编辑版"));
+    let base_texts: Vec<&str> = after_refresh["diff"]["ops"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|op| op["baseText"].as_str())
+        .collect();
+    assert!(
+        base_texts
+            .iter()
+            .any(|text| text.contains("上游第二版正文")),
+        "diff 基准应已更新到第二版: {after_refresh}"
+    );
 }
 
-/// diff 端点：系统有 git 时返回 ops；没有 git 的环境回退标记（跳过断言）。
+/// 服务器没有 git：正文照常返回，diff 缺省并带上原因，而不是整个请求失败。
 #[tokio::test]
-async fn diff_endpoint_runs_git_and_returns_ops() {
-    let server = boot().await;
-    let payload = server
+async fn content_stays_readable_when_git_is_missing() {
+    let server = boot_with_git_path("definitely-not-a-git-binary").await;
+    let book = server
+        .upload_txt(
+            "无 git 测试",
+            "第一章 开始
+原始正文。
+",
+        )
+        .await;
+    let book_id = book["bookId"].as_str().unwrap();
+    let chapters = server
+        .post("getChapterList", json!({ "bookId": book_id }))
+        .await;
+    let chapter_url = chapters[0]["url"].as_str().unwrap().to_string();
+    server
         .post(
-            "diffChapterEdit",
+            "saveChapterEdit",
             json!({
-                "base": ["一", "二", "三"],
-                "edited": ["一", "二改", "三", "四"],
+                "bookId": book_id,
+                "chapterUrl": chapter_url,
+                "chapterIndex": 0,
+                "chapterTitle": "第一章 开始",
+                "content": "改过的正文。",
             }),
         )
         .await;
-    if payload["fallback"].as_bool() == Some(true) {
-        return; // 无 git 环境：回退路径已在 service 内联测试覆盖
-    }
-    let ops = payload["ops"].as_array().unwrap();
-    let kinds: Vec<&str> = ops.iter().map(|op| op["type"].as_str().unwrap()).collect();
-    assert_eq!(kinds, ["equal", "modify", "equal", "add"]);
-    assert_eq!(ops[1]["baseText"], json!("二"));
-    assert_eq!(ops[1]["editedText"], json!("二改"));
-    assert_eq!(ops[3]["editedIndex"], json!(3));
+
+    let payload = server.get_content(book_id, &chapter_url, json!({})).await;
+    assert_eq!(payload["content"], json!("改过的正文。"));
+    assert_eq!(payload["edited"], json!(true));
+    assert!(
+        payload.get("diff").is_none(),
+        "没有 git 不该给 diff: {payload}"
+    );
+    let error = payload["diffError"].as_str().unwrap_or_default();
+    assert!(error.contains("git"), "应说明缺 git: {payload}");
 }
 
 /// WebDAV 恢复重建登记表后：book_url 与同 id 新登记行不一致的编辑版与书签

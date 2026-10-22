@@ -80,6 +80,12 @@ pub struct AppConfig {
     /// `sidecar/.venv` 并安装 `pyproject.toml` 里钉死的版本）；留空时探测 PATH
     /// 里的 `uv`；都没有则降级为 `AGENT_SIDECAR_COMMAND`（需宿主机预装依赖）。
     pub agent_sidecar_uv: String,
+    /// git 可执行文件的路径。
+    ///
+    /// 章节正文编辑版的 diff 依赖系统 git（`git diff --no-index`）。留空时用
+    /// PATH 里的 `git`；装在非标准位置时在这里给绝对路径。没有 git 不影响阅读，
+    /// 只是 diff 面板显示不可用原因。
+    pub git_path: String,
 }
 
 impl Default for AppConfig {
@@ -111,6 +117,7 @@ impl Default for AppConfig {
             agent_sidecar_command: "python -m agent_sidecar".to_string(),
             agent_sidecar_chapter_timeout_secs: 600,
             agent_sidecar_uv: String::new(),
+            git_path: String::new(),
         }
     }
 }
@@ -175,6 +182,7 @@ pub fn load() -> anyhow::Result<AppConfig> {
             defaults.agent_sidecar_chapter_timeout_secs as i64,
         )?
         .set_default("agent_sidecar_uv", defaults.agent_sidecar_uv)?
+        .set_default("git_path", defaults.git_path)?
         .add_source(config::Environment::default().try_parsing(true))
         .build()?;
     Ok(cfg.try_deserialize()?)

@@ -256,7 +256,8 @@ async fn empty_content_with_image_rule_stays_successful() {
 
     assert_eq!(status, StatusCode::OK);
     assert_eq!(payload["isSuccess"], json!(true));
-    assert_eq!(payload["data"], json!(""));
+    assert_eq!(payload["data"]["content"], json!(""));
+    assert_eq!(payload["data"]["edited"], json!(false));
 }
 
 #[tokio::test]
@@ -297,5 +298,5 @@ async fn normal_content_still_works() {
     let (status, payload) = server.get_content(&chapter_url).await;
 
     assert_eq!(status, StatusCode::OK);
-    assert_eq!(payload["data"], json!("第一段正文"));
+    assert_eq!(payload["data"]["content"], json!("第一段正文"));
 }

@@ -406,7 +406,7 @@ async fn html_content_keeps_inline_images() {
     let content = server
         .post("getBookContent", server.chapter_params(&chapter_url))
         .await;
-    let content = content.as_str().unwrap();
+    let content = content["content"].as_str().unwrap();
 
     // 正文 HTML 里的图片必须原样保留，前端才有得渲染
     assert!(content.contains("<img"), "正文应保留 <img>: {content}");

@@ -124,6 +124,7 @@ cp .env.example .env
 | `AGENT_SIDECAR_COMMAND`              | `python -m agent_sidecar` | sidecar 启动命令，进程 cwd 为 `sidecar/`；保持默认时若 `sidecar/.venv` 存在自动优先其 Python，自定义（含 Docker ENV）则不兜底 |
 | `AGENT_SIDECAR_UV`                   | 空                        | uv 二进制路径；非空/PATH 可探测时由 uv 自动管理依赖（推荐），都没有时降级为 AGENT_SIDECAR_COMMAND      |
 | `AGENT_SIDECAR_CHAPTER_TIMEOUT_SECS` | `600`                     | 单章处理超时；超时即终止 sidecar 进程并中止批量任务（sidecar 内模型重试预算已对齐此值，错误会带真实原因回来而不是被截成超时）                                                     |
+| `GIT_PATH`                           | 空                        | git 可执行文件路径；留空用 PATH 里的 `git`。章节编辑版 diff 依赖系统 git，缺失时阅读不受影响，差异面板显示不可用原因 |
 
 三点需要注意：
 

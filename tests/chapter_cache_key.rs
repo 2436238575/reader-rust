@@ -300,7 +300,7 @@ async fn content_with_explicit_book_url_lands_in_the_book_cache_dir() {
         "chapterUrl": server.chapter_url(0),
     });
     let content = server.post("getBookContent", body.clone()).await;
-    assert_eq!(content, json!("章节 100 的正文"));
+    assert_eq!(content["content"], json!("章节 100 的正文"));
 
     let file = server.book_cache_file(&server.chapter_url(0));
     assert!(
@@ -417,6 +417,10 @@ async fn content_pagination_stops_at_page_cap() {
 
     // 上限 50 页截断：上游被恰好打 50 次，正文恰好 50 页拼起来
     assert_eq!(server.hits_for("/content_paged"), 50, "翻页必须被上限截断");
-    let pages = content.as_str().unwrap().matches("一页正文").count();
+    let pages = content["content"]
+        .as_str()
+        .unwrap()
+        .matches("一页正文")
+        .count();
     assert_eq!(pages, 50, "正文应恰好拼 50 页");
 }
