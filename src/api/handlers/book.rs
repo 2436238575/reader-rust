@@ -1223,7 +1223,11 @@ pub async fn delete_books(
             };
             if shelf_ids.contains(canonical.as_str())
                 || matches!(
-                    state.book_service.book_repo().get(&user_ns, &canonical).await,
+                    state
+                        .book_service
+                        .book_repo()
+                        .get(&user_ns, &canonical)
+                        .await,
                     Ok(Some(_))
                 )
             {

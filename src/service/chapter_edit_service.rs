@@ -57,13 +57,13 @@ impl ChapterEditService {
     /// 顺序是「写临时文件 → 落索引 → 改名就位」：索引写失败时旧正文原样
     /// 保留（旧版先覆盖正文再 upsert，upsert 一失败就把刚覆盖的文件删掉，
     /// 二次编辑的旧版就此永久丢失）。
+    /// `meta.edited_at` 由这里覆盖为当前时间，调用方只需给章节快照字段。
     pub async fn save_chapter_edit(
         &self,
         user_ns: &str,
         book_id: &str,
         chapter_url: &str,
-        chapter_index: i32,
-        chapter_title: &str,
+        mut meta: ChapterEditMeta,
         content: &str,
         book_url: &str,
     ) -> Result<(), AppError> {
@@ -86,19 +86,10 @@ impl ChapterEditService {
         fs::write(&tmp, content.as_bytes())
             .await
             .map_err(|e| AppError::Internal(e.into()))?;
+        meta.edited_at = crate::util::time::now_millis();
         if let Err(err) = self
             .repo
-            .upsert(
-                user_ns,
-                book_id,
-                chapter_url,
-                &ChapterEditMeta {
-                    chapter_index,
-                    chapter_title: chapter_title.to_string(),
-                    edited_at: crate::util::time::now_millis(),
-                },
-                book_url,
-            )
+            .upsert(user_ns, book_id, chapter_url, &meta, book_url)
             .await
         {
             let _ = fs::remove_file(&tmp).await;
@@ -139,7 +130,7 @@ impl ChapterEditService {
         let path = self.chapter_path(user_ns, book_id, chapter_url)?;
         crate::storage::cache::file_cache::read_head_limited(&path, max_bytes)
             .await
-            .map_err(|e| AppError::Internal(e.into()))
+            .map_err(AppError::Internal)
     }
 
     /// 按书列出已编辑章节的 chapterUrl 集（目录徽章用）。
@@ -187,6 +178,14 @@ mod tests {
     use super::*;
     use crate::storage::db::repo::ChapterEditRepo;
 
+    fn meta(index: i32, title: &str) -> ChapterEditMeta {
+        ChapterEditMeta {
+            chapter_index: index,
+            chapter_title: title.to_string(),
+            edited_at: 0, // service 会覆盖为当前时间
+        }
+    }
+
     async fn test_service() -> (ChapterEditService, PathBuf) {
         let dir = std::env::temp_dir().join(format!(
             "reader-rust-edit-test-{}-{}",
@@ -220,11 +219,25 @@ mod tests {
             .is_empty());
 
         service
-            .save_chapter_edit(ns, "book_1", "http://a/1", 0, "第一章", "改后的正文", "https://example.com/b")
+            .save_chapter_edit(
+                ns,
+                "book_1",
+                "http://a/1",
+                meta(0, "第一章"),
+                "改后的正文",
+                "https://example.com/b",
+            )
             .await
             .unwrap();
         service
-            .save_chapter_edit(ns, "book_1", "http://a/2", 1, "第二章", "", "https://example.com/b")
+            .save_chapter_edit(
+                ns,
+                "book_1",
+                "http://a/2",
+                meta(1, "第二章"),
+                "",
+                "https://example.com/b",
+            )
             .await
             .unwrap();
 
@@ -271,7 +284,14 @@ mod tests {
 
         // 覆盖写：同章再编辑是替换不是追加
         service
-            .save_chapter_edit(ns, "book_1", "http://a/2", 1, "第二章", "第二版", "https://example.com/b")
+            .save_chapter_edit(
+                ns,
+                "book_1",
+                "http://a/2",
+                meta(1, "第二章"),
+                "第二版",
+                "https://example.com/b",
+            )
             .await
             .unwrap();
         assert_eq!(
@@ -314,8 +334,7 @@ mod tests {
                         ns,
                         "book_1",
                         &format!("http://a/{i}"),
-                        i,
-                        &format!("第{i}章"),
+                        meta(i, &format!("第{i}章")),
                         "正文",
                         "https://example.com/b",
                     )
@@ -342,7 +361,14 @@ mod tests {
         let (service, dir) = test_service().await;
         let big = "x".repeat(MAX_EDITED_CHAPTER_BYTES + 1);
         let result = service
-            .save_chapter_edit("user_1", "book_1", "http://a/1", 0, "章", &big, "https://example.com/b")
+            .save_chapter_edit(
+                "user_1",
+                "book_1",
+                "http://a/1",
+                meta(0, "章"),
+                &big,
+                "https://example.com/b",
+            )
             .await;
         assert!(matches!(result, Err(AppError::BadRequest(_))));
         let _ = std::fs::remove_dir_all(dir);
@@ -355,24 +381,36 @@ mod tests {
         let (service, dir) = test_service().await;
         let ns = "user_1";
         service
-            .save_chapter_edit(ns, "book_1", "http://a/1", 0, "章", "旧版正文", "https://example.com/b")
+            .save_chapter_edit(
+                ns,
+                "book_1",
+                "http://a/1",
+                meta(0, "章"),
+                "旧版正文",
+                "https://example.com/b",
+            )
             .await
             .unwrap();
 
         // 模拟索引写失败：把表 drop 掉，upsert 必炸
-        let pool2 = sqlx::SqlitePool::connect(&format!(
-            "sqlite:{}",
-            dir.join("reader.db").display()
-        ))
-        .await
-        .unwrap();
+        let pool2 =
+            sqlx::SqlitePool::connect(&format!("sqlite:{}", dir.join("reader.db").display()))
+                .await
+                .unwrap();
         sqlx::query("DROP TABLE chapter_edits")
             .execute(&pool2)
             .await
             .unwrap();
 
         let result = service
-            .save_chapter_edit(ns, "book_1", "http://a/1", 0, "章", "新版正文", "https://example.com/b")
+            .save_chapter_edit(
+                ns,
+                "book_1",
+                "http://a/1",
+                meta(0, "章"),
+                "新版正文",
+                "https://example.com/b",
+            )
             .await;
         assert!(result.is_err(), "索引失败应报错");
         assert_eq!(

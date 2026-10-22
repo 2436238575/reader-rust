@@ -360,7 +360,11 @@ async fn book_cache_delete_validates_and_normalizes_book_id() {
     assert!(!toc_path.exists(), "canonical toc 缓存应被别名调用清掉");
 
     // 越界 id：两个端点都 404；toc 目录上一级的文件必须原样保留
-    let keep = server.temp_dir.join("cache").join("user_1").join("keep.json");
+    let keep = server
+        .temp_dir
+        .join("cache")
+        .join("user_1")
+        .join("keep.json");
     std::fs::write(&keep, b"{}").unwrap();
     for (path, body) in [
         ("/reader3/deleteBookCache", json!({ "bookId": "../keep" })),
@@ -377,7 +381,11 @@ async fn book_cache_delete_validates_and_normalizes_book_id() {
             .send()
             .await
             .unwrap();
-        assert_eq!(resp.status(), StatusCode::NOT_FOUND, "{path} 越界 id 应 404");
+        assert_eq!(
+            resp.status(),
+            StatusCode::NOT_FOUND,
+            "{path} 越界 id 应 404"
+        );
     }
     assert!(keep.exists(), "目录外的文件绝不能被动到");
 

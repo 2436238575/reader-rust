@@ -62,7 +62,11 @@ impl FileCache {
         chapter_key: &str,
         max_bytes: u64,
     ) -> anyhow::Result<Option<(String, bool)>> {
-        read_head_limited(&self.chapter_path(user_ns, book_key, chapter_key), max_bytes).await
+        read_head_limited(
+            &self.chapter_path(user_ns, book_key, chapter_key),
+            max_bytes,
+        )
+        .await
     }
 
     /// 写入章节正文，并按容量上限淘汰最旧条目。
@@ -463,7 +467,11 @@ mod tests {
         let cache = FileCache::new(&root, 0);
         cache.put("ns", "book_1", "c1", "0123456789").await.unwrap();
 
-        let (text, more) = cache.get_head("ns", "book_1", "c1", 4).await.unwrap().unwrap();
+        let (text, more) = cache
+            .get_head("ns", "book_1", "c1", 4)
+            .await
+            .unwrap()
+            .unwrap();
         assert_eq!(text, "0123");
         assert!(more, "文件还有剩余必须如实上报");
         let (text, more) = cache

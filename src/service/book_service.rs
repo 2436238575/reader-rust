@@ -316,10 +316,7 @@ impl BookService {
     }
 
     /// 注入书签 repo：purgeCache 回收孤儿登记行时连带清掉它们的书签。
-    pub fn with_bookmark_repo(
-        mut self,
-        repo: crate::storage::db::repo::BookmarkRepo,
-    ) -> Self {
+    pub fn with_bookmark_repo(mut self, repo: crate::storage::db::repo::BookmarkRepo) -> Self {
         self.bookmark_repo = Some(repo);
         self
     }
@@ -3661,8 +3658,11 @@ mod tests {
                 "u",
                 &orphan_id,
                 "http://up/ch/1",
-                0,
-                "第一章",
+                crate::storage::db::repo::ChapterEditMeta {
+                    chapter_index: 0,
+                    chapter_title: "第一章".to_string(),
+                    edited_at: 0,
+                },
                 "编辑内容",
                 "https://example.com/orphan",
             )

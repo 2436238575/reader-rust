@@ -64,8 +64,11 @@ pub async fn save_chapter_edit(
             &user.0.ns,
             &req.book_id,
             &req.chapter_url,
-            req.chapter_index,
-            &req.chapter_title,
+            crate::storage::db::repo::ChapterEditMeta {
+                chapter_index: req.chapter_index,
+                chapter_title: req.chapter_title.clone(),
+                edited_at: 0, // 由 service 覆盖为当前时间
+            },
             &req.content,
             &resolved.book_url,
         )

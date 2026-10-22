@@ -269,8 +269,7 @@ impl BookRepo {
             return Ok(0);
         }
         let placeholders = ids.iter().map(|_| "?").collect::<Vec<_>>().join(",");
-        let sql =
-            format!("DELETE FROM books WHERE user_ns=? AND book_id IN ({placeholders})");
+        let sql = format!("DELETE FROM books WHERE user_ns=? AND book_id IN ({placeholders})");
         let mut query = sqlx::query(&sql).bind(user_ns);
         for id in &ids {
             query = query.bind(id);
@@ -1317,12 +1316,11 @@ impl ChapterEditRepo {
 
     /// 该书全部编辑索引的 (book_id, book_url) 去重清单（恢复校验用）。
     pub async fn list_book_refs(&self, user_ns: &str) -> Result<Vec<(String, String)>, AppError> {
-        let rows = sqlx::query(
-            "SELECT DISTINCT book_id, book_url FROM chapter_edits WHERE user_ns=?1",
-        )
-        .bind(user_ns)
-        .fetch_all(&self.pool)
-        .await?;
+        let rows =
+            sqlx::query("SELECT DISTINCT book_id, book_url FROM chapter_edits WHERE user_ns=?1")
+                .bind(user_ns)
+                .fetch_all(&self.pool)
+                .await?;
         Ok(rows
             .iter()
             .map(|row| {
@@ -1577,7 +1575,9 @@ mod tests {
         repo.upsert("u", &bookmark("book_1", 3, 0, "章书签"), "")
             .await
             .unwrap();
-        repo.upsert("u", &underline(0, "章首划线"), "").await.unwrap();
+        repo.upsert("u", &underline(0, "章首划线"), "")
+            .await
+            .unwrap();
         repo.upsert("u", &underline(5000, "中段划线"), "")
             .await
             .unwrap();
@@ -1649,13 +1649,7 @@ mod tests {
         // 批量：第二条违规 → 整体回滚，第一条也不留
         let good = bookmark("book_1", 1, 0, "好的");
         let err = repo
-            .upsert_many(
-                "u",
-                &[
-                    (good, String::new()),
-                    (bad_pos, String::new()),
-                ],
-            )
+            .upsert_many("u", &[(good, String::new()), (bad_pos, String::new())])
             .await
             .unwrap_err();
         assert!(matches!(err, AppError::BadRequest(_)));
