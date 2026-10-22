@@ -1,15 +1,14 @@
 //! 章节正文编辑版：用户数据目录下的叠加层。
 //!
-//! 布局：`data/<ns>/edited_chapters/<bookId>/<md5(chapterUrl)>.txt` 存整章编辑后正文，
-//! 同目录 `_index.json` 是清单（chapterUrl → 章号/标题/时间），供目录「已编辑」徽章
-//! 与前端预加载绕过用。
+//! 布局：正文存 `data/<ns>/edited_chapters/<bookId>/<md5(chapterUrl)>.txt`，
+//! 元数据（章号/标题/时间）进 `chapter_edits` 表——清单查询与删书级联走 SQL，
+//! 不再有 `_index.json` 整文档读-改-写（并发互相覆盖、删未编辑过的书 500）。
 //!
 //! 落在 `data/` 而不是 `cache/`：编辑版是用户资产，purgeCache 只清 cache 子树，
 //! 刷新上游（refresh=1）也只动缓存基准，两边互不干扰。
 
 use crate::error::error::AppError;
-use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use crate::storage::db::repo::{ChapterEditMeta, ChapterEditRepo};
 use std::path::PathBuf;
 use tokio::fs;
 
@@ -17,27 +16,18 @@ use tokio::fs;
 const MAX_EDITED_CHAPTER_BYTES: usize = 2 * 1024 * 1024;
 
 const EDITED_DIR: &str = "edited_chapters";
-const INDEX_FILE: &str = "_index.json";
-
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-#[serde(default, rename_all = "camelCase")]
-pub struct ChapterEditMeta {
-    pub chapter_index: i32,
-    pub chapter_title: String,
-    pub edited_at: i64,
-}
-
-type EditIndex = HashMap<String, ChapterEditMeta>;
 
 #[derive(Clone)]
 pub struct ChapterEditService {
     storage_dir: PathBuf,
+    repo: ChapterEditRepo,
 }
 
 impl ChapterEditService {
-    pub fn new(storage_dir: &str) -> Self {
+    pub fn new(storage_dir: &str, repo: ChapterEditRepo) -> Self {
         Self {
             storage_dir: PathBuf::from(storage_dir),
+            repo,
         }
     }
 
@@ -63,36 +53,9 @@ impl ChapterEditService {
             .join(format!("{}.txt", crate::util::hash::md5_hex(chapter_url))))
     }
 
-    fn index_path(&self, user_ns: &str, book_id: &str) -> Result<PathBuf, AppError> {
-        Ok(self.book_dir(user_ns, book_id)?.join(INDEX_FILE))
-    }
-
-    async fn read_index(&self, user_ns: &str, book_id: &str) -> Result<EditIndex, AppError> {
-        let path = self.index_path(user_ns, book_id)?;
-        let Ok(data) = fs::read_to_string(path).await else {
-            return Ok(HashMap::new());
-        };
-        Ok(serde_json::from_str(&data).unwrap_or_default())
-    }
-
-    async fn write_index(
-        &self,
-        user_ns: &str,
-        book_id: &str,
-        index: &EditIndex,
-    ) -> Result<(), AppError> {
-        let path = self.index_path(user_ns, book_id)?;
-        let data = serde_json::to_string_pretty(index).map_err(|e| AppError::Internal(e.into()))?;
-        // 索引可以独立写（比如删除路径下目录刚被删）：确保父目录存在
-        if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent)
-                .await
-                .map_err(|e| AppError::Internal(e.into()))?;
-        }
-        write_atomic(&path, data.as_bytes()).await
-    }
-
     /// 保存整章编辑版。空内容合法（用户把整章删空也是编辑意图）。
+    /// 先写正文文件、再落索引行；索引写失败时删掉刚写的文件，不留「正文在
+    /// 盘上但清单里没有」的孤儿。
     pub async fn save_chapter_edit(
         &self,
         user_ns: &str,
@@ -112,24 +75,29 @@ impl ChapterEditService {
         fs::create_dir_all(&dir)
             .await
             .map_err(|e| AppError::Internal(e.into()))?;
-        write_atomic(
-            &self.chapter_path(user_ns, book_id, chapter_url)?,
-            content.as_bytes(),
-        )
-        .await?;
-        let mut index = self.read_index(user_ns, book_id).await?;
-        index.insert(
-            chapter_url.to_string(),
-            ChapterEditMeta {
-                chapter_index,
-                chapter_title: chapter_title.to_string(),
-                edited_at: crate::util::time::now_millis(),
-            },
-        );
-        self.write_index(user_ns, book_id, &index).await
+        let path = self.chapter_path(user_ns, book_id, chapter_url)?;
+        write_atomic(&path, content.as_bytes()).await?;
+        let result = self
+            .repo
+            .upsert(
+                user_ns,
+                book_id,
+                chapter_url,
+                &ChapterEditMeta {
+                    chapter_index,
+                    chapter_title: chapter_title.to_string(),
+                    edited_at: crate::util::time::now_millis(),
+                },
+            )
+            .await;
+        if let Err(err) = result {
+            let _ = fs::remove_file(&path).await;
+            return Err(err);
+        }
+        Ok(())
     }
 
-    /// 读编辑版；没有编辑过返回 None。
+    /// 读编辑版正文；没有编辑过返回 None。
     pub async fn get_chapter_edit(
         &self,
         user_ns: &str,
@@ -149,32 +117,31 @@ impl ChapterEditService {
         user_ns: &str,
         book_id: &str,
     ) -> Result<Vec<String>, AppError> {
-        Ok(self
-            .read_index(user_ns, book_id)
-            .await?
-            .keys()
-            .cloned()
-            .collect())
+        self.repo.list_urls(user_ns, book_id).await
     }
 
-    /// 删除单章编辑版（恢复上游版本）。
+    /// 删除单章编辑版（恢复上游版本）：先删正文文件（不存在不算错），再删索引行。
     pub async fn delete_chapter_edit(
         &self,
         user_ns: &str,
         book_id: &str,
         chapter_url: &str,
     ) -> Result<(), AppError> {
-        let _ = fs::remove_file(self.chapter_path(user_ns, book_id, chapter_url)?).await;
-        let mut index = self.read_index(user_ns, book_id).await?;
-        index.remove(chapter_url);
-        self.write_index(user_ns, book_id, &index).await
+        let path = self.chapter_path(user_ns, book_id, chapter_url)?;
+        match fs::remove_file(&path).await {
+            Ok(()) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => return Err(AppError::Internal(e.into())),
+        }
+        self.repo.delete(user_ns, book_id, chapter_url).await
     }
 
-    /// 删书级联：整书编辑版目录连带删除。非法 bookId 直接 no-op（不调文件系统）。
+    /// 删书级联：索引一句 DELETE，目录整个清掉。非法 bookId 直接 no-op。
     pub async fn delete_book_edits(&self, user_ns: &str, book_id: &str) {
         let Ok(dir) = self.book_dir(user_ns, book_id) else {
             return;
         };
+        let _ = self.repo.delete_for_book(user_ns, book_id).await;
         let _ = fs::remove_dir_all(dir).await;
     }
 }
@@ -198,6 +165,7 @@ async fn write_atomic(path: &PathBuf, bytes: &[u8]) -> Result<(), AppError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::storage::db::repo::ChapterEditRepo;
 
     async fn test_service() -> (ChapterEditService, PathBuf) {
         let dir = std::env::temp_dir().join(format!(
@@ -205,8 +173,11 @@ mod tests {
             std::process::id(),
             crate::util::crypto::random_string(6)
         ));
+        // init_pool 不建父目录，先落目录再开库
         std::fs::create_dir_all(&dir).unwrap();
-        let service = ChapterEditService::new(dir.to_str().unwrap());
+        let url = format!("sqlite:{}?mode=rwc", dir.join("reader.db").display());
+        let pool = crate::storage::db::init_pool(&url).await.unwrap();
+        let service = ChapterEditService::new(dir.to_str().unwrap(), ChapterEditRepo::new(pool));
         (service, dir)
     }
 
@@ -291,6 +262,13 @@ mod tests {
             Some("第二版".to_string())
         );
 
+        // 删除从未编辑过的书：no-op 而不是 500
+        service.delete_book_edits(ns, "book_99").await;
+        service
+            .delete_chapter_edit(ns, "book_99", "http://a/none")
+            .await
+            .unwrap();
+
         // 删书级联
         service.delete_book_edits(ns, "book_1").await;
         assert!(service
@@ -299,6 +277,42 @@ mod tests {
             .unwrap()
             .is_empty());
 
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    /// M1 回归：两章并发保存，索引（表）不丢条目。
+    #[tokio::test]
+    async fn concurrent_saves_keep_all_index_entries() {
+        let (service, dir) = test_service().await;
+        let ns = "user_1";
+        let mut handles = Vec::new();
+        for i in 0..8 {
+            let service = service.clone();
+            handles.push(tokio::spawn(async move {
+                service
+                    .save_chapter_edit(
+                        ns,
+                        "book_1",
+                        &format!("http://a/{i}"),
+                        i,
+                        &format!("第{i}章"),
+                        "正文",
+                    )
+                    .await
+                    .unwrap();
+            }));
+        }
+        for handle in handles {
+            handle.await.unwrap();
+        }
+        assert_eq!(
+            service
+                .list_chapter_edits(ns, "book_1")
+                .await
+                .unwrap()
+                .len(),
+            8
+        );
         let _ = std::fs::remove_dir_all(dir);
     }
 

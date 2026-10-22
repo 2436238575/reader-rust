@@ -1165,6 +1165,108 @@ impl ReplaceRuleRepo {
     }
 }
 
+// ─── 章节编辑版索引（正文仍落 data/ 文件，这里存元数据与徽章清单） ─────────
+
+/// chapter_edits 表的一行。正文内容不进表（2MB 级文本不进行），
+/// 正文文件路径由 (user_ns, book_id, chapter_url) 推导。
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, Default)]
+#[serde(default, rename_all = "camelCase")]
+pub struct ChapterEditMeta {
+    pub chapter_index: i32,
+    pub chapter_title: String,
+    pub edited_at: i64,
+}
+
+#[derive(Clone)]
+pub struct ChapterEditRepo {
+    pool: SqlitePool,
+}
+
+impl ChapterEditRepo {
+    pub fn new(pool: SqlitePool) -> Self {
+        Self { pool }
+    }
+
+    /// 保存/覆盖索引条目（正文文件的写由调用方先做）。
+    pub async fn upsert(
+        &self,
+        user_ns: &str,
+        book_id: &str,
+        chapter_url: &str,
+        meta: &ChapterEditMeta,
+    ) -> Result<(), AppError> {
+        let Some(id) = parse_book_id(book_id) else {
+            return Err(AppError::BadRequest(format!(
+                "bookId 格式非法: {book_id:?}"
+            )));
+        };
+        sqlx::query(
+            "INSERT INTO chapter_edits (user_ns, book_id, chapter_url, chapter_index, chapter_title, edited_at) \
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6) \
+             ON CONFLICT(user_ns, book_id, chapter_url) DO UPDATE SET \
+             chapter_index=excluded.chapter_index, chapter_title=excluded.chapter_title, edited_at=excluded.edited_at",
+        )
+        .bind(user_ns)
+        .bind(id)
+        .bind(chapter_url)
+        .bind(meta.chapter_index)
+        .bind(&meta.chapter_title)
+        .bind(meta.edited_at)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    /// 按书列出已编辑章节的 chapterUrl（目录徽章用）。
+    pub async fn list_urls(&self, user_ns: &str, book_id: &str) -> Result<Vec<String>, AppError> {
+        let Some(id) = parse_book_id(book_id) else {
+            return Ok(vec![]);
+        };
+        let rows = sqlx::query(
+            "SELECT chapter_url FROM chapter_edits WHERE user_ns=?1 AND book_id=?2 ORDER BY chapter_index",
+        )
+        .bind(user_ns)
+        .bind(id)
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows
+            .iter()
+            .map(|row| row.get::<String, _>("chapter_url"))
+            .collect())
+    }
+
+    pub async fn delete(
+        &self,
+        user_ns: &str,
+        book_id: &str,
+        chapter_url: &str,
+    ) -> Result<(), AppError> {
+        let Some(id) = parse_book_id(book_id) else {
+            return Ok(());
+        };
+        sqlx::query("DELETE FROM chapter_edits WHERE user_ns=?1 AND book_id=?2 AND chapter_url=?3")
+            .bind(user_ns)
+            .bind(id)
+            .bind(chapter_url)
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
+
+    /// 删书级联：一句 DELETE 清掉该书全部索引。
+    pub async fn delete_for_book(&self, user_ns: &str, book_id: &str) -> Result<u64, AppError> {
+        let Some(id) = parse_book_id(book_id) else {
+            return Ok(0);
+        };
+        let result = sqlx::query("DELETE FROM chapter_edits WHERE user_ns=?1 AND book_id=?2")
+            .bind(user_ns)
+            .bind(id)
+            .execute(&self.pool)
+            .await?;
+        Ok(result.rows_affected())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

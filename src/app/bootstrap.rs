@@ -228,8 +228,12 @@ pub async fn build_state(cfg: AppConfig) -> anyhow::Result<AppState> {
         probe_service.probe().await;
     });
 
-    let chapter_edit_service =
-        Arc::new(crate::service::chapter_edit_service::ChapterEditService::new(&cfg.storage_dir));
+    let chapter_edit_service = Arc::new(
+        crate::service::chapter_edit_service::ChapterEditService::new(
+            &cfg.storage_dir,
+            crate::storage::db::repo::ChapterEditRepo::new(pool.clone()),
+        ),
+    );
 
     Ok(AppState {
         config: cfg,

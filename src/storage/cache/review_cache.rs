@@ -250,12 +250,13 @@ mod tests {
     async fn purge_scopes_match_content_cache_shape() {
         let root = temp_root("reader-review-purge");
         let cache = ReviewCache::new(&root, 0, 0);
-        cache.put("alice", "book1", "c1", "a").await.unwrap();
-        cache.put("alice", "book2", "c1", "b").await.unwrap();
-        cache.put("bob", "book1", "c1", "c").await.unwrap();
+        // book_key 必须是 book_<n> 格式（非法 id 会被落进无害隔离段）
+        cache.put("alice", "book_1", "c1", "a").await.unwrap();
+        cache.put("alice", "book_2", "c1", "b").await.unwrap();
+        cache.put("bob", "book_1", "c1", "c").await.unwrap();
 
         assert_eq!(cache.user_usage("alice").await.files, 2);
-        assert_eq!(cache.remove_book("alice", "book1").await.unwrap(), 1);
+        assert_eq!(cache.remove_book("alice", "book_1").await.unwrap(), 1);
         assert_eq!(cache.user_usage("alice").await.files, 1);
         assert_eq!(cache.remove_user("alice").await.unwrap(), 1);
         assert!(cache.user_usage("alice").await.files == 0);
