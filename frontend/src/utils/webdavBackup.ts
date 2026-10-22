@@ -110,6 +110,15 @@ export function parseWebdavBackup(raw: string) {
   } as WebdavBackupPayload
 }
 
+/**
+ * 位域分组的合法 id：2 的幂且不超过 2^30（JS 位运算是 32 位有符号整数，
+ * 1<<31 就是负号）。旧版 max_id+1 分配的备份里可能混着 3 这种非法 id
+ *（0b11 = 同时进组 1 和组 2），恢复时直接落库会把老 bug 带回来。
+ */
+function isValidGroupId(id: number) {
+  return Number.isInteger(id) && id > 0 && id <= 2 ** 30 && (id & (id - 1)) === 0
+}
+
 export async function restoreWebdavBackup(payload: WebdavBackupPayload) {
   const currentGroups = await getBookGroups().catch(() => [])
   const currentBooks = await getBookshelf().catch(() => [])
@@ -131,13 +140,20 @@ export async function restoreWebdavBackup(payload: WebdavBackupPayload) {
   if (payload.bookSources.length) {
     await saveBookSources(payload.bookSources)
   }
-  for (const group of payload.bookshelf.groups) {
+  // 非法组 id 丢弃，书籍位掩码里对应的位一并剥掉，避免恢复出悬空分组引用
+  const validGroups = payload.bookshelf.groups.filter((group) => isValidGroupId(group.groupId))
+  for (const group of validGroups) {
     await saveBookGroup(group)
   }
+  const validGroupMask = validGroups.reduce((mask, group) => mask | group.groupId, 0)
   if (payload.bookshelf.books.length) {
     // 恢复 = 全量覆盖：restore 语义让后端清表重建登记表，备份自带的
     // bookId 原位恢复，书签等按 id 引用的数据随之对齐
-    await restoreBooks(payload.bookshelf.books)
+    const books = payload.bookshelf.books.map((book) => ({
+      ...book,
+      group: (book.group ?? 0) & validGroupMask,
+    }))
+    await restoreBooks(books)
   }
   if (payload.bookmarks.length) {
     await saveBookmarks(payload.bookmarks)

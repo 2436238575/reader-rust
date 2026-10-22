@@ -1308,7 +1308,8 @@ impl BookGroupRepo {
         Ok(rows.iter().map(map_book_group).collect())
     }
 
-    /// 分配最小未占用的幂位（1, 2, 4, 8…）。位域最多 63 位，满时返回 None。
+    /// 分配最小未占用的幂位（1, 2, 4, 8…）。位域上限 31 位（前端位运算是
+    /// 32 位有符号整数，1<<31 即负号），满时返回 None。
     pub async fn alloc_group_id(&self, user_ns: &str) -> Result<Option<i64>, AppError> {
         let rows = sqlx::query("SELECT group_id FROM book_groups WHERE user_ns=?1")
             .bind(user_ns)
@@ -1316,7 +1317,7 @@ impl BookGroupRepo {
             .await?;
         let used: std::collections::HashSet<i64> =
             rows.iter().map(|r| r.get::<i64, _>("group_id")).collect();
-        for n in 0..63 {
+        for n in 0..31 {
             let id = 1i64 << n;
             if !used.contains(&id) {
                 return Ok(Some(id));
@@ -1325,7 +1326,8 @@ impl BookGroupRepo {
         Ok(None)
     }
 
-    /// 新建/覆盖一个组。幂等键是 group_id。
+    /// 新建/覆盖一个组。幂等键是 group_id。表级 CHECK 兜非法 id
+    ///（非 2 的幂 / 超出 31 位），这里把它翻译成用户可读的 400。
     pub async fn upsert(
         &self,
         user_ns: &str,
@@ -1342,16 +1344,34 @@ impl BookGroupRepo {
         .bind(&group.group_name)
         .bind(group.order_no)
         .execute(&self.pool)
-        .await?;
+        .await
+        .map_err(|e| match &e {
+            sqlx::Error::Database(db_err) if db_err.is_check_violation() => AppError::BadRequest(
+                "groupId 必须是 2 的幂且不超过 2^30（书籍分组是位掩码）".to_string(),
+            ),
+            _ => AppError::Internal(e.into()),
+        })?;
         Ok(())
     }
 
+    /// 删组并同步清掉书籍位掩码里的对应位：不清的话 alloc_group_id 回填该位时，
+    /// 旧书会自动「进」新组。两句收进同一事务。
     pub async fn delete(&self, user_ns: &str, group_id: i64) -> Result<(), AppError> {
+        let mut tx = self.pool.begin_with("BEGIN IMMEDIATE").await?;
         sqlx::query("DELETE FROM book_groups WHERE user_ns=?1 AND group_id=?2")
             .bind(user_ns)
             .bind(group_id)
-            .execute(&self.pool)
+            .execute(&mut *tx)
             .await?;
+        sqlx::query(
+            "UPDATE shelf_books SET group_bits = group_bits & ~?2 \
+             WHERE user_ns=?1 AND (group_bits & ?2) != 0",
+        )
+        .bind(user_ns)
+        .bind(group_id)
+        .execute(&mut *tx)
+        .await?;
+        tx.commit().await?;
         Ok(())
     }
 }
@@ -1559,6 +1579,97 @@ mod tests {
             list.iter().find(|g| g.group_id == 1).unwrap().group_name,
             "改名"
         );
+
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    /// 位域上限 31（前端 32 位有符号位运算）：1<<30 可用，1<<31 被拒；
+    /// 非 2 的幂被表级 CHECK 兜住并翻译成 400。
+    #[tokio::test]
+    async fn book_group_ids_are_capped_at_31_bits_and_checked() {
+        let (pool, dir) = test_pool().await;
+        let repo = BookGroupRepo::new(pool);
+        let mk = |id: i64| crate::model::book_group::BookGroup {
+            group_id: id,
+            group_name: "组".into(),
+            order_no: 0,
+        };
+
+        repo.upsert("u", &mk(1 << 30)).await.unwrap();
+        for bad in [3i64, 0, -2, 1 << 31, 1 << 62] {
+            let err = repo.upsert("u", &mk(bad)).await.unwrap_err();
+            assert!(
+                matches!(err, AppError::BadRequest(_)),
+                "非法 groupId {bad} 应 400，实际 {err:?}"
+            );
+        }
+
+        // 占满 31 个幂位后分配返回 None
+        let (pool2, dir2) = test_pool().await;
+        let repo2 = BookGroupRepo::new(pool2);
+        for n in 0..31 {
+            let id = repo2.alloc_group_id("u").await.unwrap().unwrap();
+            assert_eq!(id, 1i64 << n);
+            repo2.upsert("u", &mk(id)).await.unwrap();
+        }
+        assert!(repo2.alloc_group_id("u").await.unwrap().is_none());
+
+        let _ = std::fs::remove_dir_all(dir);
+        let _ = std::fs::remove_dir_all(dir2);
+    }
+
+    /// 删组同步清书籍位掩码里的对应位：位回填时旧书不会自动「进」新组。
+    #[tokio::test]
+    async fn book_group_delete_clears_shelf_bits() {
+        let (pool, dir) = test_pool().await;
+        let group_repo = BookGroupRepo::new(pool.clone());
+        let shelf_repo = ShelfBookRepo::new(pool.clone());
+        let mk = |id: i64| crate::model::book_group::BookGroup {
+            group_id: id,
+            group_name: format!("组{id}"),
+            order_no: 0,
+        };
+        group_repo.upsert("u", &mk(1)).await.unwrap();
+        group_repo.upsert("u", &mk(2)).await.unwrap();
+
+        // 一本书同时在组 1 和组 2（位掩码 0b11）；shelf 读取走 JOIN books，
+        // 先登记注册表行才查得到
+        BookRepo::new(pool.clone())
+            .register(
+                "u",
+                RegisterBook {
+                    book_url: "https://example.com/g",
+                    book_source_id: None,
+                    name: None,
+                    author: None,
+                    toc_url: None,
+                },
+                None,
+            )
+            .await
+            .unwrap();
+        shelf_repo
+            .upsert(
+                "u",
+                ShelfBookRow {
+                    book_id: "book_1".to_string(),
+                    group_bits: Some(0b11),
+                    ..Default::default()
+                },
+                None,
+            )
+            .await
+            .unwrap();
+
+        // 删组 2：书籍位掩码只剩组 1 的位；位 2 可安全回填给新组
+        group_repo.delete("u", 2).await.unwrap();
+        let entry = shelf_repo.get("u", "book_1").await.unwrap().unwrap();
+        assert_eq!(entry.shelf.group_bits, Some(0b01));
+        assert_eq!(group_repo.alloc_group_id("u").await.unwrap(), Some(2));
+        group_repo.upsert("u", &mk(2)).await.unwrap();
+        // 新组 2 不该自动带上旧书
+        let entry = shelf_repo.get("u", "book_1").await.unwrap().unwrap();
+        assert_eq!(entry.shelf.group_bits, Some(0b01));
 
         let _ = std::fs::remove_dir_all(dir);
     }

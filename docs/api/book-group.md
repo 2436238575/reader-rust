@@ -26,7 +26,7 @@ GET /reader3/getBookGroups
 POST /reader3/saveBookGroup
 ```
 
-请求体为单个 `BookGroup` 对象（`groupId` 为 0 或已存在时按 ID 覆盖）。响应 `data` 为 `"success"`。
+请求体为单个 `BookGroup` 对象。`groupId` 为 0 时服务端分配最小未占用的幂位；显式指定（WebDAV 恢复对齐备份）必须是 2 的幂且不超过 2^30——`group` 是位掩码，非法 id（如 3 = 0b11）会让书籍同时落进多个组，服务端按 400 拒绝。分组上限 31 个（1<<0 ..= 1<<30，前端位运算是 32 位有符号整数）。响应 `data` 为 `"success"`。
 
 ## 删除分组
 
@@ -34,7 +34,7 @@ POST /reader3/saveBookGroup
 POST /reader3/deleteBookGroup
 ```
 
-请求体：`{ "groupId": 0 }`。响应 `data` 为 `"success"`。
+请求体：`{ "groupId": 0 }`。删除会同步清掉所有书籍位掩码里该组的位（空出的幂位之后可安全分配给新组）。响应 `data` 为 `"success"`。
 
 ## 批量保存分组顺序
 
