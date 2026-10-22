@@ -8,6 +8,8 @@ export interface SearchResultItem {
   chapterIndex: number
   chapterTitle: string
   snippet: string
+  /** 全书搜索里命中的是编辑版章节（后端 edited 标记透传） */
+  edited?: boolean
 }
 
 export type ReaderSearchScope = 'chapter' | 'book'
@@ -139,6 +141,7 @@ export function useReaderSearch(store: ReaderStore, options: ReaderSearchOptions
           chapterIndex: hit.chapterIndex,
           chapterTitle: hit.chapterTitle,
           snippet,
+          edited: hit.edited,
         }))
       )
       bookSearchCoverage.value = {

@@ -189,6 +189,9 @@ async fn search_finds_across_cached_chapters_with_coverage() {
     assert_eq!(results.len(), 2);
     assert_eq!(results[0]["chapterIndex"], json!(0));
     assert_eq!(results[0]["chapterTitle"], json!("第一章 开始"));
+    // 命中来自上游缓存（非编辑版）：edited 恒 false
+    assert_eq!(results[0]["edited"], json!(false));
+    assert_eq!(results[1]["edited"], json!(false));
     let snippet = results[0]["snippets"][0].as_str().unwrap();
     assert!(snippet.contains("古庙"), "摘要应含命中词: {snippet}");
     // 第二章命中处前后都有长文：摘要两头带省略号
@@ -302,7 +305,9 @@ async fn search_reads_edited_version_when_present() {
         .search(json!({ "bookId": book_id, "query": "新词" }))
         .await;
     assert_eq!(status, StatusCode::OK);
-    assert_eq!(payload["data"]["results"].as_array().unwrap().len(), 1);
+    let results = payload["data"]["results"].as_array().unwrap();
+    assert_eq!(results.len(), 1);
+    assert_eq!(results[0]["edited"], json!(true), "命中编辑版应带标记");
 
     // 上游旧词搜不到（编辑版覆盖了它）
     let (_, payload) = server

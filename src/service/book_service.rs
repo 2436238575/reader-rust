@@ -2429,7 +2429,9 @@ impl BookService {
     /// 子串匹配（大小写不敏感），不做正则语法——用户输错正则不该炸掉搜索。
     ///
     /// 资源预算：最多扫 5000 章 / 50MB / 10 秒，超限 truncated 截断并如实
-    /// 上报覆盖度。已编辑章节读编辑版（与阅读器显示一致）。
+    /// 上报覆盖度。章节文件按剩余预算限量读入（单章几十 MB 不会先把内存
+    /// 翻倍再判超限）。已编辑章节读编辑版（与阅读器显示一致），命中带
+    /// `edited` 标记。同时最多 2 个检索在跑（每个的读入上限都是 50MB）。
     pub async fn search_cached_content(
         &self,
         user_ns: &str,
@@ -2440,6 +2442,11 @@ impl BookService {
         const MAX_SCAN_CHAPTERS: usize = 5000;
         const MAX_SCAN_BYTES: u64 = 50 * 1024 * 1024;
         const MAX_SCAN_DURATION: std::time::Duration = std::time::Duration::from_secs(10);
+
+        let _permit = CACHED_SEARCH_PERMITS
+            .acquire()
+            .await
+            .map_err(|e| AppError::Internal(anyhow::anyhow!("检索并发闸门已关闭: {e}")))?;
 
         let chapters = self
             .load_chapter_list_cache(user_ns, book_id)
@@ -2470,31 +2477,45 @@ impl BookService {
                 outcome.truncated = true;
                 break;
             }
-            // 编辑版优先（与阅读器显示一致），没有再读上游缓存
-            let body = if let Some(edits) = &self.chapter_edit {
-                match edits.get_chapter_edit(user_ns, book_id, &chapter.url).await {
-                    Ok(Some(edited)) => Some(edited),
-                    _ => self
-                        .cache
-                        .get(user_ns, book_id, &chapter.url)
-                        .await
-                        .ok()
-                        .flatten(),
-                }
-            } else {
-                self.cache
-                    .get(user_ns, book_id, &chapter.url)
-                    .await
-                    .ok()
-                    .flatten()
-            };
-            let Some(body) = body else { continue };
-            outcome.cached_chapters += 1;
-            scanned_bytes += body.len() as u64;
-            if scanned_bytes > MAX_SCAN_BYTES {
+            // 字节预算：循环起点上后面一定还有未扫章节，剩余为 0 即截断
+            let remaining = MAX_SCAN_BYTES.saturating_sub(scanned_bytes);
+            if remaining == 0 {
                 outcome.truncated = true;
                 break;
             }
+            // 编辑版优先（与阅读器显示一致），没有再读上游缓存；
+            // 两边都按剩余预算限量读，读失败的按未缓存处理
+            let mut edited = false;
+            let mut had_more = false;
+            let mut body: Option<String> = None;
+            if let Some(edits) = &self.chapter_edit {
+                if let Ok(Some((text, more))) = edits
+                    .get_chapter_edit_head(user_ns, book_id, &chapter.url, remaining)
+                    .await
+                {
+                    edited = true;
+                    had_more = more;
+                    body = Some(text);
+                }
+            }
+            if body.is_none() {
+                if let Ok(Some((text, more))) = self
+                    .cache
+                    .get_head(user_ns, book_id, &chapter.url, remaining)
+                    .await
+                {
+                    had_more = more;
+                    body = Some(text);
+                }
+            }
+            let Some(body) = body else { continue };
+            // 预算在本章耗尽：半截内容不搜（截断点附近的命中会丢），如实报截断
+            if had_more {
+                outcome.truncated = true;
+                break;
+            }
+            outcome.cached_chapters += 1;
+            scanned_bytes += body.len() as u64;
             // 缓存里可能是 HTML 正文：剥掉标签再匹配，摘要才不带尖括号
             let text = crate::util::text::strip_html_tags(&body);
             let mut snippets = Vec::new();
@@ -2512,6 +2533,7 @@ impl BookService {
                 chapter_title: chapter.title.clone(),
                 chapter_url: chapter.url.clone(),
                 snippets,
+                edited,
             });
             if outcome.results.len() >= max_results {
                 // 命中上限恰好落在最后一章时不算截断（后面没有更多可扫的了）
@@ -2668,7 +2690,14 @@ pub struct CachedSearchHit {
     pub chapter_title: String,
     pub chapter_url: String,
     pub snippets: Vec<String>,
+    /// 命中内容来自编辑版（而非上游缓存）：前端在条目上标「已编辑」
+    pub edited: bool,
 }
+
+/// 全书缓存检索的并发闸门：一次检索读入上限 50MB，无闸门时并发请求
+/// 线性放大内存占用。单用户场景 2 个并发足够（阅读器搜索 + 重试）。
+static CACHED_SEARCH_PERMITS: once_cell::sync::Lazy<tokio::sync::Semaphore> =
+    once_cell::sync::Lazy::new(|| tokio::sync::Semaphore::new(2));
 
 #[derive(Debug, Clone, serde::Serialize)]
 #[serde(rename_all = "camelCase")]

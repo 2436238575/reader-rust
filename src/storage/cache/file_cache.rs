@@ -52,6 +52,19 @@ impl FileCache {
         Ok(Some(fs::read_to_string(&path).await?))
     }
 
+    /// 限量读取章节正文（全文检索的字节预算用）：最多读 max_bytes，
+    /// 返回 (内容, 文件是否还有剩余)。不再整章读入——单章可达几十 MB，
+    /// 50MB 的检索预算不能在一个文件上就翻倍占内存。
+    pub async fn get_head(
+        &self,
+        user_ns: &str,
+        book_key: &str,
+        chapter_key: &str,
+        max_bytes: u64,
+    ) -> anyhow::Result<Option<(String, bool)>> {
+        read_head_limited(&self.chapter_path(user_ns, book_key, chapter_key), max_bytes).await
+    }
+
     /// 写入章节正文，并按容量上限淘汰最旧条目。
     pub async fn put(
         &self,
@@ -223,6 +236,29 @@ impl FileCache {
             .join(name)
             .with_extension("txt")
     }
+}
+
+/// 限量读文本文件：最多读 max_bytes 个字节（多读 1 字节判断是否还有剩余，
+/// 截断处可能劈开多字节字符，由 lossy 转换兜住）。文件不存在返回 None。
+pub(crate) async fn read_head_limited(
+    path: &Path,
+    max_bytes: u64,
+) -> anyhow::Result<Option<(String, bool)>> {
+    use tokio::io::AsyncReadExt;
+    let file = match tokio::fs::File::open(path).await {
+        Ok(file) => file,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(e) => return Err(e.into()),
+    };
+    let mut buf = Vec::new();
+    file.take(max_bytes.saturating_add(1))
+        .read_to_end(&mut buf)
+        .await?;
+    let had_more = buf.len() as u64 > max_bytes;
+    if had_more {
+        buf.truncate(max_bytes as usize);
+    }
+    Ok(Some((String::from_utf8_lossy(&buf).into_owned(), had_more)))
 }
 
 /// 两层缓存（正文/评论）共用的容量控制：平时只增量记账（`written` 累加），
@@ -419,6 +455,30 @@ mod tests {
 
     fn temp_root(prefix: &str) -> PathBuf {
         std::env::temp_dir().join(format!("{prefix}-{}", uuid::Uuid::new_v4()))
+    }
+
+    #[tokio::test]
+    async fn get_head_reads_at_most_max_bytes_and_reports_remainder() {
+        let root = temp_root("reader-cache-head");
+        let cache = FileCache::new(&root, 0);
+        cache.put("ns", "book_1", "c1", "0123456789").await.unwrap();
+
+        let (text, more) = cache.get_head("ns", "book_1", "c1", 4).await.unwrap().unwrap();
+        assert_eq!(text, "0123");
+        assert!(more, "文件还有剩余必须如实上报");
+        let (text, more) = cache
+            .get_head("ns", "book_1", "c1", 10)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(text, "0123456789");
+        assert!(!more, "恰好读完不算截断");
+        assert!(cache
+            .get_head("ns", "book_1", "none", 4)
+            .await
+            .unwrap()
+            .is_none());
+        let _ = fs::remove_dir_all(&root).await;
     }
 
     #[tokio::test]

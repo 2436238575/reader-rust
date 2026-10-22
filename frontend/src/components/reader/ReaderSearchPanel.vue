@@ -55,7 +55,10 @@
           :class="{ active: scope === 'chapter' && idx === activeIndex }"
           @click="$emit('jump', result, idx)"
         >
-          <div class="search-result-title">{{ result.chapterTitle }}</div>
+          <div class="search-result-title">
+            {{ result.chapterTitle }}
+            <span v-if="result.edited" class="search-result-edited">已编辑</span>
+          </div>
           <div class="search-result-snippet">{{ result.snippet }}</div>
         </button>
       </div>
@@ -196,6 +199,20 @@ watch(
   font-size: var(--text-sm);
   font-weight: 700;
   margin-bottom: 4px;
+}
+
+/* 命中的是编辑版章节：沿用目录徽章的口径（琥珀色小标签） */
+.search-result-edited {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 0 6px;
+  border-radius: 4px;
+  font-size: var(--text-xs);
+  font-weight: 500;
+  line-height: 18px;
+  vertical-align: 1px;
+  color: #b45309;
+  background: rgba(217, 119, 6, 0.14);
 }
 
 .search-result-snippet {

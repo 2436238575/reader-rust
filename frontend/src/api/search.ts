@@ -7,6 +7,8 @@ export interface CachedSearchHit {
   chapterTitle: string
   chapterUrl: string
   snippets: string[]
+  /** 命中内容来自编辑版（而非上游缓存） */
+  edited: boolean
 }
 
 export interface CachedSearchOutcome {

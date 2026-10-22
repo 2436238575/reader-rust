@@ -81,7 +81,7 @@ GET /reader3/searchCachedContent
 | `query`      | string | 是   | 纯文本子串（大小写不敏感），最长 100 字符  |
 | `maxResults` | number | 否   | 命中章节数上限，默认 50，最大 200          |
 
-响应：命中按章聚合，每章最多 3 条上下文摘要；`coverage` 如实标注检索覆盖面
+响应：命中按章聚合，每章最多 3 条上下文摘要；已编辑章节读编辑版内容（与阅读器显示一致），对应命中的 `edited` 为 `true`。`coverage` 如实标注检索覆盖面
 （只有缓存过的章节参与，阅读进度没走到/没手动缓存的章节不在其内）：
 
 ```json
@@ -93,7 +93,8 @@ GET /reader3/searchCachedContent
         "chapterIndex": 2,
         "chapterTitle": "第三章",
         "chapterUrl": "https://...",
-        "snippets": ["…命中词前后约 40 字符的上下文…"]
+        "snippets": ["…命中词前后约 40 字符的上下文…"],
+        "edited": false
       }
     ],
     "cachedChapters": 12,
@@ -104,7 +105,7 @@ GET /reader3/searchCachedContent
 }
 ```
 
-`truncated: true` 表示命中达到上限被截断，后面可能还有结果。
+`truncated: true` 表示没有扫完全书：命中达到上限、或超出检索资源预算（5000 章 / 50MB / 10 秒，章节按剩余预算限量读入），后面可能还有结果。
 
 ## 发现页
 

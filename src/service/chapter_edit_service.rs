@@ -127,6 +127,21 @@ impl ChapterEditService {
         }
     }
 
+    /// 限量读编辑版正文（全文检索的字节预算用）：最多 max_bytes，
+    /// 返回 (内容, 文件是否还有剩余)；没有编辑过返回 None。
+    pub async fn get_chapter_edit_head(
+        &self,
+        user_ns: &str,
+        book_id: &str,
+        chapter_url: &str,
+        max_bytes: u64,
+    ) -> Result<Option<(String, bool)>, AppError> {
+        let path = self.chapter_path(user_ns, book_id, chapter_url)?;
+        crate::storage::cache::file_cache::read_head_limited(&path, max_bytes)
+            .await
+            .map_err(|e| AppError::Internal(e.into()))
+    }
+
     /// 按书列出已编辑章节的 chapterUrl 集（目录徽章用）。
     pub async fn list_chapter_edits(
         &self,
