@@ -1381,6 +1381,7 @@ impl BookService {
     }
 
     /// 评论 URL 模板可用的占位符。
+    #[allow(clippy::too_many_arguments)]
     fn review_ctx(
         &self,
         book_url: &str,
@@ -1389,12 +1390,15 @@ impl BookService {
         count: i32,
         sort: ReviewSort,
         para_index: Option<i32>,
+        variant: &str,
     ) -> HashMap<String, String> {
         let mut ctx = HashMap::new();
         ctx.insert("page".to_string(), page.max(1).to_string());
         ctx.insert("count".to_string(), count.to_string());
         ctx.insert("bookUrl".to_string(), book_url.to_string());
         ctx.insert("chapterUrl".to_string(), chapter_url.to_string());
+        // 当前客户端显示的正文版本：书源评论 URL 可按需用它区分
+        ctx.insert("variant".to_string(), variant.to_string());
         // 站点取值各不相同（番茄的段评排序是 `Hot`/`TimeDesc` 枚举），
         // 规则里可以用 JS 映射：`&sort={{sort === 'hot' ? 'Hot' : 'TimeDesc'}}`
         ctx.insert("sort".to_string(), sort.as_ctx_value().to_string());
@@ -1416,6 +1420,7 @@ impl BookService {
         page: i32,
         count: i32,
         sort: ReviewSort,
+        variant: &str,
         refresh: bool,
     ) -> Result<ReviewResponse<ReviewPage>, AppError> {
         if !self.parser.has_chapter_review_rule(source) {
@@ -1428,7 +1433,7 @@ impl BookService {
                 .and_then(|rule| rule.review_url.as_deref()),
         );
         let cache_key = format!(
-            "chapter|{chapter_url}|{page}|{count}|{}",
+            "chapter|{chapter_url}|{page}|{count}|{}|{variant}",
             sort.as_ctx_value()
         );
         let author_marks = self.parser.has_chapter_author_rules(source);
@@ -1442,7 +1447,7 @@ impl BookService {
         let (body, base) = self
             .chapter_source_body(user_ns, source, chapter_url)
             .await?;
-        let ctx = self.review_ctx(book_url, chapter_url, page, count, sort, None);
+        let ctx = self.review_ctx(book_url, chapter_url, page, count, sort, None, variant);
         let url = self
             .parse_body_blocking(user_ns, source, &body, &base, &ctx, |p, s, b, u, ctx| {
                 p.chapter_review_url(s, b, u, ctx)
@@ -1466,6 +1471,7 @@ impl BookService {
     }
 
     /// 段评概览：本章哪些段落有段评、各有多少条。
+    #[allow(clippy::too_many_arguments)]
     pub async fn get_para_review_index(
         &self,
         user_ns: &str,
@@ -1473,12 +1479,13 @@ impl BookService {
         book_id: &str,
         book_url: &str,
         chapter_url: &str,
+        variant: &str,
         refresh: bool,
     ) -> Result<ReviewResponse<ParaReviewIndex>, AppError> {
         if !self.parser.has_para_review_rule(source) {
             return Ok(ReviewResponse::new(false, ParaReviewIndex::default()));
         }
-        let cache_key = format!("para-index|{chapter_url}");
+        let cache_key = format!("para-index|{chapter_url}|{variant}");
         if !refresh {
             if let Some(cached) = self.load_review_cache(user_ns, book_id, &cache_key).await {
                 return Ok(ReviewResponse::new(true, cached));
@@ -1494,6 +1501,7 @@ impl BookService {
             REVIEW_PAGE_SIZE,
             ReviewSort::Hot,
             None,
+            variant,
         );
         let url = self
             .parse_body_blocking(user_ns, source, &body, &base, &ctx, |p, s, b, u, ctx| {
@@ -1575,6 +1583,7 @@ impl BookService {
         page: i32,
         count: i32,
         sort: ReviewSort,
+        variant: &str,
         refresh: bool,
     ) -> Result<ReviewResponse<ReviewPage>, AppError> {
         if !self.parser.has_para_review_rule(source) {
@@ -1588,7 +1597,7 @@ impl BookService {
         );
         let author_marks = self.parser.has_para_author_rules(source);
         let cache_key = format!(
-            "para|{chapter_url}|{para_index}|{page}|{count}|{}",
+            "para|{chapter_url}|{para_index}|{page}|{count}|{}|{variant}",
             sort.as_ctx_value()
         );
         if !refresh {
@@ -1601,7 +1610,15 @@ impl BookService {
         let (body, base) = self
             .chapter_source_body(user_ns, source, chapter_url)
             .await?;
-        let ctx = self.review_ctx(book_url, chapter_url, page, count, sort, Some(para_index));
+        let ctx = self.review_ctx(
+            book_url,
+            chapter_url,
+            page,
+            count,
+            sort,
+            Some(para_index),
+            variant,
+        );
         let url = self
             .parse_body_blocking(user_ns, source, &body, &base, &ctx, |p, s, b, u, ctx| {
                 p.para_review_url(s, b, u, ctx)
@@ -1642,6 +1659,7 @@ impl BookService {
         book_url: &str,
         chapter_url: &str,
         para_index: Option<i32>,
+        variant: &str,
         refresh: bool,
     ) -> Result<ReviewResponse<ReviewPage>, AppError> {
         let (capable, author_marks) = match para_index {
@@ -1659,8 +1677,8 @@ impl BookService {
             return Ok(ReviewResponse::new(false, ReviewPage::empty(1)));
         }
         let cache_key = match para_index {
-            Some(index) => format!("para-author|{chapter_url}|{index}"),
-            None => format!("chapter-author|{chapter_url}"),
+            Some(index) => format!("para-author|{chapter_url}|{index}|{variant}"),
+            None => format!("chapter-author|{chapter_url}|{variant}"),
         };
         if !refresh {
             if let Some(cached) = self
@@ -1684,6 +1702,7 @@ impl BookService {
                     AUTHOR_SCAN_PAGE_SIZE,
                     sort,
                     para_index,
+                    variant,
                 );
                 let url = self
                     .parse_body_blocking(

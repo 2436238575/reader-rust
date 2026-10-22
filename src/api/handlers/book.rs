@@ -85,6 +85,32 @@ pub struct BookContentRequest {
     pub book_id: Option<String>,
     pub index: Option<i32>,
     pub refresh: Option<i32>,
+    /// `upstream` 返回上游原版（不读编辑版）；缺省/其它值返回编辑版优先。
+    pub variant: Option<String>,
+}
+
+/// 正文版本：编辑版优先，或只读上游原版。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ContentVariant {
+    Edited,
+    Upstream,
+}
+
+impl ContentVariant {
+    fn parse(value: Option<&str>) -> Self {
+        if value.is_some_and(|v| v.trim().eq_ignore_ascii_case("upstream")) {
+            Self::Upstream
+        } else {
+            Self::Edited
+        }
+    }
+
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Edited => "edited",
+            Self::Upstream => "upstream",
+        }
+    }
 }
 
 /// 章节正文响应。`data` 不再是裸字符串：编辑过的章节把 diff 一起带回来，
@@ -93,7 +119,10 @@ pub struct BookContentRequest {
 #[serde(rename_all = "camelCase")]
 pub struct ChapterContentData {
     pub content: String,
+    /// 本章是否存在编辑版（不代表当前显示的是哪一个版本）。
     pub edited: bool,
+    /// 当前返回的是哪个版本：`edited` / `upstream`。
+    pub variant: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub diff: Option<ChapterDiffData>,
     /// diff 算不出来的原因（正文仍然可用）。前端在 diff 面板里展示。
@@ -106,19 +135,41 @@ pub struct ChapterDiffData {
     pub ops: Vec<crate::service::git_diff_service::DiffOp>,
 }
 
-/// 组装正文响应：有编辑版就顺带算好 diff。
+/// 组装正文响应：有编辑版就顺带算好 diff（两个版本都算，diff 面板共用）。
 ///
-/// `upstream` 为 None 表示基准读不到（本地原文被删、上游失败）——此时仍返回
-/// 编辑版，只把原因放进 `diffError`，不让「看不了差异」连累「看不了正文」。
+/// `upstream` 为 None 表示基准读不到（本地原文被删、上游失败）——编辑版模式下
+/// 仍返回编辑版，只把原因放进 `diffError`；上游原版模式下调用方会先报错。
 async fn chapter_content_data(
     state: &AppState,
     upstream: Option<String>,
     edited: Option<String>,
+    variant: ContentVariant,
 ) -> ChapterContentData {
+    let has_edit = edited.is_some();
+    if variant == ContentVariant::Upstream {
+        let diff = match (upstream.as_deref(), edited.as_deref()) {
+            (Some(base), Some(edit)) => Some(state.git_diff_service.diff_texts(base, edit).await),
+            _ => None,
+        };
+        let (diff, diff_error) = match diff {
+            Some(Ok(ops)) => (Some(ChapterDiffData { ops }), None),
+            Some(Err(reason)) => (None, Some(reason.to_string())),
+            None => (None, None),
+        };
+        return ChapterContentData {
+            content: upstream.unwrap_or_default(),
+            edited: has_edit,
+            variant: variant.as_str().to_string(),
+            diff,
+            diff_error,
+        };
+    }
+
     let Some(edited) = edited else {
         return ChapterContentData {
             content: upstream.unwrap_or_default(),
             edited: false,
+            variant: variant.as_str().to_string(),
             diff: None,
             diff_error: None,
         };
@@ -127,6 +178,7 @@ async fn chapter_content_data(
         return ChapterContentData {
             content: edited,
             edited: true,
+            variant: variant.as_str().to_string(),
             diff: None,
             diff_error: Some("上游原文不可读，未计算差异".to_string()),
         };
@@ -135,12 +187,14 @@ async fn chapter_content_data(
         Ok(ops) => ChapterContentData {
             content: edited,
             edited: true,
+            variant: variant.as_str().to_string(),
             diff: Some(ChapterDiffData { ops }),
             diff_error: None,
         },
         Err(reason) => ChapterContentData {
             content: edited,
             edited: true,
+            variant: variant.as_str().to_string(),
             diff: None,
             diff_error: Some(reason.to_string()),
         },
@@ -588,6 +642,7 @@ pub async fn get_book_content(
     let user_ns = user.0.ns.clone();
 
     let do_refresh = req.refresh.unwrap_or(0) > 0;
+    let variant = ContentVariant::parse(req.variant.as_deref());
 
     if req.chapter_url.as_deref().is_some_and(is_local_txt_url) {
         let url = req
@@ -620,13 +675,13 @@ pub async fn get_book_content(
             .await
         {
             Ok(content) => Some(content),
-            Err(error) if edited.is_some() => {
+            Err(error) if variant == ContentVariant::Edited && edited.is_some() => {
                 tracing::warn!(%error, "本地 TXT 原文读取失败，只返回编辑版");
                 None
             }
             Err(error) => return Err(error),
         };
-        let data = chapter_content_data(&state, upstream, edited).await;
+        let data = chapter_content_data(&state, upstream, edited, variant).await;
         return Ok(Json(ApiResponse::ok(
             serde_json::to_value(data).unwrap_or_default(),
         )));
@@ -662,13 +717,13 @@ pub async fn get_book_content(
             .await
         {
             Ok(content) => Some(content),
-            Err(error) if edited.is_some() => {
+            Err(error) if variant == ContentVariant::Edited && edited.is_some() => {
                 tracing::warn!(%error, "本地 EPUB 原文读取失败，只返回编辑版");
                 None
             }
             Err(error) => return Err(error),
         };
-        let data = chapter_content_data(&state, upstream, edited).await;
+        let data = chapter_content_data(&state, upstream, edited, variant).await;
         return Ok(Json(ApiResponse::ok(
             serde_json::to_value(data).unwrap_or_default(),
         )));
@@ -709,13 +764,13 @@ pub async fn get_book_content(
         .await
     {
         Ok(content) => Some(content),
-        Err(error) if !do_refresh && edited.is_some() => {
+        Err(error) if variant == ContentVariant::Edited && !do_refresh && edited.is_some() => {
             tracing::warn!(%error, "上游正文读取失败，只返回编辑版");
             None
         }
         Err(error) => return Err(error),
     };
-    let data = chapter_content_data(&state, upstream, edited).await;
+    let data = chapter_content_data(&state, upstream, edited, variant).await;
     Ok(Json(ApiResponse::ok(
         serde_json::to_value(data).unwrap_or_default(),
     )))

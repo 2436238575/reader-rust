@@ -215,6 +215,25 @@ async fn local_book_edit_overlays_original_and_delete_restores() {
             .any(|text| text.contains("原始正文第一句")),
         "diff 基准应是原文: {after}"
     );
+
+    // 切换正文版本：上游原版返回原文，但仍标记本章有编辑版并带上 diff
+    let upstream_view = server
+        .get_content(book_id, &chapter_url, json!({ "variant": "upstream" }))
+        .await;
+    assert_eq!(upstream_view["variant"], json!("upstream"));
+    assert_eq!(upstream_view["edited"], json!(true));
+    assert!(
+        upstream_view["content"]
+            .as_str()
+            .unwrap()
+            .contains("原始正文第一句"),
+        "上游原版应返回原文: {upstream_view}"
+    );
+    assert!(
+        upstream_view["diff"]["ops"].is_array(),
+        "上游原版也要能打开 diff 面板: {upstream_view}"
+    );
+
     let list = server
         .post("listChapterEdits", json!({ "bookId": book_id }))
         .await;
@@ -450,6 +469,12 @@ async fn network_book_refresh_updates_base_but_returns_edit() {
             .any(|text| text.contains("上游第二版正文")),
         "diff 基准应已更新到第二版: {after_refresh}"
     );
+
+    let upstream_view = server
+        .get_content(&book_id, &chapter_url, json!({ "variant": "upstream" }))
+        .await;
+    assert_eq!(upstream_view["variant"], json!("upstream"));
+    assert_eq!(upstream_view["content"], json!("上游第二版正文"));
 }
 
 /// 服务器没有 git：正文照常返回，diff 缺省并带上原因，而不是整个请求失败。

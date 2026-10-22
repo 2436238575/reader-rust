@@ -31,6 +31,9 @@ pub struct ReviewRequest {
     /// true 时忽略分页参数，返回「只看作者」扫描结果（作者评论/赞过/回复过的整条评论）
     pub author_only: Option<bool>,
     pub refresh: Option<i32>,
+    /// 正文版本：`edited`（默认）或 `upstream`。评论按版本分开缓存，
+    /// 书源评论 URL 里可用 `{{variant}}` 区分（大多数站点两类评论相同）。
+    pub variant: Option<String>,
 }
 
 /// 一次评论查询的完整上下文。
@@ -43,6 +46,7 @@ struct ReviewContext {
     count: i32,
     sort: ReviewSort,
     refresh: bool,
+    variant: String,
 }
 
 /// 解析请求里的书籍与书源，得到一次评论查询的全部上下文。
@@ -70,6 +74,10 @@ async fn resolve_context(
             _ => ReviewSort::Hot,
         },
         refresh: req.refresh.unwrap_or(0) > 0,
+        variant: match req.variant.as_deref().map(str::trim) {
+            Some(value) if value.eq_ignore_ascii_case("upstream") => "upstream".to_string(),
+            _ => "edited".to_string(),
+        },
     })
 }
 
@@ -118,6 +126,7 @@ pub async fn get_chapter_comments(
                 &ctx.book_url,
                 &ctx.chapter_url,
                 None,
+                &ctx.variant,
                 ctx.refresh,
             )
             .await?
@@ -133,6 +142,7 @@ pub async fn get_chapter_comments(
                 ctx.page,
                 ctx.count,
                 ctx.sort,
+                &ctx.variant,
                 ctx.refresh,
             )
             .await?
@@ -156,6 +166,7 @@ pub async fn get_para_comment_index(
             &ctx.book_id,
             &ctx.book_url,
             &ctx.chapter_url,
+            &ctx.variant,
             ctx.refresh,
         )
         .await?;
@@ -185,6 +196,7 @@ pub async fn get_para_comments(
                 &ctx.book_url,
                 &ctx.chapter_url,
                 Some(para_index),
+                &ctx.variant,
                 ctx.refresh,
             )
             .await?
@@ -201,6 +213,7 @@ pub async fn get_para_comments(
                 ctx.page,
                 ctx.count,
                 ctx.sort,
+                &ctx.variant,
                 ctx.refresh,
             )
             .await?

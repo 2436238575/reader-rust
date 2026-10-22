@@ -16,6 +16,7 @@ GET /reader3/getBookContent
 | `chapterUrl` | string | 是   | 章节 URL（数据字段，用来定位章节并作为缓存键 `md5(chapterUrl)`）  |
 | `index`      | number | 否   | 章节下标                                                          |
 | `refresh`    | number | 否   | 非 0 时强制刷新上游缓存（同时会重算 diff 基准）                   |
+| `variant`    | string | 否   | `upstream` 返回上游原版；缺省/其它值返回编辑版优先                 |
 
 响应 `data` 是对象：正文，以及（本章有编辑版时）与上游原文的差异。没编辑过就是
 `{ "content": "正文内容...", "edited": false }`：
@@ -27,6 +28,7 @@ GET /reader3/getBookContent
   "data": {
     "content": "编辑后的整章正文...",
     "edited": true,
+    "variant": "edited",
     "diff": {
       "ops": [
         { "type": "equal", "baseIndex": 0, "editedIndex": 0 },
@@ -39,12 +41,14 @@ GET /reader3/getBookContent
 }
 ```
 
-- `edited`：本章是否存在用户编辑版。阅读内容始终优先返回编辑版。
+- `edited`：本章是否存在用户编辑版（不代表当前显示的是哪一个版本）。
+- `variant`：本次返回的正文版本，`edited`（编辑版）或 `upstream`（上游原版）。
 - `diff.ops`：段落级操作序列，`type` 为 `equal` / `add` / `del` / `modify`，
   带 `baseIndex`（上游段落下标）与 `editedIndex`（编辑版段落下标）。
   为省流量，`equal` 行不带文本（前端用 `content` 补齐）；`add` 只带 `editedText`，
   `del` 只带 `baseText`，`modify` 两段都带。
 - `diffError`：算不出差异时的原因（字符串）。此时 `diff` 缺省，但正文照常可用。
+- `variant=upstream` 时 `content` 换成上游原文，`diff` 仍然返回（diff 面板两个版本共用）；阅读器只在显示编辑版时叠加正文改动标记。
   常见原因：服务器没装 git（可用 [`GIT_PATH`](../guide/configuration) 指定路径）、
   计算超时、章节过大、上游原文读不到。
 
@@ -52,8 +56,8 @@ diff 由服务端系统 git（`git diff --no-index --unified=0`）计算，按�
 做进程内缓存；同一章重复阅读不会反复起 git 进程。系统没有 git 时**不回退**到
 前端计算，前端只在差异面板里展示 `diffError`。
 
-`refresh=1` 会先删掉本章上游缓存并重新抓取，然后再和编辑版对比；返回值仍然是
-编辑版。编辑版的读写端点见下。
+`refresh=1` 会先删掉本章上游缓存并重新抓取，然后再和编辑版对比；`variant` 决定
+返回哪一版（默认编辑版）。编辑版的读写端点见下。
 
 也可使用 `POST /reader3/getBookContent`。
 

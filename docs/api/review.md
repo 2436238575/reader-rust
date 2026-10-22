@@ -19,6 +19,7 @@
 | `sort`       | string  | 否   | `hot`（默认，站点热度序）或 `time`（按时间倒序）；认不出来的取值按 `hot` 处理 |
 | `authorOnly` | boolean | 否   | `true` 时走「只看作者」扫描（见下），忽略 `page` / `count` / `sort`           |
 | `refresh`    | number  | 否   | `1` 表示忽略缓存重新抓取                                                      |
+| `variant`    | string  | 否   | 当前显示的正文版本：`edited`（默认）或 `upstream`。评论按版本分开缓存，书源评论 URL 可用 <code v-pre>{{variant}}</code> 区分（大多数站点两版评论相同） |
 
 排序说明：
 
@@ -161,7 +162,7 @@ POST /reader3/getParaComments
 
 ## 缓存与清理
 
-评论缓存按 `用户 / 书籍（bookId）/ 章节+类型+页码` 存放于 `storage/cache/reviews/`，默认 7 天过期，同时受 `REVIEW_CACHE_USER_LIMIT_BYTES`（默认 64 MiB）容量约束。
+评论缓存按 `用户 / 书籍（bookId）/ 章节+类型+页码+排序+正文版本` 存放于 `storage/cache/reviews/`，默认 7 天过期，同时受 `REVIEW_CACHE_USER_LIMIT_BYTES`（默认 64 MiB）容量约束。切换编辑版/上游原版不会复用另一版本下的缓存条目。
 
 - 按书清理：`purgeCache` 传 `{ "scope": "book", "bookId": "book_12" }` 会一并清掉该书的评论缓存（`deleteBookCache` 只清正文/目录/换源候选，不动评论）。
 - 按类型清理：`purgeCache` 传 `{ "scope": "kind", "kind": "review" }`。

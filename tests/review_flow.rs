@@ -575,6 +575,39 @@ async fn comments_are_cached_for_seven_days_and_reused() {
     assert_eq!(server.hits_for("/comment/para/list"), after_index);
 }
 
+/// 章评缓存按正文版本分开：切到上游原版要重新取一次，切回编辑版仍命中旧缓存。
+#[tokio::test]
+async fn comment_caches_are_scoped_by_content_variant() {
+    let server = TestServer::start().await;
+
+    server
+        .post("getChapterComments", server.review_body(json!({})))
+        .await;
+    let after_edited = server.hits_for("/comment/item");
+    assert_eq!(after_edited, 1, "编辑版首次应打上游");
+
+    server
+        .post(
+            "getChapterComments",
+            server.review_body(json!({ "variant": "upstream" })),
+        )
+        .await;
+    assert_eq!(
+        server.hits_for("/comment/item"),
+        after_edited + 1,
+        "上游原版是另一个缓存键，应重新打上游"
+    );
+
+    server
+        .post("getChapterComments", server.review_body(json!({})))
+        .await;
+    assert_eq!(
+        server.hits_for("/comment/item"),
+        after_edited + 1,
+        "切回编辑版仍命中自己的缓存"
+    );
+}
+
 #[tokio::test]
 async fn purge_kind_review_clears_the_comment_cache() {
     let server = TestServer::start().await;

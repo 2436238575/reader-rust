@@ -1426,6 +1426,7 @@ getContentAwait(source, book, chapter, nextChapterUrl=null, needSave=true):
 | <code v-pre>{{page}}</code> / <code v-pre>{{count}}</code> | 页码 / 每页条数                                                                                    |
 | <code v-pre>{{paraIndex}}</code>          | 段号（仅段评列表 URL）                                                                             |
 | <code v-pre>{{sort}}</code>               | 排序方式：`hot` / `time`。站点取值不同时可用 JS 映射，如 <code v-pre>{{sort === 'hot' ? 'Hot' : 'TimeDesc'}}</code> |
+| <code v-pre>{{variant}}</code>            | 客户端当前显示的正文版本：`edited`（编辑版）或 `upstream`（上游原版）；不需要区分时忽略即可 |
 | <code v-pre>{{bookUrl}}</code> / <code v-pre>{{chapterUrl}}</code> | 当前书籍 / 章节 URL |
 
 番茄书源（FQWeb）的实际取值：章评 `smart_hot` / `time`，段评 `hot` / `time_desc`。
