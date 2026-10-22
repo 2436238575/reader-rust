@@ -85,6 +85,87 @@ export function buildBaseChapterHtml(rawText: string, opts: BaseRenderOptions) {
   return wrapper.innerHTML
 }
 
+function normalizeDiffText(text: string) {
+  return text
+    .replace(/<[^>]+>/g, '')
+    .replace(/\s+/g, '')
+    .trim()
+}
+
+/**
+ * 把 diff 操作对到渲染后的段落上。
+ *
+ * 后端按**原始正文**算 diff，而渲染前还会跑替换规则（可能删行）与繁简转换。
+ * 段落数没变时下标仍然可靠；变了就按 `editedText` 顺序找原文，找不到的
+ * 操作宁可不标，也不把标记贴到错误段落上。
+ */
+function resolveDiffParagraphs(paragraphs: HTMLElement[], ops: ParagraphDiffOp[]) {
+  const resolved = new Map<number, HTMLElement>()
+  const used = new Set<number>()
+  let cursor = 0
+  let maxEditedIndex = -1
+
+  for (let opIndex = 0; opIndex < ops.length; opIndex += 1) {
+    const op = ops[opIndex]
+    if (op.type === 'del' || op.editedIndex == null) continue
+    maxEditedIndex = Math.max(maxEditedIndex, op.editedIndex)
+    const expected = normalizeDiffText(op.editedText || '')
+    if (!expected) continue
+
+    const direct = paragraphs[op.editedIndex]
+    if (
+      direct &&
+      !used.has(op.editedIndex) &&
+      normalizeDiffText(direct.textContent || '') === expected
+    ) {
+      resolved.set(opIndex, direct)
+      used.add(op.editedIndex)
+      cursor = Math.max(cursor, op.editedIndex + 1)
+      continue
+    }
+
+    // 只在当前位置附近找：替换规则删/增行时下标会漂，但不会把整章重排
+    const limit = Math.min(paragraphs.length, cursor + 64)
+    let bestIndex = -1
+    let bestScore = 0
+    for (let index = cursor; index < limit; index += 1) {
+      if (used.has(index)) continue
+      const candidate = normalizeDiffText(paragraphs[index].textContent || '')
+      if (!candidate) continue
+      if (candidate === expected) {
+        bestIndex = index
+        bestScore = 1
+        break
+      }
+      const score = paraTextSimilarity(expected, candidate)
+      if (score > bestScore) {
+        bestScore = score
+        bestIndex = index
+      }
+    }
+    if (bestIndex >= 0 && bestScore >= 0.75) {
+      resolved.set(opIndex, paragraphs[bestIndex])
+      used.add(bestIndex)
+      cursor = bestIndex + 1
+    }
+  }
+
+  // 段落数一致（没有规则增删行）：文本对不上（繁简转换等）也按原下标兜底
+  if (paragraphs.length === maxEditedIndex + 1) {
+    for (let opIndex = 0; opIndex < ops.length; opIndex += 1) {
+      const op = ops[opIndex]
+      if (op.type === 'del' || op.editedIndex == null || resolved.has(opIndex)) continue
+      if (used.has(op.editedIndex)) continue
+      const paragraph = paragraphs[op.editedIndex]
+      if (paragraph) {
+        resolved.set(opIndex, paragraph)
+        used.add(op.editedIndex)
+      }
+    }
+  }
+  return resolved
+}
+
 /**
  * 编辑版与上游基准的 diff 标记（vscode git diff 风）：
  *
@@ -104,6 +185,7 @@ export function applyDiffMarks(wrapper: HTMLElement, ops: ParagraphDiffOp[]) {
   if (!ops.length) return
   const paragraphs = Array.from(wrapper.querySelectorAll('p')) as HTMLElement[]
   if (!paragraphs.length) return
+  const resolved = resolveDiffParagraphs(paragraphs, ops)
   // 删除块的首个 del 下标：点击红箭头时据此取出整块被删段落
   let pendingDeleteStart: number | null = null
   ops.forEach((op, opIndex) => {
@@ -113,7 +195,7 @@ export function applyDiffMarks(wrapper: HTMLElement, ops: ParagraphDiffOp[]) {
     }
     const index = op.editedIndex
     if (index == null) return
-    const paragraph = paragraphs[index]
+    const paragraph = resolved.get(opIndex)
     if (!paragraph) return
     if (pendingDeleteStart != null) {
       paragraph.dataset.diffDelStart = String(pendingDeleteStart)

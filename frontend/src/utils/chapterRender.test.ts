@@ -203,6 +203,44 @@ describe('applyDiffMarks', () => {
     expect((ps2[1] as HTMLElement).dataset.diffDelStart).toBe('2')
   })
 
+  it('替换规则删掉一段后仍按原文对齐新增标记', () => {
+    // 原始正文是 [甲段, 广告段, 乙段, 新段]，渲染时广告行被替换规则删掉。
+    // equal op 的文本由 store 的 hydrateDiffOps 从编辑版正文补齐。
+    const hydrated = [
+      { ...equal(0, 0), editedText: '甲段' },
+      { ...equal(1, 1), editedText: '广告段' },
+      { ...equal(2, 2), editedText: '乙段' },
+      add(3, '新段'),
+    ]
+    const el = root('<p>甲段</p><p>乙段</p><p>新段</p>')
+    applyDiffMarks(el, hydrated)
+    const ps = el.querySelectorAll('p')
+    expect(ps[2].classList.contains('diff-added')).toBe(true)
+    expect((ps[2] as HTMLElement).dataset.diffOp).toBe('3')
+    expect(ps[1].classList.contains('diff-added')).toBe(false)
+  })
+
+  it('替换规则删行后删除箭头仍跟着匹配到的下一段', () => {
+    const el = root('<p>甲段</p><p>乙段</p>')
+    applyDiffMarks(el, [
+      { ...equal(0, 0), editedText: '甲段' },
+      del(1, '广告段'),
+      { ...equal(2, 1), editedText: '乙段' },
+    ])
+    const ps = el.querySelectorAll('p')
+    expect(ps[1].classList.contains('diff-del-after')).toBe(true)
+    expect((ps[1] as HTMLElement).dataset.diffDelStart).toBe('1')
+  })
+
+  it('段落数一致但文本被繁简转换改过时按下标兜底', () => {
+    const el = root('<p>甲乙丙</p><p>丁戊己</p>')
+    applyDiffMarks(el, [
+      { ...equal(0, 0), editedText: '甲乙丙' },
+      modify(1, 1, '完全不同的原文', '完全不同的新文'),
+    ])
+    expect(el.querySelectorAll('p')[1].classList.contains('diff-modified')).toBe(true)
+  })
+
   it('diff 标记后划线/搜索仍能穿过 span 匹配', () => {
     const el = root('<p>他走出了那座古庙。</p>')
     applyDiffMarks(el, [modify(0, 0, '他走进了那座古庙。', '他走出了那座古庙。')])
