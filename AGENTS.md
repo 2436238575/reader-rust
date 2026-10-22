@@ -22,7 +22,7 @@ Reader-Rust 是 [阅读3.0](https://github.com/hectorqin/reader) 的 Rust 重写
 cargo run                      # 开发模式运行，默认监听 0.0.0.0:8080
 cargo build                    # 调试构建
 cargo build --release          # 发布构建
-cargo test                     # 全部测试（Rust 侧共 363 个，另有 2 个真实网络用例默认忽略）
+cargo test                     # 全部测试（Rust 侧共 371 个，另有 2 个真实网络用例默认忽略）
 cargo test <关键字>             # 按名称过滤测试
 cargo clippy --all-targets     # 静态检查
 cargo fmt                      # 格式化
@@ -155,8 +155,9 @@ src/
     secret.rs             JWT_SECRET 解析与持久化
     extractor.rs          CurrentUser / MaybeUser 提取器
     middleware.rs         require_auth / require_admin / optional_auth
-  service/                业务编排，12 文件约 7800 行
+  service/                业务编排，12 文件约 10800 行
     image_service.rs       图片管道：id 映射 + HEIC→JPEG + 永久缓存 + 回源自愈
+    git_diff_service.rs    章节编辑版 diff：系统 git（GIT_PATH）+ 变更块相似度配对 + 结果缓存
     agent_sidecar_service.rs AI 资料编排：spawn Python sidecar、逐章 run/result 泵、
                           工具应答（统一内容链路）、单章看门狗、任务注册表与取消
   parser/                 规则解析引擎，6 文件约 4300 行
@@ -186,9 +187,9 @@ scripts/release.sh        发布脚本
 storage/                  运行期数据，gitignored，首次启动自动创建
 ```
 
-规模参照（便于判断改动影响面）：后端 `src/` 共 82 个 `.rs`、约 26300 行，其中最大的三个文件是
-`parser/rule_engine.rs`（约 4700 行）、`api/handlers/book.rs`（约 3100 行）、`service/book_service.rs`（约 3100 行）；
-前端 `src/` 下 161 个文件（108 个 `.ts`，其中 30 个是测试；39 个 `.vue`；3 个 CSS + 2 个静态资源 + 1 个 JS 工具）。阅读器按职责拆成 composable（views/ReaderView.vue 只做模板与编排接线；横翻分页/连续滚动/位置恢复/搜索/选字/TTS/自动播放/手势各自成簇），纯计算下沉 `utils/`（chapterRender/horizontalPaging/readingPosition 等）。
+规模参照（便于判断改动影响面）：后端 `src/` 共 91 个 `.rs`、约 33900 行，其中最大的三个文件是
+`parser/rule_engine.rs`（约 4900 行）、`service/book_service.rs`（约 3800 行）、`api/handlers/book.rs`（约 2900 行）；
+前端 `src/` 下 178 个文件（127 个 `.ts`，其中 37 个是测试；47 个 `.vue`；2 个 CSS + SVG/PNG 各 1）。阅读器按职责拆成 composable（views/ReaderView.vue 只做模板与编排接线；横翻分页/连续滚动/位置恢复/搜索/选字/TTS/自动播放/手势各自成簇），纯计算下沉 `utils/`（chapterRender/horizontalPaging/readingPosition 等）。
 
 ---
 
@@ -369,7 +370,7 @@ XPath 有资源上限（长度 8KB / 嵌套 64 层 / 总步数 100、`//` 50）�
 
 ## 测试
 
-Rust 侧共 **363 个测试**（250 个内联单元测试 + 113 个集成用例，另有 2 个 `#[ignore]` 的真实网络用例）。`cargo test` 输出的合计是 613——`src/main.rs` 以 `mod` 重声明了全部模块，bin 目标的单元测试把同一批 250 个用例又跑了一遍，统计时别重复计算。分布为：
+Rust 侧共 **371 个测试**（258 个内联单元测试 + 113 个集成用例，另有 2 个 `#[ignore]` 的真实网络用例）。`cargo test` 输出的合计是 629——`src/main.rs` 以 `mod` 重声明了全部模块，bin 目标的单元测试把同一批 258 个用例又跑了一遍，统计时别重复计算。分布为：
 
 - `tests/` 下 20 个集成测试文件（113 个用例），其中 `book_source_compat.rs` 用例最多（17 个）；
   `auth_flow.rs`、`review_flow.rs`、`chapter_image_flow.rs`、`image_pipeline.rs` 与
@@ -381,7 +382,7 @@ Rust 侧共 **363 个测试**（250 个内联单元测试 + 113 个集成用例�
 - `agent_sidecar_flow.rs` 用 Node 假 sidecar（`tests/helpers/fake_agent_sidecar.mjs`）
   走全流程：批量更新、章节跳过、工具回调（正文/搜索钳制）、地图落盘与降级、看门狗与取消
   （机器上需要有 Node）；
-- `src/` 内的内联单元测试模块（250 个）。
+- `src/` 内的内联单元测试模块（258 个）。
 
 sidecar 使用 pytest（95 个用例，
 见「常用命令」），含从旧前端实现 1:1 移植的领域规则用例与新增编排能力用例。
