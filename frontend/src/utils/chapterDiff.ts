@@ -25,11 +25,19 @@ export function splitToParagraphs(text: string): string[] {
     .filter((line) => line.length > 0)
 }
 
+/**
+ * LCS 的 DP 表是 (m+1)×(n+1) 的 Uint32Array：万字段落的双侧乘积能凑出
+ * 数亿元素（数百 MB），浏览器直接崩。超过阈值返回 null——调用方按
+ * 「差异过大不算」处理（不显示标记/提示）。
+ */
+const MAX_LCS_CELLS = 16_000_000
+
 /** 段级 LCS（DP + 回溯）；del 紧跟 add 的一对合并为 modify。 */
-export function diffParagraphs(base: string[], edited: string[]): ParagraphDiffOp[] {
+export function diffParagraphs(base: string[], edited: string[]): ParagraphDiffOp[] | null {
   const m = base.length
   const n = edited.length
   if (!m && !n) return []
+  if ((m + 1) * (n + 1) > MAX_LCS_CELLS) return null
   // dp[i][j] = LCS(base[i:], edited[j:]) 的长度
   const dp = new Uint32Array((m + 1) * (n + 1))
   const at = (i: number, j: number) => i * (n + 1) + j

@@ -17,20 +17,21 @@ describe('splitToParagraphs', () => {
 })
 
 describe('diffParagraphs', () => {
+  const diff = (base: string[], edited: string[]) => diffParagraphs(base, edited) ?? []
   const types = (ops: ParagraphDiffOp[]) => ops.map((op) => op.type)
 
   it('完全相同：全 equal', () => {
-    const ops = diffParagraphs(['a', 'b'], ['a', 'b'])
+    const ops = diff(['a', 'b'], ['a', 'b'])
     expect(types(ops)).toEqual(['equal', 'equal'])
   })
 
   it('纯新增/纯删除', () => {
-    expect(types(diffParagraphs(['a'], ['a', 'b', 'c']))).toEqual(['equal', 'add', 'add'])
-    expect(types(diffParagraphs(['a', 'b', 'c'], ['a']))).toEqual(['equal', 'del', 'del'])
+    expect(types(diff(['a'], ['a', 'b', 'c']))).toEqual(['equal', 'add', 'add'])
+    expect(types(diff(['a', 'b', 'c'], ['a']))).toEqual(['equal', 'del', 'del'])
   })
 
   it('同位置删+加合并为 modify，内容进 op', () => {
-    const ops = diffParagraphs(['a', '旧段', 'c'], ['a', '新段', 'c'])
+    const ops = diff(['a', '旧段', 'c'], ['a', '新段', 'c'])
     expect(types(ops)).toEqual(['equal', 'modify', 'equal'])
     expect(ops[1].baseText).toBe('旧段')
     expect(ops[1].editedText).toBe('新段')
@@ -39,7 +40,7 @@ describe('diffParagraphs', () => {
   })
 
   it('一对多：删一加二合并为 modify + add（改一段、新增一段）', () => {
-    const ops = diffParagraphs(['a', 'x', 'd'], ['a', 'y', 'z', 'd'])
+    const ops = diff(['a', 'x', 'd'], ['a', 'y', 'z', 'd'])
     expect(types(ops)).toEqual(['equal', 'modify', 'add', 'equal'])
     expect(ops[1].baseText).toBe('x')
     expect(ops[1].editedText).toBe('y')
@@ -47,14 +48,20 @@ describe('diffParagraphs', () => {
   })
 
   it('中间整块替换（多段重新对齐）', () => {
-    const ops = diffParagraphs(['头', '甲', '乙', '尾'], ['头', '丙', '乙', '尾'])
+    const ops = diff(['头', '甲', '乙', '尾'], ['头', '丙', '乙', '尾'])
     expect(types(ops)).toEqual(['equal', 'modify', 'equal', 'equal'])
   })
 
   it('空对空 / 单边为空', () => {
-    expect(diffParagraphs([], [])).toEqual([])
-    expect(types(diffParagraphs([], ['a']))).toEqual(['add'])
-    expect(types(diffParagraphs(['a'], []))).toEqual(['del'])
+    expect(diff([], [])).toEqual([])
+    expect(types(diff([], ['a']))).toEqual(['add'])
+    expect(types(diff(['a'], []))).toEqual(['del'])
+  })
+
+  it('双侧段落乘积超上限返回 null（防 Uint32Array 爆内存）', () => {
+    const big = Array.from({ length: 4100 }, (_, i) => `段${i}`)
+    expect(diffParagraphs(big, big)).toBeNull()
+    expect(types(diff(['a'], ['a']))).toEqual(['equal'])
   })
 })
 

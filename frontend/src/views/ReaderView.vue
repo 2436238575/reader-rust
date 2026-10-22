@@ -784,7 +784,7 @@ async function ensureChapterDiff(chapterIndex: number) {
       /* 回退本地 */
     }
     if (!ops) ops = diffParagraphs(baseParas, editedParas)
-    chapterDiffCache.set(chapterIndex, ops.length ? ops : null)
+    chapterDiffCache.set(chapterIndex, ops?.length ? ops : null)
   } catch {
     chapterDiffCache.set(chapterIndex, null)
   } finally {

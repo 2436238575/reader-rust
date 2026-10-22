@@ -137,7 +137,7 @@ describe('applyUnderlineMarks', () => {
 })
 
 describe('applyDiffMarks', () => {
-  const opsFor = (base: string[], edited: string[]) => diffParagraphs(base, edited)
+  const opsFor = (base: string[], edited: string[]) => diffParagraphs(base, edited) ?? []
 
   it('新增段打 diff-added，未变段不动', () => {
     const el = root('<p>甲段</p><p>新加的段</p><p>乙段</p>')

@@ -67,8 +67,11 @@ impl From<anyhow::Error> for AppError {
                         "上游站点连接超时".to_string()
                     } else if err.is_connect() {
                         "无法连接上游站点".to_string()
-                    } else {
+                    } else if status > 0 {
                         format!("上游请求失败（HTTP {status}）")
+                    } else {
+                        // DNS/重定向/解码错误等没有响应状态的场景：不带「HTTP 0」
+                        "上游请求失败".to_string()
                     };
                     AppError::Upstream { status, message }
                 }

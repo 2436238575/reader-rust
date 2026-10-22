@@ -61,6 +61,7 @@ export function useReaderSearch(store: ReaderStore, options: ReaderSearchOptions
     searchScope.value = 'chapter'
     bookSearchLoading.value = false
     bookSearchCoverage.value = null
+    clearScrollRetryTimer()
   }
 
   function buildSearchSnippet(text: string, keyword: string, startIndex: number) {
@@ -187,12 +188,28 @@ export function useReaderSearch(store: ReaderStore, options: ReaderSearchOptions
     bookSearchStatus.value = ''
   }
 
+  /** 横翻分页异步重建时的 150ms 重试定时器：关面板/卸载时清掉 */
+  let scrollRetryTimer: number | null = null
+
+  function clearScrollRetryTimer() {
+    if (scrollRetryTimer) {
+      clearTimeout(scrollRetryTimer)
+      scrollRetryTimer = null
+    }
+  }
+
   function scrollToMatch(allowRetry = true) {
     nextTick(() => {
       const matches = document.querySelectorAll('.search-highlight')
       if (!matches.length) {
         // 横翻模式的分页是异步重建的，跨章跳转后高亮可能还没落进页里
-        if (allowRetry) window.setTimeout(() => scrollToMatch(false), 150)
+        if (allowRetry) {
+          clearScrollRetryTimer()
+          scrollRetryTimer = window.setTimeout(() => {
+            scrollRetryTimer = null
+            scrollToMatch(false)
+          }, 150)
+        }
         return
       }
       let targetIndex = searchIndex.value

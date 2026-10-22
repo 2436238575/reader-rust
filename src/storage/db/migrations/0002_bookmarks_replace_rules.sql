@@ -24,7 +24,10 @@ CREATE TABLE IF NOT EXISTS bookmarks (
     chapter_name TEXT NOT NULL DEFAULT '',
     book_text TEXT NOT NULL DEFAULT '',
     content TEXT NOT NULL DEFAULT '',
-    PRIMARY KEY (user_ns, book_id, chapter_index, chapter_pos, kind)
+    PRIMARY KEY (user_ns, book_id, chapter_index, chapter_pos, kind),
+    -- 客户端可造任意条目，表级兜住：kind 只允许两型，进度在万分比量程内
+    CHECK (kind IN ('bookmark', 'underline')),
+    CHECK (chapter_pos BETWEEN 0 AND 10000)
 );
 
 CREATE INDEX IF NOT EXISTS idx_bookmarks_book ON bookmarks(user_ns, book_id);

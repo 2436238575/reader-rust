@@ -1,4 +1,4 @@
-import { computed, nextTick, ref } from 'vue'
+import { computed, nextTick, onUnmounted, ref } from 'vue'
 import type { ComputedRef, Ref } from 'vue'
 import type { useReaderStore } from '../stores/reader'
 import {
@@ -60,6 +60,13 @@ export function useHorizontalPaging(
       horizontalInstantJump.value = false
     }, 120)
   }
+  // 卸载时清掉未触发的定时器，避免组件销毁后还改状态
+  onUnmounted(() => {
+    if (horizontalInstantJumpTimer) {
+      clearTimeout(horizontalInstantJumpTimer)
+      horizontalInstantJumpTimer = null
+    }
+  })
   // 单页内容区高度（px），模板挂到 article 的 CSS 变量上给图片限高；
   // 测量器上也设置同名变量，保证测量与渲染一致
   const horizontalPageContentHeight = ref(0)
