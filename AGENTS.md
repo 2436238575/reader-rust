@@ -22,7 +22,7 @@ Reader-Rust 是 [阅读3.0](https://github.com/hectorqin/reader) 的 Rust 重写
 cargo run                      # 开发模式运行，默认监听 0.0.0.0:8080
 cargo build                    # 调试构建
 cargo build --release          # 发布构建
-cargo test                     # 全部测试（Rust 侧共 371 个，另有 2 个真实网络用例默认忽略）
+cargo test                     # 全部测试（Rust 侧共 372 个，另有 2 个真实网络用例默认忽略）
 cargo test <关键字>             # 按名称过滤测试
 cargo clippy --all-targets     # 静态检查
 cargo fmt                      # 格式化
@@ -255,7 +255,9 @@ HTTP 请求
 评论（章评 / 段评）另有一组方法：`chapter_reviews` · `para_review_index` · `para_reviews`，
 外加 `chapter_review_url` / `para_review_index_url` / `para_review_url` 三个 URL 求值入口。
 评论 URL 对**章节正文响应**求值（与 `nextContentUrl` 同理：书籍 ID / 章节 ID / 版本号都在正文响应里），
-模板里额外可用 `{{page}}`、`{{count}}`、`{{paraIndex}}`、`{{bookUrl}}`、`{{chapterUrl}}`。
+模板里额外可用 `{{page}}`、`{{count}}`、`{{paraIndex}}`、`{{bookUrl}}`、`{{chapterUrl}}`、`{{variant}}`。
+`variant` 是客户端当前显示的正文版本（`edited` 默认 / `upstream`），三个评论接口都接受并计入缓存键；
+评论内容通常与版本无关，它主要影响段评在编辑版正文上的定位。
 书源没声明 `ruleReview` / `ruleParaReview` 时接口返回 `enabled: false`，前端不渲染任何入口。
 评论配图走 `imageRule`，按**列表规则**求值（`$.image_url[*]` / 多行 JS / `img@src`）；
 地址按站点顺序原样返回，挑哪个格式渲染是客户端的事（番茄会同时给 HEIC 与 JPEG）。
@@ -370,9 +372,9 @@ XPath 有资源上限（长度 8KB / 嵌套 64 层 / 总步数 100、`//` 50）�
 
 ## 测试
 
-Rust 侧共 **371 个测试**（258 个内联单元测试 + 113 个集成用例，另有 2 个 `#[ignore]` 的真实网络用例）。`cargo test` 输出的合计是 629——`src/main.rs` 以 `mod` 重声明了全部模块，bin 目标的单元测试把同一批 258 个用例又跑了一遍，统计时别重复计算。分布为：
+Rust 侧共 **372 个测试**（258 个内联单元测试 + 114 个集成用例，另有 2 个 `#[ignore]` 的真实网络用例）。`cargo test` 输出的合计是 630——`src/main.rs` 以 `mod` 重声明了全部模块，bin 目标的单元测试把同一批 258 个用例又跑了一遍，统计时别重复计算。分布为：
 
-- `tests/` 下 20 个集成测试文件（113 个用例），其中 `book_source_compat.rs` 用例最多（17 个）；
+- `tests/` 下 20 个集成测试文件（114 个用例），其中 `book_source_compat.rs` 用例最多（17 个）；
   `auth_flow.rs`、`review_flow.rs`、`chapter_image_flow.rs`、`image_pipeline.rs` 与
   `webdav_flow.rs` 起真实监听端口，前者覆盖 401、静态回落、缓存清理与改密吊销令牌，
   中间三个各用一个假上游覆盖评论规则（7 天缓存、按类型清理）、章节配图（配图规则、
