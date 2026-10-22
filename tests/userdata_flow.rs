@@ -247,3 +247,47 @@ async fn userdata_accepts_array_documents() {
     assert_eq!(list.len(), 2);
     assert_eq!(list[0]["name"], "书一");
 }
+
+#[tokio::test]
+async fn user_config_roundtrip_and_legacy_file_migration() {
+    let server = TestServer::start().await;
+    let token = server.login().await;
+
+    // 保存 → 读取往返（进 json_documents 表）
+    let response = server
+        .post(
+            "/reader3/saveUserConfig",
+            Some(&token),
+            serde_json::json!({ "readMode": "night", "fontSize": 20 }),
+        )
+        .await;
+    let body: serde_json::Value = response.json().await.unwrap();
+    assert!(body["isSuccess"].as_bool().unwrap(), "保存应成功: {body}");
+
+    let response = server.get("/reader3/getUserConfig", Some(&token)).await;
+    let body: serde_json::Value = response.json().await.unwrap();
+    let data = &body["data"];
+    assert_eq!(data["readMode"], "night");
+    assert_eq!(data["fontSize"], 20);
+    assert!(data["@updateTime"].as_i64().unwrap() > 0, "应带更新时间戳");
+
+    // 老文件迁移路径用全新服务验证（新 storage：表里空、文件有）
+    let legacy_server = TestServer::start().await;
+    let legacy_token = legacy_server.login().await;
+    let legacy_dir = legacy_server.temp_dir.join("data").join("user_1");
+    std::fs::create_dir_all(&legacy_dir).unwrap();
+    let legacy_file = legacy_dir.join("userConfig.json");
+    std::fs::write(&legacy_file, r#"{"readMode":"day","legacy":true}"#).unwrap();
+    let response = legacy_server
+        .get("/reader3/getUserConfig", Some(&legacy_token))
+        .await;
+    let body: serde_json::Value = response.json().await.unwrap();
+    assert_eq!(body["data"]["legacy"], true, "应吃到老文件内容");
+    assert!(!legacy_file.exists(), "迁移后老文件应被删除");
+    // 再读一次走表
+    let response = legacy_server
+        .get("/reader3/getUserConfig", Some(&legacy_token))
+        .await;
+    let body: serde_json::Value = response.json().await.unwrap();
+    assert_eq!(body["data"]["readMode"], "day", "迁移后应读表");
+}

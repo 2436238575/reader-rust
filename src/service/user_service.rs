@@ -95,6 +95,9 @@ async fn equalize_login_timing(password: &str) {
 pub struct UserService {
     cfg: AppConfig,
     data_root: PathBuf,
+    /// 用户配置存 json_documents 表（单行 upsert，原子）；data/<ns>/userConfig.json
+    /// 是旧形态，读取时一次性迁移进表后删文件
+    docs: crate::service::json_document_service::JsonDocumentService,
     pool: SqlitePool,
     jwt_secret: Arc<Vec<u8>>,
     auth_throttle: Arc<Mutex<AuthThrottle>>,
@@ -116,6 +119,7 @@ impl UserService {
         let storage_root = PathBuf::from(&cfg.storage_dir);
         Self {
             data_root: storage_root.join("data"),
+            docs: crate::service::json_document_service::JsonDocumentService::new(pool.clone()),
             cfg,
             pool,
             jwt_secret,
@@ -332,33 +336,31 @@ impl UserService {
         Ok(serde_json::json!({ "userInfo": info }))
     }
 
+    /// 用户配置备份存 json_documents 表（文档名 userConfig，单行 upsert 原子写）。
     pub async fn save_user_config(&self, user_ns: &str, config: Value) -> Result<(), AppError> {
-        let dir = self.data_root.join(user_ns);
-        fs::create_dir_all(&dir)
-            .await
-            .map_err(|e| AppError::Internal(e.into()))?;
-        let path = dir.join("userConfig.json");
         let mut cfg = config;
         if let Some(obj) = cfg.as_object_mut() {
             obj.insert("@updateTime".to_string(), Value::from(now_ts() * 1000));
         }
-        let data = serde_json::to_string(&cfg).map_err(|e| AppError::BadRequest(e.to_string()))?;
-        fs::write(path, data)
-            .await
-            .map_err(|e| AppError::Internal(e.into()))?;
-        Ok(())
+        self.docs.set_value(user_ns, "userConfig", &cfg).await
     }
 
     pub async fn get_user_config(&self, user_ns: &str) -> Result<Value, AppError> {
+        if let Some(value) = self.docs.get_value(user_ns, "userConfig").await? {
+            return Ok(value);
+        }
+        // 一次性迁移：老部署的 data/<ns>/userConfig.json 读进表后删文件
         let path = self.data_root.join(user_ns).join("userConfig.json");
         if !path.exists() {
             return Err(AppError::BadRequest("没有备份文件".to_string()));
         }
-        let data = fs::read_to_string(path)
+        let data = fs::read_to_string(&path)
             .await
             .map_err(|e| AppError::Internal(e.into()))?;
         let v: Value =
             serde_json::from_str(&data).map_err(|e| AppError::BadRequest(e.to_string()))?;
+        self.docs.set_value(user_ns, "userConfig", &v).await?;
+        let _ = fs::remove_file(&path).await;
         Ok(v)
     }
 
