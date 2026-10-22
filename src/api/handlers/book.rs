@@ -969,9 +969,11 @@ pub async fn save_books(
         .await?;
 
     if restore {
-        // 登记表已清表重建：AI 记忆里 book_url 与同 id 新登记行不一致的
-        // 是恢复前别的书的残留，删掉防串书
+        // 登记表已清表重建：按 id 引用的数据里，book_url 与同 id 新登记行
+        // 不一致的都是恢复前别的书的残留，清掉防串书
         prune_mismatched_ai_memories(&state, &user_ns).await;
+        prune_mismatched_chapter_edits(&state, &user_ns).await;
+        prune_mismatched_bookmarks(&state, &user_ns).await;
     }
     Ok(ok_with_cover_routes(&state, serde_json::to_value(saved).unwrap_or_default()).await)
 }
@@ -990,6 +992,45 @@ async fn prune_mismatched_ai_memories(state: &AppState, user_ns: &str) {
         };
         if mismatched {
             let _ = state.ai_book_service.delete(user_ns, &book_id).await;
+        }
+    }
+}
+
+/// 章节编辑版同一手法：book_url 不一致或登记表已无此 id 的索引行连同
+/// 正文文件一起删（留着会在 id 复用时把旧编辑版挂到别的书上）。
+async fn prune_mismatched_chapter_edits(state: &AppState, user_ns: &str) {
+    let Ok(refs) = state.chapter_edit_service.list_book_refs(user_ns).await else {
+        return;
+    };
+    for (book_id, book_url) in refs {
+        let mismatched = match state.book_service.book_repo().get(user_ns, &book_id).await {
+            // 空 book_url 是列加入前的旧行：无法校验，留着不杀
+            Ok(Some(row)) => !book_url.is_empty() && row.book_url != book_url,
+            Ok(None) => true,
+            Err(_) => false,
+        };
+        if mismatched {
+            state
+                .chapter_edit_service
+                .delete_book_edits(user_ns, &book_id)
+                .await;
+        }
+    }
+}
+
+/// 书签同一手法；只处理记了 book_url 的行（旧数据空串跳过校验）。
+async fn prune_mismatched_bookmarks(state: &AppState, user_ns: &str) {
+    let Ok(refs) = state.bookmark_repo.list_book_refs(user_ns).await else {
+        return;
+    };
+    for (book_id, book_url) in refs {
+        let mismatched = match state.book_service.book_repo().get(user_ns, &book_id).await {
+            Ok(Some(row)) => row.book_url != book_url,
+            Ok(None) => true,
+            Err(_) => false,
+        };
+        if mismatched {
+            let _ = state.bookmark_repo.delete_for_book(user_ns, &book_id).await;
         }
     }
 }

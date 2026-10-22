@@ -65,6 +65,7 @@ impl ChapterEditService {
         chapter_index: i32,
         chapter_title: &str,
         content: &str,
+        book_url: &str,
     ) -> Result<(), AppError> {
         if content.len() > MAX_EDITED_CHAPTER_BYTES {
             return Err(AppError::BadRequest(format!(
@@ -96,6 +97,7 @@ impl ChapterEditService {
                     chapter_title: chapter_title.to_string(),
                     edited_at: crate::util::time::now_millis(),
                 },
+                book_url,
             )
             .await
         {
@@ -132,6 +134,11 @@ impl ChapterEditService {
         book_id: &str,
     ) -> Result<Vec<String>, AppError> {
         self.repo.list_urls(user_ns, book_id).await
+    }
+
+    /// 该用户全部编辑索引的 (bookId, bookUrl) 去重清单（WebDAV 恢复校验用）。
+    pub async fn list_book_refs(&self, user_ns: &str) -> Result<Vec<(String, String)>, AppError> {
+        self.repo.list_book_refs(user_ns).await
     }
 
     /// 删除单章编辑版（恢复上游版本）：先删正文文件（不存在不算错），再删索引行。
@@ -198,11 +205,11 @@ mod tests {
             .is_empty());
 
         service
-            .save_chapter_edit(ns, "book_1", "http://a/1", 0, "第一章", "改后的正文")
+            .save_chapter_edit(ns, "book_1", "http://a/1", 0, "第一章", "改后的正文", "https://example.com/b")
             .await
             .unwrap();
         service
-            .save_chapter_edit(ns, "book_1", "http://a/2", 1, "第二章", "")
+            .save_chapter_edit(ns, "book_1", "http://a/2", 1, "第二章", "", "https://example.com/b")
             .await
             .unwrap();
 
@@ -249,7 +256,7 @@ mod tests {
 
         // 覆盖写：同章再编辑是替换不是追加
         service
-            .save_chapter_edit(ns, "book_1", "http://a/2", 1, "第二章", "第二版")
+            .save_chapter_edit(ns, "book_1", "http://a/2", 1, "第二章", "第二版", "https://example.com/b")
             .await
             .unwrap();
         assert_eq!(
@@ -295,6 +302,7 @@ mod tests {
                         i,
                         &format!("第{i}章"),
                         "正文",
+                        "https://example.com/b",
                     )
                     .await
                     .unwrap();
@@ -319,7 +327,7 @@ mod tests {
         let (service, dir) = test_service().await;
         let big = "x".repeat(MAX_EDITED_CHAPTER_BYTES + 1);
         let result = service
-            .save_chapter_edit("user_1", "book_1", "http://a/1", 0, "章", &big)
+            .save_chapter_edit("user_1", "book_1", "http://a/1", 0, "章", &big, "https://example.com/b")
             .await;
         assert!(matches!(result, Err(AppError::BadRequest(_))));
         let _ = std::fs::remove_dir_all(dir);
@@ -332,7 +340,7 @@ mod tests {
         let (service, dir) = test_service().await;
         let ns = "user_1";
         service
-            .save_chapter_edit(ns, "book_1", "http://a/1", 0, "章", "旧版正文")
+            .save_chapter_edit(ns, "book_1", "http://a/1", 0, "章", "旧版正文", "https://example.com/b")
             .await
             .unwrap();
 
@@ -349,7 +357,7 @@ mod tests {
             .unwrap();
 
         let result = service
-            .save_chapter_edit(ns, "book_1", "http://a/1", 0, "章", "新版正文")
+            .save_chapter_edit(ns, "book_1", "http://a/1", 0, "章", "新版正文", "https://example.com/b")
             .await;
         assert!(result.is_err(), "索引失败应报错");
         assert_eq!(

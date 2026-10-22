@@ -16,6 +16,9 @@ CREATE TABLE IF NOT EXISTS chapter_edits (
     chapter_index INTEGER NOT NULL DEFAULT 0,
     chapter_title TEXT NOT NULL DEFAULT '',
     edited_at INTEGER NOT NULL DEFAULT 0,
+    -- 恢复校验冗余列：WebDAV 恢复重建登记表后，按它识别「id 被别的书复用」
+    -- 的残留编辑版（与 ai_book_memories.book_url 同一手法）
+    book_url TEXT NOT NULL DEFAULT '',
     PRIMARY KEY (user_ns, book_id, chapter_url)
 );
 

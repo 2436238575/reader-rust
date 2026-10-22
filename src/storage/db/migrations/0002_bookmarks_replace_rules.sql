@@ -24,6 +24,9 @@ CREATE TABLE IF NOT EXISTS bookmarks (
     chapter_name TEXT NOT NULL DEFAULT '',
     book_text TEXT NOT NULL DEFAULT '',
     content TEXT NOT NULL DEFAULT '',
+    -- 恢复校验冗余列：WebDAV 恢复重建登记表后，按它识别「id 被别的书复用」
+    -- 的残留行（与 ai_book_memories.book_url 同一手法）；空串是旧数据，跳过校验
+    book_url TEXT NOT NULL DEFAULT '',
     PRIMARY KEY (user_ns, book_id, chapter_index, chapter_pos, kind),
     -- 客户端可造任意条目，表级兜住：kind 只允许两型，进度在万分比量程内
     CHECK (kind IN ('bookmark', 'underline')),

@@ -62,6 +62,8 @@ pub struct BookService {
     /// 章节编辑版：全文检索时优先读编辑版（与阅读器显示一致）。
     /// 组装后由 bootstrap 经 with_chapter_edit_service 注入。
     chapter_edit: Option<Arc<crate::service::chapter_edit_service::ChapterEditService>>,
+    /// 书签级联（purgeCache 回收孤儿登记行时连带清理）；bootstrap 注入。
+    bookmark_repo: Option<crate::storage::db::repo::BookmarkRepo>,
     /// 正在后台补全目录的 `(user_ns, book_id)` 集合：防止同一本书并发触发
     /// 两个补全任务（竞态下各自抓全部分页并各 append 一次，缓存里出现重复章节）。
     pending_toc_fills: Arc<Mutex<HashSet<(String, String)>>>,
@@ -277,6 +279,7 @@ impl BookService {
             user_book_limit: 0,
             user_local_book_limit: 0,
             chapter_edit: None,
+            bookmark_repo: None,
             pending_toc_fills: Arc::new(Mutex::new(HashSet::new())),
         }
     }
@@ -309,6 +312,15 @@ impl BookService {
         service: Arc<crate::service::chapter_edit_service::ChapterEditService>,
     ) -> Self {
         self.chapter_edit = Some(service);
+        self
+    }
+
+    /// 注入书签 repo：purgeCache 回收孤儿登记行时连带清掉它们的书签。
+    pub fn with_bookmark_repo(
+        mut self,
+        repo: crate::storage::db::repo::BookmarkRepo,
+    ) -> Self {
+        self.bookmark_repo = Some(repo);
         self
     }
 
@@ -1892,7 +1904,19 @@ impl BookService {
             .iter()
             .filter_map(|b| b.book_id.clone())
             .collect();
+        // 孤儿登记行的附属数据随行走：书签、章节编辑版（文件+索引）都按
+        // book_id 引用，登记行没了它们就是死数据，还会在该 id 复用时串书
+        let orphan_ids = self.book_repo.list_ids_except(user_ns, &shelf_ids).await?;
         self.book_repo.delete_except(user_ns, &shelf_ids).await?;
+        for orphan_id in &orphan_ids {
+            let orphan = crate::storage::db::repo::format_book_id(*orphan_id);
+            if let Some(bookmarks) = &self.bookmark_repo {
+                let _ = bookmarks.delete_for_book(user_ns, &orphan).await;
+            }
+            if let Some(edits) = &self.chapter_edit {
+                edits.delete_book_edits(user_ns, &orphan).await;
+            }
+        }
         Ok(result)
     }
 
@@ -3201,8 +3225,16 @@ mod tests {
             FileCache::new(storage_dir.join("cache"), 0),
             storage_dir.to_str().unwrap(),
             BookRepo::new(pool.clone()),
-            ShelfBookRepo::new(pool),
+            ShelfBookRepo::new(pool.clone()),
         )
+        // 与 bootstrap 同款接线：级联清理与编辑版检索在单元测试里也是真的
+        .with_bookmark_repo(crate::storage::db::repo::BookmarkRepo::new(pool.clone()))
+        .with_chapter_edit_service(Arc::new(
+            crate::service::chapter_edit_service::ChapterEditService::new(
+                storage_dir.to_str().unwrap(),
+                crate::storage::db::repo::ChapterEditRepo::new(pool),
+            ),
+        ))
     }
 
     #[tokio::test]
@@ -3558,7 +3590,7 @@ mod tests {
             .save_book("u", make_book("https://example.com/onshelf"))
             .await
             .unwrap();
-        service
+        let orphan_id = service
             .register_book(
                 "u",
                 RegisterBook {
@@ -3568,6 +3600,42 @@ mod tests {
                     author: None,
                     toc_url: None,
                 },
+            )
+            .await
+            .unwrap();
+        // 孤儿行带上附属数据：一条书签 + 一章编辑版（索引+正文文件）
+        let pool2 = sqlx::SqlitePool::connect(&format!(
+            "sqlite:{}",
+            storage_dir.join("reader.db").display()
+        ))
+        .await
+        .unwrap();
+        let bookmark_repo = crate::storage::db::repo::BookmarkRepo::new(pool2.clone());
+        bookmark_repo
+            .upsert(
+                "u",
+                &crate::model::bookmark::Bookmark {
+                    book_id: orphan_id.clone(),
+                    kind: "bookmark".into(),
+                    ..Default::default()
+                },
+                "https://example.com/orphan",
+            )
+            .await
+            .unwrap();
+        let edit_service = crate::service::chapter_edit_service::ChapterEditService::new(
+            storage_dir.to_str().unwrap(),
+            crate::storage::db::repo::ChapterEditRepo::new(pool2),
+        );
+        edit_service
+            .save_chapter_edit(
+                "u",
+                &orphan_id,
+                "http://up/ch/1",
+                0,
+                "第一章",
+                "编辑内容",
+                "https://example.com/orphan",
             )
             .await
             .unwrap();
@@ -3586,6 +3654,22 @@ mod tests {
             .await
             .unwrap()
             .is_none());
+        // 孤儿行的书签与编辑版（索引+正文文件）随登记行一起回收
+        assert!(
+            bookmark_repo.list("u").await.unwrap().is_empty(),
+            "孤儿登记行的书签应被级联清掉"
+        );
+        assert!(edit_service
+            .list_chapter_edits("u", &orphan_id)
+            .await
+            .unwrap()
+            .is_empty());
+        assert!(!storage_dir
+            .join("data")
+            .join("u")
+            .join("edited_chapters")
+            .join(&orphan_id)
+            .exists());
 
         // 合法语义保持不变：书架为空的用户 purge 后登记行全清
         service

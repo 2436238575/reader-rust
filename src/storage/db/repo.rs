@@ -264,22 +264,46 @@ impl BookRepo {
 
     /// 回收不在给定保留清单里的登记行（purgeCache 清用户缓存时联动调用）。
     pub async fn delete_except(&self, user_ns: &str, keep_ids: &[String]) -> Result<u64, AppError> {
-        if keep_ids.is_empty() {
-            let result = sqlx::query("DELETE FROM books WHERE user_ns=?1")
-                .bind(user_ns)
-                .execute(&self.pool)
-                .await?;
-            return Ok(result.rows_affected());
+        let ids = self.list_ids_except(user_ns, keep_ids).await?;
+        if ids.is_empty() {
+            return Ok(0);
         }
-        let ids: Vec<i64> = keep_ids.iter().filter_map(|s| parse_book_id(s)).collect();
         let placeholders = ids.iter().map(|_| "?").collect::<Vec<_>>().join(",");
-        let sql = format!("DELETE FROM books WHERE user_ns=? AND book_id NOT IN ({placeholders})");
+        let sql =
+            format!("DELETE FROM books WHERE user_ns=? AND book_id IN ({placeholders})");
         let mut query = sqlx::query(&sql).bind(user_ns);
-        for id in ids {
+        for id in &ids {
             query = query.bind(id);
         }
         let result = query.execute(&self.pool).await?;
         Ok(result.rows_affected())
+    }
+
+    /// 保留清单之外的登记行 id（canonical `book_<n>`）：供调用方在删除前
+    /// 先对孤儿行做级联清理（书签/编辑版/AI 记忆都按 book_id 引用）。
+    pub async fn list_ids_except(
+        &self,
+        user_ns: &str,
+        keep_ids: &[String],
+    ) -> Result<Vec<i64>, AppError> {
+        if keep_ids.is_empty() {
+            let rows = sqlx::query("SELECT book_id FROM books WHERE user_ns=?1")
+                .bind(user_ns)
+                .fetch_all(&self.pool)
+                .await?;
+            return Ok(rows.iter().map(|r| r.get::<i64, _>("book_id")).collect());
+        }
+        let ids: Vec<i64> = keep_ids.iter().filter_map(|s| parse_book_id(s)).collect();
+        let placeholders = ids.iter().map(|_| "?").collect::<Vec<_>>().join(",");
+        let sql = format!(
+            "SELECT book_id FROM books WHERE user_ns=? AND book_id NOT IN ({placeholders})"
+        );
+        let mut query = sqlx::query(&sql).bind(user_ns);
+        for id in ids {
+            query = query.bind(id);
+        }
+        let rows = query.fetch_all(&self.pool).await?;
+        Ok(rows.iter().map(|r| r.get::<i64, _>("book_id")).collect())
     }
 }
 
@@ -1013,10 +1037,12 @@ impl BookmarkRepo {
     }
 
     /// upsert 单条：同 (book_id, chapter_index, chapter_pos, kind) 覆盖。
+    /// `book_url` 是保存时刻的登记表地址（恢复校验冗余列，见 0002 迁移注释）。
     pub async fn upsert(
         &self,
         user_ns: &str,
         b: &crate::model::bookmark::Bookmark,
+        book_url: &str,
     ) -> Result<(), AppError> {
         let Some(book_id) = parse_book_id(&b.book_id) else {
             return Err(AppError::BadRequest(format!(
@@ -1031,11 +1057,12 @@ impl BookmarkRepo {
             b.kind.as_str()
         };
         sqlx::query(
-            "INSERT INTO bookmarks (user_ns, book_id, chapter_index, chapter_pos, kind, time, book_name, book_author, chapter_name, book_text, content) \
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11) \
+            "INSERT INTO bookmarks (user_ns, book_id, chapter_index, chapter_pos, kind, time, book_name, book_author, chapter_name, book_text, content, book_url) \
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12) \
              ON CONFLICT(user_ns, book_id, chapter_index, chapter_pos, kind) DO UPDATE SET \
              time=excluded.time, book_name=excluded.book_name, book_author=excluded.book_author, \
-             chapter_name=excluded.chapter_name, book_text=excluded.book_text, content=excluded.content",
+             chapter_name=excluded.chapter_name, book_text=excluded.book_text, content=excluded.content, \
+             book_url=excluded.book_url",
         )
         .bind(user_ns)
         .bind(book_id)
@@ -1048,9 +1075,30 @@ impl BookmarkRepo {
         .bind(&b.chapter_name)
         .bind(&b.book_text)
         .bind(&b.content)
+        .bind(book_url)
         .execute(&self.pool)
         .await?;
         Ok(())
+    }
+
+    /// 该书全部书签的 (book_id, book_url) 去重清单（恢复校验用；
+    /// 只取记了 book_url 的行——旧数据的空串无法校验，调用方跳过）。
+    pub async fn list_book_refs(&self, user_ns: &str) -> Result<Vec<(String, String)>, AppError> {
+        let rows = sqlx::query(
+            "SELECT DISTINCT book_id, book_url FROM bookmarks WHERE user_ns=?1 AND book_url != ''",
+        )
+        .bind(user_ns)
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows
+            .iter()
+            .map(|row| {
+                (
+                    format_book_id(row.get::<i64, _>("book_id")),
+                    row.get::<String, _>("book_url"),
+                )
+            })
+            .collect())
     }
 
     pub async fn delete(
@@ -1195,12 +1243,15 @@ impl ChapterEditRepo {
     }
 
     /// 保存/覆盖索引条目（正文文件的写由调用方先做）。
+    /// `book_url` 是保存时刻的登记表地址：WebDAV 恢复重建登记表后按它识别
+    /// 「id 被别的书复用」的残留编辑版（与 ai_book_memories 同一手法）。
     pub async fn upsert(
         &self,
         user_ns: &str,
         book_id: &str,
         chapter_url: &str,
         meta: &ChapterEditMeta,
+        book_url: &str,
     ) -> Result<(), AppError> {
         let Some(id) = parse_book_id(book_id) else {
             return Err(AppError::BadRequest(format!(
@@ -1208,10 +1259,11 @@ impl ChapterEditRepo {
             )));
         };
         sqlx::query(
-            "INSERT INTO chapter_edits (user_ns, book_id, chapter_url, chapter_index, chapter_title, edited_at) \
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6) \
+            "INSERT INTO chapter_edits (user_ns, book_id, chapter_url, chapter_index, chapter_title, edited_at, book_url) \
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7) \
              ON CONFLICT(user_ns, book_id, chapter_url) DO UPDATE SET \
-             chapter_index=excluded.chapter_index, chapter_title=excluded.chapter_title, edited_at=excluded.edited_at",
+             chapter_index=excluded.chapter_index, chapter_title=excluded.chapter_title, edited_at=excluded.edited_at, \
+             book_url=excluded.book_url",
         )
         .bind(user_ns)
         .bind(id)
@@ -1219,9 +1271,29 @@ impl ChapterEditRepo {
         .bind(meta.chapter_index)
         .bind(&meta.chapter_title)
         .bind(meta.edited_at)
+        .bind(book_url)
         .execute(&self.pool)
         .await?;
         Ok(())
+    }
+
+    /// 该书全部编辑索引的 (book_id, book_url) 去重清单（恢复校验用）。
+    pub async fn list_book_refs(&self, user_ns: &str) -> Result<Vec<(String, String)>, AppError> {
+        let rows = sqlx::query(
+            "SELECT DISTINCT book_id, book_url FROM chapter_edits WHERE user_ns=?1",
+        )
+        .bind(user_ns)
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows
+            .iter()
+            .map(|row| {
+                (
+                    format_book_id(row.get::<i64, _>("book_id")),
+                    row.get::<String, _>("book_url"),
+                )
+            })
+            .collect())
     }
 
     /// 按书列出已编辑章节的 chapterUrl（目录徽章用）。
@@ -1416,16 +1488,16 @@ mod tests {
         let repo = BookmarkRepo::new(pool);
 
         // 同书同位置覆盖、不同位置各存一条（修掉旧「一书一签」的覆盖 bug 后保持语义）
-        repo.upsert("u", &bookmark("book_1", 0, 0, "第一版"))
+        repo.upsert("u", &bookmark("book_1", 0, 0, "第一版"), "")
             .await
             .unwrap();
-        repo.upsert("u", &bookmark("book_1", 0, 0, "覆盖版"))
+        repo.upsert("u", &bookmark("book_1", 0, 0, "覆盖版"), "")
             .await
             .unwrap();
-        repo.upsert("u", &bookmark("book_1", 2, 5, "另一处"))
+        repo.upsert("u", &bookmark("book_1", 2, 5, "另一处"), "")
             .await
             .unwrap();
-        repo.upsert("u", &bookmark("book_2", 0, 0, "别的书"))
+        repo.upsert("u", &bookmark("book_2", 0, 0, "别的书"), "")
             .await
             .unwrap();
 
@@ -1464,15 +1536,15 @@ mod tests {
             ..bookmark("book_1", 3, pos, text)
         };
 
-        repo.upsert("u", &bookmark("book_1", 3, 0, "章书签"))
+        repo.upsert("u", &bookmark("book_1", 3, 0, "章书签"), "")
             .await
             .unwrap();
-        repo.upsert("u", &underline(0, "章首划线")).await.unwrap();
-        repo.upsert("u", &underline(5000, "中段划线"))
+        repo.upsert("u", &underline(0, "章首划线"), "").await.unwrap();
+        repo.upsert("u", &underline(5000, "中段划线"), "")
             .await
             .unwrap();
         // 同 kind 同位置仍覆盖（同段重复划线去重）
-        repo.upsert("u", &underline(5000, "中段划线-改"))
+        repo.upsert("u", &underline(5000, "中段划线-改"), "")
             .await
             .unwrap();
 
@@ -1498,7 +1570,7 @@ mod tests {
             kind: String::new(),
             ..bookmark("book_1", 5, 0, "空kind")
         };
-        repo.upsert("u", &legacy).await.unwrap();
+        repo.upsert("u", &legacy, "").await.unwrap();
         repo.delete("u", "book_1", 5, 0, "").await.unwrap();
         assert!(repo
             .list("u")

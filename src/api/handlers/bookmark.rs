@@ -24,7 +24,18 @@ pub async fn save_bookmark(
     if bookmark.book_id.trim().is_empty() {
         return Err(AppError::BadRequest("bookId required".to_string()));
     }
-    state.bookmark_repo.upsert(&user.0.ns, &bookmark).await?;
+    // book_url 冗余列（恢复校验用）：登记不到的记空串，恢复时跳过校验
+    let book_url = state
+        .book_service
+        .book_repo()
+        .get(&user.0.ns, &bookmark.book_id)
+        .await?
+        .map(|row| row.book_url)
+        .unwrap_or_default();
+    state
+        .bookmark_repo
+        .upsert(&user.0.ns, &bookmark, &book_url)
+        .await?;
     Ok(Json(ApiResponse::ok(Value::String(String::new()))))
 }
 
@@ -33,10 +44,27 @@ pub async fn save_bookmarks(
     user: CurrentUser,
     Json(bookmarks): Json<Vec<Bookmark>>,
 ) -> Result<Json<ApiResponse<Value>>, AppError> {
+    // 批量恢复（WebDAV）时逐条查登记表的 book_url；同书多条只查一次
+    let mut url_cache: std::collections::HashMap<String, String> = Default::default();
     for b in &bookmarks {
-        if !b.book_id.trim().is_empty() {
-            state.bookmark_repo.upsert(&user.0.ns, b).await?;
+        if b.book_id.trim().is_empty() {
+            continue;
         }
+        let book_url = match url_cache.get(&b.book_id) {
+            Some(url) => url.clone(),
+            None => {
+                let url = state
+                    .book_service
+                    .book_repo()
+                    .get(&user.0.ns, &b.book_id)
+                    .await?
+                    .map(|row| row.book_url)
+                    .unwrap_or_default();
+                url_cache.insert(b.book_id.clone(), url.clone());
+                url
+            }
+        };
+        state.bookmark_repo.upsert(&user.0.ns, b, &book_url).await?;
     }
     Ok(Json(ApiResponse::ok(Value::String(String::new()))))
 }

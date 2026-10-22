@@ -438,3 +438,130 @@ async fn diff_endpoint_runs_git_and_returns_ops() {
     assert_eq!(ops[1]["editedText"], json!("二改"));
     assert_eq!(ops[3]["editedIndex"], json!(3));
 }
+
+/// WebDAV 恢复重建登记表后：book_url 与同 id 新登记行不一致的编辑版与书签
+/// 是恢复前别的书的残留，必须随 prune 清掉；地址一致的（同一本书）保留。
+#[tokio::test]
+async fn restore_prunes_edits_and_bookmarks_of_reused_book_ids() {
+    let server = boot().await;
+    let book = server.upload_txt("恢复甲", "第一章 开始\n正文。").await;
+    let book_id = book["bookId"].as_str().unwrap().to_string();
+    let book_url = book["bookUrl"].as_str().unwrap().to_string();
+    let chapter_url = format!("{book_url}#0");
+
+    // 编辑一章 + 加一条书签
+    server
+        .post(
+            "saveChapterEdit",
+            json!({
+                "bookId": book_id,
+                "chapterUrl": chapter_url,
+                "chapterIndex": 0,
+                "chapterTitle": "第一章",
+                "content": "我的编辑版",
+            }),
+        )
+        .await;
+    server
+        .post(
+            "saveBookmark",
+            json!({
+                "bookId": book_id,
+                "chapterIndex": 0,
+                "chapterPos": 0,
+                "chapterName": "第一章",
+                "bookText": "正文",
+            }),
+        )
+        .await;
+    let edits = || async {
+        server
+            .post("listChapterEdits", json!({ "bookId": book_id }))
+            .await["urls"]
+            .as_array()
+            .unwrap()
+            .len()
+    };
+    let bookmarks = || async {
+        let resp = server
+            .client
+            .get(format!("{}/reader3/getBookmarks", server.base_url))
+            .bearer_auth(&server.token)
+            .send()
+            .await
+            .unwrap();
+        let payload: Value = resp.json().await.unwrap();
+        payload["data"].as_array().unwrap().len()
+    };
+    assert_eq!(edits().await, 1);
+    assert_eq!(bookmarks().await, 1);
+
+    // 恢复一本别的书、占用同一个 bookId：旧书的编辑版与书签被清掉
+    //（用 local-txt 地址冒充：resolve_book 对无书源的普通网络书会 404，
+    //  而 prune 的判定只看登记表 book_url，与书源无关）
+    server
+        .post(
+            "saveBooks",
+            json!({
+                "books": [{
+                    "bookId": book_id,
+                    "bookUrl": "local-txt:ffffffffffffffffffffffffffffffff",
+                    "name": "别的书",
+                    "origin": "local-txt",
+                }],
+                "restore": true,
+            }),
+        )
+        .await;
+    assert_eq!(edits().await, 0, "id 被别的书复用后旧编辑版应被清掉");
+    assert_eq!(bookmarks().await, 0, "id 被别的书复用后旧书签应被清掉");
+    assert!(
+        !server
+            .temp_dir
+            .join("data")
+            .join("user_1")
+            .join("edited_chapters")
+            .join(&book_id)
+            .exists(),
+        "编辑版正文目录应一并删除"
+    );
+
+    // 反向对照：恢复的同一本书（bookUrl 一致）时数据保留
+    let book = server.upload_txt("恢复乙", "第二章 继续\n正文。").await;
+    let book_id2 = book["bookId"].as_str().unwrap().to_string();
+    let book_url2 = book["bookUrl"].as_str().unwrap().to_string();
+    server
+        .post(
+            "saveChapterEdit",
+            json!({
+                "bookId": book_id2,
+                "chapterUrl": format!("{book_url2}#0"),
+                "chapterIndex": 0,
+                "chapterTitle": "第二章",
+                "content": "乙的编辑版",
+            }),
+        )
+        .await;
+    server
+        .post(
+            "saveBooks",
+            json!({
+                "books": [{
+                    "bookId": book_id2,
+                    "bookUrl": book_url2,
+                    "name": "恢复乙",
+                    "origin": "local-txt",
+                }],
+                "restore": true,
+            }),
+        )
+        .await;
+    let urls = server
+        .post("listChapterEdits", json!({ "bookId": book_id2 }))
+        .await;
+    assert_eq!(
+        urls["urls"].as_array().unwrap().len(),
+        1,
+        "同一本书恢复后编辑版应保留"
+    );
+}

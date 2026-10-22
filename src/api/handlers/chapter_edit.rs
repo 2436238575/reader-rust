@@ -42,13 +42,13 @@ fn require_ids(book_id: &str, chapter_url: &str) -> Result<(), AppError> {
 /// bookId 的完整校验：格式 + 存在 + 归属当前命名空间。
 /// 这些端点的入参最终会拼进 storage 文件路径，绝不能只查非空——
 /// `../../user_2` 这类输入必须在这里就 404。
+/// 返回解析出的登记表行（编辑索引要记 book_url 冗余列，供恢复校验）。
 async fn resolve_book_checked(
     state: &AppState,
     user_ns: &str,
     book_id: &str,
-) -> Result<(), AppError> {
-    super::book::resolve_book(state, user_ns, book_id).await?;
-    Ok(())
+) -> Result<super::book::ResolvedBook, AppError> {
+    super::book::resolve_book(state, user_ns, book_id).await
 }
 
 pub async fn save_chapter_edit(
@@ -57,7 +57,7 @@ pub async fn save_chapter_edit(
     QueryOrBody(req): QueryOrBody<SaveChapterEditRequest>,
 ) -> Result<Json<ApiResponse<Value>>, AppError> {
     require_ids(&req.book_id, &req.chapter_url)?;
-    resolve_book_checked(&state, &user.0.ns, &req.book_id).await?;
+    let resolved = resolve_book_checked(&state, &user.0.ns, &req.book_id).await?;
     state
         .chapter_edit_service
         .save_chapter_edit(
@@ -67,6 +67,7 @@ pub async fn save_chapter_edit(
             req.chapter_index,
             &req.chapter_title,
             &req.content,
+            &resolved.book_url,
         )
         .await?;
     Ok(Json(ApiResponse::ok(json!({ "edited": true }))))
