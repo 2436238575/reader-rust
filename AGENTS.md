@@ -22,7 +22,7 @@ Reader-Rust 是 [阅读3.0](https://github.com/hectorqin/reader) 的 Rust 重写
 cargo run                      # 开发模式运行，默认监听 0.0.0.0:8080
 cargo build                    # 调试构建
 cargo build --release          # 发布构建
-cargo test                     # 全部测试（Rust 侧共 309 个，另有 2 个真实网络用例默认忽略）
+cargo test                     # 全部测试（Rust 侧共 357 个，另有 2 个真实网络用例默认忽略）
 cargo test <关键字>             # 按名称过滤测试
 cargo clippy --all-targets     # 静态检查
 cargo fmt                      # 格式化
@@ -55,16 +55,20 @@ npm test                       # vitest 单元测试
 ```bash
 npm install                    # 仓库根目录，安装 @playwright/test
 npx playwright install chrome
+cargo build                    # 零配置自起需要 target/debug 里的构建产物
 
-# 需要先手动启动后端
 npm run test:e2e               # 等价于 playwright test
 npm run test:e2e:headed        # 有头模式
 npm run test:e2e:ui            # UI 模式
 ```
 
-- 用例位于 `tests/e2e/*.spec.ts`，默认访问 `http://127.0.0.1:8080`。
-- 后端换端口时用环境变量覆盖：`PLAYWRIGHT_BASE_URL=http://127.0.0.1:18080 npm run test:e2e`。
-- 被测后端建议以 `RATE_LIMIT_DISABLED=true` 启动，否则登录失败限速会拦住重复跑的用例；**没设 `E2E_USERNAME`/`E2E_PASSWORD` 时 globalSetup 会在 18081 自起临时后端**（用 `target/debug/reader-rust.exe` + 独立临时 storage + 固定凭据，跑完即清），CI 零配置可用；设了凭据则照旧连 `PLAYWRIGHT_BASE_URL` 的外部实例（凭据要与后端 `ADMIN_USERNAME`/`ADMIN_PASSWORD` 一致）。
+- 用例位于 `tests/e2e/*.spec.ts`。**零配置**：不设任何环境变量时，globalSetup
+  自动用 `target/debug/reader-rust.exe` 在 18081 起临时后端（独立临时
+  storage + 数据库 + assets + 固定凭据 reader1/password123 + 豁免限速），
+  跑完即清，CI 直接可用。
+- 要跑自己的实例：设 `PLAYWRIGHT_BASE_URL=http://127.0.0.1:18080` 并同时给
+  `E2E_USERNAME`/`E2E_PASSWORD`（与后端 `ADMIN_USERNAME`/`ADMIN_PASSWORD` 一致）。
+  自起与外部实例二选一：设了 PLAYWRIGHT_BASE_URL 就必须给凭据。
 - 配置使用系统已安装的 Chrome（`channel: 'chrome'`），机器上需要有 Chrome。
 
 ### 发布
@@ -163,7 +167,9 @@ src/
     url_guard.rs          出站请求守卫（SSRF 防护）
   model/                  BookSource 等数据结构，15 文件约 1000 行
   storage/               SQLite（sqlx）+ 文件缓存，8 文件约 800 行
-    db/migrations/        仅 0001_init.sql（当前全部表结构，历史迁移已并入；详见 docs/maintainers/database.md）
+    db/migrations/        0001_init.sql（基础表结构，历史迁移已并入）+ 0002（书签/替换规则
+                          实体表）+ 0003（chapter_edits 编辑版索引）+ 0004（book_groups
+                          分组实体表）；详见 docs/maintainers/database.md
     cache/file_cache.rs   章节内容文件缓存，以 MD5 命名；无 TTL，按容量淘汰
     cache/review_cache.rs 评论缓存；**有 TTL**（默认 7 天），按容量淘汰
   app/                    配置加载与启动引导
@@ -362,9 +368,9 @@ XPath 有资源上限（长度 8KB / 嵌套 64 层 / 总步数 100、`//` 50）�
 
 ## 测试
 
-Rust 侧共 **346 个测试**（238 个内联单元测试 + 108 个集成用例，另有 2 个 `#[ignore]` 的真实网络用例），分布为：
+Rust 侧共 **357 个测试**（246 个内联单元测试 + 111 个集成用例，另有 2 个 `#[ignore]` 的真实网络用例），分布为：
 
-- `tests/` 下 20 个集成测试文件（108 个用例），其中 `book_source_compat.rs` 用例最多（17 个）；
+- `tests/` 下 20 个集成测试文件（111 个用例），其中 `book_source_compat.rs` 用例最多（17 个）；
   `auth_flow.rs`、`review_flow.rs`、`chapter_image_flow.rs`、`image_pipeline.rs` 与
   `webdav_flow.rs` 起真实监听端口，前者覆盖 401、静态回落、缓存清理与改密吊销令牌，
   中间三个各用一个假上游覆盖评论规则（7 天缓存、按类型清理）、章节配图（配图规则、
@@ -374,7 +380,7 @@ Rust 侧共 **346 个测试**（238 个内联单元测试 + 108 个集成用例�
 - `agent_sidecar_flow.rs` 用 Node 假 sidecar（`tests/helpers/fake_agent_sidecar.mjs`）
   走全流程：批量更新、章节跳过、工具回调（正文/搜索钳制）、地图落盘与降级、看门狗与取消
   （机器上需要有 Node）；
-- `src/` 内的内联单元测试模块（179 个）。
+- `src/` 内的内联单元测试模块（246 个）。
 
 sidecar 使用 pytest（95 个用例，
 见「常用命令」），含从旧前端实现 1:1 移植的领域规则用例与新增编排能力用例。
@@ -382,7 +388,7 @@ sidecar 使用 pytest（95 个用例，
 需要注意：
 
 - `tests/yckceo_live_sources.rs` 会**访问真实网络**抓取在线书源，在无网或受限环境中失败属预期行为。
-- `tests/e2e/` 的 Playwright 用例需要先手动启动后端。
+- `tests/e2e/` 的 Playwright 用例零配置可跑（globalSetup 自起临时后端，见「常用命令」）。
 
 新增功能时请补充测试：集成测试放 `tests/`，纯逻辑单元测试就近放在 `src` 的内联模块里。
 

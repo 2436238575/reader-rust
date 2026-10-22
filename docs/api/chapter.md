@@ -140,7 +140,7 @@ POST /reader3/deleteBookCache
 
 | 参数     | 类型   | 必填 | 说明    |
 | -------- | ------ | ---- | ------- |
-| `bookId` | string | 是   | 书籍 ID |
+| `bookId` | string | 是   | 书籍 ID（须已登记，否则 404） |
 
 响应：`data` 形如 `{ "deleted": true, "contentCache": true, "chapterListCache": true }`。
 

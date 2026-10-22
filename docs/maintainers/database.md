@@ -2,7 +2,7 @@
 
 运行期数据存在 SQLite（默认 `storage/reader.db`，`DATABASE_URL` 可改）。sqlx 访问，连接池 10 条，WAL 模式（`synchronous=NORMAL`），启动时自动执行 `src/storage/db/migrations/` 下的迁移。
 
-当前全部表结构都定义在唯一的迁移文件 `0001_init.sql` 里（历史迁移已逐批并入）。新增结构请新建迁移文件，不要改已发布的迁移——sqlx 按校验和核对已应用的迁移，改动历史文件会让旧库无法启动；确需重写时按破坏性变更处理：删除 `storage/reader.db` 重建。
+表结构定义在 `src/storage/db/migrations/` 下：`0001_init.sql`（基础表结构，历史迁移已逐批并入）+ `0002_bookmarks_replace_rules.sql`（书签/替换规则实体表）+ `0003_chapter_edits.sql`（章节编辑版索引）+ `0004_book_groups.sql`（分组实体表）。新增结构请新建迁移文件，不要改已发布的迁移——sqlx 按校验和核对已应用的迁移，改动历史文件会让旧库无法启动；确需重写时按破坏性变更处理：删除 `storage/reader.db` 重建。
 
 三张底表的身份模型：
 
@@ -122,6 +122,7 @@
 | `chapter_name`  | TEXT    | 章节标题快照                                                         |
 | `book_text`     | TEXT    | 进度文案/划线摘录快照                                                |
 | `content`       | TEXT    | 书签备注/摘录                                                        |
+| `book_url`      | TEXT    | 冗余校验列：WebDAV 恢复重建登记表后逐行比对，同 id 不同 URL 的书签删除防串书 |
 
 ## replace_rules
 
@@ -164,6 +165,7 @@ AI 书籍记忆（AI 资料编排产物）。主键 `(user_ns, book_id)`。
 | `chapter_index`  | INTEGER | 章节序号快照                    |
 | `chapter_title`  | TEXT    | 章节标题快照                    |
 | `edited_at`      | INTEGER | 最后编辑时间，毫秒时间戳        |
+| `book_url`       | TEXT    | 冗余校验列（同上：恢复后 id 复用防串书） |
 
 ## book_groups
 
@@ -180,6 +182,6 @@ AI 书籍记忆（AI 资料编排产物）。主键 `(user_ns, book_id)`。
 
 - **书源存整份 JSON** 而不是打散成列——书源字段会随阅读3.0 规范演进，打散后每次演进都要改表；代价是无法按规则字段建索引。
 - **章节正文存文件而不是数据库**——单章动辄数十 KB 且数量极多，进库会让文件迅速膨胀并拖慢备份。正文缓存以 MD5 文件名落在 `storage/cache/` 下，数据库不存索引。
-- **`json_documents` 通用化**——零散键值（分组、配置、userdata）复用一张表，减少迁移次数；有实体语义的（书签、替换规则）拆实体表。
+- **`json_documents` 通用化**——零散键值（配置、userdata）复用一张表，减少迁移次数；有实体语义的（书签、替换规则、章节编辑索引、分组）拆实体表。
 - **不声明外键**——表间一致性由 service 层维护（如删书时级联清书架行、书签、AI 记忆与图片记录）；`foreign_keys` pragma 虽开，但表结构里没有 FK 约束。
 - **时间戳单位不统一是历史现状**：`users` / `json_documents` / `ai_book_memories` 用毫秒，其余表用秒；`shelf_books` 里来自前端的字段（`dur_chapter_time`、`last_check_time`）随前端用毫秒。列的用途表里已逐列标注。
