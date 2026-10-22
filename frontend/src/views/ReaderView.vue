@@ -2149,6 +2149,7 @@ watch(
   async () => {
     if (isContinuousMode.value) {
       await rebuildContinuousAtChapter(store.currentIndex)
+      void store.loadChapterReviews(store.currentIndex)
     } else {
       await store.reloadChapterAfterEdit(store.currentIndex)
     }

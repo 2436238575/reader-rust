@@ -445,9 +445,8 @@ export const useReaderStore = defineStore('reader', () => {
       if (chapterContent == null) return false
       setActiveChapterState(nextIndex, chapterContent, session.chapterScrollProgress || 0)
       markChapterAsRead(nextIndex)
-      // 恢复会话不经过 loadChapter，评论与配图要在这里单独补一次
+      // 恢复会话不经过 loadChapter，评论要在这里单独补一次（配图由 setActive 触发）
       void loadChapterReviews(nextIndex)
-      void loadChapterImages(nextIndex)
       return true
     } catch {
       return false
@@ -679,8 +678,11 @@ export const useReaderStore = defineStore('reader', () => {
   function setActiveChapterState(index: number, chapterContent: string, progress = 0) {
     currentIndex.value = index
     content.value = chapterContent
-    // 配图跟着章节走：先清掉上一章的，等本次请求回来再填
+    // 配图跟着章节走：先清掉上一章的，再按新正文重新取。
+    // 放在这里而不是各个调用方：换章、切正文版本、刷新、连续滚动激活
+    // 都会经过这里，漏一处就会少一次配图请求
     resetChapterImages()
+    void loadChapterImages(index)
     chapterScrollProgress.value = Math.max(0, Math.min(1, progress))
     if (book.value) {
       book.value.durChapterIndex = index
@@ -816,9 +818,8 @@ export const useReaderStore = defineStore('reader', () => {
         await persistProgress(index, 0)
       }
 
-      // 正文先渲染，评论与配图随后补上：拉不到不该拖慢或打断阅读
+      // 正文先渲染，评论随后补上（配图由 setActiveChapterState 统一触发）
       void loadChapterReviews(index)
-      void loadChapterImages(index)
 
       if (config.enablePreload) {
         setTimeout(() => preloadAroundChapter(index), forceRefresh ? 1500 : 1000)
@@ -1064,6 +1065,8 @@ export const useReaderStore = defineStore('reader', () => {
       if (chapterContent == null) return
       if (loadSeq !== chapterLoadSeq || index !== currentIndex.value) return
       setActiveChapterState(index, chapterContent, chapterScrollProgress.value)
+      // 正文/版本变了，段评概览也要按当前版本重新取（服务端有缓存，代价很小）
+      void loadChapterReviews(index)
     } finally {
       loading.value = false
     }

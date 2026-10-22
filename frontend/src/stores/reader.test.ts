@@ -2,12 +2,13 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
 import { useAppStore } from './app'
 import { useReaderStore } from './reader'
-import { getBookContent } from '../api/bookshelf'
+import { getBookContent, getChapterImages } from '../api/bookshelf'
 import { getBrowserCachedChapter } from '../utils/browserCache'
 
 vi.mock('../api/bookshelf', () => ({
   getChapterList: vi.fn(),
   getBookContent: vi.fn(),
+  getChapterImages: vi.fn(),
   saveBookProgress: vi.fn(),
   setBookSource: vi.fn(),
 }))
@@ -56,6 +57,7 @@ describe('reader local txt chapters', () => {
     })
     vi.mocked(getBookContent).mockReset()
     vi.mocked(getBrowserCachedChapter).mockReset()
+    vi.mocked(getChapterImages).mockResolvedValue({ enabled: false, images: [] })
   })
 
   it('fetches uploaded local txt content from backend even when browser reports offline', async () => {
@@ -116,6 +118,28 @@ describe('reader local txt chapters', () => {
     expect(getBrowserCachedChapter).not.toHaveBeenCalled()
     expect(getBookContent).toHaveBeenCalledWith(expect.objectContaining({ variant: 'upstream' }))
     expect(readerStore.chapterDiffs.get(0)?.variant).toBe('upstream')
+  })
+
+  it('activating a chapter reloads its images even when the content is already in hand', async () => {
+    const readerStore = useReaderStore()
+    readerStore.book = {
+      name: '网络书',
+      author: '作者',
+      origin: 'https://example.org',
+      bookId: 'book_1',
+      bookUrl: 'https://example.org/book',
+      bookSourceId: 1,
+    }
+    readerStore.chapters = [{ title: '第一章', url: 'https://example.org/1', index: 0 }]
+
+    // 切正文版本/重载都走 setActiveChapterState；配图不能依赖调用方补
+    readerStore.setActiveChapterState(0, '正文', 0)
+    await vi.waitFor(() =>
+      expect(getChapterImages).toHaveBeenCalledWith({
+        bookId: 'book_1',
+        chapterUrl: 'https://example.org/1',
+      })
+    )
   })
 })
 
