@@ -565,3 +565,43 @@ async fn restore_prunes_edits_and_bookmarks_of_reused_book_ids() {
         "同一本书恢复后编辑版应保留"
     );
 }
+
+/// 批量删书的级联按 canonical id 执行：别名（book_01）与 canonical 同效；
+/// 合法格式但从未登记过的 id 不进级联（图片是全局存储，裸输入不能乱删）。
+#[tokio::test]
+async fn batch_delete_cascades_only_for_owned_books() {
+    let server = boot().await;
+    let book = server.upload_txt("级联归属", "第一章 开始\n正文。\n").await;
+    let book_id = book["bookId"].as_str().unwrap().to_string();
+    server
+        .post(
+            "saveChapterEdit",
+            json!({
+                "bookId": book_id,
+                "chapterUrl": "local-txt:x",
+                "chapterIndex": 0,
+                "chapterTitle": "x",
+                "content": "有了一条编辑版",
+            }),
+        )
+        .await;
+
+    let alias = format!("book_0{}", book_id.trim_start_matches("book_"));
+    let data = server
+        .post(
+            "deleteBooks",
+            json!({ "bookIds": [alias, "book_999", "../.."] }),
+        )
+        .await;
+    assert_eq!(data["deleted"], json!(1), "只有别名指向的那本真被删");
+    assert!(
+        !server
+            .temp_dir
+            .join("data")
+            .join("user_1")
+            .join("edited_chapters")
+            .join(&book_id)
+            .exists(),
+        "别名删除的级联应落到 canonical 目录"
+    );
+}

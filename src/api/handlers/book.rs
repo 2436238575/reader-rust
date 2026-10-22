@@ -1206,13 +1206,33 @@ pub async fn delete_books(
             shelf_books.push(book);
         }
     }
-    let count = state.book_service.delete_books(&user_ns, &book_ids).await?;
-    for book_id in &book_ids {
-        // 非法 id 在 delete_many 里是静默 no-op；这里同样跳过，绝不能把原始
-        // 输入喂给会拼文件路径的级联清理（`["../.."]` 会递归删到 data/ 目录）
-        if crate::storage::db::repo::parse_book_id(book_id).is_none() {
-            continue;
+    // 级联清理只对本用户拥有的 id 执行（在架或已登记）：图片记录是按
+    // book_id 全局存的，不过这道闸的话，批量参数里混进别人的合法 id
+    // 会把别人的图片清掉。顺带把 id 归一为 canonical（别名与杂项缓存同口径）。
+    let mut owned_ids: Vec<String> = Vec::new();
+    {
+        let shelf_ids: std::collections::HashSet<&str> = shelf_books
+            .iter()
+            .filter_map(|b| b.book_id.as_deref())
+            .collect();
+        for book_id in &book_ids {
+            let Some(canonical) = crate::storage::db::repo::canonical_book_id(book_id) else {
+                // 非法 id 在 delete_many 里是静默 no-op；这里同样跳过，绝不能把
+                // 原始输入喂给会拼文件路径的级联清理（`["../.."]` 会递归删到 data/）
+                continue;
+            };
+            if shelf_ids.contains(canonical.as_str())
+                || matches!(
+                    state.book_service.book_repo().get(&user_ns, &canonical).await,
+                    Ok(Some(_))
+                )
+            {
+                owned_ids.push(canonical);
+            }
         }
+    }
+    let count = state.book_service.delete_books(&user_ns, &book_ids).await?;
+    for book_id in &owned_ids {
         let _ = state.ai_book_service.delete(&user_ns, book_id).await;
         super::bookmark::delete_bookmarks_for_book(&state, &user_ns, book_id).await?;
         state.image_service.remove_by_book_id(book_id).await;

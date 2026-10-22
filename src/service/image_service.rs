@@ -147,8 +147,10 @@ impl ImageService {
             id: id.clone(),
             kind: kind.to_string(),
             source_url: url.to_string(),
+            // book_id 归一为 canonical：别名（book_007）登记下的记录在按书
+            // 清理（canonical）时删不到，会成孤儿
             book_id: book_id
-                .map(str::to_string)
+                .and_then(crate::storage::db::repo::canonical_book_id)
                 .or(existing.as_ref().and_then(|r| r.book_id.clone())),
             content_type: existing
                 .as_ref()
@@ -222,8 +224,12 @@ impl ImageService {
     /// 按书删除其全部图片（记录 + 本体），返回删除的图片数。
     ///
     /// 目录即映射表：逐条读记录比对 book_id。只在删书/按书清缓存时调用，
-    /// 频率极低，全目录扫描可接受。
+    /// 频率极低，全目录扫描可接受。book_id 先归一为 canonical（别名/非法
+    /// 输入不命中任何记录——登记侧同样归一，两端口径一致）。
     pub async fn remove_by_book_id(&self, book_id: &str) -> u64 {
+        let Some(book_id) = crate::storage::db::repo::canonical_book_id(book_id) else {
+            return 0;
+        };
         let dir = self.dir();
         let Ok(mut entries) = fs::read_dir(&dir).await else {
             return 0;
@@ -240,7 +246,7 @@ impl ImageService {
             let Ok(record) = serde_json::from_slice::<ImageRecord>(&data) else {
                 continue;
             };
-            if record.book_id.as_deref() != Some(book_id) {
+            if record.book_id.as_deref() != Some(book_id.as_str()) {
                 continue;
             }
             let _ = fs::remove_file(&path).await;
@@ -590,6 +596,35 @@ mod tests {
             "https://p3-reading-sign.fqnovelpic.com/novel-pic/other~tplv-x.heic",
         );
         assert_ne!(a, c, "不同路径应当是不同 id");
+    }
+
+    /// 登记与按书删除两端都把 book_id 归一为 canonical：别名登记的记录
+    /// 按 canonical 删除删得到；非法 id 是 no-op。
+    #[tokio::test]
+    async fn book_id_is_canonicalized_on_register_and_remove() {
+        let dir = std::env::temp_dir().join(format!(
+            "reader-rust-img-alias-{}-{}",
+            std::process::id(),
+            crate::util::crypto::random_string(6)
+        ));
+        let service = ImageService::new(
+            crate::crawler::http_client::HttpClient::new(5, None).unwrap(),
+            dir.to_str().unwrap(),
+            0,
+        );
+        let id = service
+            .register("cover", "https://img.example/x.jpg", Some("book_07"))
+            .await
+            .unwrap();
+        assert_eq!(
+            service.record(&id).await.unwrap().book_id.as_deref(),
+            Some("book_7"),
+            "别名登记应存 canonical id"
+        );
+        assert_eq!(service.remove_by_book_id("../..").await, 0);
+        assert_eq!(service.remove_by_book_id("book_7").await, 1);
+        assert!(service.record(&id).await.is_none());
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
