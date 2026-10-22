@@ -1164,6 +1164,11 @@ pub async fn delete_books(
     }
     let count = state.book_service.delete_books(&user_ns, &book_ids).await?;
     for book_id in &book_ids {
+        // 非法 id 在 delete_many 里是静默 no-op；这里同样跳过，绝不能把原始
+        // 输入喂给会拼文件路径的级联清理（`["../.."]` 会递归删到 data/ 目录）
+        if crate::storage::db::repo::parse_book_id(book_id).is_none() {
+            continue;
+        }
         let _ = state.ai_book_service.delete(&user_ns, book_id).await;
         super::bookmark::delete_bookmarks_for_book(&state, &user_ns, book_id).await?;
         state.image_service.remove_by_book_id(book_id).await;

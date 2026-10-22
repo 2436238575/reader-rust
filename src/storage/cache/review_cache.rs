@@ -80,8 +80,12 @@ impl ReviewCache {
     }
 
     /// 删除某本书的全部评论缓存，返回删除的文件数。
+    /// book_key 必须是 `book_<n>`：非法 id 直接 no-op（纵深防御，与 FileCache 同手法）。
     pub async fn remove_book(&self, user_ns: &str, book_key: &str) -> anyhow::Result<u64> {
-        let path = self.root.join(user_ns).join(book_key);
+        let Some(id) = crate::storage::db::repo::parse_book_id(book_key) else {
+            return Ok(0);
+        };
+        let path = self.root.join(user_ns).join(format!("book_{id}"));
         let book_usage = dir_usage(&path, 1).await;
         let removed = remove_dir_counting_files(&path).await?;
         self.subtract_usage(user_ns, book_usage.bytes);
@@ -151,9 +155,14 @@ impl ReviewCache {
     }
 
     fn entry_path(&self, user_ns: &str, book_key: &str, key: &str) -> PathBuf {
+        // 与 FileCache.book_path 同一道防线：非法 book_id 落无害隔离段
+        let segment = match crate::storage::db::repo::parse_book_id(book_key) {
+            Some(id) => format!("book_{id}"),
+            None => "__invalid_book__".to_string(),
+        };
         self.root
             .join(user_ns)
-            .join(book_key)
+            .join(segment)
             .join(md5_hex(key))
             .with_extension("json")
     }

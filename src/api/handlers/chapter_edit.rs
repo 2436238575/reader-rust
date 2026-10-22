@@ -51,12 +51,25 @@ fn require_ids(book_id: &str, chapter_url: &str) -> Result<(), AppError> {
     Ok(())
 }
 
+/// bookId 的完整校验：格式 + 存在 + 归属当前命名空间。
+/// 这些端点的入参最终会拼进 storage 文件路径，绝不能只查非空——
+/// `../../user_2` 这类输入必须在这里就 404。
+async fn resolve_book_checked(
+    state: &AppState,
+    user_ns: &str,
+    book_id: &str,
+) -> Result<(), AppError> {
+    super::book::resolve_book(state, user_ns, book_id).await?;
+    Ok(())
+}
+
 pub async fn save_chapter_edit(
     State(state): State<AppState>,
     user: CurrentUser,
     QueryOrBody(req): QueryOrBody<SaveChapterEditRequest>,
 ) -> Result<Json<ApiResponse<Value>>, AppError> {
     require_ids(&req.book_id, &req.chapter_url)?;
+    resolve_book_checked(&state, &user.0.ns, &req.book_id).await?;
     state
         .chapter_edit_service
         .save_chapter_edit(
@@ -77,6 +90,7 @@ pub async fn get_chapter_edit(
     QueryOrBody(req): QueryOrBody<ChapterEditQuery>,
 ) -> Result<Json<ApiResponse<Value>>, AppError> {
     require_ids(&req.book_id, &req.chapter_url)?;
+    resolve_book_checked(&state, &user.0.ns, &req.book_id).await?;
     let content = state
         .chapter_edit_service
         .get_chapter_edit(&user.0.ns, &req.book_id, &req.chapter_url)
@@ -95,10 +109,11 @@ pub async fn list_chapter_edits(
     if req.book_id.trim().is_empty() {
         return Err(AppError::BadRequest("bookId required".to_string()));
     }
+    resolve_book_checked(&state, &user.0.ns, &req.book_id).await?;
     let urls = state
         .chapter_edit_service
         .list_chapter_edits(&user.0.ns, &req.book_id)
-        .await;
+        .await?;
     Ok(Json(ApiResponse::ok(json!({ "urls": urls }))))
 }
 
@@ -108,6 +123,7 @@ pub async fn delete_chapter_edit(
     QueryOrBody(req): QueryOrBody<ChapterEditQuery>,
 ) -> Result<Json<ApiResponse<Value>>, AppError> {
     require_ids(&req.book_id, &req.chapter_url)?;
+    resolve_book_checked(&state, &user.0.ns, &req.book_id).await?;
     state
         .chapter_edit_service
         .delete_chapter_edit(&user.0.ns, &req.book_id, &req.chapter_url)

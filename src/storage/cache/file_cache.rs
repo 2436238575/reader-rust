@@ -200,8 +200,18 @@ impl FileCache {
         self.usage.lock().unwrap().remove(user_ns);
     }
 
+    /// 书级目录路径。book_key 必须是 `book_<n>`：非法 id（`../..`、绝对路径等）
+    /// 统一落到一个无害的隔离段——读返回空、写进隔离区、删除是 no-op。
+    /// 这是纵深防御的最后一道：handler/service 层的校验才是主防线。
     fn book_path(&self, user_ns: &str, book_key: &str) -> PathBuf {
-        self.root.join(user_ns).join(book_key)
+        const INVALID_SEGMENT: &str = "__invalid_book__";
+        let segment = match crate::storage::db::repo::parse_book_id(book_key) {
+            Some(id) => format!("book_{id}"),
+            None => INVALID_SEGMENT.to_string(),
+        };
+        let base = self.root.join(user_ns);
+        crate::util::safe_path::resolve_within(&base, std::path::Path::new(&segment))
+            .unwrap_or_else(|| base.join(INVALID_SEGMENT))
     }
 
     /// 章节文件按 md5 前两位分片（`book_<n>/ab/abcdef….txt`）：

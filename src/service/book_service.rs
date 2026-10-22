@@ -2269,6 +2269,11 @@ impl BookService {
         let deleted = self.shelf_repo.delete_many(user_ns, book_ids).await?;
         if deleted > 0 {
             for book_id in book_ids {
+                // 非法 id 拼进缓存目录路径会越界（`../..` 经 remove_dir_all 落到上级），
+                // repo 层对它们是 no-op，这里同样跳过，不把原始输入送进文件系统
+                if crate::storage::db::repo::parse_book_id(book_id).is_none() {
+                    continue;
+                }
                 let _ = self.clear_book_related_cache(user_ns, book_id).await;
                 let _ = self.book_repo.delete(user_ns, book_id).await;
             }

@@ -50,6 +50,8 @@ pub async fn search_cached_content(
     if req.book_id.trim().is_empty() {
         return Err(AppError::BadRequest("bookId required".to_string()));
     }
+    // bookId 会拼进缓存目录路径：格式 + 存在 + 归属校验（与书籍级接口一致）
+    super::book::resolve_book(&state, &ns, &req.book_id).await?;
     let query = req.query.trim();
     if query.is_empty() {
         return Err(AppError::BadRequest("query required".to_string()));

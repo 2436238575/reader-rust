@@ -73,6 +73,25 @@ impl Drop for TestServer {
     }
 }
 
+fn list_files_recursive(dir: &PathBuf) -> Vec<String> {
+    let mut out = Vec::new();
+    fn walk(dir: &std::path::Path, base: &std::path::Path, out: &mut Vec<String>) {
+        let Ok(entries) = std::fs::read_dir(dir) else {
+            return;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                walk(&path, base, out);
+            } else {
+                out.push(path.strip_prefix(base).unwrap().display().to_string());
+            }
+        }
+    }
+    walk(dir, dir, &mut out);
+    out
+}
+
 impl TestServer {
     async fn post(&self, path: &str, body: Value) -> Value {
         let resp = self
@@ -212,6 +231,102 @@ async fn local_book_edit_overlays_original_and_delete_restores() {
         .join("edited_chapters")
         .join(book_id);
     assert!(!edits_dir.exists(), "删书应级联清掉编辑版目录");
+}
+
+/// 路径注入防线：非法 bookId（`../..`、绝对路径、非数字）在 handler 层就 404/400，
+/// service 层的 book_dir 兜底也只接受 `book_<n>`。
+#[tokio::test]
+async fn path_traversal_book_ids_are_rejected() {
+    let server = boot().await;
+    let book = server.upload_txt("防线测试", "第一章 开始\n正文。\n").await;
+    let book_id = book["bookId"].as_str().unwrap().to_string();
+    server
+        .post(
+            "saveChapterEdit",
+            json!({
+                "bookId": book_id,
+                "chapterUrl": "local-txt:x",
+                "chapterIndex": 0,
+                "chapterTitle": "x",
+                "content": "有了一条编辑版",
+            }),
+        )
+        .await;
+
+    let evil_ids = [
+        "../../user_2",
+        "..\\..\\",
+        "/etc",
+        "book_abc",
+        "book_1/../../",
+    ];
+    for evil in evil_ids {
+        for (path, body) in [
+            (
+                "saveChapterEdit",
+                json!({"bookId": evil, "chapterUrl": "x", "content": "y"}),
+            ),
+            ("listChapterEdits", json!({"bookId": evil})),
+            (
+                "searchCachedContent",
+                json!({"bookId": evil, "query": "词"}),
+            ),
+        ] {
+            let resp = server
+                .client
+                .post(format!("{}/reader3/{path}", server.base_url))
+                .bearer_auth(&server.token)
+                .json(&body)
+                .send()
+                .await
+                .unwrap();
+            let status = resp.status();
+            assert!(
+                status == StatusCode::NOT_FOUND || status == StatusCode::BAD_REQUEST,
+                "{path} 对 {evil:?} 应 404/400，实际 {status}"
+            );
+        }
+    }
+
+    // 批量删书携带非法 id：哨兵文件放在 data/ 根——若 "../.." 逃出
+    // edited_chapters/<bookId> 落到上级目录，remove_dir_all 会连它带走
+    let sentinel = server.temp_dir.join("data").join("sentinel.txt");
+    std::fs::create_dir_all(sentinel.parent().unwrap()).unwrap();
+    std::fs::write(&sentinel, "别删我").unwrap();
+    server
+        .post("deleteBooks", json!({ "bookIds": [book_id.clone()] }))
+        .await;
+    assert!(
+        sentinel.exists(),
+        "合法批量删书不应带走 data/ 根。剩余文件: {:?}",
+        list_files_recursive(&server.temp_dir)
+    );
+    // 再上传一本，带非法 id 一起删
+    let book2 = server
+        .upload_txt("防线测试2", "第一章 开始\n正文。\n")
+        .await;
+    server
+        .post(
+            "deleteBooks",
+            json!({ "bookIds": [book2["bookId"].as_str().unwrap(), "../..", "../../.."] }),
+        )
+        .await;
+    assert!(
+        sentinel.exists(),
+        "非法 bookId 不应越出 edited_chapters 目录造成删除。剩余文件: {:?}",
+        list_files_recursive(&server.temp_dir)
+    );
+    // 合法书的级联正常执行（编辑版已随书删除）
+    let list = server
+        .client
+        .post(format!("{}/reader3/listChapterEdits", server.base_url))
+        .bearer_auth(&server.token)
+        .json(&json!({ "bookId": book_id }))
+        .send()
+        .await
+        .unwrap();
+    // 书已删，resolve_book 报 404
+    assert_eq!(list.status(), StatusCode::NOT_FOUND);
 }
 
 /// 网络书：refresh=1 重抓上游更新基准，阅读仍返回编辑版。
