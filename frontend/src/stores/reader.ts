@@ -38,6 +38,7 @@ import {
 import { isLocalBook } from '../utils/localBook'
 import { saveRecentReadBook } from '../utils/recentBooks'
 import { listChapterEdits } from '../api/chapterEdit'
+import { hydrateDiffOps, type ParagraphDiffOp } from '../utils/chapterDiff'
 import {
   loadLocalKeywordRules,
   persistAndPushKeywordRules,
@@ -76,6 +77,14 @@ export interface ReadConfig {
   showDiffMarks: boolean
   /** 评论里回复的配图形态：缩略图直接显示，或番茄式「查看图片」文字链 */
   replyImageStyle: 'thumbnail' | 'link'
+}
+
+/** 某一章的编辑版差异状态（由正文接口带回）。 */
+export interface ChapterDiffState {
+  edited: boolean
+  ops: ParagraphDiffOp[] | null
+  /** diff 算不出来的原因；空串表示正常 */
+  error: string
 }
 
 const defaultConfig: ReadConfig = {
@@ -187,6 +196,9 @@ export const useReaderStore = defineStore('reader', () => {
   /// 已编辑章节的 chapterUrl 集：阅读链路对这些章跳过浏览器缓存直走后端
   /// （后端会优先返回编辑版），目录面板与正文 diff 标记也用它
   const editedChapterKeys = ref<Set<string>>(new Set())
+  /// 各章编辑版差异（随 getBookContent 一起返回，不再单独请求）。
+  /// 连续滚动模式下每章都从这里取自己的 ops。
+  const chapterDiffs = reactive(new Map<number, ChapterDiffState>())
 
   async function refreshEditedChapterKeys() {
     if (!book.value?.bookId) {
@@ -609,10 +621,11 @@ export const useReaderStore = defineStore('reader', () => {
     chapters.value = []
     content.value = ''
     resetReviews()
-      appStore.markBookOpened(b.bookId || b.bookUrl)
+    appStore.markBookOpened(b.bookId || b.bookUrl)
     currentIndex.value = b.durChapterIndex || 0
     chapterScrollProgress.value = 0
     preloadedContent.value.clear()
+    chapterDiffs.clear()
     loadReadChapterHistory(b)
     progressDirty.value = false
     lastServerProgressKey.value = ''
@@ -694,11 +707,13 @@ export const useReaderStore = defineStore('reader', () => {
       : null
 
     if (!forceRefresh && browserCached) {
+      chapterDiffs.delete(index)
       return browserCached
     }
 
     if (!appStore.isOnline && !isLocal) {
       if (browserCached) {
+        chapterDiffs.delete(index)
         return browserCached
       }
       throw new Error('当前处于离线状态，且该章节未缓存到浏览器')
@@ -706,14 +721,27 @@ export const useReaderStore = defineStore('reader', () => {
 
     let chapterContent = ''
     try {
-      chapterContent = await getBookContent({
+      const response = await getBookContent({
         bookId,
         chapterUrl: chapter.url,
         index,
         refresh: forceRefresh ? 1 : 0,
       })
+      chapterContent = response.content
+      if (response.edited) {
+        // 后端为省流量不给 equal 行带文本，这里用编辑版正文补齐
+        const ops = response.diff?.ops ? hydrateDiffOps(response.diff.ops, response.content) : null
+        chapterDiffs.set(index, {
+          edited: true,
+          ops,
+          error: response.diffError || '',
+        })
+      } else {
+        chapterDiffs.delete(index)
+      }
     } catch (error) {
       if (browserCached) {
+        chapterDiffs.delete(index)
         appStore.showToast('网络请求失败，已切换到本地缓存章节', 'warning')
         return browserCached
       }
@@ -760,7 +788,11 @@ export const useReaderStore = defineStore('reader', () => {
 
       setActiveChapterState(index, chapterContent, initialProgress)
       markChapterAsRead(index)
-      appStore.markChapterRead(book.value.bookId || book.value.bookUrl, index, chapters.value.length)
+      appStore.markChapterRead(
+        book.value.bookId || book.value.bookUrl,
+        index,
+        chapters.value.length
+      )
 
       if (!isOpeningSavedChapter) {
         await persistProgress(index, 0)
@@ -811,7 +843,7 @@ export const useReaderStore = defineStore('reader', () => {
    * 书源没声明评论规则时后端返回 `enabled: false`，此时前端不渲染任何入口；
    * 网络或解析失败同样静默降级——评论是附加内容，不能让它影响正文阅读。
    */
-  async function loadChapterReviews(index = currentIndex.value) {
+  async function loadChapterReviews(index = currentIndex.value, refresh = false) {
     const currentBook = book.value
     const chapter = chapters.value[index]
     if (!currentBook || !chapter || isLocalBook(currentBook)) {
@@ -826,6 +858,9 @@ export const useReaderStore = defineStore('reader', () => {
       const params = {
         bookId: currentBook.bookId,
         chapterUrl: requestedChapterUrl,
+        // 手动刷新正文时让段评索引也重抓：两者必须来自同一版上游，
+        // 否则段号会和刷新后的正文对不上
+        refresh: refresh ? 1 : 0,
       }
       // 顺序请求：第二个请求能复用第一个已经取回的章节正文响应
       const indexResp = await getParaCommentIndex(params)
@@ -1027,6 +1062,8 @@ export const useReaderStore = defineStore('reader', () => {
       if (chapterContent == null) return
       if (loadSeq !== chapterLoadSeq || index !== currentIndex.value) return
       setActiveChapterState(index, chapterContent, chapterScrollProgress.value)
+      // 正文基准刚被重抓，段评索引也要跟着刷新
+      void loadChapterReviews(index, true)
       void preloadAroundChapter(index)
     } catch (error) {
       // 手动刷新失败不能静默：转圈停了用户会以为刷新成功
@@ -1278,6 +1315,7 @@ export const useReaderStore = defineStore('reader', () => {
     keywordRules,
     editedChapterKeys,
     refreshEditedChapterKeys,
+    chapterDiffs,
     saveKeywordRules,
     syncKeywordRules,
     switchSource,

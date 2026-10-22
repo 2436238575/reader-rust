@@ -1,8 +1,8 @@
 /**
  * 章节编辑版 vs 上游基准的 diff（纯函数，无响应式状态）。
  *
- * 两级：段落级 LCS（段 = 非空行，与正文渲染的段落口径一致），
- * 段内用公共前后缀剥离出变动中段（中文按字，够用且快）。
+ * 操作序列由后端用系统 git 算好随正文一起返回；这里只做前端展示需要的
+ * 数据补齐、段内对照与面板折叠。
  */
 
 export interface ParagraphDiffOp {
@@ -26,70 +26,16 @@ export function splitToParagraphs(text: string): string[] {
 }
 
 /**
- * LCS 的 DP 表是 (m+1)×(n+1) 的 Uint32Array：万字段落的双侧乘积能凑出
- * 数亿元素（数百 MB），浏览器直接崩。超过阈值返回 null——调用方按
- * 「差异过大不算」处理（不显示标记/提示）。
+ * 后端为省流量不给 `equal` 行带文本（它们和编辑版正文完全一致）。
+ * 这里按编辑版正文把文本补回来，面板的上下文行才显示得出来。
  */
-const MAX_LCS_CELLS = 16_000_000
-
-/** 段级 LCS（DP + 回溯）；del 紧跟 add 的一对合并为 modify。 */
-export function diffParagraphs(base: string[], edited: string[]): ParagraphDiffOp[] | null {
-  const m = base.length
-  const n = edited.length
-  if (!m && !n) return []
-  if ((m + 1) * (n + 1) > MAX_LCS_CELLS) return null
-  // dp[i][j] = LCS(base[i:], edited[j:]) 的长度
-  const dp = new Uint32Array((m + 1) * (n + 1))
-  const at = (i: number, j: number) => i * (n + 1) + j
-  for (let i = m - 1; i >= 0; i--) {
-    for (let j = n - 1; j >= 0; j--) {
-      dp[at(i, j)] =
-        base[i] === edited[j]
-          ? dp[at(i + 1, j + 1)] + 1
-          : Math.max(dp[at(i + 1, j)], dp[at(i, j + 1)])
-    }
-  }
-  const ops: ParagraphDiffOp[] = []
-  let i = 0
-  let j = 0
-  while (i < m && j < n) {
-    if (base[i] === edited[j]) {
-      ops.push({ type: 'equal', baseIndex: i, editedIndex: j, baseText: base[i], editedText: edited[j] })
-      i++
-      j++
-    } else if (dp[at(i + 1, j)] >= dp[at(i, j + 1)]) {
-      ops.push({ type: 'del', baseIndex: i, baseText: base[i] })
-      i++
-    } else {
-      ops.push({ type: 'add', editedIndex: j, editedText: edited[j] })
-      j++
-    }
-  }
-  while (i < m) {
-    ops.push({ type: 'del', baseIndex: i, baseText: base[i] })
-    i++
-  }
-  while (j < n) {
-    ops.push({ type: 'add', editedIndex: j, editedText: edited[j] })
-    j++
-  }
-  // 同位置的「删一段 + 加一段」合并为 modify（一对一；一对多不强行撮合）
-  const merged: ParagraphDiffOp[] = []
-  for (const op of ops) {
-    const last = merged[merged.length - 1]
-    if (last?.type === 'del' && op.type === 'add') {
-      merged[merged.length - 1] = {
-        type: 'modify',
-        baseIndex: last.baseIndex,
-        editedIndex: op.editedIndex,
-        baseText: last.baseText,
-        editedText: op.editedText,
-      }
-    } else {
-      merged.push(op)
-    }
-  }
-  return merged
+export function hydrateDiffOps(ops: ParagraphDiffOp[], content: string): ParagraphDiffOp[] {
+  const paragraphs = splitToParagraphs(content)
+  return ops.map((op) => {
+    if (op.editedIndex == null || op.editedText != null) return op
+    const text = paragraphs[op.editedIndex]
+    return text == null ? op : { ...op, editedText: text }
+  })
 }
 
 export interface InlineDiff {
@@ -108,7 +54,11 @@ export function inlineDiff(baseText: string, editedText: string): InlineDiff {
   while (start < minLen && baseText[start] === editedText[start]) start++
   let endBase = baseText.length
   let endEdited = editedText.length
-  while (endBase > start && endEdited > start && baseText[endBase - 1] === editedText[endEdited - 1]) {
+  while (
+    endBase > start &&
+    endEdited > start &&
+    baseText[endBase - 1] === editedText[endEdited - 1]
+  ) {
     endBase--
     endEdited--
   }
@@ -120,7 +70,11 @@ export function inlineDiff(baseText: string, editedText: string): InlineDiff {
   }
 }
 
-export function diffStats(ops: ParagraphDiffOp[]): { added: number; removed: number; modified: number } {
+export function diffStats(ops: ParagraphDiffOp[]): {
+  added: number
+  removed: number
+  modified: number
+} {
   let added = 0
   let removed = 0
   let modified = 0
@@ -130,6 +84,61 @@ export function diffStats(ops: ParagraphDiffOp[]): { added: number; removed: num
     else if (op.type === 'modify') modified++
   }
   return { added, removed, modified }
+}
+
+/* ─── 正文里点 diff 标记的就地预览 ─── */
+
+export interface DiffPreviewModel {
+  kind: 'add' | 'modify' | 'delete'
+  /** 该段自身的原文（add 没有） */
+  baseText?: string
+  /** 该段自身的新文本（delete 没有） */
+  editedText?: string
+  /** 紧邻的删除块（大段删除 / 删除+修改混合时都会带） */
+  deleted: string[]
+  deletedTotal: number
+}
+
+/**
+ * 从操作序列里取出某个段落的预览内容。
+ *
+ * `opIndex` 是段落自身对应的 add/modify 操作；`delStart` 是删除块里第一条
+ * del 的下标（删除箭头挂在「删除块后第一个未变段」上，所以单独记）。
+ */
+export function buildDiffPreview(
+  ops: ParagraphDiffOp[] | null,
+  opIndex?: number | null,
+  delStart?: number | null
+): DiffPreviewModel | null {
+  if (!ops?.length) return null
+  const deleted: string[] = []
+  if (delStart != null && delStart >= 0 && delStart < ops.length) {
+    for (let i = delStart; i < ops.length && ops[i].type === 'del'; i += 1) {
+      deleted.push(ops[i].baseText || '')
+    }
+  }
+  const op = opIndex != null && opIndex >= 0 ? ops[opIndex] : undefined
+  if (op?.type === 'add') {
+    return {
+      kind: 'add',
+      editedText: op.editedText || '',
+      deleted,
+      deletedTotal: deleted.length,
+    }
+  }
+  if (op?.type === 'modify') {
+    return {
+      kind: 'modify',
+      baseText: op.baseText || '',
+      editedText: op.editedText || '',
+      deleted,
+      deletedTotal: deleted.length,
+    }
+  }
+  if (deleted.length) {
+    return { kind: 'delete', deleted, deletedTotal: deleted.length }
+  }
+  return null
 }
 
 /* ─── diff 面板的折叠行序列 ─── */

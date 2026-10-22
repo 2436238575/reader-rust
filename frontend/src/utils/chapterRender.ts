@@ -104,28 +104,33 @@ export function applyDiffMarks(wrapper: HTMLElement, ops: ParagraphDiffOp[]) {
   if (!ops.length) return
   const paragraphs = Array.from(wrapper.querySelectorAll('p')) as HTMLElement[]
   if (!paragraphs.length) return
-  let pendingDelete = false
-  for (const op of ops) {
+  // 删除块的首个 del 下标：点击红箭头时据此取出整块被删段落
+  let pendingDeleteStart: number | null = null
+  ops.forEach((op, opIndex) => {
     if (op.type === 'del') {
-      pendingDelete = true
-      continue
+      if (pendingDeleteStart == null) pendingDeleteStart = opIndex
+      return
     }
     const index = op.editedIndex
-    if (index == null) continue
+    if (index == null) return
     const paragraph = paragraphs[index]
-    if (!paragraph) continue
-    if (pendingDelete) {
+    if (!paragraph) return
+    if (pendingDeleteStart != null) {
+      paragraph.dataset.diffDelStart = String(pendingDeleteStart)
       paragraph.classList.add('diff-del-after')
-      pendingDelete = false
+      pendingDeleteStart = null
     }
+    if (op.type === 'equal') return
+    // 段落自身对应的操作：点击该段就地预览「原 → 改」
+    paragraph.dataset.diffOp = String(opIndex)
     if (op.type === 'add') {
       paragraph.classList.add('diff-added')
-      continue
+      return
     }
-    if (op.type !== 'modify') continue
+    if (op.type !== 'modify') return
     paragraph.classList.add('diff-modified')
     const diff = inlineDiff(op.baseText || '', paragraph.textContent || '')
-    if (!diff.removed && !diff.added) continue
+    if (!diff.removed && !diff.added) return
     const fragment = document.createDocumentFragment()
     if (diff.prefix) fragment.appendChild(document.createTextNode(diff.prefix))
     if (diff.removed) {
@@ -143,9 +148,10 @@ export function applyDiffMarks(wrapper: HTMLElement, ops: ParagraphDiffOp[]) {
     if (diff.suffix) fragment.appendChild(document.createTextNode(diff.suffix))
     paragraph.textContent = ''
     paragraph.appendChild(fragment)
-  }
+  })
   // 删除块在文末：标最后一个段
-  if (pendingDelete) {
+  if (pendingDeleteStart != null) {
+    paragraphs[paragraphs.length - 1].dataset.diffDelStart = String(pendingDeleteStart)
     paragraphs[paragraphs.length - 1].classList.add('diff-del-after')
   }
 }
@@ -170,6 +176,112 @@ export function renderParaCommentBubble(item: ParaReviewCount) {
     authorMark +
     '</span>'
   )
+}
+
+/* ─── 段评气泡定位 ─── */
+
+/** 编辑版章节用段落原文匹配时，最低相似度（0–1）。 */
+const PARA_TEXT_MATCH_THRESHOLD = 0.5
+
+function normalizeParaText(text: string) {
+  return text
+    .replace(/<[^>]+>/g, '')
+    .replace(/\s+/g, '')
+    .toLowerCase()
+}
+
+/**
+ * 两段文字相似度：字符二元组 Dice 系数，短段（< 4 字）用公共前缀比例。
+ *
+ * 段评概览里的原文被截到 60 字，编辑版段落可能更长：比较前把目标截到
+ * 相近长度，避免长段落自身长度把相似度稀释掉。
+ */
+export function paraTextSimilarity(source: string, target: string): number {
+  const left = normalizeParaText(source)
+  const right = normalizeParaText(target)
+  if (!left || !right) return 0
+  if (left === right) return 1
+  const leftChars = Array.from(left)
+  const rightChars = Array.from(right)
+  const shorter = Math.min(leftChars.length, rightChars.length)
+  if (shorter === 0) return 0
+
+  let prefix = 0
+  while (prefix < shorter && leftChars[prefix] === rightChars[prefix]) prefix += 1
+  const prefixScore = prefix / shorter
+  if (shorter < 4) return prefixScore
+
+  const rightForBigrams = rightChars.slice(0, leftChars.length + 10)
+  const leftBigrams = new Map<string, number>()
+  for (let i = 0; i < leftChars.length - 1; i += 1) {
+    const key = `${leftChars[i]}${leftChars[i + 1]}`
+    leftBigrams.set(key, (leftBigrams.get(key) ?? 0) + 1)
+  }
+  let shared = 0
+  for (let i = 0; i < rightForBigrams.length - 1; i += 1) {
+    const key = `${rightForBigrams[i]}${rightForBigrams[i + 1]}`
+    const leftCount = leftBigrams.get(key)
+    if (leftCount) {
+      shared += 1
+      if (leftCount === 1) leftBigrams.delete(key)
+      else leftBigrams.set(key, leftCount - 1)
+    }
+  }
+  const dice = (2 * shared) / (leftChars.length - 1 + rightForBigrams.length - 1)
+  return Math.max(prefixScore, dice)
+}
+
+/**
+ * 段号 → 渲染段落位置。
+ *
+ * 普通章节：段评的 `paraIndex` 就是正文行号，按「渲染位置 ↔ 原始行号」
+ * 映射直接取。
+ *
+ * 编辑过的章节：`paraIndex` 指向上游正文，编辑增删段落后行号会漂移。
+ * 改用段评概览自带的 `text`（该段原文）去编辑版正文里做相似度匹配；
+ * 匹配不上说明这段已经被删掉，不挂气泡。
+ */
+export function buildParaBubbleMap(
+  counts: ParaReviewCount[],
+  rawLines: { index: number; text: string }[],
+  rawLineByPosition: Map<number, number>,
+  edited: boolean
+): Map<number, ParaReviewCount> {
+  const map = new Map<number, ParaReviewCount>()
+  if (!counts.length) return map
+  const positionByRawLine = new Map<number, number>()
+  rawLineByPosition.forEach((rawIndex, position) => {
+    if (!positionByRawLine.has(rawIndex)) positionByRawLine.set(rawIndex, position)
+  })
+
+  if (!edited) {
+    for (const item of counts) {
+      const position = positionByRawLine.get(item.paraIndex)
+      if (position != null) map.set(position, item)
+    }
+    return map
+  }
+
+  const used = new Set<number>()
+  for (const item of counts) {
+    if (!normalizeParaText(item.text)) continue
+    let bestRawIndex = -1
+    let bestScore = 0
+    for (const line of rawLines) {
+      if (used.has(line.index)) continue
+      const score = paraTextSimilarity(item.text, line.text)
+      if (score > bestScore) {
+        bestScore = score
+        bestRawIndex = line.index
+      }
+    }
+    if (bestRawIndex < 0 || bestScore < PARA_TEXT_MATCH_THRESHOLD) continue
+    const position = positionByRawLine.get(bestRawIndex)
+    if (position == null) continue
+    used.add(bestRawIndex)
+    map.set(position, item)
+  }
+  return map
 }
 
 /**
@@ -360,7 +472,6 @@ export function applyUnderlineMarks(root: HTMLElement, marks: UnderlineMarkSpec[
     }
   }
 }
-
 
 /**
  * 常驻关键词高亮：命中处包 `<mark class="kw-highlight">` 并上底色。

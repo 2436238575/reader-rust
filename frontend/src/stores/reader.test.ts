@@ -59,7 +59,7 @@ describe('reader local txt chapters', () => {
   })
 
   it('fetches uploaded local txt content from backend even when browser reports offline', async () => {
-    vi.mocked(getBookContent).mockResolvedValue('本地正文')
+    vi.mocked(getBookContent).mockResolvedValue({ content: '本地正文', edited: false })
     vi.mocked(getBrowserCachedChapter).mockResolvedValue(null)
     const appStore = useAppStore()
     const readerStore = useReaderStore()

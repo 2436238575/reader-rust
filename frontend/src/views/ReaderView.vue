@@ -71,6 +71,7 @@
     <ReaderMobileControls
       v-if="isMobile"
       :show="showControls || !!store.activePanel"
+      :chapter-edited="currentChapterEdited"
       @goBack="goBack"
       @scrollTop="scrollToTop"
       @scrollBottom="scrollToBottom"
@@ -393,6 +394,79 @@
       </div>
     </Transition>
 
+    <!-- 点击 diff 标记的就地预览：本段「原 → 改」，或这段前面的删除块 -->
+    <Transition name="fade">
+      <div
+        v-if="diffPreview.visible && diffPreview.model"
+        class="selection-menu diff-preview"
+        @click.stop
+        :style="{
+          top: diffPreview.top + 'px',
+          left: diffPreview.left + 'px',
+          background: chromeTheme.popup,
+          color: chromeTheme.fontColor,
+        }"
+      >
+        <div class="diff-preview-head">
+          <span>
+            {{
+              diffPreview.model.kind === 'add'
+                ? '新增段落'
+                : diffPreview.model.kind === 'delete'
+                  ? '删除的段落'
+                  : '本段改动'
+            }}
+          </span>
+          <button class="diff-preview-close" aria-label="关闭" @click="closeDiffPreview">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M18 6 6 18M6 6l12 12" />
+            </svg>
+          </button>
+        </div>
+        <div class="diff-preview-body">
+          <template v-if="diffPreview.model.kind === 'modify'">
+            <div class="diff-preview-row del">
+              <span class="diff-preview-gutter">-</span>
+              <span>{{ diffPreview.model.baseText }}</span>
+            </div>
+            <div class="diff-preview-row add">
+              <span class="diff-preview-gutter">+</span>
+              <span>
+                <template
+                  v-for="(part, partIndex) in diffPreviewParts(diffPreview.model)"
+                  :key="partIndex"
+                >
+                  <span v-if="part.added" class="diff-preview-ins">{{ part.text }}</span>
+                  <template v-else>{{ part.text }}</template>
+                </template>
+              </span>
+            </div>
+          </template>
+          <div v-else-if="diffPreview.model.kind === 'add'" class="diff-preview-row add">
+            <span class="diff-preview-gutter">+</span>
+            <span>{{ diffPreview.model.editedText }}</span>
+          </div>
+          <template v-if="diffPreview.model.deletedTotal">
+            <div class="diff-preview-label">删除 {{ diffPreview.model.deletedTotal }} 段</div>
+            <div
+              v-for="(text, delIndex) in diffPreview.model.deleted.slice(0, 3)"
+              :key="delIndex"
+              class="diff-preview-row del"
+            >
+              <span class="diff-preview-gutter">-</span>
+              <span>{{ text }}</span>
+            </div>
+            <div v-if="diffPreview.model.deletedTotal > 3" class="diff-preview-more">
+              还有 {{ diffPreview.model.deletedTotal - 3 }} 段，打开完整面板查看
+            </div>
+          </template>
+        </div>
+        <div class="diff-preview-actions">
+          <button @click="openDiffPanelFromPreview">查看全部</button>
+        </div>
+      </div>
+    </Transition>
+
     <BookDetailModal v-model="showBookInfo" :book="bookInfoBook" @switched="handleBookSwitched" />
 
     <ChapterEditorModal v-model="showChapterEditor" @changed="handleChapterEditChanged" />
@@ -400,8 +474,7 @@
     <ChapterDiffPanel
       v-model="showDiffPanel"
       :ops="currentChapterDiffOps"
-      :too-large="chapterDiffTooLarge.has(store.currentIndex)"
-      :loading="diffPanelLoading"
+      :error="currentChapterDiffError"
       @edit="openChapterEditor"
       @changed="handleChapterEditChanged"
     />
@@ -411,7 +484,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, reactive, watch, onMounted, onUnmounted, nextTick, defineAsyncComponent } from 'vue'
+import { ref, computed, watch, onMounted, onUnmounted, nextTick, defineAsyncComponent } from 'vue'
 import { onBeforeRouteLeave, useRouter } from 'vue-router'
 import { useReaderStore, fontPresets } from '../stores/reader'
 import { useAppStore } from '../stores/app'
@@ -422,15 +495,14 @@ import { APP_VIEWPORT_CHANGE_EVENT, syncViewportSize } from '../utils/viewport'
 import { isReaderInteractiveClickTarget, resolveReaderTapZone } from '../utils/readerClick'
 import { chapterPosToProgress } from '../utils/bookmarks'
 import { darkenKeywordColor } from '../utils/keywordHighlights'
-import { diffParagraphs, splitToParagraphs, type ParagraphDiffOp } from '../utils/chapterDiff'
-import { diffChapterEdit, getChapterEdit } from '../api/chapterEdit'
-import { getBookContent } from '../api/bookshelf'
+import { buildDiffPreview, inlineDiff, type DiffPreviewModel } from '../utils/chapterDiff'
 import { DUAL_PAGE_MIN_WIDTH, useHorizontalPaging } from '../composables/useHorizontalPaging'
 import {
   appendLocalEpubAssetAuth,
   applyDiffMarks,
   applyUnderlineMarks,
   buildBaseChapterHtml,
+  buildParaBubbleMap,
   highlightKeywords,
   highlightSearchText,
   insertChapterImages,
@@ -439,7 +511,7 @@ import {
   type BaseRenderOptions,
   type UnderlineMarkSpec,
 } from '../utils/chapterRender'
-import type { ChapterImage, ParaReviewCount } from '../types'
+import type { ChapterImage } from '../types'
 import {
   createReaderProgressAutoSaveScheduler,
   createReaderProgressExitSaver,
@@ -459,7 +531,10 @@ import { useOverlayHistory } from '../composables/useOverlayHistory'
 import { useReaderKeyboard } from '../composables/useReaderKeyboard'
 import { useReaderTtsControls } from '../composables/useReaderTtsControls'
 import { useBookInfoModal } from '../composables/useBookInfoModal'
-import { useReadingPosition, CONTINUOUS_POSITION_ANCHOR_RATIO } from '../composables/useReadingPosition'
+import {
+  useReadingPosition,
+  CONTINUOUS_POSITION_ANCHOR_RATIO,
+} from '../composables/useReadingPosition'
 
 const ReaderCatalog = defineAsyncComponent(() => import('../components/reader/ReaderCatalog.vue'))
 const ReadSettings = defineAsyncComponent(() => import('../components/reader/ReadSettings.vue'))
@@ -493,8 +568,6 @@ const store = useReaderStore()
 const appStore = useAppStore()
 const sourceStore = useSourceStore()
 const SERVER_PROGRESS_AUTOSAVE_MS = 10000
-
-
 
 const config = computed(() => store.config)
 const theme = computed(() => store.currentTheme)
@@ -561,8 +634,11 @@ const {
   openParaComments,
   closeCommentPanel,
 } = useCommentPanelGlue(store)
-const { showBookInfo, bookInfoBook, openInfo, handleBookSwitched } =
-  useBookInfoModal(store, appStore, router)
+const { showBookInfo, bookInfoBook, openInfo, handleBookSwitched } = useBookInfoModal(
+  store,
+  appStore,
+  router
+)
 const {
   showSearch,
   searchQuery,
@@ -688,7 +764,7 @@ function decorateChapterHtml(baseHtml: string, withBubbles: boolean, chapterInde
   const targetChapterIndex = chapterIndex ?? store.currentIndex
   // diff 标记在装饰层最前：它改段级 class 与段内 span，后续 walker 都能穿过
   if (config.value.showDiffMarks) {
-    const ops = chapterDiffCache.get(targetChapterIndex)
+    const ops = chapterDiffOps(targetChapterIndex)
     if (ops) applyDiffMarks(wrapper, ops)
   }
   applyUnderlineMarks(wrapper, underlineTextsForChapter(targetChapterIndex))
@@ -739,90 +815,25 @@ const activeKeywordMarks = computed(() =>
     }))
 )
 
-/* ─── 编辑版 diff（正文标记与 diff 面板共用） ───
- * reactive Map：set/delete 触发依赖它的 computed 重算（横翻 formattedContent
- * 经 decorateChapterHtml 读取它，自动跟着重建）；连续模式要手动刷章缓存。 */
-const chapterDiffCache = reactive(new Map<number, ParagraphDiffOp[] | null>())
-/** diff 因规模超限（LCS 16M 单元上限）没算的章：面板要显示「差异过大未对比」，
- *  与「本章没有差异」区分开 */
-const chapterDiffTooLarge = reactive(new Set<number>())
-const chapterDiffPending = new Set<number>()
-
-/** 懒算某章的 diff：仅当该章有编辑版。两版都过替换规则+繁简转换再切段，
- *  与渲染管线的段落口径对齐。 */
-async function ensureChapterDiff(chapterIndex: number) {
-  const chapter = store.chapters[chapterIndex]
-  const bookId = store.book?.bookId
-  if (!chapter || !bookId) return
-  if (!store.editedChapterKeys.has(chapter.url)) {
-    chapterDiffCache.delete(chapterIndex)
-    chapterDiffTooLarge.delete(chapterIndex)
-    return
-  }
-  if (chapterDiffCache.has(chapterIndex)) return
-  // 正在算：调用方（diff 面板）要拿结果，等它完成而不是早退
-  while (chapterDiffPending.has(chapterIndex)) {
-    await new Promise((resolve) => setTimeout(resolve, 50))
-  }
-  if (chapterDiffCache.has(chapterIndex)) return
-  chapterDiffPending.add(chapterIndex)
-  try {
-    const [editResp, upstream] = await Promise.all([
-      getChapterEdit(bookId, chapter.url),
-      getBookContent({ bookId, chapterUrl: chapter.url, index: chapterIndex, variant: 'upstream' }),
-    ])
-    const edited = editResp?.content
-    if (edited == null) {
-      chapterDiffCache.set(chapterIndex, null)
-      chapterDiffTooLarge.delete(chapterIndex)
-      return
-    }
-    // 与渲染同口径：两版都过替换规则+繁简转换再切段
-    const baseParas = splitToParagraphs(store.processContentForDisplay(upstream))
-    const editedParas = splitToParagraphs(store.processContentForDisplay(edited))
-    // 优先后端系统 git（更聪明的相似段匹配）；服务器没装 git 或执行失败
-    // 时回退前端本地 LCS——行为连续，用户无感
-    let ops: ParagraphDiffOp[] | null = null
-    try {
-      const resp = await diffChapterEdit(baseParas, editedParas)
-      if (!resp.fallback && resp.ops) ops = resp.ops
-    } catch {
-      /* 回退本地 */
-    }
-    if (!ops) ops = diffParagraphs(baseParas, editedParas)
-    // null = LCS 超单元上限没算（不是「没有差异」），面板据此换文案
-    if (ops === null) chapterDiffTooLarge.add(chapterIndex)
-    else chapterDiffTooLarge.delete(chapterIndex)
-    chapterDiffCache.set(chapterIndex, ops?.length ? ops : null)
-  } catch {
-    chapterDiffCache.set(chapterIndex, null)
-    chapterDiffTooLarge.delete(chapterIndex)
-  } finally {
-    chapterDiffPending.delete(chapterIndex)
-    // diff 到位后重渲：横翻靠 chapterDiffCache 响应式自动重建，连续模式手动刷
-    if (isContinuousMode.value) syncContinuousChapterHtml()
-  }
-}
-
-/** 编辑保存/删除/刷新基准后：作废该章缓存并重算。 */
-function invalidateChapterDiff(chapterIndex: number) {
-  chapterDiffCache.delete(chapterIndex)
-  void ensureChapterDiff(chapterIndex)
+/* ─── 编辑版 diff（正文标记、就地预览与 diff 面板共用） ───
+ * 差异随正文接口一起返回，store.chapterDiffs 是响应式 Map：
+ * 横翻的 formattedContent 与连续模式渲染都直接读它。 */
+function chapterDiffOps(chapterIndex: number) {
+  return store.chapterDiffs.get(chapterIndex)?.ops ?? null
 }
 
 async function handleRefreshContent() {
   await store.refreshContent()
-  // 基准（上游缓存）可能刚被刷新：diff 重算
-  invalidateChapterDiff(store.currentIndex)
 }
 
 /* ─── 章节正文编辑 ─── */
 const showChapterEditor = ref(false)
 const showDiffPanel = ref(false)
-const diffPanelLoading = ref(false)
-/** 当前章的 diff 操作序列（chapterDiffCache 是响应式的，面板跟着重算） */
-const currentChapterDiffOps = computed(
-  () => chapterDiffCache.get(store.currentIndex) ?? null
+/** 当前章的 diff 操作序列（store 的响应式 Map，面板跟着重算） */
+const currentChapterDiffOps = computed(() => chapterDiffOps(store.currentIndex))
+/** diff 算不出来的原因：面板要显示「无法对比」而不是「没有差异」 */
+const currentChapterDiffError = computed(
+  () => store.chapterDiffs.get(store.currentIndex)?.error || ''
 )
 /** 当前章是否有编辑版（决定工具栏编辑按钮的去向） */
 const currentChapterEdited = computed(() => {
@@ -840,31 +851,22 @@ function openChapterEditor() {
 function openChapterEditOrDiff() {
   if (!store.currentChapter) return
   if (currentChapterEdited.value) {
-    void openDiffPanel()
+    openDiffPanel()
     return
   }
   openChapterEditor()
 }
 
-/** 「查看本章改动」：先确保 diff 已算，再开面板 */
-async function openDiffPanel() {
+/** 「查看本章改动」：diff 已经随正文回来，直接开面板 */
+function openDiffPanel() {
   if (!store.currentChapter) return
   showDiffPanel.value = true
-  diffPanelLoading.value = true
-  try {
-    await ensureChapterDiff(store.currentIndex)
-  } finally {
-    diffPanelLoading.value = false
-  }
 }
 
-/** 编辑保存/恢复上游后：重载本章（后端返回最新状态）+ 重算 diff */
+/** 编辑保存/恢复上游后：重载本章（响应里带最新正文与 diff） */
 async function handleChapterEditChanged() {
-  const index = store.currentIndex
-  await store.reloadChapterAfterEdit(index)
-  invalidateChapterDiff(index)
+  await store.reloadChapterAfterEdit(store.currentIndex)
 }
-
 
 function formatChapterHtml(rawText: string, withParaComments = false, chapterIndex?: number) {
   const base = withParaComments
@@ -921,16 +923,14 @@ const rawLineByPosition = computed(() => {
   return map
 })
 
-const paraBubbleMap = computed(() => {
-  const map = new Map<number, ParaReviewCount>()
-  const counts = store.paraReviewCountByIndex
-  if (!counts.size) return map
-  rawLineByPosition.value.forEach((rawIndex, position) => {
-    const item = counts.get(rawIndex)
-    if (item) map.set(position, item)
-  })
-  return map
-})
+const paraBubbleMap = computed(() =>
+  buildParaBubbleMap(
+    store.paraReviewEnabled ? store.paraReviewIndex : [],
+    splitParagraphLines(store.content),
+    rawLineByPosition.value,
+    currentChapterEdited.value
+  )
+)
 
 /**
  * 正文原始行号 → 渲染段落位置（章末用 `-1`）。
@@ -977,6 +977,73 @@ function resolveUnderlineTarget(target: HTMLElement | null) {
   return { text: span.textContent || '', chapterIndex, chapterPos }
 }
 
+/* ─── 点 diff 标记就地预览 ─── */
+const diffPreview = ref<{
+  visible: boolean
+  top: number
+  left: number
+  model: DiffPreviewModel | null
+}>({ visible: false, top: 0, left: 0, model: null })
+
+function closeDiffPreview() {
+  diffPreview.value.visible = false
+}
+
+/** 从点击目标解析「哪一章、哪一段」的 diff 标记（属性由 applyDiffMarks 写入）。 */
+function resolveDiffPreviewTarget(target: HTMLElement | null) {
+  const paragraph = target?.closest?.('p') as HTMLElement | null
+  if (!paragraph) return null
+  const opIndex = Number(paragraph.dataset.diffOp)
+  const delStart = Number(paragraph.dataset.diffDelStart)
+  const hasOp = Number.isFinite(opIndex)
+  const hasDel = Number.isFinite(delStart)
+  if (!hasOp && !hasDel) return null
+  const sectionIndex = paragraph
+    .closest('section.continuous-chapter')
+    ?.getAttribute('data-chapter-index')
+  const chapterIndex = sectionIndex != null ? Number(sectionIndex) : store.currentIndex
+  if (!Number.isFinite(chapterIndex)) return null
+  return {
+    chapterIndex,
+    opIndex: hasOp ? opIndex : null,
+    delStart: hasDel ? delStart : null,
+    paragraph,
+  }
+}
+
+/** 打开就地预览；返回 false 表示这一点没有可展示的差异。 */
+function openDiffPreview(target: HTMLElement | null) {
+  const hit = resolveDiffPreviewTarget(target)
+  if (!hit) return false
+  const model = buildDiffPreview(chapterDiffOps(hit.chapterIndex), hit.opIndex, hit.delStart)
+  if (!model) return false
+  const rect = hit.paragraph.getBoundingClientRect()
+  // 卡片高度按视口估算：下方放不下就翻到段落上方
+  const cardHeight = Math.min(320, Math.max(160, window.innerHeight * 0.4))
+  let top = rect.bottom + 10
+  if (top + cardHeight > window.innerHeight - 16) {
+    top = Math.max(16, rect.top - cardHeight - 10)
+  }
+  const left = Math.min(Math.max(16, rect.left), Math.max(16, window.innerWidth - 440))
+  diffPreview.value = { visible: true, top, left, model }
+  return true
+}
+
+/** 段内对照：编辑版里新增的部分加底色（与 diff 面板同口径）。 */
+function diffPreviewParts(model: DiffPreviewModel) {
+  const diff = inlineDiff(model.baseText || '', model.editedText || '')
+  const parts: { text: string; added: boolean }[] = []
+  if (diff.prefix) parts.push({ text: diff.prefix, added: false })
+  if (diff.added) parts.push({ text: diff.added, added: true })
+  if (diff.suffix) parts.push({ text: diff.suffix, added: false })
+  return parts
+}
+
+function openDiffPanelFromPreview() {
+  closeDiffPreview()
+  openDiffPanel()
+}
+
 function handleChapterTextClick(event: MouseEvent) {
   if (Date.now() < suppressNextTapUntil) return
   const target = event.target as HTMLElement | null
@@ -1008,6 +1075,11 @@ function handleChapterTextClick(event: MouseEvent) {
   if (target?.tagName === 'IMG') {
     event.stopPropagation()
     previewImage.value = (target as HTMLImageElement).src
+    return
+  }
+  // 编辑版 diff 标记：点段落就地看「原 → 改」（有文字选区时不抢）
+  if (!window.getSelection?.()?.toString().trim() && openDiffPreview(target)) {
+    event.stopPropagation()
   }
 }
 
@@ -1386,13 +1458,13 @@ const {
 // 覆盖层历史栈：面板打开压入同 URL 历史标记，返回键只关最上层面板
 // （panels 顺序即 ESC/返回键的关闭优先级）
 const { handleOverlayPopState } = useOverlayHistory([
-    { isOpen: computed(() => !!store.activePanel), close: () => store.closePanel() },
-    { isOpen: showSearch, close: closeSearch },
-    { isOpen: showCommentPanel, close: () => (showCommentPanel.value = false) },
-    { isOpen: computed(() => !!previewImage.value), close: () => (previewImage.value = '') },
-    { isOpen: showTTSPanel, close: closeTTSPanel },
-    { isOpen: showBookInfo, close: () => (showBookInfo.value = false) },
-  ])
+  { isOpen: computed(() => !!store.activePanel), close: () => store.closePanel() },
+  { isOpen: showSearch, close: closeSearch },
+  { isOpen: showCommentPanel, close: () => (showCommentPanel.value = false) },
+  { isOpen: computed(() => !!previewImage.value), close: () => (previewImage.value = '') },
+  { isOpen: showTTSPanel, close: closeTTSPanel },
+  { isOpen: showBookInfo, close: () => (showBookInfo.value = false) },
+])
 
 const { handleKeydown } = useReaderKeyboard(
   store,
@@ -1402,6 +1474,9 @@ const { handleKeydown } = useReaderKeyboard(
     // 图片预览 → TTS 面板 → 书籍详情 → 点按控制条 → 退出阅读页
     escChain: [
       { isOpen: () => !!store.activePanel, close: () => store.closePanel() },
+      { isOpen: () => showDiffPanel.value, close: () => (showDiffPanel.value = false) },
+      { isOpen: () => showChapterEditor.value, close: () => (showChapterEditor.value = false) },
+      { isOpen: () => diffPreview.value.visible, close: closeDiffPreview },
       { isOpen: () => selectionMenu.value.visible, close: hideSelectionMenu },
       { isOpen: () => showSearch.value, close: closeSearch },
       { isOpen: () => showCommentPanel.value, close: () => (showCommentPanel.value = false) },
@@ -1412,6 +1487,8 @@ const { handleKeydown } = useReaderKeyboard(
     isBlockingOverlayOpen: () =>
       !!(
         store.activePanel ||
+        showDiffPanel.value ||
+        showChapterEditor.value ||
         showSearch.value ||
         showCommentPanel.value ||
         showBookInfo.value ||
@@ -1484,6 +1561,10 @@ function handleGlobalClick(e: MouseEvent) {
     hideSelectionMenu()
     return
   }
+  if (diffPreview.value.visible) {
+    closeDiffPreview()
+    return
+  }
   if (window.getSelection?.()?.toString().trim()) return
 
   const target = e.target as HTMLElement | null
@@ -1554,6 +1635,7 @@ function clickZoneAction(zone: 'prev' | 'menu' | 'next') {
 
 function handleScroll() {
   hideSelectionMenu()
+  closeDiffPreview()
   const container = scrollContainerRef.value
   if (container && isContinuousMode.value && continuousChapters.value.length) {
     if (isContinuousScrollSyncSuppressed()) {
@@ -2046,28 +2128,7 @@ watch(
   () => {
     loadSavedReadingPosition()
     scheduleRefreshOfflineCacheState()
-    chapterDiffCache.clear()
     void store.refreshEditedChapterKeys()
-  }
-)
-
-// diff 懒算触发：当前章/已编辑清单/开关变化时算当前章；
-// 连续模式对渲染中的各章都算（它们在视口里就该带标记）
-watch(
-  [
-    () => store.currentIndex,
-    () => store.editedChapterKeys,
-    () => config.value.showDiffMarks,
-    () => continuousChapters.value.map((chapter) => chapter.index).join(','),
-  ],
-  () => {
-    if (!config.value.showDiffMarks) return
-    void ensureChapterDiff(store.currentIndex)
-    if (isContinuousMode.value) {
-      for (const chapter of continuousChapters.value) {
-        void ensureChapterDiff(chapter.index)
-      }
-    }
   }
 )
 
@@ -2645,6 +2706,114 @@ watch(
   background: #ef4444;
 }
 
+/* ─── diff 标记的就地预览卡 ─── */
+.diff-preview {
+  min-width: 240px;
+  max-width: min(420px, calc(100vw - 32px));
+}
+
+.diff-preview-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px 4px;
+  font-size: var(--text-sm);
+  font-weight: 600;
+}
+
+.diff-preview-close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: inherit;
+  opacity: 0.55;
+  cursor: pointer;
+}
+
+.diff-preview-close:hover {
+  opacity: 1;
+  background: var(--color-bg-hover);
+}
+
+.diff-preview-close svg {
+  width: 14px;
+  height: 14px;
+}
+
+.diff-preview-body {
+  max-height: 40vh;
+  overflow-y: auto;
+  padding: 2px 14px 10px;
+  font-size: var(--text-sm);
+  line-height: 1.6;
+}
+
+.diff-preview-row {
+  display: flex;
+  gap: 8px;
+  padding: 3px 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.diff-preview-row.del {
+  color: #ef4444;
+}
+
+.diff-preview-row.add {
+  color: #16a34a;
+}
+
+.diff-preview-gutter {
+  flex: none;
+  width: 10px;
+  opacity: 0.8;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.diff-preview-ins {
+  background: rgba(34, 197, 94, 0.22);
+  border-radius: 2px;
+}
+
+.diff-preview-label {
+  margin-top: 6px;
+  padding-top: 6px;
+  border-top: 1px dashed rgba(128, 128, 128, 0.3);
+  font-size: var(--text-xs);
+  opacity: 0.65;
+}
+
+.diff-preview-more {
+  padding-top: 2px;
+  font-size: var(--text-xs);
+  opacity: 0.6;
+}
+
+.diff-preview-actions {
+  display: flex;
+  justify-content: flex-end;
+  padding: 0 12px 12px;
+}
+
+.diff-preview-actions button {
+  border: none;
+  border-radius: 10px;
+  padding: 8px 14px;
+  background: var(--color-primary);
+  color: #fff;
+  font-size: var(--text-sm);
+  cursor: pointer;
+}
+
 /* 右键菜单形态：竖排列表，占满整宽，像原生上下文菜单 */
 .selection-menu.as-context-menu {
   display: flex;
@@ -2717,16 +2886,31 @@ watch(
 }
 
 /* ─── 编辑版 diff 标记（vscode 风） ─── */
-/* 新增段：左绿竖线 */
-:deep(p.diff-added) {
-  border-left: 3px solid #22c55e;
-  padding-left: 8px;
+/* 新增段：左绿竖线。竖线用绝对定位，不占内容盒宽度——border/padding 会把
+   被标记段落整体右移，正文首行缩进就和其他段对不齐了 */
+:deep(.chapter-text p.diff-added),
+:deep(.chapter-text p.diff-modified) {
+  position: relative;
 }
 
-/* 段内改动：左蓝竖线 */
-:deep(p.diff-modified) {
-  border-left: 3px solid #3b82f6;
-  padding-left: 8px;
+:deep(p.diff-added)::after,
+:deep(p.diff-modified)::after {
+  content: '';
+  position: absolute;
+  left: -12px;
+  top: 0.15em;
+  bottom: 0.15em;
+  width: 3px;
+  border-radius: 2px;
+  pointer-events: none;
+}
+
+:deep(p.diff-added)::after {
+  background: #22c55e;
+}
+
+:deep(p.diff-modified)::after {
+  background: #3b82f6;
 }
 
 /* 段内相对原段增加的部分：虚线下划线 */
@@ -2735,14 +2919,15 @@ watch(
   text-underline-offset: 3px;
 }
 
-/* 段内减少处：零宽红竖线（title 带被删原文） */
+/* 段内减少处：零宽红竖线（title 带被删原文）。
+   竖线自身 2px 宽，用负 margin 抵掉，文字位置不因标记而移动 */
 :deep(span.diff-del-marker) {
   display: inline-block;
   width: 0;
   height: 1em;
   border-left: 2px solid #ef4444;
+  margin-left: -2px;
   vertical-align: -0.15em;
-  margin: 0 1px;
 }
 
 /* 大段删除：删除块后第一个未变段的左上角红箭头（绝对定位零占位，不影响分页测量） */
@@ -2758,6 +2943,7 @@ watch(
   color: #ef4444;
   font-size: 0.8em;
   line-height: 1;
+  pointer-events: none;
 }
 
 @media (max-width: 767px) {

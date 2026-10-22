@@ -11,7 +11,8 @@ async function seedLocalTxtBook(page): Promise<{ bookId: string; name: string }>
   await page.waitForFunction(() => !!localStorage.getItem('accessToken'))
   const seed = await page.evaluate(async () => {
     const token = localStorage.getItem('accessToken')
-    const content = '第一章 开始\n第一章正文内容。\n第二章 中段\n第二章正文内容。\n第三章 收尾\n第三章正文内容。\n'
+    const content =
+      '第一章 开始\n第一章正文内容。\n第二章 中段\n第二章正文内容。\n第三章 收尾\n第三章正文内容。\n'
     const form = new FormData()
     form.append('file', new File([content], `阅读器冒烟-${Date.now()}.txt`, { type: 'text/plain' }))
     const resp = await fetch('/reader3/uploadTxtBook', {
@@ -39,10 +40,15 @@ async function seedLongBook(page, chapterCount: number, paragraphsPerChapter: nu
         )
       const chapters = Array.from(
         { length: chapterCount },
-        (_, i) => `第${i + 1}章 长文\n` + Array.from({ length: paragraphsPerChapter }, () => para).join('\n')
+        (_, i) =>
+          `第${i + 1}章 长文\n` +
+          Array.from({ length: paragraphsPerChapter }, () => para).join('\n')
       ).join('\n')
       const form = new FormData()
-      form.append('file', new File([chapters], `长文冒烟-${Date.now()}.txt`, { type: 'text/plain' }))
+      form.append(
+        'file',
+        new File([chapters], `长文冒烟-${Date.now()}.txt`, { type: 'text/plain' })
+      )
       const resp = await fetch('/reader3/uploadTxtBook', {
         method: 'POST',
         headers: { Authorization: `Bearer ${token}` },
@@ -231,9 +237,7 @@ test.describe('Standard E2E: reader', () => {
     await expect(section1.getByText('这一章的正文段落足够长').first()).toBeVisible()
   })
 
-  test('chapter edit overlays content, marks catalog, and diff panel renders', async ({
-    page,
-  }) => {
+  test('chapter edit overlays content, marks catalog, and diff panel renders', async ({ page }) => {
     const { name } = await seedLocalTxtBook(page)
     await openBookFromShelf(page, name)
     // 等第一章正文渲染出来
@@ -251,8 +255,19 @@ test.describe('Standard E2E: reader', () => {
     await expect(page.getByText('这一整段是新加上去的。').first()).toBeVisible()
     await expect(page.locator('p.diff-added').first()).toBeVisible()
 
-    // 目录里出现「已编辑」徽章（编辑器关后设置抽屉仍在，先 ESC 回正文再开目录）
+    // 保存后设置抽屉还开着，先回正文再点标记
     await page.keyboard.press('Escape')
+    // 点 diff 标记就地预览：新增段落文本 + 查看全部进完整面板
+    await page.locator('p.diff-added').first().click()
+    const preview = page.locator('.diff-preview')
+    await expect(preview).toBeVisible()
+    await expect(preview).toContainText('新增段落')
+    await expect(preview).toContainText('这一整段是新加上去的。')
+    await preview.getByRole('button', { name: '查看全部' }).click()
+    await expect(page.locator('.diff-modal')).toBeVisible()
+    await page.keyboard.press('Escape')
+
+    // 目录里出现「已编辑」徽章
     await page.locator('.sidebar-item', { hasText: '目录' }).first().click()
     await expect(page.locator('.status-badge.edited', { hasText: '已编辑' })).toBeVisible()
     await page.keyboard.press('Escape')
@@ -263,7 +278,9 @@ test.describe('Standard E2E: reader', () => {
     const panel = page.locator('.diff-modal')
     await expect(panel).toBeVisible()
     // 新增段绿底行在面板里
-    await expect(panel.locator('.diff-row.add', { hasText: '这一整段是新加上去的。' })).toBeVisible()
+    await expect(
+      panel.locator('.diff-row.add', { hasText: '这一整段是新加上去的。' })
+    ).toBeVisible()
     // 统计行有 +2 段
     await expect(panel.locator('.stat-add')).toContainText('+2')
     await page.keyboard.press('Escape')

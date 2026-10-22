@@ -1,8 +1,9 @@
 import { describe, expect, it } from 'vitest'
 import {
+  buildDiffPreview,
   buildDiffRows,
-  diffParagraphs,
   diffStats,
+  hydrateDiffOps,
   inlineDiff,
   splitToParagraphs,
   type ParagraphDiffOp,
@@ -16,52 +17,55 @@ describe('splitToParagraphs', () => {
   })
 })
 
-describe('diffParagraphs', () => {
-  const diff = (base: string[], edited: string[]) => diffParagraphs(base, edited) ?? []
-  const types = (ops: ParagraphDiffOp[]) => ops.map((op) => op.type)
+describe('hydrateDiffOps', () => {
+  it('用编辑版正文补齐 equal 行文本，已有文本不覆盖', () => {
+    const ops = hydrateDiffOps(
+      [
+        { type: 'equal', baseIndex: 0, editedIndex: 0 },
+        { type: 'modify', baseIndex: 1, editedIndex: 1, baseText: '旧', editedText: '新' },
+        { type: 'del', baseIndex: 2, baseText: '删掉' },
+      ],
+      '第一段\n第二段\n'
+    )
+    expect(ops[0].editedText).toBe('第一段')
+    expect(ops[1].editedText).toBe('新')
+    expect(ops[2].editedText).toBeUndefined()
+  })
+})
 
-  it('完全相同：全 equal', () => {
-    const ops = diff(['a', 'b'], ['a', 'b'])
-    expect(types(ops)).toEqual(['equal', 'equal'])
+describe('buildDiffPreview', () => {
+  it('modify：带原文、新文与段内新增片段', () => {
+    const ops: ParagraphDiffOp[] = [
+      { type: 'equal', baseIndex: 0, editedIndex: 0 },
+      { type: 'modify', baseIndex: 1, editedIndex: 1, baseText: '旧句子', editedText: '新句子' },
+    ]
+    const model = buildDiffPreview(ops, 1, null)
+    expect(model).toMatchObject({ kind: 'modify', baseText: '旧句子', editedText: '新句子' })
+    expect(model!.deletedTotal).toBe(0)
   })
 
-  it('纯新增/纯删除', () => {
-    expect(types(diff(['a'], ['a', 'b', 'c']))).toEqual(['equal', 'add', 'add'])
-    expect(types(diff(['a', 'b', 'c'], ['a']))).toEqual(['equal', 'del', 'del'])
+  it('add：只带新文本', () => {
+    const ops: ParagraphDiffOp[] = [{ type: 'add', editedIndex: 0, editedText: '新增' }]
+    expect(buildDiffPreview(ops, 0, null)).toMatchObject({
+      kind: 'add',
+      editedText: '新增',
+    })
   })
 
-  it('同位置删+加合并为 modify，内容进 op', () => {
-    const ops = diff(['a', '旧段', 'c'], ['a', '新段', 'c'])
-    expect(types(ops)).toEqual(['equal', 'modify', 'equal'])
-    expect(ops[1].baseText).toBe('旧段')
-    expect(ops[1].editedText).toBe('新段')
-    expect(ops[1].baseIndex).toBe(1)
-    expect(ops[1].editedIndex).toBe(1)
+  it('删除块：从 delStart 起收集连续 del；只有删除时 kind=delete', () => {
+    const ops: ParagraphDiffOp[] = [
+      { type: 'equal', baseIndex: 0, editedIndex: 0 },
+      { type: 'del', baseIndex: 1, baseText: '删一' },
+      { type: 'del', baseIndex: 2, baseText: '删二' },
+      { type: 'equal', baseIndex: 3, editedIndex: 1 },
+    ]
+    const model = buildDiffPreview(ops, 3, 1)
+    expect(model).toMatchObject({ kind: 'delete', deleted: ['删一', '删二'], deletedTotal: 2 })
   })
 
-  it('一对多：删一加二合并为 modify + add（改一段、新增一段）', () => {
-    const ops = diff(['a', 'x', 'd'], ['a', 'y', 'z', 'd'])
-    expect(types(ops)).toEqual(['equal', 'modify', 'add', 'equal'])
-    expect(ops[1].baseText).toBe('x')
-    expect(ops[1].editedText).toBe('y')
-    expect(ops[2].editedText).toBe('z')
-  })
-
-  it('中间整块替换（多段重新对齐）', () => {
-    const ops = diff(['头', '甲', '乙', '尾'], ['头', '丙', '乙', '尾'])
-    expect(types(ops)).toEqual(['equal', 'modify', 'equal', 'equal'])
-  })
-
-  it('空对空 / 单边为空', () => {
-    expect(diff([], [])).toEqual([])
-    expect(types(diff([], ['a']))).toEqual(['add'])
-    expect(types(diff(['a'], []))).toEqual(['del'])
-  })
-
-  it('双侧段落乘积超上限返回 null（防 Uint32Array 爆内存）', () => {
-    const big = Array.from({ length: 4100 }, (_, i) => `段${i}`)
-    expect(diffParagraphs(big, big)).toBeNull()
-    expect(types(diff(['a'], ['a']))).toEqual(['equal'])
+  it('没有可展示内容时返回 null', () => {
+    expect(buildDiffPreview(null, 0, null)).toBeNull()
+    expect(buildDiffPreview([{ type: 'equal', baseIndex: 0, editedIndex: 0 }], 0, null)).toBeNull()
   })
 })
 

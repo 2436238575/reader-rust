@@ -119,8 +119,19 @@ export function parseParagraphHtml(paragraphHtml: string) {
   return {
     style: paragraph.getAttribute('style') || '',
     className: paragraph.getAttribute('class') || '',
+    // diff 标记的定位属性：按字符拆页时要带到每个片段上，跨页后仍能点开预览
+    dataAttrs: buildPagingDataAttrs(paragraph),
     text: (paragraph.textContent || '').trimEnd(),
   }
+}
+
+const PAGING_DATA_ATTRS = ['data-diff-op', 'data-diff-del-start']
+
+function buildPagingDataAttrs(paragraph: Element) {
+  return PAGING_DATA_ATTRS.map((name) => {
+    const value = paragraph.getAttribute(name)
+    return value == null ? '' : ` ${name}="${value.replace(/"/g, '&quot;')}"`
+  }).join('')
 }
 
 /**
@@ -146,10 +157,10 @@ export function appendBubbleToBlock(blockHtml: string, bubbleHtml: string) {
   return `${blockHtml.slice(0, idx)}${bubbleHtml}${blockHtml.slice(idx)}`
 }
 
-export function buildParagraphHtml(style: string, text: string, className = '') {
+export function buildParagraphHtml(style: string, text: string, className = '', dataAttrs = '') {
   const stylePart = style ? ` style="${style}"` : ''
   const classPart = className ? ` class="${className}"` : ''
-  return `<p${classPart}${stylePart}>${escapePagingHtml(text)}</p>`
+  return `<p${classPart}${stylePart}${dataAttrs}>${escapePagingHtml(text)}</p>`
 }
 
 export function firstVisibleChar(text: string) {

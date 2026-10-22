@@ -215,7 +215,7 @@ export function useHorizontalPaging(
       const parsed = parseParagraphHtml(blockHtml)
       if (!parsed || parsed.text.length <= 1) return null
 
-      const { style, text, className } = parsed
+      const { style, text, className, dataAttrs } = parsed
       const currentHeight = measureContentHeight(currentParts)
       const remainingHeight = measurer.clientHeight - currentHeight
       const minRemainingHeight =
@@ -229,7 +229,12 @@ export function useHorizontalPaging(
       while (left <= right) {
         const mid = Math.floor((left + right) / 2)
         const tryStyle = buildSegmentStyle(style, options.isContinuation, mid < text.length)
-        const tryHtml = buildParagraphHtml(tryStyle, text.slice(0, mid), segmentClassName)
+        const tryHtml = buildParagraphHtml(
+          tryStyle,
+          text.slice(0, mid),
+          segmentClassName,
+          dataAttrs
+        )
         if (!overflows([...currentParts, tryHtml])) {
           fitCount = mid
           left = mid + 1
@@ -257,9 +262,9 @@ export function useHorizontalPaging(
       const hasMoreText = fitCount < text.length
       const fitStyle = buildSegmentStyle(style, options.isContinuation, hasMoreText)
       return {
-        html: buildParagraphHtml(fitStyle, text.slice(0, fitCount), segmentClassName),
+        html: buildParagraphHtml(fitStyle, text.slice(0, fitCount), segmentClassName, dataAttrs),
         remainingHtml: hasMoreText
-          ? buildParagraphHtml(style, text.slice(fitCount), removeIndentClass(className))
+          ? buildParagraphHtml(style, text.slice(fitCount), removeIndentClass(className), dataAttrs)
           : '',
       }
     }

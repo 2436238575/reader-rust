@@ -27,10 +27,7 @@
             </div>
           </div>
 
-          <div v-if="loading" class="diff-loading">正在计算差异...</div>
-          <div v-else-if="tooLarge" class="diff-loading">
-            章节差异过大，未做对比（可点「编辑本章」直接对照修改）
-          </div>
+          <div v-if="error" class="diff-loading">无法对比：{{ error }}</div>
           <div v-else-if="!ops?.length" class="diff-loading">本章没有差异</div>
           <div v-else class="diff-body">
             <template v-for="(row, rowIndex) in rows" :key="rowIndex">
@@ -43,7 +40,7 @@
                 ⋯ 展开 15 段（还有 {{ row.opsCount }} 段未显示）
               </button>
 
-                <!-- 未变段 -->
+              <!-- 未变段 -->
               <div v-else-if="row.op.type === 'equal'" class="diff-row equal">
                 <span class="diff-gutter"></span>
                 <span class="diff-text">{{ row.op.editedText }}</span>
@@ -92,20 +89,14 @@ import { useAppStore } from '../../stores/app'
 import { deleteChapterEdit } from '../../api/chapterEdit'
 import { useEscClose } from '../../composables/useEscClose'
 import { useMobileLayout } from '../../composables/useMobileLayout'
-import {
-  buildDiffRows,
-  diffStats,
-  inlineDiff,
-  type ParagraphDiffOp,
-} from '../../utils/chapterDiff'
+import { buildDiffRows, diffStats, inlineDiff, type ParagraphDiffOp } from '../../utils/chapterDiff'
 
 const props = defineProps<{
   modelValue: boolean
-  /** 当前章的 diff 操作序列（父组件的 chapterDiffCache 供给） */
+  /** 当前章的 diff 操作序列（store.chapterDiffs 供给） */
   ops: ParagraphDiffOp[] | null
-  /** 差异规模超限没算（LCS 上限）：显示「差异过大未对比」而不是「没有差异」 */
-  tooLarge: boolean
-  loading: boolean
+  /** diff 算不出来的原因；空串表示正常（与「没有差异」区分） */
+  error: string
 }>()
 const emit = defineEmits<{
   'update:modelValue': [value: boolean]

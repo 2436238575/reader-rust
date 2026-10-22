@@ -60,6 +60,17 @@ export function getBookInfo(bookId: string) {
   return http.post<Book>('/getBookInfo', { bookId }).then((r) => r.data)
 }
 
+import type { ParagraphDiffOp } from '../utils/chapterDiff'
+
+/** 章节正文响应：编辑过的章节会带回与上游原文的差异。 */
+export interface ChapterContentResponse {
+  content: string
+  edited: boolean
+  diff?: { ops: ParagraphDiffOp[] } | null
+  /** diff 算不出来的原因（正文仍然可用） */
+  diffError?: string | null
+}
+
 export function getChapterList(params: { bookId: string; refresh?: number }) {
   return http.post<BookChapter[]>('/getChapterList', params).then((r) => r.data)
 }
@@ -69,10 +80,8 @@ export function getBookContent(params: {
   chapterUrl: string
   index?: number
   refresh?: number
-  /** `upstream`：只读上游基准（缓存/本地原文），不读编辑版、不抓上游（diff 通道） */
-  variant?: 'upstream'
 }) {
-  return http.post<string>('/getBookContent', params).then((r) => r.data)
+  return http.post<ChapterContentResponse>('/getBookContent', params).then((r) => r.data)
 }
 
 /** 本章配图；书源没声明配图规则时返回 `enabled: false` */

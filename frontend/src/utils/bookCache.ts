@@ -34,7 +34,7 @@ export async function cacheBookToBrowser(params: {
     if (params.signal?.cancelled) {
       break
     }
-    const content = await getBookContent({
+    const chapterContent = await getBookContent({
       bookId,
       chapterUrl: chapter.url,
     })
@@ -44,7 +44,7 @@ export async function cacheBookToBrowser(params: {
         bookId,
         chapterUrl: chapter.url,
         chapterTitle: chapter.title,
-        content,
+        content: chapterContent.content,
       })
     } catch {
       break

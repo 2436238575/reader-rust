@@ -10,6 +10,7 @@ import {
   mergeOrphanPunctuationPages,
   normalizeParagraphHtml,
   parseInlineStyle,
+  parseParagraphHtml,
   prependTextToFirstParagraph,
   removeIndentClass,
   stripParaCommentBubble,
@@ -111,5 +112,18 @@ describe('horizontalPaging 纯函数', () => {
   it('prepend/appendText 在无段落时降级为转义文本拼接', () => {
     expect(prependTextToFirstParagraph('<div>x</div>', 'a<b')).toBe('a&lt;b<div>x</div>')
     expect(appendTextToLastParagraph('<div>x</div>', 'c')).toBe('<div>x</div>c')
+  })
+})
+
+describe('diff 标记跨页', () => {
+  it('按字符拆页时保留 data-diff-op / data-diff-del-start', () => {
+    const parsed = parseParagraphHtml(
+      '<p class="diff-modified" data-diff-op="3" data-diff-del-start="1">一段文字</p>'
+    )
+    expect(parsed?.dataAttrs).toContain('data-diff-op="3"')
+    expect(parsed?.dataAttrs).toContain('data-diff-del-start="1"')
+    const html = buildParagraphHtml('', '前', 'diff-modified', parsed!.dataAttrs)
+    expect(html).toContain('data-diff-op="3"')
+    expect(html).toContain('data-diff-del-start="1"')
   })
 })

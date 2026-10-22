@@ -10,6 +10,7 @@ const READER_INTERACTIVE_SELECTOR = [
   '.mobile-controls',
   '.reader-search-panel',
   '.selection-menu',
+  '.diff-preview',
 ].join(', ')
 
 export function isReaderInteractiveClickTarget(
