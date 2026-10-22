@@ -4,6 +4,7 @@
 //! - `variant=upstream` 只读基准（diff 通道）；删除编辑版即恢复上游版本；
 //! - 删书级联清掉编辑版目录。
 
+mod common;
 use axum::{http::StatusCode, routing::get, Json, Router};
 use reader_rust::api::router::build_router;
 use reader_rust::app::bootstrap::build_state;
@@ -20,6 +21,7 @@ struct TestServer {
 }
 
 async fn boot() -> TestServer {
+    common::clean_stale_temp_dirs();
     let temp_dir =
         std::env::temp_dir().join(format!("reader-rust-edit-flow-{}", uuid::Uuid::new_v4()));
     std::fs::create_dir_all(&temp_dir).unwrap();
@@ -69,7 +71,7 @@ async fn boot() -> TestServer {
 
 impl Drop for TestServer {
     fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.temp_dir);
+        common::remove_dir_retried(&self.temp_dir);
     }
 }
 

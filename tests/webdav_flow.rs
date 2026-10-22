@@ -3,6 +3,7 @@
 //! 起一个真实监听端口的服务，用 reqwest 构造 PROPFIND/PUT/LOCK 等方法，
 //! 覆盖认证、CRUD、Depth、Destination、锁语义与 Windows 路径安全门。
 
+mod common;
 use base64::Engine;
 use reader_rust::api::router::build_router;
 use reader_rust::app::bootstrap::build_state;
@@ -22,6 +23,7 @@ struct TestServer {
 
 impl TestServer {
     async fn start() -> Self {
+        common::clean_stale_temp_dirs();
         let temp_dir =
             std::env::temp_dir().join(format!("reader-rust-webdav-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&temp_dir).unwrap();

@@ -4,6 +4,7 @@
 //! 兜底链路已删除（API 型书源的书/章节 URL 没有公共前缀，反推失败会把缓存写进
 //! md5(chapterUrl) 孤儿目录）。现在请求缺 bookId 直接 400，孤儿目录无从产生。
 
+mod common;
 use axum::{extract::Query, http::StatusCode, routing::get, Json, Router};
 use reader_rust::api::router::build_router;
 use reader_rust::app::bootstrap::build_state;
@@ -126,6 +127,7 @@ impl TestServer {
     async fn start() -> Self {
         let (upstream_url, hits) = start_upstream().await;
 
+        common::clean_stale_temp_dirs();
         let temp_dir =
             std::env::temp_dir().join(format!("reader-rust-cache-key-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&temp_dir).unwrap();
@@ -250,7 +252,7 @@ impl TestServer {
 
 impl Drop for TestServer {
     fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.temp_dir);
+        common::remove_dir_retried(&self.temp_dir);
     }
 }
 

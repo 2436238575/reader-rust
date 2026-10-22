@@ -4,6 +4,7 @@
 //!
 //! 前置：测试机需要有 Node（跑假 sidecar）。
 
+mod common;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
@@ -39,6 +40,7 @@ impl TestServer {
             .with_max_level(tracing::Level::DEBUG)
             .with_test_writer()
             .try_init();
+        common::clean_stale_temp_dirs();
         let temp_dir =
             std::env::temp_dir().join(format!("reader-rust-agent-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&temp_dir).unwrap();

@@ -3,6 +3,7 @@
 //! 上游用一个假的「番茄式」服务顶替（真实 FQWeb 需要一台装着番茄小说的手机），
 //! 响应结构与真实接口一致，因此书源规则、URL 求值、解析走的都是生产路径。
 
+mod common;
 use axum::{
     extract::{Query, State},
     http::StatusCode,
@@ -186,6 +187,7 @@ fn rich_source(upstream_url: &str) -> Value {
 impl TestServer {
     async fn start(source: Value) -> Self {
         let (upstream_url, _hits) = start_upstream().await;
+        common::clean_stale_temp_dirs();
         let temp_dir =
             std::env::temp_dir().join(format!("reader-rust-image-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&temp_dir).unwrap();
@@ -312,7 +314,7 @@ impl TestServer {
 
 impl Drop for TestServer {
     fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.temp_dir);
+        common::remove_dir_retried(&self.temp_dir);
     }
 }
 

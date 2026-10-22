@@ -186,7 +186,9 @@ mod tests {
         }
     }
 
-    async fn test_service() -> (ChapterEditService, PathBuf) {
+    /// 收尾必须先 `pool.close().await` 再删目录（Windows 文件锁，见 repo.rs 测试约定）。
+    async fn test_service() -> (ChapterEditService, sqlx::SqlitePool, PathBuf) {
+        crate::util::test_temp::clean_stale_test_dirs();
         let dir = std::env::temp_dir().join(format!(
             "reader-rust-edit-test-{}-{}",
             std::process::id(),
@@ -196,13 +198,14 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         let url = format!("sqlite:{}?mode=rwc", dir.join("reader.db").display());
         let pool = crate::storage::db::init_pool(&url).await.unwrap();
-        let service = ChapterEditService::new(dir.to_str().unwrap(), ChapterEditRepo::new(pool));
-        (service, dir)
+        let service =
+            ChapterEditService::new(dir.to_str().unwrap(), ChapterEditRepo::new(pool.clone()));
+        (service, pool, dir)
     }
 
     #[tokio::test]
     async fn save_get_list_delete_roundtrip() {
-        let (service, dir) = test_service().await;
+        let (service, pool, dir) = test_service().await;
         let ns = "user_1";
 
         assert_eq!(
@@ -317,13 +320,14 @@ mod tests {
             .unwrap()
             .is_empty());
 
+        pool.close().await;
         let _ = std::fs::remove_dir_all(dir);
     }
 
     /// M1 回归：两章并发保存，索引（表）不丢条目。
     #[tokio::test]
     async fn concurrent_saves_keep_all_index_entries() {
-        let (service, dir) = test_service().await;
+        let (service, pool, dir) = test_service().await;
         let ns = "user_1";
         let mut handles = Vec::new();
         for i in 0..8 {
@@ -353,12 +357,13 @@ mod tests {
                 .len(),
             8
         );
+        pool.close().await;
         let _ = std::fs::remove_dir_all(dir);
     }
 
     #[tokio::test]
     async fn oversized_content_is_rejected() {
-        let (service, dir) = test_service().await;
+        let (service, pool, dir) = test_service().await;
         let big = "x".repeat(MAX_EDITED_CHAPTER_BYTES + 1);
         let result = service
             .save_chapter_edit(
@@ -371,6 +376,7 @@ mod tests {
             )
             .await;
         assert!(matches!(result, Err(AppError::BadRequest(_))));
+        pool.close().await;
         let _ = std::fs::remove_dir_all(dir);
     }
 
@@ -378,7 +384,7 @@ mod tests {
     /// 失败回滚把新文件删掉，二次编辑的旧版就此永久丢失）。
     #[tokio::test]
     async fn failed_index_upsert_keeps_the_previous_edition() {
-        let (service, dir) = test_service().await;
+        let (service, pool, dir) = test_service().await;
         let ns = "user_1";
         service
             .save_chapter_edit(
@@ -430,6 +436,8 @@ mod tests {
             .count();
         assert_eq!(leftovers, 0, "失败的保存不该留下 tmp 文件");
 
+        pool2.close().await;
+        pool.close().await;
         let _ = std::fs::remove_dir_all(dir);
     }
 }

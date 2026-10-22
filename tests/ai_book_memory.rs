@@ -1,3 +1,4 @@
+mod common;
 use reader_rust::model::ai_book::{
     AiBookCharacter, AiBookLocation, AiBookMap, AiBookMemory, AiBookNote, AiBookRelationship,
 };
@@ -5,6 +6,7 @@ use reader_rust::service::ai_book_service::AiBookService;
 use reader_rust::storage::db;
 
 fn temp_storage_dir(name: &str) -> String {
+    common::clean_stale_temp_dirs();
     let path = std::env::temp_dir().join(format!(
         "reader-rust-ai-book-test-{}-{}",
         name,
@@ -120,7 +122,7 @@ async fn ai_book_memory_round_trips_and_isolated_by_user() {
     assert!(service.delete("alice", "book_1").await.unwrap());
     assert!(service.get("alice", "book_1").await.unwrap().is_none());
 
-    let _ = std::fs::remove_dir_all(storage_dir);
+    common::remove_dir_retried(storage_dir);
 }
 
 #[tokio::test]
@@ -138,5 +140,5 @@ async fn ai_book_memory_rejects_mismatched_book_url_on_save() {
         .expect_err("mismatched bookUrl should fail");
 
     assert!(err.to_string().contains("bookUrl mismatch"));
-    let _ = std::fs::remove_dir_all(storage_dir);
+    common::remove_dir_retried(storage_dir);
 }

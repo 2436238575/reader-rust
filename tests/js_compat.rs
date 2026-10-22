@@ -1,3 +1,4 @@
+mod common;
 use reader_rust::parser::js::eval_js;
 
 #[test]

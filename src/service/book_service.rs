@@ -3236,7 +3236,10 @@ mod tests {
         assert_eq!(next.status, 404);
     }
 
-    async fn test_service(storage_dir: &std::path::Path) -> BookService {
+    /// 返回池句柄：收尾必须先 `pool.close().await` 再删目录（Windows 文件锁，
+    /// 见 repo.rs 测试约定）。
+    async fn test_service(storage_dir: &std::path::Path) -> (BookService, sqlx::SqlitePool) {
+        crate::util::test_temp::clean_stale_test_dirs();
         // init_pool 不会建父目录，先落目录再开库
         std::fs::create_dir_all(storage_dir).unwrap();
         let pool = db::init_pool(&format!(
@@ -3245,7 +3248,7 @@ mod tests {
         ))
         .await
         .unwrap();
-        BookService::new(
+        let service = BookService::new(
             HttpClient::new(5, None).unwrap(),
             RuleEngine::new().unwrap(),
             FileCache::new(storage_dir.join("cache"), 0),
@@ -3258,16 +3261,17 @@ mod tests {
         .with_chapter_edit_service(Arc::new(
             crate::service::chapter_edit_service::ChapterEditService::new(
                 storage_dir.to_str().unwrap(),
-                crate::storage::db::repo::ChapterEditRepo::new(pool),
+                crate::storage::db::repo::ChapterEditRepo::new(pool.clone()),
             ),
-        ))
+        ));
+        (service, pool)
     }
 
     #[tokio::test]
     async fn append_chapter_list_cache_dedups_by_url_and_keeps_index_sequential() {
         let storage_dir =
             std::env::temp_dir().join(format!("reader-rust-toc-dedup-{}", std::process::id()));
-        let service = test_service(&storage_dir).await;
+        let (service, pool) = test_service(&storage_dir).await;
         let ns = "test-dedup";
         let book_id = "book_1";
 
@@ -3309,6 +3313,7 @@ mod tests {
             service.try_begin_toc_fill(ns, book_id).is_some(),
             "守卫释放后可再次开始"
         );
+        pool.close().await;
         let _ = std::fs::remove_dir_all(&storage_dir);
     }
 
@@ -3316,7 +3321,7 @@ mod tests {
     async fn window_rate_waits_when_existing_starts_reach_limit() {
         let storage_dir =
             std::env::temp_dir().join(format!("reader-rust-window-rate-{}", std::process::id()));
-        let service = test_service(&storage_dir).await;
+        let (service, pool) = test_service(&storage_dir).await;
         let now = Instant::now();
         service.rate_states.write().await.insert(
             "source".to_string(),
@@ -3335,6 +3340,7 @@ mod tests {
         )
         .await;
 
+        pool.close().await;
         let _ = tokio::fs::remove_dir_all(&storage_dir).await;
         assert!(result.is_ok(), "窗口滑出后应放行而非卡住");
         assert!(
@@ -3359,7 +3365,7 @@ mod tests {
         // intro 是详情弹窗直接吃列表对象的字段，丢了书架上的书简介全空
         let storage_dir =
             std::env::temp_dir().join(format!("reader-rust-shelf-intro-{}", std::process::id()));
-        let service = test_service(&storage_dir).await;
+        let (service, pool) = test_service(&storage_dir).await;
 
         let mut book = make_book("intro-book");
         book.intro = Some("这是一本测试书的简介。".to_string());
@@ -3375,6 +3381,7 @@ mod tests {
         // 大快照字段仍然不进列表（窄列的意义所在）
         assert!(shelf[0].info_html.is_none() || shelf[0].info_html.as_deref() == Some(""));
 
+        pool.close().await;
         let _ = tokio::fs::remove_dir_all(&storage_dir).await;
     }
 
@@ -3382,7 +3389,8 @@ mod tests {
     async fn shelf_limit_holds_under_concurrent_saves() {
         let storage_dir =
             std::env::temp_dir().join(format!("reader-rust-limit-race-{}", std::process::id()));
-        let service = std::sync::Arc::new(test_service(&storage_dir).await.with_user_book_limit(2));
+        let (service, pool) = test_service(&storage_dir).await;
+        let service = std::sync::Arc::new(service.with_user_book_limit(2));
 
         // 限额检查与写入在同一事务（upsert_with_limit）：并发 8 本只能进 2 本
         let mut handles = Vec::new();
@@ -3404,6 +3412,7 @@ mod tests {
         assert_eq!(rejected, 6);
         assert_eq!(service.get_bookshelf("u").await.unwrap().len(), 2);
 
+        pool.close().await;
         let _ = tokio::fs::remove_dir_all(&storage_dir).await;
     }
 
@@ -3411,7 +3420,8 @@ mod tests {
     async fn user_book_limit_blocks_new_books_but_not_updates() {
         let storage_dir =
             std::env::temp_dir().join(format!("reader-rust-book-limit-{}", std::process::id()));
-        let service = test_service(&storage_dir).await.with_user_book_limit(2);
+        let (service, pool) = test_service(&storage_dir).await;
+        let service = service.with_user_book_limit(2);
 
         service.save_book("u", make_book("a")).await.unwrap();
         service.save_book("u", make_book("b")).await.unwrap();
@@ -3440,7 +3450,7 @@ mod tests {
         assert!(err.to_string().contains("书架书籍数量不能超过"));
 
         // 0 = 不限
-        let unlimited = test_service(&storage_dir).await;
+        let (unlimited, pool2) = test_service(&storage_dir).await;
         for i in 0..5 {
             unlimited
                 .save_book("u", make_book(&format!("b{i}")))
@@ -3448,6 +3458,8 @@ mod tests {
                 .unwrap();
         }
 
+        pool.close().await;
+        pool2.close().await;
         let _ = tokio::fs::remove_dir_all(&storage_dir).await;
     }
 
@@ -3455,9 +3467,8 @@ mod tests {
     async fn user_local_book_limit_blocks_local_books_saved_directly() {
         let storage_dir =
             std::env::temp_dir().join(format!("reader-rust-local-limit-{}", std::process::id()));
-        let service = test_service(&storage_dir)
-            .await
-            .with_user_local_book_limit(1);
+        let (service, pool) = test_service(&storage_dir).await;
+        let service = service.with_user_local_book_limit(1);
 
         // 直构 local-txt 书入架（不经上传 handler）同样受本地书限额约束
         service
@@ -3494,6 +3505,7 @@ mod tests {
             .unwrap_err();
         assert!(err.to_string().contains("本地书籍数量不能超过"));
 
+        pool.close().await;
         let _ = tokio::fs::remove_dir_all(&storage_dir).await;
     }
 
@@ -3501,7 +3513,7 @@ mod tests {
     async fn restore_aligns_backup_book_ids() {
         let storage_dir =
             std::env::temp_dir().join(format!("reader-rust-restore-align-{}", std::process::id()));
-        let service = test_service(&storage_dir).await;
+        let (service, pool) = test_service(&storage_dir).await;
 
         let mut a = make_book("https://example.com/a");
         a.book_id = Some("book_7".to_string());
@@ -3528,6 +3540,7 @@ mod tests {
             .unwrap();
         assert_eq!(c, "book_8");
 
+        pool.close().await;
         let _ = tokio::fs::remove_dir_all(&storage_dir).await;
     }
 
@@ -3535,7 +3548,7 @@ mod tests {
     async fn restore_rolls_back_atomically_when_book_id_invalid() {
         let storage_dir =
             std::env::temp_dir().join(format!("reader-rust-restore-tx-{}", std::process::id()));
-        let service = test_service(&storage_dir).await;
+        let (service, pool) = test_service(&storage_dir).await;
 
         // 先在架两本，作为「恢复前状态」
         service
@@ -3571,6 +3584,7 @@ mod tests {
             .unwrap()
             .is_none());
 
+        pool.close().await;
         let _ = tokio::fs::remove_dir_all(&storage_dir).await;
     }
 
@@ -3578,7 +3592,7 @@ mod tests {
     async fn cache_paths_normalize_book_id_aliases_and_isolate_invalid() {
         let storage_dir =
             std::env::temp_dir().join(format!("reader-rust-pathkey-{}", std::process::id()));
-        let service = test_service(&storage_dir).await;
+        let (service, pool) = test_service(&storage_dir).await;
 
         // 别名（前导零/显式正号）与 canonical 收敛到同一路径：同一本书一份缓存
         let canonical = service.chapter_list_cache_path("u", "book_7");
@@ -3602,6 +3616,7 @@ mod tests {
             .to_string_lossy()
             .contains("__invalid_book__"));
 
+        pool.close().await;
         let _ = std::fs::remove_dir_all(&storage_dir);
     }
 
@@ -3609,7 +3624,7 @@ mod tests {
     async fn purge_user_cache_keeps_shelf_registrations_and_recycles_orphans() {
         let storage_dir =
             std::env::temp_dir().join(format!("reader-rust-purge-{}", std::process::id()));
-        let service = test_service(&storage_dir).await;
+        let (service, pool) = test_service(&storage_dir).await;
 
         // 在架一本 + 非在架登记一本
         service
@@ -3721,6 +3736,7 @@ mod tests {
             .unwrap()
             .is_none());
 
+        pool.close().await;
         let _ = tokio::fs::remove_dir_all(&storage_dir).await;
     }
 }

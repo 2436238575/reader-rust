@@ -1490,7 +1490,11 @@ mod tests {
     use crate::model::bookmark::Bookmark;
     use crate::model::replace_rule::ReplaceRule;
 
+    /// 测试池。收尾必须先 `pool.close().await` 再删目录：Windows 下连接池
+    /// 还持有 reader.db 时 remove_dir_all 会因文件被占用静默失败（`let _ =` 吞掉），
+    /// 每跑一次测试就在 %TEMP% 留一个孤儿目录。
     async fn test_pool() -> (SqlitePool, std::path::PathBuf) {
+        crate::util::test_temp::clean_stale_test_dirs();
         let dir = std::env::temp_dir().join(format!(
             "reader-rust-repo-test-{}-{}",
             std::process::id(),
@@ -1521,7 +1525,7 @@ mod tests {
     #[tokio::test]
     async fn bookmark_upsert_overwrites_same_position_and_cascades_on_book_delete() {
         let (pool, dir) = test_pool().await;
-        let repo = BookmarkRepo::new(pool);
+        let repo = BookmarkRepo::new(pool.clone());
 
         // 同书同位置覆盖、不同位置各存一条（修掉旧「一书一签」的覆盖 bug 后保持语义）
         repo.upsert("u", &bookmark("book_1", 0, 0, "第一版"), "")
@@ -1557,6 +1561,7 @@ mod tests {
         // 非法 bookId 是 no-op 而不是报错（删书路径对伪 id 宽容）
         assert_eq!(repo.delete_for_book("u", "../x").await.unwrap(), 0);
 
+        pool.close().await;
         let _ = std::fs::remove_dir_all(dir);
     }
 
@@ -1565,7 +1570,7 @@ mod tests {
     #[tokio::test]
     async fn bookmark_kinds_coexist_and_delete_is_scoped_by_kind() {
         let (pool, dir) = test_pool().await;
-        let repo = BookmarkRepo::new(pool);
+        let repo = BookmarkRepo::new(pool.clone());
 
         let underline = |pos: i32, text: &str| Bookmark {
             kind: "underline".into(),
@@ -1617,6 +1622,7 @@ mod tests {
             .iter()
             .all(|b| b.chapter_index != 5));
 
+        pool.close().await;
         let _ = std::fs::remove_dir_all(dir);
     }
 
@@ -1632,7 +1638,7 @@ mod tests {
     #[tokio::test]
     async fn bookmark_check_violation_is_400_and_batch_rolls_back() {
         let (pool, dir) = test_pool().await;
-        let repo = BookmarkRepo::new(pool);
+        let repo = BookmarkRepo::new(pool.clone());
 
         // 单条：超量程进度与未知 kind 都是 400
         let mut bad_pos = bookmark("book_1", 0, 0, "x");
@@ -1658,13 +1664,14 @@ mod tests {
             "批量中途失败应整体回滚"
         );
 
+        pool.close().await;
         let _ = std::fs::remove_dir_all(dir);
     }
 
     #[tokio::test]
     async fn replace_rule_upsert_by_name_and_ordering() {
         let (pool, dir) = test_pool().await;
-        let repo = ReplaceRuleRepo::new(pool);
+        let repo = ReplaceRuleRepo::new(pool.clone());
 
         let rule = |name: &str, order: i32| ReplaceRule {
             id: 1,
@@ -1690,6 +1697,7 @@ mod tests {
         repo.delete_by_name("u", "后加").await.unwrap();
         assert_eq!(repo.list("u").await.unwrap().len(), 1);
 
+        pool.close().await;
         let _ = std::fs::remove_dir_all(dir);
     }
 
@@ -1697,7 +1705,7 @@ mod tests {
     #[tokio::test]
     async fn book_group_ids_are_powers_of_two() {
         let (pool, dir) = test_pool().await;
-        let repo = BookGroupRepo::new(pool);
+        let repo = BookGroupRepo::new(pool.clone());
         let mk = |id: i64, name: &str| crate::model::book_group::BookGroup {
             group_id: id,
             group_name: name.into(),
@@ -1724,6 +1732,7 @@ mod tests {
             "改名"
         );
 
+        pool.close().await;
         let _ = std::fs::remove_dir_all(dir);
     }
 
@@ -1732,7 +1741,7 @@ mod tests {
     #[tokio::test]
     async fn book_group_ids_are_capped_at_31_bits_and_checked() {
         let (pool, dir) = test_pool().await;
-        let repo = BookGroupRepo::new(pool);
+        let repo = BookGroupRepo::new(pool.clone());
         let mk = |id: i64| crate::model::book_group::BookGroup {
             group_id: id,
             group_name: "组".into(),
@@ -1750,7 +1759,7 @@ mod tests {
 
         // 占满 31 个幂位后分配返回 None
         let (pool2, dir2) = test_pool().await;
-        let repo2 = BookGroupRepo::new(pool2);
+        let repo2 = BookGroupRepo::new(pool2.clone());
         for n in 0..31 {
             let id = repo2.alloc_group_id("u").await.unwrap().unwrap();
             assert_eq!(id, 1i64 << n);
@@ -1758,7 +1767,9 @@ mod tests {
         }
         assert!(repo2.alloc_group_id("u").await.unwrap().is_none());
 
+        pool.close().await;
         let _ = std::fs::remove_dir_all(dir);
+        pool2.close().await;
         let _ = std::fs::remove_dir_all(dir2);
     }
 
@@ -1815,6 +1826,7 @@ mod tests {
         let entry = shelf_repo.get("u", "book_1").await.unwrap().unwrap();
         assert_eq!(entry.shelf.group_bits, Some(0b01));
 
+        pool.close().await;
         let _ = std::fs::remove_dir_all(dir);
     }
 }

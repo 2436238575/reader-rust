@@ -1,3 +1,4 @@
+mod common;
 use reader_rust::service::local_txt_book::{build_chapter_url, parse_txt_chapters};
 
 // 章节正文不再随解析结果复制（省一倍整书内存）；断言改用 start..end 现切原文。
@@ -84,6 +85,7 @@ fn txt_chapter_urls_are_stable_by_book_url_and_index() {
 
 #[tokio::test]
 async fn txt_import_saves_book_index_and_content_for_server_bookshelf() {
+    common::clean_stale_temp_dirs();
     let storage_dir =
         std::env::temp_dir().join(format!("reader-rust-local-txt-test-{}", std::process::id()));
     if storage_dir.exists() {
@@ -114,11 +116,12 @@ async fn txt_import_saves_book_index_and_content_for_server_bookshelf() {
     assert_eq!(chapters[1].title, "第二章 后来");
     assert_eq!(content.trim(), "第二章内容。");
 
-    let _ = std::fs::remove_dir_all(storage_dir);
+    common::remove_dir_retried(storage_dir);
 }
 
 #[tokio::test]
 async fn txt_import_rejects_non_txt_files() {
+    common::clean_stale_temp_dirs();
     let storage_dir = std::env::temp_dir().join(format!(
         "reader-rust-local-txt-reject-test-{}",
         std::process::id()
@@ -131,11 +134,12 @@ async fn txt_import_rejects_non_txt_files() {
         .expect_err("non txt file should be rejected");
 
     assert!(err.to_string().contains(".txt"));
-    let _ = std::fs::remove_dir_all(storage_dir);
+    common::remove_dir_retried(storage_dir);
 }
 
 #[tokio::test]
 async fn txt_service_rejects_non_hash_local_txt_urls() {
+    common::clean_stale_temp_dirs();
     let storage_dir = std::env::temp_dir().join(format!(
         "reader-rust-local-txt-path-test-{}",
         std::process::id()
@@ -148,11 +152,12 @@ async fn txt_service_rejects_non_hash_local_txt_urls() {
         .expect_err("absolute local txt paths should be rejected");
 
     assert!(err.to_string().contains("本地 TXT 地址无效"));
-    let _ = std::fs::remove_dir_all(storage_dir);
+    common::remove_dir_retried(storage_dir);
 }
 
 #[tokio::test]
 async fn txt_delete_removes_imported_book_files() {
+    common::clean_stale_temp_dirs();
     let storage_dir = std::env::temp_dir().join(format!(
         "reader-rust-local-txt-delete-test-{}",
         std::process::id()
@@ -180,7 +185,7 @@ async fn txt_delete_removes_imported_book_files() {
         .expect_err("deleted local txt content should not remain readable");
 
     assert!(err.to_string().contains("不存在") || err.to_string().contains("No such file"));
-    let _ = std::fs::remove_dir_all(storage_dir);
+    common::remove_dir_retried(storage_dir);
 }
 
 #[tokio::test]
@@ -190,6 +195,7 @@ async fn saving_same_named_local_txt_books_keeps_distinct_book_urls() {
     use reader_rust::service::book_service::BookService;
     use reader_rust::storage::cache::file_cache::FileCache;
 
+    common::clean_stale_temp_dirs();
     let storage_dir = std::env::temp_dir().join(format!(
         "reader-rust-local-txt-save-test-{}",
         std::process::id()
@@ -241,5 +247,5 @@ async fn saving_same_named_local_txt_books_keeps_distinct_book_urls() {
     assert!(shelf.iter().any(|book| book.book_url == first.book_url));
     assert!(shelf.iter().any(|book| book.book_url == second.book_url));
 
-    let _ = std::fs::remove_dir_all(storage_dir);
+    common::remove_dir_retried(storage_dir);
 }

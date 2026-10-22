@@ -115,6 +115,13 @@ const WEBDAV_CREDENTIAL_TTL_SECS: u64 = 300;
 const WEBDAV_CREDENTIAL_MAX_ENTRIES: usize = 256;
 
 impl UserService {
+    /// 测试收尾用：关闭连接池释放 SQLite 文件句柄
+    ///（Windows 下池还开着 reader.db 时删目录会静默失败）。
+    #[cfg(test)]
+    pub(crate) async fn close_pool_for_test(&self) {
+        self.pool.close().await;
+    }
+
     pub fn new(cfg: AppConfig, pool: SqlitePool, jwt_secret: Arc<Vec<u8>>) -> Self {
         let storage_root = PathBuf::from(&cfg.storage_dir);
         Self {
@@ -553,6 +560,7 @@ mod tests {
     }
 
     async fn create_user_service_with(username: &str, password: &str) -> (UserService, PathBuf) {
+        crate::util::test_temp::clean_stale_test_dirs();
         let temp_dir =
             std::env::temp_dir().join(format!("reader-rust-user-service-{}", random_suffix()));
         let cfg = AppConfig {
@@ -605,6 +613,7 @@ mod tests {
         let again = service.find_user("reader1").await.unwrap().unwrap();
         assert_eq!(again.password_hash, user.password_hash);
 
+        service.close_pool_for_test().await;
         let _ = fs::remove_dir_all(temp_dir).await;
     }
 
@@ -631,6 +640,7 @@ mod tests {
             .await
             .unwrap();
 
+        service.close_pool_for_test().await;
         let _ = fs::remove_dir_all(temp_dir).await;
     }
 
@@ -651,6 +661,7 @@ mod tests {
         let err = service.bootstrap_admin().await.unwrap_err();
         assert!(err.to_string().contains("ADMIN_USERNAME"));
 
+        service.close_pool_for_test().await;
         let _ = fs::remove_dir_all(temp_dir).await;
     }
 
@@ -672,6 +683,7 @@ mod tests {
         let info = service.get_user_info(None).await.unwrap();
         assert!(info["userInfo"].is_null());
 
+        service.close_pool_for_test().await;
         let _ = fs::remove_dir_all(temp_dir).await;
     }
 
@@ -693,6 +705,7 @@ mod tests {
         // 改密码后旧口令失效
         assert!(service.login("reader1", "password123", None).await.is_err());
 
+        service.close_pool_for_test().await;
         let _ = fs::remove_dir_all(temp_dir).await;
     }
 
@@ -728,6 +741,7 @@ mod tests {
             .unwrap_err();
         assert!(err.to_string().contains("失败次数过多"));
 
+        service.close_pool_for_test().await;
         let _ = fs::remove_dir_all(temp_dir).await;
     }
 
@@ -755,6 +769,7 @@ mod tests {
             .await
             .unwrap();
 
+        service.close_pool_for_test().await;
         let _ = fs::remove_dir_all(temp_dir).await;
     }
 
@@ -783,6 +798,7 @@ mod tests {
             .unwrap_err();
         assert!(err.to_string().contains("用户名或密码错误"));
 
+        service.close_pool_for_test().await;
         let _ = fs::remove_dir_all(temp_dir).await;
     }
 
@@ -812,6 +828,7 @@ mod tests {
             assert!(err.to_string().contains("用户名或密码错误"));
         }
 
+        service.close_pool_for_test().await;
         let _ = fs::remove_dir_all(temp_dir).await;
     }
 
@@ -835,6 +852,7 @@ mod tests {
             .unwrap()
             .is_none());
 
+        service.close_pool_for_test().await;
         let _ = fs::remove_dir_all(temp_dir).await;
     }
 
@@ -859,6 +877,7 @@ mod tests {
         assert!(info["userInfo"].get("accessToken").is_none());
         assert!(info["userInfo"].get("password").is_none());
 
+        service.close_pool_for_test().await;
         let _ = fs::remove_dir_all(temp_dir).await;
     }
 }

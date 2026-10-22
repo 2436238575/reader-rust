@@ -85,7 +85,9 @@ impl BookGroupService {
 mod tests {
     use super::*;
 
-    async fn test_service() -> (BookGroupService, std::path::PathBuf) {
+    /// 收尾必须先 `pool.close().await` 再删目录（Windows 文件锁，见 repo.rs 测试约定）。
+    async fn test_service() -> (BookGroupService, sqlx::SqlitePool, std::path::PathBuf) {
+        crate::util::test_temp::clean_stale_test_dirs();
         let dir = std::env::temp_dir().join(format!(
             "reader-rust-group-svc-{}-{}",
             std::process::id(),
@@ -94,7 +96,11 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         let url = format!("sqlite:{}?mode=rwc", dir.join("reader.db").display());
         let pool = crate::storage::db::init_pool(&url).await.unwrap();
-        (BookGroupService::new(BookGroupRepo::new(pool)), dir)
+        (
+            BookGroupService::new(BookGroupRepo::new(pool.clone())),
+            pool,
+            dir,
+        )
     }
 
     fn group(id: i64) -> BookGroup {
@@ -109,7 +115,7 @@ mod tests {
     /// 是 max_id+1 时代的老 bug 形态，必须 400 挡在入口。
     #[tokio::test]
     async fn save_group_rejects_non_power_of_two_ids() {
-        let (service, dir) = test_service().await;
+        let (service, pool, dir) = test_service().await;
 
         for bad in [3i64, 5, 6, -1, 1 << 31] {
             let err = service.save_group("u", group(bad)).await.unwrap_err();
@@ -137,6 +143,7 @@ mod tests {
             .unwrap_err();
         assert!(matches!(err, AppError::BadRequest(_)));
 
+        pool.close().await;
         let _ = std::fs::remove_dir_all(dir);
     }
 }

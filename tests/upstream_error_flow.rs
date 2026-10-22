@@ -2,6 +2,7 @@
 //! - 上游 4xx/5xx 不再被当成「成功但空」返回，而是 502 + 带状态码的可读文案；
 //! - 2xx 但正文解析为空：书源声明了配图规则（纯图章节）放行，未声明报错。
 
+mod common;
 use axum::{http::StatusCode, response::Response, routing::get, Json, Router};
 use reader_rust::api::router::build_router;
 use reader_rust::app::bootstrap::build_state;
@@ -87,6 +88,7 @@ struct TestServer {
 impl TestServer {
     async fn start(source: Value) -> Self {
         let upstream_url = start_upstream().await;
+        common::clean_stale_temp_dirs();
         let temp_dir =
             std::env::temp_dir().join(format!("reader-rust-upstream-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&temp_dir).unwrap();
@@ -200,7 +202,7 @@ impl TestServer {
 
 impl Drop for TestServer {
     fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.temp_dir);
+        common::remove_dir_retried(&self.temp_dir);
     }
 }
 

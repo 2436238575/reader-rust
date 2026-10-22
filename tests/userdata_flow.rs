@@ -1,5 +1,6 @@
 //! userdata（跨浏览器同步的最近阅读 / 阅读统计载体）接口的端到端行为。
 
+mod common;
 use reader_rust::api::router::build_router;
 use reader_rust::app::bootstrap::build_state;
 use reader_rust::app::config::AppConfig;
@@ -16,6 +17,7 @@ struct TestServer {
 
 impl TestServer {
     async fn start() -> Self {
+        common::clean_stale_temp_dirs();
         let temp_dir =
             std::env::temp_dir().join(format!("reader-rust-userdata-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&temp_dir).unwrap();
@@ -101,7 +103,7 @@ impl TestServer {
 
 impl Drop for TestServer {
     fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.temp_dir);
+        common::remove_dir_retried(&self.temp_dir);
     }
 }
 

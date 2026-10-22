@@ -1,3 +1,4 @@
+mod common;
 use reader_rust::service::local_epub_book::LocalEpubBookService;
 use std::io::{Cursor, Write};
 use zip::write::FileOptions;
@@ -118,11 +119,12 @@ fn epub2_fixture() -> Vec<u8> {
 
 #[tokio::test]
 async fn epub_import_saves_manifest_chapters_and_assets() {
+    common::clean_stale_temp_dirs();
     let storage_dir = std::env::temp_dir().join(format!(
         "reader-rust-local-epub-test-{}",
         std::process::id()
     ));
-    let _ = std::fs::remove_dir_all(&storage_dir);
+    common::remove_dir_retried(&storage_dir);
     let service = LocalEpubBookService::new(&storage_dir);
 
     let book = service
@@ -168,16 +170,17 @@ async fn epub_import_saves_manifest_chapters_and_assets() {
         .await
         .is_err());
 
-    let _ = std::fs::remove_dir_all(storage_dir);
+    common::remove_dir_retried(storage_dir);
 }
 
 #[tokio::test]
 async fn epub2_ncx_titles_are_used_for_chapter_list() {
+    common::clean_stale_temp_dirs();
     let storage_dir = std::env::temp_dir().join(format!(
         "reader-rust-local-epub-ncx-test-{}",
         std::process::id()
     ));
-    let _ = std::fs::remove_dir_all(&storage_dir);
+    common::remove_dir_retried(&storage_dir);
     let service = LocalEpubBookService::new(&storage_dir);
 
     let book = service
@@ -192,16 +195,17 @@ async fn epub2_ncx_titles_are_used_for_chapter_list() {
     assert_eq!(book.name, "NCX 书");
     assert_eq!(chapters[0].title, "NCX 第一章");
 
-    let _ = std::fs::remove_dir_all(storage_dir);
+    common::remove_dir_retried(storage_dir);
 }
 
 #[tokio::test]
 async fn epub_import_rejects_non_epub_and_path_traversal() {
+    common::clean_stale_temp_dirs();
     let storage_dir = std::env::temp_dir().join(format!(
         "reader-rust-local-epub-reject-test-{}",
         std::process::id()
     ));
-    let _ = std::fs::remove_dir_all(&storage_dir);
+    common::remove_dir_retried(&storage_dir);
     let service = LocalEpubBookService::new(&storage_dir);
 
     let err = service
@@ -217,7 +221,7 @@ async fn epub_import_rejects_non_epub_and_path_traversal() {
         .expect_err("traversal path should be rejected");
     assert!(err.to_string().contains("非法路径") || err.to_string().contains("缺少文件"));
 
-    let _ = std::fs::remove_dir_all(storage_dir);
+    common::remove_dir_retried(storage_dir);
 }
 
 #[tokio::test]
@@ -228,11 +232,12 @@ async fn real_sample_epub_imports_from_repo_epub_folder_when_present() {
     if !sample.exists() {
         return;
     }
+    common::clean_stale_temp_dirs();
     let storage_dir = std::env::temp_dir().join(format!(
         "reader-rust-local-epub-real-test-{}",
         std::process::id()
     ));
-    let _ = std::fs::remove_dir_all(&storage_dir);
+    common::remove_dir_retried(&storage_dir);
     let service = LocalEpubBookService::new(&storage_dir);
     let bytes = std::fs::read(&sample).unwrap();
 
@@ -257,5 +262,5 @@ async fn real_sample_epub_imports_from_repo_epub_folder_when_present() {
     assert!(chapters.len() > 100);
     assert!(content.contains("localEpubAsset"));
 
-    let _ = std::fs::remove_dir_all(storage_dir);
+    common::remove_dir_retried(storage_dir);
 }

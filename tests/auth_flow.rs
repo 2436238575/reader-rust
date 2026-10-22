@@ -3,6 +3,7 @@
 //! 起一个真实监听端口的服务（而不是直接调 handler），这样中间件分层、
 //! 状态码映射与静态回落都能被真实地覆盖到。
 
+mod common;
 use reader_rust::api::router::build_router;
 use reader_rust::app::bootstrap::build_state;
 use reader_rust::app::config::AppConfig;
@@ -20,6 +21,7 @@ struct TestServer {
 
 impl TestServer {
     async fn start() -> Self {
+        common::clean_stale_temp_dirs();
         let temp_dir =
             std::env::temp_dir().join(format!("reader-rust-auth-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&temp_dir).unwrap();
@@ -117,7 +119,7 @@ impl TestServer {
 
 impl Drop for TestServer {
     fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.temp_dir);
+        common::remove_dir_retried(&self.temp_dir);
     }
 }
 

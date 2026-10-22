@@ -3,6 +3,7 @@
 //! 上游用假服务顶替：`/cover.heic` 只认当前签名，旧签名一律 403——
 //! 番茄图床就是这个行为（签名随宿主会话轮换），正好用来验证自愈。
 
+mod common;
 use axum::{
     extract::{Query, State},
     http::{header, StatusCode},
@@ -134,6 +135,7 @@ struct TestServer {
 impl TestServer {
     async fn start() -> Self {
         let (upstream_url, _hits) = start_upstream().await;
+        common::clean_stale_temp_dirs();
         let temp_dir =
             std::env::temp_dir().join(format!("reader-rust-image-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&temp_dir).unwrap();
@@ -259,7 +261,7 @@ impl TestServer {
 
 impl Drop for TestServer {
     fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.temp_dir);
+        common::remove_dir_retried(&self.temp_dir);
     }
 }
 

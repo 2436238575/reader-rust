@@ -1,3 +1,4 @@
+mod common;
 use axum::{extract::State, http::HeaderMap, response::Html, routing::get, Router};
 use reader_rust::crawler::fetcher::HttpMethod;
 use reader_rust::crawler::http_client::HttpClient;
@@ -361,6 +362,7 @@ async fn search_pipeline_uses_url_analyzer_final_url_and_login_check_js() {
         axum::serve(listener, app).await.unwrap();
     });
 
+    common::clean_stale_temp_dirs();
     let storage_dir =
         std::env::temp_dir().join(format!("reader-rust-search-compat-{}", Uuid::new_v4()));
     let service = test_book_service(&storage_dir).await;
@@ -390,7 +392,7 @@ async fn search_pipeline_uses_url_analyzer_final_url_and_login_check_js() {
         .unwrap();
 
     server.abort();
-    let _ = tokio::fs::remove_dir_all(&storage_dir).await;
+    common::remove_dir_retried(&storage_dir);
 
     assert_eq!(books.len(), 1);
     assert_eq!(books[0].name, "Checked");
@@ -429,6 +431,7 @@ async fn content_pagination_stops_before_next_chapter_url() {
         axum::serve(listener, app).await.unwrap();
     });
 
+    common::clean_stale_temp_dirs();
     let storage_dir =
         std::env::temp_dir().join(format!("reader-rust-content-test-{}", Uuid::new_v4()));
     let service = test_book_service(&storage_dir).await;
@@ -454,7 +457,7 @@ async fn content_pagination_stops_before_next_chapter_url() {
         .unwrap();
 
     server.abort();
-    let _ = tokio::fs::remove_dir_all(&storage_dir).await;
+    common::remove_dir_retried(&storage_dir);
 
     assert!(content.contains("第一页正文"));
     assert!(content.contains("第二页正文"));

@@ -4,6 +4,7 @@
 //! 手机），响应结构与真实接口一致，因此书源规则、URL 求值、解析与缓存
 //! 走的都是生产路径。
 
+mod common;
 use axum::{
     extract::{Query, State},
     http::StatusCode,
@@ -284,6 +285,7 @@ impl TestServer {
     async fn start() -> Self {
         let (upstream_url, hits) = start_upstream().await;
 
+        common::clean_stale_temp_dirs();
         let temp_dir =
             std::env::temp_dir().join(format!("reader-rust-review-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&temp_dir).unwrap();
@@ -414,7 +416,7 @@ impl TestServer {
 
 impl Drop for TestServer {
     fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.temp_dir);
+        common::remove_dir_retried(&self.temp_dir);
     }
 }
 

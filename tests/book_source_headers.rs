@@ -1,3 +1,4 @@
+mod common;
 use axum::{http::HeaderMap, response::Json, routing::get, Router};
 use reader_rust::crawler::http_client::HttpClient;
 use reader_rust::model::{book_source::BookSource, rule::TocRule};
@@ -46,6 +47,7 @@ async fn chapter_list_requests_include_legacy_source_headers() {
         axum::serve(listener, app).await.unwrap();
     });
 
+    common::clean_stale_temp_dirs();
     let storage_dir =
         std::env::temp_dir().join(format!("reader-rust-header-test-{}", Uuid::new_v4()));
     // init_pool 不会建父目录，先落目录再开库
@@ -91,7 +93,7 @@ async fn chapter_list_requests_include_legacy_source_headers() {
         .unwrap();
 
     server.abort();
-    let _ = tokio::fs::remove_dir_all(&storage_dir).await;
+    common::remove_dir_retried(&storage_dir);
 
     assert_eq!(chapters.len(), 1);
     assert_eq!(chapters[0].title, "第一章");

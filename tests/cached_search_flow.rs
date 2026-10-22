@@ -1,6 +1,7 @@
 //! 缓存内全文检索的端到端行为：只扫已缓存章节正文（可再生数据），
 //! 命中返回章节定位 + 上下文摘要；不触发任何上游请求。
 
+mod common;
 use axum::http::StatusCode;
 use reader_rust::api::router::build_router;
 use reader_rust::app::bootstrap::build_state;
@@ -18,6 +19,7 @@ struct TestServer {
 
 impl TestServer {
     async fn start() -> Self {
+        common::clean_stale_temp_dirs();
         let temp_dir =
             std::env::temp_dir().join(format!("reader-rust-search-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&temp_dir).unwrap();
@@ -156,7 +158,7 @@ impl TestServer {
 
 impl Drop for TestServer {
     fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.temp_dir);
+        common::remove_dir_retried(&self.temp_dir);
     }
 }
 
