@@ -6,9 +6,9 @@
 
 | 层级                 | 命令                      | 覆盖范围                       |
 | -------------------- | ------------------------- | ------------------------------ |
-| Rust 单元 + 集成测试 | `cargo test`              | 124 个用例（见下）             |
-| 前端单元测试         | `cd frontend && npm test` | 20 个 `*.test.ts`（vitest）    |
-| 端到端冒烟           | `npm run test:e2e`        | Playwright，需先启动后端       |
+| Rust 单元 + 集成测试 | `cargo test`              | 363 个用例（见下）             |
+| 前端单元测试         | `cd frontend && npm test` | 37 个 `*.test.ts`（vitest）    |
+| 端到端冒烟           | `npm run test:e2e`        | Playwright，零配置自起后端     |
 | 手工全量回归         | 见文末清单                | 依赖真实书源、账号、缓存的功能 |
 
 ## 1. Rust 测试
@@ -19,10 +19,13 @@ cargo test book_source         # 按名称过滤
 cargo test --lib               # 只跑 src 内的内联单元测试
 ```
 
-Rust 侧共 **124 个用例**（85 个 `#[test]` + 39 个 `#[tokio::test]`），分两类：
+Rust 侧共 **363 个用例**（250 个内联单元测试 + 113 个集成用例），另外 `tests/yckceo_live_sources.rs` 的 2 个用例默认 `#[ignore]`。
 
-- **`tests/` 下的集成测试**（10 个文件）：`book_source_compat.rs`（用例最多，17 个，覆盖书源格式兼容）、`book_source_validation.rs`、`book_source_headers.rs`、`local_txt_book.rs`、`local_epub_book.rs`、`ai_book_memory.rs`、`ai_proxy.rs`、`version_update.rs`、`js_compat.rs`、`yckceo_live_sources.rs`
-- **`src/` 内的内联单元测试**：解析器、URL 处理等纯逻辑
+`cargo test` 的输出合计会显示 613：`src/main.rs` 以 `mod` 的方式重新声明了全部模块，
+bin 目标的单元测试把同一批 250 个用例又跑了一遍，统计时别重复计算。
+
+- **`tests/` 下的集成测试**（20 个文件，113 个用例）：`book_source_compat.rs`（用例最多，17 个，覆盖书源格式兼容）、`auth_flow.rs`、`cached_search_flow.rs`、`chapter_edit_flow.rs`、`chapter_image_flow.rs`、`image_pipeline.rs`、`review_flow.rs`、`webdav_flow.rs`、`agent_sidecar_flow.rs`、`local_txt_book.rs`、`local_epub_book.rs`、`ai_book_memory.rs`、`ai_proxy.rs`、`js_compat.rs`、`userdata_flow.rs`、`upstream_error_flow.rs`、`chapter_cache_key.rs`、`book_source_validation.rs`、`book_source_headers.rs`、`yckceo_live_sources.rs`
+- **`src/` 内的内联单元测试**（250 个）：解析器、URL 处理、repo、服务层纯逻辑
 
 ::: warning 有一个用例会真的联网
 `tests/yckceo_live_sources.rs` 会抓取在线书源列表，在无网络或受限环境下失败属于预期行为，不代表代码有问题。
@@ -36,7 +39,7 @@ npm install
 npm test                       # vitest run
 ```
 
-覆盖 Pinia store 与工具函数，共 20 个 `.test.ts`。
+覆盖 Pinia store 与工具函数，共 37 个 `.test.ts`（222 个用例）。
 
 ## 3. 构建与静态检查
 
@@ -69,30 +72,29 @@ npx playwright install chrome
 执行：
 
 ```bash
-# 先手动启动后端（另开一个终端）
-cargo run
-
-# 再跑 e2e
 npm run test:e2e            # 无头
 npm run test:e2e:headed     # 有头
 npm run test:e2e:ui         # UI 模式
 ```
 
-默认访问 `http://127.0.0.1:8080`。后端换了端口时用环境变量覆盖：
+**零配置**：不设任何环境变量时，globalSetup 会用 `target/debug/reader-rust.exe`
+在 18081 起一个临时后端（构建产物不存在时自动先跑 `cargo build`），运行期数据
+全部落在独立临时目录（storage/数据库/assets），固定凭据 reader1/password123，
+跑完即清。18081 被占用时会直接报错，不会连到别的实例上。
+
+要跑自己的实例：设 `PLAYWRIGHT_BASE_URL` 并同时给 `E2E_USERNAME`/`E2E_PASSWORD`：
 
 ```bash
-PLAYWRIGHT_BASE_URL=http://127.0.0.1:18080 npm run test:e2e
+PLAYWRIGHT_BASE_URL=http://127.0.0.1:18080 E2E_USERNAME=admin E2E_PASSWORD=12345678 npm run test:e2e
 ```
 
 ### 当前自动冒烟覆盖范围
 
-- 顶部 / 底部导航切换
-- 书架、发现、最近主页面可打开
-- 设置抽屉可打开
-- 书源管理、备份恢复入口可见
-- 全局搜索可进入搜索模式
-- 搜索结果范围切换 UI 可见
-- 分组管理、缓存管理弹窗可打开
+- 顶部导航切换、设置抽屉、搜索模式与范围切换
+- 书架、发现、搜索主页面可打开；分组管理、缓存管理弹窗可打开
+- 本地书阅读：目录跳转、横翻翻页、连续滚动裁剪
+- 章节正文编辑：编辑覆盖、目录徽章、diff 面板
+- 划线长按菜单（移动端视口）、章书签增删与备注、全书检索空态
 
 ### 可选：需要测试数据的用例
 

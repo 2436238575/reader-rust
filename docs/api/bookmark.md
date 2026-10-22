@@ -32,7 +32,7 @@ GET /reader3/getBookmarks
 POST /reader3/saveBookmark
 ```
 
-请求体为单个 `Bookmark` 对象。`bookId` 为空返回 400。同身份（`bookId` + `chapterIndex` + `chapterPos`）已存在时覆盖。响应 `data` 为空字符串。
+请求体为单个 `Bookmark` 对象。`bookId` 为空返回 400；书籍未登记返回 404（书签要按登记表记录 `book_url` 用于恢复校验，无主的书签在 bookId 复用时会挂到别的书上）。同身份（`bookId` + `chapterIndex` + `chapterPos` + `kind`）已存在时覆盖。响应 `data` 为空字符串。
 
 ## 批量保存书签
 
@@ -40,7 +40,7 @@ POST /reader3/saveBookmark
 POST /reader3/saveBookmarks
 ```
 
-请求体为 `Bookmark` 数组；`bookId` 为空的书签会被静默忽略。响应 `data` 为空字符串。
+请求体为 `Bookmark` 数组；`bookId` 为空或书籍未登记的书签会被跳过（不因一条脏数据让整批失败），其余在单事务里落库。响应 `data` 为空字符串。
 
 ## 删除书签
 

@@ -106,7 +106,7 @@ JS 求值本身带资源上限：内存 128MiB、调用栈 1MiB、单次求值 5
 | 位置                  | 职责                                                                          |
 | --------------------- | ----------------------------------------------------------------------------- |
 | `db/mod.rs`           | sqlx 连接池（10 条连接），启动时自动跑迁移                                     |
-| `db/migrations/`      | 单一迁移 `0001_init.sql`：当前全部表结构（历史迁移已并入，详见[数据库](/maintainers/database)） |
+| `db/migrations/`      | 0001 基础表结构（历史迁移已并入）+ 0002 书签/替换规则 + 0003 编辑版索引 + 0004 分组（详见[数据库](/maintainers/database)） |
 | `cache/file_cache.rs` | 章节正文文件缓存，文件名用 MD5，数据库不存索引                                |
 | `fs/`                 | `storage/` 与 `assets/` 的文件操作                                            |
 
@@ -228,7 +228,7 @@ SQLite 表：
 | `book_sources`     | `(user_ns, book_source_id)`  | 书源配置（整份 JSON 存储；`book_source_id` 是自增身份键，URL 唯一索引作导入去重） |
 | `books`            | `(user_ns, book_id)`         | 书籍登记表（`book_<n>`，绑定书源 id，换源只改绑）    |
 | `shelf_books`      | `(user_ns, book_id)`         | 书架（全列展开进度/分组/排序/元数据快照，JOIN books 注入绑定字段） |
-| `json_documents`   | `(user_ns, name)`            | 通用 JSON 文档存取（用户配置、书签、替换规则等复用这张表） |
+| `json_documents`   | `(user_ns, name)`            | 通用 JSON 文档存取（用户配置、userdata 等；书签/替换规则/编辑索引/分组已拆实体表） |
 | `ai_book_memories` | `(user_ns, book_id)`         | AI 资料（`book_id` 关联登记表，`book_url` 冗余列供恢复校验） |
 
 逐字段说明见[数据库](/maintainers/database)。
