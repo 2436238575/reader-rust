@@ -1267,6 +1267,88 @@ impl ChapterEditRepo {
     }
 }
 
+// ─── 书架分组（位域：group_id 必须是 2 的幂，与阅读3.0 一致） ─────────────
+
+#[derive(Clone)]
+pub struct BookGroupRepo {
+    pool: SqlitePool,
+}
+
+fn map_book_group(row: &sqlx::sqlite::SqliteRow) -> crate::model::book_group::BookGroup {
+    crate::model::book_group::BookGroup {
+        group_id: row.get::<i64, _>("group_id"),
+        group_name: row.get::<String, _>("group_name"),
+        order_no: row.get::<i32, _>("order_no"),
+    }
+}
+
+impl BookGroupRepo {
+    pub fn new(pool: SqlitePool) -> Self {
+        Self { pool }
+    }
+
+    /// 全部组，按 order_no 排序。
+    pub async fn list(
+        &self,
+        user_ns: &str,
+    ) -> Result<Vec<crate::model::book_group::BookGroup>, AppError> {
+        let rows = sqlx::query(
+            "SELECT group_id, group_name, order_no FROM book_groups WHERE user_ns=?1 ORDER BY order_no, group_id",
+        )
+        .bind(user_ns)
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows.iter().map(map_book_group).collect())
+    }
+
+    /// 分配最小未占用的幂位（1, 2, 4, 8…）。位域最多 63 位，满时返回 None。
+    pub async fn alloc_group_id(&self, user_ns: &str) -> Result<Option<i64>, AppError> {
+        let rows = sqlx::query("SELECT group_id FROM book_groups WHERE user_ns=?1")
+            .bind(user_ns)
+            .fetch_all(&self.pool)
+            .await?;
+        let used: std::collections::HashSet<i64> =
+            rows.iter().map(|r| r.get::<i64, _>("group_id")).collect();
+        for n in 0..63 {
+            let id = 1i64 << n;
+            if !used.contains(&id) {
+                return Ok(Some(id));
+            }
+        }
+        Ok(None)
+    }
+
+    /// 新建/覆盖一个组。幂等键是 group_id。
+    pub async fn upsert(
+        &self,
+        user_ns: &str,
+        group: &crate::model::book_group::BookGroup,
+    ) -> Result<(), AppError> {
+        sqlx::query(
+            "INSERT INTO book_groups (user_ns, group_id, group_name, order_no) \
+             VALUES (?1, ?2, ?3, ?4) \
+             ON CONFLICT(user_ns, group_id) DO UPDATE SET \
+             group_name=excluded.group_name, order_no=excluded.order_no",
+        )
+        .bind(user_ns)
+        .bind(group.group_id)
+        .bind(&group.group_name)
+        .bind(group.order_no)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    pub async fn delete(&self, user_ns: &str, group_id: i64) -> Result<(), AppError> {
+        sqlx::query("DELETE FROM book_groups WHERE user_ns=?1 AND group_id=?2")
+            .bind(user_ns)
+            .bind(group_id)
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1436,6 +1518,40 @@ mod tests {
 
         repo.delete_by_name("u", "后加").await.unwrap();
         assert_eq!(repo.list("u").await.unwrap().len(), 1);
+
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    /// 位域：建组分配 2 的幂，第 3 个组是 4 不是 3（id=3 会命中组 1/2 的过滤）。
+    #[tokio::test]
+    async fn book_group_ids_are_powers_of_two() {
+        let (pool, dir) = test_pool().await;
+        let repo = BookGroupRepo::new(pool);
+        let mk = |id: i64, name: &str| crate::model::book_group::BookGroup {
+            group_id: id,
+            group_name: name.into(),
+            order_no: 0,
+        };
+
+        // 连续建 4 个组：应得 1、2、4、8（不是 1、2、3、4）
+        for expected in [1i64, 2, 4, 8] {
+            let id = repo.alloc_group_id("u").await.unwrap().unwrap();
+            assert_eq!(id, expected, "第几个组的 id 应是 {expected}");
+            repo.upsert("u", &mk(id, &format!("组{id}"))).await.unwrap();
+        }
+
+        // 删掉中间的（id=2），再分配应回填 2，而不是继续往上涨
+        repo.delete("u", 2).await.unwrap();
+        let id = repo.alloc_group_id("u").await.unwrap().unwrap();
+        assert_eq!(id, 2, "空出的幂位应被回填");
+
+        // 重命名不换位：upsert 同 id 覆盖
+        repo.upsert("u", &mk(1, "改名")).await.unwrap();
+        let list = repo.list("u").await.unwrap();
+        assert_eq!(
+            list.iter().find(|g| g.group_id == 1).unwrap().group_name,
+            "改名"
+        );
 
         let _ = std::fs::remove_dir_all(dir);
     }

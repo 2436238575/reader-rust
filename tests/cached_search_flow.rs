@@ -98,6 +98,29 @@ impl TestServer {
         std::fs::write(dir.join(format!("{name}.txt")), content).unwrap();
     }
 
+    /// 登记一本书（search_cached_content 现在要求书已存在——resolve_book 校验）。
+    /// 用本地 TXT 上传登记最省事（不需要书源）。
+    async fn register_book(&self, name: &str, content: &str) -> String {
+        let boundary = "----cached-search-test";
+        let body = format!(
+            "--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"{name}.txt\"\r\nContent-Type: text/plain\r\n\r\n{content}\r\n--{boundary}--\r\n"
+        );
+        let resp = self
+            .client
+            .post(format!("{}/reader3/uploadTxtBook", self.base_url))
+            .bearer_auth(&self.token)
+            .header(
+                "Content-Type",
+                format!("multipart/form-data; boundary={boundary}"),
+            )
+            .body(body)
+            .send()
+            .await
+            .unwrap();
+        let payload: Value = resp.json().await.unwrap();
+        payload["data"]["bookId"].as_str().unwrap().to_string()
+    }
+
     async fn search(&self, body: Value) -> (StatusCode, Value) {
         let resp = self
             .client
@@ -121,13 +144,14 @@ impl Drop for TestServer {
 #[tokio::test]
 async fn search_finds_across_cached_chapters_with_coverage() {
     let server = TestServer::start().await;
+    let book_id = server.register_book("检索测试", "占位").await;
     let chapters = [
         ("第一章 开始", "http://up/ch/1"),
         ("第二章 发展", "http://up/ch/2"),
         ("第三章 高潮", "http://up/ch/3"),
     ];
-    server.seed_toc("book_1", &chapters);
-    server.seed_chapter_cache("book_1", "http://up/ch/1", "他走进了那座古庙。");
+    server.seed_toc(&book_id, &chapters);
+    server.seed_chapter_cache(&book_id, "http://up/ch/1", "他走进了那座古庙。");
     server.seed_chapter_cache(
         "book_1",
         "http://up/ch/2",
@@ -136,7 +160,7 @@ async fn search_finds_across_cached_chapters_with_coverage() {
     // 第三章故意不写缓存文件：未缓存章节不参与检索，只体现在覆盖度里
 
     let (status, payload) = server
-        .search(json!({ "bookId": "book_1", "query": "古庙" }))
+        .search(json!({ "bookId": book_id, "query": "古庙" }))
         .await;
 
     assert_eq!(status, StatusCode::OK);
@@ -160,7 +184,8 @@ async fn search_finds_across_cached_chapters_with_coverage() {
 #[tokio::test]
 async fn search_is_case_insensitive_and_strips_html() {
     let server = TestServer::start().await;
-    server.seed_toc("book_1", &[("第一章", "http://up/ch/1")]);
+    let book_id = server.register_book("检索测试", "占位").await;
+    server.seed_toc(&book_id, &[("第一章", "http://up/ch/1")]);
     server.seed_chapter_cache(
         "book_1",
         "http://up/ch/1",
@@ -168,7 +193,7 @@ async fn search_is_case_insensitive_and_strips_html() {
     );
 
     let (status, payload) = server
-        .search(json!({ "bookId": "book_1", "query": "silent" }))
+        .search(json!({ "bookId": book_id, "query": "silent" }))
         .await;
 
     assert_eq!(status, StatusCode::OK);
@@ -184,6 +209,7 @@ async fn search_is_case_insensitive_and_strips_html() {
 #[tokio::test]
 async fn search_truncates_at_max_results() {
     let server = TestServer::start().await;
+    let book_id = server.register_book("截断测试", "占位").await;
     let chapters: Vec<(String, String)> = (1..=3)
         .map(|i| (format!("第{i}章"), format!("http://up/ch/{i}")))
         .collect();
@@ -191,13 +217,13 @@ async fn search_truncates_at_max_results() {
         .iter()
         .map(|(t, u)| (t.as_str(), u.as_str()))
         .collect();
-    server.seed_toc("book_1", &refs);
+    server.seed_toc(&book_id, &refs);
     for (_, url) in &refs {
-        server.seed_chapter_cache("book_1", url, "每一章都提到那个人。");
+        server.seed_chapter_cache(&book_id, url, "每一章都提到那个人。");
     }
 
     let (status, payload) = server
-        .search(json!({ "bookId": "book_1", "query": "那个人", "maxResults": 1 }))
+        .search(json!({ "bookId": book_id, "query": "那个人", "maxResults": 1 }))
         .await;
 
     assert_eq!(status, StatusCode::OK);
@@ -209,20 +235,22 @@ async fn search_truncates_at_max_results() {
 #[tokio::test]
 async fn search_validates_input_and_handles_empty_cache() {
     let server = TestServer::start().await;
+    let book_id = server.register_book("校验测试", "占位").await;
 
     // 空 query / 超长 query / 空 bookId 都是 400
     for body in [
-        json!({ "bookId": "book_1", "query": "  " }),
-        json!({ "bookId": "book_1", "query": "x".repeat(101) }),
+        json!({ "bookId": &book_id, "query": "  " }),
+        json!({ "bookId": &book_id, "query": "x".repeat(101) }),
         json!({ "bookId": "", "query": "词" }),
     ] {
         let (status, _) = server.search(body).await;
         assert_eq!(status, StatusCode::BAD_REQUEST);
     }
 
-    // 没有任何缓存的书：成功返回空结果，覆盖度如实为 0
+    // 已登记但没有任何缓存的书：成功返回空结果，覆盖度如实为 0
+    let empty_book = server.register_book("空缓存书", "占位").await;
     let (status, payload) = server
-        .search(json!({ "bookId": "book_9", "query": "词" }))
+        .search(json!({ "bookId": empty_book, "query": "词" }))
         .await;
     assert_eq!(status, StatusCode::OK);
     let data = &payload["data"];

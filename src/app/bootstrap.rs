@@ -173,7 +173,9 @@ pub async fn build_state(cfg: AppConfig) -> anyhow::Result<AppState> {
     ));
     // 唯一账号的建号与 ADMIN_PASSWORD 强制重置都在这里完成
     user_service.bootstrap_admin().await?;
-    let book_group_service = Arc::new(BookGroupService::new(json_document_service.clone()));
+    let book_group_service = Arc::new(BookGroupService::new(
+        crate::storage::db::repo::BookGroupRepo::new(pool.clone()),
+    ));
     let ai_book_service = Arc::new(AiBookService::new(pool.clone(), &cfg.storage_dir));
     // 后端 AI 模型配置只来自环境变量（AI_TEXT_* / AI_IMAGE_* / AI_SPEECH_*），
     // 不落库、不下发；config::load() 已先加载 .env
