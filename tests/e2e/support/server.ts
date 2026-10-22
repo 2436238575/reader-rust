@@ -65,7 +65,11 @@ export async function startServerIfNeeded(): Promise<void> {
       ...process.env,
       SERVER_HOST: '127.0.0.1',
       SERVER_PORT: String(FIXTURE_PORT),
+      // 运行期数据全部收进临时目录：STORAGE_DIR 只管缓存/日志/数据，
+      // DATABASE_URL 与 ASSETS_DIR 的默认值仍指向仓库 storage/，不设就会写 dev 库
       STORAGE_DIR: serverTempDir,
+      DATABASE_URL: `sqlite:${join(serverTempDir, 'reader.db')}?mode=rwc`,
+      ASSETS_DIR: join(serverTempDir, 'assets'),
       ADMIN_USERNAME: FIXTURE_USERNAME,
       ADMIN_PASSWORD: FIXTURE_PASSWORD,
       RATE_LIMIT_DISABLED: 'true',
