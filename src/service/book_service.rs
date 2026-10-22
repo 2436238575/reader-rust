@@ -59,6 +59,9 @@ pub struct BookService {
     user_book_limit: u32,
     /// 单用户本地书上限（0 = 不限），来自 `USER_LOCAL_BOOK_LIMIT`。
     user_local_book_limit: u32,
+    /// 章节编辑版：全文检索时优先读编辑版（与阅读器显示一致）。
+    /// 组装后由 bootstrap 经 with_chapter_edit_service 注入。
+    chapter_edit: Option<Arc<crate::service::chapter_edit_service::ChapterEditService>>,
     /// 正在后台补全目录的 `(user_ns, book_id)` 集合：防止同一本书并发触发
     /// 两个补全任务（竞态下各自抓全部分页并各 append 一次，缓存里出现重复章节）。
     pending_toc_fills: Arc<Mutex<HashSet<(String, String)>>>,
@@ -273,6 +276,7 @@ impl BookService {
             recent_bodies: Arc::new(RwLock::new(HashMap::new())),
             user_book_limit: 0,
             user_local_book_limit: 0,
+            chapter_edit: None,
             pending_toc_fills: Arc::new(Mutex::new(HashSet::new())),
         }
     }
@@ -296,6 +300,15 @@ impl BookService {
     /// 设置单用户本地书上限（`USER_LOCAL_BOOK_LIMIT`；0 = 不限）。
     pub fn with_user_local_book_limit(mut self, limit: u32) -> Self {
         self.user_local_book_limit = limit;
+        self
+    }
+
+    /// 注入章节编辑版服务：全文检索读章内容时优先编辑版（与阅读器显示一致）。
+    pub fn with_chapter_edit_service(
+        mut self,
+        service: Arc<crate::service::chapter_edit_service::ChapterEditService>,
+    ) -> Self {
+        self.chapter_edit = Some(service);
         self
     }
 
@@ -2390,6 +2403,9 @@ impl BookService {
     /// 缓存内全文检索：只扫已缓存章节的正文文件（可再生数据），不触发任何
     /// 上游请求。本地书不走这套缓存，自然不在检索范围。`query` 是纯文本
     /// 子串匹配（大小写不敏感），不做正则语法——用户输错正则不该炸掉搜索。
+    ///
+    /// 资源预算：最多扫 5000 章 / 50MB / 10 秒，超限 truncated 截断并如实
+    /// 上报覆盖度。已编辑章节读编辑版（与阅读器显示一致）。
     pub async fn search_cached_content(
         &self,
         user_ns: &str,
@@ -2397,6 +2413,10 @@ impl BookService {
         query: &str,
         max_results: usize,
     ) -> Result<CachedSearchOutcome, AppError> {
+        const MAX_SCAN_CHAPTERS: usize = 5000;
+        const MAX_SCAN_BYTES: u64 = 50 * 1024 * 1024;
+        const MAX_SCAN_DURATION: std::time::Duration = std::time::Duration::from_secs(10);
+
         let chapters = self
             .load_chapter_list_cache(user_ns, book_id)
             .await?
@@ -2405,20 +2425,52 @@ impl BookService {
             .iter()
             .filter(|chapter| !chapter.is_volume && !chapter.url.is_empty())
             .collect();
+        let total_in_book = searchable.len();
+        // 章节数预算：超出部分按截断处理（coverage 的 total 仍报真实总数）
+        let scan_list = &searchable[..searchable.len().min(MAX_SCAN_CHAPTERS)];
         let re = regex::Regex::new(&format!("(?i){}", regex::escape(query)))
             .map_err(|e| AppError::BadRequest(format!("搜索词不可用: {e}")))?;
 
         let mut outcome = CachedSearchOutcome {
             results: Vec::new(),
             cached_chapters: 0,
-            total_chapters: searchable.len(),
-            truncated: false,
+            total_chapters: total_in_book,
+            truncated: total_in_book > MAX_SCAN_CHAPTERS,
         };
-        for chapter in searchable {
-            let Ok(Some(body)) = self.cache.get(user_ns, book_id, &chapter.url).await else {
-                continue;
+        let started = std::time::Instant::now();
+        let mut scanned_bytes = 0u64;
+        let total = scan_list.len();
+        for (position, chapter) in scan_list.iter().enumerate() {
+            // 耗时预算：超时按已扫部分截断返回
+            if started.elapsed() > MAX_SCAN_DURATION {
+                outcome.truncated = true;
+                break;
+            }
+            // 编辑版优先（与阅读器显示一致），没有再读上游缓存
+            let body = if let Some(edits) = &self.chapter_edit {
+                match edits.get_chapter_edit(user_ns, book_id, &chapter.url).await {
+                    Ok(Some(edited)) => Some(edited),
+                    _ => self
+                        .cache
+                        .get(user_ns, book_id, &chapter.url)
+                        .await
+                        .ok()
+                        .flatten(),
+                }
+            } else {
+                self.cache
+                    .get(user_ns, book_id, &chapter.url)
+                    .await
+                    .ok()
+                    .flatten()
             };
+            let Some(body) = body else { continue };
             outcome.cached_chapters += 1;
+            scanned_bytes += body.len() as u64;
+            if scanned_bytes > MAX_SCAN_BYTES {
+                outcome.truncated = true;
+                break;
+            }
             // 缓存里可能是 HTML 正文：剥掉标签再匹配，摘要才不带尖括号
             let text = crate::util::text::strip_html_tags(&body);
             let mut snippets = Vec::new();
@@ -2438,7 +2490,8 @@ impl BookService {
                 snippets,
             });
             if outcome.results.len() >= max_results {
-                outcome.truncated = true;
+                // 命中上限恰好落在最后一章时不算截断（后面没有更多可扫的了）
+                outcome.truncated = position + 1 < total;
                 break;
             }
         }

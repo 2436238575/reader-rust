@@ -12,7 +12,7 @@ use serde_json::{json, Value};
 
 use crate::error::error::{ApiResponse, AppError};
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Default, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct SaveChapterEditRequest {
     pub book_id: String,
@@ -20,18 +20,6 @@ pub struct SaveChapterEditRequest {
     pub chapter_index: i32,
     pub chapter_title: String,
     pub content: String,
-}
-
-impl Default for SaveChapterEditRequest {
-    fn default() -> Self {
-        Self {
-            book_id: String::new(),
-            chapter_url: String::new(),
-            chapter_index: 0,
-            chapter_title: String::new(),
-            content: String::new(),
-        }
-    }
 }
 
 #[derive(Debug, Default, Deserialize)]

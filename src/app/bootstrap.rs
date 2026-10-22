@@ -156,11 +156,18 @@ pub async fn build_state(cfg: AppConfig) -> anyhow::Result<AppState> {
         &cfg.storage_dir,
         cfg.cache_cover_limit_bytes,
     ));
+    let chapter_edit_service = Arc::new(
+        crate::service::chapter_edit_service::ChapterEditService::new(
+            &cfg.storage_dir,
+            crate::storage::db::repo::ChapterEditRepo::new(pool.clone()),
+        ),
+    );
     let book_service = Arc::new(
         BookService::new(http, parser, cache, &cfg.storage_dir, book_repo, shelf_repo)
             .with_user_book_limit(cfg.user_book_limit)
             .with_user_local_book_limit(cfg.user_local_book_limit)
-            .with_review_cache(cfg.review_cache_ttl_secs, cfg.review_cache_user_limit_bytes),
+            .with_review_cache(cfg.review_cache_ttl_secs, cfg.review_cache_user_limit_bytes)
+            .with_chapter_edit_service(chapter_edit_service.clone()),
     );
     let book_source_service = Arc::new(BookSourceService::new(repo));
     let local_txt_book_service = Arc::new(LocalTxtBookService::new(&cfg.storage_dir));
@@ -230,12 +237,7 @@ pub async fn build_state(cfg: AppConfig) -> anyhow::Result<AppState> {
         probe_service.probe().await;
     });
 
-    let chapter_edit_service = Arc::new(
-        crate::service::chapter_edit_service::ChapterEditService::new(
-            &cfg.storage_dir,
-            crate::storage::db::repo::ChapterEditRepo::new(pool.clone()),
-        ),
-    );
+    let chapter_edit_service = chapter_edit_service;
 
     Ok(AppState {
         config: cfg,

@@ -73,7 +73,7 @@ impl Drop for TestServer {
     }
 }
 
-fn list_files_recursive(dir: &PathBuf) -> Vec<String> {
+fn list_files_recursive(dir: &std::path::Path) -> Vec<String> {
     let mut out = Vec::new();
     fn walk(dir: &std::path::Path, base: &std::path::Path, out: &mut Vec<String>) {
         let Ok(entries) = std::fs::read_dir(dir) else {

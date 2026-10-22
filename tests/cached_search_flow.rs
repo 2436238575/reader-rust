@@ -98,6 +98,25 @@ impl TestServer {
         std::fs::write(dir.join(format!("{name}.txt")), content).unwrap();
     }
 
+    /// 通用 POST（成功断言 200 + isSuccess，返回 data）。
+    async fn post(&self, path: &str, body: Value) -> Value {
+        let resp = self
+            .client
+            .post(format!("{}/reader3/{path}", self.base_url))
+            .bearer_auth(&self.token)
+            .json(&body)
+            .send()
+            .await
+            .unwrap();
+        let payload: Value = resp.json().await.unwrap();
+        assert_eq!(
+            payload["isSuccess"],
+            json!(true),
+            "{path} 应成功: {payload}"
+        );
+        payload["data"].clone()
+    }
+
     /// 登记一本书（search_cached_content 现在要求书已存在——resolve_book 校验）。
     /// 用本地 TXT 上传登记最省事（不需要书源）。
     async fn register_book(&self, name: &str, content: &str) -> String {
@@ -257,6 +276,39 @@ async fn search_validates_input_and_handles_empty_cache() {
     assert_eq!(data["results"], json!([]));
     assert_eq!(data["totalChapters"], json!(0));
     assert_eq!(data["cachedChapters"], json!(0));
+}
+
+#[tokio::test]
+async fn search_reads_edited_version_when_present() {
+    let server = TestServer::start().await;
+    let book_id = server.register_book("编辑版检索", "占位").await;
+    server.seed_toc(&book_id, &[("第一章", "http://up/ch/1")]);
+    server.seed_chapter_cache(&book_id, "http://up/ch/1", "上游缓存里的旧词。");
+    // 编辑版把内容改了：检索应命中编辑版而不是上游缓存
+    server
+        .post(
+            "saveChapterEdit",
+            json!({
+                "bookId": book_id,
+                "chapterUrl": "http://up/ch/1",
+                "chapterIndex": 0,
+                "chapterTitle": "第一章",
+                "content": "编辑版里的新词。",
+            }),
+        )
+        .await;
+
+    let (status, payload) = server
+        .search(json!({ "bookId": book_id, "query": "新词" }))
+        .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(payload["data"]["results"].as_array().unwrap().len(), 1);
+
+    // 上游旧词搜不到（编辑版覆盖了它）
+    let (_, payload) = server
+        .search(json!({ "bookId": book_id, "query": "旧词" }))
+        .await;
+    assert_eq!(payload["data"]["results"].as_array().unwrap().len(), 0);
 }
 
 #[tokio::test]

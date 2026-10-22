@@ -1,4 +1,4 @@
-use serde::{de::DeserializeOwned, Serialize};
+use serde::Serialize;
 use serde_json::Value;
 use sqlx::{Row, SqlitePool};
 
@@ -36,26 +36,6 @@ impl JsonDocumentService {
     ) -> Result<(), AppError> {
         let json = serde_json::to_string(value).map_err(|e| AppError::BadRequest(e.to_string()))?;
         self.set_raw(user_ns, name, &json).await
-    }
-
-    pub async fn read_list<T: DeserializeOwned>(
-        &self,
-        user_ns: &str,
-        name: &str,
-    ) -> Result<Vec<T>, AppError> {
-        let Some(value) = self.get_value(user_ns, name).await? else {
-            return Ok(Vec::new());
-        };
-        serde_json::from_value(value).map_err(|e| AppError::BadRequest(e.to_string()))
-    }
-
-    pub async fn write_list<T: Serialize>(
-        &self,
-        user_ns: &str,
-        name: &str,
-        list: &Vec<T>,
-    ) -> Result<(), AppError> {
-        self.set_value(user_ns, name, list).await
     }
 
     async fn get_raw(&self, user_ns: &str, name: &str) -> Result<Option<String>, AppError> {
