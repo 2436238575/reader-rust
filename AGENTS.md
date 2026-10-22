@@ -362,7 +362,7 @@ XPath 有资源上限（长度 8KB / 嵌套 64 层 / 总步数 100、`//` 50）�
 
 ## 测试
 
-Rust 侧共 **334 个测试**（231 个内联单元测试 + 103 个集成用例，另有 2 个 `#[ignore]` 的真实网络用例），分布为：
+Rust 侧共 **340 个测试**（236 个内联单元测试 + 104 个集成用例，另有 2 个 `#[ignore]` 的真实网络用例），分布为：
 
 - `tests/` 下 19 个集成测试文件（103 个用例），其中 `book_source_compat.rs` 用例最多（17 个）；
   `auth_flow.rs`、`review_flow.rs`、`chapter_image_flow.rs`、`image_pipeline.rs` 与

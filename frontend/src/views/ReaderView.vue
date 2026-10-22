@@ -422,7 +422,7 @@ import { isReaderInteractiveClickTarget, resolveReaderTapZone } from '../utils/r
 import { chapterPosToProgress } from '../utils/bookmarks'
 import { darkenKeywordColor } from '../utils/keywordHighlights'
 import { diffParagraphs, splitToParagraphs, type ParagraphDiffOp } from '../utils/chapterDiff'
-import { getChapterEdit } from '../api/chapterEdit'
+import { diffChapterEdit, getChapterEdit } from '../api/chapterEdit'
 import { getBookContent } from '../api/bookshelf'
 import { DUAL_PAGE_MIN_WIDTH, useHorizontalPaging } from '../composables/useHorizontalPaging'
 import {
@@ -771,10 +771,19 @@ async function ensureChapterDiff(chapterIndex: number) {
       chapterDiffCache.set(chapterIndex, null)
       return
     }
-    const ops = diffParagraphs(
-      splitToParagraphs(store.processContentForDisplay(upstream)),
-      splitToParagraphs(store.processContentForDisplay(edited))
-    )
+    // 与渲染同口径：两版都过替换规则+繁简转换再切段
+    const baseParas = splitToParagraphs(store.processContentForDisplay(upstream))
+    const editedParas = splitToParagraphs(store.processContentForDisplay(edited))
+    // 优先后端系统 git（更聪明的相似段匹配）；服务器没装 git 或执行失败
+    // 时回退前端本地 LCS——行为连续，用户无感
+    let ops: ParagraphDiffOp[] | null = null
+    try {
+      const resp = await diffChapterEdit(baseParas, editedParas)
+      if (!resp.fallback && resp.ops) ops = resp.ops
+    } catch {
+      /* 回退本地 */
+    }
+    if (!ops) ops = diffParagraphs(baseParas, editedParas)
     chapterDiffCache.set(chapterIndex, ops.length ? ops : null)
   } catch {
     chapterDiffCache.set(chapterIndex, null)

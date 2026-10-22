@@ -114,3 +114,32 @@ pub async fn delete_chapter_edit(
         .await?;
     Ok(Json(ApiResponse::ok(json!({ "edited": false }))))
 }
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DiffChapterRequest {
+    /// 上游基准的段落数组（前端切好段：段 = 非空行）
+    pub base: Vec<String>,
+    /// 编辑版的段落数组
+    pub edited: Vec<String>,
+}
+
+/// 用系统 git 算段落 diff。`fallback: true` 表示系统没有 git（或执行失败），
+/// 前端应回退到本地计算——日志里已警告一次。
+pub async fn diff_chapter_edit(
+    State(state): State<AppState>,
+    _user: CurrentUser,
+    QueryOrBody(req): QueryOrBody<DiffChapterRequest>,
+) -> Result<Json<ApiResponse<Value>>, AppError> {
+    match state
+        .git_diff_service
+        .diff_paragraphs(&req.base, &req.edited)
+        .await?
+    {
+        Some(ops) => Ok(Json(ApiResponse::ok(json!({
+            "fallback": false,
+            "ops": ops,
+        })))),
+        None => Ok(Json(ApiResponse::ok(json!({ "fallback": true })))),
+    }
+}

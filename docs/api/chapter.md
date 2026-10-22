@@ -53,7 +53,13 @@ POST /reader3/saveChapterEdit      { bookId, chapterUrl, chapterIndex, chapterTi
 GET  /reader3/getChapterEdit       ?bookId&chapterUrl（无编辑版时 data 为 null）
 GET  /reader3/listChapterEdits     ?bookId → { urls: string[] }
 POST /reader3/deleteChapterEdit    { bookId, chapterUrl }（删除即恢复上游版本）
+POST /reader3/diffChapterEdit      { base: string[], edited: string[] }（前端切好的段落数组）
 ```
+
+`diffChapterEdit` 用服务器上的系统 git 计算段落 diff（`git diff --no-index`），返回
+`{ fallback: false, ops: [...] }`（与前端 `ParagraphDiffOp` 同构：equal/add/del/modify +
+段下标与文本）。系统没有 git（或执行失败/超时）时返回 `{ fallback: true }` 并在服务端日志
+警告一次，前端据此回退到本地 LCS 计算。单侧段落数上限 2 万、单段 8KB。
 
 单章内容上限 2MB；删书时编辑版目录随书级联删除。
 

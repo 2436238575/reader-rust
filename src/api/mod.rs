@@ -27,6 +27,8 @@ pub struct AppState {
     pub local_epub_book_service: Arc<LocalEpubBookService>,
     /// 章节正文编辑版（用户数据目录的叠加层）
     pub chapter_edit_service: Arc<ChapterEditService>,
+    /// 章节 diff 的系统 git 执行器（无 git 时回退前端本地计算）
+    pub git_diff_service: Arc<crate::service::git_diff_service::GitDiffService>,
     pub json_document_service: Arc<JsonDocumentService>,
     pub bookmark_repo: crate::storage::db::repo::BookmarkRepo,
     pub replace_rule_repo: crate::storage::db::repo::ReplaceRuleRepo,

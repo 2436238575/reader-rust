@@ -299,3 +299,27 @@ async fn network_book_refresh_updates_base_but_returns_edit() {
         .await;
     assert_eq!(upstream_now, "上游第二版正文", "基准应已更新到第二版");
 }
+
+/// diff 端点：系统有 git 时返回 ops；没有 git 的环境回退标记（跳过断言）。
+#[tokio::test]
+async fn diff_endpoint_runs_git_and_returns_ops() {
+    let server = boot().await;
+    let payload = server
+        .post(
+            "diffChapterEdit",
+            json!({
+                "base": ["一", "二", "三"],
+                "edited": ["一", "二改", "三", "四"],
+            }),
+        )
+        .await;
+    if payload["fallback"].as_bool() == Some(true) {
+        return; // 无 git 环境：回退路径已在 service 内联测试覆盖
+    }
+    let ops = payload["ops"].as_array().unwrap();
+    let kinds: Vec<&str> = ops.iter().map(|op| op["type"].as_str().unwrap()).collect();
+    assert_eq!(kinds, ["equal", "modify", "equal", "add"]);
+    assert_eq!(ops[1]["baseText"], json!("二"));
+    assert_eq!(ops[1]["editedText"], json!("二改"));
+    assert_eq!(ops[3]["editedIndex"], json!(3));
+}
