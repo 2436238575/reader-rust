@@ -24,14 +24,15 @@ pub async fn save_bookmark(
     if bookmark.book_id.trim().is_empty() {
         return Err(AppError::BadRequest("bookId required".to_string()));
     }
-    // book_url 冗余列（恢复校验用）：登记不到的记空串，恢复时跳过校验
+    // 书签必须挂在已登记的书上：book_url 冗余列是恢复校验的唯一依据，
+    // 允许空值就等于放过「id 复用时挂到新书」的漏洞
     let book_url = state
         .book_service
         .book_repo()
         .get(&user.0.ns, &bookmark.book_id)
         .await?
         .map(|row| row.book_url)
-        .unwrap_or_default();
+        .ok_or_else(|| AppError::NotFound("书籍不存在".to_string()))?;
     state
         .bookmark_repo
         .upsert(&user.0.ns, &bookmark, &book_url)
@@ -45,8 +46,9 @@ pub async fn save_bookmarks(
     Json(bookmarks): Json<Vec<Bookmark>>,
 ) -> Result<Json<ApiResponse<Value>>, AppError> {
     // 批量恢复（WebDAV）时逐条查登记表的 book_url；同书多条只查一次
-    let mut url_cache: std::collections::HashMap<String, String> = Default::default();
+    let mut url_cache: std::collections::HashMap<String, Option<String>> = Default::default();
     let mut items: Vec<(Bookmark, String)> = Vec::with_capacity(bookmarks.len());
+    let mut skipped = 0usize;
     for b in bookmarks {
         if b.book_id.trim().is_empty() {
             continue;
@@ -59,13 +61,22 @@ pub async fn save_bookmarks(
                     .book_repo()
                     .get(&user.0.ns, &b.book_id)
                     .await?
-                    .map(|row| row.book_url)
-                    .unwrap_or_default();
+                    .map(|row| row.book_url);
                 url_cache.insert(b.book_id.clone(), url.clone());
                 url
             }
         };
-        items.push((b, book_url));
+        match book_url {
+            Some(url) => items.push((b, url)),
+            // 备份里的书签指向不在本次备份书架里的书：没有归属信息，
+            // 存进去只会在 id 复用时串书，跳过并留日志
+            None => skipped += 1,
+        }
+    }
+    if skipped > 0 {
+        tracing::warn!(
+            "saveBookmarks: skipped {skipped} bookmark(s) whose books are not registered"
+        );
     }
     // 单事务落库：中途失败整体回滚，不留半批书签
     state.bookmark_repo.upsert_many(&user.0.ns, &items).await?;

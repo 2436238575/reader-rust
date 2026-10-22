@@ -607,3 +607,45 @@ async fn batch_delete_cascades_only_for_owned_books() {
         "别名删除的级联应落到 canonical 目录"
     );
 }
+
+/// 书签必须挂在已登记的书上：单条保存 404，批量恢复跳过无主的书签
+/// （空 book_url 的行是恢复校验的盲区，id 复用时会把书签挂到新书上）。
+#[tokio::test]
+async fn bookmarks_require_a_registered_book() {
+    let server = boot().await;
+    let book = server.upload_txt("书签归属", "第一章 开始\n正文。\n").await;
+    let book_id = book["bookId"].as_str().unwrap().to_string();
+
+    // 未登记的书：单条保存 404
+    let resp = server
+        .client
+        .post(format!("{}/reader3/saveBookmark", server.base_url))
+        .bearer_auth(&server.token)
+        .json(&json!({ "bookId": "book_999", "chapterIndex": 0, "chapterPos": 0 }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+
+    // 批量：有主的落库、无主的跳过（不因一条脏数据整批失败）
+    server
+        .post(
+            "saveBookmarks",
+            json!([
+                { "bookId": book_id, "chapterIndex": 0, "chapterPos": 0, "chapterName": "第一章", "bookText": "正文" },
+                { "bookId": "book_999", "chapterIndex": 1, "chapterPos": 0, "bookText": "孤儿" },
+            ]),
+        )
+        .await;
+    let resp = server
+        .client
+        .get(format!("{}/reader3/getBookmarks", server.base_url))
+        .bearer_auth(&server.token)
+        .send()
+        .await
+        .unwrap();
+    let payload: Value = resp.json().await.unwrap();
+    let list = payload["data"].as_array().unwrap();
+    assert_eq!(list.len(), 1, "无主书签不该落库");
+    assert_eq!(list[0]["bookId"], json!(book_id));
+}
