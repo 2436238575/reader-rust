@@ -1,3 +1,5 @@
+mod common;
+
 use axum::{response::Html, routing::get, Router};
 use reader_rust::crawler::http_client::HttpClient;
 use reader_rust::model::book_source::BookSource;
@@ -9,7 +11,10 @@ use reader_rust::storage::cache::file_cache::FileCache;
 use uuid::Uuid;
 
 /// 装配一套带书籍登记表的 BookService（独立临时目录 + 临时 SQLite）。
-async fn test_book_service(storage_dir: &std::path::Path) -> BookService {
+/// 返回池句柄：收尾必须先 `pool.close().await` 再删目录（Windows 文件锁）。
+async fn test_book_service(
+    storage_dir: &std::path::Path,
+) -> (BookService, sqlx::SqlitePool) {
     // init_pool 不会建父目录，先落目录再开库
     std::fs::create_dir_all(storage_dir).unwrap();
     let pool = reader_rust::storage::db::init_pool(&format!(
@@ -18,14 +23,15 @@ async fn test_book_service(storage_dir: &std::path::Path) -> BookService {
     ))
     .await
     .unwrap();
-    BookService::new(
+    let service = BookService::new(
         HttpClient::new(5, None).unwrap(),
         RuleEngine::new().unwrap(),
         FileCache::new(storage_dir.join("cache"), 0),
         storage_dir.to_str().unwrap(),
         reader_rust::storage::db::repo::BookRepo::new(pool.clone()),
-        reader_rust::storage::db::repo::ShelfBookRepo::new(pool),
-    )
+        reader_rust::storage::db::repo::ShelfBookRepo::new(pool.clone()),
+    );
+    (service, pool)
 }
 
 async fn search_ok() -> Html<&'static str> {
@@ -58,9 +64,10 @@ async fn source_availability_is_valid_when_search_or_explore_has_results() {
         axum::serve(listener, app).await.unwrap();
     });
 
+    common::clean_stale_temp_dirs();
     let storage_dir =
         std::env::temp_dir().join(format!("reader-rust-source-validation-{}", Uuid::new_v4()));
-    let service = test_book_service(&storage_dir).await;
+    let (service, pool) = test_book_service(&storage_dir).await;
 
     let search_valid = source_with_routes(&format!("http://{}", addr), "/search-ok", "/empty");
     let explore_valid = source_with_routes(&format!("http://{}", addr), "/empty", "/explore-ok");
@@ -77,7 +84,8 @@ async fn source_availability_is_valid_when_search_or_explore_has_results() {
         .await;
 
     server.abort();
-    let _ = tokio::fs::remove_dir_all(&storage_dir).await;
+    pool.close().await;
+    common::remove_dir_retried(&storage_dir);
 
     assert!(search_result.valid);
     assert!(search_result.search_ok);

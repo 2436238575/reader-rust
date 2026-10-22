@@ -21,6 +21,13 @@ struct TestServer {
     client: reqwest::Client,
 }
 
+impl Drop for TestServer {
+    fn drop(&mut self) {
+        // 收尾删临时目录（重试等句柄释放；删不掉就留给下一轮启动清）
+        common::remove_dir_retried(&self.temp_dir);
+    }
+}
+
 impl TestServer {
     async fn start() -> Self {
         common::clean_stale_temp_dirs();

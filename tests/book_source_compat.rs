@@ -22,7 +22,8 @@ fn allow_private_network() {
 }
 
 /// 装配一套带书籍登记表的 BookService（独立临时目录 + 临时 SQLite）。
-async fn test_book_service(storage_dir: &std::path::Path) -> BookService {
+/// 返回池句柄：收尾必须先 `pool.close().await` 再删目录（Windows 文件锁）。
+async fn test_book_service(storage_dir: &std::path::Path) -> (BookService, sqlx::SqlitePool) {
     // init_pool 不会建父目录，先落目录再开库
     std::fs::create_dir_all(storage_dir).unwrap();
     let pool = reader_rust::storage::db::init_pool(&format!(
@@ -31,14 +32,15 @@ async fn test_book_service(storage_dir: &std::path::Path) -> BookService {
     ))
     .await
     .unwrap();
-    BookService::new(
+    let service = BookService::new(
         HttpClient::new(5, None).unwrap(),
         RuleEngine::new().unwrap(),
         FileCache::new(storage_dir.join("cache"), 0),
         storage_dir.to_str().unwrap(),
         reader_rust::storage::db::repo::BookRepo::new(pool.clone()),
-        reader_rust::storage::db::repo::ShelfBookRepo::new(pool),
-    )
+        reader_rust::storage::db::repo::ShelfBookRepo::new(pool.clone()),
+    );
+    (service, pool)
 }
 
 #[test]
@@ -365,7 +367,7 @@ async fn search_pipeline_uses_url_analyzer_final_url_and_login_check_js() {
     common::clean_stale_temp_dirs();
     let storage_dir =
         std::env::temp_dir().join(format!("reader-rust-search-compat-{}", Uuid::new_v4()));
-    let service = test_book_service(&storage_dir).await;
+    let (service, pool) = test_book_service(&storage_dir).await;
     let source = BookSource {
         book_source_name: "Runtime".to_string(),
         book_source_url: format!("http://{}", addr),
@@ -392,6 +394,7 @@ async fn search_pipeline_uses_url_analyzer_final_url_and_login_check_js() {
         .unwrap();
 
     server.abort();
+    pool.close().await;
     common::remove_dir_retried(&storage_dir);
 
     assert_eq!(books.len(), 1);
@@ -434,7 +437,7 @@ async fn content_pagination_stops_before_next_chapter_url() {
     common::clean_stale_temp_dirs();
     let storage_dir =
         std::env::temp_dir().join(format!("reader-rust-content-test-{}", Uuid::new_v4()));
-    let service = test_book_service(&storage_dir).await;
+    let (service, pool) = test_book_service(&storage_dir).await;
     let source = BookSource {
         book_source_name: "Content pagination".to_string(),
         book_source_url: format!("http://{}", addr),
@@ -457,6 +460,7 @@ async fn content_pagination_stops_before_next_chapter_url() {
         .unwrap();
 
     server.abort();
+    pool.close().await;
     common::remove_dir_retried(&storage_dir);
 
     assert!(content.contains("第一页正文"));
@@ -467,10 +471,10 @@ async fn content_pagination_stops_before_next_chapter_url() {
 
 #[tokio::test]
 async fn explore_kinds_support_text_and_js_rules() {
-    let service = test_book_service(
-        &std::env::temp_dir().join(format!("reader-rust-explore-kinds-{}", Uuid::new_v4())),
-    )
-    .await;
+    common::clean_stale_temp_dirs();
+    let storage_dir =
+        std::env::temp_dir().join(format!("reader-rust-explore-kinds-{}", Uuid::new_v4()));
+    let (service, pool) = test_book_service(&storage_dir).await;
     let text_source = BookSource {
         book_source_name: "Explore".to_string(),
         book_source_url: "https://explore.example".to_string(),
@@ -496,16 +500,18 @@ async fn explore_kinds_support_text_and_js_rules() {
     assert_eq!(
         js[0].style.as_ref().and_then(|style| style.get("layout")),
         Some(&json!("grid"))
-    );
+    );    pool.close().await;
+    common::remove_dir_retried(&storage_dir);
 }
 
 #[tokio::test]
 async fn explore_kinds_accept_relaxed_style_objects() {
-    let service = test_book_service(&std::env::temp_dir().join(format!(
+    common::clean_stale_temp_dirs();
+    let storage_dir = std::env::temp_dir().join(format!(
         "reader-rust-explore-kinds-relaxed-{}",
         Uuid::new_v4()
-    )))
-    .await;
+    ));
+    let (service, pool) = test_book_service(&storage_dir).await;
     let source = BookSource {
         book_source_name: "Relaxed explore".to_string(),
         book_source_url: "https://explore.example".to_string(),
@@ -529,16 +535,18 @@ async fn explore_kinds_accept_relaxed_style_objects() {
             .as_ref()
             .and_then(|style| style.get("layout_flexBasisPercent")),
         Some(&json!(0.4))
-    );
+    );    pool.close().await;
+    common::remove_dir_retried(&storage_dir);
 }
 
 #[tokio::test]
 async fn explore_kinds_accept_relaxed_angle_item_objects() {
-    let service = test_book_service(&std::env::temp_dir().join(format!(
+    common::clean_stale_temp_dirs();
+    let storage_dir = std::env::temp_dir().join(format!(
         "reader-rust-explore-kinds-angle-items-{}",
         Uuid::new_v4()
-    )))
-    .await;
+    ));
+    let (service, pool) = test_book_service(&storage_dir).await;
     let source = BookSource {
         book_source_name: "Relaxed explore items".to_string(),
         book_source_url: "https://explore.example".to_string(),
@@ -564,5 +572,6 @@ async fn explore_kinds_accept_relaxed_angle_item_objects() {
             .as_ref()
             .and_then(|style| style.get("layout_flexBasisPercent")),
         Some(&json!(0.25))
-    );
+    );    pool.close().await;
+    common::remove_dir_retried(&storage_dir);
 }

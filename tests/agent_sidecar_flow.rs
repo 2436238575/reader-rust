@@ -34,6 +34,13 @@ struct TestServer {
     client: reqwest::Client,
 }
 
+impl Drop for TestServer {
+    fn drop(&mut self) {
+        // 收尾删临时目录（重试等句柄释放；删不掉就留给下一轮启动清）
+        common::remove_dir_retried(&self.temp_dir);
+    }
+}
+
 impl TestServer {
     async fn start(chapter_timeout_secs: u64) -> Self {
         let _ = tracing_subscriber::fmt()
