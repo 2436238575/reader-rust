@@ -19,6 +19,66 @@ const MAX_TOTAL_BYTES: usize = 32 * 1024 * 1024;
 const GIT_DIFF_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
 /// 同一时刻最多 4 个 git 进程（每个都要读写临时文件 + 全量 diff）。
 const MAX_CONCURRENT_GIT: usize = 4;
+/// 往期遗留临时文件的清理门槛：取消/崩溃留下的文件超过这个年龄就回收。
+const STALE_TEMP_AGE: std::time::Duration = std::time::Duration::from_secs(600);
+
+/// 临时文件的兜底清理：正常路径会显式删除并 disarm；取消、提前 return、
+/// panic 时由 Drop 兜住（异步代码里没法在 Drop 里 await，用同步删除尽力而为）。
+struct TempFiles {
+    paths: Vec<PathBuf>,
+}
+
+impl TempFiles {
+    fn new(paths: Vec<PathBuf>) -> Self {
+        Self { paths }
+    }
+
+    /// 显式清理已完成的路径：之后 Drop 不再重复删。
+    fn disarm(&mut self) {
+        self.paths.clear();
+    }
+}
+
+impl Drop for TempFiles {
+    fn drop(&mut self) {
+        for path in &self.paths {
+            let _ = std::fs::remove_file(path);
+        }
+    }
+}
+
+/// 启动时清一次往期遗留：取消/崩溃留下的 `reader-git-diff-*` 不在任何
+/// 测试清理前缀里，不主动扫就永远留在 %TEMP%。只动超过门槛的旧文件。
+fn sweep_stale_temp_files() {
+    sweep_stale_temp_files_in(&std::env::temp_dir());
+}
+
+/// 清扫逻辑本体（目录注入便于测试）。
+fn sweep_stale_temp_files_in(dir: &std::path::Path) {
+    let cutoff = std::time::SystemTime::now()
+        .checked_sub(STALE_TEMP_AGE)
+        .unwrap_or(std::time::SystemTime::UNIX_EPOCH);
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        if !entry
+            .file_name()
+            .to_string_lossy()
+            .starts_with("reader-git-diff-")
+        {
+            continue;
+        }
+        let stale = entry
+            .metadata()
+            .and_then(|m| m.modified())
+            .map(|t| t < cutoff)
+            .unwrap_or(false);
+        if stale {
+            let _ = std::fs::remove_file(entry.path());
+        }
+    }
+}
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
@@ -82,6 +142,7 @@ impl Default for GitDiffService {
 
 impl GitDiffService {
     pub fn new() -> Self {
+        sweep_stale_temp_files();
         Self {
             available: Arc::new(std::sync::Mutex::new(None)),
             semaphore: Arc::new(tokio::sync::Semaphore::new(MAX_CONCURRENT_GIT)),
@@ -168,6 +229,8 @@ impl GitDiffService {
             let _ = tokio::fs::remove_file(&edited_path).await;
             return Err(AppError::Internal(e.into()));
         }
+        // 兜底清理：后面任一 `?`/提前 return/任务被取消/panic 都不会漏文件
+        let mut cleanup = TempFiles::new(vec![base_path.clone(), edited_path.clone()]);
 
         // kill_on_drop：超时分支会把子进程杀掉（否则超时只warn不杀，
         // Windows 下文件还被占着删不掉，泄漏 tmp 文件）
@@ -192,6 +255,7 @@ impl GitDiffService {
                 let _ = tokio::fs::remove_file(path).await;
             }
         }
+        cleanup.disarm();
 
         let output = match run {
             Ok(Ok(output)) => output,
@@ -433,5 +497,51 @@ mod tests {
             .unwrap()
             .expect("有 git 就该出结果");
         assert_eq!(kinds(&ops), ["equal", "modify", "equal", "add"]);
+    }
+
+    /// 取消/panic 路径靠 Drop 兜底删临时文件；正常路径显式删完就 disarm。
+    #[test]
+    fn temp_files_guard_removes_unfinished_files_on_drop() {
+        let dir = std::env::temp_dir().join(format!(
+            "reader-git-diff-guard-{}",
+            crate::util::crypto::random_string(6)
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let a = dir.join("a.txt");
+        let b = dir.join("b.txt");
+        std::fs::write(&a, "x").unwrap();
+        std::fs::write(&b, "y").unwrap();
+
+        {
+            let mut guard = TempFiles::new(vec![a.clone(), b.clone()]);
+            guard.disarm();
+        }
+        assert!(a.exists() && b.exists(), "disarm 后 Drop 不该再删");
+
+        {
+            let _guard = TempFiles::new(vec![a.clone(), b.clone()]);
+        }
+        assert!(!a.exists() && !b.exists(), "Drop 兜底应删除临时文件");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// 启动清扫只动自己的前缀、且只动超过门槛的旧文件。
+    #[test]
+    fn stale_temp_sweep_only_touches_old_own_files() {
+        let dir = std::env::temp_dir().join(format!(
+            "reader-git-diff-sweep-{}",
+            crate::util::crypto::random_string(6)
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let fresh = dir.join("reader-git-diff-fresh-a.txt");
+        let other = dir.join("someone-else.txt");
+        std::fs::write(&fresh, "x").unwrap();
+        std::fs::write(&other, "y").unwrap();
+
+        // 刚写入的文件不算「往期遗留」，清扫不碰
+        sweep_stale_temp_files_in(&dir);
+        assert!(fresh.exists(), "新文件不该被清扫");
+        assert!(other.exists(), "非本前缀的文件不该被清扫");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
