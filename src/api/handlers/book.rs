@@ -681,6 +681,9 @@ pub async fn delete_book_cache(
         .book_id
         .filter(|v| !v.trim().is_empty())
         .ok_or_else(|| AppError::BadRequest("bookId required".to_string()))?;
+    // bookId 会拼进 toc/详情/候选清单的缓存文件路径：格式 + 存在 + 归属校验
+    //（与书籍级接口一致）；`../../x` 这类输入在这里就 404，到不了文件系统
+    resolve_book(&state, &user_ns, &book_id).await?;
 
     // 正文 + 章节列表 + 换源候选；评论（7 天 TTL 的第三方数据）与书籍详情不动
     let deleted_content = state

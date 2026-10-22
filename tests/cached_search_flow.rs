@@ -323,3 +323,67 @@ async fn search_requires_login() {
         .unwrap();
     assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
 }
+
+/// deleteBookCache / purgeCache(scope=book) 的 bookId 与书籍级接口同口径：
+/// 未登记或非法格式 404（到不了文件系统）；别名（book_01）归一到 canonical
+/// 路径清理——同一本书不该有两个缓存文件。
+#[tokio::test]
+async fn book_cache_delete_validates_and_normalizes_book_id() {
+    let server = TestServer::start().await;
+    let book_id = server.register_book("缓存清理", "占位").await;
+    server.seed_toc(&book_id, &[("第一章", "http://up/ch/1")]);
+    server.seed_chapter_cache(&book_id, "http://up/ch/1", "正文。");
+    let toc_path = server
+        .temp_dir
+        .join("cache")
+        .join("user_1")
+        .join("toc")
+        .join(format!("{book_id}.json"));
+    assert!(toc_path.exists());
+
+    // 别名 book_01（前导零）与 canonical 指向同一本书
+    let alias = format!("book_0{}", book_id.trim_start_matches("book_"));
+    let resp = server
+        .client
+        .post(format!("{}/reader3/purgeCache", server.base_url))
+        .bearer_auth(&server.token)
+        .json(&json!({ "scope": "book", "bookId": alias }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK, "别名应解析到同一本书");
+    assert!(!toc_path.exists(), "canonical toc 缓存应被别名调用清掉");
+
+    // 越界 id：两个端点都 404；toc 目录上一级的文件必须原样保留
+    let keep = server.temp_dir.join("cache").join("user_1").join("keep.json");
+    std::fs::write(&keep, b"{}").unwrap();
+    for (path, body) in [
+        ("/reader3/deleteBookCache", json!({ "bookId": "../keep" })),
+        (
+            "/reader3/purgeCache",
+            json!({ "scope": "book", "bookId": "../keep" }),
+        ),
+    ] {
+        let resp = server
+            .client
+            .post(format!("{}{path}", server.base_url))
+            .bearer_auth(&server.token)
+            .json(&body)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::NOT_FOUND, "{path} 越界 id 应 404");
+    }
+    assert!(keep.exists(), "目录外的文件绝不能被动到");
+
+    // 未登记的合法 id 同样 404（存在性校验）
+    let resp = server
+        .client
+        .post(format!("{}/reader3/deleteBookCache", server.base_url))
+        .bearer_auth(&server.token)
+        .json(&json!({ "bookId": "book_999" }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+}

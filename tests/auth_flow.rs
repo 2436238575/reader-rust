@@ -354,14 +354,21 @@ async fn purge_cache_scopes_all_work_for_the_single_user() {
         )
         .await;
     assert_eq!(response.status(), 400, "缺少 bookId 应被拒绝");
-    let response = server
-        .post(
-            "/reader3/purgeCache",
-            Some(&token),
-            serde_json::json!({ "scope": "book", "bookId": "book_1" }),
-        )
-        .await;
-    assert_eq!(response.status(), 200);
+    // bookId 拼缓存文件路径：未登记/非法格式的 id 一律 404，到不了文件系统
+    for book_id in ["book_999", "../../data", "book_1/../book_2"] {
+        let response = server
+            .post(
+                "/reader3/purgeCache",
+                Some(&token),
+                serde_json::json!({ "scope": "book", "bookId": book_id }),
+            )
+            .await;
+        assert_eq!(
+            response.status(),
+            404,
+            "未登记或非法的 bookId {book_id:?} 应 404"
+        );
+    }
 
     // 单用户即所有者：全局清理与全局统计都直接可用
     let response = server

@@ -62,6 +62,8 @@ pub async fn purge_cache(
             let ns = target_ns(&user.0, req.username.as_deref())?;
             let book_id = non_empty(req.book_id.as_deref())
                 .ok_or_else(|| AppError::BadRequest("bookId required".to_string()))?;
+            // bookId 会拼进缓存文件路径：格式 + 存在 + 归属校验（与书籍级接口一致）
+            super::book::resolve_book(&state, &ns, book_id).await?;
             let mut purged = state.book_service.purge_book_cache(&ns, book_id).await?;
             // 连带删除该书登记过的图片（封面/章节配图/评论配图共用 image 目录）
             purged.cover += state.image_service.remove_by_book_id(book_id).await;

@@ -17,6 +17,13 @@ pub fn format_book_id(id: i64) -> String {
     format!("{BOOK_ID_PREFIX}{id}")
 }
 
+/// bookId 的 canonical 形态：`book_007`/`book_+7` 这类别名归一为 `book_<n>`；
+/// 非法 id 返回 None。拼缓存/数据文件路径前一律先归一——同一本书不该有
+/// 两个目录，非法输入更不该落到文件系统。
+pub fn canonical_book_id(s: &str) -> Option<String> {
+    parse_book_id(s).map(format_book_id)
+}
+
 /// books 登记表的一行。book_id 对外是格式化后的 `book_<n>` 文本。
 #[derive(Debug, Clone)]
 pub struct BookRow {

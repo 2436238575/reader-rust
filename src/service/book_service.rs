@@ -879,7 +879,7 @@ impl BookService {
             .join("cache")
             .join(BOOK_INFO_CACHE_DIR)
             .join(user_ns)
-            .join(format!("{}.json", book_id))
+            .join(format!("{}.json", book_id_path_segment(book_id)))
     }
 
     async fn load_book_info_cache(&self, user_ns: &str, book_id: &str) -> Option<Book> {
@@ -2378,7 +2378,7 @@ impl BookService {
             .join("cache")
             .join(user_ns)
             .join("source_candidates")
-            .join(format!("{}.json", book_id))
+            .join(format!("{}.json", book_id_path_segment(book_id)))
     }
 
     // Chapter list cache methods
@@ -2387,7 +2387,7 @@ impl BookService {
             .join("cache")
             .join(user_ns)
             .join("toc")
-            .join(format!("{}.json", book_id))
+            .join(format!("{}.json", book_id_path_segment(book_id)))
     }
 
     /// 只读本章的正文缓存（不触发上游抓取）：章节编辑版的 diff 基准通道。
@@ -2627,6 +2627,15 @@ impl BookService {
 
 /// 单章的命中摘要数上限：一章命中太多时前三条足够判断要不要跳过去。
 const MAX_SNIPPETS_PER_CHAPTER: usize = 3;
+
+/// bookId 拼进缓存文件路径前的归一：别名（`book_007`/`book_+7`）归一为
+/// canonical `book_<n>`（同一本书不该有两个缓存文件），非法 id 落隔离段——
+/// 与 FileCache::book_path 同一策略：读返回空、写进隔离区、删除是 no-op。
+/// handler 层的 resolve_book 是主防线，这层兜底防未来新调用点绕开它。
+fn book_id_path_segment(book_id: &str) -> String {
+    crate::storage::db::repo::canonical_book_id(book_id)
+        .unwrap_or_else(|| "__invalid_book__".to_string())
+}
 
 #[derive(Debug, Clone, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -3505,6 +3514,37 @@ mod tests {
             .is_none());
 
         let _ = tokio::fs::remove_dir_all(&storage_dir).await;
+    }
+
+    #[tokio::test]
+    async fn cache_paths_normalize_book_id_aliases_and_isolate_invalid() {
+        let storage_dir =
+            std::env::temp_dir().join(format!("reader-rust-pathkey-{}", std::process::id()));
+        let service = test_service(&storage_dir).await;
+
+        // 别名（前导零/显式正号）与 canonical 收敛到同一路径：同一本书一份缓存
+        let canonical = service.chapter_list_cache_path("u", "book_7");
+        assert_eq!(canonical, service.chapter_list_cache_path("u", "book_007"));
+        assert_eq!(canonical, service.chapter_list_cache_path("u", "book_+7"));
+        assert!(service
+            .book_source_cache_path("u", "book_07")
+            .ends_with("book_7.json"));
+
+        // 非法 id 落隔离段：读为空、写进隔离区、删除是 no-op，绝不越出缓存目录
+        for invalid in ["../../etc/passwd", "book_1/../../x", "C:/temp/x"] {
+            let path = service.chapter_list_cache_path("u", invalid);
+            assert!(
+                path.to_string_lossy().contains("__invalid_book__"),
+                "{invalid:?} 应落隔离段，实际 {path:?}"
+            );
+            assert!(path.starts_with(&storage_dir));
+        }
+        assert!(service
+            .book_info_cache_path("u", "../x")
+            .to_string_lossy()
+            .contains("__invalid_book__"));
+
+        let _ = std::fs::remove_dir_all(&storage_dir);
     }
 
     #[tokio::test]
