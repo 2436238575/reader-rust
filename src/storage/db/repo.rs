@@ -1418,6 +1418,10 @@ impl BookGroupRepo {
 
     /// 分配最小未占用的幂位（1, 2, 4, 8…）。位域上限 31 位（前端位运算是
     /// 32 位有符号整数，1<<31 即负号），满时返回 None。
+    ///
+    /// 「占用」不只看 book_groups：书架位掩码里的在用位同样算——组行可能被
+    /// 旧版本（删组不清位）删过而位还留在书架上，回填这种位会把老书自动
+    /// 带进新组。
     pub async fn alloc_group_id(&self, user_ns: &str) -> Result<Option<i64>, AppError> {
         let rows = sqlx::query("SELECT group_id FROM book_groups WHERE user_ns=?1")
             .bind(user_ns)
@@ -1425,9 +1429,18 @@ impl BookGroupRepo {
             .await?;
         let used: std::collections::HashSet<i64> =
             rows.iter().map(|r| r.get::<i64, _>("group_id")).collect();
+        let shelf_rows = sqlx::query(
+            "SELECT DISTINCT group_bits FROM shelf_books WHERE user_ns=?1 AND group_bits IS NOT NULL",
+        )
+        .bind(user_ns)
+        .fetch_all(&self.pool)
+        .await?;
+        let shelf_mask = shelf_rows
+            .iter()
+            .fold(0i64, |mask, row| mask | row.get::<i64, _>("group_bits"));
         for n in 0..31 {
             let id = 1i64 << n;
-            if !used.contains(&id) {
+            if !used.contains(&id) && (shelf_mask & id) == 0 {
                 return Ok(Some(id));
             }
         }
@@ -1771,6 +1784,57 @@ mod tests {
         let _ = std::fs::remove_dir_all(dir);
         pool2.close().await;
         let _ = std::fs::remove_dir_all(dir2);
+    }
+
+    /// 分配幂位时书架上的在用位也算占用：旧版本删组不清位留下的残留位，
+    /// 回填前必须先跳过，否则老书会自动进新组。
+    #[tokio::test]
+    async fn book_group_alloc_skips_bits_still_in_use_on_shelf() {
+        let (pool, dir) = test_pool().await;
+        let group_repo = BookGroupRepo::new(pool.clone());
+        let shelf_repo = ShelfBookRepo::new(pool.clone());
+        let mk = |id: i64| crate::model::book_group::BookGroup {
+            group_id: id,
+            group_name: format!("组{id}"),
+            order_no: 0,
+        };
+        // 组行只有 1；书架上一本书的位掩码带着残留的 2（组行早已不在）
+        group_repo.upsert("u", &mk(1)).await.unwrap();
+        BookRepo::new(pool.clone())
+            .register(
+                "u",
+                RegisterBook {
+                    book_url: "https://example.com/legacy-bit",
+                    book_source_id: None,
+                    name: None,
+                    author: None,
+                    toc_url: None,
+                },
+                None,
+            )
+            .await
+            .unwrap();
+        shelf_repo
+            .upsert(
+                "u",
+                ShelfBookRow {
+                    book_id: "book_1".to_string(),
+                    group_bits: Some(0b10),
+                    ..Default::default()
+                },
+                None,
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(
+            group_repo.alloc_group_id("u").await.unwrap(),
+            Some(4),
+            "位 2 还在书架上用着，不能回填"
+        );
+
+        pool.close().await;
+        let _ = std::fs::remove_dir_all(dir);
     }
 
     /// 删组同步清书籍位掩码里的对应位：位回填时旧书不会自动「进」新组。

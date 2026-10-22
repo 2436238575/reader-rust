@@ -17,7 +17,7 @@ pub const MAX_GROUP_ID: i64 = 1 << 30;
 
 /// 客户端直传的 groupId 必须是合法幂位；0 保留给「新建，服务端分配」。
 /// 非法 id（比如 3）在位掩码语义下等于同时进两个组，必须挡在入口。
-fn validate_group_id(group_id: i64) -> Result<(), AppError> {
+pub(crate) fn validate_group_id(group_id: i64) -> Result<(), AppError> {
     if group_id <= 0 || group_id > MAX_GROUP_ID || (group_id & (group_id - 1)) != 0 {
         return Err(AppError::BadRequest(
             "groupId 必须是 2 的幂（1, 2, 4…2^30）：书籍分组是位掩码".to_string(),
@@ -33,6 +33,26 @@ impl BookGroupService {
 
     pub async fn get_groups(&self, user_ns: &str) -> Result<Vec<BookGroup>, AppError> {
         self.repo.list(user_ns).await
+    }
+
+    /// 组是否存在：入组/改组前校验，防书籍位掩码里留下悬空位。
+    pub async fn group_exists(&self, user_ns: &str, group_id: i64) -> Result<bool, AppError> {
+        Ok(self
+            .repo
+            .list(user_ns)
+            .await?
+            .iter()
+            .any(|group| group.group_id == group_id))
+    }
+
+    /// 全部组的位掩码并集（`saveBooks(restore)` 按它剥掉悬空位）。
+    pub async fn group_mask(&self, user_ns: &str) -> Result<i64, AppError> {
+        Ok(self
+            .repo
+            .list(user_ns)
+            .await?
+            .iter()
+            .fold(0i64, |mask, group| mask | group.group_id))
     }
 
     /// 整体替换排序（前端「保存排序」的整表提交）。
@@ -76,7 +96,10 @@ impl BookGroupService {
 
     /// 删组：组行与书籍位掩码里的对应位一起清（repo 层单事务），
     /// 空出的幂位才可安全回填。
+    /// groupId 同样要过幂位校验：传 3 会清掉组 1|2 的位却留着两个组行，
+    /// 传 -1 更是把全部组位一次抹掉。
     pub async fn delete_group(&self, user_ns: &str, group_id: i64) -> Result<(), AppError> {
+        validate_group_id(group_id)?;
         self.repo.delete(user_ns, group_id).await
     }
 }
@@ -142,6 +165,16 @@ mod tests {
             .await
             .unwrap_err();
         assert!(matches!(err, AppError::BadRequest(_)));
+
+        // 删组同样要过幂位校验：3 会清掉组 1|2 的位，-1 会抹掉全部组位
+        for bad in [3i64, -1, 0] {
+            let err = service.delete_group("u", bad).await.unwrap_err();
+            assert!(
+                matches!(err, AppError::BadRequest(_)),
+                "删组非法 groupId {bad} 应 400，实际 {err:?}"
+            );
+        }
+        service.delete_group("u", 1).await.unwrap();
 
         pool.close().await;
         let _ = std::fs::remove_dir_all(dir);

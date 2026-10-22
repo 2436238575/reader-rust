@@ -961,6 +961,14 @@ pub async fn save_books(
             book.toc_url = Some(repair_encoded_url(toc_url));
         }
     }
+    // 书籍的 group 是位掩码：只保留当前真实存在的组的位，备份里的悬空位
+    //（旧版本非法 id、已被删的组）一并剥掉，否则过滤会出幽灵分组
+    let group_mask = state.book_group_service.group_mask(&user_ns).await?;
+    for book in &mut books {
+        if let Some(group) = book.group {
+            book.group = Some(group & group_mask);
+        }
+    }
 
     restore_cover_urls(&state, &mut books).await;
     let saved = state

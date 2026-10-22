@@ -390,6 +390,49 @@ async fn purge_cache_scopes_all_work_for_the_single_user() {
     );
 }
 
+/// saveBooks（整架替换/恢复）按现存分组掩码剥掉悬空位：
+/// 备份里旧版本的非法组 id、已被删的组，不能在书架上留成幽灵分组。
+#[tokio::test]
+async fn save_books_masks_group_bits_to_existing_groups() {
+    let server = TestServer::start().await;
+    let token = server.login().await;
+
+    // 只建组 1
+    let response = server
+        .post(
+            "/reader3/saveBookGroup",
+            Some(&token),
+            serde_json::json!({ "groupId": 0, "groupName": "组一", "orderNo": 0 }),
+        )
+        .await;
+    assert_eq!(response.status(), 200);
+
+    // 书籍位掩码 0b111：组 1 合法，位 2/4 是悬空位
+    let response = server
+        .post(
+            "/reader3/saveBooks",
+            Some(&token),
+            serde_json::json!({
+                "books": [{
+                    "bookId": "book_1",
+                    "bookUrl": "https://example.com/group-mask",
+                    "name": "掩码测试",
+                    "origin": "https://example.com",
+                    "group": 0b111,
+                }],
+                "restore": true,
+            }),
+        )
+        .await;
+    assert_eq!(response.status(), 200);
+    let body: serde_json::Value = response.json().await.unwrap();
+    assert_eq!(
+        body["data"][0]["group"],
+        serde_json::json!(1),
+        "悬空位应被剥掉，只剩组 1 的位"
+    );
+}
+
 #[tokio::test]
 async fn logout_always_succeeds_even_with_an_invalid_token() {
     let server = TestServer::start().await;
