@@ -285,6 +285,11 @@ test.describe('Standard E2E: reader', () => {
     await expect(panel.locator('.stat-add')).toContainText('+2')
     await page.keyboard.press('Escape')
 
+    // 刷新页面：编辑版正文与 diff 标记应直接恢复（浏览器缓存里可能存着上游版）
+    await page.reload()
+    await expect(page.getByText('这一整段是新加上去的。').first()).toBeVisible()
+    await expect(page.locator('p.diff-added').first()).toBeVisible()
+
     // 编辑器里恢复上游版本
     await page.locator('.sidebar-item', { hasText: '设置' }).first().click()
     await page.locator('.opt-btn', { hasText: '编辑本章正文' }).click()
