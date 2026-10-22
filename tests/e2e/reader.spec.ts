@@ -346,4 +346,45 @@ test.describe('Standard E2E: reader', () => {
     await menu.getByRole('button', { name: '删除划线' }).click()
     await expect(underline).toHaveCount(0)
   })
+
+  test('chapter bookmark add/list/note/delete in catalog panel', async ({ page }) => {
+    const { name } = await seedLocalTxtBook(page)
+    await openBookFromShelf(page, name)
+    await expect(page.getByText('第一章正文内容。').first()).toBeVisible()
+
+    // 目录面板 → 书签 tab → 添加当前页书签
+    await page.locator('.sidebar-item', { hasText: '目录' }).first().click()
+    await page.locator('.tab', { hasText: '书签' }).click()
+    await page.getByRole('button', { name: '添加当前页书签' }).click()
+    const bookmarkItem = page.locator('.bookmark-item', { hasText: '第一章 开始' })
+    await expect(bookmarkItem).toBeVisible()
+
+    // 备注：hover 出操作区 → 编辑 → 保存 → 展示
+    await bookmarkItem.hover()
+    await bookmarkItem.locator('.bm-edit').click()
+    await page.locator('.bm-note-editor textarea').fill('这一段值得回味')
+    await page.getByRole('button', { name: '保存' }).click()
+    await expect(page.locator('.bm-note', { hasText: '这一段值得回味' })).toBeVisible()
+
+    // 删除（confirm 自动接）
+    page.on('dialog', (dialog) => void dialog.accept())
+    await bookmarkItem.hover()
+    await bookmarkItem.locator('.bm-delete').click()
+    await expect(page.locator('.bookmark-item')).toHaveCount(0)
+  })
+
+  test('book-wide search on local book reports empty coverage', async ({ page }) => {
+    const { name } = await seedLocalTxtBook(page)
+    await openBookFromShelf(page, name)
+    await expect(page.getByText('第一章正文内容。').first()).toBeVisible()
+
+    // 搜索面板（工具栏搜索按钮）→ 切「全书」（本地书不进缓存检索，应如实报覆盖度 0）
+    await page.locator('button.tb-btn[title="搜索"]').click()
+    const panel = page.locator('.reader-search-panel')
+    await expect(panel).toBeVisible()
+    await panel.getByRole('button', { name: '全书' }).click()
+    await panel.locator('input').fill('古庙')
+    await panel.getByRole('button', { name: '搜索', exact: true }).click()
+    await expect(panel.locator('.search-status-text')).toContainText('没有已缓存的章节可供检索')
+  })
 })

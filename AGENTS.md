@@ -64,7 +64,7 @@ npm run test:e2e:ui            # UI 模式
 
 - 用例位于 `tests/e2e/*.spec.ts`，默认访问 `http://127.0.0.1:8080`。
 - 后端换端口时用环境变量覆盖：`PLAYWRIGHT_BASE_URL=http://127.0.0.1:18080 npm run test:e2e`。
-- 被测后端建议以 `RATE_LIMIT_DISABLED=true` 启动，否则登录失败限速会拦住重复跑的用例；登录用例还需要 `E2E_USERNAME`/`E2E_PASSWORD` 与后端 `ADMIN_USERNAME`/`ADMIN_PASSWORD` 一致。
+- 被测后端建议以 `RATE_LIMIT_DISABLED=true` 启动，否则登录失败限速会拦住重复跑的用例；**没设 `E2E_USERNAME`/`E2E_PASSWORD` 时 globalSetup 会在 18081 自起临时后端**（用 `target/debug/reader-rust.exe` + 独立临时 storage + 固定凭据，跑完即清），CI 零配置可用；设了凭据则照旧连 `PLAYWRIGHT_BASE_URL` 的外部实例（凭据要与后端 `ADMIN_USERNAME`/`ADMIN_PASSWORD` 一致）。
 - 配置使用系统已安装的 Chrome（`channel: 'chrome'`），机器上需要有 Chrome。
 
 ### 发布
