@@ -54,8 +54,9 @@ impl ChapterEditService {
     }
 
     /// 保存整章编辑版。空内容合法（用户把整章删空也是编辑意图）。
-    /// 先写正文文件、再落索引行；索引写失败时删掉刚写的文件，不留「正文在
-    /// 盘上但清单里没有」的孤儿。
+    /// 顺序是「写临时文件 → 落索引 → 改名就位」：索引写失败时旧正文原样
+    /// 保留（旧版先覆盖正文再 upsert，upsert 一失败就把刚覆盖的文件删掉，
+    /// 二次编辑的旧版就此永久丢失）。
     pub async fn save_chapter_edit(
         &self,
         user_ns: &str,
@@ -76,8 +77,15 @@ impl ChapterEditService {
             .await
             .map_err(|e| AppError::Internal(e.into()))?;
         let path = self.chapter_path(user_ns, book_id, chapter_url)?;
-        write_atomic(&path, content.as_bytes()).await?;
-        let result = self
+        let tmp = path.with_extension(format!(
+            "tmp-{}-{}",
+            std::process::id(),
+            crate::util::crypto::random_string(6)
+        ));
+        fs::write(&tmp, content.as_bytes())
+            .await
+            .map_err(|e| AppError::Internal(e.into()))?;
+        if let Err(err) = self
             .repo
             .upsert(
                 user_ns,
@@ -89,10 +97,16 @@ impl ChapterEditService {
                     edited_at: crate::util::time::now_millis(),
                 },
             )
-            .await;
-        if let Err(err) = result {
-            let _ = fs::remove_file(&path).await;
+            .await
+        {
+            let _ = fs::remove_file(&tmp).await;
             return Err(err);
+        }
+        if let Err(e) = fs::rename(&tmp, &path).await {
+            // 索引已落、正文没换上：索引指向的旧正文仍是合法编辑版，
+            // 下次保存自愈；清掉 tmp 不留孤儿
+            let _ = fs::remove_file(&tmp).await;
+            return Err(AppError::Internal(e.into()));
         }
         Ok(())
     }
@@ -144,22 +158,6 @@ impl ChapterEditService {
         let _ = self.repo.delete_for_book(user_ns, book_id).await;
         let _ = fs::remove_dir_all(dir).await;
     }
-}
-
-/// tmp + rename 写入：防半截文件（与 FileCache 同一手法）。
-async fn write_atomic(path: &PathBuf, bytes: &[u8]) -> Result<(), AppError> {
-    let tmp = path.with_extension(format!(
-        "tmp-{}-{}",
-        std::process::id(),
-        crate::util::crypto::random_string(6)
-    ));
-    fs::write(&tmp, bytes)
-        .await
-        .map_err(|e| AppError::Internal(e.into()))?;
-    fs::rename(&tmp, path)
-        .await
-        .map_err(|e| AppError::Internal(e.into()))?;
-    Ok(())
 }
 
 #[cfg(test)]
@@ -324,6 +322,53 @@ mod tests {
             .save_chapter_edit("user_1", "book_1", "http://a/1", 0, "章", &big)
             .await;
         assert!(matches!(result, Err(AppError::BadRequest(_))));
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    /// 索引写失败时旧编辑版必须原样保住（旧版先覆盖正文再 upsert，
+    /// 失败回滚把新文件删掉，二次编辑的旧版就此永久丢失）。
+    #[tokio::test]
+    async fn failed_index_upsert_keeps_the_previous_edition() {
+        let (service, dir) = test_service().await;
+        let ns = "user_1";
+        service
+            .save_chapter_edit(ns, "book_1", "http://a/1", 0, "章", "旧版正文")
+            .await
+            .unwrap();
+
+        // 模拟索引写失败：把表 drop 掉，upsert 必炸
+        let pool2 = sqlx::SqlitePool::connect(&format!(
+            "sqlite:{}",
+            dir.join("reader.db").display()
+        ))
+        .await
+        .unwrap();
+        sqlx::query("DROP TABLE chapter_edits")
+            .execute(&pool2)
+            .await
+            .unwrap();
+
+        let result = service
+            .save_chapter_edit(ns, "book_1", "http://a/1", 0, "章", "新版正文")
+            .await;
+        assert!(result.is_err(), "索引失败应报错");
+        assert_eq!(
+            service
+                .get_chapter_edit(ns, "book_1", "http://a/1")
+                .await
+                .unwrap(),
+            Some("旧版正文".to_string()),
+            "索引失败时旧编辑版不能被覆盖或删除"
+        );
+        // tmp 文件也清干净，不留孤儿
+        let edit_dir = dir.join("data").join(ns).join(EDITED_DIR).join("book_1");
+        let leftovers = std::fs::read_dir(&edit_dir)
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .filter(|e| e.file_name().to_string_lossy().contains("tmp"))
+            .count();
+        assert_eq!(leftovers, 0, "失败的保存不该留下 tmp 文件");
+
         let _ = std::fs::remove_dir_all(dir);
     }
 }
