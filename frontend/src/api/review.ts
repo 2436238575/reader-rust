@@ -18,6 +18,11 @@ export interface ReviewParams {
   authorOnly?: boolean
   /** 1 表示忽略 7 天缓存重新抓取 */
   refresh?: number
+  /**
+   * 当前显示的正文版本。评论按版本分开缓存，书源评论 URL 里可用
+   * `{{variant}}` 区分；大多数站点的章评/段评与版本无关。
+   */
+  variant?: 'edited' | 'upstream'
 }
 
 export type ReviewSort = 'hot' | 'time'

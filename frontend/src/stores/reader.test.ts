@@ -59,7 +59,11 @@ describe('reader local txt chapters', () => {
   })
 
   it('fetches uploaded local txt content from backend even when browser reports offline', async () => {
-    vi.mocked(getBookContent).mockResolvedValue({ content: '本地正文', edited: false })
+    vi.mocked(getBookContent).mockResolvedValue({
+      content: '本地正文',
+      edited: false,
+      variant: 'edited',
+    })
     vi.mocked(getBrowserCachedChapter).mockResolvedValue(null)
     const appStore = useAppStore()
     const readerStore = useReaderStore()
@@ -81,7 +85,37 @@ describe('reader local txt chapters', () => {
       bookId: 'book_1',
       index: 0,
       refresh: 0,
+      variant: 'edited',
     })
+  })
+
+  it('upstream variant skips browser cache and stores the version on the diff state', async () => {
+    vi.mocked(getBookContent).mockResolvedValue({
+      content: '上游正文',
+      edited: true,
+      variant: 'upstream',
+      diff: { ops: [] },
+    })
+    vi.mocked(getBrowserCachedChapter).mockResolvedValue(null)
+    const appStore = useAppStore()
+    appStore.setOnlineStatus(true)
+    const readerStore = useReaderStore()
+    readerStore.book = {
+      name: '网络书',
+      author: '作者',
+      origin: 'https://example.org',
+      bookId: 'book_1',
+      bookUrl: 'https://example.org/book',
+      bookSourceId: 1,
+    }
+    readerStore.chapters = [{ title: '第一章', url: 'https://example.org/1', index: 0 }]
+    readerStore.updateConfig('contentVersion', 'upstream')
+
+    await expect(readerStore.fetchChapterContent(0)).resolves.toBe('上游正文')
+
+    expect(getBrowserCachedChapter).not.toHaveBeenCalled()
+    expect(getBookContent).toHaveBeenCalledWith(expect.objectContaining({ variant: 'upstream' }))
+    expect(readerStore.chapterDiffs.get(0)?.variant).toBe('upstream')
   })
 })
 

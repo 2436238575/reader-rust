@@ -9,7 +9,10 @@
           <div class="modal-head">
             <div class="head-main">
               <h2>本章改动</h2>
-              <p class="head-sub">{{ chapterTitle }}</p>
+              <p class="head-sub">
+                {{ chapterTitle }}
+                <template v-if="viewingUpstream"> · 正在阅读上游原版</template>
+              </p>
             </div>
             <div class="head-actions">
               <span v-if="stats" class="diff-stats">
@@ -97,6 +100,8 @@ const props = defineProps<{
   ops: ParagraphDiffOp[] | null
   /** diff 算不出来的原因；空串表示正常（与「没有差异」区分） */
   error: string
+  /** 正文当前显示上游原版：正文上不叠标记，面板照常对照 */
+  viewingUpstream?: boolean
 }>()
 const emit = defineEmits<{
   'update:modelValue': [value: boolean]

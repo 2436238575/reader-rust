@@ -394,6 +394,8 @@ async function fetchPage(target: number) {
       count: 50,
       sort: sort.value,
       authorOnly: authorOnly.value || undefined,
+      // 正文版本参与评论缓存键；书源评论 URL 也可用 {{variant}} 区分
+      variant: readerStore.config.contentVersion,
     }
     const resp =
       props.mode === 'para'

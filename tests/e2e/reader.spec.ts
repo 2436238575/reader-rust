@@ -298,6 +298,36 @@ test.describe('Standard E2E: reader', () => {
     await expect(page.locator('p.diff-added')).toHaveCount(0)
   })
 
+  test('content version switch shows upstream original and restores the edit', async ({ page }) => {
+    const { name } = await seedLocalTxtBook(page)
+    await openBookFromShelf(page, name)
+    await expect(page.getByText('第一章正文内容。').first()).toBeVisible()
+
+    // 先保存一版编辑
+    await page.locator('.sidebar-item', { hasText: '设置' }).first().click()
+    await page.locator('.opt-btn', { hasText: '编辑本章正文' }).click()
+    await page.locator('.editor-textarea').fill('编辑版正文内容。')
+    await page.getByRole('button', { name: '保存修改' }).click()
+    await expect(page.getByText('编辑版正文内容。').first()).toBeVisible()
+    await page.keyboard.press('Escape')
+
+    // 切到上游原版：正文换回原文，改动标记不显示
+    await page.locator('.sidebar-item', { hasText: '设置' }).first().click()
+    const versionRow = page.locator('.setting-row', { hasText: '正文版本' })
+    await versionRow.getByRole('button', { name: '上游原版' }).click()
+    await page.keyboard.press('Escape')
+    await expect(page.getByText('第一章正文内容。').first()).toBeVisible()
+    await expect(page.getByText('编辑版正文内容。')).toHaveCount(0)
+    await expect(page.locator('p.diff-modified, p.diff-added')).toHaveCount(0)
+
+    // 切回编辑版：编辑内容和标记都回来
+    await page.locator('.sidebar-item', { hasText: '设置' }).first().click()
+    await versionRow.getByRole('button', { name: '编辑版' }).click()
+    await page.keyboard.press('Escape')
+    await expect(page.getByText('编辑版正文内容。').first()).toBeVisible()
+    await expect(page.locator('p.diff-modified')).toHaveCount(1)
+  })
+
   test('mobile long-press on underline opens action menu and deletes it', async ({ page }) => {
     // 移动视口（isMobile 按 767px 断点）；长按靠手动 dispatch TouchEvent，
     // 不需要 context 级 hasTouch

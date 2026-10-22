@@ -75,6 +75,8 @@ export interface ReadConfig {
   showChapterImages: boolean
   /** 已编辑章节的正文 diff 标记（绿/蓝竖线、红箭头、段内虚线） */
   showDiffMarks: boolean
+  /** 正文版本：编辑版优先，或只读上游原版（只对编辑过的章节有区别） */
+  contentVersion: 'edited' | 'upstream'
   /** 评论里回复的配图形态：缩略图直接显示，或番茄式「查看图片」文字链 */
   replyImageStyle: 'thumbnail' | 'link'
 }
@@ -85,6 +87,8 @@ export interface ChapterDiffState {
   ops: ParagraphDiffOp[] | null
   /** diff 算不出来的原因；空串表示正常 */
   error: string
+  /** 当前显示的版本：上游原版不叠加 diff 标记（但面板仍可对照） */
+  variant: 'edited' | 'upstream'
 }
 
 const defaultConfig: ReadConfig = {
@@ -109,6 +113,7 @@ const defaultConfig: ReadConfig = {
   enablePreload: true,
   showChapterImages: true,
   showDiffMarks: true,
+  contentVersion: 'edited',
   replyImageStyle: 'thumbnail',
 }
 
@@ -256,6 +261,10 @@ export const useReaderStore = defineStore('reader', () => {
   function updateConfig<K extends keyof ReadConfig>(key: K, value: ReadConfig[K]) {
     config[key] = value
     if (key === 'enablePreload' && !value) {
+      preloadedContent.value.clear()
+    }
+    // 预载内容是按旧版本抓的：切版本后作废，否则翻到邻章会拿到另一版正文
+    if (key === 'contentVersion') {
       preloadedContent.value.clear()
     }
     saveConfig()
@@ -426,14 +435,19 @@ export const useReaderStore = defineStore('reader', () => {
     if (!chapters.value.length) return false
     loadReadChapterHistory(session.book)
 
-    const nextIndex = Math.max(0, Math.min(session.currentIndex || 0, session.chapters.length - 1))
+    // 先拿到已编辑章清单再取正文：否则恢复会话时会走浏览器缓存，拿到的是
+    // 编辑前的上游正文（diff 标记也随之消失）
+    await refreshEditedChapterKeys()
+
+    const nextIndex = Math.max(0, Math.min(session.currentIndex || 0, chapters.value.length - 1))
     try {
       const chapterContent = await fetchChapterContent(nextIndex)
       if (chapterContent == null) return false
       setActiveChapterState(nextIndex, chapterContent, session.chapterScrollProgress || 0)
       markChapterAsRead(nextIndex)
-      // 恢复会话不经过 loadChapter，评论要在这里单独补一次
+      // 恢复会话不经过 loadChapter，评论与配图要在这里单独补一次
       void loadChapterReviews(nextIndex)
+      void loadChapterImages(nextIndex)
       return true
     } catch {
       return false
@@ -699,9 +713,11 @@ export const useReaderStore = defineStore('reader', () => {
     const bookId = book.value.bookId
 
     const isLocal = isLocalBook(book.value)
-    // 已编辑章跳过浏览器缓存：后端会优先返回编辑版，缓存里的旧版只会挡住它
+    const variant = config.contentVersion === 'upstream' ? 'upstream' : 'edited'
+    // 已编辑章跳过浏览器缓存：后端会优先返回编辑版，缓存里的旧版只会挡住它。
+    // 上游原版也不读缓存：缓存里存的是编辑版（或上一次抓的另一版）。
     const isEdited = editedChapterKeys.value.has(chapter.url)
-    const useBrowserCache = !isLocal && !isEdited
+    const useBrowserCache = !isLocal && !isEdited && variant !== 'upstream'
     const browserCached = useBrowserCache
       ? await getBrowserCachedChapter(bookId, chapter.url).catch(() => null)
       : null
@@ -726,6 +742,7 @@ export const useReaderStore = defineStore('reader', () => {
         chapterUrl: chapter.url,
         index,
         refresh: forceRefresh ? 1 : 0,
+        variant,
       })
       chapterContent = response.content
       if (response.edited) {
@@ -735,6 +752,7 @@ export const useReaderStore = defineStore('reader', () => {
           edited: true,
           ops,
           error: response.diffError || '',
+          variant: response.variant,
         })
       } else {
         chapterDiffs.delete(index)
@@ -861,6 +879,7 @@ export const useReaderStore = defineStore('reader', () => {
         // 手动刷新正文时让段评索引也重抓：两者必须来自同一版上游，
         // 否则段号会和刷新后的正文对不上
         refresh: refresh ? 1 : 0,
+        variant: config.contentVersion,
       }
       // 顺序请求：第二个请求能复用第一个已经取回的章节正文响应
       const indexResp = await getParaCommentIndex(params)

@@ -65,7 +65,10 @@ import type { ParagraphDiffOp } from '../utils/chapterDiff'
 /** 章节正文响应：编辑过的章节会带回与上游原文的差异。 */
 export interface ChapterContentResponse {
   content: string
+  /** 本章是否存在编辑版（不代表当前显示的是哪个版本） */
   edited: boolean
+  /** 当前返回的版本 */
+  variant: 'edited' | 'upstream'
   diff?: { ops: ParagraphDiffOp[] } | null
   /** diff 算不出来的原因（正文仍然可用） */
   diffError?: string | null
@@ -80,6 +83,8 @@ export function getBookContent(params: {
   chapterUrl: string
   index?: number
   refresh?: number
+  /** `upstream` 读上游原版；缺省为编辑版优先 */
+  variant?: 'edited' | 'upstream'
 }) {
   return http.post<ChapterContentResponse>('/getBookContent', params).then((r) => r.data)
 }

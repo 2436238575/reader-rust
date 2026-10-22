@@ -31,7 +31,9 @@
               <button v-if="hasEdit" class="danger-btn" :disabled="saving" @click="restoreUpstream">
                 恢复上游版本
               </button>
-              <span v-if="hasEdit" class="edited-hint">本章已编辑，正在显示你的修改版</span>
+              <span v-if="hasEdit" class="edited-hint">
+                本章已编辑，{{ isUpstreamView ? '这里仍显示你的修改版' : '正在显示你的修改版' }}
+              </span>
             </div>
             <div class="foot-right">
               <button class="ghost-btn" :disabled="saving" @click="close">取消</button>
@@ -50,7 +52,7 @@
 import { computed, nextTick, ref, toRef, watch } from 'vue'
 import { useReaderStore } from '../../stores/reader'
 import { useAppStore } from '../../stores/app'
-import { deleteChapterEdit, saveChapterEdit } from '../../api/chapterEdit'
+import { deleteChapterEdit, getChapterEdit, saveChapterEdit } from '../../api/chapterEdit'
 import { useEscClose } from '../../composables/useEscClose'
 import { useMobileLayout } from '../../composables/useMobileLayout'
 
@@ -71,6 +73,7 @@ const saving = ref(false)
 const editorRef = ref<HTMLTextAreaElement>()
 
 const chapterTitle = computed(() => store.currentChapter?.title || '')
+const isUpstreamView = computed(() => store.config.contentVersion === 'upstream')
 const hasEdit = computed(() => {
   const chapter = store.currentChapter
   return !!chapter && store.editedChapterKeys.has(chapter.url)
@@ -80,8 +83,19 @@ watch(
   () => props.modelValue,
   async (open) => {
     if (!open) return
-    // 预填当前显示内容（有编辑版时就是编辑版，否则是上游版）
-    draft.value = store.content || ''
+    // 默认预填当前显示内容；正在读上游原版时要取编辑版，否则一保存就把
+    // 上游正文盖成编辑版，用户的修改就丢了
+    const displayed = store.content || ''
+    draft.value = displayed
+    const chapter = store.currentChapter
+    const bookId = store.book?.bookId
+    if (isUpstreamView.value && chapter && bookId) {
+      const edit = await getChapterEdit(bookId, chapter.url).catch(() => null)
+      // 等待期间用户可能已经动手改字，别覆盖
+      if (props.modelValue && draft.value === displayed && edit?.content != null) {
+        draft.value = edit.content
+      }
+    }
     await nextTick()
     editorRef.value?.focus()
   }
@@ -105,8 +119,16 @@ async function save() {
       chapterTitle: chapter.title,
       content: draft.value,
     })
+    // 在上游原版界面保存后切回编辑版，让用户立刻看到保存结果；
+    // 版本切换的 watcher 会负责重载本章
+    const switchedToEdited = isUpstreamView.value
+    if (switchedToEdited) {
+      store.updateConfig('contentVersion', 'edited')
+    }
     emit('update:modelValue', false)
-    emit('changed')
+    if (!switchedToEdited) {
+      emit('changed')
+    }
     appStore.showToast('已保存本章修改', 'success')
   } catch (error) {
     appStore.showToast((error as Error).message || '保存失败', 'error')

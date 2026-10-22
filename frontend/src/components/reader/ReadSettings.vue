@@ -562,10 +562,31 @@
       </div>
 
       <div class="setting-row">
+        <label>正文版本</label>
+        <div class="btn-group">
+          <button
+            class="opt-btn"
+            :class="{ active: config.contentVersion === 'edited' }"
+            @click="store.updateConfig('contentVersion', 'edited')"
+          >
+            编辑版
+          </button>
+          <button
+            class="opt-btn"
+            :class="{ active: config.contentVersion === 'upstream' }"
+            @click="store.updateConfig('contentVersion', 'upstream')"
+          >
+            上游原版
+          </button>
+        </div>
+      </div>
+      <div class="setting-hint">
+        只对编辑过的章节有区别；上游原版不显示改动标记，「本章改动」仍可查看编辑版与上游的差异。
+      </div>
+
+      <div class="setting-row">
         <label>编辑正文</label>
-        <button class="opt-btn wide" @click="emit('editChapter')">
-          编辑本章正文
-        </button>
+        <button class="opt-btn wide" @click="emit('editChapter')">编辑本章正文</button>
       </div>
 
       <div class="setting-row">

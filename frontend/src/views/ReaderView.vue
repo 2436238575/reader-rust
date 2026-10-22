@@ -475,6 +475,7 @@
       v-model="showDiffPanel"
       :ops="currentChapterDiffOps"
       :error="currentChapterDiffError"
+      :viewing-upstream="currentChapterViewingUpstream"
       @edit="openChapterEditor"
       @changed="handleChapterEditChanged"
     />
@@ -762,8 +763,9 @@ function decorateChapterHtml(baseHtml: string, withBubbles: boolean, chapterInde
   const wrapper = document.createElement('div')
   wrapper.innerHTML = baseHtml
   const targetChapterIndex = chapterIndex ?? store.currentIndex
-  // diff 标记在装饰层最前：它改段级 class 与段内 span，后续 walker 都能穿过
-  if (config.value.showDiffMarks) {
+  // diff 标记在装饰层最前：它改段级 class 与段内 span，后续 walker 都能穿过。
+  // 上游原版不叠加标记（ops 的 editedIndex 对应的是编辑版段落）
+  if (config.value.showDiffMarks && chapterDiffState(targetChapterIndex)?.variant === 'edited') {
     const ops = chapterDiffOps(targetChapterIndex)
     if (ops) applyDiffMarks(wrapper, ops)
   }
@@ -822,6 +824,10 @@ function chapterDiffOps(chapterIndex: number) {
   return store.chapterDiffs.get(chapterIndex)?.ops ?? null
 }
 
+function chapterDiffState(chapterIndex: number) {
+  return store.chapterDiffs.get(chapterIndex) ?? null
+}
+
 async function handleRefreshContent() {
   await store.refreshContent()
 }
@@ -834,6 +840,10 @@ const currentChapterDiffOps = computed(() => chapterDiffOps(store.currentIndex))
 /** diff 算不出来的原因：面板要显示「无法对比」而不是「没有差异」 */
 const currentChapterDiffError = computed(
   () => store.chapterDiffs.get(store.currentIndex)?.error || ''
+)
+/** 当前是否在读上游原版（diff 面板里提示一句） */
+const currentChapterViewingUpstream = computed(
+  () => store.chapterDiffs.get(store.currentIndex)?.variant === 'upstream'
 )
 /** 当前章是否有编辑版（决定工具栏编辑按钮的去向） */
 const currentChapterEdited = computed(() => {
@@ -928,7 +938,8 @@ const paraBubbleMap = computed(() =>
     store.paraReviewEnabled ? store.paraReviewIndex : [],
     splitParagraphLines(store.content),
     rawLineByPosition.value,
-    currentChapterEdited.value
+    // 只有显示编辑版时才需要按原文重定位；上游原版的段号本来就对得上
+    currentChapterEdited.value && config.value.contentVersion === 'edited'
   )
 )
 
@@ -2129,6 +2140,18 @@ watch(
     loadSavedReadingPosition()
     scheduleRefreshOfflineCacheState()
     void store.refreshEditedChapterKeys()
+  }
+)
+
+// 切换编辑版/上游原版：重新取当前章（连续模式连同视口内的邻章一起重建）
+watch(
+  () => config.value.contentVersion,
+  async () => {
+    if (isContinuousMode.value) {
+      await rebuildContinuousAtChapter(store.currentIndex)
+    } else {
+      await store.reloadChapterAfterEdit(store.currentIndex)
+    }
   }
 )
 
