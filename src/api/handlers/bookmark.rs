@@ -46,7 +46,8 @@ pub async fn save_bookmarks(
 ) -> Result<Json<ApiResponse<Value>>, AppError> {
     // 批量恢复（WebDAV）时逐条查登记表的 book_url；同书多条只查一次
     let mut url_cache: std::collections::HashMap<String, String> = Default::default();
-    for b in &bookmarks {
+    let mut items: Vec<(Bookmark, String)> = Vec::with_capacity(bookmarks.len());
+    for b in bookmarks {
         if b.book_id.trim().is_empty() {
             continue;
         }
@@ -64,8 +65,10 @@ pub async fn save_bookmarks(
                 url
             }
         };
-        state.bookmark_repo.upsert(&user.0.ns, b, &book_url).await?;
+        items.push((b, book_url));
     }
+    // 单事务落库：中途失败整体回滚，不留半批书签
+    state.bookmark_repo.upsert_many(&user.0.ns, &items).await?;
     Ok(Json(ApiResponse::ok(Value::String(String::new()))))
 }
 

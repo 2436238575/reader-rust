@@ -1017,6 +1017,57 @@ fn map_bookmark(row: &sqlx::sqlite::SqliteRow) -> crate::model::bookmark::Bookma
 const BOOKMARK_COLS: &str =
     "book_id, time, book_name, book_author, chapter_index, chapter_pos, chapter_name, book_text, content, kind";
 
+/// 书签 upsert 的语句构造（单条与批量共用）。bookId 非法即参数错误。
+fn bookmark_upsert_query<'q>(
+    user_ns: &'q str,
+    b: &'q crate::model::bookmark::Bookmark,
+    book_url: &'q str,
+) -> Result<sqlx::query::Query<'q, sqlx::Sqlite, sqlx::sqlite::SqliteArguments<'q>>, AppError> {
+    let Some(book_id) = parse_book_id(&b.book_id) else {
+        return Err(AppError::BadRequest(format!(
+            "bookId 格式非法: {:?}",
+            b.book_id
+        )));
+    };
+    // 模型层 serde default 已兜「缺 kind」，这里再兜一层空串（直接构造的结构体）
+    let kind = if b.kind.is_empty() {
+        "bookmark"
+    } else {
+        b.kind.as_str()
+    };
+    Ok(sqlx::query(
+        "INSERT INTO bookmarks (user_ns, book_id, chapter_index, chapter_pos, kind, time, book_name, book_author, chapter_name, book_text, content, book_url) \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12) \
+         ON CONFLICT(user_ns, book_id, chapter_index, chapter_pos, kind) DO UPDATE SET \
+         time=excluded.time, book_name=excluded.book_name, book_author=excluded.book_author, \
+         chapter_name=excluded.chapter_name, book_text=excluded.book_text, content=excluded.content, \
+         book_url=excluded.book_url",
+    )
+    .bind(user_ns)
+    .bind(book_id)
+    .bind(b.chapter_index)
+    .bind(b.chapter_pos)
+    .bind(kind)
+    .bind(b.time)
+    .bind(&b.book_name)
+    .bind(&b.book_author)
+    .bind(&b.chapter_name)
+    .bind(&b.book_text)
+    .bind(&b.content)
+    .bind(book_url))
+}
+
+/// 表级 CHECK 违规（kind 枚举 / chapter_pos 量程）是调用方的输入问题，
+/// 翻译为 400 而不是吞成 500。
+fn map_bookmark_write_error(e: sqlx::Error) -> AppError {
+    match &e {
+        sqlx::Error::Database(db_err) if db_err.is_check_violation() => AppError::BadRequest(
+            "书签参数非法：kind 只支持 bookmark/underline，chapterPos 取 0–10000".to_string(),
+        ),
+        _ => AppError::Internal(e.into()),
+    }
+}
+
 impl BookmarkRepo {
     pub fn new(pool: SqlitePool) -> Self {
         Self { pool }
@@ -1044,40 +1095,27 @@ impl BookmarkRepo {
         b: &crate::model::bookmark::Bookmark,
         book_url: &str,
     ) -> Result<(), AppError> {
-        let Some(book_id) = parse_book_id(&b.book_id) else {
-            return Err(AppError::BadRequest(format!(
-                "bookId 格式非法: {:?}",
-                b.book_id
-            )));
-        };
-        // 模型层 serde default 已兜「缺 kind」，这里再兜一层空串（直接构造的结构体）
-        let kind = if b.kind.is_empty() {
-            "bookmark"
-        } else {
-            b.kind.as_str()
-        };
-        sqlx::query(
-            "INSERT INTO bookmarks (user_ns, book_id, chapter_index, chapter_pos, kind, time, book_name, book_author, chapter_name, book_text, content, book_url) \
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12) \
-             ON CONFLICT(user_ns, book_id, chapter_index, chapter_pos, kind) DO UPDATE SET \
-             time=excluded.time, book_name=excluded.book_name, book_author=excluded.book_author, \
-             chapter_name=excluded.chapter_name, book_text=excluded.book_text, content=excluded.content, \
-             book_url=excluded.book_url",
-        )
-        .bind(user_ns)
-        .bind(book_id)
-        .bind(b.chapter_index)
-        .bind(b.chapter_pos)
-        .bind(kind)
-        .bind(b.time)
-        .bind(&b.book_name)
-        .bind(&b.book_author)
-        .bind(&b.chapter_name)
-        .bind(&b.book_text)
-        .bind(&b.content)
-        .bind(book_url)
-        .execute(&self.pool)
-        .await?;
+        bookmark_upsert_query(user_ns, b, book_url)?
+            .execute(&self.pool)
+            .await
+            .map_err(map_bookmark_write_error)?;
+        Ok(())
+    }
+
+    /// 批量 upsert（WebDAV 恢复）：单事务——中途失败整体回滚，不留半批。
+    pub async fn upsert_many(
+        &self,
+        user_ns: &str,
+        items: &[(crate::model::bookmark::Bookmark, String)],
+    ) -> Result<(), AppError> {
+        let mut tx = self.pool.begin_with("BEGIN IMMEDIATE").await?;
+        for (b, book_url) in items {
+            bookmark_upsert_query(user_ns, b, book_url)?
+                .execute(&mut *tx)
+                .await
+                .map_err(map_bookmark_write_error)?;
+        }
+        tx.commit().await?;
         Ok(())
     }
 
@@ -1587,6 +1625,46 @@ mod tests {
         let b: Bookmark =
             serde_json::from_str(r#"{"bookId":"book_1","chapterIndex":0,"chapterPos":0}"#).unwrap();
         assert_eq!(b.kind, "bookmark");
+    }
+
+    /// 表级 CHECK（kind 枚举 / chapter_pos 0–10000）违规翻译为 400 而非 500；
+    /// 批量保存单事务：中途违规整体回滚，不留半批。
+    #[tokio::test]
+    async fn bookmark_check_violation_is_400_and_batch_rolls_back() {
+        let (pool, dir) = test_pool().await;
+        let repo = BookmarkRepo::new(pool);
+
+        // 单条：超量程进度与未知 kind 都是 400
+        let mut bad_pos = bookmark("book_1", 0, 0, "x");
+        bad_pos.chapter_pos = 10001;
+        let err = repo.upsert("u", &bad_pos, "").await.unwrap_err();
+        assert!(matches!(err, AppError::BadRequest(_)), "实际 {err:?}");
+        let bad_kind = Bookmark {
+            kind: "weird".into(),
+            ..bookmark("book_1", 0, 0, "x")
+        };
+        let err = repo.upsert("u", &bad_kind, "").await.unwrap_err();
+        assert!(matches!(err, AppError::BadRequest(_)), "实际 {err:?}");
+
+        // 批量：第二条违规 → 整体回滚，第一条也不留
+        let good = bookmark("book_1", 1, 0, "好的");
+        let err = repo
+            .upsert_many(
+                "u",
+                &[
+                    (good, String::new()),
+                    (bad_pos, String::new()),
+                ],
+            )
+            .await
+            .unwrap_err();
+        assert!(matches!(err, AppError::BadRequest(_)));
+        assert!(
+            repo.list("u").await.unwrap().is_empty(),
+            "批量中途失败应整体回滚"
+        );
+
+        let _ = std::fs::remove_dir_all(dir);
     }
 
     #[tokio::test]
