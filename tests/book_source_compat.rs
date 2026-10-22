@@ -500,7 +500,8 @@ async fn explore_kinds_support_text_and_js_rules() {
     assert_eq!(
         js[0].style.as_ref().and_then(|style| style.get("layout")),
         Some(&json!("grid"))
-    );    pool.close().await;
+    );
+    pool.close().await;
     common::remove_dir_retried(&storage_dir);
 }
 
@@ -535,7 +536,8 @@ async fn explore_kinds_accept_relaxed_style_objects() {
             .as_ref()
             .and_then(|style| style.get("layout_flexBasisPercent")),
         Some(&json!(0.4))
-    );    pool.close().await;
+    );
+    pool.close().await;
     common::remove_dir_retried(&storage_dir);
 }
 
@@ -572,6 +574,7 @@ async fn explore_kinds_accept_relaxed_angle_item_objects() {
             .as_ref()
             .and_then(|style| style.get("layout_flexBasisPercent")),
         Some(&json!(0.25))
-    );    pool.close().await;
+    );
+    pool.close().await;
     common::remove_dir_retried(&storage_dir);
 }

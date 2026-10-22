@@ -12,9 +12,7 @@ use uuid::Uuid;
 
 /// 装配一套带书籍登记表的 BookService（独立临时目录 + 临时 SQLite）。
 /// 返回池句柄：收尾必须先 `pool.close().await` 再删目录（Windows 文件锁）。
-async fn test_book_service(
-    storage_dir: &std::path::Path,
-) -> (BookService, sqlx::SqlitePool) {
+async fn test_book_service(storage_dir: &std::path::Path) -> (BookService, sqlx::SqlitePool) {
     // init_pool 不会建父目录，先落目录再开库
     std::fs::create_dir_all(storage_dir).unwrap();
     let pool = reader_rust::storage::db::init_pool(&format!(
