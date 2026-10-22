@@ -336,7 +336,7 @@ XPath 有资源上限（长度 8KB / 嵌套 64 层 / 总步数 100、`//` 50）�
 ## 数据与存储
 
 - SQLite 通过 `sqlx` 访问，连接池 10 条连接，开启 WAL（`synchronous=NORMAL`），启动时自动执行 `src/storage/db/migrations/` 下的迁移。
-- 主要表：`book_sources`（书源 JSON，`(user_ns, book_source_id)` 主键 + `(user_ns, book_source_url)` 唯一索引；**`book_source_id` 是书源的身份键**，自增分配，导入/订阅按 URL 去重时保号）、`books`（**书籍登记表**：`book_id INTEGER PRIMARY KEY`（rowid 单调自增）+ `(user_ns, book_url)` 唯一索引；对外一律 `book_<n>` 文本，repo 边界转换，绑定 `book_source_id`，换源只改绑不改 id；本地书 source_id 为 NULL）、`shelf_books`（**书架**，`(user_ns, book_id)` 主键，全列展开进度/分组/排序/元数据快照，读取时 JOIN books 注入 bookUrl/origin 等绑定字段）、`users`（`uid` 主键、身份锚点，命名空间一律 `user_<uid>`；username 仅登录与展示，唯一索引）、`json_documents`（`(user_ns, name)` 主键，通用键值）、`bookmarks`（书签/划线实体表，`(user_ns, book_id, chapter_index, chapter_pos, kind)` 主键——kind 区分章书签 bookmark / 划线 underline，`chapter_pos` 是万分比章内进度 0–10000、章书签恒 0；删书级联 `DELETE WHERE book_id`）、`replace_rules`（替换规则实体表）、`ai_book_memories`（`(user_ns, book_id)` 主键，`book_url` 冗余列供恢复校验）。逐字段说明见 docs/maintainers/database.md。
+- 主要表：`book_sources`（书源 JSON，`(user_ns, book_source_id)` 主键 + `(user_ns, book_source_url)` 唯一索引；**`book_source_id` 是书源的身份键**，自增分配，导入/订阅按 URL 去重时保号）、`books`（**书籍登记表**：`book_id INTEGER PRIMARY KEY`（rowid 单调自增）+ `(user_ns, book_url)` 唯一索引；对外一律 `book_<n>` 文本，repo 边界转换，绑定 `book_source_id`，换源只改绑不改 id；本地书 source_id 为 NULL）、`shelf_books`（**书架**，`(user_ns, book_id)` 主键，全列展开进度/分组/排序/元数据快照，读取时 JOIN books 注入 bookUrl/origin 等绑定字段）、`users`（`uid` 主键、身份锚点，命名空间一律 `user_<uid>`；username 仅登录与展示，唯一索引）、`json_documents`（`(user_ns, name)` 主键，通用键值）、`bookmarks`（书签/划线实体表，`(user_ns, book_id, chapter_index, chapter_pos, kind)` 主键——kind 区分章书签 bookmark / 划线 underline，`chapter_pos` 是万分比章内进度 0–10000、章书签恒 0；删书级联 `DELETE WHERE book_id`）、`replace_rules`（替换规则实体表）、`ai_book_memories`（`(user_ns, book_id)` 主键，`book_url` 冗余列供恢复校验）、`chapter_edits`（章节编辑版索引：`(user_ns, book_id, chapter_url)` 主键；正文仍落 `data/` 文件，表里只存章号/标题/时间快照）、`book_groups`（书架分组实体表：`(user_ns, group_id)` 主键；**group_id 是位域、分配 2 的幂**（1/2/4/8…），与阅读3.0 的位掩码约定一致）。逐字段说明见 docs/maintainers/database.md。
 - **身份模型（2026-10 重构，破坏性）**：请求的身份参数只认 `bookId`（书籍）与 `bookSourceId`（书源）；`bookUrl`/`bookSourceUrl`/`origin` 只是数据字段（爬虫取数、导入去重）。搜索/发现产出即登记（响应必带 bookId）；书籍级接口经 `resolve_book`（handlers/book.rs）由 bookId 解析出当前绑定的 bookUrl + 书源。升级存量部署：删除 `storage/` 后重启重建。
 - 章节正文以文件形式缓存于 `storage/cache/<ns>/<bookId>/<md5前2位>/<md5(chapterUrl)>.txt`（分片防单目录膨胀）；目录缓存 `cache/<ns>/toc/<bookId>.json`（1h TTL）；书籍详情缓存 `cache/bookinfo/<ns>/<bookId>.json`（1h TTL，`refresh=1` 强刷）；换源候选 `cache/<ns>/source_candidates/<bookId>.json`。可再生缓存一律在 `cache/` 树下；`data/` 只剩用户资产：`local_books`、`edited_chapters`（章节正文编辑版叠加层：阅读优先返回编辑版、上游缓存只做 diff 基准，删书级联）与 `userConfig.json`（用户配置备份快照）。
 - 缓存**大多不按时间过期**，只在显式调用 `POST /reader3/purgeCache` 或超出容量上限时回收；占用可用 `GET /reader3/cacheStats` 查看。`scope=book` 按 bookId 清全部按书缓存并连带该书的图片；`scope=user` 额外回收非在架书籍的登记行。
@@ -362,9 +362,9 @@ XPath 有资源上限（长度 8KB / 嵌套 64 层 / 总步数 100、`//` 50）�
 
 ## 测试
 
-Rust 侧共 **340 个测试**（236 个内联单元测试 + 104 个集成用例，另有 2 个 `#[ignore]` 的真实网络用例），分布为：
+Rust 侧共 **346 个测试**（238 个内联单元测试 + 108 个集成用例，另有 2 个 `#[ignore]` 的真实网络用例），分布为：
 
-- `tests/` 下 19 个集成测试文件（103 个用例），其中 `book_source_compat.rs` 用例最多（17 个）；
+- `tests/` 下 20 个集成测试文件（108 个用例），其中 `book_source_compat.rs` 用例最多（17 个）；
   `auth_flow.rs`、`review_flow.rs`、`chapter_image_flow.rs`、`image_pipeline.rs` 与
   `webdav_flow.rs` 起真实监听端口，前者覆盖 401、静态回落、缓存清理与改密吊销令牌，
   中间三个各用一个假上游覆盖评论规则（7 天缓存、按类型清理）、章节配图（配图规则、

@@ -152,6 +152,30 @@ AI 书籍记忆（AI 资料编排产物）。主键 `(user_ns, book_id)`。
 | `json`       | TEXT    | 整份记忆 JSON                                                              |
 | `updated_at` | INTEGER | 更新时间，毫秒时间戳                                                       |
 
+## chapter_edits
+
+章节正文编辑版的索引（正文仍落 `data/<ns>/edited_chapters/<bookId>/<md5>.txt` 文件，表里只存元数据）。主键 `(user_ns, book_id, chapter_url)`。删书级联 `DELETE WHERE book_id`。
+
+| 字段             | 类型    | 用途                            |
+| ---------------- | ------- | ------------------------------- |
+| `user_ns`        | TEXT    | 数据隔离键                      |
+| `book_id`        | INTEGER | 关联 books 登记表               |
+| `chapter_url`    | TEXT    | 章节 URL（身份键之一）          |
+| `chapter_index`  | INTEGER | 章节序号快照                    |
+| `chapter_title`  | TEXT    | 章节标题快照                    |
+| `edited_at`      | INTEGER | 最后编辑时间，毫秒时间戳        |
+
+## book_groups
+
+书架分组。主键 `(user_ns, group_id)`。`group_id` 是位域里的 2 的幂（1/2/4/8…，与阅读3.0 的位掩码约定一致；分配取最小未占用幂位，上限 63 个组）。
+
+| 字段         | 类型    | 用途               |
+| ------------ | ------- | ------------------ |
+| `user_ns`    | TEXT    | 数据隔离键         |
+| `group_id`   | INTEGER | 位域 id（2 的幂）  |
+| `group_name` | TEXT    | 组名               |
+| `order_no`   | INTEGER | 排序               |
+
 ## 设计取舍
 
 - **书源存整份 JSON** 而不是打散成列——书源字段会随阅读3.0 规范演进，打散后每次演进都要改表；代价是无法按规则字段建索引。
