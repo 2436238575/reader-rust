@@ -88,7 +88,14 @@
       @close="subscriptionPanelVisible = false"
     />
 
-    <Transition name="scale">
+    <Transition name="fade">
+      <div
+        v-if="loginPreviewVisible"
+        class="login-preview-overlay"
+        @click="loginPreviewVisible = false"
+      ></div>
+    </Transition>
+    <Transition :name="isMobileLayout ? 'slide-right' : 'scale'">
       <div
         v-if="loginPreviewVisible"
         class="login-preview-container"
@@ -156,6 +163,7 @@ import SourceFilterBar from '../components/source-manager/SourceFilterBar.vue'
 import SourceList from '../components/source-manager/SourceList.vue'
 import SourceManagerHeader from '../components/source-manager/SourceManagerHeader.vue'
 import SourceSubscriptionPanel from '../components/source-manager/SourceSubscriptionPanel.vue'
+import { useMobileLayout } from '../composables/useMobileLayout'
 
 type SourceSubscription = {
   url: string
@@ -166,6 +174,7 @@ const SUBSCRIPTION_KEY = 'reader-source-subscriptions'
 
 const appStore = useAppStore()
 const router = useRouter()
+const { isMobileLayout } = useMobileLayout()
 
 const sources = ref<BookSource[]>([])
 const loading = ref(false)
@@ -724,17 +733,23 @@ onUnmounted(() => {
   background: var(--color-bg-hover);
 }
 
-.login-preview-container {
+.login-preview-overlay {
   position: fixed;
   inset: 0;
   z-index: calc(var(--z-modal) + 2);
+  background: var(--overlay-mask-bg);
+  -webkit-backdrop-filter: var(--overlay-mask-blur);
+  backdrop-filter: var(--overlay-mask-blur);
+}
+
+.login-preview-container {
+  position: fixed;
+  inset: 0;
+  z-index: calc(var(--z-modal) + 3);
   display: flex;
   align-items: center;
   justify-content: center;
   padding: 24px;
-  background: var(--overlay-mask-bg);
-  -webkit-backdrop-filter: var(--overlay-mask-blur);
-  backdrop-filter: var(--overlay-mask-blur);
 }
 
 .login-preview-modal {
@@ -775,6 +790,23 @@ onUnmounted(() => {
   width: 100%;
   border: none;
   background: #fff;
+}
+
+@media (max-width: 767px) {
+  .login-preview-container {
+    padding: 0;
+  }
+
+  .login-preview-modal {
+    width: 100%;
+    height: 100%;
+    border-radius: 0;
+    padding-bottom: var(--safe-area-bottom);
+  }
+
+  .login-preview-header {
+    padding-top: calc(16px + var(--safe-area-top));
+  }
 }
 
 @media (max-width: 900px) {

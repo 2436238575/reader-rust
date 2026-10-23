@@ -195,7 +195,7 @@ async function restoreUpstream() {
 .modal-head {
   display: flex;
   justify-content: space-between;
-  align-items: flex-start;
+  align-items: center;
   gap: 16px;
   margin-bottom: 16px;
   flex-shrink: 0;

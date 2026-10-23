@@ -284,7 +284,13 @@ watch(
   font-size: var(--text-xl);
   line-height: 1;
   opacity: 0.65;
+  border-radius: var(--radius-md);
   cursor: pointer;
+}
+
+.close-search:hover {
+  background: var(--color-bg-hover);
+  opacity: 1;
 }
 
 @media (max-width: 767px) {

@@ -266,6 +266,11 @@ async function handleDelete(rule: ReplaceRule) {
   cursor: pointer;
 }
 
+.close-btn:hover {
+  background: var(--color-bg-hover);
+  opacity: 1;
+}
+
 .rule-list {
   flex: 1;
   overflow-y: auto;

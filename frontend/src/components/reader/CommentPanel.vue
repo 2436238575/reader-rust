@@ -715,6 +715,11 @@ function formatReviewTime(raw: string) {
   cursor: pointer;
 }
 
+.comment-close:hover {
+  background: var(--color-bg-hover);
+  opacity: 1;
+}
+
 .comment-close svg {
   width: 16px;
   height: 16px;

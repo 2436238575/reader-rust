@@ -542,5 +542,9 @@ async function selectServerSpeech() {
   .modal-head {
     padding-top: calc(14px + var(--safe-area-top));
   }
+
+  .modal-body {
+    padding-bottom: calc(12px + var(--safe-area-bottom));
+  }
 }
 </style>

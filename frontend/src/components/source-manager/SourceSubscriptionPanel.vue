@@ -1,6 +1,9 @@
 <template>
   <Transition name="fade">
-    <div v-if="visible" class="subscription-backdrop" @click.self="$emit('close')">
+    <div v-if="visible" class="subscription-backdrop" @click="$emit('close')"></div>
+  </Transition>
+  <Transition :name="isMobileLayout ? 'slide-right' : 'scale'">
+    <div v-if="visible" class="subscription-container" @click.self="$emit('close')">
       <section class="subscription-panel">
         <header class="subscription-header">
           <div>
@@ -59,6 +62,7 @@
 
 <script setup lang="ts">
 import { formatDateTime } from '../../utils/format'
+import { useMobileLayout } from '../../composables/useMobileLayout'
 
 export type SourceSubscription = {
   url: string
@@ -79,6 +83,8 @@ defineEmits<{
   'remove-subscription': [url: string]
   close: []
 }>()
+
+const { isMobileLayout } = useMobileLayout()
 </script>
 
 <style scoped>
@@ -86,13 +92,19 @@ defineEmits<{
   position: fixed;
   inset: 0;
   z-index: calc(var(--z-modal) + 1);
+  background: var(--overlay-mask-bg);
+  -webkit-backdrop-filter: var(--overlay-mask-blur);
+  backdrop-filter: var(--overlay-mask-blur);
+}
+
+.subscription-container {
+  position: fixed;
+  inset: 0;
+  z-index: calc(var(--z-modal) + 2);
   display: flex;
   align-items: center;
   justify-content: center;
   padding: 24px;
-  background: var(--overlay-mask-bg);
-  -webkit-backdrop-filter: var(--overlay-mask-blur);
-  backdrop-filter: var(--overlay-mask-blur);
 }
 
 .subscription-panel {
@@ -185,18 +197,14 @@ defineEmits<{
 }
 
 .icon-btn {
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-md);
-  background: transparent;
-  transition: all var(--duration-fast);
-}
-
-.icon-btn {
   width: 34px;
   height: 34px;
   display: flex;
   align-items: center;
   justify-content: center;
+  border-radius: var(--radius-md);
+  background: transparent;
+  transition: all var(--duration-fast);
 }
 
 .icon-btn svg {
@@ -208,18 +216,8 @@ defineEmits<{
   background: var(--color-bg-hover);
 }
 
-.fade-enter-active,
-.fade-leave-active {
-  transition: opacity var(--duration-normal) var(--ease-out);
-}
-
-.fade-enter-from,
-.fade-leave-to {
-  opacity: 0;
-}
-
 @media (max-width: 767px) {
-  .subscription-backdrop {
+  .subscription-container {
     padding: 0;
   }
 

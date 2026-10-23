@@ -1,7 +1,18 @@
 <template>
   <Teleport to="body">
     <Transition name="fade">
-      <div v-if="modelValue" class="modal-overlay" @click="$emit('update:modelValue', false)">
+      <div
+        v-if="modelValue"
+        class="modal-overlay"
+        @click="$emit('update:modelValue', false)"
+      ></div>
+    </Transition>
+    <Transition :name="isMobileLayout ? 'slide-right' : 'scale'">
+      <div
+        v-if="modelValue"
+        class="modal-container"
+        @click.self="$emit('update:modelValue', false)"
+      >
         <div class="modal-content" @click.stop>
           <div class="modal-header">
             <h3>选择分组</h3>
@@ -48,6 +59,7 @@ import { ref, toRef } from 'vue'
 import { useBookshelfStore } from '../../stores/bookshelf'
 import { useAppStore } from '../../stores/app'
 import { useEscClose } from '../../composables/useEscClose'
+import { useMobileLayout } from '../../composables/useMobileLayout'
 
 const props = defineProps<{
   modelValue: boolean
@@ -59,6 +71,8 @@ const emit = defineEmits<{
 }>()
 
 useEscClose(toRef(props, 'modelValue'), () => emit('update:modelValue', false))
+
+const { isMobileLayout } = useMobileLayout()
 
 const shelfStore = useBookshelfStore()
 const appStore = useAppStore()
@@ -93,13 +107,19 @@ async function handleCreate() {
   background: var(--overlay-mask-bg);
   -webkit-backdrop-filter: var(--overlay-mask-blur);
   backdrop-filter: var(--overlay-mask-blur);
+  /* 叠在分组管理弹窗（--z-modal）之上 */
+  z-index: calc(var(--z-modal) + 1);
+}
+
+.modal-container {
+  position: fixed;
+  inset: 0;
   display: flex;
   align-items: center;
   justify-content: center;
   padding: calc(16px + var(--safe-area-top)) calc(16px + var(--safe-area-right))
     calc(16px + var(--safe-area-bottom)) calc(16px + var(--safe-area-left));
-  /* 叠在分组管理弹窗（--z-modal）之上 */
-  z-index: calc(var(--z-modal) + 1);
+  z-index: calc(var(--z-modal) + 2);
 }
 
 .modal-content {
@@ -107,7 +127,7 @@ async function handleCreate() {
   max-width: 360px;
   background: var(--color-bg-elevated);
   border-radius: var(--radius-2xl);
-  box-shadow: var(--shadow-2xl);
+  box-shadow: var(--shadow-xl);
   overflow: hidden;
   max-height: calc(
     var(--app-height, 100dvh) - var(--safe-area-top) - var(--safe-area-bottom) - 32px
@@ -141,6 +161,10 @@ async function handleCreate() {
   background: transparent;
   border: none;
   cursor: pointer;
+}
+
+.close-btn:hover {
+  background: var(--color-bg-hover);
 }
 
 .modal-body {
@@ -215,5 +239,27 @@ async function handleCreate() {
 .add-btn:disabled {
   opacity: 0.5;
   cursor: not-allowed;
+}
+
+@media (max-width: 767px) {
+  .modal-container {
+    padding: 0;
+  }
+
+  .modal-content {
+    max-width: none;
+    width: 100%;
+    height: 100%;
+    max-height: none;
+    border-radius: 0;
+  }
+
+  .modal-header {
+    padding-top: calc(var(--space-4) + var(--safe-area-top));
+  }
+
+  .modal-body {
+    padding-bottom: calc(var(--space-2) + var(--safe-area-bottom));
+  }
 }
 </style>

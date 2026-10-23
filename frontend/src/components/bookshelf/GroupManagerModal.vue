@@ -3,7 +3,7 @@
     <Transition name="fade">
       <div v-if="modelValue" class="modal-overlay" @click="$emit('update:modelValue', false)"></div>
     </Transition>
-    <Transition name="scale">
+    <Transition :name="isMobileLayout ? 'slide-right' : 'scale'">
       <div
         v-if="modelValue"
         class="modal-container"
@@ -62,6 +62,7 @@ import { reactive, ref, watch, toRef } from 'vue'
 import { useBookshelfStore } from '../../stores/bookshelf'
 import { useAppStore } from '../../stores/app'
 import { useEscClose } from '../../composables/useEscClose'
+import { useMobileLayout } from '../../composables/useMobileLayout'
 
 const props = defineProps<{
   modelValue: boolean
@@ -72,6 +73,8 @@ const emit = defineEmits<{
 }>()
 
 useEscClose(toRef(props, 'modelValue'), () => emit('update:modelValue', false))
+
+const { isMobileLayout } = useMobileLayout()
 
 const shelfStore = useBookshelfStore()
 const appStore = useAppStore()
@@ -190,6 +193,10 @@ async function deleteGroup(groupId: number, groupName: string) {
   border-radius: 10px;
 }
 
+.close-btn:hover {
+  background: var(--color-bg-hover);
+}
+
 .close-btn svg {
   width: 18px;
   height: 18px;
@@ -227,5 +234,26 @@ async function deleteGroup(groupId: number, groupName: string) {
 .group-actions {
   display: flex;
   gap: 8px;
+}
+
+@media (max-width: 767px) {
+  .modal-container {
+    padding: 0;
+  }
+
+  .modal-card {
+    width: 100%;
+    height: 100%;
+    max-height: none;
+    border-radius: 0;
+  }
+
+  .modal-header {
+    padding-top: calc(18px + var(--safe-area-top));
+  }
+
+  .modal-body {
+    padding-bottom: calc(20px + var(--safe-area-bottom));
+  }
 }
 </style>
