@@ -93,37 +93,55 @@ http://localhost:8080/reader3
 
 ## 认证
 
-鉴权基于 **JWT**。登录成功后服务端签发一个标准 JWT（HS256），载荷包含：
+鉴权采用 **Access Token + Refresh Token** 双令牌：
 
-| Claim         | 含义                                         |
-| ------------- | -------------------------------------------- |
-| `sub`         | 用户名                                       |
-| `ns`          | 用户命名空间（数据隔离前缀，当前等于用户名） |
-| `iat` / `exp` | 签发时间 / 过期时间（默认 7 天）             |
-| `ver`         | 撤销版本号，对应 `users.token_version`       |
+| 令牌          | 形态                          | 有效期                         | 用途                                               |
+| ------------- | ----------------------------- | ------------------------------ | -------------------------------------------------- |
+| Access Token  | HS256 JWT                     | 6 小时（`ACCESS_TOKEN_TTL_SECS`） | 访问业务接口；可放请求头或查询参数                 |
+| Refresh Token | `rt_` + 随机串（一次性）      | 7 天滑动续期（`REFRESH_TOKEN_TTL_SECS`） | 只用于 `POST /reader3/refreshToken` 换新，不进 URL |
 
-令牌**只以两种方式传递**（依据：`src/auth/middleware.rs`）：
+Access Token 载荷：
+
+| Claim         | 含义                                   |
+| ------------- | -------------------------------------- |
+| `sub`         | 用户名                                 |
+| `uid`         | 自增身份 id；命名空间由它推导为 `user_<uid>` |
+| `iat` / `exp` | 签发时间 / 过期时间（默认 6 小时）     |
+| `ver`         | 撤销版本号，对应 `users.token_version` |
+
+令牌**只以三种方式传递**（依据：`src/auth/middleware.rs`、`src/api/handlers/user.rs`）：
 
 | 传法     | 位置                          | 用途                                  |
 | -------- | ----------------------------- | ------------------------------------- |
-| 请求头   | `Authorization: Bearer <jwt>` | 常规请求                              |
+| 请求头   | `Authorization: Bearer <jwt>` | 常规请求（仅 Access Token）           |
 | 查询参数 | `accessToken=<jwt>`           | SSE 与 `<img>` 等无法设置请求头的场景 |
+| JSON body | `{"refreshToken":"rt_..."}`  | 仅 `/reader3/refreshToken` 与登出     |
 
 请求头优先于查询参数。裸令牌（不带 `Bearer ` 前缀）也能识别，但推荐始终带上前缀。
 
+### 刷新与轮换
+
+`POST /reader3/refreshToken` 是公开接口，请求体 `{ "refreshToken": "rt_..." }`，成功返回新的 `accessToken` 与 `refreshToken`。
+
+- **一次性**：换取成功即消费旧令牌，同时下发新令牌；
+- **30 秒宽限窗口**：客户端丢响应或双标签页并发时，已消费令牌在窗口内仍可换取；超过窗口再次出现视为重放，吊销整条登录会话；
+- **7 天滑动续期**：每次换取重新计时；
+- Refresh Token 不是 JWT，不能当访问凭据；Access Token 也不能用于刷新；
+- 失败统一 **HTTP 401 + `需要登录`**。
+
 ### 需要登录的接口
 
-除 `/health`、`/reader3/login`、`/reader3/getUserInfo`、`/reader3/logout` 与 WebDAV 的 Basic 认证入口外，**所有 `/reader3/*` 接口都要求有效令牌**，否则返回 401。
+除 `/health`、`/reader3/login`、`/reader3/refreshToken`、`/reader3/getUserInfo`、`/reader3/logout` 与 WebDAV 的 Basic 认证入口外，**所有 `/reader3/*` 接口都要求有效 Access Token**，否则返回 401。
 
-`/reader3/getUserInfo` 与 `/reader3/logout` 是**可选鉴权**：未登录也返回 200，只是 `userInfo` 为 `null` / 不做任何事。
+`/reader3/getUserInfo` 与 `/reader3/logout` 是**可选鉴权**：未登录也返回 200，只是 `userInfo` 为 `null` / 仅做本地清理确认。
 
 ### 令牌失效
 
-JWT 是无状态的，但服务端每个请求都会比对 `users.token_version`。以下操作会自增该版本号，使该账号**此前签发的所有令牌立即失效**：
+Access Token 无状态，但服务端每个请求都会比对 `users.token_version`；Refresh Token 另有 `refresh_tokens` 表记录轮换状态。以下操作会让会话立即失效：
 
-- 修改密码（`changePassword`）——响应会换发一个新令牌给当前设备
+- 修改密码（`changePassword`）——自增版本号并吊销该账号全部 Refresh Token，响应为当前设备新开一对令牌
 - 以不同的 `ADMIN_PASSWORD` 重启服务（强制重置，见 [账号 API](./user#账号的创建与初始密码)）
+- 登出（`logout`）——吊销 body 里那枚 Refresh Token 所属的会话家族；当前 Access Token 最迟 6 小时后自然过期
+- 已消费的 Refresh Token 在 30 秒宽限窗口外再次提交——按泄露处理，吊销整条会话家族
 
-登出（`logout`）不涉及服务端状态：客户端丢弃本地令牌即可，该接口因此总是返回成功。
-
-[认证方式的完整说明见用户管理 API](./user)
+[认证方式的完整说明见账号 API](./user)

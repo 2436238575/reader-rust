@@ -45,12 +45,13 @@ let books = self.parser.search_books(source, &res.body, &res.url);  // parser �
 
 | 文件        | 职责                                                                                                                                                                                                                                               |
 | ----------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `router.rs` | **路由真相来源**。全部业务路由挂在 `/reader3` 下，唯一例外是根路径 `GET /health`                                                                                                                                                                   |
-| `auth.rs`   | 从请求头 `Authorization` 或查询参数 `accessToken` 提取凭证                                                                                                                                                                                         |
-| `mod.rs`    | `AppState`：共享配置与各 service 实例                                                                                                                                                                                                              |
-| `handlers/` | 按领域拆分，共 14 个领域模块：`book`、`book_source`、`book_group`、`bookmark`、`cache`、`chapter_image`、`review`、`user`、`ai_book`、`ai_model`、`ai_proxy`、`replace_rule`、`update`、`webdav`；另有共享的 `multipart`（multipart 字段限量读取） |
+| `router.rs` | **路由真相来源**。全部业务路由挂在 `/reader3` 下，唯一例外是根路径 `GET /health`；鉴权中间件按公开 / 可选 / 需登录分组挂载                                             |
+| `mod.rs`    | `AppState`：共享配置与各 service 实例                                                                                                                                              |
+| `handlers/` | 按领域拆分，共 17 个领域模块：`book`、`book_source`、`book_group`、`bookmark`、`cache`、`chapter_image`、`chapter_edit`、`image`、`review`、`search_cache`、`user`、`ai_book`、`ai_model`、`ai_proxy`、`agent`、`replace_rule`、`webdav`；另有共享的 `multipart`（multipart 字段限量读取） |
 
-`handlers/book.rs` 是最大的单个文件（约 3200 行），涵盖书架、章节、缓存、上传等书籍相关接口。
+JWT 鉴权不在 `src/api/` 下：令牌编解码、签名密钥、身份提取器与中间件都在 `src/auth/`（见下文「鉴权与身份」）。
+
+`handlers/book.rs` 是最大的单个文件（约 2900 行），涵盖书架、章节、缓存、上传等书籍相关接口。
 
 静态资源由同一台 axum 实例托管：
 
@@ -144,42 +145,53 @@ JS 求值本身带资源上限：内存 128MiB、调用栈 1MiB、单次求值 5
 
 `AppState` 里持有 `AuthState`（连接池 + 签名密钥），中间件每个请求做一次主键查询读出 `token_version`。
 
+Access Token 只负责访问业务接口；登录 / 改密同时下发一枚一次性 **Refresh Token**，其轮换状态由 `service/refresh_token_service.rs` 管理：数据库只存 SHA-256 摘要，一次登录一条 family，换取后旧行标记 `used_at` 并追加新行；30 秒宽限窗口外的重放会吊销整条 family。
+
 ### 账号（单用户）
 
 不提供注册与用户管理：唯一账号由 `bootstrap_admin`（`service/user_service.rs`）在启动时创建——用户名取 `ADMIN_USERNAME`，密码取 `ADMIN_PASSWORD`（非空则每次启动强制覆盖并吊销旧令牌，是忘记密码时的找回通道），都为空则随机生成 20 位强密码并打印到启动日志。没有角色与权限开关：登录即拥有全部能力。
 
 ### 令牌
 
-登录成功后签发标准 JWT，载荷为 `{ sub, uid, iat, exp, ver }`（`sub` 是用户名，仅登录与展示；`uid` 是自增身份 id）。传递方式只有两种：
+登录成功后签发一对令牌：
+
+- **Access Token**：HS256 JWT，载荷为 `{ sub, uid, iat, exp, ver }`（`sub` 是用户名，仅登录与展示；`uid` 是自增身份 id），默认 6 小时；
+- **Refresh Token**：`rt_` + 32 字节随机数，默认 7 天滑动续期，只能提交给 `POST /reader3/refreshToken`。
+
+Access Token 的传递方式只有两种：
 
 | 传法     | 位置                          | 用途                            |
 | -------- | ----------------------------- | ------------------------------- |
 | 请求头   | `Authorization: Bearer <jwt>` | 常规请求                        |
 | 查询参数 | `accessToken=<jwt>`           | SSE 与 `<img>` 无法设置请求头时 |
 
-查询参数不是可选的兼容分支：`EventSource` 与 `<img>` 都带不了请求头，前端只能走查询串（`frontend/src/utils/secureAccess.ts`）。
+查询参数不是可选的兼容分支：`EventSource` 与 `<img>` 都带不了请求头，前端只能走查询串（`frontend/src/utils/secureAccess.ts`、`utils/authedEventSource.ts`）。Refresh Token 只放在 JSON body，永远不进 URL。
+
+前端在 `utils/authSession.ts` 里做单飞刷新与到期前 5 分钟主动续期，并用 Web Locks（可用时）避免多标签页同时消费同一枚 Refresh Token。
 
 ### 路由分层
 
 路由按鉴权强度分成三组，各自在 `src/api/router.rs` 里挂不同的中间件后再 merge：
 
-| 分组     | 中间件          | 内容                              |
-| -------- | --------------- | --------------------------------- |
-| 公开     | 无              | `/health`、`/reader3/login`       |
-| 可选鉴权 | `optional_auth` | `getUserInfo`、`logout`           |
-| 需登录   | `require_auth`  | 其余全部 `/reader3/*`             |
-| WebDAV   | 自带 HTTP Basic | `/reader3/webdav/*path`，不经 JWT |
+| 分组     | 中间件          | 内容                                             |
+| -------- | --------------- | ------------------------------------------------ |
+| 公开     | 无              | `/health`、`/reader3/login`、`/reader3/refreshToken` |
+| 可选鉴权 | `optional_auth` | `getUserInfo`、`logout`                          |
+| 需登录   | `require_auth`  | 其余全部 `/reader3/*`                            |
+| WebDAV   | 自带 HTTP Basic | `/reader3/webdav/*path`，不经 JWT                |
 
 失败时的状态码：未登录/令牌无效或过期 → **401 + `errorMsg="需要登录"`**（用户可读文案，前端会原样 toast；识别只靠 401 状态码）。
 
 ### 撤销
 
-JWT 本身无状态，但服务端每个请求都比对 `users.token_version`：
+Access Token 本身无状态，但服务端每个请求都比对 `users.token_version`；Refresh Token 另有服务端状态：
 
-- 修改密码 → 自增版本号，该账号所有旧令牌立即失效（响应会为当前设备换发新令牌）
-- 以不同的 `ADMIN_PASSWORD` 重启 → 强制重置密码并自增版本号
+- 修改密码 → 自增版本号并吊销该账号全部 Refresh Token，旧的 Access Token 立即失效（响应为当前设备新开一条会话家族）
+- 以不同的 `ADMIN_PASSWORD` 重启 → 强制重置密码、自增版本号并吊销全部 Refresh Token
+- 登出 → 吊销 body 里那枚 Refresh Token 所属的 family；当前 Access Token 最迟 6 小时后自然过期
+- 已消费的 Refresh Token 在 30 秒宽限窗口外再次出现 → 视为泄露，吊销整条 family
 
-登出没有服务端状态可清，接口总是返回成功，令牌由客户端丢弃。
+Access Token 的即时撤销靠版本号；Refresh Token 的即时撤销靠 `refresh_tokens.revoked_at`。
 
 ### `user_ns` 的作用
 
@@ -209,7 +221,7 @@ JWT 本身无状态，但服务端每个请求都比对 `users.token_version`：
 | AI 代理                 | `api/handlers/ai_proxy.rs`                  | 客户端自带端点（`useServerConfig=false`，含 `fullUrl=true`）能把服务端当成向任意地址发 POST 的通用代理；单用户下登录者即所有者，不再收敛，出站安全由 URL 守卫（`ALLOW_PRIVATE_NETWORK`）兜底                                               |
 | 前端 HTML 消毒          | `frontend/src/utils/sanitize.ts`            | 书源正文经 DOMPurify 白名单消毒后才进 `v-html`（保留排版标签，剥脚本/事件属性/iframe）                                                                                                                                                     |
 | CORS                    | `api/router.rs`                             | 默认仅同源（不下发任何 CORS 头）；跨域需 `CORS_ALLOWED_ORIGINS` 显式白名单                                                                                                                                                                 |
-| 令牌                    | `auth/`、`service/user_service.rs`          | HS256 JWT；签名密钥来自 `JWT_SECRET` 或自动生成并持久化到 `storage/jwt_secret`；`token_version` 提供即时撤销                                                                                                                               |
+| 令牌                    | `auth/`、`service/refresh_token_service.rs` | Access Token 是 HS256 JWT（密钥来自 `JWT_SECRET` 或自动生成并持久化到 `storage/jwt_secret`），`token_version` 提供即时撤销；Refresh Token 只存 SHA-256 摘要，一次性轮换、30 秒宽限、重放吊销整条 family |
 | 图片管道                | `service/image_service.rs`                  | 书源图片统一收口（id 映射、HEIC 转 JPEG、按记录里的 book_id 回源自愈）；Content-Type 收敛为位图白名单（防 `text/html`/`svg` 的同源 XSS）；图片目录容量上限 `CACHE_COVER_LIMIT_BYTES`、按最旧优先淘汰                                                                  |
 
 缓存**不按时间过期**：章节正文只在显式调用 `purgeCache` 或超出 `CACHE_USER_LIMIT_BYTES`（默认 512MiB，按用户）时被回收，超限按修改时间最旧优先淘汰。

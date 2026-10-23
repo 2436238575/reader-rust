@@ -74,7 +74,7 @@ Reader-Rust 是一个用 Rust 实现的书源阅读服务器，自带 Web 前端
 
 ![登录界面](../images/index/homepage.png)
 
-登录凭证会保存在本地，同一账号可以多端登录。
+登录凭证会保存在本地，同一账号可以多端登录（每次登录各自持有独立会话）。Access Token 6 小时过期后由前端自动用 Refresh Token 续期；Refresh Token 闲置超过 7 天才需要重新登录。
 
 ### 修改密码
 

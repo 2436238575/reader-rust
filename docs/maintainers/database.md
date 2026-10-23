@@ -2,7 +2,7 @@
 
 运行期数据存在 SQLite（默认 `storage/reader.db`，`DATABASE_URL` 可改）。sqlx 访问，连接池 10 条，WAL 模式（`synchronous=NORMAL`），启动时自动执行 `src/storage/db/migrations/` 下的迁移。
 
-表结构定义在 `src/storage/db/migrations/` 下：`0001_init.sql`（基础表结构，历史迁移已逐批并入）+ `0002_bookmarks_replace_rules.sql`（书签/替换规则实体表）+ `0003_chapter_edits.sql`（章节编辑版索引）+ `0004_book_groups.sql`（分组实体表）。新增结构请新建迁移文件，不要改已发布的迁移——sqlx 按校验和核对已应用的迁移，改动历史文件会让旧库无法启动；确需重写时按破坏性变更处理：删除 `storage/reader.db` 重建。
+表结构定义在 `src/storage/db/migrations/` 下：`0001_init.sql`（基础表结构，历史迁移已逐批并入）+ `0002_bookmarks_replace_rules.sql`（书签/替换规则实体表）+ `0003_chapter_edits.sql`（章节编辑版索引）+ `0004_book_groups.sql`（分组实体表）+ `0005_refresh_tokens.sql`（Refresh Token 轮换状态）。新增结构请新建迁移文件，不要改已发布的迁移——sqlx 按校验和核对已应用的迁移，改动历史文件会让旧库无法启动；确需重写时按破坏性变更处理：删除 `storage/reader.db` 重建。
 
 三张底表的身份模型：
 
@@ -24,6 +24,23 @@
 | `token_version` | INTEGER | 撤销版本号：改密码自增，该账号此前签发的所有 JWT 立即失效                  |
 | `created_at`    | INTEGER | 创建时间，毫秒时间戳                                                       |
 | `last_login_at` | INTEGER | 最近登录时间，毫秒时间戳                                                   |
+
+## refresh_tokens
+
+Refresh Token 的轮换状态。一次登录创建一条 `family_id`，每次换取在同一 family 下追加新行；旧行保留并标记 `used_at`，用于重放检测。
+
+| 字段            | 类型    | 用途                                                                   |
+| --------------- | ------- | ---------------------------------------------------------------------- |
+| `token_hash`    | TEXT    | 主键，`sha256(完整 refresh token)` 的十六进制；明文永不落库            |
+| `uid`           | INTEGER | 所属用户；索引 `idx_refresh_tokens_uid`                                |
+| `token_version` | INTEGER | 签发时的 `users.token_version`，改密码后与当前值不一致即拒绝           |
+| `family_id`     | TEXT    | 会话家族 id（登录时新建，轮换沿用）；索引 `idx_refresh_tokens_family`  |
+| `issued_at`     | INTEGER | 签发时间（秒）                                                         |
+| `expires_at`    | INTEGER | 过期时间（秒，滑动续期）；索引 `idx_refresh_tokens_expires`            |
+| `used_at`       | INTEGER | 被消费时间（秒）；30 秒宽限窗口内允许重放，超窗重放吊销整条 family     |
+| `revoked_at`    | INTEGER | 吊销时间（秒）；登出 / 改密 / 重放检测写入，非空即拒绝                 |
+
+过期行在每次签发/轮换时顺带清理（`expires_at <= now`）；已消费但未过期的行保留，用于识别重放。
 
 ## book_sources
 
