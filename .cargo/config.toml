@@ -1,3 +1,9 @@
+[build]
+# 本仓库单个代码库编译一次约需 1.8GB 内存，cargo test 会同时编译多个目标。
+# 12 路并行会把 32GB 机器的提交内存推到上限，触发页面文件抖动后反而更慢。
+# 默认限制为 4 路；内存充足时用 CARGO_BUILD_JOBS 覆盖。
+jobs = 4
+
 [target.x86_64-unknown-linux-musl]
 linker = "x86_64-linux-musl-gcc"
 

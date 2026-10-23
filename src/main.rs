@@ -1,15 +1,4 @@
-mod api;
-mod app;
-mod auth;
-mod crawler;
-mod error;
-mod model;
-mod parser;
-mod service;
-mod storage;
-mod util;
-
-use app::bootstrap::run;
+use reader_rust::app::bootstrap::run;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
