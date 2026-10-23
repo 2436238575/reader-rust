@@ -22,19 +22,14 @@ struct TestServer {
 }
 
 async fn boot() -> TestServer {
-    boot_with_options("", 24 * 3600).await
-}
-
-/// `git_path` 传不存在的路径可模拟「服务器没装 git」。
-async fn boot_with_git_path(git_path: &str) -> TestServer {
-    boot_with_options(git_path, 24 * 3600).await
+    boot_with_options(24 * 3600).await
 }
 
 async fn boot_with_ttl(content_revalidate_ttl_secs: u64) -> TestServer {
-    boot_with_options("", content_revalidate_ttl_secs).await
+    boot_with_options(content_revalidate_ttl_secs).await
 }
 
-async fn boot_with_options(git_path: &str, content_revalidate_ttl_secs: u64) -> TestServer {
+async fn boot_with_options(content_revalidate_ttl_secs: u64) -> TestServer {
     common::clean_stale_temp_dirs();
     let temp_dir =
         std::env::temp_dir().join(format!("reader-rust-edit-flow-{}", uuid::Uuid::new_v4()));
@@ -52,7 +47,6 @@ async fn boot_with_options(git_path: &str, content_revalidate_ttl_secs: u64) -> 
         admin_password: "password123".to_string(),
         rate_limit_disabled: true,
         allow_private_network: true,
-        git_path: git_path.to_string(),
         content_revalidate_ttl_secs,
         ..AppConfig::default()
     };
@@ -679,13 +673,14 @@ async fn network_book_versions_and_diff() {
     assert_eq!(history["content"], json!("我的编辑版"));
 }
 
-/// 服务器没有 git：正文照常返回，diff 缺省并带上原因，而不是整个请求失败。
+/// diff 由服务端进程内计算（imara-diff），不依赖任何外部工具：
+/// 保存编辑版后 getBookContent 直接给出差异，不再有降级路径。
 #[tokio::test]
-async fn content_stays_readable_when_git_is_missing() {
-    let server = boot_with_git_path("definitely-not-a-git-binary").await;
+async fn diff_is_available_without_external_tools() {
+    let server = boot().await;
     let book = server
         .upload_txt(
-            "无 git 测试",
+            "进程内 diff 测试",
             "第一章 开始
 原始正文。
 ",
@@ -712,12 +707,15 @@ async fn content_stays_readable_when_git_is_missing() {
     let payload = server.get_content(book_id, &chapter_url, json!({})).await;
     assert_eq!(payload["content"], json!("改过的正文。"));
     assert_eq!(payload["edited"], json!(true));
-    assert!(
-        payload.get("diff").is_none(),
-        "没有 git 不该给 diff: {payload}"
+    let ops = payload["diff"]["ops"]
+        .as_array()
+        .unwrap_or_else(|| panic!("进程内 diff 永远可用: {payload}"));
+    assert!(!ops.is_empty(), "编辑版与上游不同就该有差异: {payload}");
+    assert_eq!(
+        payload["diffError"].as_str().unwrap_or_default(),
+        "",
+        "不该有 diffError: {payload}"
     );
-    let error = payload["diffError"].as_str().unwrap_or_default();
-    assert!(error.contains("git"), "应说明缺 git: {payload}");
 }
 
 /// 超过回源间隔：当前请求先返回旧缓存，后台抓到新版本后下一次读取更新。

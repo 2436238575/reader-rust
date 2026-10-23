@@ -67,8 +67,8 @@ GET /reader3/getBookContent
   最新上游对齐。为省流量，`equal` 行不带文本（前端用 `content` 补齐）；
   `add` 只带 `editedText`，`del` 只带 `baseText`，`modify` 两段都带。
 - `diffError`：算不出差异时的原因。此时 `diff` 缺省，但正文照常可用。常见原因：
-  最新上游版本不可读、服务器没装 git（可用
-  [`GIT_PATH`](../guide/configuration) 指定路径）、章节过大。
+  最新上游版本不可读、章节过大。diff 由服务端进程内计算（imara-diff），
+  不依赖任何外部工具。
 
 `diff` 始终是「最新上游 → 当前用户版本」，包含上游在编辑之后发生的变化。
 只看任意两个历史版本的差异，用

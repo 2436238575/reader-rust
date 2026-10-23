@@ -372,9 +372,8 @@ pub async fn get_chapter_version_diff(
         .await?
         .ok_or_else(|| AppError::NotFound("目标版本不存在".to_string()))?;
     let ops = state
-        .git_diff_service
+        .chapter_diff_service
         .diff_texts(&from.content, &to.content)
-        .await
         .map_err(|reason| AppError::BadRequest(format!("diff 不可用: {reason}")))?;
     Ok(Json(ApiResponse::ok(json!({
         "fromVersionId": from.version_id,
@@ -1041,9 +1040,8 @@ pub async fn get_chapter_import_diff(
         }))));
     }
     let (ops, diff_error) = match state
-        .git_diff_service
+        .chapter_diff_service
         .diff_texts(&current.content, &incoming)
-        .await
     {
         Ok(ops) => (Some(ops), String::new()),
         Err(reason) => (None, reason.to_string()),

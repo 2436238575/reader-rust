@@ -238,8 +238,6 @@ pub async fn build_state(cfg: AppConfig) -> anyhow::Result<AppState> {
         probe_service.probe().await;
     });
 
-    let git_path = cfg.git_path.clone();
-
     Ok(AppState {
         config: cfg,
         image_service,
@@ -251,9 +249,9 @@ pub async fn build_state(cfg: AppConfig) -> anyhow::Result<AppState> {
         local_txt_book_service,
         local_epub_book_service,
         chapter_content_service,
-        git_diff_service: Arc::new(crate::service::git_diff_service::GitDiffService::new(
-            git_path,
-        )),
+        chapter_diff_service: Arc::new(
+            crate::service::chapter_diff_service::ChapterDiffService::new(),
+        ),
         json_document_service,
         bookmark_repo: db::repo::BookmarkRepo::new(pool.clone()),
         replace_rule_repo: db::repo::ReplaceRuleRepo::new(pool.clone()),

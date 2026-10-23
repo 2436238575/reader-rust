@@ -159,7 +159,7 @@ pub struct ChapterContentData {
 
 #[derive(Debug, Serialize)]
 pub struct ChapterDiffData {
-    pub ops: Vec<crate::service::git_diff_service::DiffOp>,
+    pub ops: Vec<crate::service::chapter_diff_service::DiffOp>,
 }
 
 /// 网络书的正文响应：阅读页 diff 始终拿「当前用户版本 vs 最新上游版本」。
@@ -194,9 +194,8 @@ async fn network_content_data(
                     }
                     Ok(Some(base)) => {
                         match state
-                            .git_diff_service
+                            .chapter_diff_service
                             .diff_texts(&base.content, &view.content)
-                            .await
                         {
                             Ok(ops) => (Some(ChapterDiffData { ops }), None),
                             Err(reason) => (None, Some(reason.to_string())),
@@ -260,7 +259,7 @@ async fn local_content_data(
     let (content, version_id, version_kind, base_version_id, diff, diff_error) = match user_view {
         Some(view) if !force_upstream => {
             let (diff, diff_error) = match upstream.as_deref() {
-                Some(base) => match state.git_diff_service.diff_texts(base, &view.content).await {
+                Some(base) => match state.chapter_diff_service.diff_texts(base, &view.content) {
                     Ok(ops) => (Some(ChapterDiffData { ops }), None),
                     Err(reason) => (None, Some(reason.to_string())),
                 },

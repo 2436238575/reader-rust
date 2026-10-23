@@ -62,3 +62,4 @@ dav-server = { version = "0.11", default-features = false, features = ["localfs"
 # 用 Limited 显式保持 WebDAV PUT 的体积上限。
 http-body-util = "0.1"
 ts-rs = { version = "12", features = ["no-serde-warnings"] }
+imara-diff = "0.2"

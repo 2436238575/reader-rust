@@ -390,7 +390,7 @@ pub fn content_hash(content: &str) -> String {
 /// 与 diff 面板的切段口径一致，避免「正文一样、只是 HTML 或空行不同」
 /// 被误判成有差异。
 pub fn normalized_content_hash(content: &str) -> String {
-    let paragraphs = crate::service::git_diff_service::split_to_paragraphs(content);
+    let paragraphs = crate::service::chapter_diff_service::split_to_paragraphs(content);
     content_hash(&paragraphs.join("\n"))
 }
 

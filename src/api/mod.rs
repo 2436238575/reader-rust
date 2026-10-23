@@ -27,8 +27,8 @@ pub struct AppState {
     pub local_epub_book_service: Arc<LocalEpubBookService>,
     /// 正文池、版本时间线与每用户版本选择
     pub chapter_content_service: Arc<ChapterContentService>,
-    /// 章节 diff 的系统 git 执行器（无 git 时回退前端本地计算）
-    pub git_diff_service: Arc<crate::service::git_diff_service::GitDiffService>,
+    /// 章节 diff：进程内 imara-diff 计算，无外部进程依赖
+    pub chapter_diff_service: Arc<crate::service::chapter_diff_service::ChapterDiffService>,
     pub json_document_service: Arc<JsonDocumentService>,
     pub bookmark_repo: crate::storage::db::repo::BookmarkRepo,
     pub replace_rule_repo: crate::storage::db::repo::ReplaceRuleRepo,

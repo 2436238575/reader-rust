@@ -131,7 +131,6 @@ cp .env.example .env
 | `AGENT_SIDECAR_COMMAND`              | `python -m agent_sidecar` | sidecar 启动命令，进程 cwd 为 `sidecar/`；保持默认时若 `sidecar/.venv` 存在自动优先其 Python，自定义（含 Docker ENV）则不兜底 |
 | `AGENT_SIDECAR_UV`                   | 空                        | uv 二进制路径；非空/PATH 可探测时由 uv 自动管理依赖（推荐），都没有时降级为 AGENT_SIDECAR_COMMAND      |
 | `AGENT_SIDECAR_CHAPTER_TIMEOUT_SECS` | `600`                     | 单章处理超时；超时即终止 sidecar 进程并中止批量任务（sidecar 内模型重试预算已对齐此值，错误会带真实原因回来而不是被截成超时）                                                     |
-| `GIT_PATH`                           | 空                        | git 可执行文件路径；留空用 PATH 里的 `git`。章节版本 diff 依赖系统 git，缺失时阅读不受影响，差异面板显示不可用原因 |
 
 三点需要注意：
 
@@ -167,7 +166,8 @@ src/
     chapter_content_service.rs 正文池与版本时间线：sha256 去重、zstd 压缩、版本追加、
                           最新指针、每用户版本选择、24h 回源判定
     image_service.rs       图片管道：id 映射 + HEIC→JPEG + 永久缓存 + 回源自愈
-    git_diff_service.rs    章节版本 diff：系统 git（GIT_PATH）+ 变更块相似度配对 + 结果缓存
+    chapter_diff_service.rs 章节版本 diff：进程内 imara-diff（git 同款 Histogram 算法）
+                          + 变更块相似度配对 + 结果缓存
     refresh_token_service.rs Refresh Token 轮换：SHA-256 摘要落库、一次性消费、30 秒宽限、
                           重放吊销 family
     agent_sidecar_service.rs AI 资料编排：spawn Python sidecar、逐章 run/result 泵、
