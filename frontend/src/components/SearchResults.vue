@@ -109,6 +109,7 @@ import { saveBook } from '../api/bookshelf'
 import { useOpenBook } from '../composables/useOpenBook'
 import { splitBookSourceGroups } from '../utils/sourceSelection'
 import { consumeSSE } from '../utils/sse'
+import type { SseConnection } from '../utils/authedEventSource'
 import BookGrid from './BookGrid.vue'
 import BookDetailModal from './BookDetailModal.vue'
 import type { Book, SearchBook, SearchBookDisplay } from '../types'
@@ -129,7 +130,7 @@ const {
   searchSourceId: selectedSourceId,
 } = storeToRefs(shelfStore)
 
-let eventSource: EventSource | null = null
+let eventSource: SseConnection | null = null
 // 跨 SSE 消息维护的去重集合；每次发起新搜索时重建
 let searchSeen: Set<string> | null = null
 const showBookDetail = ref(false)

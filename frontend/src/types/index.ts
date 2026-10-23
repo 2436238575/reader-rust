@@ -230,8 +230,12 @@ export interface BookGroup {
 export interface UserInfo {
   username: string
   lastLoginAt?: number
-  /// 仅在登录与改密码的响应中出现；服务端不再回吐任何凭据
+  /// 仅在登录与改密码的响应中出现；getUserInfo 不回吐任何凭据
   accessToken?: string
+  /// 一次性 Refresh Token，换取后立即轮换
+  refreshToken?: string
+  /// Access Token 有效秒数，前端据此主动续期
+  accessTokenExpiresIn?: number
   createdAt?: number
 }
 

@@ -1,5 +1,5 @@
 import { createRouter, createWebHashHistory } from 'vue-router'
-import { readAccessToken } from '../utils/secureAccess'
+import { readAccessToken, readRefreshToken } from '../utils/secureAccess'
 
 const router = createRouter({
   // hash 路由本身不依赖服务端回落，但基址要跟着部署前缀走
@@ -55,9 +55,10 @@ const router = createRouter({
 
 // 无令牌直达任意页面都会被 API 401 兜底，但体验上是白屏转圈后才弹登录框；
 // 路由守卫提前拦到 /login。登录页自身放行。
+// Access Token 可能已过期但 Refresh Token 仍在：先进页面，由启动引导换新。
 router.beforeEach((to) => {
   if (to.name === 'login') return true
-  if (!readAccessToken(localStorage)) {
+  if (!readAccessToken(localStorage) && !readRefreshToken(localStorage)) {
     return { name: 'login', query: { redirect: to.fullPath } }
   }
   return true

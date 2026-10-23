@@ -1,4 +1,4 @@
-import { createAuthedEventSource } from '../utils/secureAccess'
+import { createAuthedEventSource } from '../utils/authedEventSource'
 import http from './http'
 
 /** 缓存内全文检索的单章命中（后端 searchCachedContent） */

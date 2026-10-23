@@ -14,7 +14,7 @@ import { spawn, spawnSync, type ChildProcess } from 'node:child_process'
 import { createConnection } from 'node:net'
 import { existsSync, mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { isAbsolute, join } from 'node:path'
 
 const FIXTURE_PORT = 18081
 const FIXTURE_USERNAME = 'reader1'
@@ -28,6 +28,16 @@ let serverTempDir = ''
 let serverStderr: string[] = []
 
 function serverExePath(): string {
+  // 本机可能正有一个 `cargo run` 占着 target/debug 的 exe（Windows 会拒绝覆盖），
+  // 用 E2E_SERVER_BIN 指向独立 target 目录里的同名产物即可继续跑 e2e。
+  const override = process.env.E2E_SERVER_BIN
+  if (override) {
+    const resolved = isAbsolute(override) ? override : join(process.cwd(), override)
+    if (!existsSync(resolved)) {
+      throw new Error(`E2E_SERVER_BIN 指向的二进制不存在: ${resolved}`)
+    }
+    return resolved
+  }
   // playwright 从仓库根目录跑，cwd 即项目根
   const root = process.cwd()
   const exe = join(root, 'target', 'debug', 'reader-rust.exe')
@@ -88,8 +98,11 @@ async function waitForFixture(url: string, child: ChildProcess): Promise<boolean
         body: JSON.stringify({ username: FIXTURE_USERNAME, password: FIXTURE_PASSWORD }),
       })
       if (resp.status === 200) {
-        const payload = (await resp.json()) as { data?: { accessToken?: string } }
-        if (payload?.data?.accessToken) return true
+        const payload = (await resp.json()) as {
+          data?: { accessToken?: string; refreshToken?: string }
+        }
+        // 双令牌都拿到才说明是自己刚 bootstrap 的新后端（旧产物没有 refreshToken）
+        if (payload?.data?.accessToken && payload?.data?.refreshToken) return true
       }
     } catch {
       // 还没起来
@@ -160,7 +173,7 @@ export async function startServerIfNeeded(): Promise<void> {
     const tail = stderrTail()
     await stopServerIfStarted()
     throw new Error(
-      `临时后端在 ${FIXTURE_PORT} 没能起来（端口被占？）` +
+      `临时后端在 ${FIXTURE_PORT} 没能起来（端口被占，或构建产物过旧不支持双令牌？）` +
         (tail ? `\n后端 stderr 尾部：\n${tail}` : '\n后端没有 stderr 输出')
     )
   }

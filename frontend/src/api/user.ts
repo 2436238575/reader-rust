@@ -1,14 +1,19 @@
 import http from './http'
 import type { UserInfo } from '../types'
+import { readRefreshToken } from '../utils/secureAccess'
 
 export function login(username: string, password: string) {
   return http.post<UserInfo>('/login', { username, password }).then((r) => r.data)
 }
 
 export function logout() {
-  return http.post('/logout').catch(() => {
-    // Logout always clears local state
-  })
+  // Refresh Token 交给服务端吊销对应会话家族；本地清理由 store 负责
+  const refreshToken = readRefreshToken()
+  return http
+    .post('/logout', refreshToken ? { refreshToken } : {})
+    .catch(() => {
+      // Logout always clears local state
+    })
 }
 
 export function getUserInfo() {

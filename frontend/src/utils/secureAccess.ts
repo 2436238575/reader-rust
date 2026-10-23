@@ -1,17 +1,60 @@
-import { API_BASE } from './appBase'
-
 export const ACCESS_TOKEN_STORAGE_KEY = 'accessToken'
+export const REFRESH_TOKEN_STORAGE_KEY = 'refreshToken'
+export const ACCESS_TOKEN_EXPIRES_AT_STORAGE_KEY = 'accessTokenExpiresAt'
 
 type StorageLike = Pick<Storage, 'getItem'>
+type WritableStorageLike = Pick<Storage, 'getItem' | 'setItem' | 'removeItem'>
+
+export interface AuthTokens {
+  accessToken: string
+  refreshToken: string
+  /** Access Token 有效秒数（来自登录/刷新响应） */
+  accessTokenExpiresIn: number
+}
 
 /**
- * 读取本地保存的 JWT。
+ * 读取本地保存的 Access Token。
  *
- * 令牌由服务端签发、前端只负责原样回传；其内部格式（`sub`/`ns`/`exp` 等）
+ * 令牌由服务端签发、前端只负责原样回传；其内部格式（`sub`/`exp` 等）
  * 完全由后端定义，前端不做任何解析。
  */
 export function readAccessToken(storage: StorageLike = localStorage): string | undefined {
   return storage.getItem(ACCESS_TOKEN_STORAGE_KEY)?.trim() || undefined
+}
+
+/** 读取 Refresh Token；它只在换取 Access Token 时提交，不进任何 URL。 */
+export function readRefreshToken(storage: StorageLike = localStorage): string | undefined {
+  return storage.getItem(REFRESH_TOKEN_STORAGE_KEY)?.trim() || undefined
+}
+
+/** Access Token 的绝对过期时间（毫秒）；缺失或损坏时返回 undefined。 */
+export function readAccessTokenExpiresAt(
+  storage: StorageLike = localStorage
+): number | undefined {
+  const raw = storage.getItem(ACCESS_TOKEN_EXPIRES_AT_STORAGE_KEY)
+  if (!raw) return undefined
+  const value = Number(raw)
+  return Number.isFinite(value) && value > 0 ? value : undefined
+}
+
+/** 登录 / 刷新 / 改密成功后保存一对新令牌。 */
+export function storeAuthTokens(
+  tokens: AuthTokens,
+  storage: WritableStorageLike = localStorage
+) {
+  storage.setItem(ACCESS_TOKEN_STORAGE_KEY, tokens.accessToken)
+  storage.setItem(REFRESH_TOKEN_STORAGE_KEY, tokens.refreshToken)
+  storage.setItem(
+    ACCESS_TOKEN_EXPIRES_AT_STORAGE_KEY,
+    String(Date.now() + tokens.accessTokenExpiresIn * 1000)
+  )
+}
+
+/** 登出或会话失效时清空全部令牌与过期时间。 */
+export function clearAuthTokens(storage: WritableStorageLike = localStorage) {
+  storage.removeItem(ACCESS_TOKEN_STORAGE_KEY)
+  storage.removeItem(REFRESH_TOKEN_STORAGE_KEY)
+  storage.removeItem(ACCESS_TOKEN_EXPIRES_AT_STORAGE_KEY)
 }
 
 /**
@@ -30,10 +73,11 @@ export function buildAuthHeaders(storage?: StorageLike): Record<string, string> 
 }
 
 /**
- * 把令牌放进查询参数。
+ * 把 Access Token 放进查询参数。
  *
  * SSE 由浏览器 `EventSource` 发起、`<img>` 也带不了请求头，这些请求只能
  * 用查询参数携带身份，因此这条路径不是可选的兼容分支。
+ * Refresh Token 永远不放进 URL。
  */
 export function appendAuthQueryParams(
   params: URLSearchParams,
@@ -43,22 +87,4 @@ export function appendAuthQueryParams(
   if (token) {
     params.set('accessToken', token)
   }
-}
-
-/**
- * 构造带鉴权查询串的 EventSource（SSE 无法设置请求头，只能走查询串）。
- * `undefined` 的参数自动跳过。调用方负责关闭返回的连接。
- */
-export function createAuthedEventSource(
-  path: string,
-  params: Record<string, string | number | undefined>
-): EventSource {
-  const query = new URLSearchParams()
-  for (const [key, value] of Object.entries(params)) {
-    if (value !== undefined) {
-      query.set(key, String(value))
-    }
-  }
-  appendAuthQueryParams(query)
-  return new EventSource(`${API_BASE}${path}?${query.toString()}`)
 }

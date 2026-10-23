@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import axios from 'axios'
 import { requestOpenAISpeechAudio } from './openaiSpeech'
 
 afterEach(() => {
@@ -50,6 +51,53 @@ describe('openaiSpeech', () => {
       },
     })
     expect(String(init.body)).not.toContain('browser-key')
+  })
+
+  it('refreshes once and retries an expired server speech request', async () => {
+    installLocalStorage()
+    localStorage.setItem('accessToken', 'old-token')
+    localStorage.setItem('refreshToken', 'rt_old')
+    const post = vi.spyOn(axios, 'post').mockResolvedValue({
+      data: {
+        isSuccess: true,
+        errorMsg: '',
+        data: {
+          accessToken: 'new-token',
+          refreshToken: 'rt_new',
+          accessTokenExpiresIn: 21600,
+        },
+      },
+    })
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 401,
+        headers: new Headers(),
+        json: async () => ({}),
+        text: async () => 'unauthorized',
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        headers: new Headers(),
+        blob: async () => new Blob(['audio'], { type: 'audio/mpeg' }),
+      })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const blob = await requestOpenAISpeechAudio({
+      source: 'server',
+      baseUrl: '',
+      input: '你好',
+      model: 'server-model',
+      voice: 'server-voice',
+    })
+
+    expect(blob.type).toBe('audio/mpeg')
+    expect(post).toHaveBeenCalledTimes(1)
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+    const retryInit = fetchMock.mock.calls[1]?.[1] as unknown as RequestInit
+    expect(retryInit.headers).toMatchObject({ Authorization: 'Bearer new-token' })
   })
 })
 

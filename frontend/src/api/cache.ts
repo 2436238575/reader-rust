@@ -1,5 +1,5 @@
 import http from './http'
-import { createAuthedEventSource } from '../utils/secureAccess'
+import { createAuthedEventSource } from '../utils/authedEventSource'
 
 /**
  * SSE-based book caching. Returns an EventSource.

@@ -3,7 +3,19 @@ import { ref, watch, computed } from 'vue'
 import { getUserInfo } from '../api/user'
 import type { UserInfo } from '../types'
 import { applySystemTheme } from '../utils/systemUi'
-import { ACCESS_TOKEN_STORAGE_KEY } from '../utils/secureAccess'
+import {
+  ACCESS_TOKEN_STORAGE_KEY,
+  clearAuthTokens,
+  readAccessToken,
+  readRefreshToken,
+  storeAuthTokens,
+} from '../utils/secureAccess'
+import {
+  SessionExpiredError,
+  refreshAccessToken,
+  startAuthLifecycle,
+  stopAuthLifecycle,
+} from '../utils/authSession'
 import {
   loadLocalReadingStats,
   persistLocalReadingStats,
@@ -68,33 +80,115 @@ export const useAppStore = defineStore('app', () => {
     syncStatsOnce()
   }
 
+  /** 登录/改密响应缺省时按后端默认的 6 小时计。 */
+  const DEFAULT_ACCESS_TOKEN_TTL_SECS = 6 * 3600
+
+  function persistLoginTokens(user: Pick<UserInfo, 'accessToken' | 'refreshToken' | 'accessTokenExpiresIn'>) {
+    if (!user.accessToken) return
+    if (!user.refreshToken) {
+      // 兼容尚未升级的后端：只存 Access Token，拿不到刷新能力
+      localStorage.setItem(ACCESS_TOKEN_STORAGE_KEY, user.accessToken)
+      return
+    }
+    storeAuthTokens({
+      accessToken: user.accessToken,
+      refreshToken: user.refreshToken,
+      accessTokenExpiresIn: user.accessTokenExpiresIn ?? DEFAULT_ACCESS_TOKEN_TTL_SECS,
+    })
+    startAuthLifecycle()
+  }
+
   function setUser(user: UserInfo) {
     userInfo.value = user
     isLoggedIn.value = true
-    if (user.accessToken) {
-      localStorage.setItem(ACCESS_TOKEN_STORAGE_KEY, user.accessToken)
-    }
+    persistLoginTokens(user)
     // 登录后不一定经过会调 fetchUserInfo 的页面，直接在登录点触发
     syncStatsOnce()
   }
 
   /**
-   * 换发令牌后更新本地副本。
+   * 改密码等场景换发的令牌对。
    *
-   * 改密码会让服务端自增撤销版本号、作废其他设备上的令牌，同时为当前设备
-   * 换发新令牌；不保存它的话当前设备也会被登出。
+   * 服务端会自增撤销版本号作废其他设备，同时为当前设备换发新的一对；
+   * 不保存的话当前设备也会被登出。
    */
-  function setAccessToken(token: string) {
-    if (token) {
-      localStorage.setItem(ACCESS_TOKEN_STORAGE_KEY, token)
-    }
+  function setAuthTokens(
+    tokens: Pick<UserInfo, 'accessToken' | 'refreshToken' | 'accessTokenExpiresIn'>
+  ) {
+    persistLoginTokens(tokens)
+  }
+
+  /**
+   * 启动时恢复会话。
+   *
+   * `getUserInfo` 是可选鉴权端点：Access Token 过期时它返回 200 + null，
+   * 不会触发 axios 的 401 刷新，所以这里要主动用 Refresh Token 换一次。
+   * 网络故障时保留令牌（离线不应把用户登出），等后续请求再试。
+   */
+  let bootstrapPromise: Promise<void> | null = null
+  function bootstrapAuth(): Promise<void> {
+    if (bootstrapPromise) return bootstrapPromise
+    bootstrapPromise = (async () => {
+      const hasAccess = !!readAccessToken()
+      const hasRefresh = !!readRefreshToken()
+      if (!hasAccess && !hasRefresh) {
+        isLoggedIn.value = false
+        return
+      }
+
+      let fetched = false
+      try {
+        const data = await getUserInfo()
+        fetched = true
+        if (data.userInfo?.username) {
+          userInfo.value = data.userInfo
+          isLoggedIn.value = true
+          startAuthLifecycle()
+          syncStatsOnce()
+          return
+        }
+      } catch {
+        // 网络故障：继续尝试刷新；刷新失败同样保留令牌
+      }
+
+      if (!hasRefresh) {
+        // 升级前的旧会话：Access Token 已失效且无法续期，清掉避免路由守卫反复放行
+        if (fetched && hasAccess) clearAuthTokens()
+        isLoggedIn.value = false
+        return
+      }
+
+      try {
+        await refreshAccessToken()
+        const data = await getUserInfo()
+        userInfo.value = data.userInfo
+        isLoggedIn.value = !!data.userInfo?.username
+        if (isLoggedIn.value) {
+          startAuthLifecycle()
+          syncStatsOnce()
+        } else {
+          clearAuthTokens()
+          stopAuthLifecycle()
+        }
+      } catch (error) {
+        if (error instanceof SessionExpiredError) {
+          userInfo.value = null
+          isLoggedIn.value = false
+        }
+        // 网络错误：令牌保留，下一次请求会再次触发刷新
+      }
+    })().finally(() => {
+      bootstrapPromise = null
+    })
+    return bootstrapPromise
   }
 
   function clearUser() {
     userInfo.value = null
     isLoggedIn.value = false
     statsSynced = false
-    localStorage.removeItem(ACCESS_TOKEN_STORAGE_KEY)
+    clearAuthTokens()
+    stopAuthLifecycle()
   }
 
   function updateUserInfo(next: UserInfo | null) {
@@ -232,8 +326,9 @@ export const useAppStore = defineStore('app', () => {
     userInfo,
     isLoggedIn,
     fetchUserInfo,
+    bootstrapAuth,
     setUser,
-    setAccessToken,
+    setAuthTokens,
     clearUser,
     updateUserInfo,
     showSettingsDrawer,

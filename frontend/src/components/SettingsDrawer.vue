@@ -342,10 +342,10 @@ async function handleChangePassword() {
   changingPassword.value = true
   try {
     const updated = await changePassword(passwordForm.oldPassword, passwordForm.newPassword)
-    // 后端改密时自增 token_version 并为当前设备换发新令牌，必须保存，
+    // 后端改密时自增 token_version 并为当前设备换发新的一对令牌，必须保存，
     // 否则当前设备会被静默登出
     if (updated?.accessToken) {
-      appStore.setAccessToken(updated.accessToken)
+      appStore.setAuthTokens(updated)
     }
     appStore.showToast('密码修改成功', 'success')
     showPasswordPanel.value = false

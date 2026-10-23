@@ -118,6 +118,7 @@
 
 <script setup lang="ts">
 import { consumeSSE } from '../../utils/sse'
+import type { SseConnection } from '../../utils/authedEventSource'
 import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useReaderStore } from '../../stores/reader'
 import { useAppStore } from '../../stores/app'
@@ -138,7 +139,7 @@ const currentChapterName = ref('')
 const serverCachedCount = ref(0)
 const browserCachedCount = ref(0)
 const isLocalBookInServer = computed(() => isLocalBook(store.book))
-let sse: EventSource | null = null
+let sse: SseConnection | null = null
 let browserSignal = { cancelled: false }
 
 onMounted(() => {

@@ -1,6 +1,7 @@
 import { ref, computed, onUnmounted } from 'vue'
 import { getAvailableBookSourceSSE } from '../api/search'
 import { consumeSSE } from '../utils/sse'
+import type { SseConnection } from '../utils/authedEventSource'
 import { useAppStore } from '../stores/app'
 import { useSourceStore } from '../stores/source'
 import type { SearchBook } from '../types'
@@ -68,7 +69,7 @@ export function useAvailableSources(getCurrent: () => AvailableSourceCurrent | n
   const results = ref<SearchBook[]>([])
   const lastIndex = ref(-1)
   const hasMoreSources = ref(true)
-  let stream: EventSource | null = null
+  let stream: SseConnection | null = null
 
   const preparedResults = computed<AvailableSourceCandidate[]>(() => {
     const current = getCurrent()
@@ -172,7 +173,7 @@ export function useAvailableSources(getCurrent: () => AvailableSourceCurrent | n
   }
 
   function finishStream(
-    sse: EventSource,
+    sse: SseConnection,
     mode: AvailableSourceMode,
     beforeCount: number,
     failed = false

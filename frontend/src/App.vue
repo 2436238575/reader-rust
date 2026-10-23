@@ -29,6 +29,7 @@
 import { computed, defineAsyncComponent, onMounted, onUnmounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useAppStore } from './stores/app'
+import { startAuthLifecycle } from './utils/authSession'
 import AppTopBar from './components/AppTopBar.vue'
 import SettingsDrawer from './components/SettingsDrawer.vue'
 
@@ -43,7 +44,9 @@ const appStore = useAppStore()
 const showHeader = computed(() => route.name !== 'reader')
 
 onMounted(() => {
-  appStore.fetchUserInfo()
+  // 过期/缺失的 Access Token 在这里先用 Refresh Token 换新，避免首屏请求集体 401
+  void appStore.bootstrapAuth()
+  startAuthLifecycle()
 })
 
 async function handleNeedLogin() {
