@@ -84,6 +84,14 @@ pub struct EffectiveVersionRow {
     pub raw_size: i64,
 }
 
+/// 当前显示版本的正文（仍是池里的编码形态），导入预览用于归一化比较。
+#[derive(Debug, Clone)]
+pub struct EffectiveContentBlob {
+    pub chapter_url: String,
+    pub codec: i64,
+    pub content: Vec<u8>,
+}
+
 #[derive(Clone)]
 pub struct ChapterContentRepo {
     pool: SqlitePool,
@@ -666,6 +674,68 @@ impl ChapterContentRepo {
                 raw_size: r.get("raw_size"),
             })
             .collect())
+    }
+
+    /// 一本书全部章节当前显示版本的正文（编码形态，供预览归一化比较）。
+    pub async fn list_effective_content_blobs(
+        &self,
+        user_ns: &str,
+        book_id: &str,
+    ) -> Result<Vec<EffectiveContentBlob>, AppError> {
+        let Some(id) = parse_book_id(book_id) else {
+            return Ok(Vec::new());
+        };
+        let rows = sqlx::query(
+            "SELECT l.chapter_url, c.codec, c.content
+             FROM chapter_latest l
+             LEFT JOIN chapter_view_state s
+               ON s.user_ns=?1 AND s.book_id=l.book_id AND s.chapter_url=l.chapter_url
+             JOIN chapter_versions v
+               ON v.version_id = COALESCE(s.selected_version_id, l.latest_user_version_id, l.latest_upstream_version_id)
+               AND v.book_id=l.book_id AND v.chapter_url=l.chapter_url
+             JOIN chapter_contents c ON c.content_id = v.content_id
+             WHERE l.book_id=?2",
+        )
+        .bind(user_ns)
+        .bind(id)
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows
+            .iter()
+            .map(|r| EffectiveContentBlob {
+                chapter_url: r.get("chapter_url"),
+                codec: r.get("codec"),
+                content: r.get("content"),
+            })
+            .collect())
+    }
+
+    /// 图片源的空正文只记检查时间，不往时间线里塞 0 字节版本。
+    pub async fn touch_empty_upstream(
+        &self,
+        book_id: &str,
+        chapter_url: &str,
+    ) -> Result<(), AppError> {
+        let Some(id) = parse_book_id(book_id) else {
+            return Ok(());
+        };
+        let now = now_millis();
+        sqlx::query(
+            "INSERT INTO chapter_latest \
+             (book_id, chapter_url, latest_upstream_version_id, latest_user_version_id, \
+              last_attempt_at, last_success_at, upstream_changed_at, edited_at, last_error) \
+             VALUES (?1, ?2, NULL, NULL, ?3, ?3, NULL, NULL, '') \
+             ON CONFLICT(book_id, chapter_url) DO UPDATE SET \
+               last_attempt_at=excluded.last_attempt_at, \
+               last_success_at=excluded.last_success_at, \
+               last_error=''",
+        )
+        .bind(id)
+        .bind(chapter_url)
+        .bind(now)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
     }
 
     pub async fn has_content(&self, book_id: &str, chapter_url: &str) -> Result<bool, AppError> {

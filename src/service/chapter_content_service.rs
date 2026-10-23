@@ -5,11 +5,12 @@
 
 use crate::error::error::AppError;
 use crate::storage::db::content_repo::{
-    ChapterContentRepo, ChapterLatestRow, ChapterVersionRow, EffectiveVersionRow,
-    NewChapterVersion, RecordOutcome,
+    ChapterContentRepo, ChapterLatestRow, ChapterVersionRow, EffectiveContentBlob,
+    EffectiveVersionRow, NewChapterVersion, RecordOutcome,
 };
 use crate::util::time::now_millis;
 use sha2::{Digest, Sha256};
+use std::collections::HashMap;
 
 /// 单章正文上限。异常书源返回超大正文时拒绝写入，避免把数据库写坏。
 pub const MAX_CHAPTER_CONTENT_BYTES: usize = 16 * 1024 * 1024;
@@ -311,6 +312,36 @@ impl ChapterContentService {
         self.repo.list_effective_versions(user_ns, book_id).await
     }
 
+    /// 一本书当前显示版本的归一化指纹，按章节地址索引；导入预览用来判断差异。
+    ///
+    /// 归一化口径与 diff 面板一致：剥 HTML 标签、逐行 trim、去掉空行。
+    /// 这样只差 HTML 包裹或空行的「同一份正文」不会被算成内容变化。
+    pub async fn effective_normalized_hashes(
+        &self,
+        user_ns: &str,
+        book_id: &str,
+    ) -> Result<HashMap<String, String>, AppError> {
+        let rows: Vec<EffectiveContentBlob> = self
+            .repo
+            .list_effective_content_blobs(user_ns, book_id)
+            .await?;
+        let mut hashes = HashMap::with_capacity(rows.len());
+        for row in rows {
+            let content = decode_content(row.codec, row.content)?;
+            hashes.insert(row.chapter_url, normalized_content_hash(&content));
+        }
+        Ok(hashes)
+    }
+
+    /// 图片源的空正文只更新检查时间，不追加空版本。
+    pub async fn touch_empty_upstream(
+        &self,
+        book_id: &str,
+        chapter_url: &str,
+    ) -> Result<(), AppError> {
+        self.repo.touch_empty_upstream(book_id, chapter_url).await
+    }
+
     pub async fn has_content(&self, book_id: &str, chapter_url: &str) -> Result<bool, AppError> {
         self.repo.has_content(book_id, chapter_url).await
     }
@@ -347,6 +378,22 @@ struct EncodedContent {
     hash: String,
 }
 
+/// 正文池的内容指纹：sha256(原始 UTF-8 字节)。
+pub fn content_hash(content: &str) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(content.as_bytes());
+    hex::encode(hasher.finalize())
+}
+
+/// 导入预览用的归一化指纹：剥 HTML 标签、去掉空行、逐行 trim 后再 hash。
+///
+/// 与 diff 面板的切段口径一致，避免「正文一样、只是 HTML 或空行不同」
+/// 被误判成有差异。
+pub fn normalized_content_hash(content: &str) -> String {
+    let paragraphs = crate::service::git_diff_service::split_to_paragraphs(content);
+    content_hash(&paragraphs.join("\n"))
+}
+
 fn encode_content(content: &str) -> Result<EncodedContent, AppError> {
     if content.len() > MAX_CHAPTER_CONTENT_BYTES {
         return Err(AppError::BadRequest(format!(
@@ -363,15 +410,12 @@ fn encode_content(content: &str) -> Result<EncodedContent, AppError> {
     } else {
         (CODEC_PLAIN, raw.to_vec())
     };
-    let mut hasher = Sha256::new();
-    hasher.update(raw);
-    let hash = hex::encode(hasher.finalize());
     Ok(EncodedContent {
         codec,
         raw_size: raw.len() as i64,
         stored_size: bytes.len() as i64,
         bytes,
-        hash,
+        hash: content_hash(content),
     })
 }
 

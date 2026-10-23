@@ -142,3 +142,117 @@ export function importChapterVersion(params: ImportChapterVersionParams) {
     .post<{ versionId: number; becameCurrent: boolean }>('/importChapterVersion', params)
     .then((r) => r.data)
 }
+
+export type ChapterImportMode = 'auto' | 'single' | 'book'
+
+export interface ChapterImportPreviewChapter {
+  sourceIndex: number
+  title: string
+  chars: number
+  excerpt: string
+  status: 'matched' | 'empty' | 'unmatched'
+  matchKind: 'title' | 'number' | 'order' | 'single' | 'none'
+  chapterIndex: number | null
+  chapterUrl: string | null
+  chapterTitle: string | null
+  /** 是否有当前缓存正文可用来对比 */
+  cached: boolean
+  /** 是否与当前缓存正文不同；没有缓存时为 false */
+  changed: boolean
+}
+
+export interface ChapterImportPreview {
+  mode: ChapterImportMode
+  total: number
+  matched: number
+  unmatched: number
+  empty: number
+  changed: number
+  cached: number
+  uncached: number
+  /** 详情对比用的短期令牌；正文过大时为空 */
+  previewId: string | null
+  chapters: ChapterImportPreviewChapter[]
+}
+
+export interface ChapterImportDiff {
+  changed: boolean | null
+  ops: ParagraphDiffOp[] | null
+  diffError: string
+  currentExcerpt: string
+  currentChars: number | null
+  importChars: number
+}
+
+export interface ChapterImportResult {
+  mode: ChapterImportMode
+  selected: number
+  imported: number
+  unchanged: number
+  skipped: number
+  failed: number
+  errors: string[]
+}
+
+export interface ChapterImportParams {
+  bookId: string
+  mode: ChapterImportMode
+  chapterUrl?: string
+  chapterIndex?: number
+  chapterTitle?: string
+  kind?: 'edited' | 'imported'
+  note?: string
+  makeCurrent?: boolean
+  createdAt?: number
+  /** 上传文件时优先使用文件，后端负责识别 UTF-8 / GB18030 / UTF-16。 */
+  file?: File | null
+  /** 没有文件时使用粘贴的文本。 */
+  text?: string
+}
+
+function buildChapterImportForm(
+  params: ChapterImportParams,
+  selectedIndexes?: number[]
+): FormData {
+  const form = new FormData()
+  form.append('bookId', params.bookId)
+  form.append('mode', params.mode)
+  if (params.chapterUrl) form.append('chapterUrl', params.chapterUrl)
+  if (params.chapterIndex != null) form.append('chapterIndex', String(params.chapterIndex))
+  if (params.chapterTitle) form.append('chapterTitle', params.chapterTitle)
+  if (params.kind) form.append('kind', params.kind)
+  if (params.note) form.append('note', params.note)
+  if (params.makeCurrent != null) form.append('makeCurrent', String(params.makeCurrent))
+  if (params.createdAt != null) form.append('createdAt', String(params.createdAt))
+  if (params.file) {
+    form.append('file', params.file, params.file.name)
+  } else if (params.text != null) {
+    form.append('text', params.text)
+  }
+  if (selectedIndexes) form.append('selectedIndexes', selectedIndexes.join(','))
+  return form
+}
+
+export function previewChapterImport(params: ChapterImportParams) {
+  return http
+    .post<ChapterImportPreview>('/previewChapterImport', buildChapterImportForm(params), {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    })
+    .then((r) => r.data)
+}
+
+/** `selectedIndexes` 传入空数组表示一章都不导入；不传表示全部已匹配章节。 */
+export function importChapterText(params: ChapterImportParams, selectedIndexes?: number[]) {
+  return http
+    .post<ChapterImportResult>('/importChapterText', buildChapterImportForm(params, selectedIndexes), {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    })
+    .then((r) => r.data)
+}
+
+/** 预览里点开某章时按需取它与当前正文的差异。 */
+export function getChapterImportDiff(previewId: string, sourceIndex: number) {
+  return http
+    .post<ChapterImportDiff>('/getChapterImportDiff', { previewId, sourceIndex })
+    .then((r) => r.data)
+}

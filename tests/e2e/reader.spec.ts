@@ -360,6 +360,60 @@ test.describe('Standard E2E: reader', () => {
     await expect(modal).toHaveCount(0)
   })
 
+  test('whole-book TXT import previews matches and refreshes adjacent chapters', async ({ page }) => {
+    const { name } = await seedLocalTxtBook(page)
+    await openBookFromShelf(page, name)
+    await expect(page.getByText('第一章正文内容。').first()).toBeVisible()
+
+    await page.locator('button[title="正文历史"]').click()
+    const modal = page.locator('.version-modal')
+    await expect(modal).toBeVisible()
+    await modal.getByRole('button', { name: '导入 TXT' }).click()
+
+    const firstText =
+      '第一章 开始\n导入后的第一章。\n第二章 中段\n导入后的第二章。\n第三十七章 不存在\n这章不该匹配。'
+    await modal.getByRole('textbox', { name: /粘贴整本小说文本/ }).fill(firstText)
+    await modal.getByRole('button', { name: '解析并预览' }).click()
+
+    // 预览：两章标题匹配，目录里没有的第三十七章留作未匹配；
+    // 新书没有缓存正文，无法对比，默认不勾选并引导去缓存
+    await expect(modal.getByText('共 3 章')).toBeVisible()
+    await expect(modal.getByText('匹配 2')).toBeVisible()
+    await expect(modal.getByText('未匹配 1')).toBeVisible()
+    await expect(modal.getByText('未缓存 2')).toBeVisible()
+    await expect(modal.getByText('已选 0')).toBeVisible()
+    await expect(modal.locator('.cache-hint')).toContainText('还没有')
+    await modal.getByRole('button', { name: '全选已匹配' }).click()
+    await expect(modal.getByText('已选 2')).toBeVisible()
+    await modal.getByRole('button', { name: '导入 2 章' }).click()
+    await expect(page.getByText('已导入 2 章')).toBeVisible()
+
+    // 导入后正文直接换成导入内容
+    await modal.locator('.close-btn').click()
+    await expect(page.getByText('导入后的第一章。').first()).toBeVisible()
+
+    // 相邻章此前可能已被预加载：翻过去也必须看到新正文
+    await page.locator('button.next-btn:not([disabled])').first().click()
+    await expect(page.getByText('导入后的第二章。').first()).toBeVisible()
+
+    // 再预览同一份文本：两章都与当前正文一致，默认不勾选
+    await page.locator('button[title="正文历史"]').click()
+    await modal.getByRole('button', { name: '导入 TXT' }).click()
+    await modal.getByRole('textbox', { name: /粘贴整本小说文本/ }).fill(firstText)
+    await modal.getByRole('button', { name: '解析并预览' }).click()
+    await expect(modal.getByText('有差异 0')).toBeVisible()
+    await expect(modal.getByText('已选 0')).toBeVisible()
+
+    // 改第一章再预览：只有第一章有差异并被默认勾选，详情直接显示对比
+    await modal
+      .getByRole('textbox', { name: /粘贴整本小说文本/ })
+      .fill(firstText.replace('导入后的第一章。', '再改一次第一章。'))
+    await modal.getByRole('button', { name: '解析并预览' }).click()
+    await expect(modal.getByText('有差异 1')).toBeVisible()
+    await expect(modal.getByText('已选 1')).toBeVisible()
+    await expect(modal.locator('.detail-diff .diff-line.add')).toContainText('再改一次第一章。')
+  })
+
   test('mobile long-press on underline opens action menu and deletes it', async ({ page }) => {
     // 移动视口（isMobile 按 767px 断点）；长按靠手动 dispatch TouchEvent，
     // 不需要 context 级 hasTouch

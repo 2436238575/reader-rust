@@ -11,6 +11,7 @@ use reader_rust::app::bootstrap::build_state;
 use reader_rust::app::config::AppConfig;
 use serde_json::{json, Value};
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
 struct TestServer {
@@ -130,11 +131,18 @@ impl TestServer {
     }
 
     async fn upload_txt(&self, name: &str, content: &str) -> Value {
+        self.upload_txt_bytes(name, content.as_bytes()).await
+    }
+
+    async fn upload_txt_bytes(&self, name: &str, content: &[u8]) -> Value {
         // reqwest 主 crate 没开 multipart feature：手工拼 multipart body
         let boundary = "----chapter-edit-test";
-        let body = format!(
-            "--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"{name}.txt\"\r\nContent-Type: text/plain\r\n\r\n{content}\r\n--{boundary}--\r\n"
-        );
+        let mut body = format!(
+            "--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"{name}.txt\"\r\nContent-Type: text/plain\r\n\r\n"
+        )
+        .into_bytes();
+        body.extend_from_slice(content);
+        body.extend_from_slice(format!("\r\n--{boundary}--\r\n").as_bytes());
         let resp = self
             .client
             .post(format!("{}/reader3/uploadTxtBook", self.base_url))
@@ -149,6 +157,46 @@ impl TestServer {
             .unwrap();
         let payload: Value = resp.json().await.unwrap();
         assert_eq!(payload["isSuccess"], json!(true), "上传应成功: {payload}");
+        payload["data"].clone()
+    }
+
+    async fn import_multipart(
+        &self,
+        path: &str,
+        fields: &[(&str, &str)],
+        file: Option<&str>,
+    ) -> Value {
+        let boundary = "----chapter-import-test";
+        let mut body = String::new();
+        for (name, value) in fields {
+            body.push_str(&format!(
+                "--{boundary}\r\nContent-Disposition: form-data; name=\"{name}\"\r\n\r\n{value}\r\n"
+            ));
+        }
+        if let Some(content) = file {
+            body.push_str(&format!(
+                "--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"import.txt\"\r\nContent-Type: text/plain\r\n\r\n{content}\r\n"
+            ));
+        }
+        body.push_str(&format!("--{boundary}--\r\n"));
+        let resp = self
+            .client
+            .post(format!("{}/reader3/{path}", self.base_url))
+            .bearer_auth(&self.token)
+            .header(
+                "Content-Type",
+                format!("multipart/form-data; boundary={boundary}"),
+            )
+            .body(body)
+            .send()
+            .await
+            .unwrap();
+        let payload: Value = resp.json().await.unwrap();
+        assert_eq!(
+            payload["isSuccess"],
+            json!(true),
+            "{path} 应成功: {payload}"
+        );
         payload["data"].clone()
     }
 
@@ -759,6 +807,149 @@ async fn stale_chapter_revalidates_in_background() {
     assert_eq!(upstream_versions, 2, "两次成功抓取都应保留");
 }
 
+/// 空正文不进时间线：文本源直接报错；图片源只记检查时间，不追加 0 字节版本。
+#[tokio::test]
+async fn empty_upstream_content_is_not_stored_as_a_version() {
+    let hits = Arc::new(AtomicUsize::new(0));
+    let upstream = {
+        let hits = hits.clone();
+        let app = Router::new().route(
+            "/content",
+            get(move || {
+                let hits = hits.clone();
+                async move {
+                    hits.fetch_add(1, Ordering::SeqCst);
+                    Json(json!({ "data": { "content": "" } }))
+                }
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            let _ = axum::serve(listener, app).await;
+        });
+        format!("http://{addr}")
+    };
+
+    let server = boot().await;
+    let source_body = |name: &str, source_url: &str, kind: i32| {
+        json!({
+            "bookSourceName": name,
+            "bookSourceUrl": source_url,
+            "enabled": true,
+            "bookSourceType": kind,
+            "ruleContent": { "content": "$.data.content" },
+            "ruleContentImage": {
+                "listRule": "$.images[*]",
+                "imageUrl": "image?item_id={{$.data.item_id}}"
+            }
+        })
+    };
+    server
+        .post("saveBookSource", source_body("空文本源", &upstream, 0))
+        .await;
+    server
+        .post(
+            "saveBookSource",
+            source_body("空图片源", &format!("{upstream}/image-source"), 2),
+        )
+        .await;
+    let sources = server.post("getBookSources", json!({})).await;
+    let source_id = |name: &str| {
+        sources
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|source| source["bookSourceName"] == json!(name))
+            .unwrap()["bookSourceId"]
+            .as_i64()
+            .unwrap()
+    };
+    let text_source_id = source_id("空文本源");
+    let image_source_id = source_id("空图片源");
+    let chapter_url = format!("{upstream}/content");
+
+    let text_book = server
+        .post(
+            "saveBook",
+            json!({
+                "name": "空文本",
+                "author": "作者",
+                "bookUrl": format!("{upstream}/info"),
+                "bookSourceId": text_source_id,
+            }),
+        )
+        .await;
+    let text_book_id = text_book["bookId"].as_str().unwrap().to_string();
+    let resp = server
+        .client
+        .post(format!("{}/reader3/getBookContent", server.base_url))
+        .bearer_auth(&server.token)
+        .json(&json!({
+            "bookId": text_book_id,
+            "chapterUrl": chapter_url,
+            "index": 0,
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND, "文本源空正文应报错");
+    let payload: Value = resp.json().await.unwrap();
+    assert!(
+        payload["errorMsg"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("正文为空"),
+        "{payload}"
+    );
+    assert_eq!(
+        server.timeline(&text_book_id, &chapter_url).await["items"]
+            .as_array()
+            .unwrap()
+            .len(),
+        0,
+        "文本源的 0 字节正文不应进时间线"
+    );
+    assert_eq!(hits.load(Ordering::SeqCst), 1);
+
+    let image_book = server
+        .post(
+            "saveBook",
+            json!({
+                "name": "空图片",
+                "author": "作者",
+                "bookUrl": format!("{upstream}/info2"),
+                "bookSourceId": image_source_id,
+            }),
+        )
+        .await;
+    let image_book_id = image_book["bookId"].as_str().unwrap().to_string();
+    let empty = server
+        .get_content(&image_book_id, &chapter_url, json!({}))
+        .await;
+    assert_eq!(empty["content"], json!(""), "图片源允许空正文: {empty}");
+    assert_eq!(
+        server.timeline(&image_book_id, &chapter_url).await["items"]
+            .as_array()
+            .unwrap()
+            .len(),
+        0,
+        "图片源的空正文也不进时间线"
+    );
+    assert_eq!(hits.load(Ordering::SeqCst), 2);
+
+    // 回源间隔内再读：直接返回空正文，不再抓上游
+    let again = server
+        .get_content(&image_book_id, &chapter_url, json!({}))
+        .await;
+    assert_eq!(again["content"], json!(""));
+    assert_eq!(
+        hits.load(Ordering::SeqCst),
+        2,
+        "空正文在回源间隔内不应重复抓取"
+    );
+}
+
 /// 恢复备份只替换书架，不删除全局登记行与正文历史。
 #[tokio::test]
 async fn restore_keeps_registration_and_edit_history() {
@@ -847,6 +1038,262 @@ async fn batch_delete_keeps_history() {
             .len(),
         1,
         "删书只移出书架，编辑历史保留"
+    );
+}
+
+/// 整本 TXT：按标题/序号匹配目录，预览可查看，确认后批量写入。
+#[tokio::test]
+async fn whole_book_text_preview_and_batch_import() {
+    let server = boot().await;
+    let book = server
+        .upload_txt(
+            "整本导入测试",
+            "第一章 开始\n本地正文一。\n第二章 继续\n本地正文二。\n第三章 结束\n本地正文三。\n",
+        )
+        .await;
+    let book_id = book["bookId"].as_str().unwrap().to_string();
+    let chapters = server
+        .post("getChapterList", json!({ "bookId": book_id }))
+        .await;
+    let first_url = chapters[0]["url"].as_str().unwrap().to_string();
+    let second_url = chapters[1]["url"].as_str().unwrap().to_string();
+    let third_url = chapters[2]["url"].as_str().unwrap().to_string();
+
+    // 上传的 TXT 里有两章能匹配，另有一个目录里不存在的「第三十七章」。
+    let text = "第一章 开始\n导入正文一。\n第二章 继续\n导入正文二。\n第三十七章 不存在\n这段不应该匹配。\n";
+    let preview = server
+        .import_multipart(
+            "previewChapterImport",
+            &[("bookId", &book_id), ("mode", "book")],
+            Some(text),
+        )
+        .await;
+    assert_eq!(preview["mode"], json!("book"));
+    assert_eq!(preview["total"], json!(3));
+    assert_eq!(preview["matched"], json!(2));
+    assert_eq!(
+        preview["unmatched"],
+        json!(1),
+        "目录序号对不上的章节不硬配: {preview}"
+    );
+    assert_eq!(preview["cached"], json!(0), "新书还没有正文缓存: {preview}");
+    assert_eq!(preview["uncached"], json!(2));
+    assert_eq!(preview["changed"], json!(0));
+    assert!(
+        preview["previewId"].as_str().is_some(),
+        "预览应生成详情对比令牌: {preview}"
+    );
+    let items = preview["chapters"].as_array().unwrap();
+    assert_eq!(items[0]["chapterUrl"], json!(first_url));
+    assert_eq!(items[1]["chapterUrl"], json!(second_url));
+    assert_eq!(items[2]["status"], json!("unmatched"));
+    assert_eq!(items[0]["matchKind"], json!("title"));
+    assert_eq!(items[0]["cached"], json!(false));
+    assert_eq!(items[0]["changed"], json!(false));
+
+    // 只导入前两章；第三十七章不选，也不该被塞进第三章
+    let result = server
+        .import_multipart(
+            "importChapterText",
+            &[
+                ("bookId", &book_id),
+                ("mode", "book"),
+                ("kind", "imported"),
+                ("note", "整本导入测试"),
+                ("makeCurrent", "true"),
+                ("selectedIndexes", "0,1"),
+            ],
+            Some(text),
+        )
+        .await;
+    assert_eq!(result["imported"], json!(2), "{result}");
+    assert_eq!(result["failed"], json!(0), "{result}");
+
+    let first = server.get_content(&book_id, &first_url, json!({})).await;
+    assert_eq!(first["content"], json!("导入正文一。"));
+    assert_eq!(first["edited"], json!(true));
+    let first_timeline = server.timeline(&book_id, &first_url).await;
+    let first_item = &first_timeline["items"].as_array().unwrap()[0];
+    assert_eq!(first_item["kind"], json!("imported"));
+    assert_eq!(first_item["note"], json!("整本导入测试"));
+
+    let second = server.get_content(&book_id, &second_url, json!({})).await;
+    assert_eq!(second["content"], json!("导入正文二。"));
+
+    // 第三章保持原样：没有因为多出来的第三十七章被覆盖
+    let third = server.get_content(&book_id, &third_url, json!({})).await;
+    assert_eq!(third["edited"], json!(false));
+    assert!(third["content"].as_str().unwrap().contains("本地正文三"));
+}
+
+/// 单章 TXT：粘贴带标题的正文，导入时去掉标题行，只写当前章节。
+#[tokio::test]
+async fn single_chapter_text_import_strips_heading() {
+    let server = boot().await;
+    let book = server
+        .upload_txt(
+            "单章导入测试",
+            "第一章 开始\n本地正文一。\n第二章 继续\n本地正文二。\n",
+        )
+        .await;
+    let book_id = book["bookId"].as_str().unwrap().to_string();
+    let chapters = server
+        .post("getChapterList", json!({ "bookId": book_id }))
+        .await;
+    let second_url = chapters[1]["url"].as_str().unwrap().to_string();
+
+    let text = "第二章 继续\n这是单章导入的正文。\n第二段。";
+    // 用 text 字段提交（粘贴路径），文件路径由上一个用例覆盖
+    let preview = server
+        .import_multipart(
+            "previewChapterImport",
+            &[
+                ("bookId", &book_id),
+                ("mode", "single"),
+                ("chapterUrl", &second_url),
+                ("chapterIndex", "1"),
+                ("chapterTitle", "第二章 继续"),
+                ("text", text),
+            ],
+            None,
+        )
+        .await;
+    assert_eq!(preview["mode"], json!("single"));
+    assert_eq!(preview["total"], json!(1));
+    assert_eq!(preview["matched"], json!(1));
+    assert_eq!(preview["chapters"][0]["title"], json!("第二章 继续"));
+    assert_eq!(preview["chapters"][0]["matchKind"], json!("single"));
+
+    let result = server
+        .import_multipart(
+            "importChapterText",
+            &[
+                ("bookId", &book_id),
+                ("mode", "single"),
+                ("chapterUrl", &second_url),
+                ("chapterIndex", "1"),
+                ("chapterTitle", "第二章 继续"),
+                ("makeCurrent", "true"),
+                ("text", text),
+            ],
+            None,
+        )
+        .await;
+    assert_eq!(result["imported"], json!(1), "{result}");
+
+    let content = server.get_content(&book_id, &second_url, json!({})).await;
+    assert_eq!(content["content"], json!("这是单章导入的正文。\n第二段。"));
+    assert_eq!(content["versionKind"], json!("edited"));
+}
+
+/// 预览拿当前正文对比：没变化的章节默认不需要导入，详情能按需看差异。
+#[tokio::test]
+async fn import_preview_marks_changed_chapters_and_serves_detail_diff() {
+    let server = boot().await;
+    let book = server
+        .upload_txt(
+            "导入差异测试",
+            "第一章 开始\n本地正文一。\n第二章 继续\n本地正文二。\n第三章 结束\n本地正文三。\n",
+        )
+        .await;
+    let book_id = book["bookId"].as_str().unwrap().to_string();
+
+    let text =
+        "第一章 开始\n第一次导入一。\n第二章 继续\n第一次导入二。\n第三章 结束\n第一次导入三。";
+    let imported = server
+        .import_multipart(
+            "importChapterText",
+            &[
+                ("bookId", &book_id),
+                ("mode", "book"),
+                ("makeCurrent", "true"),
+            ],
+            Some(text),
+        )
+        .await;
+    assert_eq!(imported["imported"], json!(3), "{imported}");
+
+    // 同一份文本再预览：三章都已有缓存，且都与当前正文一致
+    let same = server
+        .import_multipart(
+            "previewChapterImport",
+            &[("bookId", &book_id), ("mode", "book")],
+            Some(text),
+        )
+        .await;
+    assert_eq!(same["matched"], json!(3));
+    assert_eq!(same["cached"], json!(3), "{same}");
+    assert_eq!(same["changed"], json!(0), "{same}");
+    assert!(same["chapters"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .all(|item| item["changed"] == json!(false)));
+    let same_preview_id = same["previewId"].as_str().unwrap().to_string();
+    let same_diff = server
+        .post(
+            "getChapterImportDiff",
+            json!({ "previewId": same_preview_id, "sourceIndex": 0 }),
+        )
+        .await;
+    assert_eq!(same_diff["changed"], json!(false), "{same_diff}");
+    assert_eq!(same_diff["ops"], json!([]));
+
+    // 改第一章后再预览：只有第一章标记有差异
+    let changed_text =
+        "第一章 开始\n第二次导入一。\n第二章 继续\n第一次导入二。\n第三章 结束\n第一次导入三。";
+    let preview = server
+        .import_multipart(
+            "previewChapterImport",
+            &[("bookId", &book_id), ("mode", "book")],
+            Some(changed_text),
+        )
+        .await;
+    assert_eq!(preview["matched"], json!(3));
+    assert_eq!(preview["cached"], json!(3));
+    assert_eq!(preview["changed"], json!(1), "{preview}");
+    let items = preview["chapters"].as_array().unwrap();
+    assert_eq!(items[0]["changed"], json!(true));
+    assert_eq!(items[1]["changed"], json!(false));
+
+    let preview_id = preview["previewId"].as_str().unwrap().to_string();
+    let diff = server
+        .post(
+            "getChapterImportDiff",
+            json!({ "previewId": preview_id, "sourceIndex": 0 }),
+        )
+        .await;
+    assert_eq!(diff["changed"], json!(true), "{diff}");
+    let texts: Vec<&str> = diff["ops"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .flat_map(|op| {
+            [
+                op["baseText"].as_str().unwrap_or_default(),
+                op["editedText"].as_str().unwrap_or_default(),
+            ]
+        })
+        .collect();
+    assert!(
+        texts.iter().any(|text| text.contains("第一次导入一")),
+        "差异应包含当前正文: {diff}"
+    );
+    assert!(
+        texts.iter().any(|text| text.contains("第二次导入一")),
+        "差异应包含导入正文: {diff}"
+    );
+    assert_eq!(
+        diff["importChars"],
+        json!(items[0]["chars"].as_u64().unwrap()),
+        "{diff}"
+    );
+    assert!(
+        diff["currentExcerpt"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("第一次导入一"),
+        "{diff}"
     );
 }
 

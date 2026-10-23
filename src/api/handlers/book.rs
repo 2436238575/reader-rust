@@ -189,6 +189,9 @@ async fn network_content_data(
                     .version(book_id, chapter_url, base_id)
                     .await
                 {
+                    Ok(Some(base)) if base.content.trim().is_empty() => {
+                        (None, Some("最新上游正文为空，未计算差异".to_string()))
+                    }
                     Ok(Some(base)) => {
                         match state
                             .git_diff_service

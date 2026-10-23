@@ -1361,9 +1361,13 @@ impl BookService {
             .fetch_chapter_content(user_ns, source, chapter_url)
             .await?;
         if fetched.content.is_empty() {
-            // 纯图章节的正文本来就可能为空；只把「原来有文字、现在空了」当失败，
-            // 避免一次规则失效或风控页把正文写成空版本。
-            if source.rule_content_image.is_none() {
+            // 只有图片源（bookSourceType=2）允许空正文。文本源即使声明了
+            // 章节配图，空正文也说明规则失效或上游返回了空页面，不能写成
+            // 0 字节的上游版本。没有 bookSourceType 的旧书源仍按「声明了
+            // 配图规则就可能是图片源」兼容。
+            let image_source = source.book_source_type == Some(2)
+                || (source.book_source_type.is_none() && source.rule_content_image.is_some());
+            if !image_source {
                 return Err(AppError::NotFound(
                     "正文为空：书源规则可能已失效，或上游页面结构有变化".to_string(),
                 ));
@@ -1379,6 +1383,11 @@ impl BookService {
                     ));
                 }
             }
+            // 图片源的空正文是常态：只记检查时间，不往时间线塞 0 字节版本。
+            self.content
+                .touch_empty_upstream(book_id, chapter_url)
+                .await?;
+            return Ok(fetched.content);
         }
         self.store_upstream_content(user_ns, book_id, source, chapter_url, &fetched)
             .await?;
@@ -1487,6 +1496,39 @@ impl BookService {
                     edited_at: latest.edited_at,
                     needs_revalidate: self.content.needs_revalidate(latest),
                     stale: self.content.is_stale(latest),
+                });
+            }
+            // 图片源的空正文只有检查时间，没有版本指针；在回源间隔内直接
+            // 返回空正文，避免每次翻章都重新抓上游。
+            if latest.latest_upstream_version_id.is_none()
+                && latest.latest_user_version_id.is_none()
+                && latest.last_success_at.is_some()
+                && !self.content.needs_revalidate(latest)
+            {
+                return Ok(ChapterContentRead {
+                    view: ChapterVersionView {
+                        version_id: 0,
+                        kind: "upstream".to_string(),
+                        base_version_id: None,
+                        content: String::new(),
+                        created_at: latest
+                            .last_success_at
+                            .unwrap_or_else(crate::util::time::now_millis),
+                        book_source_name: source.book_source_name.clone(),
+                        chapter_index: 0,
+                        chapter_title: String::new(),
+                        note: String::new(),
+                        raw_size: 0,
+                    },
+                    latest_upstream_version_id: None,
+                    latest_user_version_id: None,
+                    selected_version_id: None,
+                    last_attempt_at: latest.last_attempt_at,
+                    last_success_at: latest.last_success_at,
+                    upstream_changed_at: latest.upstream_changed_at,
+                    edited_at: latest.edited_at,
+                    needs_revalidate: false,
+                    stale: false,
                 });
             }
         }

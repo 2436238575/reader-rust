@@ -224,6 +224,18 @@ pub fn build_router(state: AppState) -> Router {
             post(handlers::import_chapter_version),
         )
         .route(
+            "/reader3/previewChapterImport",
+            post(handlers::preview_chapter_import),
+        )
+        .route(
+            "/reader3/importChapterText",
+            post(handlers::import_chapter_text),
+        )
+        .route(
+            "/reader3/getChapterImportDiff",
+            post(handlers::get_chapter_import_diff),
+        )
+        .route(
             "/reader3/getChapterComments",
             get(handlers::get_chapter_comments).post(handlers::get_chapter_comments),
         )

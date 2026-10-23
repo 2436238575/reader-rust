@@ -76,6 +76,11 @@ pub fn build_chapter_url(book_url: &str, index: usize) -> String {
     format!("{}#{}", book_url.trim_end_matches('#'), index)
 }
 
+/// 单行是否像章节标题。单章导入时用它决定要不要把第一行当标题剥掉。
+pub fn is_chapter_heading_line(line: &str) -> bool {
+    chapter_heading_regex().is_some_and(|re| is_chapter_heading(line.trim(), &re))
+}
+
 pub fn parse_txt_chapters(book_url: &str, text: &str) -> Vec<ParsedTxtChapter> {
     let Some(heading_re) = chapter_heading_regex() else {
         return fallback_chapter(book_url, text);

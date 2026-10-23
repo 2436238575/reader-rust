@@ -120,6 +120,15 @@ POST /reader3/selectChapterVersion { bookId, chapterUrl, versionId? }
 POST /reader3/importChapterVersion { bookId, chapterUrl, content, chapterIndex?,
                                      chapterTitle?, baseVersionId?, note?,
                                      makeCurrent?, createdAt? }
+POST /reader3/previewChapterImport  multipart: bookId, mode?, chapterUrl?, chapterIndex?,
+                                     chapterTitle?, file? | text?
+        → { mode, total, matched, unmatched, empty, changed, cached, uncached,
+            previewId, chapters: [...] }
+POST /reader3/importChapterText     multipart: 同上 + kind?, note?, makeCurrent?,
+                                     createdAt?, selectedIndexes?
+        → { mode, selected, imported, unchanged, skipped, failed, errors }
+POST /reader3/getChapterImportDiff { previewId, sourceIndex }
+        → { changed, ops, diffError, currentExcerpt, currentChars, importChars }
 ```
 
 - `saveChapterEdit` 默认把新编辑设为当前；`baseVersionId` 不传时取当前最新上游。
@@ -127,6 +136,36 @@ POST /reader3/importChapterVersion { bookId, chapterUrl, content, chapterIndex?,
   `isCurrent` / `isLatestUpstream` / `isLatestUser` 标识版本状态。
 - `selectChapterVersion` 按用户保存到服务端，跨设备一致；“预览”不写状态。
 - `importChapterVersion` 默认只进时间线（`makeCurrent=false`），可指定历史时间与备注。
+
+#### 单章 / 整本 TXT 导入
+
+`previewChapterImport` 只解析和匹配，不写库；`importChapterText` 按预览结果批量写入。
+两个接口都收 `multipart/form-data`，正文可以放在 `file` 文件字段，也可以放在 `text` 文本字段。
+文件支持 UTF-8、GB18030 与 UTF-16（含 BOM），上限 50MB。
+
+- `mode`：`book` 按章节标题拆分（标题形如「第 12 章」「第一百零二回」），`single` 把整段文本
+  作为 `chapterUrl` 对应的当前章节，`auto` 为默认值——能拆出多章按整本处理，否则按单章处理。
+- 单章模式的正文如果第一行是章节标题，会去掉标题行后入库。
+- 整本模式的匹配顺序是「标题完全一致 → 章节序号相同 → 按位置对齐」。目录本身带章节序号时，
+  正文里带序号却匹配不上的章节不参与按位置对齐，避免把「第 37 章」硬塞进某一章。
+- 目录里的卷名条目（`isVolume`）不参与匹配。空章节和未匹配章节不会写入。
+- 预览返回的 `chapters[]` 每项包含 `sourceIndex`、`title`、`chars`、`excerpt`、`status`
+  （`matched` / `empty` / `unmatched`）、`matchKind`（`title` / `number` / `order` / `single` / `none`），
+  以及匹配到的 `chapterIndex`、`chapterUrl`、`chapterTitle`。
+- 预览会拿每章和**当前显示的正文**比对：`cached` 表示有正文可比，`changed` 表示内容不同。
+  当前返回的是用户版本时比用户版本，没有用户版本时比最新上游；没有缓存的章节 `cached=false`、
+  `changed=false`，前端默认不勾选并提示先缓存全书。比对口径与 diff 面板一致：剥 HTML 标签、
+  去掉空行和行首尾空白，所以只差 HTML 包裹或空行的同一份正文不算变化。
+- 前端默认只勾选 `matched && cached && changed` 的章节；「全选已匹配」可以在确认后覆盖所有章节。
+- `previewId` 是详情对比用的短期令牌（进程内缓存 30 分钟，最多 3 份、单份 24MB）。
+  `getChapterImportDiff` 按 `sourceIndex` 取回该章与当前正文的段落 diff；正文过大时 `previewId`
+  为 `null`，此时详情只展示正文片段。
+- `importChapterText` 的 `selectedIndexes` 是逗号分隔的 `sourceIndex`：不传表示导入全部已匹配章节，
+  传空字符串表示一章都不导入。`kind` 为 `edited`（默认）或 `imported`；`makeCurrent` 默认 false。
+- 导入接口会重新解析、重新匹配一次，所以需要和预览时提交同一份正文与 `mode`。
+- **空正文不写入时间线**：文本源（`bookSourceType` 不是 2）返回空正文按失败处理；图片源
+  （`bookSourceType=2`）允许空正文，但只更新检查时间，不追加 0 字节的上游版本。存量部署里
+  已有的空上游版本不会自动删除，需要在维护窗口按 `docs/maintainers/database.md` 的说明清理。
 
 ## 获取章节配图
 

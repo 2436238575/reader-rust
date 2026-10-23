@@ -147,6 +147,68 @@ UPDATE chapter_view_state SET chapter_url = '<new>'
 和 `chapter_view_state` 的主键包含 `chapter_url`，新 URL 已有行时必须先决定保留哪一边的
 指针/选择。
 
+### 清理旧版本留下的空上游正文（维护窗口手工执行）
+
+旧版本把「文本源返回空正文」也写成了 `kind='upstream'`、`raw_size=0` 的版本。
+新版本已经阻止这种写入（文本源空正文按失败处理；只有 `bookSourceType=2` 的图片源允许
+空正文，且只记检查时间，不追加版本），但**存量行不会自动删除**。
+
+这些行是抓取失败留下的空壳，不属于有效历史。确认要清理时，先停服并备份 `storage/reader.db`，
+再按顺序执行：
+
+```sql
+-- 1. 取消指向空上游版本的「当前版本」选择
+DELETE FROM chapter_view_state
+WHERE selected_version_id IN (
+  SELECT v.version_id
+  FROM chapter_versions v
+  JOIN chapter_contents c ON c.content_id = v.content_id
+  WHERE v.kind = 'upstream' AND c.raw_size = 0
+);
+
+-- 2. 用户版本若把空上游记成基准，清掉这个悬空引用（只影响展示的元数据）
+UPDATE chapter_versions
+SET base_version_id = NULL
+WHERE base_version_id IN (
+  SELECT v.version_id
+  FROM chapter_versions v
+  JOIN chapter_contents c ON c.content_id = v.content_id
+  WHERE v.kind = 'upstream' AND c.raw_size = 0
+);
+
+-- 3. 指针改到该章最近一个非空上游版本；没有就置空
+UPDATE chapter_latest
+SET latest_upstream_version_id = (
+  SELECT v.version_id
+  FROM chapter_versions v
+  JOIN chapter_contents c ON c.content_id = v.content_id
+  WHERE v.book_id = chapter_latest.book_id
+    AND v.chapter_url = chapter_latest.chapter_url
+    AND v.kind = 'upstream'
+    AND c.raw_size > 0
+  ORDER BY v.version_id DESC
+  LIMIT 1
+)
+WHERE latest_upstream_version_id IN (
+  SELECT v.version_id
+  FROM chapter_versions v
+  JOIN chapter_contents c ON c.content_id = v.content_id
+  WHERE v.kind = 'upstream' AND c.raw_size = 0
+);
+
+-- 4. 删除空上游版本，再回收没有版本引用的正文
+DELETE FROM chapter_versions
+WHERE version_id IN (
+  SELECT v.version_id
+  FROM chapter_versions v
+  JOIN chapter_contents c ON c.content_id = v.content_id
+  WHERE v.kind = 'upstream' AND c.raw_size = 0
+);
+
+DELETE FROM chapter_contents
+WHERE content_id NOT IN (SELECT content_id FROM chapter_versions);
+```
+
 ## shelf_books
 
 书架。主键 `(user_ns, book_id)`，普通索引 `(user_ns, position)`。

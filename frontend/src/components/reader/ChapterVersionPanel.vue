@@ -17,6 +17,9 @@
               </p>
             </div>
             <div class="head-actions">
+              <button v-if="!showImport" class="ghost-btn" @click="showImport = true">
+                导入 TXT
+              </button>
               <button v-if="canFollowLatest" class="ghost-btn" @click="followLatest">
                 跟随最新
               </button>
@@ -51,12 +54,26 @@
                   <span v-if="item.isCurrent" class="badge current">当前</span>
                   <span v-if="item.isLatestUpstream" class="badge">最新上游</span>
                   <span v-if="item.isLatestUser" class="badge">最新编辑</span>
+                  <span v-if="item.rawSize === 0" class="badge empty">空正文</span>
                 </div>
               </button>
               <div v-if="!timeline?.items?.length" class="empty small">还没有正文版本</div>
             </div>
 
-            <div class="preview">
+            <div v-if="showImport" class="preview import-pane">
+              <ChapterTextImport
+                :book-id="store.book?.bookId"
+                :chapter-url="store.currentChapter?.url"
+                :chapter-index="store.currentChapter?.index"
+                :chapter-title="store.currentChapter?.title"
+                :local-book="localBook"
+                @imported="onImported"
+                @cancel="showImport = false"
+                @cache="onOpenCache"
+              />
+            </div>
+
+            <div v-else class="preview">
               <div v-if="!preview" class="empty small">选择一个版本预览</div>
               <template v-else>
                 <div class="preview-head">
@@ -132,29 +149,6 @@
               </template>
             </div>
           </div>
-
-          <details class="import-box">
-            <summary>导入历史版本</summary>
-            <div class="import-form">
-              <textarea
-                v-model="importContent"
-                class="import-text"
-                placeholder="粘贴要保存的历史正文"
-              ></textarea>
-              <div class="import-row">
-                <input v-model="importNote" class="import-input" placeholder="备注（可选）" />
-                <input v-model="importAt" type="datetime-local" class="import-input" />
-              </div>
-              <div class="import-actions">
-                <button class="ghost-btn" :disabled="importing || !importContent.trim()" @click="doImport(false)">
-                  {{ importing ? '导入中…' : '只加入历史' }}
-                </button>
-                <button class="ghost-btn" :disabled="importing || !importContent.trim()" @click="doImport(true)">
-                  加入并设为当前
-                </button>
-              </div>
-            </div>
-          </details>
         </div>
       </div>
     </Transition>
@@ -171,11 +165,13 @@ import {
   getChapterTimeline,
   getChapterVersion,
   getChapterVersionDiff,
-  importChapterVersion,
+  type ChapterImportResult,
   type ChapterTimeline,
   type ChapterTimelineItem,
   type ChapterVersionDetail,
 } from '../../api/chapterEdit'
+import ChapterTextImport from './ChapterTextImport.vue'
+import { isLocalBook } from '../../utils/localBook'
 import { formatBytes, formatDateTime } from '../../utils/format'
 import {
   buildDiffRows,
@@ -206,12 +202,10 @@ const diffRows = computed(() =>
   buildDiffRows(diffOps.value ?? [], { expanded: expanded.value })
 )
 
-const importing = ref(false)
-const importContent = ref('')
-const importNote = ref('')
-const importAt = ref('')
+const showImport = ref(false)
 
 const chapterTitle = computed(() => store.currentChapter?.title || '')
+const localBook = computed(() => isLocalBook(store.book))
 const canFollowLatest = computed(
   () => Boolean(timeline.value?.selectedVersionId) || store.config.contentVersion === 'upstream'
 )
@@ -254,6 +248,7 @@ async function previewVersion(item: ChapterTimelineItem) {
   const bookId = store.book?.bookId
   const chapter = store.currentChapter
   if (!bookId || !chapter) return
+  showImport.value = false
   resetDiff()
   try {
     preview.value = await getChapterVersion(bookId, chapter.url, item.versionId)
@@ -337,35 +332,37 @@ function inlineParts(op: ParagraphDiffOp) {
   return parts
 }
 
-async function doImport(makeCurrentVersion: boolean) {
-  const bookId = store.book?.bookId
-  const chapter = store.currentChapter
-  if (!bookId || !chapter || !importContent.value.trim()) return
-  importing.value = true
-  try {
-    const createdAt = importAt.value ? new Date(importAt.value).getTime() : undefined
-    await importChapterVersion({
-      bookId,
-      chapterUrl: chapter.url,
-      content: importContent.value,
-      chapterIndex: chapter.index,
-      chapterTitle: chapter.title,
-      note: importNote.value,
-      makeCurrent: makeCurrentVersion,
-      createdAt: Number.isFinite(createdAt) ? createdAt : undefined,
-    })
-    importContent.value = ''
-    importNote.value = ''
-    importAt.value = ''
-    appStore.showToast(makeCurrentVersion ? '已导入并设为当前' : '已加入历史', 'success')
-    await reload()
-    if (makeCurrentVersion) {
-      await store.reloadChapterAfterEdit(store.currentIndex)
-    }
-  } catch (e) {
-    appStore.showToast((e as Error).message || '导入失败', 'error')
-  } finally {
-    importing.value = false
+function onOpenCache() {
+  emit('update:modelValue', false)
+  store.openPanel('cache')
+}
+
+async function onImported(payload: {
+  result: ChapterImportResult
+  makeCurrent: boolean
+  includesCurrent: boolean
+}) {
+  showImport.value = false
+  const { result, makeCurrent, includesCurrent } = payload
+  if (result.failed > 0) {
+    const firstError = result.errors[0] ? `：${result.errors[0]}` : ''
+    appStore.showToast(
+      `导入完成：成功 ${result.imported} 章，失败 ${result.failed} 章${firstError}`,
+      'warning'
+    )
+  } else if (result.imported > 0) {
+    const unchanged = result.unchanged > 0 ? `，${result.unchanged} 章内容未变` : ''
+    appStore.showToast(`已导入 ${result.imported} 章${unchanged}`, 'success')
+  } else if (result.unchanged > 0) {
+    appStore.showToast('内容和现有版本相同，没有新增版本', 'success')
+  } else {
+    appStore.showToast('没有导入任何章节', 'warning')
+  }
+  // 整本导入会一次改多章：预加载过的相邻章可能仍是旧正文，全部作废重取。
+  await store.invalidateChapterContentCache()
+  await reload()
+  if (makeCurrent && includesCurrent) {
+    await store.reloadChapterAfterEdit(store.currentIndex)
   }
 }
 
@@ -376,6 +373,8 @@ watch(
       preview.value = null
       resetDiff()
       void reload()
+    } else {
+      showImport.value = false
     }
   }
 )
@@ -594,6 +593,11 @@ watch(
   color: #2563eb;
 }
 
+.badge.empty {
+  background: rgba(245, 158, 11, 0.16);
+  color: #b45309;
+}
+
 .preview {
   min-width: 0;
   min-height: 0;
@@ -732,59 +736,8 @@ watch(
   padding: 20px;
 }
 
-.import-box {
-  flex-shrink: 0;
-  margin-top: 12px;
-  border-top: 1px solid rgba(128, 128, 128, 0.12);
-  padding-top: 10px;
-  font-size: var(--text-sm);
-}
-
-.import-box summary {
-  cursor: pointer;
-  opacity: 0.7;
-}
-
-.import-form {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  margin-top: 8px;
-}
-
-.import-text {
-  width: 100%;
-  min-height: 90px;
-  resize: vertical;
-  border-radius: 8px;
-  border: 1px solid rgba(128, 128, 128, 0.25);
-  background: transparent;
-  color: inherit;
-  padding: 8px 10px;
-  font: inherit;
-}
-
-.import-row {
-  display: flex;
-  gap: 8px;
-  flex-wrap: wrap;
-}
-
-.import-input {
-  flex: 1;
-  min-width: 160px;
-  border-radius: 8px;
-  border: 1px solid rgba(128, 128, 128, 0.25);
-  background: transparent;
-  color: inherit;
-  padding: 6px 8px;
-  font: inherit;
-}
-
-.import-actions {
-  display: flex;
-  gap: 8px;
-  justify-content: flex-end;
+.import-pane {
+  padding: 10px 12px;
 }
 
 @media (max-width: 767px) {

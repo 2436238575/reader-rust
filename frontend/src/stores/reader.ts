@@ -1086,6 +1086,15 @@ export const useReaderStore = defineStore('reader', () => {
     }
   }
 
+  /** 批量导入后清掉全部章节的预加载与派生状态，后续翻章重新从后端取正文。
+   *  只清当前章会让预加载过的相邻章继续显示导入前的旧正文。 */
+  async function invalidateChapterContentCache() {
+    preloadedContent.value.clear()
+    chapterVersions.clear()
+    chapterDiffs.clear()
+    await refreshEditedChapterKeys()
+  }
+
   /** 编辑版保存/删除后重载本章：清预载与浏览器缓存，重新走后端（编辑版优先），
    *  与 refreshContent 同构但不强刷上游。 */
   async function reloadChapterAfterEdit(index = currentIndex.value) {
@@ -1350,6 +1359,7 @@ export const useReaderStore = defineStore('reader', () => {
     setActiveChapterState,
     refreshContent,
     reloadChapterAfterEdit,
+    invalidateChapterContentCache,
     setChapterVersion,
     chapterVersions,
     nextChapter,
