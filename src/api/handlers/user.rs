@@ -1,6 +1,7 @@
 use crate::api::AppState;
 use crate::auth::{CurrentUser, MaybeUser};
 use axum::{
+    body::Bytes,
     extract::{ConnectInfo, Multipart, Query, State},
     Json,
 };
@@ -9,7 +10,7 @@ use serde_json::Value;
 use std::path::{Path, PathBuf};
 use tokio::fs;
 
-use crate::error::error::{ApiResponse, AppError};
+use crate::error::error::{ApiResponse, AppError, NEED_LOGIN};
 use crate::util::safe_path;
 
 /// 上传资源文件的单文件上限（multipart 字段不受 DefaultBodyLimit 约束，需自行限量）。
@@ -19,6 +20,12 @@ const MAX_UPLOAD_FILE_BYTES: usize = 32 * 1024 * 1024;
 pub struct LoginRequest {
     pub username: Option<String>,
     pub password: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct RefreshTokenRequest {
+    #[serde(rename = "refreshToken")]
+    pub refresh_token: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -123,13 +130,40 @@ pub async fn login(
     Ok(Json(ApiResponse::ok(data)))
 }
 
+/// 公开端点：用一次性 Refresh Token 换一对新令牌。
+///
+/// 成功返回新的 `accessToken` + `refreshToken`；任何失败（不存在、已过期、
+/// 已吊销、重放）统一 401 `需要登录`，前端据此清理本地令牌并回到登录页。
+pub async fn refresh_token(
+    State(state): State<AppState>,
+    Json(req): Json<RefreshTokenRequest>,
+) -> Result<Json<ApiResponse<Value>>, AppError> {
+    let token = req.refresh_token.unwrap_or_default();
+    if token.trim().is_empty() {
+        return Err(AppError::Unauthorized(NEED_LOGIN.to_string()));
+    }
+    let data = state.user_service.refresh_session(&token).await?;
+    Ok(Json(ApiResponse::ok(data)))
+}
+
 /// 登出。
 ///
-/// 令牌是无状态的，服务端没有可撤销的会话记录——这里只作为客户端
-/// 「清除本地令牌」的确认端点，因此挂在可选鉴权路由上：即使令牌已过期
-/// 也返回成功，前端不必为此走一次失败分支。
-pub async fn logout() -> Result<Json<ApiResponse<Value>>, AppError> {
-    Ok(Json(ApiResponse::ok(Value::String("".to_string()))))
+/// Refresh Token 需要在服务端吊销，因此从 body 读取；body 为空或已损坏时
+/// 仍返回成功——令牌已过期的情况下，前端同样只需要清掉本地状态。
+pub async fn logout(
+    State(state): State<AppState>,
+    body: Bytes,
+) -> Result<Json<ApiResponse<Value>>, AppError> {
+    if !body.is_empty() {
+        if let Ok(req) = serde_json::from_slice::<RefreshTokenRequest>(&body) {
+            if let Some(token) = req.refresh_token.filter(|token| !token.trim().is_empty()) {
+                if let Err(error) = state.user_service.revoke_refresh_token(&token).await {
+                    tracing::warn!("登出时吊销 Refresh Token 失败: {error}");
+                }
+            }
+        }
+    }
+    Ok(Json(ApiResponse::ok(Value::String(String::new()))))
 }
 
 /// 可选鉴权：未登录时返回 `userInfo: null`，不报错。

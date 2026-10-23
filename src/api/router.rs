@@ -41,6 +41,8 @@ pub fn build_router(state: AppState) -> Router {
     let public = Router::new()
         .route("/health", get(handlers::health))
         .route("/reader3/login", post(handlers::login))
+        // Refresh Token 本身就是凭据，不能挂在 require_auth 后面
+        .route("/reader3/refreshToken", post(handlers::refresh_token))
         .with_state(state.clone());
 
     // ── 可选鉴权：未登录也返回成功，只是内容为空 ──

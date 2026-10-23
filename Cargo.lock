@@ -2334,6 +2334,7 @@ dependencies = [
  "serde",
  "serde_html_form",
  "serde_json",
+ "sha2",
  "sqlx",
  "sxd-document",
  "sxd-xpath",

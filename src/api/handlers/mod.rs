@@ -41,7 +41,7 @@ pub use review::{get_chapter_comments, get_para_comment_index, get_para_comments
 pub use search_cache::search_cached_content;
 pub use user::{
     change_password, delete_file, get_user_config, get_user_info, get_userdata, login, logout,
-    save_user_config, save_userdata, upload_file,
+    refresh_token, save_user_config, save_userdata, upload_file,
 };
 pub use webdav::{
     delete_webdav_file, delete_webdav_file_list, get_webdav_file, get_webdav_file_list,

@@ -1,8 +1,9 @@
 use crate::app::config::AppConfig;
 use crate::auth::extractor::AuthUser;
 use crate::auth::jwt::{encode_token, Claims};
-use crate::error::error::AppError;
+use crate::error::error::{AppError, NEED_LOGIN};
 use crate::model::user::User;
+use crate::service::refresh_token_service::{RefreshTokenStore, RotateOutcome};
 use crate::util::crypto::{hash_password, random_string, verify_password};
 use crate::util::hash::md5_hex;
 use crate::util::time::now_ts;
@@ -100,6 +101,8 @@ pub struct UserService {
     docs: crate::service::json_document_service::JsonDocumentService,
     pool: SqlitePool,
     jwt_secret: Arc<Vec<u8>>,
+    /// Refresh Token 的签发与轮换状态（明文不落库，只存哈希）
+    refresh_store: RefreshTokenStore,
     auth_throttle: Arc<Mutex<AuthThrottle>>,
     /// WebDAV Basic 凭据验证缓存：`(username, md5(password))` → 校验时间。
     ///
@@ -124,12 +127,14 @@ impl UserService {
 
     pub fn new(cfg: AppConfig, pool: SqlitePool, jwt_secret: Arc<Vec<u8>>) -> Self {
         let storage_root = PathBuf::from(&cfg.storage_dir);
+        let refresh_store = RefreshTokenStore::new(pool.clone(), cfg.refresh_token_ttl_secs);
         Self {
             data_root: storage_root.join("data"),
             docs: crate::service::json_document_service::JsonDocumentService::new(pool.clone()),
             cfg,
             pool,
             jwt_secret,
+            refresh_store,
             auth_throttle: Arc::new(Mutex::new(AuthThrottle::default())),
             webdav_credential_cache: Arc::new(Mutex::new(HashMap::new())),
         }
@@ -163,6 +168,8 @@ impl UserService {
             user.password_hash = hash_password_async(&preset).await?;
             user.token_version += 1;
             self.upsert_user_row(&user).await?;
+            // 强制重置密码等同于把该账号所有既有会话踢下线
+            self.refresh_store.revoke_all_for_user(user.uid).await?;
             self.invalidate_webdav_credentials(&username);
             tracing::info!("已按 ADMIN_PASSWORD 重置账号 {username} 的密码");
             return Ok(());
@@ -278,7 +285,7 @@ impl UserService {
         }
     }
 
-    /// 登录，成功返回含 `accessToken`（JWT）的用户信息。
+    /// 登录，成功返回含 Access + Refresh 令牌的用户信息。
     ///
     /// `client_ip` 来自 `ConnectInfo`：IP 维度的登录封禁按它记账；集成测试等
     /// 拿不到对端地址的场景传 `None`，此时只走用户名维度的限速。
@@ -303,16 +310,25 @@ impl UserService {
         Err(AppError::BadRequest("用户名或密码错误".to_string()))
     }
 
-    /// 签发令牌。纯函数，不碰数据库——撤销靠 `users.token_version` 的比对，
-    /// 中间件每个请求读一次该字段，因此改密码立即生效。
+    /// 签发 Access Token。纯函数，不碰数据库——撤销靠 `users.token_version`
+    /// 的比对，中间件每个请求读一次该字段，因此改密码立即生效。
     pub fn issue_token(&self, user: &User) -> Result<String, AppError> {
+        self.sign_access_token(user.uid, &user.username, user.token_version)
+    }
+
+    fn sign_access_token(
+        &self,
+        uid: i64,
+        username: &str,
+        token_version: i64,
+    ) -> Result<String, AppError> {
         let now = now_ts();
         let claims = Claims {
-            sub: user.username.clone(),
-            uid: user.uid,
+            sub: username.to_string(),
+            uid,
             iat: now,
-            exp: now.saturating_add(self.cfg.jwt_ttl_secs as i64),
-            ver: user.token_version,
+            exp: now.saturating_add(self.cfg.access_token_ttl_secs as i64),
+            ver: token_version,
             scope: None,
             bsid: None,
         };
@@ -327,8 +343,37 @@ impl UserService {
             .bind(&user.username)
             .execute(&self.pool)
             .await?;
-        let token = self.issue_token(user)?;
-        Ok(self.format_login(user, &token))
+        let access_token = self.issue_token(user)?;
+        let refresh_token = self
+            .refresh_store
+            .issue(user.uid, user.token_version)
+            .await?;
+        Ok(self.format_login(user, &access_token, &refresh_token))
+    }
+
+    /// 用 Refresh Token 换一对新令牌（一次性轮换）。
+    ///
+    /// 所有失败（不存在/已过期/已吊销/版本不匹配/重放）统一 401，避免把
+    /// 底层原因回给客户端；重放检测与家族吊销在 store 内完成。
+    pub async fn refresh_session(&self, refresh_token: &str) -> Result<Value, AppError> {
+        match self.refresh_store.rotate(refresh_token).await? {
+            RotateOutcome::Rotated(session) => {
+                let access_token =
+                    self.sign_access_token(session.uid, &session.username, session.token_version)?;
+                Ok(self.format_session(&access_token, &session.refresh_token))
+            }
+            RotateOutcome::Invalid | RotateOutcome::ReuseDetected => {
+                Err(AppError::Unauthorized(NEED_LOGIN.to_string()))
+            }
+        }
+    }
+
+    /// 登出：吊销该 Refresh Token 所属的会话家族；无效令牌静默成功。
+    pub async fn revoke_refresh_token(&self, refresh_token: &str) -> Result<(), AppError> {
+        self.refresh_store
+            .revoke_family_by_token(refresh_token)
+            .await?;
+        Ok(())
     }
 
     /// `getUserInfo` 的载荷。身份已由 `optional_auth` 中间件解析，这里只做补全。
@@ -371,10 +416,11 @@ impl UserService {
         Ok(v)
     }
 
-    /// 修改密码，返回含新令牌的用户信息。
+    /// 修改密码，返回换发的 Access + Refresh 令牌。
     ///
-    /// 版本号自增会让所有旧令牌失效（等价于「改密码踢掉其他设备」），
-    /// 同时为当前设备换发一个新令牌，避免用户改完密码立刻被登出。
+    /// 版本号自增会让所有旧 Access Token 失效（等价于「改密码踢掉其他设备」），
+    /// 同时吊销全部 Refresh Token；为当前设备新开一条会话家族，避免用户改完
+    /// 密码立刻被登出。
     pub async fn change_password(
         &self,
         username: &str,
@@ -396,9 +442,14 @@ impl UserService {
         user.token_version += 1;
         user.last_login_at = now_ms();
         self.upsert_user_row(&user).await?;
+        self.refresh_store.revoke_all_for_user(user.uid).await?;
         self.invalidate_webdav_credentials(username);
-        let token = self.issue_token(&user)?;
-        Ok(self.format_login(&user, &token))
+        let access_token = self.issue_token(&user)?;
+        let refresh_token = self
+            .refresh_store
+            .issue(user.uid, user.token_version)
+            .await?;
+        Ok(self.format_login(&user, &access_token, &refresh_token))
     }
 
     /// WebDAV 的 HTTP Basic 校验。返回 `None` 表示用户名或口令不正确。
@@ -487,13 +538,27 @@ impl UserService {
         })
     }
 
-    /// 登录/改密码响应：在用户信息基础上附带新签发的令牌。
-    fn format_login(&self, user: &User, token: &str) -> Value {
+    /// 登录/改密码响应：在用户信息基础上附带新签发的一对令牌。
+    fn format_login(&self, user: &User, access_token: &str, refresh_token: &str) -> Value {
         let mut value = self.format_user(user);
         if let Some(obj) = value.as_object_mut() {
-            obj.insert("accessToken".to_string(), Value::from(token));
+            obj.insert("accessToken".to_string(), Value::from(access_token));
+            obj.insert("refreshToken".to_string(), Value::from(refresh_token));
+            obj.insert(
+                "accessTokenExpiresIn".to_string(),
+                Value::from(self.cfg.access_token_ttl_secs),
+            );
         }
         value
+    }
+
+    /// 刷新响应只含令牌，用户信息由前端已有的会话状态提供。
+    fn format_session(&self, access_token: &str, refresh_token: &str) -> Value {
+        serde_json::json!({
+            "accessToken": access_token,
+            "refreshToken": refresh_token,
+            "accessTokenExpiresIn": self.cfg.access_token_ttl_secs,
+        })
     }
 
     fn user_from_row(&self, row: &SqliteRow) -> User {
@@ -676,7 +741,18 @@ mod tests {
         assert_eq!(claims.uid, 1);
         assert_eq!(claims.ver, 0);
         assert!(claims.exp > claims.iat);
-        assert_eq!(claims.exp - claims.iat, service.cfg.jwt_ttl_secs as i64);
+        assert_eq!(
+            claims.exp - claims.iat,
+            service.cfg.access_token_ttl_secs as i64
+        );
+        // 登录同时返回可轮换的 Refresh Token 与过期秒数
+        assert!(login["refreshToken"]
+            .as_str()
+            .is_some_and(|token| token.starts_with("rt_")));
+        assert_eq!(
+            login["accessTokenExpiresIn"],
+            serde_json::json!(service.cfg.access_token_ttl_secs)
+        );
 
         // 对外响应不得回吐凭据
         assert!(login.get("password").is_none());
@@ -704,6 +780,60 @@ mod tests {
         assert_ne!(old_claims.ver, new_claims.ver);
         // 改密码后旧口令失效
         assert!(service.login("reader1", "password123", None).await.is_err());
+
+        service.close_pool_for_test().await;
+        let _ = fs::remove_dir_all(temp_dir).await;
+    }
+
+    #[tokio::test]
+    async fn refresh_rotates_tokens_and_password_change_revokes_them() {
+        let (service, temp_dir) = create_user_service().await;
+        let login = service.login("reader1", "password123", None).await.unwrap();
+        let first_refresh = login["refreshToken"].as_str().unwrap().to_string();
+
+        let refreshed = service.refresh_session(&first_refresh).await.unwrap();
+        let second_refresh = refreshed["refreshToken"].as_str().unwrap().to_string();
+        assert_ne!(second_refresh, first_refresh);
+        let claims = decode_token(refreshed["accessToken"].as_str().unwrap(), TEST_SECRET).unwrap();
+        assert_eq!(claims.uid, 1);
+        assert_eq!(claims.sub, "reader1");
+        assert_eq!(
+            refreshed["accessTokenExpiresIn"],
+            serde_json::json!(service.cfg.access_token_ttl_secs)
+        );
+
+        // 宽限窗口内重放旧令牌仍可换（断网丢响应的重试路径）
+        let grace = service.refresh_session(&first_refresh).await.unwrap();
+        let grace_refresh = grace["refreshToken"].as_str().unwrap().to_string();
+
+        // 改密码吊销全部会话；只有改密响应里新开的那条家族可用
+        let changed = service
+            .change_password("reader1", "password123", "newpassword123")
+            .await
+            .unwrap();
+        let changed_refresh = changed["refreshToken"].as_str().unwrap().to_string();
+        assert!(service.refresh_session(&second_refresh).await.is_err());
+        assert!(service.refresh_session(&grace_refresh).await.is_err());
+        service.refresh_session(&changed_refresh).await.unwrap();
+
+        service.close_pool_for_test().await;
+        let _ = fs::remove_dir_all(temp_dir).await;
+    }
+
+    #[tokio::test]
+    async fn logout_revokes_the_refresh_family_and_ignores_unknown_tokens() {
+        let (service, temp_dir) = create_user_service().await;
+        let login = service.login("reader1", "password123", None).await.unwrap();
+        let refresh = login["refreshToken"].as_str().unwrap().to_string();
+
+        service.revoke_refresh_token(&refresh).await.unwrap();
+        assert!(service.refresh_session(&refresh).await.is_err());
+
+        // 无效/伪造令牌不报错，登出始终是幂等的
+        service
+            .revoke_refresh_token("rt_never-issued")
+            .await
+            .unwrap();
 
         service.close_pool_for_test().await;
         let _ = fs::remove_dir_all(temp_dir).await;

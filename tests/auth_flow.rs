@@ -7,6 +7,7 @@ mod common;
 use reader_rust::api::router::build_router;
 use reader_rust::app::bootstrap::build_state;
 use reader_rust::app::config::AppConfig;
+use reader_rust::auth::jwt::decode_token;
 use std::path::PathBuf;
 
 /// 测试账号：由 bootstrap 用预设的 ADMIN_USERNAME/ADMIN_PASSWORD 创建。
@@ -75,8 +76,8 @@ impl TestServer {
         format!("{}{}", self.base_url, path)
     }
 
-    /// 用预设账号登录，返回 JWT。
-    async fn login(&self) -> String {
+    /// 用预设账号登录，返回完整 data（Access + Refresh 令牌）。
+    async fn login_session(&self) -> serde_json::Value {
         let response = self
             .client
             .post(self.url("/reader3/login"))
@@ -89,7 +90,12 @@ impl TestServer {
             .unwrap();
         assert_eq!(response.status(), 200, "登录应成功");
         let body: serde_json::Value = response.json().await.unwrap();
-        body["data"]["accessToken"]
+        body["data"].clone()
+    }
+
+    /// 用预设账号登录，只返回 Access Token。
+    async fn login(&self) -> String {
+        self.login_session().await["accessToken"]
             .as_str()
             .expect("登录响应应含 accessToken")
             .to_string()
@@ -234,6 +240,183 @@ async fn changing_password_revokes_old_tokens_but_keeps_the_current_device() {
             .status(),
         200
     );
+}
+
+#[tokio::test]
+async fn login_issues_short_lived_access_and_rotating_refresh_token() {
+    let server = TestServer::start().await;
+    let data = server.login_session().await;
+
+    let access = data["accessToken"].as_str().expect("应含 accessToken");
+    let claims = decode_token(access, b"integration-test-secret").unwrap();
+    assert_eq!(claims.sub, TEST_USERNAME);
+    assert_eq!(
+        claims.exp - claims.iat,
+        6 * 3600,
+        "Access Token 默认 6 小时"
+    );
+
+    let refresh = data["refreshToken"].as_str().expect("应含 refreshToken");
+    assert!(refresh.starts_with("rt_"));
+    assert_ne!(refresh, access, "Refresh Token 不能是 Access Token 本身");
+    assert_eq!(data["accessTokenExpiresIn"], serde_json::json!(6 * 3600));
+}
+
+#[tokio::test]
+async fn refresh_rotates_tokens_and_token_types_are_not_interchangeable() {
+    let server = TestServer::start().await;
+    let data = server.login_session().await;
+    let access = data["accessToken"].as_str().unwrap().to_string();
+    let refresh = data["refreshToken"].as_str().unwrap().to_string();
+
+    // Access Token 不能用来换新令牌
+    let response = server
+        .post(
+            "/reader3/refreshToken",
+            None,
+            serde_json::json!({ "refreshToken": &access }),
+        )
+        .await;
+    assert_eq!(response.status(), 401);
+
+    // Refresh Token 不是 JWT，不能当访问凭据
+    assert_eq!(
+        server
+            .get("/reader3/getBookshelf", Some(&refresh))
+            .await
+            .status(),
+        401
+    );
+
+    let response = server
+        .post(
+            "/reader3/refreshToken",
+            None,
+            serde_json::json!({ "refreshToken": &refresh }),
+        )
+        .await;
+    assert_eq!(response.status(), 200);
+    let body: serde_json::Value = response.json().await.unwrap();
+    let new_access = body["data"]["accessToken"].as_str().unwrap().to_string();
+    let new_refresh = body["data"]["refreshToken"].as_str().unwrap().to_string();
+    assert_ne!(new_refresh, refresh, "换取后必须下发新的 Refresh Token");
+    assert_eq!(
+        server
+            .get("/reader3/getBookshelf", Some(&new_access))
+            .await
+            .status(),
+        200
+    );
+
+    // 已消费令牌在 30 秒宽限窗口内重放仍可换取（断网重试语义）
+    assert_eq!(
+        server
+            .post(
+                "/reader3/refreshToken",
+                None,
+                serde_json::json!({ "refreshToken": &refresh }),
+            )
+            .await
+            .status(),
+        200
+    );
+
+    // 伪造令牌一律 401
+    assert_eq!(
+        server
+            .post(
+                "/reader3/refreshToken",
+                None,
+                serde_json::json!({ "refreshToken": "rt_forged" }),
+            )
+            .await
+            .status(),
+        401
+    );
+}
+
+#[tokio::test]
+async fn password_change_revokes_refresh_tokens_and_issues_a_new_pair() {
+    let server = TestServer::start().await;
+    let data = server.login_session().await;
+    let access = data["accessToken"].as_str().unwrap().to_string();
+    let old_refresh = data["refreshToken"].as_str().unwrap().to_string();
+
+    let response = server
+        .post(
+            "/reader3/changePassword",
+            Some(&access),
+            serde_json::json!({ "oldPassword": TEST_PASSWORD, "newPassword": "newpassword123" }),
+        )
+        .await;
+    assert_eq!(response.status(), 200);
+    let body: serde_json::Value = response.json().await.unwrap();
+    let new_refresh = body["data"]["refreshToken"]
+        .as_str()
+        .expect("改密码应换发新的 Refresh Token")
+        .to_string();
+    assert_ne!(new_refresh, old_refresh);
+
+    assert_eq!(
+        server
+            .post(
+                "/reader3/refreshToken",
+                None,
+                serde_json::json!({ "refreshToken": &old_refresh }),
+            )
+            .await
+            .status(),
+        401,
+        "改密码后旧 Refresh Token 必须失效"
+    );
+    assert_eq!(
+        server
+            .post(
+                "/reader3/refreshToken",
+                None,
+                serde_json::json!({ "refreshToken": &new_refresh }),
+            )
+            .await
+            .status(),
+        200
+    );
+}
+
+#[tokio::test]
+async fn logout_revokes_the_refresh_family_and_never_fails() {
+    let server = TestServer::start().await;
+    let data = server.login_session().await;
+    let refresh = data["refreshToken"].as_str().unwrap().to_string();
+
+    let response = server
+        .post(
+            "/reader3/logout",
+            None,
+            serde_json::json!({ "refreshToken": &refresh }),
+        )
+        .await;
+    assert_eq!(response.status(), 200);
+    assert_eq!(
+        server
+            .post(
+                "/reader3/refreshToken",
+                None,
+                serde_json::json!({ "refreshToken": &refresh }),
+            )
+            .await
+            .status(),
+        401,
+        "登出后该会话家族应被吊销"
+    );
+
+    // 无 body 的登出仍然成功：客户端本地已无令牌时也走这条路
+    let response = server
+        .client
+        .post(server.url("/reader3/logout"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
 }
 
 #[tokio::test]
@@ -437,7 +620,7 @@ async fn save_books_masks_group_bits_to_existing_groups() {
 async fn logout_always_succeeds_even_with_an_invalid_token() {
     let server = TestServer::start().await;
 
-    // 令牌已过期/无效时登出也应返回成功：服务端无可撤销状态，
+    // 令牌已过期/无效时登出也应返回成功：Refresh Token 查不到就静默跳过，
     // 这里只是给客户端一个「可以清本地令牌」的确认
     let response = server
         .post("/reader3/logout", Some("expired"), serde_json::json!({}))
