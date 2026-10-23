@@ -64,7 +64,10 @@ describe('reader local txt chapters', () => {
     vi.mocked(getBookContent).mockResolvedValue({
       content: '本地正文',
       edited: false,
-      variant: 'edited',
+      variant: 'default',
+      upstreamChanged: false,
+      selectionSource: 'upstream',
+      stale: false,
     })
     vi.mocked(getBrowserCachedChapter).mockResolvedValue(null)
     const appStore = useAppStore()
@@ -87,16 +90,19 @@ describe('reader local txt chapters', () => {
       bookId: 'book_1',
       index: 0,
       refresh: 0,
-      variant: 'edited',
+      variant: 'default',
     })
   })
 
   it('upstream variant skips browser cache and stores the version on the diff state', async () => {
     vi.mocked(getBookContent).mockResolvedValue({
       content: '上游正文',
-      edited: true,
+      edited: false,
       variant: 'upstream',
-      diff: { ops: [] },
+      versionKind: 'upstream',
+      upstreamChanged: false,
+      selectionSource: 'upstream_preview',
+      stale: false,
     })
     vi.mocked(getBrowserCachedChapter).mockResolvedValue(null)
     const appStore = useAppStore()
@@ -117,7 +123,8 @@ describe('reader local txt chapters', () => {
 
     expect(getBrowserCachedChapter).not.toHaveBeenCalled()
     expect(getBookContent).toHaveBeenCalledWith(expect.objectContaining({ variant: 'upstream' }))
-    expect(readerStore.chapterDiffs.get(0)?.variant).toBe('upstream')
+    expect(readerStore.chapterVersions.get(0)?.kind).toBe('upstream')
+    expect(readerStore.chapterDiffs.get(0)).toBeUndefined()
   })
 
   it('activating a chapter reloads its images even when the content is already in hand', async () => {

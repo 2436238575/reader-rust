@@ -9,7 +9,7 @@
           <div class="modal-head">
             <div>
               <h2>缓存管理</h2>
-              <p>查看并清理所有书籍的服务端缓存与浏览器缓存</p>
+              <p>查看并清理可再生缓存与浏览器缓存；正文历史保留</p>
             </div>
             <div class="head-actions">
               <button
@@ -60,7 +60,7 @@
                 <h3>{{ item.name }}</h3>
                 <p>{{ item.author || '未知作者' }}</p>
                 <div class="cache-stats">
-                  <span>服务端 {{ item.serverCachedCount }} 章</span>
+                  <span>服务端 {{ item.serverCachedCount }} 章正文</span>
                   <span>浏览器 {{ item.browserCachedCount }} 章</span>
                 </div>
               </div>
@@ -99,7 +99,7 @@
                 <div class="layers-head">
                   <div class="layer-info">
                     <span class="layer-label">服务端缓存</span>
-                    <small>服务端缓存按类型清理，清理后需重新抓取</small>
+                    <small>正文历史只读保留；其他缓存清理后需重新抓取</small>
                   </div>
                   <button
                     class="scope-btn danger"
@@ -108,6 +108,13 @@
                   >
                     {{ purging === 'all' ? '清理中...' : '全部清理' }}
                   </button>
+                </div>
+                <div class="layer-row readonly">
+                  <div class="layer-info">
+                    <span class="layer-label">正文历史</span>
+                    <small>所有上游与用户版本永久保留，不提供清理</small>
+                  </div>
+                  <span class="layer-usage">{{ contentHistoryUsage }}</span>
                 </div>
                 <div v-for="layer in cacheLayers" :key="layer.kind" class="layer-row">
                   <div class="layer-info">
@@ -180,7 +187,6 @@ interface CacheLayer {
 }
 
 const cacheLayers: CacheLayer[] = [
-  { kind: 'content', label: '正文缓存', hint: '已抓取的章节正文' },
   { kind: 'cover', label: '封面与图片', hint: '书籍封面、章节配图与评论图片' },
   { kind: 'chapterList', label: '目录与详情', hint: '章节目录与书籍详情缓存' },
   { kind: 'searchResults', label: '搜索结果', hint: '搜索与发现的结果缓存' },
@@ -205,6 +211,12 @@ function layerUsage(kind: ServerCacheKind) {
   if (!usage) return '—'
   return `${usage.files} 个文件 · ${formatBytes(usage.bytes)}`
 }
+
+const contentHistoryUsage = computed(() => {
+  const usage = serverStats.value?.content
+  if (!usage) return '—'
+  return `${usage.chapters} 章 · ${usage.versions} 个版本 · ${formatBytes(usage.bytes)}`
+})
 
 function purgedTotal(result: Record<string, number>) {
   return Object.values(result).reduce((sum, n) => sum + n, 0)
@@ -239,7 +251,7 @@ async function purgeLayer(layer: CacheLayer) {
 }
 
 async function purgeAllLayers() {
-  if (!confirm('确定清理全部服务端缓存吗？正文、封面图片、目录、搜索结果与评论缓存都会被删除。'))
+  if (!confirm('确定清理全部服务端缓存吗？封面图片、目录、搜索结果与评论缓存会被删除，正文历史保留。'))
     return
   purging.value = 'all'
   try {
@@ -347,7 +359,7 @@ async function cacheBrowser(book: Book) {
 }
 
 async function clearServer(book: Book) {
-  if (!confirm(`确定清除"${book.name}"的服务端缓存吗？已缓存的正文需要重新抓取。`)) return
+  if (!confirm(`确定清除"${book.name}"的服务端缓存吗？目录与详情会重新抓取，正文历史保留。`)) return
   try {
     await deleteBookCache(book.bookId || '')
     appStore.showToast(`"${book.name}" 服务端缓存已清除`, 'success')

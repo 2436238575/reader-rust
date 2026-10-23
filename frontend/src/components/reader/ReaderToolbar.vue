@@ -18,6 +18,13 @@
         <path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z" />
       </svg>
     </button>
+    <button class="tb-btn" @click="$emit('history')" title="正文历史">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <path d="M3 12a9 9 0 1 0 3-6.7L3 8" />
+        <path d="M3 3v5h5" />
+        <path d="M12 7v5l3 2" />
+      </svg>
+    </button>
     <button
       class="tb-btn"
       :class="{ spinning: store.loading }"
@@ -148,6 +155,7 @@ defineEmits<{
   progress: []
   refresh: []
   edit: []
+  history: []
 }>()
 </script>
 

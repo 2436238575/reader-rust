@@ -71,6 +71,8 @@ useEscClose(toRef(props, 'modelValue'), () => emit('update:modelValue', false))
 const draft = ref('')
 const saving = ref(false)
 const editorRef = ref<HTMLTextAreaElement>()
+/** 本次编辑基于哪个版本；保存时作为 diff 基准 */
+const baseVersionId = ref<number | undefined>()
 
 const chapterTitle = computed(() => store.currentChapter?.title || '')
 const isUpstreamView = computed(() => store.config.contentVersion === 'upstream')
@@ -89,11 +91,13 @@ watch(
     draft.value = displayed
     const chapter = store.currentChapter
     const bookId = store.book?.bookId
+    baseVersionId.value = store.chapterVersions.get(store.currentIndex)?.versionId
     if (isUpstreamView.value && chapter && bookId) {
       const edit = await getChapterEdit(bookId, chapter.url).catch(() => null)
       // 等待期间用户可能已经动手改字，别覆盖
       if (props.modelValue && draft.value === displayed && edit?.content != null) {
         draft.value = edit.content
+        baseVersionId.value = edit.versionId
       }
     }
     await nextTick()
@@ -118,6 +122,7 @@ async function save() {
       chapterIndex: store.currentIndex,
       chapterTitle: chapter.title,
       content: draft.value,
+      baseVersionId: baseVersionId.value,
     })
     // 在上游原版界面保存后切回编辑版，让用户立刻看到保存结果；
     // 版本切换的 watcher 会负责重载本章

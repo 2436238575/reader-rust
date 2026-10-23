@@ -1,16 +1,16 @@
 # 数据库
 
-运行期数据存在 SQLite（默认 `storage/reader.db`，`DATABASE_URL` 可改）。sqlx 访问，连接池 10 条，WAL 模式（`synchronous=NORMAL`），启动时自动执行 `src/storage/db/migrations/` 下的迁移。
+运行期数据存在 SQLite（默认 `storage/reader.db`，`DATABASE_URL` 可改）。sqlx 访问，连接池 10 条，WAL 模式（`synchronous=NORMAL`），启动时自动执行 `src/storage/db/migrations/` 下的迁移。数据库保存结构化数据（书源、书架、进度、书签、AI 记忆等），以及**全部章节正文与版本历史**；图片与上传资源仍保存在文件系统里，目录布局见[数据存储结构](/maintainers/storage)。
 
-表结构定义在 `src/storage/db/migrations/` 下：`0001_init.sql`（基础表结构，历史迁移已逐批并入）+ `0002_bookmarks_replace_rules.sql`（书签/替换规则实体表）+ `0003_chapter_edits.sql`（章节编辑版索引）+ `0004_book_groups.sql`（分组实体表）+ `0005_refresh_tokens.sql`（Refresh Token 轮换状态）。新增结构请新建迁移文件，不要改已发布的迁移——sqlx 按校验和核对已应用的迁移，改动历史文件会让旧库无法启动；确需重写时按破坏性变更处理：删除 `storage/reader.db` 重建。
+表结构定义在 `src/storage/db/migrations/` 下：`0001_init.sql`（基础表结构、书籍/书源登记表、正文池与版本时间线）+ `0002_bookmarks_replace_rules.sql`（书签/替换规则实体表）+ `0004_book_groups.sql`（分组实体表）+ `0005_refresh_tokens.sql`（Refresh Token 轮换状态）。新增结构请新建迁移文件，不要改已发布的迁移——sqlx 按校验和核对已应用的迁移，改动历史文件会让旧库无法启动；确需重写时按破坏性变更处理：删除 `storage/reader.db` 重建。当前处于第一个 beta 之前，正文池相关的结构变更不提供就地迁移，升级时删除 `storage/` 重建。
 
 三张底表的身份模型：
 
-- **用户**：`uid` 自增，是存储命名空间的锚点（`user_ns = user_<uid>`）；`username` 只用于登录与展示。
-- **书源**：`book_source_id`（per user_ns 自增）是身份键；URL 只是数据字段与导入去重键。
-- **书籍**：`book_id` 是稳定身份，不随换源变化；换源只改绑 `book_url` / `book_source_id`。库里存 INTEGER（rowid 单调自增），对外（API/缓存路径/日志）一律是 `book_<n>` 文本，转换在 repo 边界完成。
+- **用户**：`uid` 自增，是用户数据的命名空间锚点（`user_ns = user_<uid>`）；`username` 只用于登录与展示。
+- **书源**：整部署共享，不带 `user_ns`；`book_source_id` 是 `AUTOINCREMENT` 身份键，删除后也不复用；URL 只是数据字段与导入去重键。
+- **书籍**：整部署共享，不带 `user_ns`；`book_id` 是 `AUTOINCREMENT` 稳定身份，不随换源变化，删除后也不复用。换源只改绑 `book_url` / `book_source_id`。对外（API/缓存路径/日志）一律是 `book_<n>` 文本，转换在 repo 边界完成。
 
-所有表都按 `user_ns` 隔离；单用户部署下整库只有一个命名空间，但键结构保持多用户形态。书源 id 分配走 `MAX(id)+1`（per user_ns，调用方持事务）；书籍 id 是 rowid 别名，不显式插入即由 SQLite 单调分配。
+正文池、版本时间线和最新指针也整部署共享；书架、书签、分组、替换规则、userdata、AI 记忆仍按 `user_ns` 隔离。`book_url` 只作为数据字段和选源展示，不再承担「同 id 同书」的校验——id 不复用之后这层校验没有意义。
 
 ## users
 
@@ -44,12 +44,11 @@ Refresh Token 的轮换状态。一次登录创建一条 `family_id`，每次换
 
 ## book_sources
 
-书源配置。主键 `(user_ns, book_source_id)`，另有唯一索引 `(user_ns, book_source_url)`。
+书源配置，整部署共享。主键 `book_source_id`（`AUTOINCREMENT`，删除后不复用），唯一索引 `book_source_url`。
 
 | 字段               | 类型    | 用途                                                                     |
 | ------------------ | ------- | ------------------------------------------------------------------------ |
-| `user_ns`          | TEXT    | 数据隔离键（`user_<uid>`）                                               |
-| `book_source_id`   | INTEGER | 身份键，per user_ns 自增；接口参数、代理令牌、缓存关联都用它             |
+| `book_source_id`   | INTEGER | 身份键，AUTOINCREMENT；接口参数、代理令牌、版本来源都用它                |
 | `book_source_url`  | TEXT    | 书源地址。数据字段 + 导入去重键：批量导入按 URL 去重，命中时保留本地 id  |
 | `book_source_name` | TEXT    | 名称快照，列表排序与展示用（不必解析 JSON）                              |
 | `json`             | TEXT    | 整份书源 JSON；规则字段随阅读3.0 规范演进，不打散成列                    |
@@ -57,21 +56,96 @@ Refresh Token 的轮换状态。一次登录创建一条 `family_id`，每次换
 
 ## books
 
-书籍登记表。`book_id INTEGER PRIMARY KEY`（rowid 别名），唯一索引 `(user_ns, book_url)`，普通索引 `(user_ns, book_source_id)`。
+书籍登记表，整部署共享。`book_id INTEGER PRIMARY KEY AUTOINCREMENT`，唯一索引 `book_url`，普通索引 `book_source_id`。
 
-搜索/发现等列表产出即登记（响应才能带 bookId）；非在架的登记行由 `purgeCache`（scope=user）联动回收。
+搜索/发现等列表产出即登记（响应才能带 bookId）；登记行**不再随清缓存回收**，正文历史依赖它保持可达。从书架删除只删 `shelf_books` 行，`books` 行保留，重新加入同一地址会复用原 bookId。
 
 | 字段              | 类型    | 用途                                                                       |
 | ----------------- | ------- | -------------------------------------------------------------------------- |
-| `user_ns`         | TEXT    | 数据隔离键                                                                 |
-| `book_id`         | INTEGER | 稳定身份键（rowid 别名，单调自增）；对外格式化为 `book_<n>`，不随换源变化  |
-| `book_url`        | TEXT    | 上游书籍地址。同一地址永远解析到同一个 bookId（唯一索引保证）              |
+| `book_id`         | INTEGER | 稳定身份键（AUTOINCREMENT，永不复用）；对外格式化为 `book_<n>`，不随换源变化 |
+| `book_url`        | TEXT    | 上游书籍地址。同一地址解析到同一个 bookId；只作数据与选源，不做校验        |
 | `book_source_id`  | INTEGER | 当前绑定的书源 id；`NULL` 表示本地书（`local-txt:`/`local-epub:` 伪书源）  |
 | `toc_url`         | TEXT    | 目录地址；换源改绑时清空，下次访问重新抓取                                 |
 | `name`            | TEXT    | 书名快照（登记时可能还是空串，后续登记补全），默认 `''`                    |
 | `author`          | TEXT    | 作者快照，默认 `''`                                                        |
 | `created_at`      | INTEGER | 登记时间，秒级时间戳                                                       |
 | `updated_at`      | INTEGER | 最近登记/改绑时间，秒级时间戳                                              |
+
+## chapter_contents
+
+正文池，整部署共享，**只插入不更新**。相同原文只存一份，`content_hash` 是原文的 SHA-256。
+
+| 字段           | 类型    | 用途                                                        |
+| -------------- | ------- | ----------------------------------------------------------- |
+| `content_id`   | INTEGER | 主键                                                        |
+| `content_hash` | TEXT    | 原文 SHA-256，唯一索引；跨书、跨版本去重                    |
+| `codec`        | INTEGER | `0` 明文 UTF-8，`1` zstd                                    |
+| `raw_size`     | INTEGER | 原文字节数                                                  |
+| `stored_size`  | INTEGER | 实际落库字节数（压缩后）                                    |
+| `content`      | BLOB    | 正文内容                                                    |
+| `created_at`   | INTEGER | 首次写入时间，毫秒时间戳                                    |
+
+## chapter_versions
+
+版本时间线，整部署共享，**只插入不更新**。每章的每个不同内容版本一行。
+
+| 字段               | 类型    | 用途                                                                 |
+| ------------------ | ------- | -------------------------------------------------------------------- |
+| `version_id`       | INTEGER | 主键，AUTOINCREMENT；排序与版本标识                                  |
+| `book_id`          | INTEGER | 关联 `books`                                                         |
+| `chapter_url`      | TEXT    | 章节 URL（当前章节身份）                                             |
+| `content_id`       | INTEGER | 关联 `chapter_contents`                                              |
+| `kind`             | TEXT    | `upstream` 上游抓取 / `edited` 用户编辑 / `imported` 手动导入        |
+| `book_source_id`   | INTEGER | 抓取时的书源快照                                                     |
+| `book_source_name` | TEXT    | 抓取时的书源名快照                                                   |
+| `base_version_id`  | INTEGER | 用户版本基于哪一版；上游版本为空                                     |
+| `chapter_index`    | INTEGER | 章节序号快照                                                         |
+| `chapter_title`    | TEXT    | 章节标题快照                                                         |
+| `book_url`         | TEXT    | 抓取/保存时的书籍地址快照，只作数据                                  |
+| `fetch_url`        | TEXT    | 实际抓取到的地址（分页章节为首地址）                                 |
+| `note`             | TEXT    | 手动导入的备注                                                       |
+| `created_at`       | INTEGER | 版本时间，毫秒时间戳；导入可指定历史时间                             |
+
+索引：`(book_id, chapter_url, version_id DESC)`、`(book_id, version_id DESC)`、`content_id`。
+
+## chapter_latest
+
+最新指针，整部署共享，**唯一允许更新的正文表**。默认显示版本按
+`chapter_view_state.selected_version_id` > `latest_user_version_id` >
+`latest_upstream_version_id` 解析。
+
+| 字段                          | 类型    | 用途                                                   |
+| ----------------------------- | ------- | ------------------------------------------------------ |
+| `book_id`                     | INTEGER | 主键之一                                               |
+| `chapter_url`                 | TEXT    | 主键之一                                               |
+| `latest_upstream_version_id`  | INTEGER | 最近一次上游版本                                       |
+| `latest_user_version_id`      | INTEGER | 最近一次保存的编辑版，或设为当前的手动导入版本          |
+| `last_attempt_at`             | INTEGER | 最近一次回源尝试（成功或失败），用于 24h 节流           |
+| `last_success_at`             | INTEGER | 最近一次回源成功                                       |
+| `upstream_changed_at`         | INTEGER | 上游内容最近一次变化                                   |
+| `edited_at`                   | INTEGER | 最近一次用户版本成为当前的时间                         |
+| `last_error`                  | TEXT    | 最近一次回源失败原因（短文案，不带上游 URL）            |
+
+## chapter_view_state
+
+每用户每章选中的版本。主键 `(user_ns, book_id, chapter_url)`。有行表示手动选过；
+删除该行表示「跟随最新」。切换版本按用户记录，跨设备一致。
+
+### 手动改章节 URL（换源后接续历史）
+
+第一版不做换源后的自动接续。需要把旧源的正文历史挂到新章节时，停服后手工执行：
+
+```sql
+-- 先确认新 URL 没有已有记录；有的话要先合并或删除，否则主键冲突
+UPDATE chapter_versions   SET chapter_url = '<new>' WHERE book_id = <id> AND chapter_url = '<old>';
+UPDATE chapter_latest     SET chapter_url = '<new>' WHERE book_id = <id> AND chapter_url = '<old>';
+UPDATE chapter_view_state SET chapter_url = '<new>'
+ WHERE user_ns = '<ns>' AND book_id = <id> AND chapter_url = '<old>';
+```
+
+`chapter_versions` 正常只插入不更新，这条语句属于管理员例外。`chapter_latest`
+和 `chapter_view_state` 的主键包含 `chapter_url`，新 URL 已有行时必须先决定保留哪一边的
+指针/选择。
 
 ## shelf_books
 
@@ -139,7 +213,7 @@ Refresh Token 的轮换状态。一次登录创建一条 `family_id`，每次换
 | `chapter_name`  | TEXT    | 章节标题快照                                                         |
 | `book_text`     | TEXT    | 进度文案/划线摘录快照                                                |
 | `content`       | TEXT    | 书签备注/摘录                                                        |
-| `book_url`      | TEXT    | 冗余校验列：WebDAV 恢复重建登记表后逐行比对，同 id 不同 URL 的书签删除防串书 |
+| `book_url`      | TEXT    | 保存时的书籍地址快照，只作数据与备份展示                     |
 
 ## replace_rules
 
@@ -166,23 +240,9 @@ AI 书籍记忆（AI 资料编排产物）。主键 `(user_ns, book_id)`。
 | ------------ | ------- | -------------------------------------------------------------------------- |
 | `user_ns`    | TEXT    | 数据隔离键                                                                 |
 | `book_id`    | INTEGER | 关联 `books` 登记表；换源后记忆天然保留                                    |
-| `book_url`   | TEXT    | 冗余校验列：WebDAV 恢复重建登记表后逐行比对，同 id 不同 URL 的记忆删除防串书 |
+| `book_url`   | TEXT    | 保存时的书籍地址快照，只作数据与备份展示                     |
 | `json`       | TEXT    | 整份记忆 JSON                                                              |
 | `updated_at` | INTEGER | 更新时间，毫秒时间戳                                                       |
-
-## chapter_edits
-
-章节正文编辑版的索引（正文仍落 `data/<ns>/edited_chapters/<bookId>/<md5>.txt` 文件，表里只存元数据）。主键 `(user_ns, book_id, chapter_url)`。删书级联 `DELETE WHERE book_id`。
-
-| 字段             | 类型    | 用途                            |
-| ---------------- | ------- | ------------------------------- |
-| `user_ns`        | TEXT    | 数据隔离键                      |
-| `book_id`        | INTEGER | 关联 books 登记表               |
-| `chapter_url`    | TEXT    | 章节 URL（身份键之一）          |
-| `chapter_index`  | INTEGER | 章节序号快照                    |
-| `chapter_title`  | TEXT    | 章节标题快照                    |
-| `edited_at`      | INTEGER | 最后编辑时间，毫秒时间戳        |
-| `book_url`       | TEXT    | 冗余校验列（同上：恢复后 id 复用防串书） |
 
 ## book_groups
 
@@ -198,7 +258,9 @@ AI 书籍记忆（AI 资料编排产物）。主键 `(user_ns, book_id)`。
 ## 设计取舍
 
 - **书源存整份 JSON** 而不是打散成列——书源字段会随阅读3.0 规范演进，打散后每次演进都要改表；代价是无法按规则字段建索引。
-- **章节正文存文件而不是数据库**——单章动辄数十 KB 且数量极多，进库会让文件迅速膨胀并拖慢备份。正文缓存以 MD5 文件名落在 `storage/cache/` 下，数据库不存索引。
-- **`json_documents` 通用化**——零散键值（配置、userdata）复用一张表，减少迁移次数；有实体语义的（书签、替换规则、章节编辑索引、分组）拆实体表。
+- **章节正文进数据库**——正文池 + 时间线 + 最新指针三张表，正文按 hash 去重、默认 zstd 压缩。这样可以保留上游历史、让编辑版不覆盖旧版本，并让 diff 针对任意两个版本计算。代价是 `reader.db` 会随历史持续增长，因此正文历史**不提供清理入口，也不自动淘汰**；备份需要包含这个库。
+- **正文池和时间线只插入不更新**——并发写不需要原地覆盖，旧版本不会因为一次刷新或编辑消失；`chapter_latest` 是唯一允许变化的正文表，`chapter_view_state` 按用户记录当前选择。
+- **书籍/书源 id 不分命名空间且不复用**——`book_id` / `book_source_id` 都用 AUTOINCREMENT，删书、换源、清缓存都不会让历史串到另一本书。`book_url` 只作数据字段，不再承担校验。
+- **`json_documents` 通用化**——零散键值（配置、userdata）复用一张表，减少迁移次数；有实体语义的（书签、替换规则、分组）拆实体表。
 - **不声明外键**——表间一致性由 service 层维护（如删书时级联清书架行、书签、AI 记忆与图片记录）；`foreign_keys` pragma 虽开，但表结构里没有 FK 约束。
-- **时间戳单位不统一是历史现状**：`users` / `json_documents` / `ai_book_memories` 用毫秒，其余表用秒；`shelf_books` 里来自前端的字段（`dur_chapter_time`、`last_check_time`）随前端用毫秒。列的用途表里已逐列标注。
+- **时间戳单位不统一是历史现状**：`users` / `json_documents` / `ai_book_memories` 用毫秒，其余表用秒；`shelf_books` 里来自前端的字段（`dur_chapter_time`、`last_check_time`）随前端用毫秒。正文池、版本时间线和指针用毫秒。列的用途表里已逐列标注。

@@ -20,18 +20,26 @@ export function cacheBookSSE(params: {
   })
 }
 
-/** 服务端缓存分层，与后端 `CacheKind`（camelCase）一一对应 */
-export type ServerCacheKind = 'content' | 'cover' | 'chapterList' | 'searchResults' | 'review'
+/** 可清理的服务端缓存层，与后端 `CacheKind`（camelCase）一一对应 */
+export type ServerCacheKind = 'cover' | 'chapterList' | 'searchResults' | 'review'
 
 export interface CacheUsage {
   files: number
   bytes: number
 }
 
-export type CacheStats = Record<ServerCacheKind, CacheUsage>
+/** 正文历史只读统计：正文池条数、章节数、版本数和落库字节数 */
+export interface ContentHistoryStats extends CacheUsage {
+  chapters: number
+  versions: number
+}
 
-/** 各层被删除的文件数，与后端 `CachePurgeResult` 对应 */
-export type CachePurgeCounts = Record<ServerCacheKind | 'invalidSources', number>
+export type CacheStats = Record<ServerCacheKind, CacheUsage> & {
+  content: ContentHistoryStats
+}
+
+/** 各层被删除的文件数，与后端 `CachePurgeResult` 对应（正文历史恒为 0） */
+export type CachePurgeCounts = Record<ServerCacheKind | 'content' | 'invalidSources', number>
 
 /** purgeCache 的响应 data：{ purged: 各层删除数 } */
 export interface CachePurgeResult {

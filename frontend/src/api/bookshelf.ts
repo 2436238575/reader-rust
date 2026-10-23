@@ -62,13 +62,34 @@ export function getBookInfo(bookId: string) {
 
 import type { ParagraphDiffOp } from '../utils/chapterDiff'
 
-/** 章节正文响应：编辑过的章节会带回与上游原文的差异。 */
+export type ContentVariant = 'default' | 'upstream'
+export type ChapterVersionKind = 'upstream' | 'edited' | 'imported'
+
+/** 章节正文响应：默认版本可能是用户版本，也可能是上游版本。 */
 export interface ChapterContentResponse {
   content: string
-  /** 本章是否存在编辑版（不代表当前显示的是哪个版本） */
+  /** 当前返回的是否为用户版本（编辑版或手动导入） */
   edited: boolean
-  /** 当前返回的版本 */
-  variant: 'edited' | 'upstream'
+  /** `default` 按服务端选择解析；`upstream` 只预览最新上游 */
+  variant: ContentVariant
+  versionId?: number
+  versionKind?: ChapterVersionKind
+  /** 用户版本基于哪一版；手动导入未指定时可能为空 */
+  baseVersionId?: number
+  /** 本次 diff 的基准版本；始终是最新上游版本 */
+  diffBaseVersionId?: number
+  latestUserVersionId?: number
+  latestUpstreamVersionId?: number
+  /** 用户版本的基准之后，上游是否又变过 */
+  upstreamChanged: boolean
+  /** `selected` / `edited` / `upstream` / `upstream_preview` */
+  selectionSource: 'selected' | 'edited' | 'upstream' | 'upstream_preview'
+  /** 到期未回源，或最近一次回源失败 */
+  stale: boolean
+  lastAttemptAt?: number
+  lastSuccessAt?: number
+  upstreamChangedAt?: number
+  editedAt?: number
   diff?: { ops: ParagraphDiffOp[] } | null
   /** diff 算不出来的原因（正文仍然可用） */
   diffError?: string | null
@@ -83,8 +104,8 @@ export function getBookContent(params: {
   chapterUrl: string
   index?: number
   refresh?: number
-  /** `upstream` 读上游原版；缺省为编辑版优先 */
-  variant?: 'edited' | 'upstream'
+  /** `upstream` 只预览最新上游；缺省/default 按服务端选择解析 */
+  variant?: ContentVariant
 }) {
   return http.post<ChapterContentResponse>('/getBookContent', params).then((r) => r.data)
 }

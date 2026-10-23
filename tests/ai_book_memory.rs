@@ -126,7 +126,7 @@ async fn ai_book_memory_round_trips_and_isolated_by_user() {
 }
 
 #[tokio::test]
-async fn ai_book_memory_rejects_mismatched_book_url_on_save() {
+async fn ai_book_memory_accepts_legacy_book_url_without_validation() {
     let (service, storage_dir) = create_service("mismatch").await;
 
     let memory = AiBookMemory {
@@ -134,11 +134,13 @@ async fn ai_book_memory_rejects_mismatched_book_url_on_save() {
         ..Default::default()
     };
 
-    let err = service
+    // bookUrl 只是数据字段，不再按 id 校验「同 id 同书」
+    service
         .save_for_book("alice", "book_2", "https://example.test/book/2", memory)
         .await
-        .expect_err("mismatched bookUrl should fail");
+        .expect("bookUrl 不参与校验");
 
-    assert!(err.to_string().contains("bookUrl mismatch"));
+    let saved = service.get("alice", "book_2").await.unwrap().unwrap();
+    assert_eq!(saved.book_url, "https://example.test/book/1");
     common::remove_dir_retried(storage_dir);
 }

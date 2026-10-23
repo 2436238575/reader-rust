@@ -394,8 +394,14 @@ async function fetchPage(target: number) {
       count: 50,
       sort: sort.value,
       authorOnly: authorOnly.value || undefined,
-      // 正文版本参与评论缓存键；书源评论 URL 也可用 {{variant}} 区分
-      variant: readerStore.config.contentVersion,
+      // 正文版本参与评论缓存键；书源评论 URL 也可用 {{variant}} 区分。
+      // 优先用实际显示的版本（手动选择旧版本时 config 仍是 default）。
+      variant:
+        readerStore.chapterVersions.get(readerStore.currentIndex)?.kind === 'upstream'
+          ? 'upstream'
+          : readerStore.chapterVersions.get(readerStore.currentIndex)?.kind
+            ? 'edited'
+            : readerStore.config.contentVersion,
     }
     const resp =
       props.mode === 'para'

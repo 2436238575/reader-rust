@@ -37,9 +37,12 @@ pub struct AppConfig {
     pub user_book_limit: u32,
     /// 全局本地上传上限，`0` 表示不限制。
     pub user_local_book_limit: u32,
-    /// 缓存容量上限（字节）；`0` 表示不限制。
-    /// 缓存不再按时间过期，容量上限是唯一的自动回收手段。
-    pub cache_user_limit_bytes: u64,
+    /// 正文回源间隔（秒），默认 24 小时。
+    ///
+    /// 读取某章时，如果距离上次回源尝试已经超过这个时长，就回源一次；
+    /// 回源失败继续返回缓存内容。设为 `0` 表示只在显式强刷时回源。
+    /// 正文历史严格保留，不按容量淘汰。
+    pub content_revalidate_ttl_secs: u64,
     /// 封面缓存目录的容量上限（字节）；`0` 表示不限制。
     pub cache_cover_limit_bytes: u64,
     /// 评论缓存的有效期（秒），默认 7 天；`0` 表示不过期。
@@ -120,7 +123,7 @@ impl Default for AppConfig {
             admin_password: String::new(),
             user_book_limit: 2000,
             user_local_book_limit: 0,
-            cache_user_limit_bytes: 512 * 1024 * 1024,
+            content_revalidate_ttl_secs: 24 * 3600,
             cache_cover_limit_bytes: 256 * 1024 * 1024,
             review_cache_ttl_secs: 7 * 24 * 3600,
             review_cache_user_limit_bytes: 64 * 1024 * 1024,
@@ -176,8 +179,8 @@ pub fn load() -> anyhow::Result<AppConfig> {
             defaults.user_local_book_limit as i64,
         )?
         .set_default(
-            "cache_user_limit_bytes",
-            defaults.cache_user_limit_bytes as i64,
+            "content_revalidate_ttl_secs",
+            defaults.content_revalidate_ttl_secs as i64,
         )?
         .set_default(
             "cache_cover_limit_bytes",

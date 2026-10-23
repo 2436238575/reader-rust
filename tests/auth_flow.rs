@@ -520,12 +520,12 @@ async fn purge_cache_scopes_all_work_for_the_single_user() {
         assert!(purged[layer].is_number(), "缺少 {layer} 计数");
     }
 
-    // 按类型清理某一层
+    // 按类型清理某一层（正文历史不提供清理，这里用封面）
     let response = server
         .post(
             "/reader3/purgeCache",
             Some(&token),
-            serde_json::json!({ "scope": "kind", "kind": "content" }),
+            serde_json::json!({ "scope": "kind", "kind": "cover" }),
         )
         .await;
     assert_eq!(response.status(), 200);

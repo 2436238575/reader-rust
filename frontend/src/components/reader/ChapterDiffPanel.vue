@@ -8,10 +8,11 @@
         <div class="diff-modal">
           <div class="modal-head">
             <div class="head-main">
-              <h2>本章改动</h2>
+              <h2>与最新上游的差异</h2>
               <p class="head-sub">
                 {{ chapterTitle }}
                 <template v-if="viewingUpstream"> · 正在阅读上游原版</template>
+                <template v-else> · 基准：最新上游正文</template>
               </p>
             </div>
             <div class="head-actions">

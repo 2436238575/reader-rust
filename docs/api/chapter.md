@@ -10,16 +10,18 @@ GET /reader3/getBookContent
 
 查询参数：
 
-| 参数         | 类型   | 必填 | 说明                                                              |
-| ------------ | ------ | ---- | ----------------------------------------------------------------- |
-| `bookId`     | string | 是   | 书籍 ID（`book_<n>`），正文缓存按它归位                           |
-| `chapterUrl` | string | 是   | 章节 URL（数据字段，用来定位章节并作为缓存键 `md5(chapterUrl)`）  |
-| `index`      | number | 否   | 章节下标                                                          |
-| `refresh`    | number | 否   | 非 0 时强制刷新上游缓存（同时会重算 diff 基准）                   |
-| `variant`    | string | 否   | `upstream` 返回上游原版；缺省/其它值返回编辑版优先                 |
+| 参数         | 类型   | 必填 | 说明                                                                 |
+| ------------ | ------ | ---- | -------------------------------------------------------------------- |
+| `bookId`     | string | 是   | 书籍 ID（`book_<n>`）                                                |
+| `chapterUrl` | string | 是   | 章节 URL（章节身份，正文版本按它归档）                               |
+| `index`      | number | 否   | 章节下标                                                             |
+| `refresh`    | number | 否   | 非 0 时同步回源一次；失败回退已有缓存                               |
+| `variant`    | string | 否   | `upstream` 只预览最新上游；缺省/`default` 按服务端选择解析默认版本  |
 
-响应 `data` 是对象：正文，以及（本章有编辑版时）与上游原文的差异。没编辑过就是
-`{ "content": "正文内容...", "edited": false }`：
+默认版本解析顺序：**当前用户手动选择的版本 > 最近一次用户版本（编辑/手动导入）>
+最新上游版本**。用户版本优先于上游；`variant=upstream` 只是本次预览，不改变选择。
+
+响应 `data` 除了正文，还带当前版本定位信息：
 
 ```json
 {
@@ -28,7 +30,16 @@ GET /reader3/getBookContent
   "data": {
     "content": "编辑后的整章正文...",
     "edited": true,
-    "variant": "edited",
+    "variant": "default",
+    "versionId": 42,
+    "versionKind": "edited",
+    "baseVersionId": 40,
+    "diffBaseVersionId": 41,
+    "latestUserVersionId": 42,
+    "latestUpstreamVersionId": 41,
+    "upstreamChanged": true,
+    "selectionSource": "edited",
+    "stale": false,
     "diff": {
       "ops": [
         { "type": "equal", "baseIndex": 0, "editedIndex": 0 },
@@ -41,53 +52,81 @@ GET /reader3/getBookContent
 }
 ```
 
-- `edited`：本章是否存在用户编辑版（不代表当前显示的是哪一个版本）。
-- `variant`：本次返回的正文版本，`edited`（编辑版）或 `upstream`（上游原版）。
-- `diff.ops`：段落级操作序列，`type` 为 `equal` / `add` / `del` / `modify`，
-  带 `baseIndex`（上游段落下标）与 `editedIndex`（编辑版段落下标）。
-  为省流量，`equal` 行不带文本（前端用 `content` 补齐）；`add` 只带 `editedText`，
-  `del` 只带 `baseText`，`modify` 两段都带。
-- `diffError`：算不出差异时的原因（字符串）。此时 `diff` 缺省，但正文照常可用。
-- `variant=upstream` 时 `content` 换成上游原文，`diff` 仍然返回（diff 面板两个版本共用）；阅读器只在显示编辑版时叠加正文改动标记。
-  常见原因：服务器没装 git（可用 [`GIT_PATH`](../guide/configuration) 指定路径）、
-  计算超时、章节过大、上游原文读不到。
+- `edited`：当前返回的是否用户版本（编辑版或手动导入）。
+- `variant`：`default` 或 `upstream`。
+- `versionId` / `versionKind` / `baseVersionId`：当前版本的标识、来源，以及编辑时基于哪一版；`baseVersionId` 只作历史信息。
+- `diffBaseVersionId`：本次 `diff` 使用的基准版本，始终是最新上游版本。
+- `latestUserVersionId` / `latestUpstreamVersionId`：最近一次用户版本与最新上游。
+- `upstreamChanged`：用户版本的基准之后，上游是否又变过。
+- `selectionSource`：`selected`（手动选择）、`edited`（最近用户版本）、`upstream`
+  （没有用户版本）或 `upstream_preview`（显式预览上游）。
+- `stale`：当前返回的是旧数据——到期未回源，或最近一次回源失败。
+- `diff.ops`：**当前用户版本相对最新上游版本（`diffBaseVersionId`）的改动**，
+  段落级操作序列，`type` 为 `equal` / `add` / `del` / `modify`，带 `baseIndex`
+  与 `editedIndex`。评论源只对最新上游正文取段号，所以阅读页的 diff 必须和
+  最新上游对齐。为省流量，`equal` 行不带文本（前端用 `content` 补齐）；
+  `add` 只带 `editedText`，`del` 只带 `baseText`，`modify` 两段都带。
+- `diffError`：算不出差异时的原因。此时 `diff` 缺省，但正文照常可用。常见原因：
+  最新上游版本不可读、服务器没装 git（可用
+  [`GIT_PATH`](../guide/configuration) 指定路径）、章节过大。
 
-diff 由服务端系统 git（`git diff --no-index --unified=0`）计算，按两份文本的哈希
-做进程内缓存；同一章重复阅读不会反复起 git 进程。系统没有 git 时**不回退**到
-前端计算，前端只在差异面板里展示 `diffError`。
+`diff` 始终是「最新上游 → 当前用户版本」，包含上游在编辑之后发生的变化。
+只看任意两个历史版本的差异，用
+[`getChapterVersionDiff`](#版本时间线与对比)。`variant=upstream` 时 `diff` 缺省。
 
-`refresh=1` 会先删掉本章上游缓存并重新抓取，然后再和编辑版对比；`variant` 决定
-返回哪一版（默认编辑版）。编辑版的读写端点见下。
+回源规则：
 
-也可使用 `POST /reader3/getBookContent`。
-
-正文可能是纯文本，也可能是 HTML（书源的正文规则吐出 HTML 时原样返回）。HTML 正文里的
-`<img>` 由前端直接渲染——漫画/图集源、出版书插图、富文本正文都走这条路，不需要任何额外规则。
+- 读取时距上次回源尝试超过 `CONTENT_REVALIDATE_TTL_SECS`（默认 24 小时），服务端会在
+  **后台回源**，当前请求先返回缓存；下一次读取看到新版本。
+- `refresh=1` 同步回源；成功则追加版本，失败回退已有缓存并标记 `stale`。
+- 没有缓存时同步抓取，失败按错误返回。
+- 上游成功但正文为空：已有缓存视为失败并回退；没有缓存时，书源声明了配图规则
+  （`ruleContentImage`）视为纯图章节返回空串，否则返回 **HTTP 404** +
+  `正文为空：书源规则可能已失效，或上游页面结构有变化`。
+- 正文版本严格保留：刷新不会删除旧版本，编辑也不会覆盖旧版本。
 
 错误透传：
 
 - 上游站点返回失败状态码（403/404/限流等）时，接口返回 **HTTP 502**，`errorMsg` 带真实
   状态码（如 `上游站点返回错误（HTTP 403）`）；上游连接超时/无法连接同样返回 502。
-- 上游正常（2xx）但正文解析为空时：书源声明了配图规则（`ruleContentImage`）视为纯图章节
-  `content` 返回空串；未声明则返回 **HTTP 404** + `正文为空：书源规则可能已失效，或上游页面结构有变化`。
-  空正文不会进缓存。
-- 本章有编辑版时，非强刷请求遇到上游读取失败仍会返回编辑版（`diffError` 说明基准不可读）；
-  `refresh=1` 则如实返回上游错误。
+- 有缓存时的后台回源/强刷失败不阻断阅读，响应带 `stale: true`。
 
-**章节编辑版（叠加层）**：用户可以把整章正文编辑后存到自己的数据目录
-（`data/<ns>/edited_chapters/`，与可再生缓存分离，purgeCache 不碰）。本章存在编辑版时
-本接口优先返回编辑版，并随正文一起返回与上游原文的 diff。
+也可使用 `POST /reader3/getBookContent`。正文可能是纯文本，也可能是 HTML（书源的正文规则
+吐出 HTML 时原样返回）。HTML 正文里的 `<img>` 由前端直接渲染——漫画/图集源、出版书插图、
+富文本正文都走这条路，不需要任何额外规则。
 
-相关端点：
+### 编辑版与版本历史
+
+用户编辑和手动导入都进同一个正文池，作为时间线里的用户版本；删除当前用户版本只清指针，
+历史版本仍然保留。单章内容上限 16MB。
 
 ```text
-POST /reader3/saveChapterEdit      { bookId, chapterUrl, chapterIndex, chapterTitle, content }
-GET  /reader3/getChapterEdit       ?bookId&chapterUrl（无编辑版时 data 为 null）
-GET  /reader3/listChapterEdits     ?bookId → { urls: string[] }
-POST /reader3/deleteChapterEdit    { bookId, chapterUrl }（删除即恢复上游版本）
+POST /reader3/saveChapterEdit      { bookId, chapterUrl, chapterIndex, chapterTitle, content,
+                                     baseVersionId?, note? }
+GET  /reader3/getChapterEdit       ?bookId&chapterUrl（当前用户版本；没有时 data 为 null）
+GET  /reader3/listChapterEdits     ?bookId → { urls: string[] }（当前显示用户版本的章节）
+POST /reader3/deleteChapterEdit    { bookId, chapterUrl }（清除当前用户版本，回落上游）
+GET/POST /reader3/getChapterTimeline
+        ?bookId&chapterUrl&limit?&beforeVersionId? → { items, latestUpstreamVersionId,
+                                                      latestUserVersionId, selectedVersionId,
+                                                      effectiveVersionId }
+GET/POST /reader3/getChapterVersion
+        ?bookId&chapterUrl&versionId → { versionId, kind, baseVersionId?, createdAt,
+                                        rawSize, note, bookSourceName, content }
+GET/POST /reader3/getChapterVersionDiff
+        ?bookId&chapterUrl&fromVersionId&toVersionId → { fromVersionId, toVersionId, ops }
+POST /reader3/selectChapterVersion { bookId, chapterUrl, versionId? }
+        （versionId 为空表示「跟随最新」，删除手动选择）
+POST /reader3/importChapterVersion { bookId, chapterUrl, content, chapterIndex?,
+                                     chapterTitle?, baseVersionId?, note?,
+                                     makeCurrent?, createdAt? }
 ```
 
-单章内容上限 2MB；删书时编辑版目录随书级联删除。
+- `saveChapterEdit` 默认把新编辑设为当前；`baseVersionId` 不传时取当前最新上游。
+- `getChapterTimeline` 按版本时间（`createdAt`）倒序，同一时间再按 `versionId`；`kind` 为 `upstream` / `edited` / `imported`；
+  `isCurrent` / `isLatestUpstream` / `isLatestUser` 标识版本状态。
+- `selectChapterVersion` 按用户保存到服务端，跨设备一致；“预览”不写状态。
+- `importChapterVersion` 默认只进时间线（`makeCurrent=false`），可指定历史时间与备注。
 
 ## 获取章节配图
 
@@ -160,7 +199,8 @@ SSE 流式缓存指定书籍的章节正文。查询参数：
 POST /reader3/deleteBookCache
 ```
 
-删除粒度是整本书：正文缓存、目录缓存与该书的换源候选缓存一并清理（评论缓存与书籍详情缓存不动）。
+删除粒度是整本书：目录缓存与该书的换源候选缓存一并清理；**正文历史不删**，
+评论缓存与书籍详情缓存也不动。
 
 查询参数或请求体：
 
@@ -168,7 +208,7 @@ POST /reader3/deleteBookCache
 | -------- | ------ | ---- | ------- |
 | `bookId` | string | 是   | 书籍 ID（须已登记，否则 404） |
 
-响应：`data` 形如 `{ "deleted": true, "contentCache": true, "chapterListCache": true }`。
+响应：`data` 形如 `{ "deleted": true, "contentCache": false, "chapterListCache": true }`。
 
 ## 保存阅读进度
 

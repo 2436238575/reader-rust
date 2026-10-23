@@ -193,7 +193,8 @@ async fn saving_same_named_local_txt_books_keeps_distinct_book_urls() {
     use reader_rust::crawler::http_client::HttpClient;
     use reader_rust::parser::rule_engine::RuleEngine;
     use reader_rust::service::book_service::BookService;
-    use reader_rust::storage::cache::file_cache::FileCache;
+    use reader_rust::service::chapter_content_service::ChapterContentService;
+    use std::sync::Arc;
 
     common::clean_stale_temp_dirs();
     let storage_dir = std::env::temp_dir().join(format!(
@@ -217,7 +218,7 @@ async fn saving_same_named_local_txt_books_keeps_distinct_book_urls() {
     let book_service = BookService::new(
         HttpClient::new(5, None).unwrap(),
         RuleEngine::new().unwrap(),
-        FileCache::new(storage_dir.join("cache"), 0),
+        Arc::new(ChapterContentService::from_pool(pool.clone(), 0)),
         storage_dir.to_str().unwrap(),
         reader_rust::storage::db::repo::BookRepo::new(pool.clone()),
         reader_rust::storage::db::repo::ShelfBookRepo::new(pool),

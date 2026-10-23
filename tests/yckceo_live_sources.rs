@@ -2,11 +2,12 @@ use reader_rust::crawler::http_client::HttpClient;
 use reader_rust::model::book_source::{book_source_from_value, BookSource};
 use reader_rust::parser::rule_engine::RuleEngine;
 use reader_rust::service::book_service::BookService;
-use reader_rust::storage::cache::file_cache::FileCache;
+use reader_rust::service::chapter_content_service::ChapterContentService;
 use regex::Regex;
 use serde_json::Value;
 use std::collections::HashSet;
 use std::env;
+use std::sync::Arc;
 use std::time::Duration;
 use tokio::time::sleep;
 use uuid::Uuid;
@@ -41,7 +42,7 @@ async fn yckceo_live_non_webview_sources_end_to_end() {
     let service = BookService::new(
         http.clone(),
         RuleEngine::new().expect("rule engine"),
-        FileCache::new(cache_root.join("cache"), 0),
+        Arc::new(ChapterContentService::from_pool(pool.clone(), 0)),
         cache_root.to_string_lossy().as_ref(),
         reader_rust::storage::db::repo::BookRepo::new(pool.clone()),
         reader_rust::storage::db::repo::ShelfBookRepo::new(pool),
@@ -399,7 +400,7 @@ async fn yckceo_live_chapter_images_survive_content_parsing() {
     let service = BookService::new(
         http.clone(),
         RuleEngine::new().expect("rule engine"),
-        FileCache::new(cache_root.join("cache"), 0),
+        Arc::new(ChapterContentService::from_pool(pool.clone(), 0)),
         cache_root.to_string_lossy().as_ref(),
         reader_rust::storage::db::repo::BookRepo::new(pool.clone()),
         reader_rust::storage::db::repo::ShelfBookRepo::new(pool),

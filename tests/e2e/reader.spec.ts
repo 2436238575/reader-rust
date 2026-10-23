@@ -327,10 +327,37 @@ test.describe('Standard E2E: reader', () => {
 
     // 切回编辑版：编辑内容和标记都回来
     await page.locator('.sidebar-item', { hasText: '设置' }).first().click()
-    await versionRow.getByRole('button', { name: '编辑版' }).click()
+    await versionRow.getByRole('button', { name: '默认版本' }).click()
     await page.keyboard.press('Escape')
     await expect(page.getByText('编辑版正文内容。').first()).toBeVisible()
     await expect(page.locator('p.diff-modified')).toHaveCount(1)
+  })
+
+  test('version history lists the current edited version and previews it', async ({ page }) => {
+    const { name } = await seedLocalTxtBook(page)
+    await openBookFromShelf(page, name)
+    await expect(page.getByText('第一章正文内容。').first()).toBeVisible()
+
+    await page.locator('.sidebar-item', { hasText: '设置' }).first().click()
+    await page.locator('.opt-btn', { hasText: '编辑本章正文' }).click()
+    await page.locator('.editor-textarea').fill('历史面板里的编辑版。')
+    await page.getByRole('button', { name: '保存修改' }).click()
+    await expect(page.getByText('历史面板里的编辑版。').first()).toBeVisible()
+    await page.keyboard.press('Escape')
+
+    // 工具栏「正文历史」：时间线里应有一个编辑版本，且标记为当前
+    await page.locator('button[title="正文历史"]').click()
+    const modal = page.locator('.version-modal')
+    await expect(modal).toBeVisible()
+    const row = modal.locator('.version-row', { hasText: '编辑' }).first()
+    await expect(row).toBeVisible()
+    await expect(row.locator('.badge.current')).toBeVisible()
+
+    // 点版本预览正文
+    await row.click()
+    await expect(modal.locator('.preview-content')).toContainText('历史面板里的编辑版。')
+    await modal.locator('.close-btn').click()
+    await expect(modal).toHaveCount(0)
   })
 
   test('mobile long-press on underline opens action menu and deletes it', async ({ page }) => {

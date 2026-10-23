@@ -65,6 +65,7 @@
       @progress="openCachePanel"
       @refresh="handleRefreshContent"
       @edit="openChapterEditOrDiff"
+      @history="openVersionPanel"
     />
 
     <!-- Mobile Controls (Click to toggle) -->
@@ -82,6 +83,7 @@
       @tts="handleTTS"
       @progress="openCachePanel"
       @edit="openChapterEditOrDiff"
+      @history="openVersionPanel"
     />
 
     <ReaderTtsPanel
@@ -471,6 +473,8 @@
 
     <ChapterEditorModal v-model="showChapterEditor" @changed="handleChapterEditChanged" />
 
+    <ChapterVersionPanel v-model="showVersionPanel" />
+
     <ChapterDiffPanel
       v-model="showDiffPanel"
       :ops="currentChapterDiffOps"
@@ -562,6 +566,9 @@ const ChapterEditorModal = defineAsyncComponent(
 )
 const ChapterDiffPanel = defineAsyncComponent(
   () => import('../components/reader/ChapterDiffPanel.vue')
+)
+const ChapterVersionPanel = defineAsyncComponent(
+  () => import('../components/reader/ChapterVersionPanel.vue')
 )
 
 const router = useRouter()
@@ -765,7 +772,7 @@ function decorateChapterHtml(baseHtml: string, withBubbles: boolean, chapterInde
   const targetChapterIndex = chapterIndex ?? store.currentIndex
   // diff 标记在装饰层最前：它改段级 class 与段内 span，后续 walker 都能穿过。
   // 上游原版不叠加标记（ops 的 editedIndex 对应的是编辑版段落）
-  if (config.value.showDiffMarks && chapterDiffState(targetChapterIndex)?.variant === 'edited') {
+  if (config.value.showDiffMarks && chapterDiffState(targetChapterIndex)?.edited) {
     const ops = chapterDiffOps(targetChapterIndex)
     if (ops) applyDiffMarks(wrapper, ops)
   }
@@ -835,6 +842,7 @@ async function handleRefreshContent() {
 /* ─── 章节正文编辑 ─── */
 const showChapterEditor = ref(false)
 const showDiffPanel = ref(false)
+const showVersionPanel = ref(false)
 /** 当前章的 diff 操作序列（store 的响应式 Map，面板跟着重算） */
 const currentChapterDiffOps = computed(() => chapterDiffOps(store.currentIndex))
 /** diff 算不出来的原因：面板要显示「无法对比」而不是「没有差异」 */
@@ -860,7 +868,10 @@ function openChapterEditor() {
 /** 工具栏编辑按钮分流：本章没改过 → 编辑器；改过 → diff 面板 */
 function openChapterEditOrDiff() {
   if (!store.currentChapter) return
-  if (currentChapterEdited.value) {
+  // 正在预览上游原版时没有“与最新上游的差异”（标记也不叠加）；直接进编辑器，
+  // 要对照版本去「正文历史」面板。
+  const viewingUpstream = store.chapterVersions.get(store.currentIndex)?.kind === 'upstream'
+  if (currentChapterEdited.value && !viewingUpstream) {
     openDiffPanel()
     return
   }
@@ -871,6 +882,12 @@ function openChapterEditOrDiff() {
 function openDiffPanel() {
   if (!store.currentChapter) return
   showDiffPanel.value = true
+}
+
+/** 「正文历史」：版本时间线、预览、切换当前版本、导入历史版本。 */
+function openVersionPanel() {
+  if (!store.currentChapter) return
+  showVersionPanel.value = true
 }
 
 /** 编辑保存/恢复上游后：重载本章（响应里带最新正文与 diff） */
@@ -939,7 +956,7 @@ const paraBubbleMap = computed(() =>
     splitParagraphLines(store.content),
     rawLineByPosition.value,
     // 只有显示编辑版时才需要按原文重定位；上游原版的段号本来就对得上
-    currentChapterEdited.value && config.value.contentVersion === 'edited'
+    currentChapterEdited.value && chapterDiffState(store.currentIndex)?.edited === true
   )
 )
 

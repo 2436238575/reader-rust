@@ -9,7 +9,6 @@ use axum::{extract::Query, http::StatusCode, routing::get, Json, Router};
 use reader_rust::api::router::build_router;
 use reader_rust::app::bootstrap::build_state;
 use reader_rust::app::config::AppConfig;
-use reader_rust::util::hash::md5_hex;
 use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -233,18 +232,6 @@ impl TestServer {
         format!("{}/content?item_id={}", self.upstream_url, 100 + index)
     }
 
-    /// 正文缓存应当落到的文件：`cache/<ns>/<bookId>/<md5(chapterUrl)>.txt`
-    fn book_cache_file(&self, chapter_url: &str) -> PathBuf {
-        // 分片：cache/<ns>/<bookId>/<md5前两位>/<md5>.txt
-        let hash = md5_hex(chapter_url);
-        self.temp_dir
-            .join("cache")
-            .join("user_1")
-            .join(&self.book_id)
-            .join(&hash[..2])
-            .join(format!("{hash}.txt"))
-    }
-
     fn hits_for(&self, path: &str) -> usize {
         *self.hits.lock().unwrap().get(path).unwrap_or(&0)
     }
@@ -302,12 +289,15 @@ async fn content_with_explicit_book_url_lands_in_the_book_cache_dir() {
     let content = server.post("getBookContent", body.clone()).await;
     assert_eq!(content["content"], json!("章节 100 的正文"));
 
-    let file = server.book_cache_file(&server.chapter_url(0));
-    assert!(
-        file.exists(),
-        "正文应缓存到 cache/<ns>/<bookId>/ 目录: {}",
-        file.display()
-    );
+    let timeline = server
+        .post(
+            "getChapterTimeline",
+            json!({ "bookId": server.book_id, "chapterUrl": server.chapter_url(0) }),
+        )
+        .await;
+    let items = timeline["items"].as_array().unwrap();
+    assert_eq!(items.len(), 1, "每次成功抓取应落一个上游版本");
+    assert_eq!(items[0]["kind"], json!("upstream"));
 
     server.post("getBookContent", body).await;
     assert_eq!(
@@ -340,15 +330,15 @@ async fn content_without_book_id_is_rejected() {
         "应报缺 bookId: {payload}"
     );
 
-    // 缓存目录里不该出现任何以章节 URL 命名的孤儿目录
+    // 正文已经进数据库：缓存目录里不该再出现按书/章节命名的正文目录
     let orphan = server
         .temp_dir
         .join("cache")
         .join("user_1")
-        .join(md5_hex(&server.chapter_url(0)));
+        .join(&server.book_id);
     assert!(
         !orphan.exists(),
-        "不该产生孤儿缓存目录: {}",
+        "正文不应再落文件缓存: {}",
         orphan.display()
     );
 }

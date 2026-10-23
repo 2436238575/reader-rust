@@ -7,7 +7,8 @@ use reader_rust::model::rule::SearchRule;
 use reader_rust::parser::rule_engine::RuleEngine;
 use reader_rust::service::book_service::BookService;
 use reader_rust::service::book_source_service::set_invalid_book_source_group;
-use reader_rust::storage::cache::file_cache::FileCache;
+use reader_rust::service::chapter_content_service::ChapterContentService;
+use std::sync::Arc;
 use uuid::Uuid;
 
 /// 装配一套带书籍登记表的 BookService（独立临时目录 + 临时 SQLite）。
@@ -24,7 +25,7 @@ async fn test_book_service(storage_dir: &std::path::Path) -> (BookService, sqlx:
     let service = BookService::new(
         HttpClient::new(5, None).unwrap(),
         RuleEngine::new().unwrap(),
-        FileCache::new(storage_dir.join("cache"), 0),
+        Arc::new(ChapterContentService::from_pool(pool.clone(), 0)),
         storage_dir.to_str().unwrap(),
         reader_rust::storage::db::repo::BookRepo::new(pool.clone()),
         reader_rust::storage::db::repo::ShelfBookRepo::new(pool.clone()),

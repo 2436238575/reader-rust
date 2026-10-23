@@ -1,3 +1,4 @@
+pub mod content_repo;
 pub mod repo;
 
 use sqlx::{

@@ -89,10 +89,10 @@ pub struct BookContentRequest {
     pub variant: Option<String>,
 }
 
-/// 正文版本：编辑版优先，或只读上游原版。
+/// 正文版本：默认版本（用户选择 > 用户版本 > 最新上游），或只预览最新上游。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ContentVariant {
-    Edited,
+    Default,
     Upstream,
 }
 
@@ -101,28 +101,55 @@ impl ContentVariant {
         if value.is_some_and(|v| v.trim().eq_ignore_ascii_case("upstream")) {
             Self::Upstream
         } else {
-            Self::Edited
+            Self::Default
         }
     }
 
     fn as_str(self) -> &'static str {
         match self {
-            Self::Edited => "edited",
+            Self::Default => "default",
             Self::Upstream => "upstream",
         }
     }
 }
 
-/// 章节正文响应。`data` 不再是裸字符串：编辑过的章节把 diff 一起带回来，
-/// 前端不用再发「取上游基准」「算 diff」两次额外请求。
+/// 章节正文响应。`diff` 只表示「当前用户版本相对它的基准版本改了什么」；
+/// 上游版本之间的差异走历史面板的版本 diff 接口。
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ChapterContentData {
     pub content: String,
-    /// 本章是否存在编辑版（不代表当前显示的是哪一个版本）。
+    /// 当前返回的是否为用户版本（编辑版或手动导入）。
     pub edited: bool,
-    /// 当前返回的是哪个版本：`edited` / `upstream`。
+    /// `default` / `upstream`。
     pub variant: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub version_id: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub version_kind: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub base_version_id: Option<i64>,
+    /// 本次 diff 使用的基准版本；始终是最新上游版本。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub diff_base_version_id: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub latest_user_version_id: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub latest_upstream_version_id: Option<i64>,
+    /// 用户版本的基准上游之后，上游是否又变过。
+    pub upstream_changed: bool,
+    /// `selected` / `edited` / `upstream` / `upstream_preview`。
+    pub selection_source: String,
+    /// 当前返回的是旧数据：到期未回源，或最近一次回源失败。
+    pub stale: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_attempt_at: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_success_at: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub upstream_changed_at: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub edited_at: Option<i64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub diff: Option<ChapterDiffData>,
     /// diff 算不出来的原因（正文仍然可用）。前端在 diff 面板里展示。
@@ -135,69 +162,149 @@ pub struct ChapterDiffData {
     pub ops: Vec<crate::service::git_diff_service::DiffOp>,
 }
 
-/// 组装正文响应：有编辑版就顺带算好 diff（两个版本都算，diff 面板共用）。
+/// 网络书的正文响应：阅读页 diff 始终拿「当前用户版本 vs 最新上游版本」。
 ///
-/// `upstream` 为 None 表示基准读不到（本地原文被删、上游失败）——编辑版模式下
-/// 仍返回编辑版，只把原因放进 `diffError`；上游原版模式下调用方会先报错。
-async fn chapter_content_data(
+/// 评论源只对最新上游正文取段号，diff 标记必须和最新上游的段落对齐；
+/// `base_version_id` 只记录编辑时基于哪一版，留作历史信息。
+async fn network_content_data(
+    state: &AppState,
+    book_id: &str,
+    chapter_url: &str,
+    read: crate::service::book_service::ChapterContentRead,
+    force_upstream: bool,
+) -> ChapterContentData {
+    let view = read.view;
+    let is_user = view.kind != "upstream";
+    let upstream_changed = is_user
+        && match view.base_version_id {
+            Some(base) => Some(base) != read.latest_upstream_version_id,
+            None => read.latest_upstream_version_id.is_some(),
+        };
+    let diff_base_id = read.latest_upstream_version_id;
+    let (diff, diff_error) = if is_user {
+        match diff_base_id {
+            Some(base_id) => {
+                match state
+                    .chapter_content_service
+                    .version(book_id, chapter_url, base_id)
+                    .await
+                {
+                    Ok(Some(base)) => {
+                        match state
+                            .git_diff_service
+                            .diff_texts(&base.content, &view.content)
+                            .await
+                        {
+                            Ok(ops) => (Some(ChapterDiffData { ops }), None),
+                            Err(reason) => (None, Some(reason.to_string())),
+                        }
+                    }
+                    Ok(None) => (None, Some("最新上游版本不可读，未计算差异".to_string())),
+                    Err(error) => (None, Some(error.to_string())),
+                }
+            }
+            None => (None, Some("最新上游版本不可读，未计算差异".to_string())),
+        }
+    } else {
+        (None, None)
+    };
+    let selection_source = if force_upstream {
+        "upstream_preview"
+    } else if read.selected_version_id.is_some() {
+        "selected"
+    } else if read.latest_user_version_id == Some(view.version_id) {
+        "edited"
+    } else {
+        "upstream"
+    };
+    ChapterContentData {
+        content: view.content,
+        edited: is_user,
+        variant: if force_upstream {
+            ContentVariant::Upstream.as_str()
+        } else {
+            ContentVariant::Default.as_str()
+        }
+        .to_string(),
+        version_id: Some(view.version_id),
+        version_kind: Some(view.kind),
+        base_version_id: view.base_version_id,
+        diff_base_version_id: if is_user { diff_base_id } else { None },
+        latest_user_version_id: read.latest_user_version_id,
+        latest_upstream_version_id: read.latest_upstream_version_id,
+        upstream_changed,
+        selection_source: selection_source.to_string(),
+        stale: read.stale,
+        last_attempt_at: read.last_attempt_at,
+        last_success_at: read.last_success_at,
+        upstream_changed_at: read.upstream_changed_at,
+        edited_at: read.edited_at,
+        diff,
+        diff_error,
+    }
+}
+
+/// 本地书的正文响应：上游原文来自本地文件，用户版本来自正文池。
+/// 阅读页 diff 也始终以当前本地原文为基准（本地书没有版本化上游）。
+async fn local_content_data(
     state: &AppState,
     upstream: Option<String>,
-    edited: Option<String>,
-    variant: ContentVariant,
+    user_view: Option<crate::service::chapter_content_service::ChapterVersionView>,
+    latest_user_version_id: Option<i64>,
+    force_upstream: bool,
 ) -> ChapterContentData {
-    let has_edit = edited.is_some();
-    if variant == ContentVariant::Upstream {
-        let diff = match (upstream.as_deref(), edited.as_deref()) {
-            (Some(base), Some(edit)) => Some(state.git_diff_service.diff_texts(base, edit).await),
-            _ => None,
-        };
-        let (diff, diff_error) = match diff {
-            Some(Ok(ops)) => (Some(ChapterDiffData { ops }), None),
-            Some(Err(reason)) => (None, Some(reason.to_string())),
-            None => (None, None),
-        };
-        return ChapterContentData {
-            content: upstream.unwrap_or_default(),
-            edited: has_edit,
-            variant: variant.as_str().to_string(),
-            diff,
-            diff_error,
-        };
-    }
-
-    let Some(edited) = edited else {
-        return ChapterContentData {
-            content: upstream.unwrap_or_default(),
-            edited: false,
-            variant: variant.as_str().to_string(),
-            diff: None,
-            diff_error: None,
-        };
+    let has_user = user_view.is_some();
+    let (content, version_id, version_kind, base_version_id, diff, diff_error) = match user_view {
+        Some(view) if !force_upstream => {
+            let (diff, diff_error) = match upstream.as_deref() {
+                Some(base) => match state.git_diff_service.diff_texts(base, &view.content).await {
+                    Ok(ops) => (Some(ChapterDiffData { ops }), None),
+                    Err(reason) => (None, Some(reason.to_string())),
+                },
+                None => (None, Some("本地原文不可读，未计算差异".to_string())),
+            };
+            (
+                view.content,
+                Some(view.version_id),
+                Some(view.kind),
+                view.base_version_id,
+                diff,
+                diff_error,
+            )
+        }
+        _ => (upstream.unwrap_or_default(), None, None, None, None, None),
     };
-    let Some(base) = upstream else {
-        return ChapterContentData {
-            content: edited,
-            edited: true,
-            variant: variant.as_str().to_string(),
-            diff: None,
-            diff_error: Some("上游原文不可读，未计算差异".to_string()),
-        };
-    };
-    match state.git_diff_service.diff_texts(&base, &edited).await {
-        Ok(ops) => ChapterContentData {
-            content: edited,
-            edited: true,
-            variant: variant.as_str().to_string(),
-            diff: Some(ChapterDiffData { ops }),
-            diff_error: None,
-        },
-        Err(reason) => ChapterContentData {
-            content: edited,
-            edited: true,
-            variant: variant.as_str().to_string(),
-            diff: None,
-            diff_error: Some(reason.to_string()),
-        },
+    ChapterContentData {
+        content,
+        edited: has_user && !force_upstream,
+        variant: if force_upstream {
+            ContentVariant::Upstream.as_str()
+        } else {
+            ContentVariant::Default.as_str()
+        }
+        .to_string(),
+        version_id,
+        version_kind,
+        base_version_id,
+        diff_base_version_id: None,
+        latest_user_version_id,
+        latest_upstream_version_id: None,
+        upstream_changed: false,
+        selection_source: if force_upstream {
+            "upstream_preview"
+        } else if has_user {
+            "edited"
+        } else {
+            "upstream"
+        }
+        .to_string(),
+        stale: false,
+        last_attempt_at: None,
+        last_success_at: None,
+        upstream_changed_at: None,
+        edited_at: None,
+        diff,
+        diff_error,
     }
 }
 
@@ -643,6 +750,7 @@ pub async fn get_book_content(
 
     let do_refresh = req.refresh.unwrap_or(0) > 0;
     let variant = ContentVariant::parse(req.variant.as_deref());
+    let force_upstream = variant == ContentVariant::Upstream;
 
     if req.chapter_url.as_deref().is_some_and(is_local_txt_url) {
         let url = req
@@ -659,32 +767,21 @@ pub async fn get_book_content(
         } else {
             repair_encoded_url(url)
         };
-        // 编辑版优先；本地书的 diff 基准是原文，编辑不改原文件
-        let edited = match req.book_id.as_deref().filter(|v| !v.trim().is_empty()) {
-            Some(book_id) => state
-                .chapter_edit_service
-                .get_chapter_edit(&user_ns, book_id, &chapter_url)
-                .await
-                .ok()
-                .flatten(),
-            None => None,
-        };
-        let upstream = match state
-            .local_txt_book_service
-            .get_content(&user_ns, &chapter_url)
-            .await
-        {
-            Ok(content) => Some(content),
-            Err(error) if variant == ContentVariant::Edited && edited.is_some() => {
-                tracing::warn!(%error, "本地 TXT 原文读取失败，只返回编辑版");
-                None
-            }
-            Err(error) => return Err(error),
-        };
-        let data = chapter_content_data(&state, upstream, edited, variant).await;
-        return Ok(Json(ApiResponse::ok(
-            serde_json::to_value(data).unwrap_or_default(),
-        )));
+        return local_book_content(
+            &state,
+            &user_ns,
+            req.book_id.as_deref().filter(|v| !v.trim().is_empty()),
+            &chapter_url,
+            variant,
+            |ns, url| {
+                let service = state.local_txt_book_service.clone();
+                let ns = ns.to_string();
+                let url = url.to_string();
+                async move { service.get_content(&ns, &url).await }
+            },
+            "本地 TXT",
+        )
+        .await;
     }
 
     if req.chapter_url.as_deref().is_some_and(is_local_epub_url) {
@@ -702,31 +799,21 @@ pub async fn get_book_content(
         } else {
             repair_encoded_url(url)
         };
-        let edited = match req.book_id.as_deref().filter(|v| !v.trim().is_empty()) {
-            Some(book_id) => state
-                .chapter_edit_service
-                .get_chapter_edit(&user_ns, book_id, &chapter_url)
-                .await
-                .ok()
-                .flatten(),
-            None => None,
-        };
-        let upstream = match state
-            .local_epub_book_service
-            .get_content(&user_ns, &chapter_url)
-            .await
-        {
-            Ok(content) => Some(content),
-            Err(error) if variant == ContentVariant::Edited && edited.is_some() => {
-                tracing::warn!(%error, "本地 EPUB 原文读取失败，只返回编辑版");
-                None
-            }
-            Err(error) => return Err(error),
-        };
-        let data = chapter_content_data(&state, upstream, edited, variant).await;
-        return Ok(Json(ApiResponse::ok(
-            serde_json::to_value(data).unwrap_or_default(),
-        )));
+        return local_book_content(
+            &state,
+            &user_ns,
+            req.book_id.as_deref().filter(|v| !v.trim().is_empty()),
+            &chapter_url,
+            variant,
+            |ns, url| {
+                let service = state.local_epub_book_service.clone();
+                let ns = ns.to_string();
+                let url = url.to_string();
+                async move { service.get_content(&ns, &url).await }
+            },
+            "本地 EPUB",
+        )
+        .await;
     }
 
     let book_id = req
@@ -740,37 +827,92 @@ pub async fn get_book_content(
         .ok_or_else(|| AppError::BadRequest("chapterUrl required".to_string()))?;
     let resolved = resolve_book(&state, &user_ns, &book_id).await?;
 
-    let edited = state
-        .chapter_edit_service
-        .get_chapter_edit(&user_ns, &book_id, &chapter_url)
-        .await
-        .ok()
-        .flatten();
-
-    // 强刷：删掉本章上游缓存，重抓一份作为 diff 基准
+    // 强刷：抓一份新的上游版本。失败时 refresh_chapter_content 已经回退到
+    // 已有缓存；没有缓存才把错误抛出来。
     if do_refresh {
-        let _ = state
+        state
             .book_service
-            .delete_chapter_cache(&user_ns, &book_id, &chapter_url)
-            .await;
+            .refresh_chapter_content(&user_ns, &book_id, &resolved.source, &chapter_url)
+            .await?;
     }
 
-    // 上游正文同时充当阅读内容（没编辑时）和 diff 基准（有编辑时）。
-    // 非强刷下即使上游失败也把编辑版返回给用户——编辑是本地资产，
-    // 不该被一次上游抖动挡住；只有强刷才把上游失败如实报出来。
-    let upstream = match state
+    let read = state
         .book_service
-        .get_content(&user_ns, &book_id, &resolved.source, &chapter_url)
-        .await
-    {
+        .read_content(
+            &user_ns,
+            &book_id,
+            &resolved.source,
+            &chapter_url,
+            force_upstream,
+        )
+        .await?;
+    // 超过 24 小时没回源：当前请求先返回缓存，后台再抓一次。
+    if read.needs_revalidate && !do_refresh {
+        let service = state.book_service.clone();
+        let source = resolved.source.clone();
+        let user_ns = user_ns.clone();
+        let book_id = book_id.clone();
+        let chapter_url = chapter_url.clone();
+        tokio::spawn(async move {
+            service
+                .revalidate_chapter(&user_ns, &book_id, &source, &chapter_url)
+                .await;
+        });
+    }
+    let data = network_content_data(&state, &book_id, &chapter_url, read, force_upstream).await;
+    Ok(Json(ApiResponse::ok(
+        serde_json::to_value(data).unwrap_or_default(),
+    )))
+}
+
+/// 本地书的正文读取。用户版本来自正文池，上游原文来自本地文件。
+async fn local_book_content<F, Fut>(
+    state: &AppState,
+    user_ns: &str,
+    book_id: Option<&str>,
+    chapter_url: &str,
+    variant: ContentVariant,
+    read_upstream: F,
+    label: &str,
+) -> Result<Json<ApiResponse<serde_json::Value>>, AppError>
+where
+    F: FnOnce(&str, &str) -> Fut,
+    Fut: std::future::Future<Output = Result<String, AppError>>,
+{
+    let force_upstream = variant == ContentVariant::Upstream;
+    let user_view = match book_id {
+        Some(book_id) if !force_upstream => {
+            state
+                .chapter_content_service
+                .resolve(user_ns, book_id, chapter_url, false)
+                .await?
+        }
+        _ => None,
+    };
+    let latest_user_version_id = match book_id {
+        Some(book_id) => state
+            .chapter_content_service
+            .latest(book_id, chapter_url)
+            .await?
+            .and_then(|row| row.latest_user_version_id),
+        None => None,
+    };
+    let upstream = match read_upstream(user_ns, chapter_url).await {
         Ok(content) => Some(content),
-        Err(error) if variant == ContentVariant::Edited && !do_refresh && edited.is_some() => {
-            tracing::warn!(%error, "上游正文读取失败，只返回编辑版");
+        Err(error) if !force_upstream && user_view.is_some() => {
+            tracing::warn!(%error, "{}原文读取失败，只返回用户版本", label);
             None
         }
         Err(error) => return Err(error),
     };
-    let data = chapter_content_data(&state, upstream, edited, variant).await;
+    let data = local_content_data(
+        state,
+        upstream,
+        user_view,
+        latest_user_version_id,
+        force_upstream,
+    )
+    .await;
     Ok(Json(ApiResponse::ok(
         serde_json::to_value(data).unwrap_or_default(),
     )))
@@ -791,11 +933,7 @@ pub async fn delete_book_cache(
     //（与书籍级接口一致）；`../../x` 这类输入在这里就 404，到不了文件系统
     resolve_book(&state, &user_ns, &book_id).await?;
 
-    // 正文 + 章节列表 + 换源候选；评论（7 天 TTL 的第三方数据）与书籍详情不动
-    let deleted_content = state
-        .book_service
-        .delete_book_cache(&user_ns, &book_id)
-        .await?;
+    // 章节列表 + 换源候选；正文历史不删，评论与书籍详情也不动
     let deleted_chapter_list = state
         .book_service
         .chapter_list_cache_exists(&user_ns, &book_id)
@@ -813,7 +951,7 @@ pub async fn delete_book_cache(
 
     Ok(Json(ApiResponse::ok(serde_json::json!({
         "deleted": true,
-        "contentCache": deleted_content,
+        "contentCache": false,
         "chapterListCache": deleted_chapter_list
     }))))
 }
@@ -1082,71 +1220,7 @@ pub async fn save_books(
         .save_books(&user_ns, books, restore)
         .await?;
 
-    if restore {
-        // 登记表已清表重建：按 id 引用的数据里，book_url 与同 id 新登记行
-        // 不一致的都是恢复前别的书的残留，清掉防串书
-        prune_mismatched_ai_memories(&state, &user_ns).await;
-        prune_mismatched_chapter_edits(&state, &user_ns).await;
-        prune_mismatched_bookmarks(&state, &user_ns).await;
-    }
     Ok(ok_with_cover_routes(&state, serde_json::to_value(saved).unwrap_or_default()).await)
-}
-
-/// 恢复重建登记表后，校验 AI 记忆行的 book_url 与当前同 id 书籍一致。
-async fn prune_mismatched_ai_memories(state: &AppState, user_ns: &str) {
-    let Ok(rows) = state.ai_book_service.list_keys(user_ns).await else {
-        return;
-    };
-    for (book_id, book_url) in rows {
-        let mismatched = match state.book_service.book_repo().get(user_ns, &book_id).await {
-            Ok(Some(row)) => row.book_url != book_url,
-            // 登记表里没有这个 id：恢复的书架不含它，同样是孤儿
-            Ok(None) => true,
-            Err(_) => false,
-        };
-        if mismatched {
-            let _ = state.ai_book_service.delete(user_ns, &book_id).await;
-        }
-    }
-}
-
-/// 章节编辑版同一手法：book_url 不一致或登记表已无此 id 的索引行连同
-/// 正文文件一起删（留着会在 id 复用时把旧编辑版挂到别的书上）。
-async fn prune_mismatched_chapter_edits(state: &AppState, user_ns: &str) {
-    let Ok(refs) = state.chapter_edit_service.list_book_refs(user_ns).await else {
-        return;
-    };
-    for (book_id, book_url) in refs {
-        let mismatched = match state.book_service.book_repo().get(user_ns, &book_id).await {
-            // 空 book_url 是列加入前的旧行：无法校验，留着不杀
-            Ok(Some(row)) => !book_url.is_empty() && row.book_url != book_url,
-            Ok(None) => true,
-            Err(_) => false,
-        };
-        if mismatched {
-            state
-                .chapter_edit_service
-                .delete_book_edits(user_ns, &book_id)
-                .await;
-        }
-    }
-}
-
-/// 书签同一手法；只处理记了 book_url 的行（旧数据空串跳过校验）。
-async fn prune_mismatched_bookmarks(state: &AppState, user_ns: &str) {
-    let Ok(refs) = state.bookmark_repo.list_book_refs(user_ns).await else {
-        return;
-    };
-    for (book_id, book_url) in refs {
-        let mismatched = match state.book_service.book_repo().get(user_ns, &book_id).await {
-            Ok(Some(row)) => row.book_url != book_url,
-            Ok(None) => true,
-            Err(_) => false,
-        };
-        if mismatched {
-            let _ = state.bookmark_repo.delete_for_book(user_ns, &book_id).await;
-        }
-    }
 }
 
 pub async fn set_book_source(
@@ -1203,16 +1277,20 @@ pub async fn set_book_source(
         .await?
         .unwrap_or_default();
 
-    // 改绑：bookId 不变，指向新地址与新书源；目标登记行是浏览残留，连带缓存删掉
-    repo.rebind(&user_ns, &book_id, &target.book_url, target.book_source_id)
+    // 改绑：bookId 不变，指向新地址与新书源。全局唯一索引要求新 URL 只能
+    // 有一行，所以先删目标登记行再改绑，两步放在同一个事务里。
+    // 目标行之前预览过的正文历史会变成没有书指向的记录，仍然保留在库中。
+    let mut tx = repo.begin().await?;
+    repo.delete_on(&mut tx, &target_id).await?;
+    repo.rebind_on(&mut tx, &book_id, &target.book_url, target.book_source_id)
         .await?;
-    repo.delete(&user_ns, &target_id).await?;
+    tx.commit().await?;
     let _ = state
         .book_service
         .purge_book_cache(&user_ns, &target_id)
         .await;
     state.image_service.remove_by_book_id(&target_id).await;
-    // 当前书的源相关缓存（正文/目录/详情/评论）随源失效，候选清单保留
+    // 当前书的目录/详情/评论缓存随源失效，候选清单与正文历史保留
     let _ = state
         .book_service
         .purge_book_reading_cache(&user_ns, &book_id)
@@ -1296,11 +1374,7 @@ pub async fn delete_book(
     let _ = state.ai_book_service.delete(&user_ns, &book_id).await;
     super::bookmark::delete_bookmarks_for_book(&state, &user_ns, &book_id).await?;
     state.image_service.remove_by_book_id(&book_id).await;
-    // 章节编辑版（data/ 下的用户资产）随书级联删除
-    state
-        .chapter_edit_service
-        .delete_book_edits(&user_ns, &book_id)
-        .await;
+    // 登记行与正文历史保留：重新加入同一本书时 book_id 不变，历史还接得上
     if let Some(book) = shelf_book {
         cleanup_local_book_files(&state, &user_ns, std::slice::from_ref(&book)).await;
     }
@@ -1354,10 +1428,7 @@ pub async fn delete_books(
         let _ = state.ai_book_service.delete(&user_ns, book_id).await;
         super::bookmark::delete_bookmarks_for_book(&state, &user_ns, book_id).await?;
         state.image_service.remove_by_book_id(book_id).await;
-        state
-            .chapter_edit_service
-            .delete_book_edits(&user_ns, book_id)
-            .await;
+        // 正文历史保留，删书只移出书架
     }
     cleanup_local_book_files(&state, &user_ns, &shelf_books).await;
     Ok(Json(ApiResponse::ok(serde_json::json!({"deleted": count}))))

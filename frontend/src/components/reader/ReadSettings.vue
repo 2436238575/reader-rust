@@ -569,7 +569,7 @@
             :class="{ active: config.contentVersion === 'edited' }"
             @click="store.updateConfig('contentVersion', 'edited')"
           >
-            编辑版
+            默认版本
           </button>
           <button
             class="opt-btn"
@@ -581,7 +581,7 @@
         </div>
       </div>
       <div class="setting-hint">
-        只对编辑过的章节有区别；上游原版不显示改动标记，「本章改动」仍可查看编辑版与上游的差异。
+        默认版本按「正文历史」里选中的版本显示；没选过时用户版本优先，没有再取最新上游。上游原版只是本次预览，不改变选择。
       </div>
 
       <div class="setting-row">

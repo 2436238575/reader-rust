@@ -8,7 +8,7 @@ use crate::service::{
     agent_sidecar_service::AgentSidecarService, ai_book_service::AiBookService,
     ai_model_service::AiModelService, book_group_service::BookGroupService,
     book_service::BookService, book_source_service::BookSourceService,
-    chapter_edit_service::ChapterEditService, image_service::ImageService,
+    chapter_content_service::ChapterContentService, image_service::ImageService,
     json_document_service::JsonDocumentService, local_epub_book::LocalEpubBookService,
     local_txt_book::LocalTxtBookService, user_service::UserService,
 };
@@ -25,8 +25,8 @@ pub struct AppState {
     pub book_group_service: Arc<BookGroupService>,
     pub local_txt_book_service: Arc<LocalTxtBookService>,
     pub local_epub_book_service: Arc<LocalEpubBookService>,
-    /// 章节正文编辑版（用户数据目录的叠加层）
-    pub chapter_edit_service: Arc<ChapterEditService>,
+    /// 正文池、版本时间线与每用户版本选择
+    pub chapter_content_service: Arc<ChapterContentService>,
     /// 章节 diff 的系统 git 执行器（无 git 时回退前端本地计算）
     pub git_diff_service: Arc<crate::service::git_diff_service::GitDiffService>,
     pub json_document_service: Arc<JsonDocumentService>,

@@ -30,6 +30,8 @@ md-5 = "0.10"
 # Refresh Token 只以 SHA-256 摘要落库，明文永不持久化
 sha2 = "0.10"
 hex = "0.4"
+# 正文池压缩：历史严格保留，压缩能明显减慢数据库增长
+zstd = "0.13"
 scraper = "0.20"
 # RFC 9535 完整实现（维护活跃）；旧的 jsonpath_lib 0.3 多年未维护且解析器可 panic。
 # 方言差异：不支持 `=~` 正则过滤，改用 match()/search() 函数（见 docs/reference/book-source-rules.md §9.1）

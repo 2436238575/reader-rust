@@ -4,8 +4,9 @@ use reader_rust::crawler::http_client::HttpClient;
 use reader_rust::model::{book_source::BookSource, rule::TocRule};
 use reader_rust::parser::rule_engine::RuleEngine;
 use reader_rust::service::book_service::BookService;
-use reader_rust::storage::cache::file_cache::FileCache;
+use reader_rust::service::chapter_content_service::ChapterContentService;
 use serde_json::{json, Value};
+use std::sync::Arc;
 use uuid::Uuid;
 
 async fn protected_toc(headers: HeaderMap) -> Json<Value> {
@@ -58,11 +59,11 @@ async fn chapter_list_requests_include_legacy_source_headers() {
     ))
     .await
     .unwrap();
-    let cache = FileCache::new(storage_dir.join("cache"), 0);
+    let content = Arc::new(ChapterContentService::from_pool(pool.clone(), 0));
     let service = BookService::new(
         HttpClient::new(5, None).unwrap(),
         RuleEngine::new().unwrap(),
-        cache,
+        content,
         storage_dir.to_str().unwrap(),
         reader_rust::storage::db::repo::BookRepo::new(pool.clone()),
         reader_rust::storage::db::repo::ShelfBookRepo::new(pool),

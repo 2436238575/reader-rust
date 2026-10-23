@@ -8,7 +8,7 @@ use reader_rust::model::rule::{ContentRule, SearchRule, TocRule};
 use reader_rust::parser::rule_engine::RuleEngine;
 use reader_rust::parser::{html, jsonpath};
 use reader_rust::service::book_service::BookService;
-use reader_rust::storage::cache::file_cache::FileCache;
+use reader_rust::service::chapter_content_service::ChapterContentService;
 use serde_json::json;
 use std::sync::{
     atomic::{AtomicUsize, Ordering},
@@ -35,7 +35,7 @@ async fn test_book_service(storage_dir: &std::path::Path) -> (BookService, sqlx:
     let service = BookService::new(
         HttpClient::new(5, None).unwrap(),
         RuleEngine::new().unwrap(),
-        FileCache::new(storage_dir.join("cache"), 0),
+        Arc::new(ChapterContentService::from_pool(pool.clone(), 0)),
         storage_dir.to_str().unwrap(),
         reader_rust::storage::db::repo::BookRepo::new(pool.clone()),
         reader_rust::storage::db::repo::ShelfBookRepo::new(pool.clone()),

@@ -6,15 +6,17 @@ use axum::http::StatusCode;
 use reader_rust::api::router::build_router;
 use reader_rust::app::bootstrap::build_state;
 use reader_rust::app::config::AppConfig;
-use reader_rust::util::hash::md5_hex;
+use reader_rust::service::chapter_content_service::{ChapterContentService, UpstreamChapterMeta};
 use serde_json::{json, Value};
 use std::path::PathBuf;
+use std::sync::Arc;
 
 struct TestServer {
     base_url: String,
     temp_dir: PathBuf,
     client: reqwest::Client,
     token: String,
+    content: Arc<ChapterContentService>,
 }
 
 impl TestServer {
@@ -40,6 +42,7 @@ impl TestServer {
         };
 
         let state = build_state(cfg).await.unwrap();
+        let content = state.chapter_content_service.clone();
         let app = build_router(state);
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
@@ -66,6 +69,7 @@ impl TestServer {
             temp_dir,
             client,
             token,
+            content,
         }
     }
 
@@ -87,17 +91,24 @@ impl TestServer {
         .unwrap();
     }
 
-    /// 预置章节正文缓存：`<storage>/cache/user_1/<bookId>/<md5前2位>/<md5>.txt`
-    fn seed_chapter_cache(&self, book_id: &str, chapter_url: &str, content: &str) {
-        let name = md5_hex(chapter_url);
-        let dir = self
-            .temp_dir
-            .join("cache")
-            .join("user_1")
-            .join(book_id)
-            .join(&name[..2]);
-        std::fs::create_dir_all(&dir).unwrap();
-        std::fs::write(dir.join(format!("{name}.txt")), content).unwrap();
+    /// 预置一组上游正文版本（正文池）。
+    async fn seed_chapter_cache(&self, book_id: &str, chapter_url: &str, content: &str) {
+        self.content
+            .save_upstream(
+                UpstreamChapterMeta {
+                    book_id,
+                    chapter_url,
+                    book_source_id: None,
+                    book_source_name: "",
+                    chapter_index: 0,
+                    chapter_title: "",
+                    book_url: "",
+                    fetch_url: chapter_url,
+                },
+                content,
+            )
+            .await
+            .unwrap();
     }
 
     /// 通用 POST（成功断言 200 + isSuccess，返回 data）。
@@ -172,12 +183,16 @@ async fn search_finds_across_cached_chapters_with_coverage() {
         ("第三章 高潮", "http://up/ch/3"),
     ];
     server.seed_toc(&book_id, &chapters);
-    server.seed_chapter_cache(&book_id, "http://up/ch/1", "他走进了那座古庙。");
-    server.seed_chapter_cache(
-        "book_1",
-        "http://up/ch/2",
-        "离开之后她又回到古庙前，天色已经完全暗了下来，只有庙里的长明灯还亮着。她站在石阶下仰头望去，飞檐的轮廓在夜色里沉默得像一头伏着的兽，很久都没有动。",
-    );
+    server
+        .seed_chapter_cache(&book_id, "http://up/ch/1", "他走进了那座古庙。")
+        .await;
+    server
+        .seed_chapter_cache(
+            &book_id,
+            "http://up/ch/2",
+            "离开之后她又回到古庙前，天色已经完全暗了下来，只有庙里的长明灯还亮着。她站在石阶下仰头望去，飞檐的轮廓在夜色里沉默得像一头伏着的兽，很久都没有动。",
+        )
+        .await;
     // 第三章故意不写缓存文件：未缓存章节不参与检索，只体现在覆盖度里
 
     let (status, payload) = server
@@ -210,11 +225,13 @@ async fn search_is_case_insensitive_and_strips_html() {
     let server = TestServer::start().await;
     let book_id = server.register_book("检索测试", "占位").await;
     server.seed_toc(&book_id, &[("第一章", "http://up/ch/1")]);
-    server.seed_chapter_cache(
-        "book_1",
-        "http://up/ch/1",
-        "<p>He walked <b>Silent</b>ly.</p><p>下一行 silent 再来一次。</p>",
-    );
+    server
+        .seed_chapter_cache(
+            &book_id,
+            "http://up/ch/1",
+            "<p>He walked <b>Silent</b>ly.</p><p>下一行 silent 再来一次。</p>",
+        )
+        .await;
 
     let (status, payload) = server
         .search(json!({ "bookId": book_id, "query": "silent" }))
@@ -243,7 +260,9 @@ async fn search_truncates_at_max_results() {
         .collect();
     server.seed_toc(&book_id, &refs);
     for (_, url) in &refs {
-        server.seed_chapter_cache(&book_id, url, "每一章都提到那个人。");
+        server
+            .seed_chapter_cache(&book_id, url, "每一章都提到那个人。")
+            .await;
     }
 
     let (status, payload) = server
@@ -288,7 +307,9 @@ async fn search_reads_edited_version_when_present() {
     let server = TestServer::start().await;
     let book_id = server.register_book("编辑版检索", "占位").await;
     server.seed_toc(&book_id, &[("第一章", "http://up/ch/1")]);
-    server.seed_chapter_cache(&book_id, "http://up/ch/1", "上游缓存里的旧词。");
+    server
+        .seed_chapter_cache(&book_id, "http://up/ch/1", "上游缓存里的旧词。")
+        .await;
     // 编辑版把内容改了：检索应命中编辑版而不是上游缓存
     server
         .post(
@@ -339,7 +360,9 @@ async fn book_cache_delete_validates_and_normalizes_book_id() {
     let server = TestServer::start().await;
     let book_id = server.register_book("缓存清理", "占位").await;
     server.seed_toc(&book_id, &[("第一章", "http://up/ch/1")]);
-    server.seed_chapter_cache(&book_id, "http://up/ch/1", "正文。");
+    server
+        .seed_chapter_cache(&book_id, "http://up/ch/1", "正文。")
+        .await;
     let toc_path = server
         .temp_dir
         .join("cache")

@@ -224,7 +224,7 @@ Access Token 的即时撤销靠版本号；Refresh Token 的即时撤销靠 `ref
 | 令牌                    | `auth/`、`service/refresh_token_service.rs` | Access Token 是 HS256 JWT（密钥来自 `JWT_SECRET` 或自动生成并持久化到 `storage/jwt_secret`），`token_version` 提供即时撤销；Refresh Token 只存 SHA-256 摘要，一次性轮换、30 秒宽限、重放吊销整条 family |
 | 图片管道                | `service/image_service.rs`                  | 书源图片统一收口（id 映射、HEIC 转 JPEG、按记录里的 book_id 回源自愈）；Content-Type 收敛为位图白名单（防 `text/html`/`svg` 的同源 XSS）；图片目录容量上限 `CACHE_COVER_LIMIT_BYTES`、按最旧优先淘汰                                                                  |
 
-缓存**不按时间过期**：章节正文只在显式调用 `purgeCache` 或超出 `CACHE_USER_LIMIT_BYTES`（默认 512MiB，按用户）时被回收，超限按修改时间最旧优先淘汰。
+可再生缓存**大多不按时间过期**：评论与图片在显式调用 `purgeCache` 或超出各自容量上限时回收，超限按修改时间最旧优先淘汰。**章节正文与版本历史是例外**：它们在正文池里严格保留，不自动淘汰，也不提供清理入口；读取时按 `CONTENT_REVALIDATE_TTL_SECS`（默认 24 小时）后台回源检查。
 
 > 已知残余风险：出站守卫的 DNS 校验与 reqwest 实际连接是两次独立解析（TOCTOU），
 > 控制权威 DNS 的攻击者理论上可用 rebinding 绕过；彻底封堵需要在连接层钉扎 IP，
@@ -237,18 +237,22 @@ SQLite 表：
 | 表                 | 主键                         | 用途                                                 |
 | ------------------ | ---------------------------- | ---------------------------------------------------- |
 | `users`            | `uid`                        | 唯一账号与 `token_version`（撤销版本号）；`uid` 是存储命名空间锚点（`user_<uid>`） |
-| `book_sources`     | `(user_ns, book_source_id)`  | 书源配置（整份 JSON 存储；`book_source_id` 是自增身份键，URL 唯一索引作导入去重） |
-| `books`            | `(user_ns, book_id)`         | 书籍登记表（`book_<n>`，绑定书源 id，换源只改绑）    |
+| `book_sources`     | `book_source_id`（AUTOINCREMENT） | 书源配置（整部署共享；整份 JSON 存储；URL 唯一索引作导入去重） |
+| `books`            | `book_id`（AUTOINCREMENT）    | 书籍登记表（整部署共享；`book_<n>`，绑定书源 id，换源只改绑；删除后 id 不复用） |
 | `shelf_books`      | `(user_ns, book_id)`         | 书架（全列展开进度/分组/排序/元数据快照，JOIN books 注入绑定字段） |
-| `json_documents`   | `(user_ns, name)`            | 通用 JSON 文档存取（用户配置、userdata 等；书签/替换规则/编辑索引/分组已拆实体表） |
-| `ai_book_memories` | `(user_ns, book_id)`         | AI 资料（`book_id` 关联登记表，`book_url` 冗余列供恢复校验） |
+| `json_documents`   | `(user_ns, name)`            | 通用 JSON 文档存取（用户配置、userdata 等；书签/替换规则/分组已拆实体表） |
+| `ai_book_memories` | `(user_ns, book_id)`         | AI 资料（`book_id` 关联登记表，`book_url` 只作数据快照） |
+| `chapter_contents` | `content_id`                 | 正文池（`content_hash` 唯一，只插入；`codec=1` 为 zstd） |
+| `chapter_versions` | `version_id`（AUTOINCREMENT） | 版本时间线（上游/编辑/导入，只插入；含 `base_version_id` 与来源快照） |
+| `chapter_latest`   | `(book_id, chapter_url)`     | 最新上游/用户版本指针与回源时间（唯一允许更新的正文表） |
+| `chapter_view_state` | `(user_ns, book_id, chapter_url)` | 每用户选中的版本；删除行表示跟随最新 |
 
-逐字段说明见[数据库](/maintainers/database)。
+逐字段说明见[数据库](/maintainers/database)，`storage/` 目录、缓存命名与回收策略见[数据存储结构](/maintainers/storage)。
 
 设计取舍：
 
 - **书源存整份 JSON** 而不是打散成列 —— 书源字段会随阅读3.0 规范演进，打散后每次都要改表；整份存换来结构灵活性，代价是无法按字段建索引。
-- **章节正文存文件而不是数据库** —— 单章动辄数十 KB 且数量极多，塞进 SQLite 会让库文件迅速膨胀并拖慢备份。文件用 MD5 命名，天然去重。
+- **正文进数据库并保留全部版本** —— 正文池按 SHA-256 去重、默认 zstd 压缩；时间线只插入不更新，刷新和编辑都不会覆盖旧版本。代价是 `reader.db` 持续增长，且正文历史不提供清理入口。
 - **`json_documents` 通用化** —— 用户配置、书源变量等零散键值不再各建一张表，减少迁移次数。
 
 `storage/` 整个目录属于运行期数据，已被 gitignore，清理时不要误删。

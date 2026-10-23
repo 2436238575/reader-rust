@@ -204,6 +204,26 @@ pub fn build_router(state: AppState) -> Router {
             post(handlers::delete_chapter_edit),
         )
         .route(
+            "/reader3/getChapterTimeline",
+            get(handlers::get_chapter_timeline).post(handlers::get_chapter_timeline),
+        )
+        .route(
+            "/reader3/getChapterVersion",
+            get(handlers::get_chapter_version).post(handlers::get_chapter_version),
+        )
+        .route(
+            "/reader3/getChapterVersionDiff",
+            get(handlers::get_chapter_version_diff).post(handlers::get_chapter_version_diff),
+        )
+        .route(
+            "/reader3/selectChapterVersion",
+            post(handlers::select_chapter_version),
+        )
+        .route(
+            "/reader3/importChapterVersion",
+            post(handlers::import_chapter_version),
+        )
+        .route(
             "/reader3/getChapterComments",
             get(handlers::get_chapter_comments).post(handlers::get_chapter_comments),
         )

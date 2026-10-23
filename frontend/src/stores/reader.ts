@@ -37,7 +37,8 @@ import {
 } from '../utils/browserCache'
 import { isLocalBook } from '../utils/localBook'
 import { saveRecentReadBook } from '../utils/recentBooks'
-import { listChapterEdits } from '../api/chapterEdit'
+import { listChapterEdits, selectChapterVersion } from '../api/chapterEdit'
+import type { ChapterVersionKind, ContentVariant } from '../api/bookshelf'
 import { hydrateDiffOps, type ParagraphDiffOp } from '../utils/chapterDiff'
 import {
   loadLocalKeywordRules,
@@ -88,7 +89,19 @@ export interface ChapterDiffState {
   /** diff 算不出来的原因；空串表示正常 */
   error: string
   /** 当前显示的版本：上游原版不叠加 diff 标记（但面板仍可对照） */
-  variant: 'edited' | 'upstream'
+  variant: ContentVariant
+}
+
+/** 某一章当前版本的定位信息（由正文接口带回）。 */
+export interface ChapterVersionState {
+  versionId?: number
+  kind?: ChapterVersionKind
+  baseVersionId?: number
+  latestUserVersionId?: number
+  latestUpstreamVersionId?: number
+  upstreamChanged: boolean
+  selectionSource: 'selected' | 'edited' | 'upstream' | 'upstream_preview'
+  stale: boolean
 }
 
 const defaultConfig: ReadConfig = {
@@ -204,6 +217,8 @@ export const useReaderStore = defineStore('reader', () => {
   /// 各章编辑版差异（随 getBookContent 一起返回，不再单独请求）。
   /// 连续滚动模式下每章都从这里取自己的 ops。
   const chapterDiffs = reactive(new Map<number, ChapterDiffState>())
+  /// 各章当前版本的定位信息（版本 id、最新上游/用户版本、是否旧数据）。
+  const chapterVersions = reactive(new Map<number, ChapterVersionState>())
 
   async function refreshEditedChapterKeys() {
     if (!book.value?.bookId) {
@@ -715,23 +730,18 @@ export const useReaderStore = defineStore('reader', () => {
     const bookId = book.value.bookId
 
     const isLocal = isLocalBook(book.value)
-    const variant = config.contentVersion === 'upstream' ? 'upstream' : 'edited'
-    // 已编辑章跳过浏览器缓存：后端会优先返回编辑版，缓存里的旧版只会挡住它。
-    // 上游原版也不读缓存：缓存里存的是编辑版（或上一次抓的另一版）。
-    const isEdited = editedChapterKeys.value.has(chapter.url)
-    const useBrowserCache = !isLocal && !isEdited && variant !== 'upstream'
-    const browserCached = useBrowserCache
-      ? await getBrowserCachedChapter(bookId, chapter.url).catch(() => null)
-      : null
-
-    if (!forceRefresh && browserCached) {
-      chapterDiffs.delete(index)
-      return browserCached
-    }
+    const variant: ContentVariant = config.contentVersion === 'upstream' ? 'upstream' : 'default'
+    // 在线时总是问后端：手动选择的版本记在服务端，浏览器缓存可能落后于另一台设备。
+    // 浏览器缓存只在离线时作为正文来源，以及请求失败时兜底。
+    const browserCached =
+      !isLocal && !appStore.isOnline
+        ? await getBrowserCachedChapter(bookId, chapter.url).catch(() => null)
+        : null
 
     if (!appStore.isOnline && !isLocal) {
       if (browserCached) {
         chapterDiffs.delete(index)
+        chapterVersions.delete(index)
         return browserCached
       }
       throw new Error('当前处于离线状态，且该章节未缓存到浏览器')
@@ -747,6 +757,16 @@ export const useReaderStore = defineStore('reader', () => {
         variant,
       })
       chapterContent = response.content
+      chapterVersions.set(index, {
+        versionId: response.versionId,
+        kind: response.versionKind,
+        baseVersionId: response.baseVersionId,
+        latestUserVersionId: response.latestUserVersionId,
+        latestUpstreamVersionId: response.latestUpstreamVersionId,
+        upstreamChanged: response.upstreamChanged,
+        selectionSource: response.selectionSource,
+        stale: response.stale,
+      })
       if (response.edited) {
         // 后端为省流量不给 equal 行带文本，这里用编辑版正文补齐
         const ops = response.diff?.ops ? hydrateDiffOps(response.diff.ops, response.content) : null
@@ -760,14 +780,23 @@ export const useReaderStore = defineStore('reader', () => {
         chapterDiffs.delete(index)
       }
     } catch (error) {
-      if (browserCached) {
+      const fallback =
+        browserCached ??
+        (isLocal
+          ? null
+          : await getBrowserCachedChapter(bookId, chapter.url).catch(() => null))
+      if (fallback) {
         chapterDiffs.delete(index)
+        chapterVersions.delete(index)
         appStore.showToast('网络请求失败，已切换到本地缓存章节', 'warning')
-        return browserCached
+        return fallback
       }
       throw error
     }
 
+    // 上游预览不写浏览器缓存：缓存只存默认版本，否则离线时会读到另一版。
+    const isEdited = editedChapterKeys.value.has(chapter.url)
+    const useBrowserCache = !isLocal && !isEdited && variant !== 'upstream'
     if (useBrowserCache) {
       await setBrowserCachedChapter({
         bookId,
@@ -874,13 +903,20 @@ export const useReaderStore = defineStore('reader', () => {
     reviewsLoading.value = true
     try {
       if (!currentBook.bookId) throw new Error('书籍缺少 bookId')
+      const effectiveKind = chapterVersions.get(index)?.kind
       const params = {
         bookId: currentBook.bookId,
         chapterUrl: requestedChapterUrl,
         // 手动刷新正文时让段评索引也重抓：两者必须来自同一版上游，
         // 否则段号会和刷新后的正文对不上
         refresh: refresh ? 1 : 0,
-        variant: config.contentVersion,
+        // 段评定位看的是实际显示的版本：用户版本与上游版本的段号可能不同
+        variant:
+          effectiveKind === 'upstream'
+            ? 'upstream'
+            : effectiveKind
+              ? 'edited'
+              : config.contentVersion,
       }
       // 顺序请求：第二个请求能复用第一个已经取回的章节正文响应
       const indexResp = await getParaCommentIndex(params)
@@ -1069,6 +1105,24 @@ export const useReaderStore = defineStore('reader', () => {
       void loadChapterReviews(index)
     } finally {
       loading.value = false
+    }
+  }
+
+  /** 切换当前章显示版本并保存到服务端（跨设备生效）；`null` 表示跟随最新。 */
+  async function setChapterVersion(index: number, versionId: number | null) {
+    const chapter = chapters.value[index]
+    const bookId = book.value?.bookId
+    if (!chapter || !bookId) return
+    await selectChapterVersion(bookId, chapter.url, versionId)
+    chapterVersions.delete(index)
+    preloadedContent.value.clear()
+    await refreshEditedChapterKeys()
+    if (config.contentVersion === 'upstream') {
+      // 在「上游原版」预览里选了版本：切回默认版本模式，ReaderView 的
+      // contentVersion watcher 会用新的服务端选择重载本章。
+      updateConfig('contentVersion', 'edited')
+    } else {
+      await reloadChapterAfterEdit(index)
     }
   }
 
@@ -1296,6 +1350,8 @@ export const useReaderStore = defineStore('reader', () => {
     setActiveChapterState,
     refreshContent,
     reloadChapterAfterEdit,
+    setChapterVersion,
+    chapterVersions,
     nextChapter,
     prevChapter,
     clear,

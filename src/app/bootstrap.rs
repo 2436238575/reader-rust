@@ -12,11 +12,12 @@ use crate::parser::rule_engine::RuleEngine;
 use crate::service::{
     agent_sidecar_service::AgentSidecarService, ai_book_service::AiBookService,
     ai_model_service::AiModelService, book_group_service::BookGroupService,
-    book_service::BookService, book_source_service::BookSourceService, image_service::ImageService,
+    book_service::BookService, book_source_service::BookSourceService,
+    chapter_content_service::ChapterContentService, image_service::ImageService,
     json_document_service::JsonDocumentService, local_epub_book::LocalEpubBookService,
     local_txt_book::LocalTxtBookService, user_service::UserService,
 };
-use crate::storage::{cache::file_cache::FileCache, db, fs::storage_fs::StorageFs};
+use crate::storage::{db, fs::storage_fs::StorageFs};
 
 pub async fn run() -> anyhow::Result<()> {
     let cfg = config::load()?;
@@ -144,11 +145,11 @@ pub async fn build_state(cfg: AppConfig) -> anyhow::Result<AppState> {
     // 书源 JS 的 java.ajax 等内部请求与主抓取共用同一超时口径
     crate::parser::js::set_js_http_timeout(cfg.request_timeout_secs);
     let parser = RuleEngine::new()?;
-    let cache = FileCache::new(
-        format!("{}/cache", cfg.storage_dir),
-        cfg.cache_user_limit_bytes,
-    );
-    tracing::info!("core services initialized (db/http/rule engine/cache)");
+    let chapter_content_service = Arc::new(ChapterContentService::from_pool(
+        pool.clone(),
+        cfg.content_revalidate_ttl_secs,
+    ));
+    tracing::info!("core services initialized (db/http/rule engine/content pool)");
 
     // 图片管道与书源抓取共用同一个 HttpClient（同一套出站守卫与代理配置）
     let image_service = Arc::new(ImageService::new(
@@ -156,19 +157,18 @@ pub async fn build_state(cfg: AppConfig) -> anyhow::Result<AppState> {
         &cfg.storage_dir,
         cfg.cache_cover_limit_bytes,
     ));
-    let chapter_edit_service = Arc::new(
-        crate::service::chapter_edit_service::ChapterEditService::new(
-            &cfg.storage_dir,
-            crate::storage::db::repo::ChapterEditRepo::new(pool.clone()),
-        ),
-    );
     let book_service = Arc::new(
-        BookService::new(http, parser, cache, &cfg.storage_dir, book_repo, shelf_repo)
-            .with_user_book_limit(cfg.user_book_limit)
-            .with_user_local_book_limit(cfg.user_local_book_limit)
-            .with_review_cache(cfg.review_cache_ttl_secs, cfg.review_cache_user_limit_bytes)
-            .with_chapter_edit_service(chapter_edit_service.clone())
-            .with_bookmark_repo(db::repo::BookmarkRepo::new(pool.clone())),
+        BookService::new(
+            http,
+            parser,
+            chapter_content_service.clone(),
+            &cfg.storage_dir,
+            book_repo,
+            shelf_repo,
+        )
+        .with_user_book_limit(cfg.user_book_limit)
+        .with_user_local_book_limit(cfg.user_local_book_limit)
+        .with_review_cache(cfg.review_cache_ttl_secs, cfg.review_cache_user_limit_bytes),
     );
     let book_source_service = Arc::new(BookSourceService::new(repo));
     let local_txt_book_service = Arc::new(LocalTxtBookService::new(&cfg.storage_dir));
@@ -238,7 +238,6 @@ pub async fn build_state(cfg: AppConfig) -> anyhow::Result<AppState> {
         probe_service.probe().await;
     });
 
-    let chapter_edit_service = chapter_edit_service;
     let git_path = cfg.git_path.clone();
 
     Ok(AppState {
@@ -251,7 +250,7 @@ pub async fn build_state(cfg: AppConfig) -> anyhow::Result<AppState> {
         book_group_service,
         local_txt_book_service,
         local_epub_book_service,
-        chapter_edit_service,
+        chapter_content_service,
         git_diff_service: Arc::new(crate::service::git_diff_service::GitDiffService::new(
             git_path,
         )),

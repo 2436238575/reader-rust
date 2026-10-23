@@ -9,13 +9,12 @@ use super::file_cache::{dir_usage, remove_dir_counting_files, CacheUsage};
 
 /// 评论缓存：`<root>/<user_ns>/<book_key>/<md5(key)>.json`。
 ///
-/// 与章节正文缓存（[`super::file_cache::FileCache`]）刻意不同：评论是
-/// **会变的第三方数据**，新评论、点赞数、热度排序每天都在动，因此这里
+/// 评论是**会变的第三方数据**，新评论、点赞数、热度排序每天都在动，因此
 /// 保留时间过期，默认 7 天（`REVIEW_CACHE_TTL_SECS`，`0` 表示不过期）。
-/// 正文缓存不设 TTL 是因为它按 URL 定位、内容稳定；评论没有这个性质。
+/// 正文版本是历史，进正文池后不设 TTL、不自动淘汰；两者的回收策略不同。
 ///
-/// 目录层级与正文缓存一致（`ns/book_key/文件`），这样按用户/按书的清理
-/// 与容量淘汰可以直接复用同一套目录工具。
+/// 目录层级按 `ns/book_key/文件` 组织，按用户/按书的清理与容量淘汰复用
+/// `file_cache` 里的目录工具。
 #[derive(Clone)]
 pub struct ReviewCache {
     root: PathBuf,
@@ -23,7 +22,7 @@ pub struct ReviewCache {
     ttl: Duration,
     /// 单用户容量上限（字节）；`0` 表示不限制。
     max_user_bytes: u64,
-    /// 每用户用量计量（字节）：与 [`super::file_cache::FileCache`] 相同的
+    /// 每用户用量计量（字节）：与目录型缓存相同的
     /// 增量记账策略——评论翻页/换排序都会新增缓存文件，每次 put 全目录
     /// 扫描在重度使用下是 O(N²) 次 stat。
     usage: Arc<Mutex<HashMap<String, u64>>>,
@@ -80,7 +79,7 @@ impl ReviewCache {
     }
 
     /// 删除某本书的全部评论缓存，返回删除的文件数。
-    /// book_key 必须是 `book_<n>`：非法 id 直接 no-op（纵深防御，与 FileCache 同手法）。
+    /// book_key 必须是 `book_<n>`：非法 id 直接 no-op（纵深防御，与其他缓存路径同手法）。
     pub async fn remove_book(&self, user_ns: &str, book_key: &str) -> anyhow::Result<u64> {
         let Some(id) = crate::storage::db::repo::parse_book_id(book_key) else {
             return Ok(0);
@@ -155,7 +154,7 @@ impl ReviewCache {
     }
 
     fn entry_path(&self, user_ns: &str, book_key: &str, key: &str) -> PathBuf {
-        // 与 FileCache.book_path 同一道防线：非法 book_id 落无害隔离段
+        // 与其他缓存路径同一道防线：非法 book_id 落无害隔离段
         let segment = match crate::storage::db::repo::parse_book_id(book_key) {
             Some(id) => format!("book_{id}"),
             None => "__invalid_book__".to_string(),

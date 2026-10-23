@@ -115,7 +115,7 @@ cp .env.example .env
 | `ADMIN_PASSWORD`                | 空                                  | 唯一账号的密码；非空时每次启动强制覆盖（兼作忘记密码的找回通道），相同则 no-op；留空时首启随机生成并打印到启动日志                                                                                                                          |
 | `USER_BOOK_LIMIT`               | `2000`                              | 书架上限，`0` 表示不限制                                                                                                                                                                                                                    |
 | `USER_LOCAL_BOOK_LIMIT`         | `0`                                 | 本地上传上限，`0` 表示不限制                                                                                                                                                                                                                |
-| `CACHE_USER_LIMIT_BYTES`        | `536870912`                         | 正文缓存上限；`0` 表示不限制                                                                                                                                                                                                                |
+| `CONTENT_REVALIDATE_TTL_SECS`   | `86400`（24 小时）                  | 正文回源间隔：读取某章时距上次回源尝试超过该时长就后台回源，失败继续返回缓存。`0` 表示只在显式强刷时回源；正文历史严格保留、不按容量淘汰                                                                                                      |
 | `CACHE_COVER_LIMIT_BYTES`       | `268435456`                         | 图片缓存目录（封面、章节配图、评论配图共用）上限；`0` 表示不限制                                                                                                                                                                             |
 | `REVIEW_CACHE_TTL_SECS`         | `604800`（7 天）                    | 章评/段评缓存有效期；`0` 表示不过期                                                                                                                                                                                                         |
 | `REVIEW_CACHE_USER_LIMIT_BYTES` | `67108864`                          | 评论缓存上限；`0` 表示不限制                                                                                                                                                                                                                |
@@ -128,7 +128,7 @@ cp .env.example .env
 | `AGENT_SIDECAR_COMMAND`              | `python -m agent_sidecar` | sidecar 启动命令，进程 cwd 为 `sidecar/`；保持默认时若 `sidecar/.venv` 存在自动优先其 Python，自定义（含 Docker ENV）则不兜底 |
 | `AGENT_SIDECAR_UV`                   | 空                        | uv 二进制路径；非空/PATH 可探测时由 uv 自动管理依赖（推荐），都没有时降级为 AGENT_SIDECAR_COMMAND      |
 | `AGENT_SIDECAR_CHAPTER_TIMEOUT_SECS` | `600`                     | 单章处理超时；超时即终止 sidecar 进程并中止批量任务（sidecar 内模型重试预算已对齐此值，错误会带真实原因回来而不是被截成超时）                                                     |
-| `GIT_PATH`                           | 空                        | git 可执行文件路径；留空用 PATH 里的 `git`。章节编辑版 diff 依赖系统 git，缺失时阅读不受影响，差异面板显示不可用原因 |
+| `GIT_PATH`                           | 空                        | git 可执行文件路径；留空用 PATH 里的 `git`。章节版本 diff 依赖系统 git，缺失时阅读不受影响，差异面板显示不可用原因 |
 
 三点需要注意：
 
@@ -148,7 +148,7 @@ src/
     handlers/             17 个领域模块：book、book_source、user、bookmark、
                           book_group、ai_book、ai_model、ai_proxy、agent、replace_rule、
                           image、webdav、cache（缓存清理与统计）、chapter_image、
-                          chapter_edit（章节正文编辑版，data/ 叠加层）、
+                          chapter_edit（用户版本、版本时间线、版本 diff 与选择）、
                           review（章评/段评）、search_cache（缓存内全文检索，只扫
                           已缓存章节、不触发上游请求）；另有共享的 multipart.rs（限量读取工具）。
                           webdav 的协议语义（PROPFIND/PUT/LOCK 等）由 dav-server
@@ -159,9 +159,11 @@ src/
     secret.rs             JWT_SECRET 解析与持久化
     extractor.rs          CurrentUser / MaybeUser 提取器
     middleware.rs         require_auth / optional_auth
-  service/                业务编排，14 文件约 11400 行
+  service/                业务编排，14 文件约 12000 行
+    chapter_content_service.rs 正文池与版本时间线：sha256 去重、zstd 压缩、版本追加、
+                          最新指针、每用户版本选择、24h 回源判定
     image_service.rs       图片管道：id 映射 + HEIC→JPEG + 永久缓存 + 回源自愈
-    git_diff_service.rs    章节编辑版 diff：系统 git（GIT_PATH）+ 变更块相似度配对 + 结果缓存
+    git_diff_service.rs    章节版本 diff：系统 git（GIT_PATH）+ 变更块相似度配对 + 结果缓存
     refresh_token_service.rs Refresh Token 轮换：SHA-256 摘要落库、一次性消费、30 秒宽限、
                           重放吊销 family
     agent_sidecar_service.rs AI 资料编排：spawn Python sidecar、逐章 run/result 泵、
@@ -174,12 +176,12 @@ src/
     url_analyzer.rs       占位符替换、页面选择、内联 JS
     url_guard.rs          出站请求守卫（SSRF 防护）
   model/                  BookSource 等数据结构，15 文件约 1000 行
-  storage/               SQLite（sqlx）+ 文件缓存，8 文件约 800 行
-    db/migrations/        0001_init.sql（基础表结构，历史迁移已并入）+ 0002（书签/替换规则
-                          实体表）+ 0003（chapter_edits 编辑版索引）+ 0004（book_groups
-                          分组实体表）+ 0005（refresh_tokens 轮换状态）；详见
-                          docs/maintainers/database.md
-    cache/file_cache.rs   章节内容文件缓存，以 MD5 命名；无 TTL，按容量淘汰
+  storage/               SQLite（sqlx）+ 文件缓存
+    db/migrations/        0001_init.sql（基础表结构、书籍/书源登记表、正文池与版本时间线）
+                          + 0002（书签/替换规则实体表）+ 0004（book_groups 分组实体表）
+                          + 0005（refresh_tokens 轮换状态）；详见 docs/maintainers/database.md
+    db/content_repo.rs    正文池/时间线/最新指针的数据访问
+    cache/file_cache.rs   目录型缓存的容量控制与占用统计（评论、图片等）
     cache/review_cache.rs 评论缓存；**有 TTL**（默认 7 天），按容量淘汰
   app/                    配置加载与启动引导
   error/                  错误类型
@@ -207,7 +209,7 @@ HTTP 请求
   → api/router.rs          路由匹配 + 鉴权分组（公开 / 可选 / 需登录 / 管理员）
   → auth/middleware.rs     校验 JWT，把身份写入请求扩展；失败即 401 / 403
   → api/handlers/*         从 CurrentUser 取身份与参数
-  → service/*              业务编排（缓存命中判断、书源选择、请求头与 Cookie 准备）
+  → service/*              业务编排（正文版本解析与回源、缓存命中判断、书源选择、Cookie 准备）
   → parser/rule_engine.rs  按 BookSource 规则解析；需要页面内容时经 crawler 抓取
   → crawler/*              reqwest 抓取上游页面（占位符展开、字符集解码）
   → 统一响应包装返回 JSON
@@ -353,10 +355,12 @@ XPath 有资源上限（长度 8KB / 嵌套 64 层 / 总步数 100、`//` 50）�
 ## 数据与存储
 
 - SQLite 通过 `sqlx` 访问，连接池 10 条连接，开启 WAL（`synchronous=NORMAL`），启动时自动执行 `src/storage/db/migrations/` 下的迁移。
-- 主要表：`book_sources`（书源 JSON，`(user_ns, book_source_id)` 主键 + `(user_ns, book_source_url)` 唯一索引；**`book_source_id` 是书源的身份键**，自增分配，导入/订阅按 URL 去重时保号）、`books`（**书籍登记表**：`book_id INTEGER PRIMARY KEY`（rowid 单调自增）+ `(user_ns, book_url)` 唯一索引；对外一律 `book_<n>` 文本，repo 边界转换，绑定 `book_source_id`，换源只改绑不改 id；本地书 source_id 为 NULL）、`shelf_books`（**书架**，`(user_ns, book_id)` 主键，全列展开进度/分组/排序/元数据快照，读取时 JOIN books 注入 bookUrl/origin 等绑定字段）、`users`（`uid` 主键、身份锚点，命名空间一律 `user_<uid>`；username 仅登录与展示，唯一索引）、`json_documents`（`(user_ns, name)` 主键，通用键值）、`bookmarks`（书签/划线实体表，`(user_ns, book_id, chapter_index, chapter_pos, kind)` 主键——kind 区分章书签 bookmark / 划线 underline，`chapter_pos` 是万分比章内进度 0–10000、章书签恒 0；删书级联 `DELETE WHERE book_id`）、`replace_rules`（替换规则实体表）、`ai_book_memories`（`(user_ns, book_id)` 主键，`book_url` 冗余列供恢复校验）、`chapter_edits`（章节编辑版索引：`(user_ns, book_id, chapter_url)` 主键；正文仍落 `data/` 文件，表里只存章号/标题/时间快照）、`book_groups`（书架分组实体表：`(user_ns, group_id)` 主键；**group_id 是位域、分配 2 的幂**（1/2/4/8…），与阅读3.0 的位掩码约定一致）。逐字段说明见 docs/maintainers/database.md。
-- **身份模型（2026-10 重构，破坏性）**：请求的身份参数只认 `bookId`（书籍）与 `bookSourceId`（书源）；`bookUrl`/`bookSourceUrl`/`origin` 只是数据字段（爬虫取数、导入去重）。搜索/发现产出即登记（响应必带 bookId）；书籍级接口经 `resolve_book`（handlers/book.rs）由 bookId 解析出当前绑定的 bookUrl + 书源。升级存量部署：删除 `storage/` 后重启重建。
-- 章节正文以文件形式缓存于 `storage/cache/<ns>/<bookId>/<md5前2位>/<md5(chapterUrl)>.txt`（分片防单目录膨胀）；目录缓存 `cache/<ns>/toc/<bookId>.json`（1h TTL）；书籍详情缓存 `cache/bookinfo/<ns>/<bookId>.json`（1h TTL，`refresh=1` 强刷）；换源候选 `cache/<ns>/source_candidates/<bookId>.json`。可再生缓存一律在 `cache/` 树下；`data/` 只剩用户资产：`local_books`、`edited_chapters`（章节正文编辑版叠加层：阅读优先返回编辑版、上游缓存只做 diff 基准，删书级联）与 `userConfig.json`（用户配置备份快照）。
-- 缓存**大多不按时间过期**，只在显式调用 `POST /reader3/purgeCache` 或超出容量上限时回收；占用可用 `GET /reader3/cacheStats` 查看。`scope=book` 按 bookId 清全部按书缓存并连带该书的图片；`scope=user` 额外回收非在架书籍的登记行。
+- 主要表：`book_sources`（书源 JSON，整部署共享，`book_source_id INTEGER PRIMARY KEY AUTOINCREMENT` + `book_source_url` 唯一索引；**`book_source_id` 是书源的身份键**，删除后不复用，导入/订阅按 URL 去重时保号）、`books`（**书籍登记表**，整部署共享：`book_id INTEGER PRIMARY KEY AUTOINCREMENT` + `book_url` 唯一索引；对外一律 `book_<n>` 文本，repo 边界转换，绑定 `book_source_id`，换源只改绑不改 id；本地书 source_id 为 NULL；登记行不随清缓存删除）、`shelf_books`（**书架**，`(user_ns, book_id)` 主键，全列展开进度/分组/排序/元数据快照，读取时 JOIN books 注入 bookUrl/origin 等绑定字段）、`users`（`uid` 主键、用户数据命名空间锚点，命名空间一律 `user_<uid>`；username 仅登录与展示，唯一索引）、`json_documents`（`(user_ns, name)` 主键，通用键值）、`bookmarks`（书签/划线实体表，`(user_ns, book_id, chapter_index, chapter_pos, kind)` 主键——kind 区分章书签 bookmark / 划线 underline，`chapter_pos` 是万分比章内进度 0–10000、章书签恒 0；删书级联 `DELETE WHERE book_id`）、`replace_rules`（替换规则实体表）、`ai_book_memories`（`(user_ns, book_id)` 主键，`book_url` 只作数据快照）、`book_groups`（书架分组实体表：`(user_ns, group_id)` 主键；**group_id 是位域、分配 2 的幂**（1/2/4/8…），与阅读3.0 的位掩码约定一致）。逐字段说明见 docs/maintainers/database.md。
+- **正文版本表（整部署共享，不带 `user_ns`）**：`chapter_contents`（正文池，`content_hash` 唯一，只插入不更新；`codec=1` 为 zstd）、`chapter_versions`（版本时间线，`kind` 为 upstream/edited/imported，含 `base_version_id` 与书源/章节快照，只插入不更新）、`chapter_latest`（最新上游/用户版本指针与回源时间，唯一允许更新的正文表）、`chapter_view_state`（`(user_ns, book_id, chapter_url)` 主键，每用户选中的版本；删除行表示跟随最新）。阅读页的 diff **始终以最新上游正文为基准**（评论源只对最新上游取段号，diff 标记要和它对齐）；`base_version_id` 只记录编辑时基于哪一版，不参与阅读页 diff。
+- **身份模型**：请求的身份参数只认 `bookId`（书籍）与 `bookSourceId`（书源）；`bookUrl`/`bookSourceUrl`/`origin` 只是数据字段（爬虫取数、导入去重），不参与「同 id 同书」校验。书籍与书源 id 都是 AUTOINCREMENT、删除后不复用，正文历史不会串书。搜索/发现产出即登记（响应必带 bookId）；书籍级接口经 `resolve_book`（handlers/book.rs）由 bookId 解析出当前绑定的 bookUrl + 书源。升级存量部署（beta 之前）：删除 `storage/` 后重启重建。
+- **正文存储**：章节正文已从文件缓存迁到 SQLite 正文池；阅读默认版本按「用户选择 > 最近用户版本 > 最新上游」解析。读取时距上次回源尝试超过 `CONTENT_REVALIDATE_TTL_SECS` 会在后台回源，失败继续返回缓存并标记 `stale`。`refresh=1` 与历史面板的“检查更新”同步回源，失败也回退缓存。正文历史**严格保留，不自动淘汰，也不提供清理入口**。
+- 可再生缓存仍在 `cache/` 树下：目录缓存 `cache/<ns>/toc/<bookId>.json`（1h TTL）；书籍详情缓存 `cache/bookinfo/<ns>/<bookId>.json`（1h TTL，`refresh=1` 强刷）；换源候选 `cache/<ns>/source_candidates/<bookId>.json`；评论缓存 `cache/reviews/...`；图片缓存 `cache/image/...`。`data/` 只剩用户资产：`local_books` 与 `userConfig.json`（用户配置备份快照）。
+- 可再生缓存**大多不按时间过期**，只在显式调用 `POST /reader3/purgeCache` 或超出容量上限时回收；占用可用 `GET /reader3/cacheStats` 查看。**正文历史不在清理范围内**（`purgeCache` 没有 content 类型）；`scope=book` 清目录/详情/换源候选/评论并连带该书的图片；`scope=user` 清该用户的全部可再生缓存，但不再删除书籍登记行。
 - **评论缓存**（`storage/cache/reviews/<ns>/<bookId>/`）是会变的第三方数据，
   保留 7 天 TTL（`REVIEW_CACHE_TTL_SECS`），同时也受容量上限约束。
 - **图片缓存**（`storage/cache/image/`）是书源图片的统一出口：`<id>.bin` 是图片本体、
@@ -370,7 +374,7 @@ XPath 有资源上限（长度 8KB / 嵌套 64 层 / 总步数 100、`//` 50）�
 - 书签按 `(bookId, chapterIndex, chapterPos, kind)` 判等（一书多条；章书签与划线分型共存，
   `chapterPos` 万分比章内进度）；替换规则 scope 用
   `book:<bookId>` / `source:<bookSourceId>`；换源 `setBookSource {bookId, targetBookId}`
-  只改登记表绑定，进度/书签/AI 记忆天然保留。
+  只改登记表绑定，进度/书签/AI 记忆/正文历史天然保留。
 - 日志按天滚动落盘到 `storage/logs/reader-rust.log.YYYY-MM-DD`（stdout + 文件双写，
   文件不含 ANSI 颜色码；sidecar 的 stderr 经主进程 tracing 也落同一个文件）。
 - `storage/` 全部属于运行期数据，**不要提交**，清理时也不要误删。
@@ -379,9 +383,9 @@ XPath 有资源上限（长度 8KB / 嵌套 64 层 / 总步数 100、`//` 50）�
 
 ## 测试
 
-Rust 侧共 **388 个测试**（270 个内联单元测试 + 118 个集成用例，另有 2 个 `#[ignore]` 的真实网络用例）。`cargo test` 输出的合计是 658——`src/main.rs` 以 `mod` 重声明了全部模块，bin 目标的单元测试把同一批 270 个用例又跑了一遍，统计时别重复计算。分布为：
+Rust 侧共 **389 个测试**（268 个内联单元测试 + 121 个集成用例，另有 2 个 `#[ignore]` 的真实网络用例）。`cargo test` 输出的合计是 657——`src/main.rs` 以 `mod` 重声明了全部模块，bin 目标的单元测试把同一批 268 个用例又跑了一遍，统计时别重复计算。分布为：
 
-- `tests/` 下 20 个集成测试文件（118 个用例），其中 `book_source_compat.rs` 用例最多（17 个）；
+- `tests/` 下 21 个集成测试文件（121 个用例），其中 `book_source_compat.rs` 用例最多（17 个）；
   `auth_flow.rs`、`review_flow.rs`、`chapter_image_flow.rs`、`image_pipeline.rs` 与
   `webdav_flow.rs` 起真实监听端口，前者覆盖 401、静态回落、缓存清理与改密吊销令牌，
   中间三个各用一个假上游覆盖评论规则（7 天缓存、按类型清理）、章节配图（配图规则、
@@ -391,7 +395,7 @@ Rust 侧共 **388 个测试**（270 个内联单元测试 + 118 个集成用例�
 - `agent_sidecar_flow.rs` 用 Node 假 sidecar（`tests/helpers/fake_agent_sidecar.mjs`）
   走全流程：批量更新、章节跳过、工具回调（正文/搜索钳制）、地图落盘与降级、看门狗与取消
   （机器上需要有 Node）；
-- `src/` 内的内联单元测试模块（270 个）。
+- `src/` 内的内联单元测试模块（268 个）。
 
 sidecar 使用 pytest（95 个用例，
 见「常用命令」），含从旧前端实现 1:1 移植的领域规则用例与新增编排能力用例。
@@ -447,5 +451,5 @@ sidecar 使用 pytest（95 个用例，
 | `docs/api/`                           | 接口集成方           | `/reader3/*` 接口参考                  |
 | `docs/book-source/`                   | 书源作者             | 书源规则编写教程                       |
 | `docs/reference/book-source-rules.md` | 书源作者 / 实现者    | 阅读3.0 规则完整兼容规格               |
-| `docs/maintainers/`                   | 维护者               | 架构说明、发布流程                     |
+| `docs/maintainers/`                   | 维护者               | 架构说明、数据库、数据存储结构、发布流程 |
 | `docs/archive/`                       | 维护者               | 历史设计与计划快照，**不代表当前实现** |

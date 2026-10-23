@@ -65,9 +65,9 @@ docker run -d \
 
 该目录包含：
 
-- SQLite 数据库（`reader.db`）
-- 章节正文缓存（`cache/`）
-- 上传的资源与本地书籍（`assets/`）
+- SQLite 数据库（`reader.db`，含正文池与全部版本历史）
+- 可再生缓存（`cache/`，删掉只会重新抓取）
+- 上传资源（`assets/`）与本地书籍（`data/`）
 
 镜像声明了 `VOLUME ["/app/storage"]`。若不显式挂载，容器重建后数据会丢失。
 

@@ -2,7 +2,7 @@ use sqlx::{Row, SqlitePool};
 
 use crate::error::error::AppError;
 use crate::model::ai_book::AiBookMemory;
-use crate::storage::db::repo::{format_book_id, parse_book_id};
+use crate::storage::db::repo::parse_book_id;
 use crate::util::time::now_ts;
 
 /// AI 书籍记忆：按 bookId 键控（`book_id` 列存 INTEGER，关联 books 登记表；
@@ -53,9 +53,6 @@ impl AiBookService {
         if memory.book_url.trim().is_empty() {
             memory.book_url = book_url.to_string();
         }
-        if memory.book_url != book_url {
-            return Err(AppError::BadRequest("bookUrl mismatch".to_string()));
-        }
         if memory.updated_at <= 0 {
             memory.updated_at = now_ts() * 1000;
         }
@@ -87,23 +84,5 @@ impl AiBookService {
             .execute(&self.pool)
             .await?;
         Ok(result.rows_affected() > 0)
-    }
-
-    /// 列出全部记忆的 `(book_id, book_url)`：WebDAV 恢复重建登记表后，
-    /// 由调用方逐行比对，book_url 与新登记同 id 行不一致的记忆删除（防串书）。
-    pub async fn list_keys(&self, user_ns: &str) -> Result<Vec<(String, String)>, AppError> {
-        let rows = sqlx::query("SELECT book_id, book_url FROM ai_book_memories WHERE user_ns=?1")
-            .bind(user_ns)
-            .fetch_all(&self.pool)
-            .await?;
-        Ok(rows
-            .into_iter()
-            .map(|r| {
-                (
-                    format_book_id(r.get::<i64, _>("book_id")),
-                    r.get::<String, _>("book_url"),
-                )
-            })
-            .collect())
     }
 }

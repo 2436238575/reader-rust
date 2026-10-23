@@ -68,60 +68,57 @@ impl BookRepo {
         Self { pool }
     }
 
-    /// 登记单本书：URL 已存在 → 复用其 id 并补上可变字段；否则分配新 id
-    ///（books.book_id 是 rowid 别名，不显式插入即单调自增）。
+    /// 登记单本书：URL 已存在 → 复用其 id 并补上可变字段；否则由
+    /// AUTOINCREMENT 分配新 id（删除过的 id 不复用）。
     /// `desired_id` 仅供 WebDAV 恢复：必须形如 `book_<n>`（否则 400），
     /// 空位才用，被占用（且 URL 不同）则分配新 id。
     pub async fn register(
         &self,
-        user_ns: &str,
+        _user_ns: &str,
         item: RegisterBook<'_>,
         desired_id: Option<&str>,
     ) -> Result<String, AppError> {
-        if let Some(existing) = self.get_by_url(user_ns, item.book_url).await? {
-            touch_book_fields(&self.pool, user_ns, &existing.book_id, item).await?;
+        if let Some(existing) = self.get_by_url("", item.book_url).await? {
+            touch_book_fields(&self.pool, &existing.book_id, item).await?;
             return Ok(existing.book_id);
         }
         if let Some(desired) = desired_id {
             let desired_num = parse_book_id(desired)
                 .ok_or_else(|| AppError::BadRequest(format!("bookId 格式非法: {desired:?}")))?;
-            if let Some(existing) = self.get(user_ns, desired).await? {
+            if let Some(existing) = self.get("", desired).await? {
                 if existing.book_url == item.book_url {
-                    touch_book_fields(&self.pool, user_ns, desired, item).await?;
+                    touch_book_fields(&self.pool, desired, item).await?;
                     return Ok(desired.to_string());
                 }
                 // id 被别的书占用：本地身份优先，新来的一律分配新 id
             } else {
-                insert_book_with_id(&self.pool, user_ns, desired_num, item).await?;
+                insert_book_with_id(&self.pool, desired_num, item).await?;
                 return Ok(desired.to_string());
             }
         }
-        insert_book_auto(&self.pool, user_ns, item)
-            .await
-            .map(|(id, _)| id)
+        insert_book_auto(&self.pool, item).await.map(|(id, _)| id)
     }
 
     /// 批量登记（搜索/发现结果），单事务。返回 bookUrl → bookId 映射。
     pub async fn register_many(
         &self,
-        user_ns: &str,
+        _user_ns: &str,
         items: &[RegisterBook<'_>],
     ) -> Result<std::collections::HashMap<String, String>, AppError> {
         let mut tx = self.pool.begin_with("BEGIN IMMEDIATE").await?;
         let mut out = std::collections::HashMap::with_capacity(items.len());
         for item in items {
             let existing: Option<i64> =
-                sqlx::query_scalar("SELECT book_id FROM books WHERE user_ns=?1 AND book_url=?2")
-                    .bind(user_ns)
+                sqlx::query_scalar("SELECT book_id FROM books WHERE book_url=?1")
                     .bind(item.book_url)
                     .fetch_optional(&mut *tx)
                     .await?;
             let id = match existing {
                 Some(id) => {
-                    touch_book_fields(&mut *tx, user_ns, &format_book_id(id), *item).await?;
+                    touch_book_fields(&mut *tx, &format_book_id(id), *item).await?;
                     id
                 }
-                None => insert_book_auto(&mut *tx, user_ns, *item).await?.1,
+                None => insert_book_auto(&mut *tx, *item).await?.1,
             };
             out.insert(item.book_url.to_string(), format_book_id(id));
         }
@@ -134,75 +131,57 @@ impl BookRepo {
         Ok(self.pool.begin_with("BEGIN IMMEDIATE").await?)
     }
 
-    /// 事务版 wipe。
-    pub async fn wipe_on(
-        &self,
-        tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
-        user_ns: &str,
-    ) -> Result<(), AppError> {
-        sqlx::query("DELETE FROM books WHERE user_ns=?1")
-            .bind(user_ns)
-            .execute(&mut **tx)
-            .await?;
-        Ok(())
-    }
-
     /// 事务版 register：与 `register` 语义一致，全部读写落在给定事务里。
     pub async fn register_on(
         &self,
         tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
-        user_ns: &str,
+        _user_ns: &str,
         item: RegisterBook<'_>,
         desired_id: Option<&str>,
     ) -> Result<String, AppError> {
         let row = sqlx::query(&format!(
-            "SELECT {BOOK_ROW_COLS} FROM books WHERE user_ns=?1 AND book_url=?2"
+            "SELECT {BOOK_ROW_COLS} FROM books WHERE book_url=?1"
         ))
-        .bind(user_ns)
         .bind(item.book_url)
         .fetch_optional(&mut **tx)
         .await?;
         if let Some(row) = row {
             let existing = map_book_row(&row);
-            touch_book_fields(&mut **tx, user_ns, &existing.book_id, item).await?;
+            touch_book_fields(&mut **tx, &existing.book_id, item).await?;
             return Ok(existing.book_id);
         }
         if let Some(desired) = desired_id {
             let desired_num = parse_book_id(desired)
                 .ok_or_else(|| AppError::BadRequest(format!("bookId 格式非法: {desired:?}")))?;
             let row = sqlx::query(&format!(
-                "SELECT {BOOK_ROW_COLS} FROM books WHERE user_ns=?1 AND book_id=?2"
+                "SELECT {BOOK_ROW_COLS} FROM books WHERE book_id=?1"
             ))
-            .bind(user_ns)
             .bind(desired_num)
             .fetch_optional(&mut **tx)
             .await?;
             match row {
                 Some(row) if map_book_row(&row).book_url == item.book_url => {
-                    touch_book_fields(&mut **tx, user_ns, desired, item).await?;
+                    touch_book_fields(&mut **tx, desired, item).await?;
                     return Ok(desired.to_string());
                 }
                 // id 被别的书占用：本地身份优先，新来的一律分配新 id
                 Some(_) => {}
                 None => {
-                    insert_book_with_id(&mut **tx, user_ns, desired_num, item).await?;
+                    insert_book_with_id(&mut **tx, desired_num, item).await?;
                     return Ok(desired.to_string());
                 }
             }
         }
-        insert_book_auto(&mut **tx, user_ns, item)
-            .await
-            .map(|(id, _)| id)
+        insert_book_auto(&mut **tx, item).await.map(|(id, _)| id)
     }
 
-    pub async fn get(&self, user_ns: &str, book_id: &str) -> Result<Option<BookRow>, AppError> {
+    pub async fn get(&self, _user_ns: &str, book_id: &str) -> Result<Option<BookRow>, AppError> {
         let Some(id) = parse_book_id(book_id) else {
             return Ok(None);
         };
         let row = sqlx::query(&format!(
-            "SELECT {BOOK_ROW_COLS} FROM books WHERE user_ns=?1 AND book_id=?2"
+            "SELECT {BOOK_ROW_COLS} FROM books WHERE book_id=?1"
         ))
-        .bind(user_ns)
         .bind(id)
         .fetch_optional(&self.pool)
         .await?;
@@ -211,24 +190,22 @@ impl BookRepo {
 
     pub async fn get_by_url(
         &self,
-        user_ns: &str,
+        _user_ns: &str,
         book_url: &str,
     ) -> Result<Option<BookRow>, AppError> {
         let row = sqlx::query(&format!(
-            "SELECT {BOOK_ROW_COLS} FROM books WHERE user_ns=?1 AND book_url=?2"
+            "SELECT {BOOK_ROW_COLS} FROM books WHERE book_url=?1"
         ))
-        .bind(user_ns)
         .bind(book_url)
         .fetch_optional(&self.pool)
         .await?;
         Ok(row.as_ref().map(map_book_row))
     }
 
-    /// 换源改绑：book_id 不变，指向新的上游地址与书源。
-    /// `book_url` 唯一冲突由调用方先处理（删孤儿行或对「目标已在架」报错）。
-    pub async fn rebind(
+    /// 事务版改绑：调用方负责先删掉占用新 URL 的目标登记行。
+    pub async fn rebind_on(
         &self,
-        user_ns: &str,
+        tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
         book_id: &str,
         new_book_url: &str,
         new_source_id: Option<i64>,
@@ -237,79 +214,38 @@ impl BookRepo {
             return Ok(());
         };
         sqlx::query(
-            "UPDATE books SET book_url=?3, book_source_id=?4, toc_url=NULL, updated_at=?5 \
-             WHERE user_ns=?1 AND book_id=?2",
+            "UPDATE books SET book_url=?2, book_source_id=?3, toc_url=NULL, updated_at=?4 \
+             WHERE book_id=?1",
         )
-        .bind(user_ns)
         .bind(id)
         .bind(new_book_url)
         .bind(new_source_id)
         .bind(now_ts())
-        .execute(&self.pool)
+        .execute(&mut **tx)
         .await?;
         Ok(())
     }
 
-    pub async fn delete(&self, user_ns: &str, book_id: &str) -> Result<(), AppError> {
+    /// 事务版删除：换源时先删目标登记行，再改绑当前书。
+    pub async fn delete_on(
+        &self,
+        tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+        book_id: &str,
+    ) -> Result<(), AppError> {
         let Some(id) = parse_book_id(book_id) else {
             return Ok(());
         };
-        sqlx::query("DELETE FROM books WHERE user_ns=?1 AND book_id=?2")
-            .bind(user_ns)
+        sqlx::query("DELETE FROM books WHERE book_id=?1")
             .bind(id)
-            .execute(&self.pool)
+            .execute(&mut **tx)
             .await?;
         Ok(())
-    }
-
-    /// 回收不在给定保留清单里的登记行（purgeCache 清用户缓存时联动调用）。
-    pub async fn delete_except(&self, user_ns: &str, keep_ids: &[String]) -> Result<u64, AppError> {
-        let ids = self.list_ids_except(user_ns, keep_ids).await?;
-        if ids.is_empty() {
-            return Ok(0);
-        }
-        let placeholders = ids.iter().map(|_| "?").collect::<Vec<_>>().join(",");
-        let sql = format!("DELETE FROM books WHERE user_ns=? AND book_id IN ({placeholders})");
-        let mut query = sqlx::query(&sql).bind(user_ns);
-        for id in &ids {
-            query = query.bind(id);
-        }
-        let result = query.execute(&self.pool).await?;
-        Ok(result.rows_affected())
-    }
-
-    /// 保留清单之外的登记行 id（canonical `book_<n>`）：供调用方在删除前
-    /// 先对孤儿行做级联清理（书签/编辑版/AI 记忆都按 book_id 引用）。
-    pub async fn list_ids_except(
-        &self,
-        user_ns: &str,
-        keep_ids: &[String],
-    ) -> Result<Vec<i64>, AppError> {
-        if keep_ids.is_empty() {
-            let rows = sqlx::query("SELECT book_id FROM books WHERE user_ns=?1")
-                .bind(user_ns)
-                .fetch_all(&self.pool)
-                .await?;
-            return Ok(rows.iter().map(|r| r.get::<i64, _>("book_id")).collect());
-        }
-        let ids: Vec<i64> = keep_ids.iter().filter_map(|s| parse_book_id(s)).collect();
-        let placeholders = ids.iter().map(|_| "?").collect::<Vec<_>>().join(",");
-        let sql = format!(
-            "SELECT book_id FROM books WHERE user_ns=? AND book_id NOT IN ({placeholders})"
-        );
-        let mut query = sqlx::query(&sql).bind(user_ns);
-        for id in ids {
-            query = query.bind(id);
-        }
-        let rows = query.fetch_all(&self.pool).await?;
-        Ok(rows.iter().map(|r| r.get::<i64, _>("book_id")).collect())
     }
 }
 
 /// 更新登记行的可变字段：只覆盖非空入参（登记时可能还不知道书名/目录）。
 async fn touch_book_fields<'e, E>(
     executor: E,
-    user_ns: &str,
     book_id: &str,
     item: RegisterBook<'_>,
 ) -> Result<(), AppError>
@@ -321,14 +257,13 @@ where
     };
     sqlx::query(
         "UPDATE books SET \
-           book_source_id = COALESCE(?3, book_source_id), \
-           toc_url = COALESCE(?4, toc_url), \
-           name = CASE WHEN ?5 != '' THEN ?5 ELSE name END, \
-           author = CASE WHEN ?6 != '' THEN ?6 ELSE author END, \
-           updated_at = ?7 \
-         WHERE user_ns = ?1 AND book_id = ?2",
+           book_source_id = COALESCE(?2, book_source_id), \
+           toc_url = COALESCE(?3, toc_url), \
+           name = CASE WHEN ?4 != '' THEN ?4 ELSE name END, \
+           author = CASE WHEN ?5 != '' THEN ?5 ELSE author END, \
+           updated_at = ?6 \
+         WHERE book_id = ?1",
     )
-    .bind(user_ns)
     .bind(id)
     .bind(item.book_source_id)
     .bind(item.toc_url)
@@ -341,16 +276,14 @@ where
 }
 
 const BOOK_INSERT_COLS: &str =
-    "user_ns, book_url, book_source_id, toc_url, name, author, created_at, updated_at";
+    "book_url, book_source_id, toc_url, name, author, created_at, updated_at";
 
 fn bind_book_fields<'q>(
     query: sqlx::query::Query<'q, sqlx::Sqlite, sqlx::sqlite::SqliteArguments<'q>>,
-    user_ns: &'q str,
     item: RegisterBook<'q>,
     now: i64,
 ) -> sqlx::query::Query<'q, sqlx::Sqlite, sqlx::sqlite::SqliteArguments<'q>> {
     query
-        .bind(user_ns)
         .bind(item.book_url)
         .bind(item.book_source_id)
         .bind(item.toc_url)
@@ -359,30 +292,28 @@ fn bind_book_fields<'q>(
         .bind(now)
 }
 
-/// 不显式给 id 的插入：book_id 是 rowid 别名，由 SQLite 单调分配。
+/// 不显式给 id 的插入：book_id 由 AUTOINCREMENT 单调分配，永不复用。
 /// 返回 `(格式化 id, 数值 id)`。
 async fn insert_book_auto<'e, E>(
     executor: E,
-    user_ns: &str,
     item: RegisterBook<'_>,
 ) -> Result<(String, i64), AppError>
 where
     E: sqlx::Executor<'e, Database = sqlx::Sqlite>,
 {
     let now = now_ts();
-    let sql =
-        format!("INSERT INTO books ({BOOK_INSERT_COLS}) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?7)");
-    let result = bind_book_fields(sqlx::query(&sql), user_ns, item, now)
+    let sql = format!("INSERT INTO books ({BOOK_INSERT_COLS}) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?6)");
+    let result = bind_book_fields(sqlx::query(&sql), item, now)
         .execute(executor)
         .await?;
     let id = result.last_insert_rowid();
     Ok((format_book_id(id), id))
 }
 
-/// 显式指定 id 的插入（WebDAV 恢复对齐备份）。
+/// 显式指定 id 的插入（WebDAV 恢复对齐备份）。AUTOINCREMENT 会同步推进
+/// sqlite_sequence，之后的自动分配不会与备份里的 id 冲突。
 async fn insert_book_with_id<'e, E>(
     executor: E,
-    user_ns: &str,
     id: i64,
     item: RegisterBook<'_>,
 ) -> Result<(), AppError>
@@ -391,9 +322,9 @@ where
 {
     let now = now_ts();
     let sql = format!(
-        "INSERT INTO books (book_id, {BOOK_INSERT_COLS}) VALUES (?8, ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?7)"
+        "INSERT INTO books (book_id, {BOOK_INSERT_COLS}) VALUES (?7, ?1, ?2, ?3, ?4, ?5, ?6, ?6)"
     );
-    bind_book_fields(sqlx::query(&sql), user_ns, item, now)
+    bind_book_fields(sqlx::query(&sql), item, now)
         .bind(id)
         .execute(executor)
         .await?;
@@ -410,46 +341,31 @@ impl BookSourceRepo {
         Self { pool }
     }
 
-    /// 分配下一个书源 id（per user_ns）。SQLite 单写者 + 调用方持事务，MAX+1 安全。
-    async fn next_id_on<'e, E>(executor: E, user_ns: &str) -> Result<i64, AppError>
-    where
-        E: sqlx::Executor<'e, Database = sqlx::Sqlite>,
-    {
-        let max: Option<i64> =
-            sqlx::query_scalar("SELECT MAX(book_source_id) FROM book_sources WHERE user_ns = ?1")
-                .bind(user_ns)
-                .fetch_one(executor)
-                .await?;
-        Ok(max.unwrap_or(0) + 1)
-    }
-
-    /// 按 URL upsert：新行自动分配 id；既有行（ON CONFLICT URL）保留原 id。
-    /// 返回该书源的 bookSourceId。
+    /// 按 URL upsert：新行由 AUTOINCREMENT 分配 id；既有行（ON CONFLICT URL）
+    /// 保留原 id。返回该书源的 bookSourceId。
     pub async fn upsert(
         &self,
-        user_ns: &str,
+        _user_ns: &str,
         source: &BookSource,
         json: &str,
     ) -> Result<i64, AppError> {
         sqlx::query(
-            "INSERT INTO book_sources (user_ns, book_source_url, book_source_name, json, updated_at, book_source_id) \
-             VALUES (?1, ?2, ?3, ?4, ?5, (SELECT COALESCE(MAX(book_source_id), 0) + 1 FROM book_sources WHERE user_ns = ?1)) \
-             ON CONFLICT(user_ns, book_source_url) DO UPDATE SET book_source_name=excluded.book_source_name, json=excluded.json, updated_at=excluded.updated_at"
+            "INSERT INTO book_sources (book_source_url, book_source_name, json, updated_at) \
+             VALUES (?1, ?2, ?3, ?4) \
+             ON CONFLICT(book_source_url) DO UPDATE SET \
+             book_source_name=excluded.book_source_name, json=excluded.json, updated_at=excluded.updated_at",
         )
-        .bind(user_ns)
         .bind(&source.book_source_url)
         .bind(&source.book_source_name)
         .bind(json)
         .bind(now_ts())
         .execute(&self.pool)
         .await?;
-        let id: i64 = sqlx::query_scalar(
-            "SELECT book_source_id FROM book_sources WHERE user_ns=?1 AND book_source_url=?2",
-        )
-        .bind(user_ns)
-        .bind(&source.book_source_url)
-        .fetch_one(&self.pool)
-        .await?;
+        let id: i64 =
+            sqlx::query_scalar("SELECT book_source_id FROM book_sources WHERE book_source_url=?1")
+                .bind(&source.book_source_url)
+                .fetch_one(&self.pool)
+                .await?;
         Ok(id)
     }
 
@@ -457,16 +373,15 @@ impl BookSourceRepo {
     /// 返回 false 表示该 id 不存在（调用方回落按 URL upsert）。
     pub async fn update_by_id(
         &self,
-        user_ns: &str,
+        _user_ns: &str,
         id: i64,
         source: &BookSource,
         json: &str,
     ) -> Result<bool, AppError> {
         let result = sqlx::query(
-            "UPDATE book_sources SET book_source_url=?3, book_source_name=?4, json=?5, updated_at=?6 \
-             WHERE user_ns=?1 AND book_source_id=?2",
+            "UPDATE book_sources SET book_source_url=?2, book_source_name=?3, json=?4, updated_at=?5 \
+             WHERE book_source_id=?1",
         )
-        .bind(user_ns)
         .bind(id)
         .bind(&source.book_source_url)
         .bind(&source.book_source_name)
@@ -484,28 +399,26 @@ impl BookSourceRepo {
     }
 
     /// 批量导入/恢复：URL 去重优先——URL 已存在则更新内容、保本地 id；
-    /// URL 不存在时优先使用自带 id（空位才用，被占用则分配新 id）。
+    /// URL 不存在时优先使用自带 id（空位才用，被占用则交给 AUTOINCREMENT）。
     /// 单事务提交：逐条独立事务时导入上千书源 = 上千次 fsync，且失去原子性。
     pub async fn import_many(
         &self,
-        user_ns: &str,
+        _user_ns: &str,
         entries: &[(BookSource, String, Option<i64>)],
     ) -> Result<(), AppError> {
         let mut tx = self.pool.begin_with("BEGIN IMMEDIATE").await?;
         for (source, json, desired_id) in entries {
             let existing: Option<i64> = sqlx::query_scalar(
-                "SELECT book_source_id FROM book_sources WHERE user_ns=?1 AND book_source_url=?2",
+                "SELECT book_source_id FROM book_sources WHERE book_source_url=?1",
             )
-            .bind(user_ns)
             .bind(&source.book_source_url)
             .fetch_optional(&mut *tx)
             .await?;
             if existing.is_some() {
                 sqlx::query(
-                    "UPDATE book_sources SET book_source_name=?3, json=?4, updated_at=?5 \
-                     WHERE user_ns=?1 AND book_source_url=?2",
+                    "UPDATE book_sources SET book_source_name=?2, json=?3, updated_at=?4 \
+                     WHERE book_source_url=?1",
                 )
-                .bind(user_ns)
                 .bind(&source.book_source_url)
                 .bind(&source.book_source_name)
                 .bind(json)
@@ -514,52 +427,61 @@ impl BookSourceRepo {
                 .await?;
                 continue;
             }
-            let id = match desired_id {
+            let reversible_id = match desired_id {
                 Some(d) => {
                     let taken: Option<i64> = sqlx::query_scalar(
-                        "SELECT book_source_id FROM book_sources WHERE user_ns=?1 AND book_source_id=?2",
+                        "SELECT book_source_id FROM book_sources WHERE book_source_id=?1",
                     )
-                    .bind(user_ns)
                     .bind(*d)
                     .fetch_optional(&mut *tx)
                     .await?;
                     if taken.is_some() {
-                        Self::next_id_on(&mut *tx, user_ns).await?
+                        None
                     } else {
-                        *d
+                        Some(*d)
                     }
                 }
-                None => Self::next_id_on(&mut *tx, user_ns).await?,
+                None => None,
             };
-            sqlx::query(
-                "INSERT INTO book_sources (user_ns, book_source_url, book_source_name, json, updated_at, book_source_id) \
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-            )
-            .bind(user_ns)
-            .bind(&source.book_source_url)
-            .bind(&source.book_source_name)
-            .bind(json)
-            .bind(now_ts())
-            .bind(id)
-            .execute(&mut *tx)
-            .await?;
+            if let Some(id) = reversible_id {
+                sqlx::query(
+                    "INSERT INTO book_sources (book_source_id, book_source_url, book_source_name, json, updated_at) \
+                     VALUES (?1, ?2, ?3, ?4, ?5)",
+                )
+                .bind(id)
+                .bind(&source.book_source_url)
+                .bind(&source.book_source_name)
+                .bind(json)
+                .bind(now_ts())
+                .execute(&mut *tx)
+                .await?;
+            } else {
+                sqlx::query(
+                    "INSERT INTO book_sources (book_source_url, book_source_name, json, updated_at) \
+                     VALUES (?1, ?2, ?3, ?4)",
+                )
+                .bind(&source.book_source_url)
+                .bind(&source.book_source_name)
+                .bind(json)
+                .bind(now_ts())
+                .execute(&mut *tx)
+                .await?;
+            }
         }
         tx.commit().await?;
         Ok(())
     }
 
-    pub async fn delete_by_id(&self, user_ns: &str, id: i64) -> Result<(), AppError> {
-        sqlx::query("DELETE FROM book_sources WHERE user_ns=?1 AND book_source_id=?2")
-            .bind(user_ns)
+    pub async fn delete_by_id(&self, _user_ns: &str, id: i64) -> Result<(), AppError> {
+        sqlx::query("DELETE FROM book_sources WHERE book_source_id=?1")
             .bind(id)
             .execute(&self.pool)
             .await?;
         Ok(())
     }
 
-    pub async fn delete_all(&self, user_ns: &str) -> Result<(), AppError> {
-        sqlx::query("DELETE FROM book_sources WHERE user_ns=?1")
-            .bind(user_ns)
+    pub async fn delete_all(&self, _user_ns: &str) -> Result<(), AppError> {
+        sqlx::query("DELETE FROM book_sources")
             .execute(&self.pool)
             .await?;
         Ok(())
@@ -567,16 +489,14 @@ impl BookSourceRepo {
 
     pub async fn get_by_id(
         &self,
-        user_ns: &str,
+        _user_ns: &str,
         id: i64,
     ) -> Result<Option<(String, String)>, AppError> {
-        let row = sqlx::query(
-            "SELECT book_source_url, json FROM book_sources WHERE user_ns=?1 AND book_source_id=?2",
-        )
-        .bind(user_ns)
-        .bind(id)
-        .fetch_optional(&self.pool)
-        .await?;
+        let row =
+            sqlx::query("SELECT book_source_url, json FROM book_sources WHERE book_source_id=?1")
+                .bind(id)
+                .fetch_optional(&self.pool)
+                .await?;
         Ok(row.map(|r| {
             (
                 r.get::<String, _>("book_source_url"),
@@ -586,13 +506,11 @@ impl BookSourceRepo {
     }
 
     /// 列出全部书源：`(id, json)`，保持原有 updated_at 倒序。
-    pub async fn list(&self, user_ns: &str) -> Result<Vec<(i64, String)>, AppError> {
-        let rows = sqlx::query(
-            "SELECT book_source_id, json FROM book_sources WHERE user_ns=?1 ORDER BY updated_at DESC",
-        )
-        .bind(user_ns)
-        .fetch_all(&self.pool)
-        .await?;
+    pub async fn list(&self, _user_ns: &str) -> Result<Vec<(i64, String)>, AppError> {
+        let rows =
+            sqlx::query("SELECT book_source_id, json FROM book_sources ORDER BY updated_at DESC")
+                .fetch_all(&self.pool)
+                .await?;
         Ok(rows
             .into_iter()
             .map(|r| {
@@ -737,8 +655,8 @@ impl ShelfBookRepo {
     pub async fn list(&self, user_ns: &str) -> Result<Vec<ShelfEntry>, AppError> {
         let rows = sqlx::query(&format!(
             "SELECT {SHELF_LIST_COLS}, {SHELF_JOIN_COLS} FROM shelf_books s \
-             JOIN books b ON b.user_ns = s.user_ns AND b.book_id = s.book_id \
-             LEFT JOIN book_sources bs ON bs.user_ns = s.user_ns AND bs.book_source_id = b.book_source_id \
+             JOIN books b ON b.book_id = s.book_id \
+             LEFT JOIN book_sources bs ON bs.book_source_id = b.book_source_id \
              WHERE s.user_ns = ?1 ORDER BY s.position"
         ))
         .bind(user_ns)
@@ -753,8 +671,8 @@ impl ShelfBookRepo {
         };
         let row = sqlx::query(&format!(
             "SELECT {SHELF_COLS}, {SHELF_JOIN_COLS} FROM shelf_books s \
-             JOIN books b ON b.user_ns = s.user_ns AND b.book_id = s.book_id \
-             LEFT JOIN book_sources bs ON bs.user_ns = s.user_ns AND bs.book_source_id = b.book_source_id \
+             JOIN books b ON b.book_id = s.book_id \
+             LEFT JOIN book_sources bs ON bs.book_source_id = b.book_source_id \
              WHERE s.user_ns = ?1 AND s.book_id = ?2"
         ))
         .bind(user_ns)
@@ -844,7 +762,7 @@ impl ShelfBookRepo {
             if local_limit > 0 && is_local {
                 let local_count: i64 = sqlx::query_scalar(
                     "SELECT COUNT(*) FROM shelf_books s JOIN books b \
-                     ON b.user_ns = s.user_ns AND b.book_id = s.book_id \
+                     ON b.book_id = s.book_id \
                      WHERE s.user_ns=?1 AND (b.book_url LIKE 'local-txt:%' OR b.book_url LIKE 'local-epub:%')",
                 )
                 .bind(user_ns)
@@ -1118,26 +1036,6 @@ impl BookmarkRepo {
         Ok(())
     }
 
-    /// 该书全部书签的 (book_id, book_url) 去重清单（恢复校验用；
-    /// 只取记了 book_url 的行——旧数据的空串无法校验，调用方跳过）。
-    pub async fn list_book_refs(&self, user_ns: &str) -> Result<Vec<(String, String)>, AppError> {
-        let rows = sqlx::query(
-            "SELECT DISTINCT book_id, book_url FROM bookmarks WHERE user_ns=?1 AND book_url != ''",
-        )
-        .bind(user_ns)
-        .fetch_all(&self.pool)
-        .await?;
-        Ok(rows
-            .iter()
-            .map(|row| {
-                (
-                    format_book_id(row.get::<i64, _>("book_id")),
-                    row.get::<String, _>("book_url"),
-                )
-            })
-            .collect())
-    }
-
     pub async fn delete(
         &self,
         user_ns: &str,
@@ -1254,131 +1152,6 @@ impl ReplaceRuleRepo {
             .execute(&self.pool)
             .await?;
         Ok(())
-    }
-}
-
-// ─── 章节编辑版索引（正文仍落 data/ 文件，这里存元数据与徽章清单） ─────────
-
-/// chapter_edits 表的一行。正文内容不进表（2MB 级文本不进行），
-/// 正文文件路径由 (user_ns, book_id, chapter_url) 推导。
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, Default)]
-#[serde(default, rename_all = "camelCase")]
-pub struct ChapterEditMeta {
-    pub chapter_index: i32,
-    pub chapter_title: String,
-    pub edited_at: i64,
-}
-
-#[derive(Clone)]
-pub struct ChapterEditRepo {
-    pool: SqlitePool,
-}
-
-impl ChapterEditRepo {
-    pub fn new(pool: SqlitePool) -> Self {
-        Self { pool }
-    }
-
-    /// 保存/覆盖索引条目（正文文件的写由调用方先做）。
-    /// `book_url` 是保存时刻的登记表地址：WebDAV 恢复重建登记表后按它识别
-    /// 「id 被别的书复用」的残留编辑版（与 ai_book_memories 同一手法）。
-    pub async fn upsert(
-        &self,
-        user_ns: &str,
-        book_id: &str,
-        chapter_url: &str,
-        meta: &ChapterEditMeta,
-        book_url: &str,
-    ) -> Result<(), AppError> {
-        let Some(id) = parse_book_id(book_id) else {
-            return Err(AppError::BadRequest(format!(
-                "bookId 格式非法: {book_id:?}"
-            )));
-        };
-        sqlx::query(
-            "INSERT INTO chapter_edits (user_ns, book_id, chapter_url, chapter_index, chapter_title, edited_at, book_url) \
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7) \
-             ON CONFLICT(user_ns, book_id, chapter_url) DO UPDATE SET \
-             chapter_index=excluded.chapter_index, chapter_title=excluded.chapter_title, edited_at=excluded.edited_at, \
-             book_url=excluded.book_url",
-        )
-        .bind(user_ns)
-        .bind(id)
-        .bind(chapter_url)
-        .bind(meta.chapter_index)
-        .bind(&meta.chapter_title)
-        .bind(meta.edited_at)
-        .bind(book_url)
-        .execute(&self.pool)
-        .await?;
-        Ok(())
-    }
-
-    /// 该书全部编辑索引的 (book_id, book_url) 去重清单（恢复校验用）。
-    pub async fn list_book_refs(&self, user_ns: &str) -> Result<Vec<(String, String)>, AppError> {
-        let rows =
-            sqlx::query("SELECT DISTINCT book_id, book_url FROM chapter_edits WHERE user_ns=?1")
-                .bind(user_ns)
-                .fetch_all(&self.pool)
-                .await?;
-        Ok(rows
-            .iter()
-            .map(|row| {
-                (
-                    format_book_id(row.get::<i64, _>("book_id")),
-                    row.get::<String, _>("book_url"),
-                )
-            })
-            .collect())
-    }
-
-    /// 按书列出已编辑章节的 chapterUrl（目录徽章用）。
-    pub async fn list_urls(&self, user_ns: &str, book_id: &str) -> Result<Vec<String>, AppError> {
-        let Some(id) = parse_book_id(book_id) else {
-            return Ok(vec![]);
-        };
-        let rows = sqlx::query(
-            "SELECT chapter_url FROM chapter_edits WHERE user_ns=?1 AND book_id=?2 ORDER BY chapter_index",
-        )
-        .bind(user_ns)
-        .bind(id)
-        .fetch_all(&self.pool)
-        .await?;
-        Ok(rows
-            .iter()
-            .map(|row| row.get::<String, _>("chapter_url"))
-            .collect())
-    }
-
-    pub async fn delete(
-        &self,
-        user_ns: &str,
-        book_id: &str,
-        chapter_url: &str,
-    ) -> Result<(), AppError> {
-        let Some(id) = parse_book_id(book_id) else {
-            return Ok(());
-        };
-        sqlx::query("DELETE FROM chapter_edits WHERE user_ns=?1 AND book_id=?2 AND chapter_url=?3")
-            .bind(user_ns)
-            .bind(id)
-            .bind(chapter_url)
-            .execute(&self.pool)
-            .await?;
-        Ok(())
-    }
-
-    /// 删书级联：一句 DELETE 清掉该书全部索引。
-    pub async fn delete_for_book(&self, user_ns: &str, book_id: &str) -> Result<u64, AppError> {
-        let Some(id) = parse_book_id(book_id) else {
-            return Ok(0);
-        };
-        let result = sqlx::query("DELETE FROM chapter_edits WHERE user_ns=?1 AND book_id=?2")
-            .bind(user_ns)
-            .bind(id)
-            .execute(&self.pool)
-            .await?;
-        Ok(result.rows_affected())
     }
 }
 

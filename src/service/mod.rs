@@ -4,7 +4,7 @@ pub mod ai_model_service;
 pub mod book_group_service;
 pub mod book_service;
 pub mod book_source_service;
-pub mod chapter_edit_service;
+pub mod chapter_content_service;
 pub mod git_diff_service;
 pub mod image_service;
 pub mod json_document_service;
