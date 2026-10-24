@@ -112,11 +112,15 @@ GET/POST /reader3/getChapterTimeline
                                                       effectiveVersionId }
 GET/POST /reader3/getChapterVersion
         ?bookId&chapterUrl&versionId → { versionId, kind, baseVersionId?, createdAt,
-                                        rawSize, note, bookSourceName, content }
+                                        rawSize, chars, note, bookSourceName, content }
 GET/POST /reader3/getChapterVersionDiff
         ?bookId&chapterUrl&fromVersionId&toVersionId → { fromVersionId, toVersionId, ops }
 POST /reader3/selectChapterVersion { bookId, chapterUrl, versionId? }
         （versionId 为空表示「跟随最新」，删除手动选择）
+POST /reader3/resetBookToUpstream { bookId } → { cleared }
+        （整书换回最新上游：清掉本书全部版本选择与用户版本指针，每章显示
+        回落到最新上游，本地书回到原文；历史版本保留。cleared 为摘掉
+        用户版本指针的章节数）
 POST /reader3/importChapterVersion { bookId, chapterUrl, content, chapterIndex?,
                                      chapterTitle?, baseVersionId?, note?,
                                      makeCurrent?, createdAt? }
@@ -133,7 +137,7 @@ POST /reader3/getChapterImportDiff { previewId, sourceIndex }
 
 - `saveChapterEdit` 默认把新编辑设为当前；`baseVersionId` 不传时取当前最新上游。
 - `getChapterTimeline` 按版本时间（`createdAt`）倒序，同一时间再按 `versionId`；`kind` 为 `upstream` / `edited` / `imported`；
-  `isCurrent` / `isLatestUpstream` / `isLatestUser` 标识版本状态。
+  `isCurrent` / `isLatestUpstream` / `isLatestUser` 标识版本状态；每条带 `chars`（正文字数）。
 - `selectChapterVersion` 按用户保存到服务端，跨设备一致；“预览”不写状态。
 - `importChapterVersion` 默认只进时间线（`makeCurrent=false`），可指定历史时间与备注。
 

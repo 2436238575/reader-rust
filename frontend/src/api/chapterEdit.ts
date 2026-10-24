@@ -38,6 +38,8 @@ export interface ChapterTimelineItem {
   kind: ChapterVersionKind
   createdAt: number
   rawSize: number
+  /** 正文字数（字符数） */
+  chars: number
   chapterIndex: number
   chapterTitle: string
   note: string
@@ -63,6 +65,7 @@ export interface ChapterVersionDetail {
   baseVersionId?: number
   createdAt: number
   rawSize: number
+  chars: number
   note: string
   bookSourceName: string
   chapterIndex: number
@@ -134,6 +137,17 @@ export function selectChapterVersion(bookId: string, chapterUrl: string, version
       chapterUrl,
       versionId,
     })
+    .then((r) => r.data)
+}
+
+/**
+ * 整书换回最新上游：清掉本书全部版本选择与用户版本指针，每章显示
+ * 回落到最新上游（本地书回到原文）。历史版本保留。`cleared` 是摘掉
+ * 用户版本指针的章节数。
+ */
+export function resetBookToUpstream(bookId: string) {
+  return http
+    .post<{ cleared: number }>('/resetBookToUpstream', { bookId })
     .then((r) => r.data)
 }
 

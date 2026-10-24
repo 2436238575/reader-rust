@@ -56,7 +56,14 @@ import { deleteChapterEdit, getChapterEdit, saveChapterEdit } from '../../api/ch
 import { useEscClose } from '../../composables/useEscClose'
 import { useMobileLayout } from '../../composables/useMobileLayout'
 
-const props = defineProps<{ modelValue: boolean }>()
+const props = defineProps<{
+  modelValue: boolean
+  /**
+   * 从正文历史「编辑」某个版本进来时预填该版本正文，保存后以它为 diff 基准；
+   * 空表示编辑当前显示内容（原行为）。
+   */
+  seed?: { content: string; versionId?: number } | null
+}>()
 const emit = defineEmits<{
   'update:modelValue': [value: boolean]
   /** 保存或恢复上游版本后触发（父组件负责重载本章与 diff） */
@@ -85,19 +92,25 @@ watch(
   () => props.modelValue,
   async (open) => {
     if (!open) return
-    // 默认预填当前显示内容；正在读上游原版时要取编辑版，否则一保存就把
-    // 上游正文盖成编辑版，用户的修改就丢了
-    const displayed = store.content || ''
-    draft.value = displayed
     const chapter = store.currentChapter
     const bookId = store.book?.bookId
-    baseVersionId.value = store.chapterVersions.get(store.currentIndex)?.versionId
-    if (isUpstreamView.value && chapter && bookId) {
-      const edit = await getChapterEdit(bookId, chapter.url).catch(() => null)
-      // 等待期间用户可能已经动手改字，别覆盖
-      if (props.modelValue && draft.value === displayed && edit?.content != null) {
-        draft.value = edit.content
-        baseVersionId.value = edit.versionId
+    if (props.seed) {
+      // 从正文历史进入：直接以预览版本为底稿，不再猜当前显示内容
+      draft.value = props.seed.content
+      baseVersionId.value = props.seed.versionId
+    } else {
+      // 默认预填当前显示内容；正在读上游原版时要取编辑版，否则一保存就把
+      // 上游正文盖成编辑版，用户的修改就丢了
+      const displayed = store.content || ''
+      draft.value = displayed
+      baseVersionId.value = store.chapterVersions.get(store.currentIndex)?.versionId
+      if (isUpstreamView.value && chapter && bookId) {
+        const edit = await getChapterEdit(bookId, chapter.url).catch(() => null)
+        // 等待期间用户可能已经动手改字，别覆盖
+        if (props.modelValue && draft.value === displayed && edit?.content != null) {
+          draft.value = edit.content
+          baseVersionId.value = edit.versionId
+        }
       }
     }
     await nextTick()

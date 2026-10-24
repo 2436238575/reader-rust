@@ -33,7 +33,6 @@
           />
           <ReadSettings
             v-else-if="store.activePanel === 'settings'"
-            @edit-chapter="openChapterEditor"
             @view-diff="openDiffPanel"
           />
           <ReaderBookshelf v-else-if="store.activePanel === 'bookshelf'" />
@@ -56,7 +55,6 @@
       v-if="!isMobile"
       :is-speaking="store.isSpeaking"
       :is-paused="store.isPaused"
-      :chapter-edited="currentChapterEdited"
       @search="toggleSearch"
       @info="openInfo"
       @tts="handleTTS"
@@ -64,7 +62,6 @@
       @next="nextChapter"
       @progress="openCachePanel"
       @refresh="handleRefreshContent"
-      @edit="openChapterEditOrDiff"
       @history="openVersionPanel"
     />
 
@@ -72,7 +69,6 @@
     <ReaderMobileControls
       v-if="isMobile"
       :show="showControls || !!store.activePanel"
-      :chapter-edited="currentChapterEdited"
       @goBack="goBack"
       @scrollTop="scrollToTop"
       @scrollBottom="scrollToBottom"
@@ -82,7 +78,6 @@
       @info="openInfo"
       @tts="handleTTS"
       @progress="openCachePanel"
-      @edit="openChapterEditOrDiff"
       @history="openVersionPanel"
     />
 
@@ -471,16 +466,19 @@
 
     <BookDetailModal v-model="showBookInfo" :book="bookInfoBook" @switched="handleBookSwitched" />
 
-    <ChapterEditorModal v-model="showChapterEditor" @changed="handleChapterEditChanged" />
+    <ChapterEditorModal
+      v-model="showChapterEditor"
+      :seed="chapterEditorSeed"
+      @changed="handleChapterEditChanged"
+    />
 
-    <ChapterVersionPanel v-model="showVersionPanel" />
+    <ChapterVersionPanel v-model="showVersionPanel" @edit="openChapterEditorFromVersion" />
 
     <ChapterDiffPanel
       v-model="showDiffPanel"
       :ops="currentChapterDiffOps"
       :error="currentChapterDiffError"
       :viewing-upstream="currentChapterViewingUpstream"
-      @edit="openChapterEditor"
       @changed="handleChapterEditChanged"
     />
 
@@ -861,23 +859,20 @@ const currentChapterEdited = computed(() => {
   return !!chapter && store.editedChapterKeys.has(chapter.url)
 })
 
-function openChapterEditor() {
+/** 编辑器底稿：从正文历史「编辑」某版本时预填该版本正文；空表示编辑当前显示内容 */
+const chapterEditorSeed = ref<{ content: string; versionId?: number } | null>(null)
+
+function openChapterEditor(seed: { content: string; versionId?: number } | null = null) {
   if (!store.currentChapter) return
+  chapterEditorSeed.value = seed
   showDiffPanel.value = false
   showChapterEditor.value = true
 }
 
-/** 工具栏编辑按钮分流：本章没改过 → 编辑器；改过 → diff 面板 */
-function openChapterEditOrDiff() {
-  if (!store.currentChapter) return
-  // 正在预览上游原版时没有“与最新上游的差异”（标记也不叠加）；直接进编辑器，
-  // 要对照版本去「正文历史」面板。
-  const viewingUpstream = store.chapterVersions.get(store.currentIndex)?.kind === 'upstream'
-  if (currentChapterEdited.value && !viewingUpstream) {
-    openDiffPanel()
-    return
-  }
-  openChapterEditor()
+/** 正文历史面板的「编辑」：关掉面板开编辑器；带 seed 时用预览版本做底稿 */
+function openChapterEditorFromVersion(seed: { content: string; versionId?: number } | null) {
+  showVersionPanel.value = false
+  openChapterEditor(seed)
 }
 
 /** 「查看本章改动」：diff 已经随正文回来，直接开面板 */

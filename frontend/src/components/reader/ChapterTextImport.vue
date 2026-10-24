@@ -2,7 +2,7 @@
   <div class="import-panel">
     <div class="import-head">
       <div class="head-text">
-        <h3>导入 TXT</h3>
+        <h3>导入</h3>
         <p>整本会按章节标题拆分，自动与本书目录匹配；预览确认后再写入正文历史。</p>
       </div>
       <button class="ghost-btn" :disabled="importing" @click="$emit('cancel')">返回版本预览</button>

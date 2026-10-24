@@ -12,12 +12,6 @@
         <path d="M12 16v-4M12 8h.01" />
       </svg>
     </button>
-    <button class="tb-btn" @click="$emit('edit')" :title="chapterEdited ? '查看本章改动' : '编辑本章正文'">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-        <path d="M12 20h9" />
-        <path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z" />
-      </svg>
-    </button>
     <button class="tb-btn" @click="$emit('history')" title="正文历史">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
         <path d="M3 12a9 9 0 1 0 3-6.7L3 8" />
@@ -142,8 +136,6 @@ const theme = computed(() => {
 defineProps<{
   isSpeaking?: boolean
   isPaused?: boolean
-  /** 当前章有编辑版时编辑按钮指向 diff 面板 */
-  chapterEdited?: boolean
 }>()
 
 defineEmits<{
@@ -154,7 +146,6 @@ defineEmits<{
   next: []
   progress: []
   refresh: []
-  edit: []
   history: []
 }>()
 </script>

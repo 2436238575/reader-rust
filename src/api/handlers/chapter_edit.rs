@@ -83,6 +83,12 @@ pub struct SelectChapterVersionRequest {
     pub version_id: Option<i64>,
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ResetBookToUpstreamRequest {
+    pub book_id: String,
+}
+
 #[derive(Debug, Default, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct ImportChapterVersionRequest {
@@ -106,6 +112,8 @@ pub struct ChapterTimelineItem {
     pub kind: String,
     pub created_at: i64,
     pub raw_size: i64,
+    /// 正文字数（字符数）。展示用——字节数对中文正文没有可读性。
+    pub chars: i64,
     pub chapter_index: i32,
     pub chapter_title: String,
     pub note: String,
@@ -293,13 +301,22 @@ pub async fn get_chapter_timeline(
             req.before_version_id,
         )
         .await?;
-    let items: Vec<ChapterTimelineItem> = rows
-        .iter()
-        .map(|row| ChapterTimelineItem {
+    // 字数不在版本表里存，逐条从正文池读出来数（默认 50 条、面板按需打开，
+    // zstd 解压是微秒级）；blob 缺失属数据损坏，直接报错而不是默默显示 0。
+    let mut items: Vec<ChapterTimelineItem> = Vec::with_capacity(rows.len());
+    for row in &rows {
+        let chars = state
+            .chapter_content_service
+            .load_content(row.content_id)
+            .await?
+            .chars()
+            .count() as i64;
+        items.push(ChapterTimelineItem {
             version_id: row.version_id,
             kind: row.kind.clone(),
             created_at: row.created_at,
             raw_size: row.raw_size,
+            chars,
             chapter_index: row.chapter_index,
             chapter_title: row.chapter_title.clone(),
             note: row.note.clone(),
@@ -315,8 +332,8 @@ pub async fn get_chapter_timeline(
                 .as_ref()
                 .and_then(|latest| latest.latest_user_version_id)
                 == Some(row.version_id),
-        })
-        .collect();
+        });
+    }
     Ok(Json(ApiResponse::ok(json!({
         "items": items,
         "latestUpstreamVersionId": latest.as_ref().and_then(|row| row.latest_upstream_version_id),
@@ -339,12 +356,14 @@ pub async fn get_chapter_version(
         .version(&req.book_id, &req.chapter_url, req.version_id)
         .await?
         .ok_or_else(|| AppError::NotFound("章节版本不存在".to_string()))?;
+    let chars = view.content.chars().count() as i64;
     Ok(Json(ApiResponse::ok(json!({
         "versionId": view.version_id,
         "kind": view.kind,
         "baseVersionId": view.base_version_id,
         "createdAt": view.created_at,
         "rawSize": view.raw_size,
+        "chars": chars,
         "note": view.note,
         "bookSourceName": view.book_source_name,
         "chapterIndex": view.chapter_index,
@@ -410,6 +429,24 @@ pub async fn select_chapter_version(
         "selectedVersionId": req.version_id,
         "effectiveVersionId": effective,
     }))))
+}
+
+/// 整书换回最新上游：清掉本书全部版本选择与用户版本指针，每章显示
+/// 回落到最新上游（本地书回到原文）。历史版本严格保留，可从正文历史找回。
+pub async fn reset_book_to_upstream(
+    State(state): State<AppState>,
+    user: CurrentUser,
+    QueryOrBody(req): QueryOrBody<ResetBookToUpstreamRequest>,
+) -> Result<Json<ApiResponse<Value>>, AppError> {
+    if req.book_id.trim().is_empty() {
+        return Err(AppError::BadRequest("bookId required".to_string()));
+    }
+    resolve_book_checked(&state, &user.0.ns, &req.book_id).await?;
+    let cleared = state
+        .chapter_content_service
+        .reset_book_to_upstream(&user.0.ns, &req.book_id)
+        .await?;
+    Ok(Json(ApiResponse::ok(json!({ "cleared": cleared }))))
 }
 
 /// 手动导入一个历史版本。默认只进时间线，不改变当前显示。

@@ -26,6 +26,17 @@ export function formatMonthDayTime(ts: number | null | undefined): string {
   return `${date.getMonth() + 1}-${date.getDate()} ${date.getHours()}:${String(date.getMinutes()).padStart(2, '0')}`
 }
 
+/** 毫秒时间戳格式化为 `YY-MM-DD`（版本历史标签等紧凑场景）。 */
+export function formatShortDate(ts: number | null | undefined): string {
+  if (!ts) return ''
+  const date = new Date(ts)
+  if (Number.isNaN(date.getTime())) return ''
+  const yy = String(date.getFullYear()).slice(-2)
+  const mm = String(date.getMonth() + 1).padStart(2, '0')
+  const dd = String(date.getDate()).padStart(2, '0')
+  return `${yy}-${mm}-${dd}`
+}
+
 /**
  * 目录章节的 updateTime 展示：书源给纯数字时间戳（10 位秒 / 13 位毫秒）时格式化为
  * `YY-MM-DD`；其余文本（站点自己排版的日期）原样返回。空值返回空串。

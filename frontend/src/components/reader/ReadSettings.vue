@@ -585,11 +585,6 @@
       </div>
 
       <div class="setting-row">
-        <label>编辑正文</label>
-        <button class="opt-btn wide" @click="emit('editChapter')">编辑本章正文</button>
-      </div>
-
-      <div class="setting-row">
         <label>本章改动</label>
         <button class="opt-btn wide" :disabled="!currentChapterEdited" @click="emit('viewDiff')">
           {{ currentChapterEdited ? '查看与上游的差异' : '本章未修改' }}
@@ -625,8 +620,6 @@ const aiBookStore = useAiBookStore()
 const appStore = useAppStore()
 
 const emit = defineEmits<{
-  /** 「编辑本章正文」入口（弹窗挂阅读器视图层） */
-  editChapter: []
   /** 「查看本章改动」入口（diff 面板） */
   viewDiff: []
 }>()

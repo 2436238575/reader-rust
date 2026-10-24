@@ -673,6 +673,81 @@ async fn network_book_versions_and_diff() {
     assert_eq!(history["content"], json!("我的编辑版"));
 }
 
+/// 整书换回最新上游：摘掉用户版本指针与版本选择，正文回落上游；历史版本保留。
+#[tokio::test]
+async fn reset_book_to_upstream_restores_all_chapters() {
+    let server = boot().await;
+    let book = server
+        .upload_txt("整书换回", "第一章 开始\n原始一。\n第二章 中段\n原始二。\n")
+        .await;
+    let book_id = book["bookId"].as_str().unwrap();
+    let chapters = server
+        .post("getChapterList", json!({ "bookId": book_id }))
+        .await;
+    let url1 = chapters[0]["url"].as_str().unwrap().to_string();
+    let url2 = chapters[1]["url"].as_str().unwrap().to_string();
+    // 两章各存一版编辑
+    server
+        .post(
+            "saveChapterEdit",
+            json!({
+                "bookId": book_id, "chapterUrl": url1, "chapterIndex": 0,
+                "chapterTitle": "第一章 开始", "content": "改过的一。",
+            }),
+        )
+        .await;
+    server
+        .post(
+            "saveChapterEdit",
+            json!({
+                "bookId": book_id, "chapterUrl": url2, "chapterIndex": 1,
+                "chapterTitle": "第二章 中段", "content": "改过的二。",
+            }),
+        )
+        .await;
+    let edited = server.get_content(book_id, &url1, json!({})).await;
+    assert_eq!(edited["content"], json!("改过的一。"));
+    assert_eq!(edited["edited"], json!(true));
+
+    // 整书换回最新上游
+    let resp = server
+        .post("resetBookToUpstream", json!({ "bookId": book_id }))
+        .await;
+    assert_eq!(resp["cleared"], json!(2));
+
+    // 两章都回到原文，edited 标记消失
+    let first = server.get_content(book_id, &url1, json!({})).await;
+    assert_eq!(first["content"], json!("原始一。"));
+    assert_eq!(first["edited"], json!(false));
+    let second = server.get_content(book_id, &url2, json!({})).await;
+    assert_eq!(second["content"], json!("原始二。"));
+
+    // 历史版本保留，且时间线带字数
+    let timeline = server
+        .post(
+            "getChapterTimeline",
+            json!({ "bookId": book_id, "chapterUrl": url1 }),
+        )
+        .await;
+    let items = timeline["items"].as_array().unwrap();
+    assert!(
+        items.iter().any(|item| item["kind"] == json!("edited")),
+        "编辑历史应保留: {timeline}"
+    );
+    assert!(
+        items
+            .iter()
+            .all(|item| item["chars"].as_i64().unwrap_or(0) > 0),
+        "每个版本都应带字数: {timeline}"
+    );
+
+    // 再调一次是 no-op
+    let resp = server
+        .post("resetBookToUpstream", json!({ "bookId": book_id }))
+        .await;
+    assert_eq!(resp["cleared"], json!(0));
+}
+
 /// diff 由服务端进程内计算（imara-diff），不依赖任何外部工具：
 /// 保存编辑版后 getBookContent 直接给出差异，不再有降级路径。
 #[tokio::test]

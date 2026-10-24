@@ -146,12 +146,6 @@
               <span v-if="row.chapter.index === store.currentIndex" class="status-badge current"
                 >当前</span
               >
-              <span v-else-if="store.isChapterRead(row.chapter.index)" class="status-badge read"
-                >已读</span
-              >
-              <span v-if="isChapterEdited(row.chapter.url)" class="status-badge edited"
-                >已编辑</span
-              >
               <span v-if="isChapterCached(row.chapter.url)" class="status-badge cached"
                 >已缓存</span
               >
@@ -471,11 +465,6 @@ async function refreshCachedChapterState() {
 
 function isChapterCached(chapterUrl?: string) {
   return !!chapterUrl && cachedChapterUrls.value.has(chapterUrl)
-}
-
-/** 「已编辑」直接读 store 的清单（阅读器打开时已拉取，编辑保存/删除后会刷新） */
-function isChapterEdited(chapterUrl?: string) {
-  return !!chapterUrl && store.editedChapterKeys.has(chapterUrl)
 }
 
 async function goToBookmark(bm: Bookmark) {
@@ -907,21 +896,10 @@ const formatDate = formatMonthDayTime
   border-color: rgba(201, 127, 58, 0.2);
 }
 
-.status-badge.read {
-  color: rgba(0, 0, 0, 0.5);
-  background: rgba(0, 0, 0, 0.05);
-}
-
 .status-badge.cached {
   color: #2563eb;
   background: rgba(37, 99, 235, 0.1);
   border-color: rgba(37, 99, 235, 0.14);
-}
-
-.status-badge.edited {
-  color: #d97706;
-  background: rgba(217, 119, 6, 0.1);
-  border-color: rgba(217, 119, 6, 0.16);
 }
 
 /* Bookmark items */

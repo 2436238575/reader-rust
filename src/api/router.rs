@@ -252,6 +252,10 @@ pub fn build_router(state: AppState) -> Router {
             post(handlers::select_chapter_version),
         )
         .route(
+            "/reader3/resetBookToUpstream",
+            post(handlers::reset_book_to_upstream),
+        )
+        .route(
             "/reader3/importChapterVersion",
             post(handlers::import_chapter_version),
         )

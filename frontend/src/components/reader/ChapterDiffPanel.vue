@@ -21,7 +21,6 @@
                 <span class="stat-del">-{{ stats.removed }} 段</span>
                 <span class="stat-mod">~{{ stats.modified }} 段</span>
               </span>
-              <button class="ghost-btn" @click="emit('edit')">编辑本章</button>
               <button class="danger-btn" @click="discardEdit">放弃本章修改</button>
               <button class="close-btn" @click="close">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -106,8 +105,6 @@ const props = defineProps<{
 }>()
 const emit = defineEmits<{
   'update:modelValue': [value: boolean]
-  /** 「编辑本章」：关掉面板开编辑器 */
-  edit: []
   /** 放弃修改后（父组件重载本章与 diff） */
   changed: []
 }>()

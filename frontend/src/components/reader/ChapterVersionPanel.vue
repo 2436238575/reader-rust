@@ -17,11 +17,22 @@
               </p>
             </div>
             <div class="head-actions">
+              <button v-if="!showImport" class="ghost-btn" @click="editCurrent">
+                编辑当前
+              </button>
               <button v-if="!showImport" class="ghost-btn" @click="showImport = true">
-                导入 TXT
+                导入
               </button>
               <button v-if="canFollowLatest" class="ghost-btn" @click="followLatest">
                 跟随最新
+              </button>
+              <button
+                class="ghost-btn"
+                :disabled="resettingBook"
+                title="所有章节改回显示最新上游正文（本地书回到原文）；历史版本保留在正文历史里"
+                @click="handleResetBookToUpstream"
+              >
+                整书换回上游
               </button>
               <button class="ghost-btn" :disabled="loading" @click="reload">刷新</button>
               <button class="close-btn" @click="close" aria-label="关闭">
@@ -46,13 +57,13 @@
                 <div class="row-main">
                   <span class="kind" :class="item.kind">{{ kindLabel(item.kind) }}</span>
                   <span class="time">{{ formatDateTime(item.createdAt) }}</span>
-                  <span class="size">{{ formatBytes(item.rawSize) }}</span>
+                  <span class="chars">{{ item.chars }} 字</span>
                 </div>
                 <div class="row-sub">
-                  <span v-if="item.bookSourceName" class="source">{{ item.bookSourceName }}</span>
-                  <span v-if="item.note" class="note">{{ item.note }}</span>
+                  <span class="source-tag"
+                    >[{{ versionTagLabel(item) }}] {{ versionTagState(item) }}</span
+                  >
                   <span v-if="item.isCurrent" class="badge current">当前</span>
-                  <span v-if="item.isLatestUpstream" class="badge">最新上游</span>
                   <span v-if="item.isLatestUser" class="badge">最新编辑</span>
                   <span v-if="item.rawSize === 0" class="badge empty">空正文</span>
                 </div>
@@ -80,18 +91,24 @@
                   <div class="preview-meta">
                     <span>{{ kindLabel(preview.kind) }}</span>
                     <span>{{ formatDateTime(preview.createdAt) }}</span>
-                    <span>{{ formatBytes(preview.rawSize) }}</span>
+                    <span>{{ preview.chars }} 字</span>
                   </div>
                   <div class="preview-actions">
+                    <button class="ghost-btn" @click="editPreview">编辑</button>
+                    <button
+                      class="ghost-btn"
+                      :disabled="diffLoading || compareTargetId == null"
+                      :title="compareTitle"
+                      @click="comparePreview"
+                    >
+                      {{ diffLoading ? '对比中…' : '对比' }}
+                    </button>
                     <button
                       class="ghost-btn"
                       :disabled="isPreviewCurrent"
                       @click="makeCurrent"
                     >
                       设为当前
-                    </button>
-                    <button class="ghost-btn" :disabled="diffLoading" @click="compareWithCurrent">
-                      {{ diffLoading ? '对比中…' : '与当前对比' }}
                     </button>
                   </div>
                 </div>
@@ -165,6 +182,7 @@ import {
   getChapterTimeline,
   getChapterVersion,
   getChapterVersionDiff,
+  resetBookToUpstream,
   type ChapterImportResult,
   type ChapterTimeline,
   type ChapterTimelineItem,
@@ -172,7 +190,7 @@ import {
 } from '../../api/chapterEdit'
 import ChapterTextImport from './ChapterTextImport.vue'
 import { isLocalBook } from '../../utils/localBook'
-import { formatBytes, formatDateTime } from '../../utils/format'
+import { formatDateTime, formatShortDate } from '../../utils/format'
 import {
   buildDiffRows,
   diffStats,
@@ -181,7 +199,14 @@ import {
 } from '../../utils/chapterDiff'
 
 const props = defineProps<{ modelValue: boolean }>()
-const emit = defineEmits<{ 'update:modelValue': [value: boolean] }>()
+const emit = defineEmits<{
+  'update:modelValue': [value: boolean]
+  /**
+   * 「编辑」：null 表示编辑当前显示内容（章节还没有版本时的唯一入口）；
+   * 带 seed 表示以预览版本为底稿。
+   */
+  edit: [seed: { content: string; versionId?: number } | null]
+}>()
 
 const store = useReaderStore()
 const appStore = useAppStore()
@@ -213,10 +238,48 @@ const isPreviewCurrent = computed(
   () => preview.value != null && preview.value.versionId === timeline.value?.effectiveVersionId
 )
 
+/**
+ * 「对比」的基准：最新上游版本；预览的就是最新上游时没有可比对象。
+ * 本地书没有上游版本行，退回与当前显示版本对比。
+ */
+const compareTargetId = computed(() => {
+  if (!preview.value) return null
+  const upstream = timeline.value?.latestUpstreamVersionId
+  if (upstream != null) {
+    return preview.value.versionId === upstream ? null : upstream
+  }
+  const fallback = timeline.value?.effectiveVersionId ?? timeline.value?.latestUserVersionId
+  if (fallback == null || fallback === preview.value.versionId) return null
+  return fallback
+})
+const compareTitle = computed(() => {
+  if (!preview.value) return ''
+  if (compareTargetId.value == null) {
+    return preview.value.versionId === timeline.value?.latestUpstreamVersionId
+      ? '这就是最新上游版本，没有可对比的差异'
+      : '没有可对比的版本'
+  }
+  return timeline.value?.latestUpstreamVersionId != null
+    ? '与最新上游版本的差异'
+    : '与当前显示版本的差异'
+})
+
 function kindLabel(kind: string) {
   if (kind === 'edited') return '编辑'
   if (kind === 'imported') return '导入'
   return '上游'
+}
+
+/** 版本小标签的来源名：上游用书源名（本地书用「本地」），用户版本用备注兜底类别名 */
+function versionTagLabel(item: ChapterTimelineItem) {
+  if (item.kind === 'upstream') return item.bookSourceName || '本地'
+  return item.note || (item.kind === 'imported' ? '历史' : '编辑')
+}
+
+/** 标签状态：最新上游标「最新」，其余标短日期 */
+function versionTagState(item: ChapterTimelineItem) {
+  if (item.kind === 'upstream' && item.isLatestUpstream) return '最新'
+  return formatShortDate(item.createdAt)
 }
 
 function close() {
@@ -284,22 +347,11 @@ async function followLatest() {
   }
 }
 
-async function compareWithCurrent() {
+async function comparePreview() {
   const bookId = store.book?.bookId
   const chapter = store.currentChapter
-  if (!bookId || !chapter || !preview.value) return
-  const current = timeline.value?.effectiveVersionId
-  let target = current
-  if (target == null || target === preview.value.versionId) {
-    target = timeline.value?.latestUpstreamVersionId
-  }
-  if (target == null || target === preview.value.versionId) {
-    target = timeline.value?.latestUserVersionId
-  }
-  if (target == null || target === preview.value.versionId) {
-    appStore.showToast('没有可对比的版本', 'warning')
-    return
-  }
+  const target = compareTargetId.value
+  if (!bookId || !chapter || !preview.value || target == null) return
   diffLoading.value = true
   resetDiff()
   try {
@@ -314,6 +366,46 @@ async function compareWithCurrent() {
     diffError.value = (e as Error).message || '对比失败'
   } finally {
     diffLoading.value = false
+  }
+}
+
+/** 「编辑」预览版本：正文预填进编辑器，基准版本指向它（保存后 diff 相对它计算） */
+function editPreview() {
+  if (!preview.value) return
+  emit('edit', { content: preview.value.content, versionId: preview.value.versionId })
+}
+
+/** 「编辑当前」：不传底稿，编辑器走默认预填（当前显示内容；上游原版下会取回编辑版） */
+function editCurrent() {
+  emit('edit', null)
+}
+
+/** 整书换回最新上游：清掉全书版本选择与用户版本指针，历史版本保留 */
+const resettingBook = ref(false)
+async function handleResetBookToUpstream() {
+  const bookId = store.book?.bookId
+  if (!bookId || resettingBook.value) return
+  if (
+    !confirm(
+      '整书换回最新上游？\n所有章节将显示最新上游正文（本地书回到原文）；编辑与导入的历史版本仍保留在正文历史里。'
+    )
+  )
+    return
+  resettingBook.value = true
+  try {
+    const { cleared } = await resetBookToUpstream(bookId)
+    appStore.showToast(
+      cleared > 0 ? `已整书换回最新上游（${cleared} 章）` : '已整书换回最新上游',
+      'success'
+    )
+    // 全书显示都变了：预加载过的章节缓存全部作废，重载当前章与本面板
+    await store.invalidateChapterContentCache()
+    await store.reloadChapterAfterEdit(store.currentIndex)
+    await reload()
+  } catch (e) {
+    appStore.showToast((e as Error).message || '操作失败', 'error')
+  } finally {
+    resettingBook.value = false
   }
 }
 
@@ -526,8 +618,8 @@ watch(
 }
 
 .version-row.active {
-  border-color: rgba(59, 130, 246, 0.5);
-  background: rgba(59, 130, 246, 0.08);
+  border-color: var(--color-primary-border);
+  background: var(--color-primary-bg);
 }
 
 .row-main {
@@ -545,13 +637,13 @@ watch(
 }
 
 .kind.edited {
-  background: rgba(34, 197, 94, 0.16);
-  color: #16a34a;
+  background: color-mix(in srgb, var(--color-success) 16%, transparent);
+  color: var(--color-success);
 }
 
 .kind.imported {
-  background: rgba(168, 85, 247, 0.16);
-  color: #9333ea;
+  background: color-mix(in srgb, var(--color-accent) 16%, transparent);
+  color: var(--color-accent);
 }
 
 .time {
@@ -559,7 +651,7 @@ watch(
   font-size: var(--text-xs);
 }
 
-.size {
+.chars {
   margin-left: auto;
   opacity: 0.5;
   font-size: var(--text-xs);
@@ -574,8 +666,7 @@ watch(
   opacity: 0.7;
 }
 
-.source,
-.note {
+.source-tag {
   max-width: 100%;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -589,13 +680,13 @@ watch(
 }
 
 .badge.current {
-  background: rgba(59, 130, 246, 0.18);
-  color: #2563eb;
+  background: var(--color-primary-bg);
+  color: var(--color-primary);
 }
 
 .badge.empty {
-  background: rgba(245, 158, 11, 0.16);
-  color: #b45309;
+  background: color-mix(in srgb, var(--color-warning) 18%, transparent);
+  color: var(--color-warning);
 }
 
 .preview {

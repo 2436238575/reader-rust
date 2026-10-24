@@ -82,6 +82,17 @@ async function switchReadMethod(page, method: '左右翻页' | '上下滚动' | 
   await page.keyboard.press('Escape')
 }
 
+/**
+ * 编辑器的唯一入口：正文历史 → 头部「编辑当前」（章节还没有版本时也能进）。
+ */
+async function openChapterEditorFromHistory(page) {
+  await page.locator('button[title="正文历史"]').click()
+  const modal = page.locator('.version-modal')
+  await expect(modal).toBeVisible()
+  await modal.getByRole('button', { name: '编辑当前', exact: true }).click()
+  await expect(page.locator('.editor-textarea')).toBeVisible()
+}
+
 test.describe('Standard E2E: reader', () => {
   test.beforeEach(async ({ page }) => {
     test.skip(!hasLogin(config), 'Set E2E_USERNAME and E2E_PASSWORD to enable reader regression.')
@@ -237,15 +248,14 @@ test.describe('Standard E2E: reader', () => {
     await expect(section1.getByText('这一章的正文段落足够长').first()).toBeVisible()
   })
 
-  test('chapter edit overlays content, marks catalog, and diff panel renders', async ({ page }) => {
+  test('chapter edit overlays content and diff panel renders', async ({ page }) => {
     const { name } = await seedLocalTxtBook(page)
     await openBookFromShelf(page, name)
     // 等第一章正文渲染出来
     await expect(page.getByText('第一章正文内容。').first()).toBeVisible()
 
-    // 打开编辑器（设置抽屉 → 编辑本章正文）
-    await page.locator('.sidebar-item', { hasText: '设置' }).first().click()
-    await page.locator('.opt-btn', { hasText: '编辑本章正文' }).click()
+    // 打开编辑器（正文历史 → 选中当前版本 → 编辑）
+    await openChapterEditorFromHistory(page)
     const editor = page.locator('.editor-textarea')
     await expect(editor).toBeVisible()
     await editor.fill('第一章正文内容。\n这一整段是新加上去的。\n编辑版独家段落。')
@@ -255,8 +265,6 @@ test.describe('Standard E2E: reader', () => {
     await expect(page.getByText('这一整段是新加上去的。').first()).toBeVisible()
     await expect(page.locator('p.diff-added').first()).toBeVisible()
 
-    // 保存后设置抽屉还开着，先回正文再点标记
-    await page.keyboard.press('Escape')
     // 点 diff 标记就地预览：新增段落文本 + 查看全部进完整面板
     await page.locator('p.diff-added').first().click()
     const preview = page.locator('.diff-preview')
@@ -265,11 +273,6 @@ test.describe('Standard E2E: reader', () => {
     await expect(preview).toContainText('这一整段是新加上去的。')
     await preview.getByRole('button', { name: '查看全部' }).click()
     await expect(page.locator('.diff-modal')).toBeVisible()
-    await page.keyboard.press('Escape')
-
-    // 目录里出现「已编辑」徽章
-    await page.locator('.sidebar-item', { hasText: '目录' }).first().click()
-    await expect(page.locator('.status-badge.edited', { hasText: '已编辑' })).toBeVisible()
     await page.keyboard.press('Escape')
 
     // diff 面板：设置 → 查看与上游的差异
@@ -291,8 +294,7 @@ test.describe('Standard E2E: reader', () => {
     await expect(page.locator('p.diff-added').first()).toBeVisible()
 
     // 编辑器里恢复上游版本
-    await page.locator('.sidebar-item', { hasText: '设置' }).first().click()
-    await page.locator('.opt-btn', { hasText: '编辑本章正文' }).click()
+    await openChapterEditorFromHistory(page)
     await expect(page.getByText('本章已编辑', { exact: false })).toBeVisible()
     page.on('dialog', (dialog) => void dialog.accept())
     await page.getByRole('button', { name: '恢复上游版本' }).click()
@@ -309,12 +311,10 @@ test.describe('Standard E2E: reader', () => {
     await expect(page.getByText('第一章正文内容。').first()).toBeVisible()
 
     // 先保存一版编辑
-    await page.locator('.sidebar-item', { hasText: '设置' }).first().click()
-    await page.locator('.opt-btn', { hasText: '编辑本章正文' }).click()
+    await openChapterEditorFromHistory(page)
     await page.locator('.editor-textarea').fill('编辑版正文内容。')
     await page.getByRole('button', { name: '保存修改' }).click()
     await expect(page.getByText('编辑版正文内容。').first()).toBeVisible()
-    await page.keyboard.press('Escape')
 
     // 切到上游原版：正文换回原文，改动标记不显示
     await page.locator('.sidebar-item', { hasText: '设置' }).first().click()
@@ -338,12 +338,10 @@ test.describe('Standard E2E: reader', () => {
     await openBookFromShelf(page, name)
     await expect(page.getByText('第一章正文内容。').first()).toBeVisible()
 
-    await page.locator('.sidebar-item', { hasText: '设置' }).first().click()
-    await page.locator('.opt-btn', { hasText: '编辑本章正文' }).click()
+    await openChapterEditorFromHistory(page)
     await page.locator('.editor-textarea').fill('历史面板里的编辑版。')
     await page.getByRole('button', { name: '保存修改' }).click()
     await expect(page.getByText('历史面板里的编辑版。').first()).toBeVisible()
-    await page.keyboard.press('Escape')
 
     // 工具栏「正文历史」：时间线里应有一个编辑版本，且标记为当前
     await page.locator('button[title="正文历史"]').click()
@@ -368,7 +366,7 @@ test.describe('Standard E2E: reader', () => {
     await page.locator('button[title="正文历史"]').click()
     const modal = page.locator('.version-modal')
     await expect(modal).toBeVisible()
-    await modal.getByRole('button', { name: '导入 TXT' }).click()
+    await modal.getByRole('button', { name: '导入', exact: true }).click()
 
     const firstText =
       '第一章 开始\n导入后的第一章。\n第二章 中段\n导入后的第二章。\n第三十七章 不存在\n这章不该匹配。'
@@ -398,7 +396,7 @@ test.describe('Standard E2E: reader', () => {
 
     // 再预览同一份文本：两章都与当前正文一致，默认不勾选
     await page.locator('button[title="正文历史"]').click()
-    await modal.getByRole('button', { name: '导入 TXT' }).click()
+    await modal.getByRole('button', { name: '导入', exact: true }).click()
     await modal.getByRole('textbox', { name: /粘贴整本小说文本/ }).fill(firstText)
     await modal.getByRole('button', { name: '解析并预览' }).click()
     await expect(modal.getByText('有差异 0')).toBeVisible()

@@ -31,7 +31,8 @@ pub use cache::{cache_stats, purge_cache};
 pub use chapter_edit::{
     delete_chapter_edit, get_chapter_edit, get_chapter_import_diff, get_chapter_timeline,
     get_chapter_version, get_chapter_version_diff, import_chapter_text, import_chapter_version,
-    list_chapter_edits, preview_chapter_import, save_chapter_edit, select_chapter_version,
+    list_chapter_edits, preview_chapter_import, reset_book_to_upstream, save_chapter_edit,
+    select_chapter_version,
 };
 pub use chapter_image::get_chapter_images;
 pub use image::{get_book_cover, get_image};
