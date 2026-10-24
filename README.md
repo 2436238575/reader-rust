@@ -76,7 +76,10 @@ npm run dev        # 或启动 Vite 开发服务器（默认 http://localhost:51
 
 ```bash
 curl http://127.0.0.1:8080/health
+# {"isSuccess":true,"errorMsg":"","data":{"status":"ok","version":"0.1.0"}}
 ```
+
+`version` 是服务端版本号，用于确认运行实例的实际版本。
 
 ## 配置
 

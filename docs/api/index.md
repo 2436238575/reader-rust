@@ -2,6 +2,23 @@
 
 Reader-Rust 提供 RESTful API，所有接口都以 `/reader3` 为前缀（仅 `GET /health` 例外）。
 
+## 健康检查
+
+`GET /health` 无需登录，`version` 为编译期写入的二进制版本号（随发布递增）：
+
+```json
+{
+  "isSuccess": true,
+  "errorMsg": "",
+  "data": {
+    "status": "ok",
+    "version": "0.1.0"
+  }
+}
+```
+
+探活只需看 HTTP 200 与 `status`；`version` 用于确认运行实例的实际版本（Docker 镜像的 HEALTHCHECK 依赖此端点）。
+
 ## 基础 URL
 
 ```text

@@ -41,6 +41,9 @@ pub async fn run() -> anyhow::Result<()> {
         )
         .init();
 
+    // 版本号随二进制编译期写死：从日志就能确认实例跑的是哪个发布版本
+    tracing::info!("reader-rust {} starting", env!("CARGO_PKG_VERSION"));
+
     // 把 panic 也记录进 tracing，便于在日志里定位崩溃位置；
     // 同时保留默认行为（stderr + abort 策略交给运行时）
     let default_panic_hook = std::panic::take_hook();

@@ -54,8 +54,35 @@ use crate::error::error::{ApiResponse, AppError};
 use axum::response::IntoResponse;
 use axum::Json;
 
+/// `/health` 的响应体（`ApiResponse` 的 `data` 字段）。
+///
+/// `version` 在编译期由 `CARGO_PKG_VERSION` 写入，运行实例由此自报版本；
+/// 容器 HEALTHCHECK 与外部探活只依赖 HTTP 200 与 `status` 字段。
+fn health_payload() -> serde_json::Value {
+    serde_json::json!({
+        "status": "ok",
+        "version": env!("CARGO_PKG_VERSION"),
+    })
+}
+
 pub async fn health() -> impl IntoResponse {
-    Json(ApiResponse::ok("ok"))
+    Json(ApiResponse::ok(health_payload()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// /health 的 `data` 是带版本号的对象（不是旧的裸 "ok" 字符串），
+    /// 锁死响应形状，防止后续改动悄悄破坏探活方与文档示例
+    #[test]
+    fn health_payload_reports_status_and_version() {
+        let body = serde_json::to_value(ApiResponse::ok(health_payload())).unwrap();
+        assert_eq!(body["isSuccess"], true);
+        assert_eq!(body["errorMsg"], "");
+        assert_eq!(body["data"]["status"], "ok");
+        assert_eq!(body["data"]["version"], env!("CARGO_PKG_VERSION"));
+    }
 }
 
 /// `/reader3` 命名空间下未匹配的路径。
