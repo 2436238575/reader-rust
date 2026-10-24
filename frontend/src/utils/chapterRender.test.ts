@@ -344,6 +344,31 @@ describe('isProbablyChapterHtml 的 HTML 判定', () => {
     expect(isProbablyChapterHtml('纯文本，没有标签')).toBe(false)
   })
 
+  it('成对的 <b>/<i>/<u> 识别为 HTML（要求匹配闭合标签）', () => {
+    expect(isProbablyChapterHtml('<b>粗体</b>')).toBe(true)
+    expect(isProbablyChapterHtml('<i>斜体</i>')).toBe(true)
+    expect(isProbablyChapterHtml('<u>下划线</u>')).toBe(true)
+    expect(isProbablyChapterHtml('<B>大写也认</B>')).toBe(true)
+    expect(isProbablyChapterHtml('<b class="x">带属性</b>')).toBe(true)
+  })
+
+  it('未闭合的 <b> 保持纯文本', () => {
+    expect(isProbablyChapterHtml('<b>没有闭合')).toBe(false)
+    expect(isProbablyChapterHtml('只有闭合</b>')).toBe(false)
+  })
+
+  it('<b>粗体</b> 走 HTML 分支：渲染出粗体元素而不是字面标签', () => {
+    const el = root(buildBaseChapterHtml('<b>粗体</b>', opts))
+    expect(el.querySelector('b')?.textContent).toBe('粗体')
+    expect(el.textContent).toBe('粗体')
+  })
+
+  it('<b>没有闭合 走纯文本分支：字面量原样保留', () => {
+    const html = buildBaseChapterHtml('<b>没有闭合', opts)
+    expect(html).toContain('&lt;b&gt;没有闭合')
+    expect(root(html).querySelector('b')).toBeNull()
+  })
+
   it('a<b>c 走纯文本分支：字面 <b> 不被吞掉', () => {
     const html = buildBaseChapterHtml('a<b>c', opts)
     expect(html).toContain('a&lt;b&gt;c')

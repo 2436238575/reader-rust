@@ -45,14 +45,22 @@ export function splitParagraphLines(text: string) {
  * 旧实现是 `/<[a-z][\s\S]*>/i`：正文里的字面尖括号（`a<b>c`、比较式）
  * 会被当成标签吞掉——`<b>` 进了 DOM 后原文那三个字符就消失了。
  * 也不能用「解析后 wrapper 有没有元素子节点」来判：`a<b>c` 解析后同样
- * 会产生 <b> 元素，等价于没判。有意不放 `b`/`i`/`u` 等短标签：
+ * 会产生 <b> 元素，等价于没判。白名单有意不放 `b`/`i`/`u` 等短标签：
  * 它们正是纯文本里最容易出现的字面量（`<b>`、`<i>`）。
  */
 const KNOWN_HTML_TAG_PATTERN =
   /<\/?(?:p|div|br|hr|img|h[1-6]|ul|ol|li|dl|dt|dd|table|thead|tbody|tfoot|tr|td|th|caption|colgroup|col|blockquote|pre|code|figure|figcaption|section|article|aside|details|summary|center|span|em|strong|a|ruby|rt|rp|sup|sub|video|audio|svg)(?=[\s/>])/i
 
+/**
+ * 成对短内联标签的补偿分支：`<b>粗体</b>` 这类只含 b/i/u 的正文是合法
+ * HTML，白名单排除它们后会错落纯文本分支、把标签字面量显示出来。
+ * 要求存在匹配的闭合标签（反向引用 `\1` 保证开合同名，`i` 旗标让
+ * 大小写混写也能配对）；`a<b>c`、`<b>没有闭合` 没有闭合标签，不受影响。
+ */
+const PAIRED_INLINE_TAG_PATTERN = /<(b|i|u)(?:\s[^<>]*)?>[\s\S]*?<\/\1\s*>/i
+
 export function isProbablyChapterHtml(text: string) {
-  return KNOWN_HTML_TAG_PATTERN.test(text)
+  return KNOWN_HTML_TAG_PATTERN.test(text) || PAIRED_INLINE_TAG_PATTERN.test(text)
 }
 
 // 基础渲染（消毒 + 段落样式，不含段评气泡）：按正文与排版配置缓存。
