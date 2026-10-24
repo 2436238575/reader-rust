@@ -212,10 +212,19 @@ else
 fi
 git tag -a "$TAG" -m "$TAG"
 
-echo "Pushing git refs..."
-current_branch="$(git branch --show-current)"
-git push origin "$current_branch"
-git push origin "$TAG"
+# 此刻 tag 只存在于本地：镜像构建（arm64 在 x86 主机上走 qemu 仿真）或
+# 架构校验失败时，删掉本地 tag 收场——远端不会留下指向「无法构建出镜像」
+# 提交的 tag。版本提交保留在本地分支，修复后可用同版本号原地补发。
+abort_release() {
+  local exit_code=$?
+  git tag -d "$TAG" >/dev/null 2>&1 || true
+  echo >&2
+  echo "Release aborted before anything was pushed: local tag ${TAG} deleted, origin untouched." >&2
+  echo "The version commit stays on the local branch. Fix the failure, then re-run" >&2
+  echo "./scripts/release.sh ${TAG} to publish this version as-is (or drop the commit first)." >&2
+  exit "$exit_code"
+}
+trap abort_release EXIT
 
 echo "Building Docker images..."
 podman build --platform linux/amd64 --build-arg TARGET_TRIPLE=x86_64-unknown-linux-musl -t "${DOCKER_REPO}:${TAG}-x86_64" -f Dockerfile .
@@ -235,6 +244,15 @@ if [[ "$arch_arm" != "arm64 linux" ]]; then
   echo "Unexpected arm image architecture: $arch_arm" >&2
   exit 1
 fi
+
+# 镜像已验证可构建，从这里开始向远端推送；此后失败不再自动回滚，
+# 中断点的兜底见 docs/maintainers/release.md 的「手动兜底」
+trap - EXIT
+
+echo "Pushing git refs..."
+current_branch="$(git branch --show-current)"
+git push origin "$current_branch"
+git push origin "$TAG"
 
 echo "Pushing versioned Docker tags..."
 podman push "${DOCKER_REPO}:${TAG}-x86_64"

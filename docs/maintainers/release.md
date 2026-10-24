@@ -23,9 +23,8 @@
 
 - **`gh` 必须已登录**：`gh auth login`
 - **`podman` 必须已登录 Docker Hub**：`podman login docker.io`
-- **工作区必须完全干净**，包括**没有未跟踪文件**（脚本会跑 `git ls-files --others --exclude-standard` 检查）。注意 `.env`、`storage/`、`docs/.vitepress/dist` 等都应在 `.gitignore` 里，否则会挡住发布
-- 两个 musl 目标需要已安装：`rustup target add x86_64-unknown-linux-musl aarch64-unknown-linux-musl`
-- `.cargo/config.toml` 里已配好交叉编译的 linker
+- **工作区必须完全干净**，包括**没有未跟踪文件**（脚本会跑 `git ls-files --others --exclude-standard` 检查）。注意 `.env`、`storage/`、`docs/.vitePress/dist` 等都应在 `.gitignore` 里，否则会挡住发布
+- 前后端都在 Docker 多阶段构建里**从源码编译**，本机不需要预编译，也不需要 musl 目标与交叉 linker
 
 ## 用法
 
@@ -52,24 +51,25 @@
 
 按实际执行顺序：
 
-1. **校验环境** —— 依赖命令、工作区干净、无未跟踪文件、`gh` 已登录
+1. **校验环境** —— 依赖命令、工作区干净、无未跟踪文件、`gh` 已登录（`--dry-run` 跳过这些，只做只读的版本推导）
 2. **解析目标版本** —— 按上面的规则得出 `SEMVER` 与 `TAG`（`v` 前缀）
 3. **冲突检查** —— 本地已存在同名 tag，或 GitHub 上已存在同名 Release，则退出
 4. **同步版本号** —— 三处一起改：
    - `Cargo.toml` 的 `[package] version`（用 `awk` 只改 `[package]` 段内的第一处）
    - 根 `package.json`（`npm version --no-git-tag-version`）
    - `frontend/package.json`（同上）
-5. **构建前端** —— `cd frontend && npm install && npm run build`，产出 `frontend/dist/`
-6. **交叉编译后端** —— 依次构建 `x86_64-unknown-linux-musl` 与 `aarch64-unknown-linux-musl`
-7. **提交并打 tag** —— `git add` 六个版本文件（含两个 lock 文件）；若暂存区为空（版本号本来就一致），跳过提交、直接给当前提交打 tag。tag 是带注释的：`git tag -a vX.Y.Z`
-8. **推送** —— 推送当前分支与 tag 到 `origin`
-9. **构建镜像** —— 显式指定平台：
-   - `--platform linux/amd64 -f Dockerfile.x86` → `docker.io/givenge/reader-rust:vX.Y.Z-x86_64`
-   - `--platform linux/arm64 -f Dockerfile` → `docker.io/givenge/reader-rust:vX.Y.Z-aarch64`
-10. **校验镜像架构** —— `podman image inspect` 结果必须是 `amd64 linux` 与 `arm64 linux`，否则**退出**（此时版本已推、镜像未推，需人工处理）
-11. **推送版本化镜像标签**
-12. **更新并推送滚动标签** —— `latest` ← x86_64，`latest-aarch64` ← arm64
-13. **创建 GitHub Release** —— `gh release create --generate-notes`
+   - 然后 `cargo update -w` 把新版本号推进 `Cargo.lock`（不动依赖树），并用 `cargo metadata --locked` 自检——Docker 构建里 `cargo build --release --locked` 会在 lock 落后时直接失败
+5. **提交并打 tag** —— `git add` 六个版本文件（含两个 lock 文件）；若暂存区为空（版本号本来就一致），跳过提交、直接给当前提交打 tag。tag 是带注释的：`git tag -a vX.Y.Z`
+6. **构建镜像** —— Docker 多阶段构建从源码编译（前端 `npm ci` + `npm run build`，后端 musl 静态链接 `--locked`），单一 `Dockerfile` 用 `TARGET_TRIPLE` 区分目标：
+   - `--platform linux/amd64 --build-arg TARGET_TRIPLE=x86_64-unknown-linux-musl` → `docker.io/givenge/reader-rust:vX.Y.Z-x86_64`
+   - `--platform linux/arm64 --build-arg TARGET_TRIPLE=aarch64-unknown-linux-musl` → `docker.io/givenge/reader-rust:vX.Y.Z-aarch64`
+
+   arm64 在 x86 主机上经 qemu 仿真构建，是整条链路最常见的失败点，所以排在推送之前
+7. **校验镜像架构** —— `podman image inspect` 结果必须是 `amd64 linux` 与 `arm64 linux`。失败则**自动删除本地 tag 并退出**：git 与镜像仓库的远端都没收到任何东西，本地的版本提交保留，修复后用 `./scripts/release.sh <同版本>` 原地补发
+8. **推送 git refs** —— 此时镜像已验证可构建，才推送当前分支与 tag 到 `origin`
+9. **推送版本化镜像标签**
+10. **更新并推送滚动标签** —— `latest` ← x86_64，`latest-aarch64` ← arm64
+11. **创建 GitHub Release** —— `gh release create --generate-notes`
 
 成功后会打印 GitHub Release 地址与四个镜像标签。
 
@@ -94,7 +94,7 @@ DOCKER_REPO=docker.io/yourname/reader-rust ./scripts/release.sh
 
 ## 手动兜底
 
-正常情况下永远不需要手动执行。若脚本在第 10 步之后失败（镜像已构建但推送中断），可按下面的命令补齐，**不要重新跑 `release.sh`**（tag 已存在，会被冲突检查挡住）：
+正常情况下永远不需要手动执行。若脚本在第 8 步之后失败（git refs 已推、镜像推送中断），可按下面的命令补齐，**不要重新跑 `release.sh`**（tag 已存在，会被冲突检查挡住）：
 
 ```bash
 export TAG=v1.0.9
@@ -136,6 +136,6 @@ podman manifest push --all docker.io/givenge/reader-rust:${TAG}
 | `GitHub CLI is not authenticated`   | 没跑 `gh auth login`                                                              |
 | `Missing required command: podman`  | Podman 未安装或不在 PATH                                                          |
 | `Tag vX.Y.Z already exists locally` | 重复发布同一版本；要重发必须先删本地 tag，且确认远端也要处理                      |
-| 镜像架构校验失败                    | 构建时 `--platform` 与 Dockerfile 不匹配；检查 `podman build` 是否用了正确的 `-f` |
+| 镜像构建/架构校验失败                | 脚本会**自动删除本地 tag** 并退出，远端零变更（git 与镜像仓库都没收到）；常见原因是 arm64 经 qemu 仿真构建失败。版本提交仍在本地分支，修复后 `./scripts/release.sh <同版本>` 原地补发 |
 
-`Dockerfile` 与 `Dockerfile.x86` **都不编译 Rust**，只负责把宿主机编译好的二进制与 `frontend/dist` 拷进镜像 —— 所以脚本必须先在宿主机完成第 5、6 步。
+镜像内的前后端都在 Docker 多阶段构建里从源码编译（可复现），本机不预编译；编译正确性由 CI 的 `cargo test` + `npm run build` 兜底。
