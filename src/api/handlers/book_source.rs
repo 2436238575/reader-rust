@@ -374,6 +374,21 @@ pub async fn book_source_proxy(
         .await?
         .ok_or_else(|| AppError::NotFound("bookSource not found".to_string()))?;
 
+    // ── 校验全部前置，通过后才允许产生任何副作用 ──
+    // 限定令牌只能继续代理它绑定的那个书源
+    if let Some(bound) = user.0.proxy_source {
+        if bound != source_id {
+            return Err(AppError::BadRequest("代理令牌与书源不匹配".to_string()));
+        }
+    }
+    let target_url = resolve_proxy_target_url(&raw_target_url, &source.book_source_url)?;
+    // 出站守卫：代理目标由查询参数决定，可能指向内网/云元数据地址
+    url_guard::ensure_outbound_url_str_allowed(&target_url)
+        .await
+        .map_err(AppError::BadRequest)?;
+    let upstream_referer = extract_upstream_referer(&headers);
+
+    // 校验通过：把请求里的 Cookie 写进该书源的会话存储（首个副作用）
     if let Some(cookie) = headers.get(header::COOKIE).and_then(|v| v.to_str().ok()) {
         state
             .book_service
@@ -381,18 +396,6 @@ pub async fn book_source_proxy(
             .await;
     }
 
-    let target_url = resolve_proxy_target_url(&raw_target_url, &source.book_source_url)?;
-    // 出站守卫：代理目标由查询参数决定，可能指向内网/云元数据地址
-    url_guard::ensure_outbound_url_str_allowed(&target_url)
-        .await
-        .map_err(AppError::BadRequest)?;
-    let upstream_referer = extract_upstream_referer(&headers);
-    // 限定令牌只能继续代理它绑定的那个书源
-    if let Some(bound) = user.0.proxy_source {
-        if bound != source_id {
-            return Err(AppError::BadRequest("代理令牌与书源不匹配".to_string()));
-        }
-    }
     // 被代理页面是第三方书源的 HTML/JS，与主站同源吐出：嵌进去的必须是
     // 限定令牌（短寿命、绑定书源、只能访问代理路径），而不是主 JWT。
     let page_token = mint_proxy_token(&state, &user.0, source_id)?;
