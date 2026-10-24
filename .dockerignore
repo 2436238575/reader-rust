@@ -30,6 +30,20 @@ storage/
 *.md
 !README.md
 
+# Documentation site deps & packaging output
+docs/node_modules/
+dist-pkg/
+
+# Local scratch / agent workspaces
+work/
+.zcode/
+
+# Release/test tarballs
+*.tar.gz
+
+# 本地前端构建产物（镜像内从源码重新构建，不需要带进上下文）
+frontend/dist/
+
 # Claude
 .claude/
 

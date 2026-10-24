@@ -25,7 +25,7 @@ RUN rustup target add ${TARGET_TRIPLE} \
 
 FROM ghcr.io/astral-sh/uv:0.12.21 AS uv
 
-FROM alpine:3.19
+FROM alpine:3.22
 ARG TARGET_TRIPLE
 
 RUN apk add --no-cache ca-certificates tzdata \
@@ -43,9 +43,10 @@ COPY --from=frontend /build/dist /app/web/dist
 COPY --from=uv /uv /usr/local/bin/uv
 COPY sidecar /app/sidecar
 # 版本以 sidecar/pyproject.toml 为唯一钉版源；uv sync 自动建 /app/sidecar/.venv
+# --frozen：严格按 uv.lock 安装，lock 与 pyproject 漂移时直接失败而不是悄悄更新
 # 托管 Python 装到共享位置：默认在 /root/.local 下，运行时 app 用户穿不过去
 ENV UV_PYTHON_INSTALL_DIR=/opt/uv-python
-RUN uv sync --project /app/sidecar
+RUN uv sync --frozen --project /app/sidecar
 
 # Create storage directory and hand ownership to the non-root user
 # (SQLite database, file cache and uploaded assets all live under /app/storage)
@@ -64,6 +65,11 @@ ENV WEB_ROOT=/app/web/dist
 ENV LOG_LEVEL=info
 
 EXPOSE 8080
+
+# 容器自检：alpine 自带 busybox wget，探测本机 health 端点
+# （端口取 SERVER_PORT 的默认值 8080；改端口部署时需同步覆写 HEALTHCHECK）
+HEALTHCHECK --interval=30s --timeout=3s --start-period=20s --retries=3 \
+  CMD wget -q -O- http://127.0.0.1:8080/health || exit 1
 
 VOLUME ["/app/storage"]
 
