@@ -292,7 +292,7 @@
           :data-chapter-index="chapter.index"
           :style="chapter.prunedHeight ? { minHeight: chapter.prunedHeight + 'px' } : undefined"
         >
-          <!-- 上部裁剪的占位章：保高度不渲染内容，回到视口附近时回载 -->
+          <!-- 裁剪占位章（上方/下方对称）：保高度不渲染内容，回到视口附近时回载 -->
           <div v-if="chapter.prunedHeight" class="chapter-placeholder">{{ chapter.title }}</div>
           <template v-else>
             <div class="chapter-title">{{ chapter.title }}</div>
@@ -1698,7 +1698,7 @@ function handleScroll() {
       )
       if (activeChapter) {
         if (activeChapter.prunedHeight != null) {
-          // 上部裁剪的占位章进入锚线：回载真实内容，绝不同步它的空 content 进 store
+          // 裁剪占位章进入锚线：回载真实内容，绝不同步它的空 content 进 store
           void rehydrateContinuousChapter(activeIndex)
         } else if (store.currentIndex !== activeIndex || store.content !== activeChapter.content) {
           setContinuousActiveChapter(activeIndex, activeChapter.content, progress)

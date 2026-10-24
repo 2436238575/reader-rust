@@ -9,13 +9,27 @@ export interface ContinuousChapterItem {
   title: string
   content: string
   html: string
-  /** 上部裁剪占位高度（px）：被裁章节清空 content/html，占位保持滚动高度不跳动 */
+  /** 裁剪占位高度（px，上方/下方章节通用）：被裁章节清空 content/html，占位保持滚动高度不跳动 */
   prunedHeight?: number
 }
 
 /// 当前阅读位置上方保留的完整章节数；更早的章节卸载为占位。
 /// 3 章缓冲：往上回翻一两章不用等网络，再往上才触发回载
 export const CONTINUOUS_PRUNE_KEEP_ABOVE = 3
+
+/// 当前阅读位置下方保留的完整章节数；更远的章节同样卸载为占位，
+/// 一路向下长读时 DOM/内存不再随已加载章节数线性增长
+export const CONTINUOUS_PRUNE_KEEP_BELOW = 3
+
+/// 下部裁剪的纯选择逻辑：index 超出「当前章 + 下方缓冲」才裁，
+/// 当前章与邻近章节一律保留。导出供单测直接覆盖边界
+export function shouldPruneLower(
+  index: number,
+  activeIndex: number,
+  keepBelow: number = CONTINUOUS_PRUNE_KEEP_BELOW
+) {
+  return index > activeIndex + keepBelow
+}
 
 export function useContinuousReading(
   store: ReaderStore,
@@ -64,6 +78,37 @@ export function useContinuousReading(
     const container = scrollContainerRef.value
     continuousChapters.value = continuousChapters.value.map((chapter) => {
       if (chapter.index >= cutoff || chapter.prunedHeight != null) return chapter
+      const section = container?.querySelector(
+        `.continuous-chapter[data-chapter-index="${chapter.index}"]`
+      ) as HTMLElement | null
+      return {
+        ...chapter,
+        content: '',
+        html: '',
+        prunedHeight: section?.offsetHeight || 1,
+      }
+    })
+  }
+
+  /// 与上部裁剪对称的下部裁剪：当前章下方超过缓冲数的章节卸载为等高占位。
+  /// 裁的是视口下方内容，其上方布局不变，scrollTop 不需要补偿；占位高度沿用
+  /// section 的 minHeight 通道（模板对 prunedHeight 的处理与方向无关）。回翻时
+  /// rehydrateContinuousChapter 按 prunedHeight != null 识别并回载，高度差补偿
+  /// 逻辑对两个方向同一套
+  function pruneLowerChapters(activeIndex: number) {
+    if (hideReadChaptersMode.value) return
+    // 每次滚动都会走到这里：没有可裁的章节时连数组都不重建，避免滚动路径上分配
+    if (
+      !continuousChapters.value.some(
+        (c) => shouldPruneLower(c.index, activeIndex) && c.prunedHeight == null
+      )
+    )
+      return
+    const container = scrollContainerRef.value
+    continuousChapters.value = continuousChapters.value.map((chapter) => {
+      if (!shouldPruneLower(chapter.index, activeIndex) || chapter.prunedHeight != null) {
+        return chapter
+      }
       const section = container?.querySelector(
         `.continuous-chapter[data-chapter-index="${chapter.index}"]`
       ) as HTMLElement | null
@@ -141,6 +186,7 @@ export function useContinuousReading(
     store.markChapterAsRead(index)
     void store.persistProgress(index)
     pruneUpperChapters(index)
+    pruneLowerChapters(index)
     if (continuousStateSyncTimer) {
       clearTimeout(continuousStateSyncTimer)
     }
@@ -269,6 +315,7 @@ export function useContinuousReading(
     getContinuousSections,
     pruneReadChapters,
     pruneUpperChapters,
+    pruneLowerChapters,
     rehydrateContinuousChapter,
     clearContinuousChapters,
     disposeContinuousReading,
