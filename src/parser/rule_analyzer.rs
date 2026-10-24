@@ -40,11 +40,13 @@ fn find_next_delimiter<'a>(
     let mut escaped = false;
 
     for (idx, ch) in rule.char_indices().filter(|(idx, _)| *idx >= from) {
+        // 被反斜杠转义的字符（引号内外同样规则）不参与任何判定：
+        // 引号外此前 escaped 置位后从不复位，`\&&` 仍会被顶层切开
+        if escaped {
+            escaped = false;
+            continue;
+        }
         if let Some(active_quote) = quote {
-            if escaped {
-                escaped = false;
-                continue;
-            }
             if ch == '\\' {
                 escaped = true;
                 continue;
@@ -95,5 +97,41 @@ mod tests {
 
         assert_eq!(result.delimiter.as_deref(), Some("&&"));
         assert_eq!(result.parts, vec![r#"div[a="x&&y"]"#, "span"]);
+    }
+
+    #[test]
+    fn escaped_delimiter_outside_quotes_is_not_split() {
+        // 引号外的 `\&&`：转义符消费其后字符，分隔符不生效
+        let result = split_top_level(r"a\&&b", &["&&", "||", "%%"]);
+        assert_eq!(result.delimiter, None);
+        assert_eq!(result.parts, vec![r"a\&&b".to_string()]);
+
+        // `\||` 与 `\%%` 同理
+        assert_eq!(split_top_level(r"a\||b", &["||"]).delimiter, None);
+        assert_eq!(split_top_level(r"a\%%b", &["%%"]).delimiter, None);
+
+        // 转义的括号也不参与深度计数：`\[` 不开层，其后 `&&` 在顶层生效
+        let result = split_top_level(r"a\[x&&y", &["&&"]);
+        assert_eq!(result.delimiter.as_deref(), Some("&&"));
+        assert_eq!(result.parts, vec![r"a\[x".to_string(), "y".to_string()]);
+    }
+
+    #[test]
+    fn unescaped_delimiter_outside_quotes_still_splits() {
+        let result = split_top_level("a&&b", &["&&", "||", "%%"]);
+        assert_eq!(result.delimiter.as_deref(), Some("&&"));
+        assert_eq!(result.parts, vec!["a".to_string(), "b".to_string()]);
+    }
+
+    #[test]
+    fn escaped_state_resets_after_consuming_one_char() {
+        // 转义只消费紧随的一个字符：`\x` 不吞掉后面的 `&&`，正常切分；
+        // 第二段里的 `&&` 在引号内，不切分
+        let result = split_top_level(r#"a\x&&b"c&&d""#, &["&&"]);
+        assert_eq!(result.delimiter.as_deref(), Some("&&"));
+        assert_eq!(
+            result.parts,
+            vec![r"a\x".to_string(), r#"b"c&&d""#.to_string()]
+        );
     }
 }
