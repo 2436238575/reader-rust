@@ -46,7 +46,8 @@ pub struct CacheStatsQuery {
 /// 显式清理缓存。
 ///
 /// 缓存不再按时间过期，清理完全由调用方驱动，因此这是唯一的回收入口。
-/// 单用户部署没有权限分层：登录即可清理任意范围。
+/// 单用户部署没有权限分层：登录即可清理任意范围（`scope=all` 含全局）；
+/// 但显式指定 `username` 时只能是自己的命名空间，防止误清内部命名空间。
 pub async fn purge_cache(
     State(state): State<AppState>,
     user: CurrentUser,
@@ -97,13 +98,18 @@ pub async fn cache_stats(
     Ok(Json(ApiResponse::ok(stats)))
 }
 
-/// 解析目标命名空间：默认自己；显式指定时必须合法（ns 直接拼进 storage 路径）。
+/// 解析目标命名空间：默认自己；显式指定时必须合法（ns 直接拼进 storage 路径）
+/// 且只能是调用者自己的命名空间——`user_<uid>` 之外的值（如 `__app__` 等内部
+/// 命名空间）虽然格式合法，但绝不接受外部指定。
 pub(crate) fn target_ns(user: &AuthUser, requested: Option<&str>) -> Result<String, AppError> {
     let Some(ns) = non_empty(requested) else {
         return Ok(user.ns.clone());
     };
     if !is_valid_user_ns(ns) {
         return Err(AppError::BadRequest("非法的用户命名空间".to_string()));
+    }
+    if ns != user.ns {
+        return Err(AppError::BadRequest("只能操作自己的命名空间".to_string()));
     }
     Ok(ns.to_string())
 }
@@ -136,7 +142,11 @@ mod tests {
 
     #[test]
     fn explicit_namespace_must_be_valid() {
-        assert_eq!(target_ns(&user(), Some("reader2")).unwrap(), "reader2");
+        // 格式合法但不是自己的命名空间（含 `__app__` 等内部命名空间）一律 400
+        for other in ["reader2", "__app__", "__default__", "user_2"] {
+            let err = target_ns(&user(), Some(other)).unwrap_err();
+            assert!(matches!(err, AppError::BadRequest(_)), "{other:?} 应被拒绝");
+        }
         let err = target_ns(&user(), Some("../data")).unwrap_err();
         assert!(matches!(err, AppError::BadRequest(_)));
     }
