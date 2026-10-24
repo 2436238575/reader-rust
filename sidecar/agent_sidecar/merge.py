@@ -12,6 +12,7 @@
 
 from __future__ import annotations
 
+import logging
 import time
 from typing import Any
 
@@ -29,6 +30,8 @@ from .summary import normalize_summary
 from .worldview_guard import is_chapter_summary_worldview
 
 UNKNOWN = Any
+
+log = logging.getLogger(__name__)
 
 
 def is_record(value: object) -> bool:
@@ -256,7 +259,40 @@ def should_accept_map_regeneration(
 
 # ---------------------------------------------------------------------------
 # merges 协议（新增）：别名归并 + 引用重定向
+#
+# 护栏（模型输出不可全信）：
+# - 单条 merge 的 absorbs 上限 MAX_ABSORBS_PER_MERGE 个，超出截断；
+# - canonical 与被吸收名都必须已存在于角色表，不凭空创建条目；
+# - 单次合并使角色数量减少超过一半视为坍缩，整条拒绝；
+# - memory 顶层合并走白名单（KNOWN_MEMORY_KEYS），模型不能注入任意顶层键。
 # ---------------------------------------------------------------------------
+
+MAX_ABSORBS_PER_MERGE = 8
+
+# memory 顶层白名单：以 TS 端 AiBookMemory 字段为准
+# （frontend/src/types/index.ts）。未知键一律丢弃——
+# {**previous, **raw_memory} 会把模型注入的任意顶层键原样落库。
+KNOWN_MEMORY_KEYS = frozenset(
+    {
+        "bookId",
+        "bookUrl",
+        "bookName",
+        "author",
+        "enabled",
+        "processedChapterIndex",
+        "processedChapterTitle",
+        "updatedAt",
+        "summary",
+        "worldview",
+        "characters",
+        "relationships",
+        "locations",
+        "map",
+        "mapDirty",
+        "lastError",
+    }
+)
+
 
 def apply_merges(
     characters: list[dict], relationships: list[dict], locations: list[dict], merges: object
@@ -277,16 +313,44 @@ def apply_merges(
         if not is_record(merge):
             continue
         canonical = read_string(merge, "canonical")
-        absorbs = read_string_array(merge, "absorbs")
+        raw_absorbs = read_string_array(merge, "absorbs")
         canon_key = normalize_key(canonical)
-        if not canon_key or not absorbs:
+        if not canon_key or not raw_absorbs:
             continue
+        absorbs = raw_absorbs[:MAX_ABSORBS_PER_MERGE]
+        if len(absorbs) < len(raw_absorbs):
+            log.warning(
+                "merges: canonical %r 的 absorbs 超过 %d 个，截断",
+                canonical,
+                MAX_ABSORBS_PER_MERGE,
+            )
         target = by_key.get(canon_key)
         if target is None:
-            target = {"name": canonical, "aliases": [], "status": "状态未知"}
-            by_key[canon_key] = target
-            order.append(canon_key)
+            # 模型幻觉出的 canonical：不凭空创建条目，整条跳过
+            log.warning("merges: canonical %r 不存在于角色表，跳过该 merge", canonical)
+            continue
+        valid_absorbs: list[str] = []
         for absorbed in absorbs:
+            abs_key = normalize_key(absorbed)
+            if not abs_key or abs_key == canon_key:
+                continue
+            if abs_key not in by_key:
+                log.warning("merges: absorbs %r 不存在于角色表，忽略该名字", absorbed)
+                continue
+            valid_absorbs.append(absorbed)
+        if not valid_absorbs:
+            continue
+        # 坍缩守卫：单次合并让角色数量减少超过一半 → 判定模型失控，整条拒绝
+        remaining = len(by_key) - len(valid_absorbs)
+        if remaining * 2 < len(by_key):
+            log.warning(
+                "merges: canonical %r 将把角色从 %d 个坍缩到 %d 个，拒绝该 merge",
+                canonical,
+                len(by_key),
+                remaining,
+            )
+            continue
+        for absorbed in valid_absorbs:
             abs_key = normalize_key(absorbed)
             if not abs_key or abs_key == canon_key:
                 continue
@@ -370,7 +434,8 @@ def coerce_model_update(
     previous_map = previous.get("map")
     memory: dict[str, Any] = {
         **previous,
-        **(raw_memory if is_record(raw_memory) else {}),
+        # 白名单覆盖：模型只能触碰已知的 memory 数据键，未知顶层键丢弃
+        **{key: value for key, value in raw_memory.items() if key in KNOWN_MEMORY_KEYS},
         "bookUrl": book.get("bookUrl"),
         "bookName": book.get("name"),
         "author": book.get("author"),

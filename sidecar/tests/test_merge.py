@@ -251,6 +251,83 @@ def test_merges_protocol_unifies_aliases_and_rewrites_references():
     assert memory["locations"][0]["relatedCharacters"] == ["林青云"]
 
 
+def test_merges_ignore_absorbs_that_do_not_exist():
+    # 模型幻觉出的名字：不凭空创建条目，也不把幻觉名塞进 aliases
+    previous = {**_empty_memory(), "characters": [{"name": "林青云", "status": "宗门弟子", "importance": "high"}]}
+    raw = {
+        "memory": {"summary": "本章没有新角色。"},
+        "shouldRegenerateMap": False,
+        "merges": [{"canonical": "林青云", "absorbs": ["不存在的甲", "不存在的乙"]}],
+    }
+    update = coerce_model_update(raw, previous, BOOK, CHAPTER, now_ms=0)
+    characters = update["memory"]["characters"]
+    assert [item["name"] for item in characters] == ["林青云"]
+    assert characters[0].get("aliases") == []
+
+
+def test_merges_skip_canonical_that_does_not_exist():
+    previous = {**_empty_memory(), "characters": [{"name": "林青云", "status": "宗门弟子", "importance": "high"}]}
+    raw = {
+        "memory": {"summary": "本章没有新角色。"},
+        "shouldRegenerateMap": False,
+        "merges": [{"canonical": "幻觉人物", "absorbs": ["林青云"]}],
+    }
+    update = coerce_model_update(raw, previous, BOOK, CHAPTER, now_ms=0)
+    assert [item["name"] for item in update["memory"]["characters"]] == ["林青云"]
+
+
+def test_merges_truncates_absorbs_beyond_eight():
+    # 9 个吸收目标只吸收前 8 个；20 个角色吸收 8 个（剩 12）不触发坍缩守卫
+    characters = [
+        {"name": f"角色{index}", "status": "存在", "importance": "high"} for index in range(20)
+    ]
+    previous = {**_empty_memory(), "characters": characters}
+    raw = {
+        "memory": {"summary": "多名角色实为一人。"},
+        "shouldRegenerateMap": False,
+        "merges": [
+            {"canonical": "角色0", "absorbs": [f"角色{index}" for index in range(1, 10)]}
+        ],
+    }
+    update = coerce_model_update(raw, previous, BOOK, CHAPTER, now_ms=0)
+    names = [item["name"] for item in update["memory"]["characters"]]
+    assert len(names) == 12
+    assert "角色8" not in names, "前 8 个（角色1..角色8）应被吸收"
+    assert "角色9" in names, "第 9 个超出上限，应保留"
+
+
+def test_merges_reject_collapsing_merge():
+    # 4 个角色一次吸收 3 个 → 数量减少超过一半，整条 merge 拒绝
+    characters = [
+        {"name": f"角色{index}", "status": "存在", "importance": "high"} for index in range(4)
+    ]
+    previous = {**_empty_memory(), "characters": characters}
+    raw = {
+        "memory": {"summary": "疑似全员同一人。"},
+        "shouldRegenerateMap": False,
+        "merges": [{"canonical": "角色0", "absorbs": ["角色1", "角色2", "角色3"]}],
+    }
+    update = coerce_model_update(raw, previous, BOOK, CHAPTER, now_ms=0)
+    names = [item["name"] for item in update["memory"]["characters"]]
+    assert len(names) == 4, "坍缩式 merge 应被拒绝"
+
+
+def test_unknown_top_level_memory_keys_are_dropped():
+    raw = {
+        "memory": {
+            "summary": "正常增量。",
+            "timeline": [{"event": "模型试图新增的顶层结构"}],
+            "evilKey": "任意注入值",
+        },
+        "shouldRegenerateMap": False,
+    }
+    update = coerce_model_update(raw, _empty_memory(), BOOK, CHAPTER, now_ms=0)
+    memory = update["memory"]
+    assert memory["summary"] == "正常增量。"
+    assert "timeline" not in memory, "未知顶层键不应落库"
+    assert "evilKey" not in memory, "未知顶层键不应落库"
+
+
 def test_normalize_locations_keeps_low_importance_entries():
     locations = normalize_locations([{"name": "无名小店", "description": "路边小店。", "importance": "low"}])
     assert len(locations) == 1
