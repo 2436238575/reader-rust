@@ -74,6 +74,11 @@ pub struct BookService {
     toc_append_lock: Arc<tokio::sync::Mutex<()>>,
     /// 目录快照备忘（见 `toc_snapshot_map`）：批量落库复用一份 parse 结果。
     toc_snapshots: Arc<Mutex<BoundedMap<TocSnapshotMemoEntry>>>,
+    /// 正文回源 singleflight：`(user_ns, book_id, chapter_url)` -> 按键互斥锁。
+    /// 并发未命中/并发到期回源的同一章只有一个真正打上游，其余等锁后
+    /// 二次检查缓存直接复用。BoundedMap 限条数：取消/panic 遗留的条目
+    /// 不会无界累积（正常路径会显式清理）。
+    refresh_locks: Arc<Mutex<BoundedMap<Arc<tokio::sync::Mutex<()>>>>>,
 }
 
 /// 内存里暂存的章节正文响应体。
@@ -93,6 +98,9 @@ struct TocSnapshotMemoEntry {
 const TOC_SNAPSHOT_MEMO_TTL: Duration = Duration::from_secs(5);
 /// 备忘条目上限：同时批量缓存的书籍数有限，16 本足以覆盖且控住内存。
 const TOC_SNAPSHOT_MEMO_MAX_ENTRIES: usize = 16;
+/// 回源 singleflight 锁表上限：正常路径用完即清，上限只为兜住取消/panic
+/// 遗留的条目。
+const REFRESH_LOCK_MAX_ENTRIES: usize = 256;
 
 /// 一次抓取得到的章节正文（分页已拼接）。
 struct FetchedChapter {
@@ -115,6 +123,11 @@ pub struct ChapterContentRead {
 }
 
 /// 写进 chapter_latest.last_error 的短原因，不带上游 URL。
+/// 回源 singleflight 的键：三段都用 `\0` 分隔（URL 里不会出现 NUL）。
+fn refresh_lock_key(user_ns: &str, book_id: &str, chapter_url: &str) -> String {
+    format!("{user_ns}\u{0}{book_id}\u{0}{chapter_url}")
+}
+
 fn error_summary(error: &AppError) -> String {
     match error {
         AppError::Upstream { message, .. } => message.clone(),
@@ -341,6 +354,7 @@ impl BookService {
             pending_revalidations: Arc::new(Mutex::new(HashSet::new())),
             toc_append_lock: Arc::new(tokio::sync::Mutex::new(())),
             toc_snapshots: Arc::new(Mutex::new(BoundedMap::new(TOC_SNAPSHOT_MEMO_MAX_ENTRIES))),
+            refresh_locks: Arc::new(Mutex::new(BoundedMap::new(REFRESH_LOCK_MAX_ENTRIES))),
         }
     }
 
@@ -1434,9 +1448,117 @@ impl BookService {
         Ok(())
     }
 
-    /// 回源一次并把结果落库。空正文在已有上游内容时按失败处理，避免把
-    /// 一次规则失效或风控页面写成空版本。
+    /// 回源一次并把结果落库（singleflight 包装，见 `refresh_upstream_flight`）。
+    /// 非强刷：拿到键锁后先做二次检查，等锁期间别人已抓好的新鲜缓存直接复用。
     async fn refresh_upstream(
+        &self,
+        user_ns: &str,
+        book_id: &str,
+        source: &BookSource,
+        chapter_url: &str,
+    ) -> Result<String, AppError> {
+        self.refresh_upstream_flight(user_ns, book_id, source, chapter_url, false)
+            .await
+    }
+
+    /// 强刷路径的回源：与普通回源共用同一把键锁（与在途请求互斥），
+    /// 但不做二次检查——显式「检查更新」必须真的打一次上游。
+    async fn refresh_upstream_forced(
+        &self,
+        user_ns: &str,
+        book_id: &str,
+        source: &BookSource,
+        chapter_url: &str,
+    ) -> Result<String, AppError> {
+        self.refresh_upstream_flight(user_ns, book_id, source, chapter_url, true)
+            .await
+    }
+
+    /// 按 `(user_ns, book_id, chapter_url)` 的回源 singleflight：
+    /// 同一章的并发回源只有一个真正抓上游，其余等键锁；等到锁后
+    /// （非强刷时）二次检查缓存，别人刚落库的新鲜内容直接返回。
+    async fn refresh_upstream_flight(
+        &self,
+        user_ns: &str,
+        book_id: &str,
+        source: &BookSource,
+        chapter_url: &str,
+        force: bool,
+    ) -> Result<String, AppError> {
+        let key = refresh_lock_key(user_ns, book_id, chapter_url);
+        let lock = self.acquire_refresh_lock(&key);
+        let _key_guard = lock.lock().await;
+        if !force {
+            if let Some(cached) = self
+                .fresh_cached_upstream(user_ns, book_id, chapter_url)
+                .await?
+            {
+                tracing::debug!(book_id, chapter_url, "并发回源命中二次检查，复用新鲜缓存");
+                drop(_key_guard);
+                self.release_refresh_lock(&key, &lock);
+                return Ok(cached);
+            }
+        }
+        let result = self
+            .fetch_upstream_now(user_ns, book_id, source, chapter_url)
+            .await;
+        drop(_key_guard);
+        self.release_refresh_lock(&key, &lock);
+        result
+    }
+
+    /// 二次检查用的「新鲜上游缓存」：有上游版本、未到回源间隔
+    /// （TTL=0 视为永远新鲜）且能解析出正文。
+    async fn fresh_cached_upstream(
+        &self,
+        user_ns: &str,
+        book_id: &str,
+        chapter_url: &str,
+    ) -> Result<Option<String>, AppError> {
+        let Some(latest) = self.content.latest(book_id, chapter_url).await? else {
+            return Ok(None);
+        };
+        if latest.latest_upstream_version_id.is_none() {
+            return Ok(None);
+        }
+        if self.content.needs_revalidate(&latest) {
+            return Ok(None);
+        }
+        Ok(self
+            .content
+            .resolve(user_ns, book_id, chapter_url, true)
+            .await?
+            .map(|view| view.content))
+    }
+
+    /// 登记并返回 key 的键锁：已存在则复用（后来的等待者跟在队尾），
+    /// 否则新建。纯同步短临界区，std Mutex 不跨 await。
+    fn acquire_refresh_lock(&self, key: &str) -> Arc<tokio::sync::Mutex<()>> {
+        let mut locks = self.refresh_locks.lock().unwrap();
+        if let Some(existing) = locks.get(key) {
+            return Arc::clone(existing);
+        }
+        let fresh = Arc::new(tokio::sync::Mutex::new(()));
+        locks.insert(key.to_string(), Arc::clone(&fresh));
+        fresh
+    }
+
+    /// 用完清理：表里还是这把锁、且没有别的等待者持有克隆时摘掉条目，
+    /// 避免逐章回源把表撑满（表有上限，这里只是正常路径的精确回收）。
+    fn release_refresh_lock(&self, key: &str, lock: &Arc<tokio::sync::Mutex<()>>) {
+        let mut locks = self.refresh_locks.lock().unwrap();
+        let unused = match locks.get(key) {
+            Some(current) => Arc::ptr_eq(current, lock) && Arc::strong_count(current) <= 2,
+            None => false,
+        };
+        if unused {
+            locks.remove(key);
+        }
+    }
+
+    /// 真正抓一次上游并落库。空正文在已有上游内容时按失败处理，避免把
+    /// 一次规则失效或风控页面写成空版本。
+    async fn fetch_upstream_now(
         &self,
         user_ns: &str,
         book_id: &str,
@@ -1490,7 +1612,7 @@ impl BookService {
         chapter_url: &str,
     ) -> Result<String, AppError> {
         match self
-            .refresh_upstream(user_ns, book_id, source, chapter_url)
+            .refresh_upstream_forced(user_ns, book_id, source, chapter_url)
             .await
         {
             Ok(content) => Ok(content),
@@ -1659,6 +1781,10 @@ impl BookService {
     }
 
     /// 上游正文（阅读器不显示编辑版时的内部路径、批量缓存、AI 资料）。
+    ///
+    /// 缓存到期时不再同步重抓：先返回过期缓存并 spawn 后台回源（与
+    /// read_content 的 handlers 模式一致）。批量缓存一本全过期的书
+    /// 不会因此全量重下。只有真未命中才同步回源（singleflight 去重）。
     pub async fn get_content(
         &self,
         user_ns: &str,
@@ -1672,12 +1798,26 @@ impl BookService {
             .and_then(|row| row.latest_upstream_version_id)
             .is_some();
         if let Some(latest) = &latest {
-            if has_cached && !self.content.needs_revalidate(latest) {
+            if has_cached {
                 if let Some(view) = self
                     .content
                     .resolve(user_ns, book_id, chapter_url, true)
                     .await?
                 {
+                    if self.content.needs_revalidate(latest) {
+                        // 到期：先返回缓存，后台回源；pending_revalidations +
+                        // refresh 键锁保证并发只抓一次。
+                        let service = self.clone();
+                        let user_ns = user_ns.to_string();
+                        let book_id = book_id.to_string();
+                        let source = source.clone();
+                        let chapter_url = chapter_url.to_string();
+                        tokio::spawn(async move {
+                            service
+                                .revalidate_chapter(&user_ns, &book_id, &source, &chapter_url)
+                                .await;
+                        });
+                    }
                     return Ok(view.content);
                 }
             }
