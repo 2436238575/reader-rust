@@ -273,6 +273,27 @@ fn is_forbidden_v6(ip: &Ipv6Addr) -> bool {
         || (s[0] & 0xFFC0) == 0xFE80  // fe80::/10 链路本地
         || (s[0] & 0xFE00) == 0xFC00  // fc00::/7 唯一本地地址
         || (s[0] & 0xFFC0) == 0xFEC0 // fec0::/10 站点本地（已废弃但仍是内网语义）
+        // 6to4（2002::/16，RFC 3056）：地址写作 2002:V4HI:V4LO::/48，
+        // 内嵌 IPv4 占第 2-3 个 16 位段（s[1]、s[2]）。
+        // 前缀本身是公网段，但内嵌地址可以是私网/环回（2002:7f00:1:: 即
+        // 127.0.0.1），不还原判定即可绕过私网拦截
+        || (s[0] == 0x2002 && is_forbidden_v4(&embedded_v4(s[1], s[2])))
+        // Teredo（2001:0000::/32，RFC 4380）：最后 32 位是**按位取反**的
+        // 客户端 IPv4 地址（obfuscated），还原后按 IPv4 规则判定
+        || (s[0] == 0x2001 && s[1] == 0x0000 && {
+            let obfuscated = ((s[6] as u32) << 16) | s[7] as u32;
+            is_forbidden_v4(&Ipv4Addr::from(!obfuscated))
+        })
+}
+
+/// 由两个 16 位段拼出内嵌的 IPv4 地址（6to4 用，未取反）。
+fn embedded_v4(hi: u16, lo: u16) -> Ipv4Addr {
+    Ipv4Addr::new(
+        (hi >> 8) as u8,
+        (hi & 0xFF) as u8,
+        (lo >> 8) as u8,
+        (lo & 0xFF) as u8,
+    )
 }
 
 /// 明显指向内网的主机名（含常见的云元数据别名）。
@@ -513,6 +534,43 @@ mod tests {
         for ip in ["1.1.1.1", "8.8.8.8", "93.184.216.34", "2606:4700::1111"] {
             let ip: IpAddr = ip.parse().unwrap();
             assert!(!is_forbidden_ip(&ip), "{ip} 不应被拦截");
+        }
+    }
+
+    #[test]
+    fn blocks_6to4_and_teredo_embedding_private_v4() {
+        // 6to4（2002::/16）：第 2-3 段就是内嵌 IPv4
+        // 2002:7f00:1:: → 127.0.0.1；2002:c0a8:101:: → 192.168.1.1
+        for ip in [
+            "2002:7f00:1::",
+            "2002:c0a8:101::",
+            "2002:a00:1::",
+            "2002:feed:abe0::",
+        ] {
+            let ip: IpAddr = ip.parse().unwrap();
+            assert!(is_forbidden_ip(&ip), "{ip} 内嵌私网 IPv4，应被拦截");
+        }
+        // 6to4 内嵌公网地址：放行
+        for ip in ["2002:102:304::", "2002:58d7:8d22::"] {
+            let ip: IpAddr = ip.parse().unwrap();
+            assert!(!is_forbidden_ip(&ip), "{ip} 内嵌公网 IPv4，不应被拦截");
+        }
+        // Teredo（2001:0000::/32）：最后 32 位按位取反后是客户端 IPv4。
+        // 10.0.0.1 取反 = f5ff:fffe；169.254.169.254 取反 = 5601:5601；
+        // 172.16.5.4 取反 = 53ef:fafb；127.0.0.1 取反 = 80ff:fffe
+        for ip in [
+            "2001::f5ff:fffe",
+            "2001::5601:5601",
+            "2001::53ef:fafb",
+            "2001::80ff:fffe",
+        ] {
+            let ip: IpAddr = ip.parse().unwrap();
+            assert!(is_forbidden_ip(&ip), "{ip} 内嵌私网 IPv4，应被拦截");
+        }
+        // Teredo 内嵌公网地址：放行（1.2.3.4 取反 = fefd:fcfb；8.8.8.8 取反 = f7f7:f7f7）
+        for ip in ["2001::fefd:fcfb", "2001::f7f7:f7f7"] {
+            let ip: IpAddr = ip.parse().unwrap();
+            assert!(!is_forbidden_ip(&ip), "{ip} 内嵌公网 IPv4，不应被拦截");
         }
     }
 
