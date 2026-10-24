@@ -1260,6 +1260,9 @@ impl BookService {
         // 页数上限：环检测只能挡住重复 URL，恶意/病态书源持续产新 URL 时
         // 单次取正文会发出无限请求。正常分页章节（2-5 页）远够不着上限。
         const MAX_CONTENT_PAGES: usize = 50;
+        // 累计字节上限：页数上限 × 单页体积（正文规则输出无界）的理论峰值可
+        // 达 1.6GB；大分页正文必须在累计维度同样封顶。正常章节远够不着上限。
+        const MAX_ACCUMULATED_CONTENT_BYTES: usize = 8 * 1024 * 1024;
         loop {
             if visited_urls.len() >= MAX_CONTENT_PAGES {
                 tracing::warn!(
@@ -1301,6 +1304,15 @@ impl BookService {
                     all_content.push('\n');
                 }
                 all_content.push_str(&content);
+                // 累计超上限：停止追加并告警（保留已累计的完整页面，
+                // 不做无告警的半页静默截断），翻页到此为止。
+                if all_content.len() >= MAX_ACCUMULATED_CONTENT_BYTES {
+                    tracing::warn!(
+                        "fetch_chapter_content hit MAX_ACCUMULATED_CONTENT_BYTES \
+                         ({MAX_ACCUMULATED_CONTENT_BYTES}), truncating: {chapter_url}"
+                    );
+                    break;
+                }
             }
 
             if let Some(next_url) = next_url {

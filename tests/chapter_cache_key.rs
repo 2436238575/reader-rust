@@ -65,6 +65,25 @@ async fn start_upstream() -> (String, HitCounter) {
                 }))
             }),
         )
+        // 无限翻页 + 超大单页（3MB）：逼出累计字节上限（病态书源场景）
+        .route(
+            "/content_paged_big",
+            get(|headers: axum::http::HeaderMap| async move {
+                let host = headers
+                    .get("host")
+                    .and_then(|v| v.to_str().ok())
+                    .unwrap_or_default()
+                    .to_string();
+                // 3MB 文本页：3 页就超过 8MB 的累计上限
+                let big_page = "巨".repeat(1024 * 1024);
+                Json(json!({
+                    "data": { "data": {
+                        "content": big_page,
+                        "next": format!("http://{host}/content_paged_big?t={}", uuid::Uuid::new_v4()),
+                    } }
+                }))
+            }),
+        )
         .route(
             "/__hits",
             get(
@@ -413,4 +432,76 @@ async fn content_pagination_stops_at_page_cap() {
         .matches("一页正文")
         .count();
     assert_eq!(pages, 50, "正文应恰好拼 50 页");
+}
+
+#[tokio::test]
+async fn content_pagination_stops_at_accumulated_byte_cap() {
+    let server = TestServer::start().await;
+
+    // 同一无限翻页形态，但单页 3MB：3 页就超过 8MB 累计上限
+    let source = json!({
+        "bookSourceName": "无限翻页大正文源",
+        "bookSourceUrl": server.upstream_url,
+        "enabled": true,
+        "ruleContent": {
+            "content": "$.data.data.content",
+            "nextContentUrl": "$.data.data.next"
+        },
+        "ruleToc": {
+            "chapterList": "$.data.list[*]",
+            "chapterName": "$.title",
+            "chapterUrl": "$.url"
+        }
+    });
+    let resp = server
+        .client
+        .post(format!("{}/reader3/saveBookSource", server.base_url))
+        .bearer_auth(&server.token)
+        .json(&source)
+        .send()
+        .await
+        .unwrap();
+    let source_id: i64 = resp.json::<Value>().await.unwrap()["data"]["bookSourceId"]
+        .as_i64()
+        .unwrap();
+
+    let book = json!({
+        "name": "无限翻页大正文书",
+        "author": "作者",
+        "bookUrl": format!("{}/info?book_id=paged-big", server.upstream_url),
+        "bookSourceId": source_id,
+        "tocUrl": format!("{}/catalog?book_id=paged-big", server.upstream_url),
+    });
+    let resp = server
+        .client
+        .post(format!("{}/reader3/saveBook", server.base_url))
+        .bearer_auth(&server.token)
+        .json(&book)
+        .send()
+        .await
+        .unwrap();
+    let book_id = resp.json::<Value>().await.unwrap()["data"]["bookId"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    let content = server
+        .post(
+            "getBookContent",
+            json!({
+                "bookId": book_id,
+                "chapterUrl": format!("{}/content_paged_big", server.upstream_url),
+            }),
+        )
+        .await;
+
+    // 累计 8MB 上限先于 50 页上限触发：第 3 页拼完后 9MB ≥ 8MB，立即停止
+    assert_eq!(
+        server.hits_for("/content_paged_big"),
+        3,
+        "累计字节上限必须在页数上限之前截断翻页"
+    );
+    // 保留的是完整页面（3 × 3MB + 分隔符），不做半页静默截断
+    let len = content["content"].as_str().unwrap().len();
+    assert_eq!(len, 3 * 3 * 1024 * 1024 + 2, "恰好 3 个完整 3MB 页面");
 }
