@@ -3,7 +3,12 @@
 import httpx
 import pytest
 
-from agent_sidecar.model_client import CHAT_PATH, ModelClient, ModelError, normalize_base_url
+from agent_sidecar.model_client import (
+    CHAT_PATH,
+    ModelClient,
+    ModelError,
+    normalize_base_url,
+)
 from agent_sidecar.types import ImageModelEndpoint, ModelEndpoint
 
 CLOUDFLARE_HTML = (
@@ -19,11 +24,27 @@ def _endpoint(**overrides) -> ModelEndpoint:
     return ModelEndpoint(**values)
 
 
-def _client(handler, sleeps: list[float] | None = None) -> ModelClient:
+def _client(handler, sleeps: list[float] | None = None, clock=None, jitter=None) -> ModelClient:
+    # jitter 默认恒等：退避断言保持确定性；随机抖动单独用例覆盖
     return ModelClient(
         transport=httpx.MockTransport(handler),
         sleep=(lambda seconds: sleeps.append(seconds)) if sleeps is not None else (lambda s: None),
+        clock=clock if clock is not None else (lambda: 0.0),
+        jitter=jitter if jitter is not None else (lambda delay: delay),
     )
+
+
+class SteppedClock:
+    """每次被读都前进 step 秒的假时钟（deadline 逻辑不真等）。"""
+
+    def __init__(self, step: float) -> None:
+        self.now = 0.0
+        self.step = step
+
+    def __call__(self) -> float:
+        value = self.now
+        self.now += self.step
+        return value
 
 
 def test_normalize_base_url_strips_trailing_slashes():
@@ -83,7 +104,7 @@ def test_retries_429_then_succeeds():
 
 
 def test_retries_5xx_within_budget_then_raises():
-    # 重试预算对齐 Rust 章节看门狗（默认 600s）：3 次尝试 + 短退避
+    # 重试预算对齐 Rust 章节看门狗（默认 1800s）：3 次尝试 + 短退避
     attempts = {"n": 0}
     sleeps: list[float] = []
 
@@ -172,3 +193,76 @@ def test_oversized_response_is_rejected():
 def test_unready_endpoint_raises_without_request():
     with pytest.raises(ModelError, match="模型未配置"):
         _client(lambda request: httpx.Response(200)).chat(_endpoint(baseUrl="", model=""), {})
+
+
+def test_total_deadline_stops_retries_with_real_reason():
+    # 预算耗尽：不再发起尝试，以「总时长超过预算」收场（注入假时钟，不真等）
+    attempts = {"n": 0}
+    sleeps: list[float] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        attempts["n"] += 1
+        return httpx.Response(503, json={"error": {"message": "upstream down"}})
+
+    # 首次检查时预算尚余（0→800，剩 700s）→ 发起第 1 次尝试；
+    # 之后时钟越过 deadline → 退避前检查即放弃
+    clock = SteppedClock(step=800.0)
+    with pytest.raises(ModelError, match="总时长超过预算"):
+        _client(handler, sleeps, clock=clock).chat(_endpoint(), {})
+    assert attempts["n"] == 1, "预算耗尽后不应再发起尝试"
+    assert sleeps == [], "预算耗尽后不应退避等待"
+
+
+def test_total_deadline_caps_backoff_sleep():
+    # 退避不得越过 deadline：剩余时间不足时缩短/跳过退避
+    attempts = {"n": 0}
+    sleeps: list[float] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        attempts["n"] += 1
+        return httpx.Response(503, json={"error": {"message": "upstream down"}})
+
+    clock = SteppedClock(step=400.0)
+    with pytest.raises(ModelError, match="总时长超过预算"):
+        _client(handler, sleeps, clock=clock).chat(_endpoint(), {})
+    # 第 1 次退避时预算尚余（睡眠 1.0 不变）；第 2 次退避前预算已负 → 跳过，
+    # 下一轮循环的预算检查以真实原因终止
+    assert attempts["n"] == 2
+    assert sleeps == [1.0]
+
+
+def test_deadline_spans_all_model_calls_in_one_client():
+    # 一个 run 帧一个 ModelClient：deadline 跨所有 chat/images 调用，
+    # 预算耗尽后第二次调用直接拒绝、不再发请求
+    attempts = {"n": 0}
+    holder = {"now": 0.0}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        attempts["n"] += 1
+        return httpx.Response(200, json={"choices": []})
+
+    client = ModelClient(
+        transport=httpx.MockTransport(handler),
+        sleep=lambda seconds: None,
+        clock=lambda: holder["now"],
+        jitter=lambda delay: delay,
+    )
+    client.chat(_endpoint(), {})  # 此刻 now=0，deadline=0+1500
+    holder["now"] = 1501.0
+    with pytest.raises(ModelError, match="总时长超过预算"):
+        client.chat(_endpoint(), {})
+    assert attempts["n"] == 1, "第二次调用在发请求前就应被拒绝"
+
+
+def test_backoff_jitter_is_applied():
+    # 429/5xx 退避带 jitter（默认叠加均匀随机；此用例注入固定增量验证通路）
+    attempts = {"n": 0}
+    sleeps: list[float] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        attempts["n"] += 1
+        return httpx.Response(429, json={"error": {"message": "rate limited"}})
+
+    with pytest.raises(ModelError, match="rate limited"):
+        _client(handler, sleeps, jitter=lambda delay: delay + 0.5).chat(_endpoint(), {})
+    assert sleeps == [1.5, 2.5]

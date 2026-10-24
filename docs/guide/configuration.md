@@ -94,7 +94,7 @@ Python 进程**里（Rust 只负责提交任务、转发进度与落库）。宿
 | ----------------------------------- | -------------------------- | -------------------------------------------------------------------------------------------------------- |
 | `AGENT_SIDECAR_ENABLED`             | `true`                     | 是否启用 AI 资料编排；关闭后 AI 资料更新接口返回明确错误                                                 |
 | `AGENT_SIDECAR_COMMAND`             | `python -m agent_sidecar`  | sidecar 启动命令（按空白切分，支持双引号包裹含空格的路径），进程工作目录为 `sidecar/`                    |
-| `AGENT_SIDECAR_CHAPTER_TIMEOUT_SECS`| `600`                      | 单章处理超时；超时即终止 sidecar 进程并中止批量任务                                                      |
+| `AGENT_SIDECAR_CHAPTER_TIMEOUT_SECS`| `1800`                     | 单章处理超时；超时即终止 sidecar 进程并中止批量任务（sidecar 内模型调用总预算 5×300s 与此对齐，错误会带真实原因回来而不是被截成超时）                                                      |
 | `AGENT_SIDECAR_UV`                  | 空                        | uv 二进制路径；非空/PATH 可探测时由 uv 自动管理依赖（推荐），都没有时降级为 AGENT_SIDECAR_COMMAND      |
 
 | `AGENT_SIDECAR_UV`                  | 空                         | uv 二进制的显式路径；非空时由 uv 自动管理依赖（见下）                                                |

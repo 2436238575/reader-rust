@@ -87,7 +87,13 @@ pub struct AppConfig {
     /// `python` 可能命中 Microsoft Store 的占位符，建议配置 Python 绝对路径，
     /// 如 `C:\Python313\python.exe -m agent_sidecar`。
     pub agent_sidecar_command: String,
-    /// 单章处理超时（秒），默认 600。超时即终止 sidecar 进程并中止批量任务。
+    /// 单章处理超时（秒），默认 1800。
+    ///
+    /// 算式：sidecar 一章最多 5 轮 chat（sidecar loop.py 的 MAX_ROUNDS），
+    /// 模型客户端总预算 1500s（5 × 300s，重试与退避不越过 deadline）；
+    /// 预算耗尽后最坏还有一次在途尝试（connect 10s + write 30s + read 150s
+    /// = 190s）≈ 1690s，取 1800s 留余量——让 sidecar 以真实原因（模型
+    /// 401/超时/预算耗尽）收场，而不是被看门狗截成一句「章节处理超时」。
     pub agent_sidecar_chapter_timeout_secs: u64,
     /// uv 二进制的显式路径。
     ///
@@ -127,7 +133,7 @@ impl Default for AppConfig {
             rate_limit_disabled: false,
             agent_sidecar_enabled: true,
             agent_sidecar_command: "python -m agent_sidecar".to_string(),
-            agent_sidecar_chapter_timeout_secs: 600,
+            agent_sidecar_chapter_timeout_secs: 1800,
             agent_sidecar_uv: String::new(),
         }
     }

@@ -130,7 +130,7 @@ cp .env.example .env
 | `AGENT_SIDECAR_ENABLED`              | `true`                    | AI 资料编排 sidecar 开关；关闭后 AI 资料更新接口返回明确错误                                            |
 | `AGENT_SIDECAR_COMMAND`              | `python -m agent_sidecar` | sidecar 启动命令，进程 cwd 为 `sidecar/`；保持默认时若 `sidecar/.venv` 存在自动优先其 Python，自定义（含 Docker ENV）则不兜底 |
 | `AGENT_SIDECAR_UV`                   | 空                        | uv 二进制路径；非空/PATH 可探测时由 uv 自动管理依赖（推荐），都没有时降级为 AGENT_SIDECAR_COMMAND      |
-| `AGENT_SIDECAR_CHAPTER_TIMEOUT_SECS` | `600`                     | 单章处理超时；超时即终止 sidecar 进程并中止批量任务（sidecar 内模型重试预算已对齐此值，错误会带真实原因回来而不是被截成超时）                                                     |
+| `AGENT_SIDECAR_CHAPTER_TIMEOUT_SECS` | `1800`                    | 单章处理超时；超时即终止 sidecar 进程并中止批量任务（sidecar 内模型调用有 5×300s 总 deadline，与看门狗对齐，错误会带真实原因回来而不是被截成超时）                                                     |
 
 三点需要注意：
 

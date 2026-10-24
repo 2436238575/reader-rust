@@ -9,7 +9,9 @@
 //! 关键约定：
 //! - stdout 只读 NDJSON；非 JSON 行记 warn 跳过（不杀进程）；
 //! - stderr 持续排空进 tracing（不排空会因管道背压把 sidecar 卡死）；
-//! - 单章处理超时（`AGENT_SIDECAR_CHAPTER_TIMEOUT_SECS`）即杀进程中止批量；
+//! - 单章处理超时（`AGENT_SIDECAR_CHAPTER_TIMEOUT_SECS`，默认 1800s，与
+//!   sidecar 内 5×300s 的模型调用总预算对齐——算式见 config.rs）即杀进程
+//!   中止批量；
 //! - 取消 = kill 进程；sidecar 在 stdin EOF 时自行退出，不留孤儿。
 
 use std::{
