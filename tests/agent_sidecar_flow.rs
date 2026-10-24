@@ -413,11 +413,25 @@ async fn agent_task_aborts_when_sidecar_emits_oversized_line() {
         "应报单行超过上限：{snapshot}"
     );
 
-    // 任务槽已释放，后续任务不被卡死
-    let retry = server
-        .start_task(&token, &book_id, "update_to_current", Some(0))
-        .await;
-    assert_eq!(retry.status().as_u16(), 200, "任务槽应已释放");
+    // 任务槽已释放，后续任务不被卡死。注意快照先于槽位清零翻转
+    // （start_task 尾部：update_snapshot → kill child → 释放 active），
+    // 杀掉还在写 64MB 的子进程需要时间，立即重试可能短暂 409——轮询等待。
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let mut slot_released = false;
+    while Instant::now() < deadline {
+        let retry = server
+            .start_task(&token, &book_id, "update_to_current", Some(0))
+            .await;
+        match retry.status().as_u16() {
+            200 => {
+                slot_released = true;
+                break;
+            }
+            409 => tokio::time::sleep(Duration::from_millis(100)).await,
+            other => panic!("重试只应 200 或 409，收到 {other}"),
+        }
+    }
+    assert!(slot_released, "任务槽应在合理时间内释放");
     let snapshot = server.wait_task_done(&token).await;
     assert_eq!(snapshot["running"], json!(false));
 }
