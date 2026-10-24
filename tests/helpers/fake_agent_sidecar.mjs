@@ -82,6 +82,15 @@ async function handleRun(job) {
       send({ type: 'result', jobId: `stale-${job.jobId}`, ok: true, mapPrompt: '迟到的地图帧' })
     }
 
+    if (title.includes('超长行')) {
+      // 失控 sidecar：吐一行超过 64MB 上限的“NDJSON”。宿主应在累积阶段
+      // 报「单行超过上限」并中止任务，而不是把整行读进内存
+      const junk = Buffer.alloc(64 * 1024 * 1024 + 1024, 0x78)
+      process.stdout.write(junk)
+      process.stdout.write('\n')
+      return
+    }
+
     if (title.includes('搜索')) {
       const content = await callTool('search_read_content', {
         keyword: '暗号',

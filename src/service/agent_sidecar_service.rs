@@ -58,6 +58,10 @@ const DEFAULT_SIDECAR_COMMAND: &str = "python -m agent_sidecar";
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
 /// uv 模式下首次 `uv run` 可能现场同步依赖（下载/建 venv），握手超时放宽
 const HANDSHAKE_TIMEOUT_UV: Duration = Duration::from_secs(60);
+/// sidecar stdout 单行（NDJSON 帧）上限：与 Python 侧 protocol.py 的
+/// MAX_LINE_BYTES 一致。长篇书的 memory 行可达几十 MB，64MB 已极端宽裕；
+/// 超限判定对端失控，报错并中止任务而不是把内存推高
+const MAX_NDJSON_LINE_BYTES: usize = 64 * 1024 * 1024;
 
 /// sidecar 子进程允许继承的环境变量名（白名单，见 `sidecar_env_allowlist`）。
 ///
@@ -799,7 +803,7 @@ impl AgentSidecarService {
     async fn run_frame_until_result(
         &self,
         stdin: &mut ChildStdin,
-        rx: &mut mpsc::Receiver<String>,
+        rx: &mut mpsc::Receiver<Result<String, String>>,
         run_frame: Value,
         expected_job_id: &str,
         ctx: &TaskContext<'_>,
@@ -820,6 +824,12 @@ impl AgentSidecarService {
 
         let wait = timeout(self.chapter_timeout, async {
             while let Some(raw) = rx.recv().await {
+                // stdout 泵的致命错误（读取失败/单行超限）：中止等待，
+                // 进程由调用方的清理路径杀掉
+                let raw = match raw {
+                    Ok(line) => line,
+                    Err(message) => return Err(AppError::Internal(anyhow::anyhow!(message))),
+                };
                 let frame: Value = match serde_json::from_str(&raw) {
                     Ok(value) => value,
                     Err(_) => {
@@ -1099,7 +1109,7 @@ impl AgentSidecarService {
     async fn redraw_map_via_sidecar(
         &self,
         stdin: &mut ChildStdin,
-        rx: &mut mpsc::Receiver<String>,
+        rx: &mut mpsc::Receiver<Result<String, String>>,
         memory: &AiBookMemory,
         model_json: &Value,
         stderr_tail: &StderrTail,
@@ -1172,7 +1182,15 @@ impl AgentSidecarService {
 
     async fn spawn_sidecar(
         &self,
-    ) -> Result<(Child, ChildStdin, mpsc::Receiver<String>, StderrTail), AppError> {
+    ) -> Result<
+        (
+            Child,
+            ChildStdin,
+            mpsc::Receiver<Result<String, String>>,
+            StderrTail,
+        ),
+        AppError,
+    > {
         let plan = self.spawn_plan().await;
         let (program, args, handshake_timeout) = match plan {
             // uv 自动管理：uv run --project <sidecar_dir> python -m agent_sidecar
@@ -1242,13 +1260,27 @@ impl AgentSidecarService {
             }
         });
 
-        // stdout 逐行转 mpsc；消费端 drop 后 send 失败即退出
-        let (tx, rx) = mpsc::channel::<String>(16);
+        // stdout 逐行转 mpsc；单行长度上限（见 read_line_capped）——失控
+        // sidecar 不能靠一行超长 NDJSON 把宿主内存推高。读取出错/超限以
+        // Err 带给帧泵，让调用方中止任务（进程由 kill_on_drop 与任务清理杀掉）
+        let (tx, rx) = mpsc::channel::<Result<String, String>>(16);
         tokio::spawn(async move {
-            let mut lines = BufReader::new(stdout).lines();
-            while let Ok(Some(line)) = lines.next_line().await {
-                if tx.send(line).await.is_err() {
-                    break;
+            let mut reader = BufReader::new(stdout);
+            let mut line: Vec<u8> = Vec::with_capacity(8 * 1024);
+            loop {
+                match read_line_capped(&mut reader, &mut line, MAX_NDJSON_LINE_BYTES).await {
+                    Ok(true) => {
+                        let text = String::from_utf8_lossy(&line);
+                        if tx.send(Ok(text.trim_end().to_string())).await.is_err() {
+                            break;
+                        }
+                    }
+                    Ok(false) => break, // EOF
+                    Err(message) => {
+                        tracing::warn!(target: SIDECAR_LOG_TARGET, "{message}");
+                        let _ = tx.send(Err(message)).await;
+                        break;
+                    }
                 }
             }
         });
@@ -1257,7 +1289,10 @@ impl AgentSidecarService {
         // 否则用户只能看到一句无法定位的 "internal error"
         let mut rx = rx;
         let first_line = match timeout(handshake_timeout, rx.recv()).await {
-            Ok(Some(line)) => Some(line),
+            Ok(Some(Ok(line))) => Some(line),
+            Ok(Some(Err(message))) => {
+                return Err(handshake_failed(&stderr_tail, &message).await);
+            }
             Ok(None) => None,
             Err(_) => {
                 return Err(handshake_failed(
@@ -1297,6 +1332,53 @@ impl AgentSidecarService {
 enum MapImage {
     Bytes(Vec<u8>),
     Url(String),
+}
+
+/// 逐块读一行（含结尾换行符），单行超过 `limit` 字节返回明确错误。
+///
+/// 用 fill_buf/consume 增量扫描而非 `lines()`/`read_until`——后两者都会先把
+/// 整行无界读进内存才轮得到长度检查。返回 `Ok(false)` 表示 EOF（`line` 为空）；
+/// EOF 前的最后一行即使没有换行符也会返回。内存占用以 `limit` 为上界。
+async fn read_line_capped(
+    reader: &mut BufReader<impl tokio::io::AsyncRead + Unpin>,
+    line: &mut Vec<u8>,
+    limit: usize,
+) -> Result<bool, String> {
+    line.clear();
+    loop {
+        let used = {
+            let buffered = match reader.fill_buf().await {
+                Ok(buffered) => buffered,
+                Err(e) => return Err(format!("读取 sidecar stdout 失败：{e}")),
+            };
+            if buffered.is_empty() {
+                return Ok(!line.is_empty());
+            }
+            match buffered.iter().position(|&b| b == b'\n') {
+                Some(pos) => pos + 1,
+                None => buffered.len(),
+            }
+        };
+        // 先查限再拷贝：超限时不把这批字节追加进内存
+        if line.len() + used > limit {
+            return Err(format!(
+                "sidecar 输出单行超过 {} MB 上限（>{} 字节），判定对端失控",
+                limit / (1024 * 1024),
+                limit
+            ));
+        }
+        {
+            let buffered = reader
+                .fill_buf()
+                .await
+                .map_err(|e| format!("读取 sidecar stdout 失败：{e}"))?;
+            line.extend_from_slice(&buffered[..used]);
+        }
+        reader.consume(used);
+        if line.last() == Some(&b'\n') {
+            return Ok(true);
+        }
+    }
 }
 
 fn decode_map_image(result: &Value) -> Result<MapImage, AppError> {
@@ -1702,5 +1784,59 @@ mod tests {
         assert!(names
             .iter()
             .any(|name| name.eq_ignore_ascii_case("PYTHONIOENCODING")));
+    }
+
+    #[tokio::test]
+    async fn read_line_capped_splits_lines_until_eof() {
+        let data: &[u8] = b"{\"a\":1}\n{\"b\":2}\n";
+        let mut reader = BufReader::new(data);
+        let mut line = Vec::new();
+        assert!(read_line_capped(&mut reader, &mut line, 64).await.unwrap());
+        assert_eq!(line, b"{\"a\":1}\n");
+        assert!(read_line_capped(&mut reader, &mut line, 64).await.unwrap());
+        assert_eq!(line, b"{\"b\":2}\n");
+        assert!(!read_line_capped(&mut reader, &mut line, 64).await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn read_line_capped_returns_final_line_without_newline() {
+        let data: &[u8] = b"tail";
+        let mut reader = BufReader::new(data);
+        let mut line = Vec::new();
+        assert!(read_line_capped(&mut reader, &mut line, 64).await.unwrap());
+        assert_eq!(line, b"tail");
+        assert!(!read_line_capped(&mut reader, &mut line, 64).await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn read_line_capped_rejects_oversized_line() {
+        // 65 字节无换行：超过 64 字节上限必须在累积阶段报错
+        let data: &[u8] = &[b'x'; 65];
+        let mut reader = BufReader::new(data);
+        let mut line = Vec::new();
+        let error = read_line_capped(&mut reader, &mut line, 64)
+            .await
+            .unwrap_err();
+        assert!(
+            error.contains("单行超过"),
+            "错误文案应指明单行超限：{error}"
+        );
+    }
+
+    #[tokio::test]
+    async fn read_line_capped_assembles_line_larger_than_buffer() {
+        // 行长超过 BufReader 内部缓冲（8KB）：跨块拼行仍正确
+        let payload = vec![b'x'; 20 * 1024];
+        let mut data = payload.clone();
+        data.push(b'\n');
+        let mut reader = BufReader::new(&data[..]);
+        let mut line = Vec::new();
+        assert!(
+            read_line_capped(&mut reader, &mut line, MAX_NDJSON_LINE_BYTES)
+                .await
+                .unwrap()
+        );
+        assert_eq!(line.len(), 20 * 1024 + 1);
+        assert_eq!(&line[..20 * 1024], &payload[..]);
     }
 }

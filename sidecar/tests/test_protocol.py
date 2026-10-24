@@ -52,6 +52,39 @@ def test_read_frame_skips_garbage_and_blank_lines():
     assert channel.read_frame() == {"type": "run", "jobId": "j"}
 
 
+def test_read_frame_decodes_binary_stdin():
+    # 生产路径默认 sys.stdin.buffer（二进制）：显式按 UTF-8 解码
+    stream = io.BytesIO('{"type":"run","jobId":"j","title":"第九章"}\n'.encode("utf-8"))
+    channel = StdioChannel(stdin=stream, stdout=io.StringIO())
+    assert channel.read_frame() == {"type": "run", "jobId": "j", "title": "第九章"}
+
+
+def test_read_frame_reassembles_line_across_chunks(monkeypatch):
+    # 逐块读取：块边界（3 字节）小于一行时仍能正确拼出行
+    monkeypatch.setattr(protocol, "_CHUNK_SIZE", 3)
+    stream = io.StringIO('{"type":"run","jobId":"j"}\n\n{"type":"status"}\n')
+    channel = StdioChannel(stdin=stream, stdout=io.StringIO())
+    assert channel.read_frame() == {"type": "run", "jobId": "j"}
+    assert channel.read_frame() == {"type": "status"}
+
+
+def test_read_frame_rejects_oversized_line(monkeypatch):
+    # 对端失控吐出超长行：必须在累积阶段抛协议错误，而不是读完整行
+    monkeypatch.setattr(protocol, "MAX_LINE_BYTES", 64)
+    stream = io.StringIO("x" * 65 + "\n" + '{"type":"run"}\n')
+    channel = StdioChannel(stdin=stream, stdout=io.StringIO())
+    with pytest.raises(ProtocolError, match="单行超过"):
+        channel.read_frame()
+
+
+def test_read_frame_accepts_line_at_limit(monkeypatch):
+    monkeypatch.setattr(protocol, "MAX_LINE_BYTES", 64)
+    payload = '{"type":"run"}'
+    assert len(payload) <= 64
+    channel = StdioChannel(stdin=io.StringIO(payload + "\n"), stdout=io.StringIO())
+    assert channel.read_frame() == {"type": "run"}
+
+
 def _patch_uuid(monkeypatch) -> None:
     monkeypatch.setattr(protocol.uuid, "uuid4", lambda: type("U", (), {"hex": "abc123"})())
 
@@ -62,7 +95,7 @@ def test_call_host_tool_pairs_request_and_response(monkeypatch):
     responses = iter(['{"type":"tool_result","id":"call-abc123","content":{"ok":true,"content":"正文"}}\n'])
 
     class ScriptedStdin:
-        def readline(self):
+        def read(self, size: int = -1):
             return next(responses, "")
 
     channel = StdioChannel(stdin=ScriptedStdin(), stdout=out)

@@ -385,6 +385,44 @@ async fn agent_task_ignores_stale_result_with_mismatched_job_id() {
 }
 
 #[tokio::test]
+async fn agent_task_aborts_when_sidecar_emits_oversized_line() {
+    if !node_available() {
+        eprintln!("skip: Node 不可用，无法运行假 sidecar");
+        return;
+    }
+    let server = TestServer::start(30).await;
+    let token = server.login().await;
+
+    // 「超长行」章：假 sidecar 吐一行超过 64MB 上限的“NDJSON”。宿主应报
+    // 「单行超过上限」并中止任务，而不是无界把整行读进内存。
+    let content = "\
+第一章 超长行
+正文一。";
+    let (book_id, _) = server.upload_txt(&token, "超长行测试.txt", content).await;
+
+    let response = server
+        .start_task(&token, &book_id, "update_to_current", Some(0))
+        .await;
+    assert_eq!(response.status().as_u16(), 200);
+
+    let snapshot = server.wait_task_done(&token).await;
+    assert_eq!(snapshot["running"], json!(false));
+    let last_error = snapshot["lastError"].as_str().unwrap_or_default();
+    assert!(
+        last_error.contains("单行超过"),
+        "应报单行超过上限：{snapshot}"
+    );
+
+    // 任务槽已释放，后续任务不被卡死
+    let retry = server
+        .start_task(&token, &book_id, "update_to_current", Some(0))
+        .await;
+    assert_eq!(retry.status().as_u16(), 200, "任务槽应已释放");
+    let snapshot = server.wait_task_done(&token).await;
+    assert_eq!(snapshot["running"], json!(false));
+}
+
+#[tokio::test]
 async fn agent_task_watchdog_kills_stuck_chapter() {
     if !node_available() {
         eprintln!("skip: Node 不可用，无法运行假 sidecar");
