@@ -3385,10 +3385,34 @@ fn build_chapter_from_json(
     })
 }
 
+/// 列表正则单段允许收集的最大完整匹配数（中间段与末段各自适用）。
+///
+/// 列表正则逐级下钻时每段把**全部**完整匹配串收集为下一段输入；32MB 响应体
+/// 上 `:\d` 这类规则可产出数千万匹配，末段再给每个匹配分配一个捕获组 Vec，
+/// 时间与内存都无界。10 万匹配已远超任何真实目录的规模，超限截断即可。
+const MAX_REGEX_MATCHES_PER_STAGE: usize = 100_000;
+/// 末段捕获组总产出上限（组数 × 匹配数），防止「少量匹配 × 海量捕获组」。
+const MAX_REGEX_CAPTURES_TOTAL: usize = 200_000;
+
 /// 列表正则求值（规格 §9.3）：`&&` 分段逐级下钻，前一段的所有完整匹配串拼成文本喂给下一段；
 /// 最后一段的每个匹配产出一组捕获组（含 group 0），供字段规则的 `$n` 引用——
 /// 但 `$0` 按 Legado 兼容保留字面量，只有 `$1` 起才替换（见 `capture_rule_value`）。
 fn regex_list_captures(pattern: &str, body: &str) -> Vec<Vec<String>> {
+    regex_list_captures_with_limits(
+        pattern,
+        body,
+        MAX_REGEX_MATCHES_PER_STAGE,
+        MAX_REGEX_CAPTURES_TOTAL,
+    )
+}
+
+/// 带显式上限的列表正则求值（公开包装用常量；小上限便于测试截断行为）。
+fn regex_list_captures_with_limits(
+    pattern: &str,
+    body: &str,
+    stage_limit: usize,
+    total_limit: usize,
+) -> Vec<Vec<String>> {
     let split = crate::parser::rule_analyzer::split_top_level(pattern, &["&&"]);
     let stages: Vec<&str> = split.parts.iter().map(|part| part.trim()).collect();
     if stages.is_empty() || stages.iter().all(|stage| stage.is_empty()) {
@@ -3396,6 +3420,7 @@ fn regex_list_captures(pattern: &str, body: &str) -> Vec<Vec<String>> {
     }
 
     let mut texts = vec![body.to_string()];
+    let mut total_captures = 0usize;
     for (index, stage) in stages.iter().enumerate() {
         let Some(re) = crate::util::text::compiled_regex(stage) else {
             return vec![];
@@ -3403,11 +3428,17 @@ fn regex_list_captures(pattern: &str, body: &str) -> Vec<Vec<String>> {
         let last = index + 1 == stages.len();
         let mut groups_out = Vec::new();
         let mut next_texts = Vec::new();
-        for text in &texts {
+        let mut stage_truncated = false;
+        'outer: for text in &texts {
             for captures in re.captures_iter(text) {
                 if last {
+                    if groups_out.len() >= stage_limit || total_captures >= total_limit {
+                        stage_truncated = true;
+                        break 'outer;
+                    }
+                    let group_count = captures.len();
                     groups_out.push(
-                        (0..captures.len())
+                        (0..group_count)
                             .map(|i| {
                                 captures
                                     .get(i)
@@ -3416,7 +3447,12 @@ fn regex_list_captures(pattern: &str, body: &str) -> Vec<Vec<String>> {
                             })
                             .collect(),
                     );
+                    total_captures += group_count;
                 } else {
+                    if next_texts.len() >= stage_limit {
+                        stage_truncated = true;
+                        break 'outer;
+                    }
                     next_texts.push(
                         captures
                             .get(0)
@@ -3425,6 +3461,10 @@ fn regex_list_captures(pattern: &str, body: &str) -> Vec<Vec<String>> {
                     );
                 }
             }
+        }
+        if stage_truncated {
+            let preview: String = pattern.chars().take(120).collect();
+            tracing::warn!(pattern = %preview, stage = index, "列表正则命中数超过上限，已截断");
         }
         if last {
             return groups_out;
@@ -3802,6 +3842,39 @@ mod tests {
         assert_eq!(results[0].name, "One");
         assert_eq!(results[0].book_url, "https://books.example/1");
         assert_eq!(results[1].name, "Two");
+    }
+
+    #[test]
+    fn test_regex_list_captures_truncated_at_limits() {
+        // 30 个匹配、单匹配单捕获组（group 0）：末段截断到 stage_limit=10
+        // （调用方已剥掉 `:` 前缀，这里直接给纯正则）
+        let body: String = "x".repeat(30);
+        let capped = regex_list_captures_with_limits("x", &body, 10, 200);
+        assert_eq!(capped.len(), 10, "末段命中数应截断到 stage_limit");
+
+        // 中间段截断：第一段 8 个完整匹配喂给第二段，stage_limit=3 只保留 3 个输入
+        let list_body = "<l>a</l><l>b</l><l>c</l><l>d</l><l>e</l><l>f</l><l>g</l><l>h</l>";
+        let drilled = regex_list_captures_with_limits("<l>(.*?)</l>&&(\\w)", list_body, 3, 200);
+        assert_eq!(drilled.len(), 3, "中间段命中数应截断到 stage_limit");
+
+        // 捕获组总量上限：每匹配产出 group 0 + 2 个捕获组 = 3 个字符串，
+        // total_limit=5 → 2 个匹配（共 6 个字符串）后截断
+        let two_group_body = "ab".repeat(10);
+        let total_capped = regex_list_captures_with_limits("(\\w)(\\w)", &two_group_body, 100, 5);
+        assert_eq!(total_capped.len(), 2);
+        assert!(total_capped.iter().all(|g| g.len() == 3));
+
+        // 正常规则结果不变：上限远大于命中数时原样返回
+        let body2 = "<ul><li><a href=\"/1\">One</a></li><li><a href=\"/2\">Two</a></li></ul>";
+        let full = regex_list_captures_with_limits(
+            r#"(?is)<li>(.*?)</li>&&<a href="([^"]+)">([^<]+)</a>"#,
+            body2,
+            MAX_REGEX_MATCHES_PER_STAGE,
+            MAX_REGEX_CAPTURES_TOTAL,
+        );
+        assert_eq!(full.len(), 2);
+        assert_eq!(full[0][2], "One");
+        assert_eq!(full[1][2], "Two");
     }
 
     #[test]
