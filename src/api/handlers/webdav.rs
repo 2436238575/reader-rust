@@ -3,7 +3,7 @@ use crate::api::AppState;
 use crate::auth::CurrentUser;
 use crate::error::error::{ApiResponse, AppError};
 use crate::util::time::now_ts;
-use axum::http::{HeaderMap, StatusCode};
+use axum::http::{HeaderMap, HeaderValue, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::{
     extract::{ConnectInfo, Multipart, Path, Query, Request, State},
@@ -99,9 +99,44 @@ pub async fn get_webdav_file(
     let file = fs::File::open(&full)
         .await
         .map_err(|e| AppError::Internal(e.into()))?;
-    Ok(Response::new(axum::body::Body::from_stream(
+    // 显式 Content-Type：裸流响应会被浏览器嗅探后同源渲染（备份 JSON 被
+    // 当页面执行的隐患）。已知扩展名给准确类型，未知一律 octet-stream
+    // 触发下载；协议端点由 dav-server 的 mime_guess 做同样的事。
+    let content_type = download_content_type(&full);
+    let mut res = Response::new(axum::body::Body::from_stream(
         tokio_util::io::ReaderStream::new(file),
-    )))
+    ));
+    res.headers_mut().insert(
+        axum::http::header::CONTENT_TYPE,
+        HeaderValue::from_static(content_type),
+    );
+    Ok(res)
+}
+
+/// 按扩展名给下载文件一个显式 Content-Type（小表覆盖常见格式，
+/// 与 dav-server 的 mime_guess 口径一致；未知扩展名一律 octet-stream）。
+fn download_content_type(path: &std::path::Path) -> &'static str {
+    let ext = path
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(|e| e.to_ascii_lowercase());
+    match ext.as_deref() {
+        Some("txt") | Some("text") | Some("log") | Some("md") => "text/plain; charset=utf-8",
+        Some("json") | Some("jsonl") | Some("ndjson") => "application/json",
+        Some("html") | Some("htm") => "text/html; charset=utf-8",
+        Some("xml") => "application/xml",
+        Some("pdf") => "application/pdf",
+        Some("png") => "image/png",
+        Some("jpg") | Some("jpeg") => "image/jpeg",
+        Some("gif") => "image/gif",
+        Some("webp") => "image/webp",
+        Some("svg") => "image/svg+xml",
+        Some("epub") => "application/epub+zip",
+        Some("zip") => "application/zip",
+        Some("gz") => "application/gzip",
+        Some("csv") => "text/csv",
+        _ => "application/octet-stream",
+    }
 }
 
 pub async fn upload_file_to_webdav(
@@ -234,7 +269,7 @@ pub async fn webdav_handler(
     let client_ip = crate::util::client_ip::resolve_client_ip(addr.ip(), &headers, &trusted);
     let user_ns = match resolve_webdav_user(&state, &headers, Some(&client_ip)).await {
         Ok(ns) => ns,
-        Err(status) => return status.into_response(),
+        Err(res) => return res,
     };
     let home = match webdav_home(&state, &user_ns).await {
         Ok(h) => h,
@@ -273,22 +308,22 @@ async fn resolve_webdav_user(
     state: &AppState,
     headers: &HeaderMap,
     client_ip: Option<&str>,
-) -> Result<String, StatusCode> {
+) -> Result<String, Response> {
     let auth = headers
         .get("Authorization")
         .and_then(|v| v.to_str().ok())
         .unwrap_or("");
     if !auth.to_ascii_lowercase().starts_with("basic ") {
-        return Err(StatusCode::UNAUTHORIZED);
+        return Err(unauthorized());
     }
     let b64 = auth[6..].trim();
     let decoded = base64::engine::general_purpose::STANDARD
         .decode(b64)
-        .map_err(|_| StatusCode::UNAUTHORIZED)?;
+        .map_err(|_| unauthorized())?;
     let decoded = String::from_utf8_lossy(&decoded);
     let parts: Vec<&str> = decoded.splitn(2, ':').collect();
     if parts.len() != 2 {
-        return Err(StatusCode::UNAUTHORIZED);
+        return Err(unauthorized());
     }
     let username = parts[0];
     let password = parts[1];
@@ -299,8 +334,21 @@ async fn resolve_webdav_user(
     {
         // 存储路径按 user_<uid> 隔离：username 只用于认证
         Ok(Some(user)) => Ok(crate::auth::middleware::user_ns_of(user.uid)),
-        _ => Err(StatusCode::UNAUTHORIZED),
+        _ => Err(unauthorized()),
     }
+}
+
+/// 401 质询应答：缺头、解码失败、用户名/密码错误统一走这里。
+///
+/// 必须带 `WWW-Authenticate: Basic realm="reader"`（RFC 7617）：Windows
+/// 资源管理器等客户端收不到质询头就不会弹凭据框，表现为静默失败。
+fn unauthorized() -> Response {
+    let mut res = StatusCode::UNAUTHORIZED.into_response();
+    res.headers_mut().insert(
+        "WWW-Authenticate",
+        HeaderValue::from_static("Basic realm=\"reader\""),
+    );
+    res
 }
 
 async fn webdav_home(state: &AppState, user_ns: &str) -> Result<PathBuf, AppError> {
@@ -381,5 +429,35 @@ mod tests {
         );
         assert!(normalize_rel_path("/").unwrap().is_empty());
         assert_eq!(normalize_rel_path("//a//./b//").unwrap(), vec!["a", "b"]);
+    }
+
+    #[test]
+    fn download_content_type_maps_known_extensions_and_defaults_to_octet_stream() {
+        use std::path::Path;
+        assert_eq!(
+            download_content_type(Path::new("/backup/a.json")),
+            "application/json"
+        );
+        assert_eq!(
+            download_content_type(Path::new("/backup/a.txt")),
+            "text/plain; charset=utf-8"
+        );
+        assert_eq!(
+            download_content_type(Path::new("/backup/book.epub")),
+            "application/epub+zip"
+        );
+        // 大写扩展名与未知/无扩展名一律回退 octet-stream（触发下载而非渲染）
+        assert_eq!(
+            download_content_type(Path::new("/backup/A.JSON")),
+            "application/json"
+        );
+        assert_eq!(
+            download_content_type(Path::new("/backup/backup.dat")),
+            "application/octet-stream"
+        );
+        assert_eq!(
+            download_content_type(Path::new("/backup/noext")),
+            "application/octet-stream"
+        );
     }
 }

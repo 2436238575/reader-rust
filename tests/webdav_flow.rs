@@ -98,6 +98,26 @@ impl TestServer {
             .header("Authorization", self.auth_header())
     }
 
+    /// 用预设账号登录，返回 Access Token（JSON 接口端点走查询串鉴权）。
+    async fn login_token(&self) -> String {
+        let res = self
+            .client
+            .post(self.url("/reader3/login"))
+            .json(&serde_json::json!({
+                "username": TEST_USERNAME,
+                "password": TEST_PASSWORD,
+            }))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(res.status(), StatusCode::OK, "登录应成功");
+        let body: serde_json::Value = res.json().await.unwrap();
+        body["data"]["accessToken"]
+            .as_str()
+            .expect("登录响应应含 accessToken")
+            .to_string()
+    }
+
     /// 用户 WebDAV 家目录（storage/webdav/<用户名>/）。
     fn home(&self) -> PathBuf {
         self.temp_dir.join("webdav").join("user_1")
@@ -139,6 +159,143 @@ async fn unauthenticated_requests_get_401() {
         .await
         .unwrap();
     assert_eq!(res.status(), StatusCode::UNAUTHORIZED);
+}
+
+/// 所有 401 都必须带 `WWW-Authenticate: Basic realm="reader"`：Windows
+/// 资源管理器等客户端收不到质询头不会弹凭据框，表现为静默失败。
+#[tokio::test]
+async fn unauthorized_responses_carry_basic_challenge() {
+    let app = TestServer::start().await;
+    // 无凭据（缺 Authorization 头）
+    for method in ["PROPFIND", "GET"] {
+        let res = app
+            .client
+            .request(
+                Method::from_bytes(method.as_bytes()).unwrap(),
+                app.url("/reader3/webdav/"),
+            )
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(res.status(), StatusCode::UNAUTHORIZED);
+        assert_eq!(
+            res.headers()
+                .get("WWW-Authenticate")
+                .and_then(|v| v.to_str().ok()),
+            Some("Basic realm=\"reader\""),
+            "{method} 无凭据 401 应带 Basic 质询头"
+        );
+    }
+    // 密码错误
+    let bad = format!(
+        "Basic {}",
+        base64::engine::general_purpose::STANDARD.encode("reader1:wrong")
+    );
+    let res = app
+        .client
+        .request(
+            Method::from_bytes(b"PROPFIND").unwrap(),
+            app.url("/reader3/webdav/"),
+        )
+        .header("Authorization", bad)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::UNAUTHORIZED);
+    assert_eq!(
+        res.headers()
+            .get("WWW-Authenticate")
+            .and_then(|v| v.to_str().ok()),
+        Some("Basic realm=\"reader\""),
+        "错误凭据 401 应带 Basic 质询头"
+    );
+    // 非法 base64
+    let res = app
+        .client
+        .request(
+            Method::from_bytes(b"GET").unwrap(),
+            app.url("/reader3/webdav/"),
+        )
+        .header("Authorization", "Basic !!!not-base64!!!")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::UNAUTHORIZED);
+    assert_eq!(
+        res.headers()
+            .get("WWW-Authenticate")
+            .and_then(|v| v.to_str().ok()),
+        Some("Basic realm=\"reader\""),
+        "解码失败 401 应带 Basic 质询头"
+    );
+}
+
+/// 下载响应必须带显式 Content-Type：裸流会被浏览器嗅探后同源渲染，
+/// 未知类型一律 octet-stream 触发下载。
+#[tokio::test]
+async fn downloads_carry_explicit_content_type() {
+    let app = TestServer::start().await;
+    app.dav("PUT", "/reader3/webdav/note.txt")
+        .body("hello")
+        .send()
+        .await
+        .unwrap();
+    app.dav("PUT", "/reader3/webdav/blob.dat")
+        .body("blob")
+        .send()
+        .await
+        .unwrap();
+
+    // 协议端点（dav-server 的 mime_guess）
+    let res = app
+        .dav("GET", "/reader3/webdav/note.txt")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    assert!(
+        res.headers()
+            .get("Content-Type")
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("")
+            .starts_with("text/plain"),
+        "协议 GET .txt 应带 text/plain"
+    );
+    let res = app
+        .dav("GET", "/reader3/webdav/blob.dat")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(
+        res.headers()
+            .get("Content-Type")
+            .and_then(|v| v.to_str().ok()),
+        Some("application/octet-stream"),
+        "未知扩展名应为 octet-stream"
+    );
+
+    // JSON 接口端点（getWebdavFile 此前不带任何 Content-Type）
+    let token = app.login_token().await;
+    for (path, expected) in [
+        ("/note.txt", "text/plain; charset=utf-8"),
+        ("/blob.dat", "application/octet-stream"),
+    ] {
+        let res = app
+            .client
+            .get(app.url("/reader3/getWebdavFile"))
+            .query(&[("path", path), ("accessToken", token.as_str())])
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(res.status(), StatusCode::OK, "{path} 应可下载");
+        assert_eq!(
+            res.headers()
+                .get("Content-Type")
+                .and_then(|v| v.to_str().ok()),
+            Some(expected),
+            "{path} 应显式带 {expected}"
+        );
+    }
 }
 
 #[tokio::test]
