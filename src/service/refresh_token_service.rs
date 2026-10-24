@@ -4,6 +4,12 @@
 //! SHA-256 摘要，泄露数据库也无法还原可用令牌。一次登录创建一条 family，
 //! 每次换取都在同一 family 下追加新行并给旧行打 `used_at` 标记——旧行保留
 //! 不删，用来识别重放：已消费令牌在宽限窗口外再次出现即吊销整条 family。
+//!
+//! 轮换（`rotate`）全程在 BEGIN IMMEDIATE 事务里执行：读、插新行、消费旧行、
+//! 清理过期行与吊销家族对写锁互斥——并发的登出/改密吊销提交后，轮换必然
+//! 读到 `revoked_at`，不会再长出不在吊销集合里的新行（用户已登出却多出一枚
+//! 有效令牌）。sqlx 的 `Transaction` 默认 DEFERRED，必须显式
+//! `begin_with("BEGIN IMMEDIATE")`（见 `db::init_pool` 的说明）。
 
 use crate::error::error::AppError;
 use crate::util::time::now_ts;
@@ -65,12 +71,18 @@ impl RefreshTokenStore {
     }
 
     /// 用 Refresh Token 换一对新令牌。
+    ///
+    /// 全程持有写锁（BEGIN IMMEDIATE）：SELECT、插新行、消费旧行、purge 都在
+    /// 同一事务内，与 `revoke_family_by_token`（登出）/ `revoke_all_for_user`
+    /// （改密）串行化。吊销先提交则这里读到 `revoked_at` 直接 Invalid；
+    /// 轮换先提交则后续吊销会把新行一并纳入家族——两种次序下都不会漏。
     pub async fn rotate(&self, raw: &str) -> Result<RotateOutcome, AppError> {
         let raw = raw.trim();
         if !is_well_formed(raw) {
             return Ok(RotateOutcome::Invalid);
         }
         let token_hash = hash_token(raw);
+        let mut tx = self.pool.begin_with("BEGIN IMMEDIATE").await?;
         let row = sqlx::query(
             "SELECT r.uid, r.token_version, r.family_id, r.expires_at, r.used_at, r.revoked_at, \
                     u.username, u.token_version AS current_version \
@@ -78,9 +90,10 @@ impl RefreshTokenStore {
              WHERE r.token_hash=?1",
         )
         .bind(&token_hash)
-        .fetch_optional(&self.pool)
+        .fetch_optional(&mut *tx)
         .await?;
         let Some(row) = row else {
+            tx.rollback().await?;
             return Ok(RotateOutcome::Invalid);
         };
 
@@ -95,51 +108,73 @@ impl RefreshTokenStore {
         let now = now_ts();
 
         if revoked_at.is_some() || expires_at <= now {
+            tx.rollback().await?;
             return Ok(RotateOutcome::Invalid);
         }
         // 改密码会自增 token_version；即使吊销行没走完，这里也兜底拒绝
         if token_version != current_version {
-            self.revoke_family(&family_id).await?;
+            revoke_family_on(&mut tx, &family_id).await?;
+            tx.commit().await?;
             return Ok(RotateOutcome::Invalid);
         }
 
-        match used_at {
-            None => {
-                // 先插新行、再消费旧行：两步之间崩溃只会留下一条无人持有的
-                // 孤儿行（会自然过期），旧令牌仍可重试，不会让用户卡在
-                // 「已消费但没拿到新令牌」。
-                let Some(token) = self.insert_row(uid, token_version, &family_id).await? else {
-                    return Ok(RotateOutcome::Invalid);
-                };
-                let updated = sqlx::query(
-                    "UPDATE refresh_tokens SET used_at=?1 WHERE token_hash=?2 AND used_at IS NULL",
-                )
-                .bind(now)
-                .bind(&token_hash)
-                .execute(&self.pool)
-                .await?;
-                if updated.rows_affected() == 1 {
-                    self.purge_expired().await?;
-                    return Ok(RotateOutcome::Rotated(RefreshedSession {
-                        uid,
-                        username,
-                        token_version,
-                        refresh_token: token,
-                    }));
-                }
-                // 并发输家：撤掉刚插入的孤儿行，再按「已消费」处理
-                let _ = sqlx::query("DELETE FROM refresh_tokens WHERE token_hash=?1")
-                    .bind(hash_token(&token))
-                    .execute(&self.pool)
-                    .await;
-                self.handle_consumed(&token_hash, uid, &username, token_version, &family_id, now)
-                    .await
+        let Some(used_at) = used_at else {
+            // 先插新行、再消费旧行：同一事务内原子提交。新行若发现家族已被
+            // 吊销（继承 revoked_at 的兜底），按无效处理。
+            let Some(token) =
+                insert_row_on(&mut tx, uid, token_version, &family_id, self.ttl_secs).await?
+            else {
+                tx.commit().await?;
+                return Ok(RotateOutcome::Invalid);
+            };
+            let updated = sqlx::query(
+                "UPDATE refresh_tokens SET used_at=?1 WHERE token_hash=?2 AND used_at IS NULL",
+            )
+            .bind(now)
+            .bind(&token_hash)
+            .execute(&mut *tx)
+            .await?;
+            if updated.rows_affected() != 1 {
+                // 写锁在手，读到的 used_at 不可能被别人改掉，这里只是防御
+                tx.rollback().await?;
+                return Ok(RotateOutcome::Invalid);
             }
-            Some(used_at) => {
-                self.handle_consumed_at(used_at, uid, &username, token_version, &family_id, now)
-                    .await
-            }
+            purge_expired_on(&mut tx).await?;
+            tx.commit().await?;
+            return Ok(RotateOutcome::Rotated(RefreshedSession {
+                uid,
+                username,
+                token_version,
+                refresh_token: token,
+            }));
+        };
+
+        if now.saturating_sub(used_at) > REUSE_GRACE_SECS {
+            revoke_family_on(&mut tx, &family_id).await?;
+            tx.commit().await?;
+            tracing::warn!(
+                uid,
+                family_id,
+                "refresh token 在宽限窗口外被再次使用，已吊销整条会话家族"
+            );
+            return Ok(RotateOutcome::ReuseDetected);
         }
+        // 宽限窗口内的重复换取（断网重试/双标签页并发）：再发一枚，
+        // 原轮换出的令牌继续有效
+        let Some(token) =
+            insert_row_on(&mut tx, uid, token_version, &family_id, self.ttl_secs).await?
+        else {
+            tx.commit().await?;
+            return Ok(RotateOutcome::Invalid);
+        };
+        purge_expired_on(&mut tx).await?;
+        tx.commit().await?;
+        Ok(RotateOutcome::Rotated(RefreshedSession {
+            uid,
+            username,
+            token_version,
+            refresh_token: token,
+        }))
     }
 
     /// 登出：吊销该令牌所属的整条 family（即这次登录会话）。
@@ -183,73 +218,12 @@ impl RefreshTokenStore {
         Ok(result.rows_affected())
     }
 
-    async fn handle_consumed(
-        &self,
-        token_hash: &str,
-        uid: i64,
-        username: &str,
-        token_version: i64,
-        family_id: &str,
-        now: i64,
-    ) -> Result<RotateOutcome, AppError> {
-        let used_at: Option<i64> =
-            sqlx::query("SELECT used_at FROM refresh_tokens WHERE token_hash=?1")
-                .bind(token_hash)
-                .fetch_optional(&self.pool)
-                .await?
-                .and_then(|row| row.get("used_at"));
-        match used_at {
-            Some(used_at) => {
-                self.handle_consumed_at(used_at, uid, username, token_version, family_id, now)
-                    .await
-            }
-            // 并发下刚插的行被删/被清理，按无效处理
-            None => Ok(RotateOutcome::Invalid),
-        }
-    }
-
-    async fn handle_consumed_at(
-        &self,
-        used_at: i64,
-        uid: i64,
-        username: &str,
-        token_version: i64,
-        family_id: &str,
-        now: i64,
-    ) -> Result<RotateOutcome, AppError> {
-        if now.saturating_sub(used_at) <= REUSE_GRACE_SECS {
-            let Some(token) = self.insert_row(uid, token_version, family_id).await? else {
-                return Ok(RotateOutcome::Invalid);
-            };
-            self.purge_expired().await?;
-            return Ok(RotateOutcome::Rotated(RefreshedSession {
-                uid,
-                username: username.to_string(),
-                token_version,
-                refresh_token: token,
-            }));
-        }
-        self.revoke_family(family_id).await?;
-        tracing::warn!(
-            uid,
-            family_id,
-            "refresh token 在宽限窗口外被再次使用，已吊销整条会话家族"
-        );
-        Ok(RotateOutcome::ReuseDetected)
-    }
-
     async fn revoke_family(&self, family_id: &str) -> Result<(), AppError> {
-        sqlx::query(
-            "UPDATE refresh_tokens SET revoked_at=?1 WHERE family_id=?2 AND revoked_at IS NULL",
-        )
-        .bind(now_ts())
-        .bind(family_id)
-        .execute(&self.pool)
-        .await?;
-        Ok(())
+        let mut conn = self.pool.acquire().await?;
+        revoke_family_on(&mut conn, family_id).await
     }
 
-    /// 插入一条新令牌行。
+    /// 插入一条新令牌行（池连接版，供 `issue` 使用）。
     ///
     /// `revoked_at` 从同 family 的已有行继承：如果家族在并发中被吊销，新行
     /// 会立即带上吊销时间，不会在吊销之后又长出可用令牌。返回 `None` 表示
@@ -260,32 +234,72 @@ impl RefreshTokenStore {
         token_version: i64,
         family_id: &str,
     ) -> Result<Option<String>, AppError> {
-        let token = generate_token();
-        let token_hash = hash_token(&token);
-        let now = now_ts();
-        sqlx::query(
-            "INSERT INTO refresh_tokens \
-             (token_hash, uid, token_version, family_id, issued_at, expires_at, revoked_at) \
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, \
-                     (SELECT MAX(revoked_at) FROM refresh_tokens WHERE family_id=?4))",
-        )
-        .bind(&token_hash)
-        .bind(uid)
-        .bind(token_version)
-        .bind(family_id)
-        .bind(now)
-        .bind(now.saturating_add(self.ttl_secs as i64))
-        .execute(&self.pool)
-        .await?;
-
-        let revoked: Option<i64> =
-            sqlx::query("SELECT revoked_at FROM refresh_tokens WHERE token_hash=?1")
-                .bind(&token_hash)
-                .fetch_one(&self.pool)
-                .await?
-                .get("revoked_at");
-        Ok(if revoked.is_some() { None } else { Some(token) })
+        let mut conn = self.pool.acquire().await?;
+        insert_row_on(&mut conn, uid, token_version, family_id, self.ttl_secs).await
     }
+}
+
+/// 吊销家族内全部未吊销行（事务内版）。
+async fn revoke_family_on(
+    conn: &mut sqlx::SqliteConnection,
+    family_id: &str,
+) -> Result<(), AppError> {
+    sqlx::query(
+        "UPDATE refresh_tokens SET revoked_at=?1 WHERE family_id=?2 AND revoked_at IS NULL",
+    )
+    .bind(now_ts())
+    .bind(family_id)
+    .execute(&mut *conn)
+    .await?;
+    Ok(())
+}
+
+/// 清理过期行（事务内版）；已消费但未过期的行保留，用于重放检测。
+async fn purge_expired_on(conn: &mut sqlx::SqliteConnection) -> Result<(), AppError> {
+    sqlx::query("DELETE FROM refresh_tokens WHERE expires_at <= ?1")
+        .bind(now_ts())
+        .execute(&mut *conn)
+        .await?;
+    Ok(())
+}
+
+/// 插入一条新令牌行（事务/连接内版）。
+///
+/// `revoked_at` 从同 family 的已有行继承：如果家族已被吊销，新行会立即
+/// 带上吊销时间，不会在吊销之后又长出可用令牌。返回 `None` 表示家族已被
+/// 吊销，调用方按无效处理（新家族不会命中该分支）。
+async fn insert_row_on(
+    conn: &mut sqlx::SqliteConnection,
+    uid: i64,
+    token_version: i64,
+    family_id: &str,
+    ttl_secs: u64,
+) -> Result<Option<String>, AppError> {
+    let token = generate_token();
+    let token_hash = hash_token(&token);
+    let now = now_ts();
+    sqlx::query(
+        "INSERT INTO refresh_tokens \
+         (token_hash, uid, token_version, family_id, issued_at, expires_at, revoked_at) \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, \
+                 (SELECT MAX(revoked_at) FROM refresh_tokens WHERE family_id=?4))",
+    )
+    .bind(&token_hash)
+    .bind(uid)
+    .bind(token_version)
+    .bind(family_id)
+    .bind(now)
+    .bind(now.saturating_add(ttl_secs as i64))
+    .execute(&mut *conn)
+    .await?;
+
+    let revoked: Option<i64> =
+        sqlx::query("SELECT revoked_at FROM refresh_tokens WHERE token_hash=?1")
+            .bind(&token_hash)
+            .fetch_one(&mut *conn)
+            .await?
+            .get("revoked_at");
+    Ok(if revoked.is_some() { None } else { Some(token) })
 }
 
 fn is_well_formed(raw: &str) -> bool {
@@ -520,6 +534,39 @@ mod tests {
         // 另一台设备的会话不受影响
         rotated(store.rotate(&device_b).await.unwrap());
         assert!(!store.revoke_family_by_token("rt_unknown").await.unwrap());
+        finish(pool, dir).await;
+    }
+
+    /// 吊销与轮换并发：无论谁先拿到写锁，家族里都不能再长出可用令牌。
+    ///
+    /// 轮换全程在 BEGIN IMMEDIATE 事务内，与吊销串行化——两种次序都收敛到
+    /// 同一个不变量：轮换要么直接 Invalid（吊销先提交），要么发出的新令牌
+    /// 随后被吊销一并失效（轮换先提交）。
+    #[tokio::test]
+    async fn concurrent_logout_and_rotate_never_leak_a_live_token() {
+        let (store, pool, dir) = store_with_ttl(3600).await;
+        let token = store.issue(1, 0).await.unwrap();
+
+        let (revoke_result, rotate_result) =
+            tokio::join!(store.revoke_family_by_token(&token), store.rotate(&token),);
+        assert!(revoke_result.unwrap(), "登出吊销本身应成功");
+
+        match rotate_result.unwrap() {
+            RotateOutcome::Rotated(session) => {
+                // 轮换先提交：随后的登出必须把新令牌一并吊销
+                assert_eq!(
+                    store.rotate(&session.refresh_token).await.unwrap(),
+                    RotateOutcome::Invalid,
+                    "吊销提交后，轮换出的新令牌也必须失效"
+                );
+            }
+            RotateOutcome::Invalid | RotateOutcome::ReuseDetected => {}
+        }
+        assert_eq!(
+            store.rotate(&token).await.unwrap(),
+            RotateOutcome::Invalid,
+            "已吊销家族的旧令牌必须 Invalid"
+        );
         finish(pool, dir).await;
     }
 
