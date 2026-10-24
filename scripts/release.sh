@@ -7,15 +7,23 @@ cd "$ROOT_DIR"
 DOCKER_REPO="${DOCKER_REPO:-docker.io/givenge/reader-rust}"
 BUMP_MODE="patch"
 INPUT_VERSION=""
+DRY_RUN=0
 
 usage() {
   cat <<'USAGE'
 Usage:
-  ./scripts/release.sh [vX.Y.Z|X.Y.Z|--major|--minor|--patch]
+  ./scripts/release.sh [vX.Y.Z|X.Y.Z|--major|--minor|--patch] [--dry-run]
 
 Behavior:
   - If version is provided: release that exact version.
-  - If version is omitted: auto-bump latest git tag with patch (+1).
+  - If version is omitted: auto-bump the workspace version
+    (Cargo.toml / package.json / frontend/package.json — all three must
+    already be aligned) with patch (+1); --major/--minor bump accordingly.
+    Git tags are only checked for existence, never used as the baseline:
+    a version reset (e.g. pre-beta 0.1.0) must not jump back to the old
+    tag sequence.
+  - --dry-run: resolve and print the target version, then exit. No commit,
+    tag, push or build happens.
   - Default Docker repo: docker.io/givenge/reader-rust
     (override with DOCKER_REPO env)
 USAGE
@@ -26,6 +34,7 @@ for arg in "$@"; do
     --major) BUMP_MODE="major" ;;
     --minor) BUMP_MODE="minor" ;;
     --patch) BUMP_MODE="patch" ;;
+    --dry-run) DRY_RUN=1 ;;
     -h|--help) usage; exit 0 ;;
     v*|[0-9]*.[0-9]*.[0-9]*) INPUT_VERSION="$arg" ;;
     *)
@@ -46,23 +55,28 @@ require_cmd() {
 require_cmd git
 require_cmd cargo
 require_cmd npm
-require_cmd podman
-require_cmd gh
+require_cmd node
 require_cmd awk
 
-if ! git diff --quiet || ! git diff --cached --quiet; then
-  echo "Working tree is not clean. Commit/stash changes first." >&2
-  exit 1
-fi
+# dry-run 只做只读的版本推导，不触碰工作区，也不需要 podman/gh
+if [[ "$DRY_RUN" -eq 0 ]]; then
+  require_cmd podman
+  require_cmd gh
 
-if [[ -n "$(git ls-files --others --exclude-standard)" ]]; then
-  echo "Untracked files exist. Clean them first." >&2
-  exit 1
-fi
+  if ! git diff --quiet || ! git diff --cached --quiet; then
+    echo "Working tree is not clean. Commit/stash changes first." >&2
+    exit 1
+  fi
 
-if ! gh auth status >/dev/null 2>&1; then
-  echo "GitHub CLI is not authenticated. Run: gh auth login" >&2
-  exit 1
+  if [[ -n "$(git ls-files --others --exclude-standard)" ]]; then
+    echo "Untracked files exist. Clean them first." >&2
+    exit 1
+  fi
+
+  if ! gh auth status >/dev/null 2>&1; then
+    echo "GitHub CLI is not authenticated. Run: gh auth login" >&2
+    exit 1
+  fi
 fi
 
 normalize_version() {
@@ -75,15 +89,44 @@ normalize_version() {
   echo "$raw"
 }
 
-latest_tag="$(git tag --list 'v*' | sort -V | tail -1)"
+# 读 Cargo.toml [package] 段的 version；分段定位逻辑与 update_cargo_version 保持一致
+read_cargo_version() {
+  awk '
+    /^\[package\]/ { in_pkg=1; next }
+    /^\[/ { in_pkg=0 }
+    in_pkg && /^version[[:space:]]*=/ {
+      split($0, parts, "\"")
+      print parts[2]
+      exit
+    }
+  ' Cargo.toml
+}
+
+# 版本基线取 workspace 三处版本号（发布脚本每次都会同步写它们），
+# 不取 git tag：仓库版本可能整体重置（如 pre-beta 回到 0.1.0）而历史
+# tag 停在更高的旧序列上，按 tag 递增会把下一个版本号跳回旧序列。
+cargo_version="$(read_cargo_version)"
+root_version="$(node -p "require('./package.json').version")"
+frontend_version="$(node -p "require('./frontend/package.json').version")"
+
+if [[ -z "$cargo_version" || -z "$root_version" || -z "$frontend_version" ]]; then
+  echo "Failed to read workspace versions: Cargo.toml=${cargo_version:-?}, package.json=${root_version:-?}, frontend/package.json=${frontend_version:-?}" >&2
+  exit 1
+fi
+
+if [[ "$cargo_version" != "$frontend_version" || "$root_version" != "$frontend_version" ]]; then
+  echo "Workspace versions are inconsistent:" >&2
+  echo "  Cargo.toml            = ${cargo_version}" >&2
+  echo "  package.json          = ${root_version}" >&2
+  echo "  frontend/package.json = ${frontend_version}" >&2
+  echo "Align them first; every release writes all three in lockstep." >&2
+  exit 1
+fi
 
 if [[ -n "$INPUT_VERSION" ]]; then
   SEMVER="$(normalize_version "$INPUT_VERSION")"
 else
-  base="${latest_tag#v}"
-  if [[ -z "$base" || ! "$base" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-    base="$(node -p "require('./frontend/package.json').version")"
-  fi
+  base="$(normalize_version "$frontend_version")"
   IFS='.' read -r major minor patch <<<"$base"
   case "$BUMP_MODE" in
     major)
@@ -105,9 +148,16 @@ fi
 TAG="v${SEMVER}"
 echo "Releasing ${TAG}"
 
+# git tag 只用于存在性校验：目标 tag 已存在说明该版本发布过
 if git rev-parse -q --verify "refs/tags/${TAG}" >/dev/null; then
   echo "Tag ${TAG} already exists locally." >&2
   exit 1
+fi
+
+if [[ "$DRY_RUN" -eq 1 ]]; then
+  echo "Dry run: target ${TAG} (workspace base ${frontend_version}, mode ${BUMP_MODE}${INPUT_VERSION:+, explicit ${INPUT_VERSION}})."
+  echo "Nothing was committed, tagged, built or pushed."
+  exit 0
 fi
 
 if gh release view "$TAG" >/dev/null 2>&1; then

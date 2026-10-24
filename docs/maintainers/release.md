@@ -14,7 +14,7 @@
 | -------- | ----------------------------------------------------------------------- |
 | `git`    | 提交与打 tag                                                            |
 | `cargo`  | 交叉编译后端                                                            |
-| `npm`    | 同步版本号、构建前端（`node` 随 npm 提供，无 tag 时的版本回退也用到它） |
+| `npm`    | 同步版本号（`node` 随 npm 提供，版本基线也靠它读 `package.json`）        |
 | `podman` | 构建与推送镜像                                                          |
 | `gh`     | 创建 GitHub Release                                                     |
 | `awk`    | 改写 `Cargo.toml` 里的版本号                                            |
@@ -32,19 +32,21 @@
 从仓库根目录执行：
 
 ```bash
-./scripts/release.sh                # 在最新 tag 上自动递增 patch
+./scripts/release.sh                # 以 workspace 版本为基准自动递增 patch
 ./scripts/release.sh --minor        # 递增次版本号
 ./scripts/release.sh --major        # 递增主版本号
 ./scripts/release.sh --patch        # 明确指定 patch（默认即此）
 ./scripts/release.sh v1.0.9         # 发布指定版本（也接受 1.0.9）
+./scripts/release.sh --dry-run      # 只推导并打印目标版本，不做任何变更
 ./scripts/release.sh --help
 ```
 
 版本号推导规则：
 
 1. 显式给了版本号 → 用它（前缀 `v` 可有可无）
-2. 否则取 `git tag --list 'v*'` 中版本排序最大的那个作为基准，按 `--major` / `--minor` / `--patch` 递增
-3. 若一个 `v*` tag 都没有，退回读 `frontend/package.json` 的 `version` 作为基准
+2. 否则以 **workspace 版本号**为基准（`Cargo.toml` / 根 `package.json` / `frontend/package.json`），按 `--major` / `--minor` / `--patch` 递增
+3. 三处版本号不一致 → 直接报错退出。发布脚本每次都会同步写这三处，不一致说明有人手工只改了其中一处，先对齐再发
+4. git tag **只做存在性校验**（目标 tag 已存在即拒绝发布），不作为版本基准：仓库版本可能整体重置（如 pre-beta 回到 `0.1.0`），而历史 tag 停在更高的旧序列上，按 tag 递增会把下一个版本号跳回旧序列
 
 ## 脚本做了什么
 
