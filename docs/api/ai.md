@@ -123,7 +123,7 @@ POST /reader3/aiProxy
 POST /reader3/aiProxyImage
 ```
 
-请求体：`{ "url": "https://..." }`。拉取远程图片并回传（上限 20MB），用于绕开图片防盗链。URL 仅允许 http/https 且过出站守卫；**上游响应的 Content-Type 必须是 `image/*`**，否则 400（防自 XSS：可控 URL 返回 HTML 不透传）。
+请求体：`{ "url": "https://..." }`。拉取远程图片并回传（上限 20MB），用于绕开图片防盗链。URL 仅允许 http/https 且过出站守卫；**上游响应的 Content-Type 必须是位图格式 `image/jpeg`/`image/png`/`image/gif`/`image/webp`/`image/avif`/`image/bmp`**，否则 400——`image/svg+xml` 等可携带脚本的类型同样拒绝（防自 XSS：可控 URL 返回 HTML/SVG 不透传）。
 
 > **未实现调用方**：本端点目前无前端调用方（AI 资料的地图图片改由后端直接下载落盘到
 > `ASSETS_DIR`，依据：`src/service/agent_sidecar_service.rs`），端点保留备用。

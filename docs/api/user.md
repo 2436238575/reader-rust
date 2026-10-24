@@ -159,7 +159,7 @@ POST /reader3/uploadFile?type=<目录名>
 
 `multipart/form-data`，字段名 `file`。文件落到 `ASSETS_DIR/<用户>/<type>/` 并可经 `/assets/...` 静态访问。
 
-约束：`type` 仅允许字母数字、下划线、连字符；文件名只取纯文件名部分，拒绝路径分隔符、Windows 保留字符与设备名（`CON`/`NUL` 等）、结尾点/空格；单文件上限 32MB；单请求 multipart 字段数上限 20 个（超限 400）。响应 `data` 为上传成功的 URL 字符串数组：`["/assets/<用户>/<type>/<文件名>"]`。
+约束：`type` 仅允许字母数字、下划线、连字符；文件名只取纯文件名部分，拒绝路径分隔符、Windows 保留字符与设备名（`CON`/`NUL` 等）、结尾点/空格；**扩展名只允许位图格式 `jpg`/`jpeg`/`png`/`gif`/`webp`/`avif`/`bmp`（大小写不敏感），其他扩展名或无扩展名一律 400**——/assets 与主站同源直出上传内容，放行 HTML/SVG 等于给同源存储一个脚本落脚点；单文件上限 32MB；单请求 multipart 字段数上限 20 个（超限 400）。响应 `data` 为上传成功的 URL 字符串数组：`["/assets/<用户>/<type>/<文件名>"]`。
 
 ## 删除资源文件
 

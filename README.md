@@ -61,7 +61,7 @@ cd reader-rust
 cargo run
 ```
 
-后端默认监听 `0.0.0.0:8080`。前端若要单独起开发服务器：
+后端默认监听 `127.0.0.1:8080`（仅本机回环；对外提供服务时设 `SERVER_HOST=0.0.0.0`，Docker 镜像已显式设好）。前端若要单独起开发服务器：
 
 ```bash
 cd frontend
@@ -93,7 +93,7 @@ cp .env.example .env
 
 | 变量           | 默认值                              | 说明                                                |
 | -------------- | ----------------------------------- | --------------------------------------------------- |
-| `SERVER_HOST`  | `0.0.0.0`                           | 监听地址                                            |
+| `SERVER_HOST`  | `127.0.0.1`                         | 监听地址；Docker 镜像显式设 `0.0.0.0`               |
 | `SERVER_PORT`  | `8080`                              | 监听端口                                            |
 | `DATABASE_URL` | `sqlite:storage/reader.db?mode=rwc` | SQLite 连接串                                       |
 | `WEB_ROOT`     | `frontend/dist`                     | 前端静态文件目录                                    |

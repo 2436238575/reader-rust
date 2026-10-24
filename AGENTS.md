@@ -19,10 +19,10 @@ Reader-Rust 是 [阅读3.0](https://github.com/hectorqin/reader) 的 Rust 重写
 ### 后端（Rust）
 
 ```bash
-cargo run                      # 开发模式运行，默认监听 0.0.0.0:8080
+cargo run                      # 开发模式运行，默认监听 127.0.0.1:8080（Docker 镜像显式设 0.0.0.0）
 cargo build                    # 调试构建
 cargo build --release          # 发布构建
-cargo test                     # 全部测试（Rust 侧共 401 个，另有 2 个真实网络用例默认忽略）
+cargo test                     # 全部测试（Rust 侧共 467 个，另有 2 个真实网络用例默认忽略）
 cargo test <关键字>             # 按名称过滤测试
 cargo clippy --all-targets     # 静态检查
 cargo fmt                      # 格式化
@@ -196,7 +196,7 @@ docs/                     VitePress 文档站，见文末「文档地图」
 sidecar/                  AI 资料编排 Python sidecar（stdio NDJSON；依赖由 uv 自动管理，见配置表 AGENT_SIDECAR_UV）
   agent_sidecar/          agent 循环、提示词、patch 归一化合并、模型客户端
   tests/                  pytest，与前端展示层共用口径的领域规则在此逐字移植
-tests/                    Rust 集成测试（21 文件）+ Playwright e2e（4 个 spec）
+tests/                    Rust 集成测试（24 文件）+ Playwright e2e（4 个 spec）
 scripts/release.sh        发布脚本
 storage/                  运行期数据，gitignored，首次启动自动创建
 ```
@@ -388,9 +388,9 @@ XPath 有资源上限（长度 8KB / 嵌套 64 层 / 总步数 100、`//` 50）�
 
 ## 测试
 
-Rust 侧共 **401 个测试**（276 个内联单元测试 + 125 个集成用例，另有 2 个 `#[ignore]` 的真实网络用例）。`cargo test` 输出的合计是 677——`src/main.rs` 以 `mod` 重声明了全部模块，bin 目标的单元测试把同一批 276 个用例又跑了一遍，统计时别重复计算。分布为：
+Rust 侧共 **467 个测试**（322 个内联单元测试 + 145 个集成用例，另有 2 个 `#[ignore]` 的真实网络用例）。`cargo test` 输出的合计即实际用例数——`src/main.rs` 只是薄入口，不再以 `mod` 重声明模块，bin 目标没有单元测试，不存在重复计数。分布为：
 
-- `tests/` 下 21 个集成测试文件（125 个用例），其中 `book_source_compat.rs` 用例最多（17 个）；
+- `tests/` 下 24 个集成测试文件（145 个常规用例；`yckceo_live_sources.rs` 只装那 2 个默认忽略的真实网络用例），其中 `auth_flow.rs` 用例最多（18 个）；
   `auth_flow.rs`、`review_flow.rs`、`chapter_image_flow.rs`、`image_pipeline.rs` 与
   `webdav_flow.rs` 起真实监听端口，前者覆盖 401、静态回落、缓存清理与改密吊销令牌，
   中间三个各用一个假上游覆盖评论规则（7 天缓存、按类型清理）、章节配图（配图规则、
@@ -400,7 +400,7 @@ Rust 侧共 **401 个测试**（276 个内联单元测试 + 125 个集成用例�
 - `agent_sidecar_flow.rs` 用 Node 假 sidecar（`tests/helpers/fake_agent_sidecar.mjs`）
   走全流程：批量更新、章节跳过、工具回调（正文/搜索钳制）、地图落盘与降级、看门狗与取消
   （机器上需要有 Node）；
-- `src/` 内的内联单元测试模块（276 个）。
+- `src/` 内的内联单元测试模块（322 个）。
 
 sidecar 使用 pytest（95 个用例，
 见「常用命令」），含从旧前端实现 1:1 移植的领域规则用例与新增编排能力用例。

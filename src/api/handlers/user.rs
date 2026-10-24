@@ -13,7 +13,10 @@ use tokio::fs;
 use crate::error::error::{ApiResponse, AppError, NEED_LOGIN};
 use crate::util::safe_path;
 
-/// 上传资源文件的单文件上限（multipart 字段不受 DefaultBodyLimit 约束，需自行限量）。
+/// 上传资源文件的单文件上限。axum 0.7.9 的 `Multipart` 提取器经
+/// `Request::with_limited_body` 让**请求体总量**受 `DefaultBodyLimit` 约束
+/// （本路由在 big_body_routes 组，上限 100MB）；但单个字段的大小不受其单独
+/// 约束（`Field::bytes()` 会把整个字段无界读入内存），仍须逐字段逐块计数限量。
 const MAX_UPLOAD_FILE_BYTES: usize = 32 * 1024 * 1024;
 
 /// 用户 JSON 文档（userdata / userConfig）的大小上限：两者都整文档写进
@@ -290,7 +293,7 @@ pub async fn upload_file(
                 "只支持上传图片文件（jpg/jpeg/png/gif/webp/avif/bmp）".to_string(),
             ));
         }
-        // multipart 字段不受 DefaultBodyLimit 约束，必须逐块计数限量
+        // DefaultBodyLimit 只约束请求体总量，单字段大小须逐块计数自行限量
         let data = match crate::api::handlers::multipart::read_limited_multipart_field(
             field,
             MAX_UPLOAD_FILE_BYTES,
