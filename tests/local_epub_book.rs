@@ -1,13 +1,14 @@
 mod common;
 use reader_rust::service::local_epub_book::LocalEpubBookService;
 use std::io::{Cursor, Write};
-use zip::write::FileOptions;
+use zip::write::SimpleFileOptions;
 
 fn make_epub(files: &[(&str, &str)], binary_files: &[(&str, &[u8])]) -> Vec<u8> {
     let mut cursor = Cursor::new(Vec::new());
     {
         let mut zip = zip::ZipWriter::new(&mut cursor);
-        let options = FileOptions::default().compression_method(zip::CompressionMethod::Stored);
+        let options =
+            SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored);
         for (path, content) in files {
             zip.start_file(*path, options).unwrap();
             zip.write_all(content.as_bytes()).unwrap();

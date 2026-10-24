@@ -320,7 +320,7 @@ fn import_epub_blocking(
         if !file.is_file() {
             continue;
         }
-        let Some(enclosed) = file.enclosed_name().map(|p| p.to_path_buf()) else {
+        let Some(enclosed) = file.enclosed_name() else {
             return Err(AppError::BadRequest("EPUB 包含非法路径".to_string()));
         };
         if normalize_pathbuf(&enclosed).is_none() {
@@ -1240,7 +1240,7 @@ mod tests {
         let mut cursor = Cursor::new(Vec::new());
         {
             let mut writer = zip::ZipWriter::new(&mut cursor);
-            let options = zip::write::FileOptions::default()
+            let options = zip::write::SimpleFileOptions::default()
                 .compression_method(zip::CompressionMethod::Deflated);
             writer.start_file(name, options).unwrap();
             writer.write_all(payload).unwrap();
@@ -1269,13 +1269,22 @@ mod tests {
         let honest = build_zip_with_entry("OEBPS/big.xhtml", &payload);
         drop(payload);
 
-        // 对照：声明值诚实的超大条目必须被拒
+        // 对照：声明值诚实的超大条目必须被拒，且由本实现的输出预算拦下
+        // （zip 9 对声明值诚实的条目不做限制，超限只能靠这里）
         let mut archive = zip::ZipArchive::new(Cursor::new(&honest[..])).unwrap();
         let mut budget = MAX_EPUB_UNPACKED_BYTES;
-        assert!(read_epub_entry(&mut archive, "OEBPS/big.xhtml", &mut budget).is_err());
+        let err = read_epub_entry(&mut archive, "OEBPS/big.xhtml", &mut budget)
+            .expect_err("oversized entry must be rejected");
+        assert!(
+            matches!(err, AppError::BadRequest(ref msg) if msg.contains("体积过大")),
+            "unexpected error: {err:?}"
+        );
 
         // 关键场景：声明大小被篡改为 1 字节。按声明值累计会放行；
         // 按实际解压输出限流的实现必须仍然拒绝。
+        // zip 9 起，读层自身会在「实际输出超过声明大小」时立即报 InvalidData
+        // （映射为「EPUB 文件损坏」），因此拒绝可能来自 zip 的声明大小校验，
+        // 也可能来自本实现的输出预算（「体积过大」）；两者都算拒绝成功。
         let mut forged = honest.clone();
         forge_declared_size(&mut forged);
         let mut archive = zip::ZipArchive::new(Cursor::new(&forged[..])).unwrap();
@@ -1283,7 +1292,7 @@ mod tests {
         let err = read_epub_entry(&mut archive, "OEBPS/big.xhtml", &mut budget)
             .expect_err("forged bomb must be rejected");
         assert!(
-            matches!(err, AppError::BadRequest(ref msg) if msg.contains("体积过大")),
+            matches!(err, AppError::BadRequest(ref msg) if msg.contains("体积过大") || msg.contains("文件损坏")),
             "unexpected error: {err:?}"
         );
     }
