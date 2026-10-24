@@ -306,7 +306,7 @@ GET /reader3/image/<id>?accessToken=<jwt>
 - **之后长期命中本地缓存**（`Cache-Control: public, max-age=31536000, immutable`）：
   签名过期不影响已经抓下来的图。
 - **签名失效会自愈**：抓取失败时，用登记时留下的书籍上下文（`book_id`）重新求值一次书源的封面地址再试。
-- 映射与图片本体落在 `<STORAGE_DIR>/cache/image/`：`<id>.json` 是记录（上游地址 + 所属书籍的 `book_id`，供按书清理与回源自愈），
+- 映射与图片本体存放在 `<STORAGE_DIR>/cache/image/`：`<id>.json` 是记录（上游地址 + 所属书籍的 `book_id`，供按书清理与回源自愈），
   `<id>.bin` 是图片字节；目录本身即「id → 记录」的映射表。
 
 单个图片最大 32MiB；目录容量上限与封面共用 `CACHE_COVER_LIMIT_BYTES`（超限按最旧优先淘汰）。

@@ -79,7 +79,7 @@
 - 离线访问（缓存最近阅读的章节）
 - 安装到主屏幕
 - Service Worker 更新提示
-- 离线兜底页面
+- 离线后备页面
 
 相关文件：`frontend/public/sw.js`、`frontend/public/site.webmanifest`、`frontend/src/utils/pwa.ts`
 

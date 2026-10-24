@@ -39,7 +39,7 @@ npm run test:e2e
 - **新增功能请补测试。** 集成测试放 `tests/`，纯逻辑单元测试就近放在 `src` 内的内联模块里；前端测试用 vitest（`*.test.ts` 与被测模块同目录）
 - 当前规模：Rust 124 个用例（85 个 `#[test]` + 39 个 `#[tokio::test]`），前端 20 个 `*.test.ts`
 - 改动解析器时，务必在 `tests/book_source_compat.rs` 里补上对应的书源格式用例 —— 这是兼容性的主要防线
-- 注意 `tests/yckceo_live_sources.rs` 会**真的联网**抓在线书源，无网环境下失败属预期行为，不要为了「让测试全绿」而删它
+- 注意 `tests/yckceo_live_sources.rs` 会**访问真实网络**抓在线书源，无网环境下失败属预期行为，不要为了「让测试全部通过」而删它
 
 完整测试流程见 [测试流程](/guide/testing)。
 

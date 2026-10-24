@@ -16,7 +16,7 @@ uv run pytest    # 全部测试
 无 uv 时手动建 venv：`python -m venv .venv` 后
 `.venv/Scripts/python -m pip install -e .[dev]`（POSIX 为 `.venv/bin/...`）。
 
-- 依赖版本在 `pyproject.toml` 钉死（Docker 镜像以 `pip install ./sidecar` 安装，此处是唯一钉版源）。
+- 依赖版本在 `pyproject.toml` 中固定（Docker 镜像以 `pip install ./sidecar` 安装，此处是唯一的版本来源）。
 - 独立调试单个任务：`python -m agent_sidecar --job-file <任务 JSON>`（任务帧可附带
   `chapterContent` 字段供回调工具使用；调试模式不支持章节搜索）。
 - `python -m agent_sidecar` 必须在 `sidecar/` 目录下运行（模块解析依赖 cwd），
@@ -43,7 +43,7 @@ M1 阶段 **65/65 通过**（含 1 例覆盖数校验）。该防线是一次性
 此后两侧口径的一致性由上述 1:1 移植用例与代码评审保障——
 **改动 normalize/词表时必须两侧同步**（前端 `aiBookNormalize.ts` 是展示层仍在用的副本）。
 
-## 纪律
+## 约定
 
 - stdout 只写 NDJSON 帧（写后 flush）；日志一律走 stderr（Rust 侧持续排空进 tracing）。
 - stdin EOF 时进程必须自行退出（宿主崩溃不留孤儿）。

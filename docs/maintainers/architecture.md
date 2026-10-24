@@ -16,7 +16,7 @@ src/parser/       按 BookSource 规则解析；需要页面内容时经 crawler
      ▼
 src/crawler/      reqwest 抓取上游页面，URL 占位符展开、页面选择、字符集解码
 
-底座（被各层按需引用，不反向依赖上层）：
+基础模块（被各层按需引用，不反向依赖上层）：
   src/model/   数据结构        src/util/    加密 / 哈希 / 文本 / 时间
   src/error/   统一错误类型     src/storage/ 持久化（由 service 使用）
 ```
@@ -218,7 +218,7 @@ Access Token 的即时撤销靠版本号；Refresh Token 的即时撤销靠 `ref
 | 登录限速                | `service/user_service.rs`                   | 用户名与 IP 双维度：用户名失败 10 次封该用户名登录 6 小时；IP 失败 5 次封该地址登录 6 小时。悲观计数（尝试先计数、成功再清除）使并发爆发无法绕过；WebDAV Basic 认证共享同一份限速。`RATE_LIMIT_DISABLED=true` 全部豁免（开发/测试）        |
 | 登录防枚举              | `service/user_service.rs`                   | 失败文案统一「用户名或密码错误」，用户不存在时补一次 dummy Argon2 校验对齐响应时序                                                                                                                                                         |
 | WebDAV Destination 校验 | `api/handlers/webdav.rs`                    | MOVE/COPY 的 `Destination` 必须带 `/reader3/webdav/` 前缀，缺前缀直接 400（否则目标塌缩成家目录，配合 `Overwrite` 可整目录清空）                                                                                                           |
-| AI 代理                 | `api/handlers/ai_proxy.rs`                  | 客户端自带端点（`useServerConfig=false`，含 `fullUrl=true`）能把服务端当成向任意地址发 POST 的通用代理；单用户下登录者即所有者，不再收敛，出站安全由 URL 守卫（`ALLOW_PRIVATE_NETWORK`）兜底                                               |
+| AI 代理                 | `api/handlers/ai_proxy.rs`                  | 客户端自带端点（`useServerConfig=false`，含 `fullUrl=true`）能把服务端当成向任意地址发 POST 的通用代理；单用户下登录者即所有者，不再收敛，出站安全由 URL 守卫（`ALLOW_PRIVATE_NETWORK`）负责                                               |
 | 前端 HTML 消毒          | `frontend/src/utils/sanitize.ts`            | 书源正文经 DOMPurify 白名单消毒后才进 `v-html`（保留排版标签，剥脚本/事件属性/iframe）                                                                                                                                                     |
 | CORS                    | `api/router.rs`                             | 默认仅同源（不下发任何 CORS 头）；跨域需 `CORS_ALLOWED_ORIGINS` 显式白名单                                                                                                                                                                 |
 | 令牌                    | `auth/`、`service/refresh_token_service.rs` | Access Token 是 HS256 JWT（密钥来自 `JWT_SECRET` 或自动生成并持久化到 `storage/jwt_secret`），`token_version` 提供即时撤销；Refresh Token 只存 SHA-256 摘要，一次性轮换、30 秒宽限、重放吊销整条 family |
