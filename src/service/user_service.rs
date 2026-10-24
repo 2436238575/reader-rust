@@ -453,17 +453,25 @@ impl UserService {
     }
 
     /// WebDAV 的 HTTP Basic 校验。返回 `None` 表示用户名或口令不正确。
+    ///
+    /// 限速口径与 `login()` 对齐：不存在的用户名同样计数并补等时校验，
+    /// 否则这里是绕开登录锁定、还能靠响应时间枚举用户名的平行通道。
+    /// 已验证凭据的缓存命中不计数——缓存键只有真实通过校验才会写入。
     pub async fn verify_basic_webdav(
         &self,
         username: &str,
         password: &str,
         client_ip: Option<&str>,
     ) -> Result<Option<User>, AppError> {
+        let credential_key = (username.to_string(), md5_hex(password));
         let user = match self.find_user(username).await? {
             Some(u) => u,
-            None => return Ok(None),
+            None => {
+                self.login_throttle_begin(username, client_ip)?;
+                equalize_login_timing(password).await;
+                return Ok(None);
+            }
         };
-        let credential_key = (username.to_string(), md5_hex(password));
         if self.webdav_credential_cached(&credential_key) {
             return Ok(Some(user));
         }
@@ -981,6 +989,31 @@ mod tests {
             .await
             .unwrap()
             .is_none());
+
+        service.close_pool_for_test().await;
+        let _ = fs::remove_dir_all(temp_dir).await;
+    }
+
+    #[tokio::test]
+    async fn webdav_basic_auth_throttles_unknown_usernames() {
+        let (service, temp_dir) = create_user_service().await;
+
+        // 不存在的用户名同样计数：探满上限后，即使换密码也直接被限速拒绝，
+        // 不能成为绕开登录锁定的平行枚举通道
+        for _ in 0..USER_LOGIN_MAX_FAILURES {
+            assert!(service
+                .verify_basic_webdav("nobody", "whatever", None)
+                .await
+                .unwrap()
+                .is_none());
+        }
+        let outcome = service
+            .verify_basic_webdav("nobody", "whatever", None)
+            .await;
+        assert!(
+            matches!(&outcome, Err(AppError::BadRequest(msg)) if msg.contains("失败次数过多")),
+            "不存在用户名探测应触发限速，实际返回: {outcome:?}"
+        );
 
         service.close_pool_for_test().await;
         let _ = fs::remove_dir_all(temp_dir).await;
