@@ -69,6 +69,14 @@ pub async fn health() -> impl IntoResponse {
     Json(ApiResponse::ok(health_payload()))
 }
 
+/// `/reader3` 命名空间下未匹配的路径。
+///
+/// 挂在 API 路由组末尾，避免未知接口落到静态文件服务上返回一个
+/// 没有响应体的 404——接口调用方需要的是能解析的 JSON。
+pub async fn api_not_found() -> AppError {
+    AppError::NotFound("接口不存在".to_string())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -83,12 +91,4 @@ mod tests {
         assert_eq!(body["data"]["status"], "ok");
         assert_eq!(body["data"]["version"], env!("CARGO_PKG_VERSION"));
     }
-}
-
-/// `/reader3` 命名空间下未匹配的路径。
-///
-/// 挂在 API 路由组末尾，避免未知接口落到静态文件服务上返回一个
-/// 没有响应体的 404——接口调用方需要的是能解析的 JSON。
-pub async fn api_not_found() -> AppError {
-    AppError::NotFound("接口不存在".to_string())
 }

@@ -269,7 +269,7 @@ pub async fn webdav_handler(
     let client_ip = crate::util::client_ip::resolve_client_ip(addr.ip(), &headers, &trusted);
     let user_ns = match resolve_webdav_user(&state, &headers, Some(&client_ip)).await {
         Ok(ns) => ns,
-        Err(res) => return res,
+        Err(res) => return *res,
     };
     let home = match webdav_home(&state, &user_ns).await {
         Ok(h) => h,
@@ -304,26 +304,28 @@ fn memls() -> Box<MemLs> {
     Box::new(LS.get_or_init(|| *MemLs::new()).clone())
 }
 
+/// 认证失败统一返回同一个匿名 401 质询（无错误详情可区分），Err 装箱
+/// 避免 `Response`（≥128 字节）触发 `result_large_err`。
 async fn resolve_webdav_user(
     state: &AppState,
     headers: &HeaderMap,
     client_ip: Option<&str>,
-) -> Result<String, Response> {
+) -> Result<String, Box<Response>> {
     let auth = headers
         .get("Authorization")
         .and_then(|v| v.to_str().ok())
         .unwrap_or("");
     if !auth.to_ascii_lowercase().starts_with("basic ") {
-        return Err(unauthorized());
+        return Err(Box::new(unauthorized()));
     }
     let b64 = auth[6..].trim();
     let decoded = base64::engine::general_purpose::STANDARD
         .decode(b64)
-        .map_err(|_| unauthorized())?;
+        .map_err(|_| Box::new(unauthorized()))?;
     let decoded = String::from_utf8_lossy(&decoded);
     let parts: Vec<&str> = decoded.splitn(2, ':').collect();
     if parts.len() != 2 {
-        return Err(unauthorized());
+        return Err(Box::new(unauthorized()));
     }
     let username = parts[0];
     let password = parts[1];
@@ -334,7 +336,7 @@ async fn resolve_webdav_user(
     {
         // 存储路径按 user_<uid> 隔离：username 只用于认证
         Ok(Some(user)) => Ok(crate::auth::middleware::user_ns_of(user.uid)),
-        _ => Err(unauthorized()),
+        _ => Err(Box::new(unauthorized())),
     }
 }
 

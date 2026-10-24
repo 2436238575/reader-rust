@@ -127,6 +127,7 @@ fn is_allowed_env_key(name: &str) -> bool {
 }
 
 /// 从父进程环境挑出 sidecar 允许继承的变量（纯函数，便于单测）。
+#[cfg(test)]
 fn sidecar_env_allowlist_from<I, K, V>(vars: I) -> Vec<(String, String)>
 where
     I: IntoIterator<Item = (K, V)>,
