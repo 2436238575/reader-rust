@@ -25,6 +25,35 @@ import {
 type ReaderStore = ReturnType<typeof useReaderStore>
 export { DUAL_PAGE_MIN_WIDTH }
 
+/**
+ * 横翻分页的顶层块拆分（导出供单测）。
+ *
+ * 必须遍历 childNodes 而不是 children：正文 HTML 顶层可能直接挂着文本节点
+ * （如「开头文字<p>段落</p>」），只取元素子节点会把裸文本整个丢掉。
+ * 非空白文本节点包一个 <p> 保留原文（走 buildParagraphHtml 转义，与正常段落
+ * 同构，后续可参与按字符拆页）；纯空白节点跳过；元素节点保持原样——p 仍走
+ * normalizeParagraphHtml 补缩进样式，figure/img 等原子块原样保留、不包不切。
+ */
+export function splitTopLevelBlocks(html: string): string[] {
+  const root = document.createElement('div')
+  root.innerHTML = html
+  const blocks: string[] = []
+  root.childNodes.forEach((node) => {
+    if (node.nodeType === Node.TEXT_NODE) {
+      const text = node.textContent || ''
+      if (!text.trim()) return
+      blocks.push(buildParagraphHtml('', text))
+      return
+    }
+    if (node.nodeType !== Node.ELEMENT_NODE) return
+    const element = node as Element
+    blocks.push(
+      element.tagName === 'P' ? normalizeParagraphHtml(element.outerHTML) : element.outerHTML
+    )
+  })
+  return blocks
+}
+
 export function useHorizontalPaging(
   store: ReaderStore,
   config: ComputedRef<{
@@ -75,13 +104,9 @@ export function useHorizontalPaging(
   )
 
   function buildHorizontalBlocks() {
-    const root = document.createElement('div')
-    root.innerHTML = formattedContent.value
-    // 收集全部顶层块（p + figure 等），不再只取 p：
-    // 章节配图/正文 HTML 自带的非段落元素在横翻模式也要保留
-    return Array.from(root.children).map((node) =>
-      node.tagName === 'P' ? normalizeParagraphHtml(node.outerHTML) : node.outerHTML
-    )
+    // 收集全部顶层块（p + figure 等 + 顶层裸文本），不再只取 p：
+    // 章节配图/正文 HTML 自带的非段落元素与裸文本在横翻模式也要保留
+    return splitTopLevelBlocks(formattedContent.value)
   }
 
   function updateHorizontalMetrics() {

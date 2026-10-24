@@ -15,6 +15,7 @@ import {
   removeIndentClass,
   stripParaCommentBubble,
 } from './horizontalPaging'
+import { splitTopLevelBlocks } from '../composables/useHorizontalPaging'
 
 describe('horizontalPaging 纯函数', () => {
   it('parseInlineStyle/buildInlineStyle roundtrip', () => {
@@ -125,5 +126,48 @@ describe('diff 标记跨页', () => {
     const html = buildParagraphHtml('', '前', 'diff-modified', parsed!.dataAttrs)
     expect(html).toContain('data-diff-op="3"')
     expect(html).toContain('data-diff-del-start="1"')
+  })
+})
+
+describe('splitTopLevelBlocks 顶层块拆分', () => {
+  it('开头裸文本包成 <p> 保留，不丢字、顺序不变', () => {
+    const blocks = splitTopLevelBlocks('开头文字<p>段落</p>')
+    expect(blocks).toHaveLength(2)
+    expect(blocks[0]).toBe('<p>开头文字</p>')
+    expect(blocks[1]).toContain('<p')
+    expect(blocks[1]).toContain('段落')
+  })
+
+  it('章末裸文本同样保留；文本里的实体按原文转义回写', () => {
+    const blocks = splitTopLevelBlocks('<p>段落</p>结尾 &lt; 文字')
+    expect(blocks).toHaveLength(2)
+    expect(blocks[0]).toContain('段落')
+    expect(blocks[1]).toBe('<p>结尾 &lt; 文字</p>')
+  })
+
+  it('元素间的纯空白文本节点跳过，不产生空段落', () => {
+    const blocks = splitTopLevelBlocks('<p>甲</p>\n   \n<p>乙</p>')
+    expect(blocks).toHaveLength(2)
+    expect(blocks[0]).toContain('甲')
+    expect(blocks[1]).toContain('乙')
+  })
+
+  it('正常段落顺序与样式规整不变', () => {
+    const blocks = splitTopLevelBlocks('<p class="reader-indent">一</p><p>二</p>')
+    expect(blocks).toHaveLength(2)
+    expect(blocks[0]).toContain('text-indent: 2em')
+    expect(blocks[0]).toContain('一')
+    expect(blocks[1]).toContain('二')
+  })
+
+  it('原子块（figure/img）原样保留：不包 <p>、不与裸文本合并', () => {
+    const blocks = splitTopLevelBlocks(
+      '图前说明<figure class="chapter-figure"><img src="x" alt=""></figure>'
+    )
+    expect(blocks).toHaveLength(2)
+    expect(blocks[0]).toBe('<p>图前说明</p>')
+    expect(blocks[1]).toContain('<figure')
+    expect(blocks[1]).toContain('<img')
+    expect(blocks[1]).toContain('chapter-figure')
   })
 })
