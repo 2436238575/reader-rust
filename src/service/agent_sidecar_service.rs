@@ -1422,10 +1422,15 @@ async fn download_map_image(url: &str) -> Result<Vec<u8>, AppError> {
     crate::crawler::url_guard::ensure_outbound_url_allowed(&parsed)
         .await
         .map_err(AppError::BadRequest)?;
-    let client = reqwest::Client::builder()
-        .timeout(MAP_IMAGE_DOWNLOAD_TIMEOUT)
-        .build()
-        .map_err(|e| AppError::Internal(e.into()))?;
+    // 与书源抓取同一套受守卫客户端：预检只管到第一跳，302 跳内网 /
+    // DNS rebinding（预检后重新解析出不同结果）要靠逐跳重定向策略与
+    // 解析期守卫兜底，自建裸 Client 会把这两扇窗都敞开
+    let client = crate::crawler::http_client::build_guarded_client(
+        MAP_IMAGE_DOWNLOAD_TIMEOUT.as_secs().max(1),
+        None,
+        crate::crawler::http_client::DEFAULT_USER_AGENT,
+    )
+    .map_err(AppError::Internal)?;
     let response = client.get(url).send().await?;
     if let Some(length) = response.content_length() {
         if length > MAX_MAP_IMAGE_BYTES {
