@@ -4,6 +4,10 @@ on:
   push:
     branches: [master, main, dev]
   pull_request:
+  workflow_dispatch:
+  schedule:
+    # 每周一 03:00 UTC 定期跑（配合下方 e2e job 的定时全量回归）
+    - cron: '0 3 * * 1'
 
 concurrency:
   group: ci-${{ github.ref }}
@@ -38,6 +42,32 @@ jobs:
       - name: ts-rs bindings are committed
         run: git diff --exit-code frontend/src/types/generated/
 
+      # 依赖安全审计。存量遗留：Cargo.lock 里还有升级前残留的 rsa 0.9.10
+      # （RUSTSEC-2023-0071，依赖树已不可达，lock 下次重解即消失）——在该
+      # 条目清掉之前先记录不阻断，清掉后移除 continue-on-error 恢复硬闸门
+      - name: cargo audit
+        uses: rustsec/audit-check@v2
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+        continue-on-error: true
+
+  # 开发主平台是 Windows：lib 单元测试在 windows 上跑，防止 unix-only 假设
+  # 混进核心逻辑；集成测试仍由 ubuntu job 覆盖
+  rust-windows:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: test (lib only)
+        run: cargo test --lib
+
   frontend:
     runs-on: ubuntu-latest
     steps:
@@ -63,3 +93,42 @@ jobs:
       - name: Unit test
         working-directory: frontend
         run: npm test
+
+      # 生产依赖漏洞闸门：只看运行时依赖（--omit=dev），high 及以上才失败
+      - name: npm audit (prod deps)
+        working-directory: frontend
+        run: npm audit --omit=dev --audit-level=high
+
+  # e2e 全量回归成本高（构建后端 + 装 Chrome + 起临时实例），只在手动触发
+  # 与每周定时跑；globalSetup 会自动用 target/debug 的构建产物起临时后端
+  e2e:
+    if: github.event_name == 'workflow_dispatch' || github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Build backend
+        run: cargo build
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Install
+        run: npm install
+
+      - name: Install Chrome
+        run: npx playwright install chrome
+
+      - name: e2e
+        run: npm run test:e2e
