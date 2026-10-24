@@ -403,8 +403,14 @@ pub fn ensure_outbound_url_str_allowed_blocking(raw: &str) -> Result<Url, String
     Ok(url)
 }
 
-/// 校验重定向目标。不能只看字面 IP/主机名：302 目标的域名同样可能解析到内网
-/// （攻击者把自家域名 A 记录指向 127.0.0.1），域名主机必须做真实 DNS 解析。
+/// 校验重定向目标（同步、**不做 DNS**）。
+///
+/// 该函数跑在 reqwest `Policy::custom` 闭包里——即驱动请求的 tokio worker
+/// 线程上；任何阻塞调用（`ToSocketAddrs` 的同步 DNS）都会卡住整个 worker
+/// 数秒（每跳一次）。因此这里只保留字面 IP 与 `is_obviously_internal_url`
+/// 这类零 IO 判定；域名目标的内网 IP 检查交给 [`GuardedResolver`]——
+/// 连接期解析（含重定向后的连接）由它覆盖，且不占 worker 线程。
+/// 字面 IP 不经过 DNS 解析，所以这里的显式 IP 判定仍然必要。
 fn check_redirect_target(url: &Url) -> Result<(), String> {
     if !guard_active() {
         return Ok(());
@@ -414,14 +420,6 @@ fn check_redirect_target(url: &Url) -> Result<(), String> {
     }
     if is_obviously_internal_url(url) {
         return Err("重定向目标指向内网地址".to_string());
-    }
-    if let Some(Host::Domain(domain)) = url.host() {
-        use std::net::ToSocketAddrs;
-        let port = url.port_or_known_default().unwrap_or(80);
-        let addrs = (domain, port)
-            .to_socket_addrs()
-            .map_err(|e| format!("重定向目标 {domain} 解析失败: {e}"))?;
-        check_resolved_ips(addrs.map(|addr| addr.ip()))?;
     }
     Ok(())
 }
@@ -571,9 +569,26 @@ mod tests {
         assert!(check_redirect_target(&Url::parse("http://localhost/").unwrap()).is_err());
         // 白名单命中的目标放行（字面 IP，无需 DNS）
         assert!(check_redirect_target(&Url::parse("http://192.168.100.99:9999/").unwrap()).is_ok());
-        // 守护状态下 localhost 既命中主机名黑名单，也过不了 DNS 解析检查
         set_allow_private_network(true);
         assert!(check_redirect_target(&Url::parse("http://127.0.0.1/").unwrap()).is_ok());
+        restore_guard_defaults();
+    }
+
+    #[test]
+    fn redirect_target_check_does_no_dns_for_domains() {
+        let _lock = TEST_SERIALIZER.lock().unwrap();
+        set_allow_private_network(false);
+        set_private_network_whitelist(Vec::new());
+        // `.invalid` TLD（RFC 2606）保证解析必然失败：策略若仍对域名做 DNS，
+        // 这里会因「解析失败」而 Err——现在必须零 IO 放行 Ok。
+        // 域名解析到内网 IP 的拦截由 GuardedResolver 在连接期负责。
+        let url = Url::parse("http://no-such-host-r7k2.invalid/").unwrap();
+        assert!(
+            check_redirect_target(&url).is_ok(),
+            "策略不应再对域名目标做 DNS 解析"
+        );
+        // 内网语感域名仍被零 IO 的主机名黑名单拦下
+        assert!(check_redirect_target(&Url::parse("http://nas.lan/").unwrap()).is_err());
         restore_guard_defaults();
     }
 
