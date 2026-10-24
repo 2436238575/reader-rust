@@ -78,12 +78,21 @@ def _handle_run(frame: dict, channel: StdioChannel) -> None:
 
 
 def _run_job_file(path: str) -> int:
-    with open(path, "r", encoding="utf-8") as handle:
-        frame = json.load(handle)
-    if isinstance(frame.get("job"), dict) is False:
-        frame = {"type": "run", "job": frame}
+    try:
+        with open(path, "r", encoding="utf-8") as handle:
+            frame = json.load(handle)
+    except (OSError, ValueError) as error:
+        print(f"读取 job 文件失败：{error}", file=sys.stderr)
+        return 1
     channel = StdioChannel()
     channel.send(hello())
+    # 非对象 JSON（数组/字符串/数字）此前会在 frame.get 上裸栈崩溃，
+    # 必须走 result_error 结构化错误
+    if not isinstance(frame, dict):
+        channel.send(result_error("", f"job 文件必须是 JSON 对象，收到 {type(frame).__name__}"))
+        return 0
+    if isinstance(frame.get("job"), dict) is False:
+        frame = {"type": "run", "job": frame}
     _handle_run(frame, channel)
     return 0
 
