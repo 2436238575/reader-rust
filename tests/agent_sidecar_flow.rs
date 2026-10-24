@@ -345,6 +345,46 @@ async fn agent_task_skips_non_story_chapters() {
 }
 
 #[tokio::test]
+async fn agent_task_ignores_stale_result_with_mismatched_job_id() {
+    if !node_available() {
+        eprintln!("skip: Node 不可用，无法运行假 sidecar");
+        return;
+    }
+    let server = TestServer::start(30).await;
+    let token = server.login().await;
+
+    // 「串帧」章：假 sidecar 在真实 result 之前先发一个 jobId 不匹配的
+    // 迟到 result（无 memory 字段，等价于上一章 redraw 超时后迟到的帧）。
+    // 修复前它会被当成当前章节的 result 收下，炸出「result 帧缺少 memory」；
+    // 修复后按 jobId 跳过，本章仍以真实 result 成功。
+    let content = "\
+第一章 开始
+正文一。
+第二章 串帧
+正文二。
+第三章 结尾
+正文三。";
+    let (book_id, _) = server.upload_txt(&token, "串帧测试.txt", content).await;
+
+    let response = server
+        .start_task(&token, &book_id, "update_to_current", Some(2))
+        .await;
+    assert_eq!(response.status().as_u16(), 200);
+
+    let snapshot = server.wait_task_done(&token).await;
+    assert_eq!(
+        snapshot["lastError"],
+        Value::Null,
+        "迟到帧应被跳过：{snapshot}"
+    );
+    let memory = server.get_memory(&token, &book_id).await;
+    assert_eq!(memory["processedChapterIndex"], json!(2));
+    let summary = memory["summary"].as_str().unwrap_or_default();
+    assert!(summary.contains("第1章正文"), "串帧章应正常处理：{summary}");
+    assert!(summary.contains("第2章正文"), "后续章不受影响：{summary}");
+}
+
+#[tokio::test]
 async fn agent_task_watchdog_kills_stuck_chapter() {
     if !node_available() {
         eprintln!("skip: Node 不可用，无法运行假 sidecar");

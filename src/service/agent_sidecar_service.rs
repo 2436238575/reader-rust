@@ -590,7 +590,7 @@ impl AgentSidecarService {
                     memory: &memory,
                 };
                 let result = self
-                    .run_frame_until_result(&mut stdin, &mut rx, run_frame, &ctx, &stderr_tail)
+                    .run_frame_until_result(&mut stdin, &mut rx, run_frame, job_id, &ctx, &stderr_tail)
                     .await?;
 
                 if result.get("skipped").and_then(Value::as_bool) == Some(true) {
@@ -637,7 +637,10 @@ impl AgentSidecarService {
                         snapshot.status_text = "生成世界地图...".to_string();
                     })
                     .await;
-                    match self.redraw_map_via_sidecar(&mut stdin, &mut rx, &memory, &model_json, &stderr_tail).await {
+                    // redraw 帧的 jobId 必须与任务/章节绑定：超时降级后迟到的
+                    // result 靠它被下一章的帧泵识别并跳过（串帧防线）
+                    let redraw_job_id = format!("redraw-{job_id}-{index}");
+                    match self.redraw_map_via_sidecar(&mut stdin, &mut rx, &memory, &model_json, &stderr_tail, &redraw_job_id).await {
                         Ok(map_image) => {
                             match self.resolve_map_image(user_ns, &map_image, map_prompt.as_deref().unwrap_or_default()).await {
                                 Ok(url) => {
@@ -733,7 +736,7 @@ impl AgentSidecarService {
                 memory: &memory,
             };
             let result = self
-                .run_frame_until_result(&mut stdin, &mut rx, frame, &ctx, &stderr_tail)
+                .run_frame_until_result(&mut stdin, &mut rx, frame, job_id, &ctx, &stderr_tail)
                 .await?;
             // 与前端旧版 redrawMap 的语义一致：生成/落盘失败不作为任务错误，
             // 而是降级为关系图兜底并保存
@@ -798,6 +801,7 @@ impl AgentSidecarService {
         stdin: &mut ChildStdin,
         rx: &mut mpsc::Receiver<String>,
         run_frame: Value,
+        expected_job_id: &str,
         ctx: &TaskContext<'_>,
         stderr_tail: &StderrTail,
     ) -> Result<Value, AppError> {
@@ -854,7 +858,21 @@ impl AgentSidecarService {
                             .map_err(|e| AppError::Internal(e.into()))?;
                         stdin.flush().await.map_err(|e| AppError::Internal(e.into()))?;
                     }
-                    Some("result") => return Ok(frame),
+                    Some("result") => {
+                        // jobId 校验：同一进程同一信道上可能混着迟到帧（典型是
+                        // 上一章 redraw 超时降级后迟到的 result）。不匹配就跳过
+                        // 继续等，绝不能把别的 job 的结果当成当前章节的——
+                        // 地图 result 没有 memory 字段，误收会炸「result 帧缺少 memory」
+                        let frame_job_id = frame.get("jobId").and_then(Value::as_str).unwrap_or("");
+                        if frame_job_id != expected_job_id {
+                            tracing::warn!(
+                                target: SIDECAR_LOG_TARGET,
+                                "忽略 jobId 不匹配的 result 帧：期望 {expected_job_id}，收到 {frame_job_id:?}"
+                            );
+                            continue;
+                        }
+                        return Ok(frame);
+                    }
                     other => {
                         tracing::warn!(target: SIDECAR_LOG_TARGET, "未知帧类型：{:?}", other);
                     }
@@ -1085,11 +1103,12 @@ impl AgentSidecarService {
         memory: &AiBookMemory,
         model_json: &Value,
         stderr_tail: &StderrTail,
+        frame_job_id: &str,
     ) -> Result<MapImage, AppError> {
         let frame = json!({
             "type": "run",
             "job": {
-                "jobId": format!("redraw-{}", now_ts()),
+                "jobId": frame_job_id,
                 "kind": "redraw_map",
                 "memory": serde_json::to_value(memory).unwrap_or_default(),
                 "model": model_json,
@@ -1102,7 +1121,7 @@ impl AgentSidecarService {
             memory,
         };
         let result = self
-            .run_frame_until_result(stdin, rx, frame, &ctx, stderr_tail)
+            .run_frame_until_result(stdin, rx, frame, frame_job_id, &ctx, stderr_tail)
             .await?;
         decode_map_image(&result)
     }

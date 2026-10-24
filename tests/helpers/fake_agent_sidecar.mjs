@@ -75,6 +75,13 @@ async function handleRun(job) {
       process.exit(1)
     }
 
+    if (title.includes('串帧')) {
+      // 模拟迟到帧：先发一个 jobId 不匹配的 result（典型是上一章 redraw 超时
+      // 降级后迟到的 result，没有 memory 字段），再走正常流程——Rust 侧应
+      // 按 jobId 跳过迟到帧，本章仍以真实 result 成功
+      send({ type: 'result', jobId: `stale-${job.jobId}`, ok: true, mapPrompt: '迟到的地图帧' })
+    }
+
     if (title.includes('搜索')) {
       const content = await callTool('search_read_content', {
         keyword: '暗号',
