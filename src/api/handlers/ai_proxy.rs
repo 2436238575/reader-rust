@@ -178,15 +178,33 @@ pub async fn ai_proxy_image(Json(req): Json<AiProxyImageRequest>) -> Result<Resp
         return Ok(build_upstream_error_response(status, &body));
     }
     // 上游 Content-Type 原样透传是自 XSS 面（客户端可控 url 让上游回
-    // text/html）：图片代理只放行 image/*，其余类型一律拒绝
-    let is_image = content_type
+    // text/html）：图片代理只放行位图格式；image/svg+xml 等可携带脚本
+    // 的类型与其他非图片类型一律拒绝
+    let allowed = content_type
         .as_ref()
         .and_then(|v| v.to_str().ok())
-        .is_some_and(|ct| ct.to_ascii_lowercase().starts_with("image/"));
-    if !is_image {
-        return Err(AppError::BadRequest("上游返回的不是图片".to_string()));
+        .is_some_and(is_allowed_proxy_image_content_type);
+    if !allowed {
+        return Err(AppError::BadRequest(
+            "上游返回的不是受支持的图片格式（仅 jpg/png/gif/webp/avif/bmp）".to_string(),
+        ));
     }
     Ok(build_response(status, content_type, body))
+}
+
+/// 图片代理放行的上游 Content-Type：只认位图。SVG 在同源直出时可携带
+/// 脚本（自 XSS），与 HTML 一样不可透传。
+fn is_allowed_proxy_image_content_type(content_type: &str) -> bool {
+    let mime = content_type
+        .split(';')
+        .next()
+        .unwrap_or_default()
+        .trim()
+        .to_ascii_lowercase();
+    matches!(
+        mime.as_str(),
+        "image/jpeg" | "image/png" | "image/gif" | "image/webp" | "image/avif" | "image/bmp"
+    )
 }
 
 async fn response_from_upstream(upstream: reqwest::Response) -> Result<Response, AppError> {
@@ -281,4 +299,36 @@ fn map_ai_proxy_http_error(error: reqwest::Error) -> AppError {
         return AppError::BadRequest("模型服务请求超时，请检查模型地址或稍后重试".to_string());
     }
     AppError::Http(error)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_allowed_proxy_image_content_type;
+
+    #[test]
+    fn proxy_image_content_type_allows_bitmaps_only() {
+        for ct in [
+            "image/jpeg",
+            "image/png",
+            "image/gif",
+            "image/webp",
+            "image/avif",
+            "image/bmp",
+            "IMAGE/PNG",
+            "image/png; charset=binary",
+        ] {
+            assert!(is_allowed_proxy_image_content_type(ct), "{ct} 应放行");
+        }
+        // SVG 可携带脚本，HTML/文本是自 XSS 面，通配值不可信
+        for ct in [
+            "image/svg+xml",
+            "text/html",
+            "text/plain",
+            "application/octet-stream",
+            "image/",
+            "",
+        ] {
+            assert!(!is_allowed_proxy_image_content_type(ct), "{ct} 应拒绝");
+        }
+    }
 }

@@ -1129,6 +1129,20 @@ fn content_type_for_path(path: &str) -> String {
     .to_string()
 }
 
+/// EPUB SVG 资产的沙箱 CSP：SVG 经 /reader3/localEpubAsset 以
+/// image/svg+xml **同源**直出，直接打开时内嵌脚本会在主站源下执行。
+/// 关掉全部资源加载与脚本，只保留 `<img>` 渲染与内联样式；不能用
+/// Content-Disposition: attachment 替代——那会破坏 EPUB 插画的展示。
+pub const SVG_ASSET_CSP: &str = "default-src 'none'; style-src 'unsafe-inline'";
+
+/// 该 Content-Type 的资产是否需要补 [`SVG_ASSET_CSP`]。
+pub fn needs_sandbox_csp(content_type: &str) -> bool {
+    content_type
+        .trim()
+        .to_ascii_lowercase()
+        .starts_with("image/svg+xml")
+}
+
 fn build_asset_url(book_url: &str, path: &str) -> String {
     format!(
         "/reader3/localEpubAsset?bookUrl={}&path={}",
@@ -1235,6 +1249,21 @@ fn plain_text_len(html: &str) -> usize {
 mod tests {
     use super::*;
     use std::io::Write;
+
+    #[test]
+    fn svg_assets_are_the_only_ones_needing_sandbox_csp() {
+        assert!(needs_sandbox_csp("image/svg+xml"));
+        assert!(needs_sandbox_csp("image/svg+xml; charset=utf-8"));
+        assert!(needs_sandbox_csp("IMAGE/SVG+XML"));
+        assert!(!needs_sandbox_csp("image/png"));
+        assert!(!needs_sandbox_csp("application/xhtml+xml"));
+        assert!(!needs_sandbox_csp(""));
+        // CSP 语义：脚本与资源加载全部关死，仅保留内联样式
+        assert_eq!(
+            SVG_ASSET_CSP,
+            "default-src 'none'; style-src 'unsafe-inline'"
+        );
+    }
 
     fn build_zip_with_entry(name: &str, payload: &[u8]) -> Vec<u8> {
         let mut cursor = Cursor::new(Vec::new());

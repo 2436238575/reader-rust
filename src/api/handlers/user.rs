@@ -16,6 +16,19 @@ use crate::util::safe_path;
 /// 上传资源文件的单文件上限（multipart 字段不受 DefaultBodyLimit 约束，需自行限量）。
 const MAX_UPLOAD_FILE_BYTES: usize = 32 * 1024 * 1024;
 
+/// 上传文件扩展名白名单：/assets 与主站同源直出上传内容，放行 HTML/SVG
+/// 等于给同源存储一个脚本落脚点，只收位图格式（大小写不敏感）。
+fn is_allowed_upload_extension(name: &str) -> bool {
+    let extension = Path::new(name)
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .unwrap_or_default();
+    matches!(
+        extension.to_ascii_lowercase().as_str(),
+        "jpg" | "jpeg" | "png" | "gif" | "webp" | "avif" | "bmp"
+    )
+}
+
 #[derive(Debug, Deserialize)]
 pub struct LoginRequest {
     pub username: Option<String>,
@@ -247,6 +260,12 @@ pub async fn upload_file(
         let Some(name) = safe_path::sanitize_file_name(&raw_name) else {
             return Err(AppError::BadRequest("文件名不合法".to_string()));
         };
+        // 类型白名单在读取请求体之前判定：非位图文件不必再缓冲内容
+        if !is_allowed_upload_extension(&name) {
+            return Err(AppError::BadRequest(
+                "只支持上传图片文件（jpg/jpeg/png/gif/webp/avif/bmp）".to_string(),
+            ));
+        }
         // multipart 字段不受 DefaultBodyLimit 约束，必须逐块计数限量
         let data = match crate::api::handlers::multipart::read_limited_multipart_field(
             field,
@@ -307,4 +326,30 @@ pub async fn delete_file(
         }
     }
     Ok(Json(ApiResponse::ok(Value::String("".to_string()))))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_allowed_upload_extension;
+
+    #[test]
+    fn upload_extension_whitelist_accepts_bitmaps_only() {
+        for name in [
+            "a.jpg", "b.JPEG", "c.png", "d.GIF", "e.webp", "f.avif", "g.bmp",
+        ] {
+            assert!(is_allowed_upload_extension(name), "{name} 应放行");
+        }
+        // 同源直出会变成脚本落脚点的类型一律拒绝；无扩展名也不放行
+        for name in [
+            "x.svg",
+            "y.html",
+            "z.txt",
+            "a.js",
+            "b.png.exe",
+            "noext",
+            "p.jpegx",
+        ] {
+            assert!(!is_allowed_upload_extension(name), "{name} 应拒绝");
+        }
+    }
 }

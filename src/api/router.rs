@@ -315,7 +315,7 @@ pub fn build_router(state: AppState) -> Router {
         .route("/reader3/image/:id", get(handlers::get_image))
         .route(
             "/reader3/localEpubAsset",
-            get(handlers::get_local_epub_asset),
+            get(handlers::get_local_epub_asset).layer(middleware::from_fn(sandbox_epub_svg_assets)),
         )
         .route("/reader3/getBookmarks", get(handlers::get_bookmarks))
         .route("/reader3/saveBookmark", post(handlers::save_bookmark))
@@ -431,8 +431,21 @@ pub fn build_router(state: AppState) -> Router {
     let assets_web = Router::new()
         .nest_service(
             "/assets",
-            ServeDir::new(web_assets_root).not_found_service(ServeDir::new(assets_root)),
+            // 用 fallback 而不是 not_found_service：后者会把回落响应的状态码
+            // 强制改成 404（tower-http 0.5 的 SetStatus 包装），上传文件此前
+            // 一直带着 404 状态直出，缓存与 fetch 都会当成不存在
+            ServeDir::new(web_assets_root).fallback(ServeDir::new(assets_root)),
         )
+        // /assets 同源直出上传文件：nosniff + sandbox CSP。对图片/字体等
+        // 子资源加载无影响；直接打开 HTML/SVG 时脚本不执行、表单不提交
+        .layer(SetResponseHeaderLayer::if_not_present(
+            axum::http::header::X_CONTENT_TYPE_OPTIONS,
+            HeaderValue::from_static("nosniff"),
+        ))
+        .layer(SetResponseHeaderLayer::if_not_present(
+            axum::http::header::CONTENT_SECURITY_POLICY,
+            HeaderValue::from_static("sandbox"),
+        ))
         .layer(immutable_cache.clone());
 
     // 自托管字体（MiSans 分片）：文件名带内容 hash，与 assets 同档缓存
@@ -443,11 +456,18 @@ pub fn build_router(state: AppState) -> Router {
         )
         .layer(immutable_cache);
 
-    let static_web = Router::new()
+    // 首页：CSP 只加在 HTML 响应上（脚本/样式/连接全部自托管收口到
+    // 'self'，样式保留 unsafe-inline 供 Vue 运行时注入），不扩散到
+    // /assets 的 JS/CSS——那里的 sandbox CSP 语义不同
+    let index_web = Router::new()
         .route_service(
             "/",
             ServeFile::new(PathBuf::from(&web_root).join("index.html")),
         )
+        .layer(middleware::from_fn(apply_html_csp));
+
+    let static_web = Router::new()
+        .merge(index_web)
         .merge(assets_web)
         .merge(fonts_web)
         .fallback_service(ServeDir::new(web_root).append_index_html_on_directories(false))
@@ -481,6 +501,21 @@ pub fn build_router(state: AppState) -> Router {
         .layer(PropagateRequestIdLayer::x_request_id())
         .layer(SetRequestIdLayer::x_request_id(MakeRequestUuid))
         .layer(build_cors_layer(&state.config.cors_allowed_origins))
+        // 全局安全响应头：挂在最外层对所有响应统一补齐，if_not_present
+        // 不覆盖各路由已特化的值。X-Frame-Options 用 SAMEORIGIN 而不是
+        // DENY：SourcesView 用同源 iframe 打开 bookSourceProxy，DENY 会把它打坏
+        .layer(SetResponseHeaderLayer::if_not_present(
+            axum::http::header::X_CONTENT_TYPE_OPTIONS,
+            HeaderValue::from_static("nosniff"),
+        ))
+        .layer(SetResponseHeaderLayer::if_not_present(
+            axum::http::header::REFERRER_POLICY,
+            HeaderValue::from_static("same-origin"),
+        ))
+        .layer(SetResponseHeaderLayer::if_not_present(
+            axum::http::HeaderName::from_static("x-frame-options"),
+            HeaderValue::from_static("SAMEORIGIN"),
+        ))
 }
 
 /// 给 SSE 响应加 `X-Accel-Buffering: no`（见上方的调用处注释）。
@@ -498,6 +533,57 @@ async fn disallow_proxy_buffering(
         response.headers_mut().insert(
             axum::http::header::HeaderName::from_static("x-accel-buffering"),
             axum::http::header::HeaderValue::from_static("no"),
+        );
+    }
+    response
+}
+
+/// 首页 HTML 的 CSP：主站资源全部自托管（脚本/字体走 'self'，图片额外
+/// 允许 data:/blob: 内联，媒体与 worker 允许 blob:），不放宽到任意外源。
+/// 样式保留 'unsafe-inline'：Vue 运行时会注入内联样式。
+const HTML_CSP: &str = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; \
+     img-src 'self' data: blob:; font-src 'self'; connect-src 'self'; media-src 'self' blob:; \
+     worker-src 'self' blob:; object-src 'none'; base-uri 'self'; frame-ancestors 'self'";
+
+/// 只给 HTML 响应加 CSP（`/` 的 index.html）。内容类型不是 HTML 的响应
+/// （如 ServeFile 的 404）不动，CSP 也不加到 /assets 的 JS/CSS 上。
+async fn apply_html_csp(
+    request: axum::extract::Request,
+    next: middleware::Next,
+) -> axum::response::Response {
+    let mut response = next.run(request).await;
+    let is_html = response
+        .headers()
+        .get(axum::http::header::CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+        .is_some_and(|value| value.to_ascii_lowercase().starts_with("text/html"));
+    if is_html {
+        response.headers_mut().insert(
+            axum::http::header::CONTENT_SECURITY_POLICY,
+            axum::http::HeaderValue::from_static(HTML_CSP),
+        );
+    }
+    response
+}
+
+/// 给 EPUB 的 SVG 资产补沙箱 CSP（策略与判定由 service::local_epub_book
+/// 提供）：SVG 以 image/svg+xml 同源直出，直接打开时内嵌脚本会在主站
+/// 源下执行。CSP 关掉所有资源加载与脚本，只保留 `<img>` 渲染与内联样式；
+/// 不改成 Content-Disposition: attachment——那会破坏 EPUB 插画。
+async fn sandbox_epub_svg_assets(
+    request: axum::extract::Request,
+    next: middleware::Next,
+) -> axum::response::Response {
+    let mut response = next.run(request).await;
+    let is_svg = response
+        .headers()
+        .get(axum::http::header::CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+        .is_some_and(crate::service::local_epub_book::needs_sandbox_csp);
+    if is_svg {
+        response.headers_mut().insert(
+            axum::http::header::CONTENT_SECURITY_POLICY,
+            axum::http::HeaderValue::from_static(crate::service::local_epub_book::SVG_ASSET_CSP),
         );
     }
     response
