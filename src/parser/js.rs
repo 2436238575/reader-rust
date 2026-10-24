@@ -76,8 +76,11 @@ fn js_http_timeout() -> Duration {
 /// 同样按用户命名空间隔离：否则 A 用户在站点登录得到的会话 Cookie
 /// 会被 B 用户书源的 `java.ajax` 自动带上。
 /// 命名空间 client 池上限：超出整表清空重建（单用户常态只有 1-2 个条目，
-/// 上限只是防失控的保险）
-const JS_HTTP_CLIENT_MAX: usize = 8;
+/// 上限只是防失控的保险）。旧值 8 在并发活跃命名空间稍多（代理书源、
+/// 多标签页并发解析等）时会 FIFO 静默逐出，`java.ajax` 的站点 Cookie jar
+/// 随机丢失；提到 256 后常态远触不到上限。注意这仍是兜底而非真正的 LRU
+/// （超限时整表清空，不区分冷热），需要更精细的淘汰策略可后续再做。
+const JS_HTTP_CLIENT_MAX: usize = 256;
 static JS_HTTP_CLIENTS: Lazy<Mutex<BoundedMap<Client>>> =
     Lazy::new(|| Mutex::new(BoundedMap::new(JS_HTTP_CLIENT_MAX)));
 /// 未显式指定命名空间时的归属（封面等匿名请求同此）。
