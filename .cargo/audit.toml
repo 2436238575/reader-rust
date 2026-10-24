@@ -1,0 +1,13 @@
+# cargo audit 配置（被 rustsec/audit-check 与本地 `cargo audit` 读取）
+#
+# ignore 的每一条都必须是不可达或不可修的存量项；新增可达漏洞应升级依赖，
+# 而不是往这里加条目。
+[advisories]
+ignore = [
+    # rsa 0.9.10（RUSTSEC-2023-0071，Marvin Attack）：只存在于 Cargo.lock 里
+    # sqlx-mysql 的残留分支，依赖树实际不可达（`cargo tree -i rsa` 无结果；
+    # lock 里仍挂着是因为 sqlx-macros-core 的依赖声明引用了 sqlx-mysql，
+    # 手工删 lock 条目会造成锁文件不一致）。依赖树一旦可达（例如启用
+    # sqlx 的 mysql feature）必须删掉本 ignore 并升级 rsa。
+    "RUSTSEC-2023-0071",
+]

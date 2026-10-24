@@ -42,14 +42,13 @@ jobs:
       - name: ts-rs bindings are committed
         run: git diff --exit-code frontend/src/types/generated/
 
-      # 依赖安全审计。存量遗留：Cargo.lock 里还有升级前残留的 rsa 0.9.10
-      # （RUSTSEC-2023-0071，依赖树已不可达，lock 下次重解即消失）——在该
-      # 条目清掉之前先记录不阻断，清掉后移除 continue-on-error 恢复硬闸门
+      # 依赖安全审计（硬门禁）。Cargo.lock 里残留的 rsa 0.9.10
+      # （RUSTSEC-2023-0071）在依赖树中不可达（cargo tree -i rsa 无结果），
+      # 由 .cargo/audit.toml 精确忽略该单条；除此之外的任何漏洞直接失败
       - name: cargo audit
         uses: rustsec/audit-check@v2
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
-        continue-on-error: true
 
   # 开发主平台是 Windows：lib 单元测试在 windows 上跑，防止 unix-only 假设
   # 混进核心逻辑；集成测试仍由 ubuntu job 覆盖
