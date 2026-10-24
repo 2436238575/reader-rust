@@ -27,8 +27,15 @@ pub async fn run() -> anyhow::Result<()> {
     // _log_guard 保活非阻塞写线程，必须活到进程退出
     let logs_dir = std::path::Path::new(&cfg.storage_dir).join("logs");
     std::fs::create_dir_all(&logs_dir).ok();
+    // max_log_files(14)：每次滚动时清掉最旧的日志文件，目录不再无上限增长
+    // （此前按天滚动无保留期，一年会积累 365+ 个文件）。文件名与旧 daily()
+    // 一致（reader-rust.log.YYYY-MM-DD），存量超限文件会在下一次滚动时被清掉
     let (log_writer, _log_guard) = tracing_appender::non_blocking(
-        tracing_appender::rolling::daily(&logs_dir, "reader-rust.log"),
+        tracing_appender::rolling::RollingFileAppender::builder()
+            .rotation(tracing_appender::rolling::Rotation::DAILY)
+            .filename_prefix("reader-rust.log")
+            .max_log_files(14)
+            .build(&logs_dir)?,
     );
     use tracing_subscriber::prelude::*;
     tracing_subscriber::registry()
