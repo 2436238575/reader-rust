@@ -29,7 +29,7 @@ from .prompts import (
     TOOL_SAVE_PATCH,
     TOOL_SEARCH_CONTENT,
 )
-from .protocol import StdioChannel
+from .protocol import HostGoneError, StdioChannel
 from .types import BookRef, ChapterRef
 
 log = logging.getLogger(__name__)
@@ -313,6 +313,10 @@ def _fetch_chapter_content(ctx: ToolContext) -> str | ToolOutcome:
             response = ctx.channel.call_host_tool(
                 TOOL_GET_CHAPTER, {"index": ctx.chapter.index if ctx.chapter else 0}
             )
+        except HostGoneError:
+            # 宿主已死：必须原样上抛终止整个 run 循环——吞成工具错误会让
+            # sidecar 对着已消失的宿主继续烧模型重试 token
+            raise
         except Exception as error:  # noqa: BLE001 — 回调失败必须以工具结果返回给模型
             log.warning("get_completed_chapter 回调失败：%s", error)
             return ToolOutcome({"ok": False, "error": f"章节内容获取失败：{error}"})
@@ -348,6 +352,9 @@ def _tool_search_content(args: dict[str, Any], ctx: ToolContext) -> ToolOutcome:
             TOOL_SEARCH_CONTENT,
             {"keyword": keyword, "fromIndex": from_index, "toIndex": to_index},
         )
+    except HostGoneError:
+        # 宿主已死：同 _fetch_chapter_content，必须上抛而不是回喂模型
+        raise
     except Exception as error:  # noqa: BLE001
         log.warning("search_read_content 回调失败：%s", error)
         return ToolOutcome({"ok": False, "error": f"章节搜索失败：{error}"})
