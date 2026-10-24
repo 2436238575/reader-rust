@@ -683,7 +683,7 @@ impl BookService {
         self.apply_source_cookie(user_ns, source, &mut spec.headers)
             .await;
 
-        tracing::debug!("search_book fetched spec: {:?}", spec);
+        tracing::debug!("search_book fetched spec: {}", request_spec_summary(&spec));
         let res = self
             .fetch_with_rate(user_ns, source, spec)
             .await
@@ -3054,6 +3054,25 @@ fn build_search_snippet(text: &str, match_start: usize, match_end: usize) -> Str
     snippet
 }
 
+/// 请求规格的脱敏摘要：只保留 method、URL 的 host、header 键名与 body 长度。
+///
+/// header 值（Cookie、Authorization 等）与 URL 的 query/path（可能带 token、
+/// 签名参数）绝不进日志——与 fetcher 里「绝不要打印完整 headers」的约定一致。
+fn request_spec_summary(spec: &RequestSpec) -> String {
+    let host = url::Url::parse(&spec.url)
+        .ok()
+        .and_then(|parsed| parsed.host_str().map(str::to_string))
+        .unwrap_or_else(|| "<unparsable-url>".to_string());
+    let header_keys: Vec<&str> = spec.headers.iter().map(|(k, _)| k.as_str()).collect();
+    format!(
+        "method={:?} host={} header_keys=[{}] body_len={}",
+        spec.method,
+        host,
+        header_keys.join(","),
+        spec.body.as_ref().map(String::len).unwrap_or(0)
+    )
+}
+
 fn apply_login_check_js(source: &BookSource, res: FetchResponse) -> FetchResponse {
     let Some(script) = source
         .login_check_js
@@ -3516,6 +3535,31 @@ mod tests {
             headers: vec![],
             is_successful,
         }
+    }
+
+    #[test]
+    fn request_spec_summary_never_leaks_header_values_or_query() {
+        let spec = RequestSpec {
+            url: "https://example.com/search?token=sekret&q=kw".into(),
+            method: crate::crawler::fetcher::HttpMethod::POST,
+            headers: vec![
+                ("Cookie".into(), "session=super-secret".into()),
+                ("User-Agent".into(), "Mozilla/5.0".into()),
+            ],
+            body: Some("username=a&password=b".into()),
+            ..Default::default()
+        };
+        let summary = request_spec_summary(&spec);
+        // 只允许出现 host、method、header 键名与 body 长度
+        assert!(summary.contains("host=example.com"), "{summary}");
+        assert!(summary.contains("method=POST"), "{summary}");
+        assert!(summary.contains("Cookie"), "{summary}");
+        assert!(summary.contains("body_len=21"), "{summary}");
+        // 值与 query 绝不进日志
+        assert!(!summary.contains("sekret"), "{summary}");
+        assert!(!summary.contains("super-secret"), "{summary}");
+        assert!(!summary.contains("username=a"), "{summary}");
+        assert!(!summary.contains("token"), "{summary}");
     }
 
     #[test]
