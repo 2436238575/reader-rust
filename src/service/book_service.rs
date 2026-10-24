@@ -71,6 +71,8 @@ pub struct BookService {
     /// 串行化目录缓存的读-改-写（append）：无锁交错会互相覆盖丢章。
     /// 全局一把锁即可——append 只在目录后台补全时发生，频率低、临界区短。
     toc_append_lock: Arc<tokio::sync::Mutex<()>>,
+    /// 目录快照备忘（见 `toc_snapshot_map`）：批量落库复用一份 parse 结果。
+    toc_snapshots: Arc<Mutex<BoundedMap<TocSnapshotMemoEntry>>>,
 }
 
 /// 内存里暂存的章节正文响应体。
@@ -79,6 +81,17 @@ struct RecentBody {
     url: String,
     stored_at: Instant,
 }
+
+/// `toc_snapshots` 的条目：构建时间 + 不可变的目录映射。
+struct TocSnapshotMemoEntry {
+    stored_at: Instant,
+    map: Arc<HashMap<String, (i32, String)>>,
+}
+
+/// 目录快照备忘的兜底 TTL：目录写路径会主动失效条目，这里只防长尾驻留。
+const TOC_SNAPSHOT_MEMO_TTL: Duration = Duration::from_secs(5);
+/// 备忘条目上限：同时批量缓存的书籍数有限，16 本足以覆盖且控住内存。
+const TOC_SNAPSHOT_MEMO_MAX_ENTRIES: usize = 16;
 
 /// 一次抓取得到的章节正文（分页已拼接）。
 struct FetchedChapter {
@@ -326,6 +339,7 @@ impl BookService {
             pending_toc_fills: Arc::new(Mutex::new(HashSet::new())),
             pending_revalidations: Arc::new(Mutex::new(HashSet::new())),
             toc_append_lock: Arc::new(tokio::sync::Mutex::new(())),
+            toc_snapshots: Arc::new(Mutex::new(BoundedMap::new(TOC_SNAPSHOT_MEMO_MAX_ENTRIES))),
         }
     }
 
@@ -1314,14 +1328,63 @@ impl BookService {
         book_id: &str,
         chapter_url: &str,
     ) -> (i32, String) {
-        match self.load_chapter_list_cache(user_ns, book_id).await {
-            Ok(Some(chapters)) => chapters
-                .iter()
-                .find(|chapter| chapter.url == chapter_url)
-                .map(|chapter| (chapter.index, chapter.title.clone()))
-                .unwrap_or((0, String::new())),
-            _ => (0, String::new()),
+        match self.toc_snapshot_map(user_ns, book_id).await {
+            Some(map) => map.get(chapter_url).cloned().unwrap_or((0, String::new())),
+            None => (0, String::new()),
         }
+    }
+
+    /// 取某本书的目录快照映射（`chapter_url -> (index, title)`）。
+    ///
+    /// 批量缓存（cacheCache SSE 循环起 N 个并发 `cache_chapter`）里每章
+    /// 落库都要查一次目录元数据：逐章 parse 数 MB 的目录 JSON 是纯浪费。
+    /// 这里把解析结果构建成 HashMap 后按 `(user_ns, book_id)` 短 TTL 备忘，
+    /// 同一批次只在第一章 parse 一次；目录写路径（save/append/delete）主动
+    /// 失效对应条目，TTL 只是兜底。
+    /// 语义与逐次 `find` 一致：命中第一个同 URL 章节；目录缺失/为空时
+    /// 不备忘，返回 None（回退 `(0, "")`）。
+    async fn toc_snapshot_map(
+        &self,
+        user_ns: &str,
+        book_id: &str,
+    ) -> Option<Arc<HashMap<String, (i32, String)>>> {
+        let key = format!("{user_ns}\u{0}{book_id}");
+        {
+            let memo = self.toc_snapshots.lock().unwrap();
+            if let Some(entry) = memo.get(&key) {
+                if entry.stored_at.elapsed() < TOC_SNAPSHOT_MEMO_TTL {
+                    return Some(Arc::clone(&entry.map));
+                }
+            }
+        }
+        let list = self
+            .load_chapter_list_cache(user_ns, book_id)
+            .await
+            .ok()??;
+        if list.is_empty() {
+            return None;
+        }
+        // 与逐次 find 相同的「首 URL 优先」：重复 URL 只保留第一个
+        let mut map: HashMap<String, (i32, String)> = HashMap::with_capacity(list.len());
+        for chapter in list {
+            map.entry(chapter.url)
+                .or_insert((chapter.index, chapter.title));
+        }
+        let snapshot = Arc::new(map);
+        self.toc_snapshots.lock().unwrap().insert(
+            key,
+            TocSnapshotMemoEntry {
+                stored_at: Instant::now(),
+                map: Arc::clone(&snapshot),
+            },
+        );
+        Some(snapshot)
+    }
+
+    /// 目录写路径调用：丢掉某本书的快照备忘，让下一次落库重新 parse。
+    fn invalidate_toc_snapshot(&self, user_ns: &str, book_id: &str) {
+        let key = format!("{user_ns}\u{0}{book_id}");
+        self.toc_snapshots.lock().unwrap().remove(&key);
     }
 
     async fn store_upstream_content(
@@ -2936,6 +2999,7 @@ impl BookService {
         write_atomic(&path, data.as_bytes())
             .await
             .map_err(|e| AppError::Internal(e.into()))?;
+        self.invalidate_toc_snapshot(user_ns, book_id);
         Ok(())
     }
 
@@ -2994,6 +3058,7 @@ impl BookService {
                 .await
                 .map_err(|e| AppError::Internal(e.into()))?;
         }
+        self.invalidate_toc_snapshot(user_ns, book_id);
         Ok(())
     }
 
@@ -3792,6 +3857,72 @@ mod tests {
         assert_eq!(final_list.len(), 60, "并发 append 不允许丢章");
         let indexes: HashSet<i32> = final_list.iter().map(|c| c.index).collect();
         assert_eq!(indexes.len(), 60, "index 必须连续不重复");
+
+        pool.close().await;
+        let _ = std::fs::remove_dir_all(&storage_dir);
+    }
+
+    #[tokio::test]
+    async fn chapter_snapshot_memo_reuses_and_invalidates() {
+        let storage_dir =
+            std::env::temp_dir().join(format!("reader-rust-toc-snapshot-{}", std::process::id()));
+        let (service, pool) = test_service(&storage_dir).await;
+        let ns = "test-snapshot";
+        let book_id = "book_1";
+
+        let mk = |index: i32, url: &str, title: &str| BookChapter {
+            url: url.to_string(),
+            title: title.to_string(),
+            index,
+            ..Default::default()
+        };
+        service
+            .save_chapter_list_cache(ns, book_id, &vec![mk(0, "a", "A"), mk(1, "b", "B")])
+            .await
+            .unwrap();
+
+        // 命中：返回 (index, title)；缺失章节回退 (0, "")（语义与逐次 find 一致）
+        assert_eq!(
+            service.chapter_snapshot(ns, book_id, "b").await,
+            (1, "B".into())
+        );
+        assert_eq!(
+            service.chapter_snapshot(ns, book_id, "missing").await,
+            (0, String::new())
+        );
+        // 第一次查询后条目已在备忘里：无目录的别的书不影响
+        assert!(service.toc_snapshot_map(ns, book_id).await.is_some());
+        assert!(service.toc_snapshot_map(ns, "no-such-book").await.is_none());
+
+        // 覆盖写目录（index 变化）后备忘失效：立刻看到新值
+        service
+            .save_chapter_list_cache(ns, book_id, &vec![mk(5, "a", "A2"), mk(6, "b", "B2")])
+            .await
+            .unwrap();
+        assert_eq!(
+            service.chapter_snapshot(ns, book_id, "a").await,
+            (5, "A2".into())
+        );
+
+        // append 走 save 路径，同样失效；覆盖写后目录只有 2 章，c 拿到 index=2
+        service
+            .append_chapter_list_cache(ns, book_id, &vec![mk(9, "c", "C")])
+            .await
+            .unwrap();
+        assert_eq!(
+            service.chapter_snapshot(ns, book_id, "c").await,
+            (2, "C".into())
+        );
+
+        // 删除目录后回退 (0, "")
+        service
+            .delete_chapter_list_cache(ns, book_id)
+            .await
+            .unwrap();
+        assert_eq!(
+            service.chapter_snapshot(ns, book_id, "a").await,
+            (0, String::new())
+        );
 
         pool.close().await;
         let _ = std::fs::remove_dir_all(&storage_dir);
