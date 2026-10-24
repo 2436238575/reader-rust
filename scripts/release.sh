@@ -186,6 +186,15 @@ update_cargo_version() {
 
 update_cargo_version "$SEMVER"
 
+# 只把 workspace 成员的新版本号推进 Cargo.lock（-w 不动依赖树），
+# 再用 --locked 自检一致性：Dockerfile 里 cargo build --release --locked
+# 在 lock 落后于 manifest 时会直接构建失败，必须在这里提前拦下
+cargo update -w
+if ! cargo metadata --format-version 1 --locked >/dev/null; then
+  echo "Cargo.lock is still out of sync with Cargo.toml after 'cargo update -w'." >&2
+  exit 1
+fi
+
 npm version "$SEMVER" --no-git-tag-version --allow-same-version >/dev/null
 (
   cd frontend
