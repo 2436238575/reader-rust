@@ -1724,7 +1724,7 @@ pub async fn cache_book_sse(
         .filter(|v| !v.trim().is_empty())
         .ok_or_else(|| AppError::BadRequest("bookId required".to_string()))?;
     let refresh = req.refresh.unwrap_or(0) > 0;
-    let concurrent = req.concurrent_count.unwrap_or(24).max(1) as usize;
+    let concurrent = clamp_concurrency(req.concurrent_count, 24, 32);
 
     let book = state
         .book_service
@@ -1886,8 +1886,8 @@ pub async fn search_book_multi_sse(
     let user_ns = user.0.ns.clone();
     let key = q.key.unwrap_or_default();
     let last_index = q.last_index.unwrap_or(-1);
-    let search_size = q.search_size.unwrap_or(50).max(1) as usize;
-    let concurrent = q.concurrent_count.unwrap_or(24).max(1) as usize;
+    let search_size = q.search_size.unwrap_or(50).clamp(1, 500) as usize;
+    let concurrent = clamp_concurrency(q.concurrent_count, 24, 32);
     let book_source_id = q.book_source_id;
     let book_source_group = q.book_source_group.clone().filter(|g| !g.trim().is_empty());
 
@@ -2042,9 +2042,11 @@ pub async fn search_book_source_sse(
     let user_ns = user.0.ns.clone();
     let book_id = q.book_id.clone().unwrap_or_default();
     let last_index = q.last_index.unwrap_or(-1);
-    let search_size = q.search_size.unwrap_or(30).max(1) as usize;
+    let search_size = q.search_size.unwrap_or(30).clamp(1, 500) as usize;
     let refresh = q.refresh.unwrap_or(0) > 0;
-    let concurrent = std::cmp::max(search_size * 2, 24);
+    // 并发上限与 search_size 解耦：换源候选的并发按结果预算放大（×2、
+    // 至少 24），但整体仍钳在 32 内
+    let concurrent = clamp_concurrency(Some((search_size * 2) as i32), 24, 32);
     let book_source_group = q.book_source_group.clone().filter(|g| !g.trim().is_empty());
 
     // 参数与前置状态校验一律在建流前完成（400）：流内只余运行期错误
@@ -2744,6 +2746,13 @@ fn effective_available_concurrent_count(concurrent_count: Option<i32>) -> usize 
         .clamp(1, MAX_AVAILABLE_CONCURRENT_COUNT as i32) as usize
 }
 
+/// SSE 与批量接口的并发钳制：客户端传的 concurrentCount 只当 hint，
+/// 统一收敛到 1..=max（None 取默认；0/负数为 1；超大值截到 max），
+/// 避免 concurrentCount=10^9 一次 spawn 上万个任务与出站连接。
+fn clamp_concurrency(value: Option<i32>, default: usize, max: usize) -> usize {
+    value.unwrap_or(default as i32).clamp(1, max as i32) as usize
+}
+
 fn should_use_available_source_cache(
     refresh: bool,
     result_limit: Option<i32>,
@@ -2875,12 +2884,25 @@ fn take_available_source_sse_matches(
 #[cfg(test)]
 mod tests {
     use super::{
-        build_available_book_source_response, local_book_limit_exceeded,
+        build_available_book_source_response, clamp_concurrency, local_book_limit_exceeded,
         should_use_available_source_cache, take_available_source_cached_matches,
         take_available_source_sse_matches,
     };
     use crate::model::{book::Book, search::SearchBook};
     use std::collections::HashSet;
+
+    #[test]
+    fn clamp_concurrency_treats_client_value_as_hint() {
+        // None → 默认
+        assert_eq!(clamp_concurrency(None, 24, 32), 24);
+        // 0 / 负数 → 1（SSE 循环里 tasks.len() < concurrent 依赖 ≥1）
+        assert_eq!(clamp_concurrency(Some(0), 24, 32), 1);
+        assert_eq!(clamp_concurrency(Some(-5), 24, 32), 1);
+        // 合法值原样通过
+        assert_eq!(clamp_concurrency(Some(10), 24, 32), 10);
+        // 超大值截到上限：10^9 不能变成上万个并发任务
+        assert_eq!(clamp_concurrency(Some(1_000_000_000), 24, 32), 32);
+    }
 
     #[test]
     fn available_book_source_limits_result_count_and_reports_more() {
