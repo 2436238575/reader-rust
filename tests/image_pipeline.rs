@@ -114,6 +114,20 @@ async fn start_upstream() -> (String, Counter) {
                 resp
             }),
         )
+        // 慢速 HEIC（300ms）：并发首取时首个请求会转码成 JPEG 并改写记录，
+        // 等待者二次检查命中后必须重读记录，否则用过期类型配转码字节
+        .route(
+            "/slow.heic",
+            get(|| async {
+                tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+                let mut resp = Response::new(axum::body::Body::from(TINY_HEIC.to_vec()));
+                resp.headers_mut().insert(
+                    header::CONTENT_TYPE,
+                    header::HeaderValue::from_static("image/heic"),
+                );
+                resp
+            }),
+        )
         .with_state(hits.clone());
 
     let counter = hits.clone();
@@ -430,5 +444,63 @@ async fn concurrent_first_load_of_same_image_hits_upstream_once() {
         hits.get("/slow.jpg").copied().unwrap_or(0),
         1,
         "单飞：并发首取同一张图上游只能被打一次: {hits:?}"
+    );
+}
+
+/// 并发首取一张需要转码的 HEIC：首个请求转成 JPEG 并更新记录里的类型，
+/// 等待者拿到锁后二次检查命中 body 文件时必须重读记录——
+/// 否则会拿登记时的 `application/octet-stream` 配转码后的 JPEG 字节。
+#[tokio::test]
+async fn concurrent_first_load_of_heic_returns_fresh_content_type() {
+    let server = TestServer::start().await;
+    let book = json!({
+        "name": "并发HEIC书",
+        "author": "作者",
+        "bookUrl": server.book_url(),
+        "bookSourceId": server.book_source_id.get(),
+        "coverUrl": format!("{}/slow.heic?sig=1", server.upstream_url),
+    });
+    let resp = server
+        .client
+        .post(format!("{}/reader3/saveBook", server.base_url))
+        .bearer_auth(&server.token)
+        .json(&book)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let route = server.shelf_cover_route().await;
+    assert!(route.starts_with("/reader3/image/"), "实际 {route}");
+
+    let (a, b) = tokio::join!(server.get_image(&route), server.get_image(&route));
+    assert_eq!(a.status(), StatusCode::OK);
+    assert_eq!(b.status(), StatusCode::OK);
+    for (label, value) in [("a", &a), ("b", &b)] {
+        assert_eq!(
+            value
+                .headers()
+                .get(header::CONTENT_TYPE)
+                .and_then(|v| v.to_str().ok()),
+            Some("image/jpeg"),
+            "等待者也要用转码后的最新类型（请求 {label}）"
+        );
+    }
+    let (bytes_a, bytes_b) = (a.bytes().await.unwrap(), b.bytes().await.unwrap());
+    assert_eq!(&bytes_a[..2], &[0xFF, 0xD8], "响应体应当是 JPEG");
+    assert_eq!(bytes_a, bytes_b, "两个请求应拿到相同字节");
+
+    let hits: HashMap<String, usize> = {
+        let resp = server
+            .client
+            .get(format!("{}/__hits", server.upstream_url))
+            .send()
+            .await
+            .unwrap();
+        resp.json().await.unwrap()
+    };
+    assert_eq!(
+        hits.get("/slow.heic").copied().unwrap_or(0),
+        1,
+        "单飞：并发首取 HEIC 上游只能被打一次: {hits:?}"
     );
 }

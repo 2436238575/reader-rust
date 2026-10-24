@@ -279,11 +279,17 @@ impl ImageService {
         }
         let lock = self.acquire_load_lock(id);
         let _key_guard = lock.lock().await;
-        // 二次检查：首个请求可能刚把图落盘
+        // 二次检查：首个请求可能刚把图落盘。此时记录也可能被改写
+        // （如 HEIC 转码成 JPEG 后 content_type 已更新），等待者必须
+        // 重读记录，否则会用过期的 image/heic 配转码后的 JPEG 字节。
         if let Ok(bytes) = fs::read(self.body_path(id)).await {
             drop(_key_guard);
             self.release_load_lock(id, &lock);
-            return Ok((bytes, record.content_type));
+            let content_type = match self.record(id).await {
+                Some(latest) => latest.content_type,
+                None => record.content_type,
+            };
+            return Ok((bytes, content_type));
         }
         let result = self.fetch_and_store(id, &mut record).await;
         drop(_key_guard);
