@@ -31,13 +31,12 @@ const API_CACHE_PATHS = [
   'getBookSources',
 ].map((name) => `${BASE}reader3/${name}`)
 
+// 不在 install 里 skipWaiting：新 SW 安装完成后停留在 waiting 状态，
+// 由用户在设置里点「更新应用」后通过 message 事件触发 SKIP_WAITING 接管，
+// 避免发版瞬间强刷所有打开中的标签页（阅读 / TTS / 缓存全书都会被打断）。
+// 首次安装（没有旧 SW 控制页面）时浏览器会直接激活新 SW，不受此影响。
 self.addEventListener('install', (event) => {
-  event.waitUntil(
-    caches
-      .open(SHELL_CACHE)
-      .then((cache) => cache.addAll(SHELL_ASSETS))
-      .then(() => self.skipWaiting())
-  )
+  event.waitUntil(caches.open(SHELL_CACHE).then((cache) => cache.addAll(SHELL_ASSETS)))
 })
 
 self.addEventListener('activate', (event) => {

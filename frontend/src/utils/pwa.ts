@@ -18,6 +18,27 @@ async function clearServiceWorkerCaches() {
   }
 }
 
+type PwaUpdateStore = Pick<
+  AppStore,
+  'pwaUpdateAvailable' | 'setWaitingServiceWorker' | 'setPwaUpdateAvailable' | 'showToast'
+>
+
+// 发现 waiting worker 时只登记状态并提示，不主动 SKIP_WAITING：
+// 是否切换由用户在设置抽屉点「更新应用」决定（applyPwaUpdate → message → SKIP_WAITING
+// → controllerchange → 刷新一次），避免发版瞬间强刷正在阅读 / 听书 / 缓存全书的标签页。
+export function bindWaitingWorker(
+  appStore: PwaUpdateStore,
+  worker: ServiceWorker | null | undefined
+) {
+  if (!worker) return
+  const wasAvailable = appStore.pwaUpdateAvailable
+  appStore.setWaitingServiceWorker(worker)
+  appStore.setPwaUpdateAvailable(true)
+  if (!wasAvailable) {
+    appStore.showToast('发现新版本，可在设置中更新', 'success')
+  }
+}
+
 export function registerPwa(appStore: AppStore) {
   if (typeof window === 'undefined') return
 
@@ -54,22 +75,11 @@ export function registerPwa(appStore: AppStore) {
     return
   }
 
-  function bindWaitingWorker(worker: ServiceWorker | null | undefined) {
-    if (!worker) return
-    const wasAvailable = appStore.pwaUpdateAvailable
-    appStore.setWaitingServiceWorker(worker)
-    appStore.setPwaUpdateAvailable(true)
-    worker.postMessage({ type: 'SKIP_WAITING' })
-    if (!wasAvailable) {
-      appStore.showToast('发现新版本，正在切换', 'success')
-    }
-  }
-
   async function checkForUpdates(registration: ServiceWorkerRegistration) {
     try {
       await registration.update()
       if (registration.waiting) {
-        bindWaitingWorker(registration.waiting)
+        bindWaitingWorker(appStore, registration.waiting)
       }
     } catch {
       // Ignore update check errors and keep the current app available.
@@ -83,7 +93,7 @@ export function registerPwa(appStore: AppStore) {
         appStore.setPwaReady(true)
 
         if (registration.waiting) {
-          bindWaitingWorker(registration.waiting)
+          bindWaitingWorker(appStore, registration.waiting)
         }
 
         void checkForUpdates(registration)
@@ -93,7 +103,7 @@ export function registerPwa(appStore: AppStore) {
           if (!installing) return
           installing.addEventListener('statechange', () => {
             if (installing.state === 'installed' && navigator.serviceWorker.controller) {
-              bindWaitingWorker(registration.waiting || installing)
+              bindWaitingWorker(appStore, registration.waiting || installing)
             }
           })
         })
