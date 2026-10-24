@@ -16,6 +16,20 @@ use crate::util::safe_path;
 /// 上传资源文件的单文件上限（multipart 字段不受 DefaultBodyLimit 约束，需自行限量）。
 const MAX_UPLOAD_FILE_BYTES: usize = 32 * 1024 * 1024;
 
+/// 用户 JSON 文档（userdata / userConfig）的大小上限：两者都整文档写进
+/// json_documents，超限时明确 400，而不是任由全局请求体上限当缓冲配额。
+const MAX_USER_DOCUMENT_BYTES: usize = 4 * 1024 * 1024;
+
+/// 序列化后的文档超过上限时给出用户可读错误。
+fn ensure_document_within_limit(serialized: &[u8]) -> Result<(), AppError> {
+    if serialized.len() > MAX_USER_DOCUMENT_BYTES {
+        return Err(AppError::BadRequest(
+            "文档内容不能超过 4MB，请精简后重试".to_string(),
+        ));
+    }
+    Ok(())
+}
+
 /// 上传文件扩展名白名单：/assets 与主站同源直出上传内容，放行 HTML/SVG
 /// 等于给同源存储一个脚本落脚点，只收位图格式（大小写不敏感）。
 fn is_allowed_upload_extension(name: &str) -> bool {
@@ -116,6 +130,9 @@ pub async fn save_userdata(
     let Some(value) = req.value else {
         return Err(AppError::BadRequest("缺少文档内容".to_string()));
     };
+    let serialized = serde_json::to_vec(&value)
+        .map_err(|e| AppError::BadRequest(format!("文档序列化失败: {e}")))?;
+    ensure_document_within_limit(&serialized)?;
     state
         .json_document_service
         .set_value(&user.0.ns, &name, &value)
@@ -193,6 +210,9 @@ pub async fn save_user_config(
     user: CurrentUser,
     Json(body): Json<Value>,
 ) -> Result<Json<ApiResponse<Value>>, AppError> {
+    let serialized = serde_json::to_vec(&body)
+        .map_err(|e| AppError::BadRequest(format!("配置序列化失败: {e}")))?;
+    ensure_document_within_limit(&serialized)?;
     state
         .user_service
         .save_user_config(&user.0.ns, body)

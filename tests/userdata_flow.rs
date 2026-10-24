@@ -293,3 +293,54 @@ async fn user_config_roundtrip_and_legacy_file_migration() {
     let body: serde_json::Value = response.json().await.unwrap();
     assert_eq!(body["data"]["readMode"], "day", "迁移后应读表");
 }
+
+#[tokio::test]
+async fn oversized_user_documents_are_rejected() {
+    let server = TestServer::start().await;
+    let token = server.login().await;
+
+    // 5MB 的 userdata 文档：到达 handler 后按 4MB 上限拒绝（用户可读文案）
+    let big = "x".repeat(5 * 1024 * 1024);
+    let response = server
+        .post(
+            "/reader3/saveUserdata",
+            Some(&token),
+            serde_json::json!({ "name": "reading-stats", "value": { "blob": big } }),
+        )
+        .await;
+    assert_eq!(response.status(), 400, "超过 4MB 的 userdata 应 400");
+    let body: serde_json::Value = response.json().await.unwrap();
+    assert_eq!(body["isSuccess"], serde_json::json!(false));
+    let msg = body["errorMsg"].as_str().unwrap();
+    assert!(msg.contains("4MB"), "错误文案应说明上限：{msg}");
+
+    // 5MB 的 userConfig 同样拒绝
+    let response = server
+        .post(
+            "/reader3/saveUserConfig",
+            Some(&token),
+            serde_json::json!({ "blob": big }),
+        )
+        .await;
+    assert_eq!(response.status(), 400, "超过 4MB 的 userConfig 应 400");
+
+    // 1MB 的文档正常保存并可读回
+    let ok_blob = "y".repeat(1024 * 1024);
+    let response = server
+        .post(
+            "/reader3/saveUserdata",
+            Some(&token),
+            serde_json::json!({ "name": "reading-stats", "value": { "blob": ok_blob } }),
+        )
+        .await;
+    assert_eq!(response.status(), 200, "1MB 文档应正常保存");
+    let response = server
+        .get("/reader3/getUserdata?name=reading-stats", Some(&token))
+        .await;
+    assert_eq!(response.status(), 200);
+    let body: serde_json::Value = response.json().await.unwrap();
+    assert_eq!(
+        body["data"]["blob"].as_str().map(str::len),
+        Some(1024 * 1024)
+    );
+}
