@@ -69,10 +69,10 @@ impl ReviewCache {
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent).await?;
         }
-        // 先写临时文件再改名：并发读到的要么是旧内容、要么是新内容
-        let tmp = path.with_extension("json.tmp");
-        fs::write(&tmp, value).await?;
-        fs::rename(&tmp, &path).await?;
+        // 唯一临时文件 + rename 的原子写：并发写同一个 key 时各写各的
+        // tmp（此前是固定 `json.tmp`，两个写者会互踩同一个临时文件，
+        // 可能把对方写了一半的内容 rename 过去）
+        crate::util::atomic_write::write_atomic(&path, value.as_bytes()).await?;
         self.enforce_user_capacity(user_ns, value.len() as u64)
             .await;
         Ok(())
@@ -262,6 +262,38 @@ mod tests {
         assert_eq!(cache.total_usage().await.files, 1);
         assert_eq!(cache.remove_all().await.unwrap(), 1);
         assert_eq!(cache.total_usage().await.files, 0);
+        let _ = fs::remove_dir_all(&root).await;
+    }
+
+    /// 多个写者并发 put 同一个 key：最终落盘的必须是其中一方的完整内容
+    /// （唯一临时文件 + rename；固定 tmp 名时可能读到写了一半的 JSON）。
+    #[tokio::test]
+    async fn concurrent_puts_to_same_key_leave_intact_json() {
+        let root = temp_root("reader-review-conc");
+        let cache = ReviewCache::new(&root, 0, 0);
+        let mut handles = Vec::new();
+        for i in 0..8 {
+            let cache = cache.clone();
+            handles.push(tokio::spawn(async move {
+                let value = format!("{{\"writer\":{i}}}");
+                cache.put("ns", "book_1", "same-key", &value).await.unwrap();
+            }));
+        }
+        for handle in handles {
+            handle.await.unwrap();
+        }
+        let raw = cache
+            .get("ns", "book_1", "same-key")
+            .await
+            .unwrap()
+            .expect("条目应存在");
+        let parsed: serde_json::Value =
+            serde_json::from_str(&raw).expect("并发写下读到的必须是完整 JSON");
+        let writer = parsed
+            .get("writer")
+            .and_then(serde_json::Value::as_u64)
+            .expect("应有 writer 字段");
+        assert!(writer < 8, "writer 值越界：{writer}");
         let _ = fs::remove_dir_all(&root).await;
     }
 }
