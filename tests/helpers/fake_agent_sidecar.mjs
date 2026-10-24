@@ -13,6 +13,10 @@ import { createInterface } from 'node:readline'
 
 const PROTOCOL = 1
 
+// 环境变量白名单回归哨兵：宿主 spawn 必须 env_clear + 白名单透传，
+// 子进程不应见到任何服务端凭据（Rust 侧测试设置哨兵后断言 false）
+const envLeak = process.env.JWT_SECRET !== undefined || process.env.ADMIN_PASSWORD !== undefined
+
 process.stdout.write(`${JSON.stringify({ type: 'hello', protocol: PROTOCOL, sidecar: 'fake-test' })}\n`)
 
 const rl = createInterface({ input: process.stdin, terminal: false })
@@ -91,10 +95,14 @@ async function handleRun(job) {
 }
 
 function finishChapter(job, index, title) {
+  // envLeak 同时进 result 顶层与 summary：summary 会被持久化，
+  // Rust 侧集成测试通过 getAiBookMemory 观察到它
+  summary += `;envLeak:${envLeak}`
   send({
     type: 'result',
     jobId: job.jobId,
     ok: true,
+    envLeak,
     memory: {
       bookUrl: job.book?.bookUrl ?? '',
       bookName: job.book?.name ?? '',

@@ -252,6 +252,10 @@ async fn agent_task_updates_to_current_with_tool_roundtrip() {
         eprintln!("skip: Node 不可用，无法运行假 sidecar");
         return;
     }
+    // 环境变量白名单哨兵：spawn 必须 env_clear + 白名单透传，
+    // 子进程不能读到宿主的服务端凭据（假 sidecar 回报 envLeak:false）
+    std::env::set_var("JWT_SECRET", "sentinel-jwt-secret");
+    std::env::set_var("ADMIN_PASSWORD", "sentinel-admin-password");
     let server = TestServer::start(30).await;
     let token = server.login().await;
 
@@ -293,6 +297,11 @@ async fn agent_task_updates_to_current_with_tool_roundtrip() {
     assert!(
         summary.contains("搜索范围:0"),
         "搜索范围应被钳制：{summary}"
+    );
+    // 环境变量白名单：假 sidecar 不应见到 JWT_SECRET / ADMIN_PASSWORD
+    assert!(
+        summary.contains("envLeak:false"),
+        "sidecar 子进程不应继承服务端凭据：{summary}"
     );
     // 章节窗口下发了邻近目录，快照也记录了目标章
     assert_eq!(snapshot["bookId"], json!(book_id));

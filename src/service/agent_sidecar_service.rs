@@ -59,6 +59,101 @@ const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
 /// uv 模式下首次 `uv run` 可能现场同步依赖（下载/建 venv），握手超时放宽
 const HANDSHAKE_TIMEOUT_UV: Duration = Duration::from_secs(60);
 
+/// sidecar 子进程允许继承的环境变量名（白名单，见 `sidecar_env_allowlist`）。
+///
+/// sidecar 只需要「找到 Python/uv、解析 TLS 证书、走系统代理」；宿主进程里的
+/// `JWT_SECRET` / `ADMIN_PASSWORD` / `AI_*` 的 API Key / `DATABASE_URL` 等
+/// 服务端凭据一律不进子进程——失控的 sidecar（或其依赖链）不该有机会读到它们。
+/// `UV_` 前缀（uv 自己的配置）与 `AGENT_SIDECAR_` 前缀（sidecar 自己的日志级别
+/// 等开关）整组放行；Windows 变量名大小写不敏感（`PATH` 可能存成 `Path`），
+/// 匹配时忽略大小写。
+const SIDECAR_ENV_KEYS: &[&str] = &[
+    // 进程与 shell 解析（Windows 缺 SystemRoot 连 Python 都起不来）
+    "PATH",
+    "PATHEXT",
+    "SystemRoot",
+    "SystemDrive",
+    "ComSpec",
+    // 临时目录（pip/uv 落盘要用）
+    "TEMP",
+    "TMP",
+    // 用户目录与漫游数据（uv 缓存默认在 %LOCALAPPDATA%\uv）
+    "HOME",
+    "USERPROFILE",
+    "HOMEDRIVE",
+    "HOMEPATH",
+    "APPDATA",
+    "LOCALAPPDATA",
+    // 区域与编码
+    "LANG",
+    "LC_ALL",
+    "PYTHONIOENCODING",
+    "PYTHONUTF8",
+    // TLS 证书与系统代理（大小写两种都放行）
+    "SSL_CERT_FILE",
+    "SSL_CERT_DIR",
+    "REQUESTS_CA_BUNDLE",
+    "HTTP_PROXY",
+    "HTTPS_PROXY",
+    "NO_PROXY",
+    "http_proxy",
+    "https_proxy",
+    "no_proxy",
+];
+
+fn is_allowed_env_key(name: &str) -> bool {
+    if name.starts_with("UV_") || name.starts_with("AGENT_SIDECAR_") {
+        return true;
+    }
+    if SIDECAR_ENV_KEYS.contains(&name) {
+        return true;
+    }
+    #[cfg(windows)]
+    {
+        SIDECAR_ENV_KEYS
+            .iter()
+            .any(|key| key.eq_ignore_ascii_case(name))
+    }
+    #[cfg(not(windows))]
+    {
+        false
+    }
+}
+
+/// 从父进程环境挑出 sidecar 允许继承的变量（纯函数，便于单测）。
+fn sidecar_env_allowlist_from<I, K, V>(vars: I) -> Vec<(String, String)>
+where
+    I: IntoIterator<Item = (K, V)>,
+    K: AsRef<str>,
+    V: AsRef<str>,
+{
+    vars.into_iter()
+        .filter(|(name, _)| is_allowed_env_key(name.as_ref()))
+        .map(|(name, value)| (name.as_ref().to_string(), value.as_ref().to_string()))
+        .collect()
+}
+
+/// spawn 时实际使用的白名单：父进程变量过滤 + 两个编码兜底。
+///
+/// `PYTHONIOENCODING` / `PYTHONUTF8` 未显式配置时强制 utf-8：sidecar 的
+/// stdio NDJSON 是 UTF-8，Windows 上 Python 对管道默认用 ANSI 代码页，
+/// 不兜底的话中文帧会整体变成非法 UTF-8 而被逐行丢弃。
+fn sidecar_env_allowlist() -> Vec<(String, String)> {
+    let mut vars: Vec<(String, String)> = std::env::vars_os()
+        .filter_map(|(name, value)| Some((name.to_str()?.to_string(), value.to_str()?.to_string())))
+        .filter(|(name, _)| is_allowed_env_key(name))
+        .collect();
+    fn ensure_set(vars: &mut Vec<(String, String)>, key: &str, value: &str) {
+        let present = vars.iter().any(|(name, _)| name.eq_ignore_ascii_case(key));
+        if !present {
+            vars.push((key.to_string(), value.to_string()));
+        }
+    }
+    ensure_set(&mut vars, "PYTHONIOENCODING", "utf-8");
+    ensure_set(&mut vars, "PYTHONUTF8", "1");
+    vars
+}
+
 /// sidecar 启动计划：四级优先级（详见 resolve_spawn_plan）。
 #[derive(Debug, Clone, PartialEq)]
 enum SpawnPlan {
@@ -1086,6 +1181,12 @@ impl AgentSidecarService {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .kill_on_drop(true);
+        // 环境变量白名单化：子进程不继承宿主的服务端凭据
+        // （JWT_SECRET / ADMIN_PASSWORD / AI_* API Key / DATABASE_URL 等）
+        cmd.env_clear();
+        for (key, value) in sidecar_env_allowlist() {
+            cmd.env(key, value);
+        }
         #[cfg(windows)]
         {
             const CREATE_NO_WINDOW: u32 = 0x0800_0000;
@@ -1528,5 +1629,59 @@ mod tests {
         assert_eq!(args[1], "--project");
         assert_eq!(args[3], "python");
         assert_eq!(args[4..], ["-m".to_string(), "agent_sidecar".to_string()]);
+    }
+
+    #[test]
+    fn env_allowlist_keeps_minimal_set_and_drops_secrets() {
+        let vars = vec![
+            ("PATH", "/usr/bin"),
+            ("SystemRoot", "C:\\Windows"),
+            ("JWT_SECRET", "super-secret"),
+            ("ADMIN_PASSWORD", "hunter2"),
+            ("AI_TEXT_API_KEY", "sk-text"),
+            ("AI_IMAGE_API_KEY", "sk-image"),
+            ("DATABASE_URL", "sqlite:storage/reader.db"),
+            ("UV_PYTHON", "3.12"),
+            ("HTTPS_PROXY", "http://proxy:7890"),
+        ];
+        let allowlist = sidecar_env_allowlist_from(vars);
+        let names: Vec<&str> = allowlist.iter().map(|(k, _)| k.as_str()).collect();
+        assert!(names.contains(&"PATH"), "应保留 PATH：{names:?}");
+        assert!(
+            names.contains(&"SystemRoot"),
+            "应保留 SystemRoot：{names:?}"
+        );
+        assert!(names.contains(&"UV_PYTHON"), "应保留 UV_ 前缀：{names:?}");
+        assert!(names.contains(&"HTTPS_PROXY"), "应保留代理配置：{names:?}");
+        for secret in [
+            "JWT_SECRET",
+            "ADMIN_PASSWORD",
+            "AI_TEXT_API_KEY",
+            "DATABASE_URL",
+        ] {
+            assert!(!names.contains(&secret), "{secret} 不应透传：{names:?}");
+        }
+    }
+
+    #[test]
+    fn env_allowlist_from_real_environment_excludes_secrets() {
+        // 哨兵变量：即使父进程里有服务端凭据，白名单也不放行
+        std::env::set_var("AGENT_TEST_JWT_SECRET_SENTINEL", "leak");
+        let allowlist = sidecar_env_allowlist();
+        let names: Vec<&str> = allowlist.iter().map(|(k, _)| k.as_str()).collect();
+        assert!(
+            !names.iter().any(|name| name.contains("SENTINEL")),
+            "未知变量不应透传：{names:?}"
+        );
+        assert!(
+            !names
+                .iter()
+                .any(|name| name.eq_ignore_ascii_case("JWT_SECRET")),
+            "JWT_SECRET 不应透传"
+        );
+        // 编码兜底：UTF-8 必须在（Windows 管道默认 ANSI 代码页会毁掉 NDJSON）
+        assert!(names
+            .iter()
+            .any(|name| name.eq_ignore_ascii_case("PYTHONIOENCODING")));
     }
 }
