@@ -48,6 +48,13 @@ const JS_MAX_STACK_BYTES: usize = 1024 * 1024;
 /// （`lre_poll_timeout`，约每 1 万步轮询一次）都会触发，因此正则灾难性
 /// 回溯同样受这 5 秒约束，不会永久占住 worker 线程。
 const JS_EVAL_TIMEOUT: Duration = Duration::from_secs(5);
+/// 单次**顶层解析**聚合的 JS 执行预算。
+///
+/// 单次 eval 有 5s 上限，但一次 parse（如万章目录的 formatJs 每章一次、
+/// 模板每个一次）里 eval 次数无界——恶意书源可用 4.9s 空转脚本 × 万章目录
+/// 占住阻塞线程数小时。解析入口用 [`begin_parse_budget`] 圈定聚合预算，
+/// 累计超时后后续 eval 直接拒绝。
+const JS_PARSE_BUDGET: Duration = Duration::from_secs(30);
 /// 单次求值允许返回的最大字符串长度。
 const JS_MAX_RESULT_BYTES: usize = 32 * 1024 * 1024;
 /// `java.ajax` 等内部请求的超时（秒）。默认与 `REQUEST_TIMEOUT_SECS` 的代码默认
@@ -87,6 +94,69 @@ thread_local! {
     static ACTIVE_USER_NS: RefCell<Option<String>> = const { RefCell::new(None) };
     /// 当前书源的 JSON 文本；JS 里的 `source` 就是它（规格 §10）。
     static ACTIVE_SOURCE: RefCell<Option<String>> = const { RefCell::new(None) };
+    /// 当前线程上「顶层解析」的聚合 JS 预算：深度计数 + 截止时间。
+    /// `None` 表示没有顶层解析在进行（eval 只受单次 5s 上限约束）。
+    static PARSE_BUDGET: RefCell<Option<ParseBudgetState>> = const { RefCell::new(None) };
+}
+
+/// 聚合 JS 预算的线程内状态。
+#[derive(Debug, Clone, Copy)]
+struct ParseBudgetState {
+    depth: u32,
+    deadline: Instant,
+}
+
+/// 顶层解析入口的聚合 JS 预算守卫。
+///
+/// 第一次进入时设 deadline = now + [`JS_PARSE_BUDGET`]；嵌套进入只加深度；
+/// drop 时减深度、归零时整表清空（下一次解析重新计时）。解析入口都是同步
+/// 函数，guard 只在进入解析的同一线程内生效，不跨 await 持有。
+#[derive(Debug)]
+pub struct ParseBudgetGuard;
+
+pub fn begin_parse_budget() -> ParseBudgetGuard {
+    PARSE_BUDGET.with(|cell| {
+        let mut slot = cell.borrow_mut();
+        match slot.as_mut() {
+            Some(state) => state.depth += 1,
+            None => {
+                *slot = Some(ParseBudgetState {
+                    depth: 1,
+                    deadline: Instant::now() + JS_PARSE_BUDGET,
+                })
+            }
+        }
+    });
+    ParseBudgetGuard
+}
+
+impl Drop for ParseBudgetGuard {
+    fn drop(&mut self) {
+        PARSE_BUDGET.with(|cell| {
+            let mut slot = cell.borrow_mut();
+            if let Some(state) = slot.as_mut() {
+                state.depth = state.depth.saturating_sub(1);
+                if state.depth == 0 {
+                    *slot = None;
+                }
+            }
+        });
+    }
+}
+
+/// 当前线程的聚合预算截止时间（无顶层解析时为 None）。
+fn parse_budget_deadline() -> Option<Instant> {
+    PARSE_BUDGET.with(|cell| cell.borrow().as_ref().map(|state| state.deadline))
+}
+
+/// 覆盖当前聚合预算的时长（仅测试用；预算不存在时 no-op）。
+#[cfg(test)]
+pub(crate) fn set_parse_budget_for_test(budget: Duration) {
+    PARSE_BUDGET.with(|cell| {
+        if let Some(state) = cell.borrow_mut().as_mut() {
+            state.deadline = Instant::now() + budget;
+        }
+    });
 }
 
 pub fn with_js_lib<T>(js_lib: Option<&str>, f: impl FnOnce() -> T) -> T {
@@ -292,6 +362,16 @@ fn eval_js_inner_with_source(
     bindings: Option<&HashMap<String, JsonValue>>,
     read_globals: Option<&[&str]>,
 ) -> anyhow::Result<(String, HashMap<String, JsonValue>)> {
+    // 聚合预算：进入时已超时直接拒绝执行（恶意书源用大量近满额 eval 拖垮
+    // 阻塞线程的场景在此截断）；未超时则把本次求值的中断 deadline 收紧到
+    // min(单次 5s, 聚合截止)
+    let parse_deadline = parse_budget_deadline();
+    if parse_deadline.is_some_and(|deadline| Instant::now() >= deadline) {
+        anyhow::bail!(
+            "解析预算耗尽：单次解析聚合 JS 执行超过 {} 秒",
+            JS_PARSE_BUDGET.as_secs()
+        );
+    }
     JS_RUNTIME.with(|cell| {
         {
             let mut slot = cell.borrow_mut();
@@ -307,7 +387,10 @@ fn eval_js_inner_with_source(
         // 资源上限幂等重设 + 每次求值重挂中断（deadline 是每次新的）
         rt.set_memory_limit(JS_MEMORY_LIMIT_BYTES);
         rt.set_max_stack_size(JS_MAX_STACK_BYTES);
-        let deadline = Instant::now() + JS_EVAL_TIMEOUT;
+        let deadline = match parse_deadline {
+            Some(parse_deadline) => parse_deadline.min(Instant::now() + JS_EVAL_TIMEOUT),
+            None => Instant::now() + JS_EVAL_TIMEOUT,
+        };
         rt.set_interrupt_handler(Some(Box::new(move || Instant::now() >= deadline)));
         let ctx = Context::full(rt)?;
         ctx.with(|ctx| {
@@ -1098,5 +1181,40 @@ mod tests {
             eval_js("String(cache.get('token'))", "", "").unwrap()
         });
         assert_eq!(hit_for_alice, "from-alice");
+    }
+
+    // ─── 单次解析聚合 JS 预算 ───
+
+    #[test]
+    fn exhausted_parse_budget_rejects_eval_without_running_script() {
+        let _budget = begin_parse_budget();
+        set_parse_budget_for_test(Duration::from_millis(50));
+        std::thread::sleep(Duration::from_millis(60));
+        // 预算已耗尽：直接 Err，不进入脚本执行
+        assert!(eval_js("1+1", "", "").is_err());
+    }
+
+    #[test]
+    fn parse_budget_allows_normal_eval_and_nests() {
+        let _budget = begin_parse_budget();
+        assert_eq!(eval_js("1+1", "", "").unwrap(), "2");
+        // 嵌套守卫：只加深深度，不重置截止时间；期间求值照常
+        {
+            let _nested = begin_parse_budget();
+            assert_eq!(eval_js("2+2", "", "").unwrap(), "4");
+        }
+        assert_eq!(eval_js("3+3", "", "").unwrap(), "6");
+    }
+
+    #[test]
+    fn parse_budget_cleared_after_outermost_guard_drops() {
+        {
+            let _budget = begin_parse_budget();
+            set_parse_budget_for_test(Duration::from_millis(1));
+            std::thread::sleep(Duration::from_millis(5));
+            assert!(eval_js("1+1", "", "").is_err(), "预算内应当被拒");
+        }
+        // 最外层 guard drop 后预算清空：同一线程上求值恢复
+        assert_eq!(eval_js("1+1", "", "").unwrap(), "2");
     }
 }

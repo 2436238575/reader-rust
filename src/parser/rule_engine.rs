@@ -6,7 +6,10 @@ use crate::model::{
 };
 use crate::parser::{
     html,
-    js::{eval_js, eval_js_with_bindings, eval_js_with_bindings_and_globals, with_book_source},
+    js::{
+        begin_parse_budget, eval_js, eval_js_with_bindings, eval_js_with_bindings_and_globals,
+        with_book_source,
+    },
     jsonpath,
 };
 use crate::util::text::normalize_source_url;
@@ -123,6 +126,7 @@ impl RuleEngine {
     }
 
     pub fn search_books(&self, source: &BookSource, body: &str, base_url: &str) -> Vec<SearchBook> {
+        let _budget = begin_parse_budget();
         with_book_source(source, || {
             let rule = source.rule_search.clone().unwrap_or_default();
             let (list_rule, reverse) = normalize_list_rule(rule.book_list.as_deref().unwrap_or(""));
@@ -162,6 +166,7 @@ impl RuleEngine {
         body: &str,
         base_url: &str,
     ) -> Vec<SearchBook> {
+        let _budget = begin_parse_budget();
         with_book_source(source, || {
             let rule = source
                 .rule_explore
@@ -210,6 +215,7 @@ impl RuleEngine {
         base_url: &str,
         book_url: &str,
     ) -> Book {
+        let _budget = begin_parse_budget();
         with_book_source(source, || {
             let rule = source.rule_book_info.clone().unwrap_or_default();
             let mut context = HashMap::new();
@@ -250,6 +256,7 @@ impl RuleEngine {
         body: &str,
         base_url: &str,
     ) -> (Vec<BookChapter>, Vec<String>) {
+        let _budget = begin_parse_budget();
         with_book_source(source, || {
             let rule = source.rule_toc.clone().unwrap_or_default();
             let mut context = HashMap::new();
@@ -302,6 +309,7 @@ impl RuleEngine {
     }
 
     pub fn content(&self, source: &BookSource, body: &str, base_url: &str) -> String {
+        let _budget = begin_parse_budget();
         with_book_source(source, || {
             let rule = source.rule_content.clone().unwrap_or_default();
             let mut content_body = body.to_string();
@@ -398,6 +406,7 @@ impl RuleEngine {
         body: &str,
         base_url: &str,
     ) -> Option<String> {
+        let _budget = begin_parse_budget();
         let rule = source.rule_content.clone().unwrap_or_default();
         let next_rule = rule.next_content_url.as_deref()?;
         if next_rule.is_empty() {
@@ -949,6 +958,7 @@ impl RuleEngine {
         base_url: &str,
         ctx: &HashMap<String, String>,
     ) -> Option<String> {
+        let _budget = begin_parse_budget();
         let rule = source.rule_review.as_ref()?.review_url.clone()?;
         with_book_source(source, || self.review_url(&rule, body, base_url, ctx))
     }
@@ -961,6 +971,7 @@ impl RuleEngine {
         base_url: &str,
         ctx: &HashMap<String, String>,
     ) -> Option<String> {
+        let _budget = begin_parse_budget();
         let rule = source.rule_para_review.as_ref()?.index_url.clone()?;
         with_book_source(source, || self.review_url(&rule, body, base_url, ctx))
     }
@@ -973,6 +984,7 @@ impl RuleEngine {
         base_url: &str,
         ctx: &HashMap<String, String>,
     ) -> Option<String> {
+        let _budget = begin_parse_budget();
         let rule = source.rule_para_review.as_ref()?.review_url.clone()?;
         with_book_source(source, || self.review_url(&rule, body, base_url, ctx))
     }
@@ -989,6 +1001,7 @@ impl RuleEngine {
         base_url: &str,
         ctx: &HashMap<String, String>,
     ) -> Option<String> {
+        let _budget = begin_parse_budget();
         let rule = rule.trim();
         if rule.is_empty() {
             return None;
@@ -1013,6 +1026,7 @@ impl RuleEngine {
 
     /// 解析章评列表。
     pub fn chapter_reviews(&self, source: &BookSource, body: &str, base_url: &str) -> ReviewPage {
+        let _budget = begin_parse_budget();
         let Some(rule) = source.rule_review.as_ref() else {
             return ReviewPage::default();
         };
@@ -1047,6 +1061,7 @@ impl RuleEngine {
 
     /// 解析某一段的段评列表。
     pub fn para_reviews(&self, source: &BookSource, body: &str, base_url: &str) -> ReviewPage {
+        let _budget = begin_parse_budget();
         let Some(rule) = source.rule_para_review.as_ref() else {
             return ReviewPage::default();
         };
@@ -1089,6 +1104,7 @@ impl RuleEngine {
         body: &str,
         base_url: &str,
     ) -> Vec<ParaReviewCount> {
+        let _budget = begin_parse_budget();
         let Some(rule) = source.rule_para_review.as_ref() else {
             return Vec::new();
         };
@@ -1165,6 +1181,7 @@ impl RuleEngine {
         body: &str,
         base_url: &str,
     ) -> Option<String> {
+        let _budget = begin_parse_budget();
         let rule = source.rule_content_image.as_ref()?.image_url.clone()?;
         with_book_source(source, || {
             self.review_url(&rule, body, base_url, &HashMap::new())
@@ -1181,6 +1198,7 @@ impl RuleEngine {
         body: &str,
         base_url: &str,
     ) -> Vec<ChapterImage> {
+        let _budget = begin_parse_budget();
         let Some(rule) = source.rule_content_image.as_ref() else {
             return Vec::new();
         };
