@@ -1,4 +1,5 @@
 pub mod asset;
+pub mod atomic_write;
 pub mod bounded_map;
 pub mod crypto;
 pub mod hash;

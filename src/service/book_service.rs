@@ -22,6 +22,7 @@ use crate::storage::cache::file_cache::{
 };
 use crate::storage::cache::review_cache::ReviewCache;
 use crate::storage::db::repo::{BookRepo, RegisterBook, ShelfBookRepo, ShelfBookRow, ShelfEntry};
+use crate::util::atomic_write::write_atomic;
 use crate::util::bounded_map::BoundedMap;
 use crate::util::hash::md5_hex;
 use crate::util::text::{normalize_source_url, repair_encoded_url};
@@ -67,6 +68,9 @@ pub struct BookService {
     pending_toc_fills: Arc<Mutex<HashSet<(String, String)>>>,
     /// 正在后台回源的 `(book_id, chapter_url)` 集合：到期后的并发请求只起一个任务。
     pending_revalidations: Arc<Mutex<HashSet<(String, String)>>>,
+    /// 串行化目录缓存的读-改-写（append）：无锁交错会互相覆盖丢章。
+    /// 全局一把锁即可——append 只在目录后台补全时发生，频率低、临界区短。
+    toc_append_lock: Arc<tokio::sync::Mutex<()>>,
 }
 
 /// 内存里暂存的章节正文响应体。
@@ -321,6 +325,7 @@ impl BookService {
             user_local_book_limit: 0,
             pending_toc_fills: Arc::new(Mutex::new(HashSet::new())),
             pending_revalidations: Arc::new(Mutex::new(HashSet::new())),
+            toc_append_lock: Arc::new(tokio::sync::Mutex::new(())),
         }
     }
 
@@ -937,16 +942,21 @@ impl BookService {
             return None;
         }
         let raw = fs::read_to_string(&path).await.ok()?;
-        serde_json::from_str(&raw).ok()
+        // 损坏的缓存文件按未命中处理并删除，留待重抓覆盖；不让坏文件每次都白读一遍
+        match serde_json::from_str(&raw) {
+            Ok(book) => Some(book),
+            Err(e) => {
+                tracing::warn!("book info cache corrupted, dropping: {e}");
+                let _ = fs::remove_file(&path).await;
+                None
+            }
+        }
     }
 
     async fn save_book_info_cache(&self, user_ns: &str, book_id: &str, book: &Book) {
         let path = self.book_info_cache_path(user_ns, book_id);
-        if let Some(parent) = path.parent() {
-            let _ = fs::create_dir_all(parent).await;
-        }
         if let Ok(data) = serde_json::to_string(book) {
-            let _ = fs::write(&path, data).await;
+            let _ = write_atomic(&path, data.as_bytes()).await;
         }
     }
 
@@ -2674,12 +2684,20 @@ impl BookService {
         if !path.exists() {
             return Ok(None);
         }
-        let data = fs::read_to_string(&path)
-            .await
-            .map_err(|e| AppError::Internal(e.into()))?;
-        let list: Vec<SearchBook> =
-            serde_json::from_str(&data).map_err(|e| AppError::BadRequest(e.to_string()))?;
-        Ok(Some(list))
+        let data = match fs::read_to_string(&path).await {
+            Ok(data) => data,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(e) => return Err(AppError::Internal(e.into())),
+        };
+        // 换源候选同样可再生存级，坏文件按未命中降级并删除
+        match serde_json::from_str::<Vec<SearchBook>>(&data) {
+            Ok(list) => Ok(Some(list)),
+            Err(e) => {
+                tracing::warn!("source candidates cache corrupted, dropping: {e}");
+                let _ = fs::remove_file(&path).await;
+                Ok(None)
+            }
+        }
     }
 
     pub async fn save_book_sources_cache(
@@ -2689,13 +2707,8 @@ impl BookService {
         list: &Vec<SearchBook>,
     ) -> Result<(), AppError> {
         let path = self.book_source_cache_path(user_ns, book_id);
-        if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent)
-                .await
-                .map_err(|e| AppError::Internal(e.into()))?;
-        }
         let data = serde_json::to_string(list).map_err(|e| AppError::BadRequest(e.to_string()))?;
-        fs::write(&path, data)
+        write_atomic(&path, data.as_bytes())
             .await
             .map_err(|e| AppError::Internal(e.into()))?;
         Ok(())
@@ -2862,12 +2875,22 @@ impl BookService {
         if !path.exists() {
             return Ok(None);
         }
-        let data = fs::read_to_string(&path)
-            .await
-            .map_err(|e| AppError::Internal(e.into()))?;
-        let list: Vec<BookChapter> =
-            serde_json::from_str(&data).map_err(|e| AppError::BadRequest(e.to_string()))?;
-        Ok(Some(list))
+        let data = match fs::read_to_string(&path).await {
+            Ok(data) => data,
+            // exists 与读取之间被并发删除：按未命中处理
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(e) => return Err(AppError::Internal(e.into())),
+        };
+        // 损坏/半截写入的目录缓存按未命中降级：删掉坏文件让调用方重抓，
+        // 而不是把 serde 错误冒成 400（目录本来就可再生）。
+        match serde_json::from_str::<Vec<BookChapter>>(&data) {
+            Ok(list) => Ok(Some(list)),
+            Err(e) => {
+                tracing::warn!("chapter list cache corrupted, dropping: {e}");
+                let _ = fs::remove_file(&path).await;
+                Ok(None)
+            }
+        }
     }
 
     /// 带 TTL 的目录缓存读取：超过 `CHAPTER_LIST_CACHE_TTL` 的文件按未命中
@@ -2908,7 +2931,9 @@ impl BookService {
         }
         let data =
             serde_json::to_string(chapters).map_err(|e| AppError::BadRequest(e.to_string()))?;
-        fs::write(&path, data)
+        // tmp + rename 原子覆盖：读侧（load_chapter_list_cache）要么看到旧目录、
+        // 要么看到完整新目录，绝不会读到半截 JSON
+        write_atomic(&path, data.as_bytes())
             .await
             .map_err(|e| AppError::Internal(e.into()))?;
         Ok(())
@@ -2931,6 +2956,9 @@ impl BookService {
         book_id: &str,
         new_chapters: &Vec<BookChapter>,
     ) -> Result<Vec<BookChapter>, AppError> {
+        // 读-改-写整体持锁串行化：两个并发 append 无锁交错时后写者会基于旧快照
+        // 落盘，先写者新增的章节被整体覆盖丢失。
+        let _append_guard = self.toc_append_lock.lock().await;
         let mut existing = self
             .load_chapter_list_cache(user_ns, book_id)
             .await?
@@ -3672,6 +3700,99 @@ mod tests {
             service.try_begin_toc_fill(ns, book_id).is_some(),
             "守卫释放后可再次开始"
         );
+        pool.close().await;
+        let _ = std::fs::remove_dir_all(&storage_dir);
+    }
+
+    #[tokio::test]
+    async fn corrupted_chapter_list_cache_degrades_to_miss() {
+        let storage_dir =
+            std::env::temp_dir().join(format!("reader-rust-toc-corrupt-{}", std::process::id()));
+        let (service, pool) = test_service(&storage_dir).await;
+        let ns = "test-corrupt";
+        let book_id = "book_1";
+
+        // 半截 JSON（进程中途被杀 / 旧版直写读到一半）在缓存文件里
+        let path = service.chapter_list_cache_path(ns, book_id);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, r#"[{"url":"a","title":"A","index":0},"#).unwrap();
+
+        // 读取按未命中降级（Ok(None)），不冒成 BadRequest；坏文件顺手删除
+        let loaded = service.load_chapter_list_cache(ns, book_id).await.unwrap();
+        assert!(loaded.is_none(), "损坏缓存应按未命中降级");
+        assert!(!path.exists(), "坏文件应被删除");
+
+        // 换源候选缓存同样降级
+        let cand_path = service.book_source_cache_path(ns, book_id);
+        std::fs::create_dir_all(cand_path.parent().unwrap()).unwrap();
+        std::fs::write(&cand_path, "not-json").unwrap();
+        let loaded = service.load_book_sources_cache(ns, book_id).await.unwrap();
+        assert!(loaded.is_none());
+        assert!(!cand_path.exists());
+
+        // 覆盖写回后恢复正常读取
+        service
+            .save_chapter_list_cache(
+                ns,
+                book_id,
+                &vec![BookChapter {
+                    url: "a".into(),
+                    title: "A".into(),
+                    index: 0,
+                    ..Default::default()
+                }],
+            )
+            .await
+            .unwrap();
+        let loaded = service.load_chapter_list_cache(ns, book_id).await.unwrap();
+        assert_eq!(loaded.unwrap().len(), 1);
+
+        pool.close().await;
+        let _ = std::fs::remove_dir_all(&storage_dir);
+    }
+
+    #[tokio::test]
+    async fn concurrent_append_chapter_list_cache_keeps_all_chapters() {
+        let storage_dir = std::env::temp_dir().join(format!(
+            "reader-rust-toc-append-conc-{}",
+            std::process::id()
+        ));
+        let (service, pool) = test_service(&storage_dir).await;
+        let ns = "test-append-conc";
+        let book_id = "book_1";
+
+        let mk = |url: String| BookChapter {
+            url: url.clone(),
+            title: url,
+            index: 0,
+            ..Default::default()
+        };
+        // 两批各 30 章，URL 不相交：并发 append 后缓存必须 60 章全在
+        let batch_a: Vec<BookChapter> = (0..30).map(|i| mk(format!("a{i}"))).collect();
+        let batch_b: Vec<BookChapter> = (0..30).map(|i| mk(format!("b{i}"))).collect();
+        let (ra, rb) = tokio::join!(
+            service.append_chapter_list_cache(ns, book_id, &batch_a),
+            service.append_chapter_list_cache(ns, book_id, &batch_b)
+        );
+        // 串行化语义：先拿到锁的 append 面对空缓存只返回自己那批（30），
+        // 后完成者必须看到先完成者的写入（60）。无锁交错时两者都回 30
+        // 且后写者覆盖先写者，最终缓存只剩一批。
+        let len_a = ra.unwrap().len();
+        let len_b = rb.unwrap().len();
+        assert_eq!(
+            len_a.max(len_b),
+            60,
+            "后完成的 append 必须包含先完成者的章节（实际 {len_a}/{len_b}）"
+        );
+        let final_list = service
+            .load_chapter_list_cache(ns, book_id)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(final_list.len(), 60, "并发 append 不允许丢章");
+        let indexes: HashSet<i32> = final_list.iter().map(|c| c.index).collect();
+        assert_eq!(indexes.len(), 60, "index 必须连续不重复");
+
         pool.close().await;
         let _ = std::fs::remove_dir_all(&storage_dir);
     }
