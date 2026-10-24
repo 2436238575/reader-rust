@@ -4,7 +4,6 @@ from agent_sidecar.merge import (
     coerce_model_update,
     normalize_characters,
     normalize_locations,
-    normalize_relationships,
     normalize_worldview,
 )
 

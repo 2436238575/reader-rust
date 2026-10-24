@@ -20,7 +20,6 @@ from .loop import run_job
 from .model_client import ModelClient, ModelError
 from .protocol import StdioChannel, hello, parse_job, result_error, result_ok
 from .errors import sanitize_error_message, scrub_credentials
-from .types import JobRequest
 
 log = logging.getLogger("agent_sidecar")
 
