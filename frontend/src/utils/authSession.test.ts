@@ -113,3 +113,90 @@ describe('authSession', () => {
     expect(readAccessToken()).toBe('new-access')
   })
 })
+
+describe('authSession 跨标签页软锁回退（无 navigator.locks）', () => {
+  const LOCK_KEY = 'reader.auth.refresh.lock'
+
+  // jsdom 没有 Web Locks API，回退路径本就会被走到；这里再显式把
+  // navigator.locks 置为 undefined，保证未来测试环境实现了 locks 时，
+  // 这组用例仍然针对软锁回退。
+  beforeEach(() => {
+    Object.defineProperty(window.navigator, 'locks', {
+      value: undefined,
+      configurable: true,
+      writable: true,
+    })
+  })
+
+  afterEach(() => {
+    // 删掉自有属性，恢复原型链上可能存在的原生定义
+    delete (window.navigator as { locks?: unknown }).locks
+  })
+
+  it('其他标签页持有的有效软锁会让刷新等待，锁释放后才执行', async () => {
+    vi.useFakeTimers()
+    seedTokens()
+    const post = vi.spyOn(axios, 'post').mockResolvedValue(refreshResponse())
+    localStorage.setItem(
+      LOCK_KEY,
+      JSON.stringify({ owner: 'other-tab', expiresAt: Date.now() + 10_000 })
+    )
+
+    const pending = refreshAccessToken('old-access')
+
+    // 他人持锁期间：轮询几个周期也不会发起刷新请求
+    await vi.advanceTimersByTimeAsync(900)
+    expect(post).not.toHaveBeenCalled()
+
+    // 另一个标签页释放锁后，本轮刷新拿到锁并执行
+    localStorage.removeItem(LOCK_KEY)
+    await vi.advanceTimersByTimeAsync(300)
+
+    await expect(pending).resolves.toBe('new-access')
+    expect(post).toHaveBeenCalledTimes(1)
+    // 刷新完成后软锁已主动释放
+    expect(localStorage.getItem(LOCK_KEY)).toBeNull()
+  })
+
+  it('过期的软锁会被直接抢占，不等待', async () => {
+    vi.useFakeTimers()
+    seedTokens()
+    const post = vi.spyOn(axios, 'post').mockResolvedValue(refreshResponse())
+    localStorage.setItem(
+      LOCK_KEY,
+      JSON.stringify({ owner: 'crashed-tab', expiresAt: Date.now() - 1 })
+    )
+
+    await expect(refreshAccessToken('old-access')).resolves.toBe('new-access')
+    expect(post).toHaveBeenCalledTimes(1)
+    expect(localStorage.getItem(LOCK_KEY)).toBeNull()
+  })
+
+  it('软锁内容损坏（非法 JSON）时按无锁处理，不会卡死', async () => {
+    vi.useFakeTimers()
+    seedTokens()
+    const post = vi.spyOn(axios, 'post').mockResolvedValue(refreshResponse())
+    localStorage.setItem(LOCK_KEY, '{not-json')
+
+    await expect(refreshAccessToken('old-access')).resolves.toBe('new-access')
+    expect(post).toHaveBeenCalledTimes(1)
+    expect(localStorage.getItem(LOCK_KEY)).toBeNull()
+  })
+
+  it('localStorage 写失败（隐私模式）时退化为无锁直接刷新', async () => {
+    seedTokens()
+    const post = vi.spyOn(axios, 'post').mockResolvedValue(refreshResponse())
+    const original = Storage.prototype.setItem
+    vi.spyOn(Storage.prototype, 'setItem').mockImplementation(function (
+      key: string,
+      value: string
+    ) {
+      if (key === LOCK_KEY) throw new Error('QuotaExceededError')
+      original.call(window.localStorage, key, value)
+    })
+
+    await expect(refreshAccessToken('old-access')).resolves.toBe('new-access')
+    expect(post).toHaveBeenCalledTimes(1)
+    expect(readAccessToken()).toBe('new-access')
+  })
+})
