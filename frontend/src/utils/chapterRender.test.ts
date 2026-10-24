@@ -3,9 +3,11 @@ import { describe, expect, it } from 'vitest'
 import {
   applyDiffMarks,
   applyUnderlineMarks,
+  buildBaseChapterHtml,
   buildParaBubbleMap,
   highlightKeywords,
   highlightSearchText,
+  isProbablyChapterHtml,
   paraTextSimilarity,
 } from './chapterRender'
 import type { ParagraphDiffOp } from './chapterDiff'
@@ -321,5 +323,50 @@ describe('段评定位', () => {
     expect(paraTextSimilarity('今天天气很好，我们一起去公园。', '系统提示任务完成。')).toBeLessThan(
       0.5
     )
+  })
+})
+
+describe('isProbablyChapterHtml 的 HTML 判定', () => {
+  const opts = { showChapterImages: true, firstLineIndent: false, paragraphSpacing: 0.5 }
+
+  it('已知排版标签识别为 HTML（成对标签 / 空标签 / 带属性）', () => {
+    expect(isProbablyChapterHtml('<p>hello</p>')).toBe(true)
+    expect(isProbablyChapterHtml('<br>')).toBe(true)
+    expect(isProbablyChapterHtml('<img src=x>')).toBe(true)
+    expect(isProbablyChapterHtml('<div class="content">正文</div>')).toBe(true)
+    expect(isProbablyChapterHtml('前言<ruby>字<rt>zi</rt></ruby>')).toBe(true)
+  })
+
+  it('字面尖括号保持纯文本：a<b>c 与比较式不误判', () => {
+    expect(isProbablyChapterHtml('a<b>c')).toBe(false)
+    expect(isProbablyChapterHtml('1 < 2 > 0')).toBe(false)
+    expect(isProbablyChapterHtml('他说 x<i>y 成立')).toBe(false)
+    expect(isProbablyChapterHtml('纯文本，没有标签')).toBe(false)
+  })
+
+  it('a<b>c 走纯文本分支：字面 <b> 不被吞掉', () => {
+    const html = buildBaseChapterHtml('a<b>c', opts)
+    expect(html).toContain('a&lt;b&gt;c')
+    const el = root(html)
+    expect(el.querySelector('b')).toBeNull()
+    expect(el.textContent).toBe('a<b>c')
+  })
+
+  it('1 < 2 > 0 走纯文本分支：比较式原样保留', () => {
+    const html = buildBaseChapterHtml('1 < 2 > 0', opts)
+    expect(html).toContain('1 &lt; 2 &gt; 0')
+    expect(root(html).textContent).toBe('1 < 2 > 0')
+  })
+
+  it('<p>hello</p> 走 HTML 分支：标签不被转义成可见文本', () => {
+    const html = buildBaseChapterHtml('<p>hello</p>', opts)
+    expect(html).not.toContain('&lt;p&gt;')
+    expect(root(html).querySelector('p')?.textContent).toBe('hello')
+  })
+
+  it('<br> 与 <img src=x> 走 HTML 分支：空标签与带属性标签都保留', () => {
+    const el = root(buildBaseChapterHtml('<p>甲</p><br><img src="x">', opts))
+    expect(el.querySelector('br')).not.toBeNull()
+    expect(el.querySelector('img')?.getAttribute('src')).toBe('x')
   })
 })

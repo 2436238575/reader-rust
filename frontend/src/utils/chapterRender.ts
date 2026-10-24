@@ -38,6 +38,23 @@ export function splitParagraphLines(text: string) {
   return lines
 }
 
+/**
+ * 正文是否为 HTML 的嗅探：只认已知排版标签（块级 + 常用内联），
+ * 且标签名后必须紧跟空白、`>` 或 `/`。
+ *
+ * 旧实现是 `/<[a-z][\s\S]*>/i`：正文里的字面尖括号（`a<b>c`、比较式）
+ * 会被当成标签吞掉——`<b>` 进了 DOM 后原文那三个字符就消失了。
+ * 也不能用「解析后 wrapper 有没有元素子节点」来判：`a<b>c` 解析后同样
+ * 会产生 <b> 元素，等价于没判。有意不放 `b`/`i`/`u` 等短标签：
+ * 它们正是纯文本里最容易出现的字面量（`<b>`、`<i>`）。
+ */
+const KNOWN_HTML_TAG_PATTERN =
+  /<\/?(?:p|div|br|hr|img|h[1-6]|ul|ol|li|dl|dt|dd|table|thead|tbody|tfoot|tr|td|th|caption|colgroup|col|blockquote|pre|code|figure|figcaption|section|article|aside|details|summary|center|span|em|strong|a|ruby|rt|rp|sup|sub|video|audio|svg)(?=[\s/>])/i
+
+export function isProbablyChapterHtml(text: string) {
+  return KNOWN_HTML_TAG_PATTERN.test(text)
+}
+
 // 基础渲染（消毒 + 段落样式，不含段评气泡）：按正文与排版配置缓存。
 // 段评索引异步到达、开关搜索等任一变化都应只触发便宜的装饰层。
 export function buildBaseChapterHtml(rawText: string, opts: BaseRenderOptions) {
@@ -46,7 +63,7 @@ export function buildBaseChapterHtml(rawText: string, opts: BaseRenderOptions) {
   const stripLeadingIndent = (line: string) => line.replace(/^[\u3000\u00A0 \t]+/, '')
   const wrapper = document.createElement('div')
 
-  if (/<[a-z][\s\S]*>/i.test(text)) {
+  if (isProbablyChapterHtml(text)) {
     // 书源返回的正文 HTML 完全不可信：先白名单消毒再进 DOM
     wrapper.innerHTML = sanitizeUntrustedHtml(text)
     if (!opts.showChapterImages) {
