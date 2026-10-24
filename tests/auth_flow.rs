@@ -701,3 +701,38 @@ async fn multipart_upload_rejects_excessive_field_count() {
         .unwrap();
     assert_eq!(response.status(), 200, "正常上传不应被误伤");
 }
+
+#[tokio::test]
+async fn public_login_body_is_capped_at_1mb() {
+    let server = TestServer::start().await;
+
+    // 未登录就能触达的端点：2MB 的垃圾 JSON 应被公开组 1MB 上限挡成 413，
+    // 而不是按全局兜底先缓冲 100MB 再进业务逻辑
+    let big_password = "x".repeat(2 * 1024 * 1024);
+    let response = server
+        .client
+        .post(server.url("/reader3/login"))
+        .json(&serde_json::json!({
+            "username": TEST_USERNAME,
+            "password": big_password,
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 413, "超过公开组 1MB 上限应返回 413");
+
+    // 正常小 body 仍能拿到业务响应
+    let response = server
+        .client
+        .post(server.url("/reader3/login"))
+        .json(&serde_json::json!({
+            "username": TEST_USERNAME,
+            "password": TEST_PASSWORD,
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200, "小 body 不应被上限误伤");
+    let body: serde_json::Value = response.json().await.unwrap();
+    assert_eq!(body["isSuccess"], serde_json::json!(true));
+}

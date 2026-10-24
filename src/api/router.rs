@@ -15,6 +15,16 @@ use tower_http::services::{ServeDir, ServeFile};
 use tower_http::set_header::SetResponseHeaderLayer;
 use tower_http::trace::TraceLayer;
 
+/// 公开/可选鉴权组的请求体上限（1MB）：登录与令牌刷新只收小 JSON，
+/// 未登录就能触达的端点不值得按全局兜底值缓冲 100MB。
+const PUBLIC_BODY_LIMIT_BYTES: usize = 1024 * 1024;
+/// 登录后接口的默认请求体上限（8MB）。
+const PROTECTED_BODY_LIMIT_BYTES: usize = 8 * 1024 * 1024;
+/// 批量导入书源（`/reader3/saveBookSources`）的请求体上限。
+const SAVE_SOURCES_BODY_LIMIT_BYTES: usize = 64 * 1024 * 1024;
+/// 大上传路由与最外层兜底共用的请求体上限。
+const MAX_BODY_LIMIT_BYTES: usize = 100 * 1024 * 1024;
+
 /// 构建 CORS 层。
 ///
 /// 此前使用 `very_permissive()`，等于向任意站点反射 Origin 并允许携带凭据，
@@ -43,6 +53,10 @@ pub fn build_router(state: AppState) -> Router {
         .route("/reader3/login", post(handlers::login))
         // Refresh Token 本身就是凭据，不能挂在 require_auth 后面
         .route("/reader3/refreshToken", post(handlers::refresh_token))
+        // 请求体上限按下组下发：DefaultBodyLimit 经请求扩展覆盖，最内层先生效
+        // （axum-core 0.4 的 DefaultBodyLimitService 对扩展是 insert 覆盖写），
+        // 因此这里的 1MB 优先于最外层的 100MB 兜底
+        .layer(DefaultBodyLimit::max(PUBLIC_BODY_LIMIT_BYTES))
         .with_state(state.clone());
 
     // ── 可选鉴权：未登录也返回成功，只是内容为空 ──
@@ -50,6 +64,7 @@ pub fn build_router(state: AppState) -> Router {
         .route("/reader3/getUserInfo", get(handlers::get_user_info))
         .route("/reader3/logout", post(handlers::logout))
         .layer(middleware::from_fn_with_state(state.clone(), optional_auth))
+        .layer(DefaultBodyLimit::max(PUBLIC_BODY_LIMIT_BYTES))
         .with_state(state.clone());
 
     // ── WebDAV 文件接口：自带 HTTP Basic 认证，不经 JWT ──
@@ -60,6 +75,30 @@ pub fn build_router(state: AppState) -> Router {
         .route("/reader3/webdav/", any(handlers::webdav_handler))
         .route("/reader3/webdav/*path", any(handlers::webdav_handler))
         .with_state(state.clone());
+
+    // ── 大请求体路由：先挂各自放宽的上限（最内层先生效），再并入 protected ──
+    // 整本书/大文件上传（TXT、EPUB、章节正文导入、资源与 WebDAV 中转）
+    let big_body_routes = Router::new()
+        .route("/reader3/readSourceFile", post(handlers::read_source_file))
+        .route("/reader3/uploadTxtBook", post(handlers::upload_txt_book))
+        .route("/reader3/uploadEpubBook", post(handlers::upload_epub_book))
+        .route(
+            "/reader3/importChapterText",
+            post(handlers::import_chapter_text),
+        )
+        .route("/reader3/uploadFile", post(handlers::upload_file))
+        .route(
+            "/reader3/uploadFileToWebdav",
+            post(handlers::upload_file_to_webdav),
+        )
+        .layer(DefaultBodyLimit::max(MAX_BODY_LIMIT_BYTES));
+    // 批量导入书源：一次性贴几 MB 到几十 MB 的 JSON 数组
+    let bulk_sources_routes = Router::new()
+        .route(
+            "/reader3/saveBookSources",
+            post(handlers::save_book_sources),
+        )
+        .layer(DefaultBodyLimit::max(SAVE_SOURCES_BODY_LIMIT_BYTES));
 
     // ── 其余全部需要登录 ──
     let protected = Router::new()
@@ -94,10 +133,6 @@ pub fn build_router(state: AppState) -> Router {
         )
         .route("/reader3/saveBookSource", post(handlers::save_book_source))
         .route(
-            "/reader3/saveBookSources",
-            post(handlers::save_book_sources),
-        )
-        .route(
             "/reader3/deleteBookSource",
             post(handlers::delete_book_source),
         )
@@ -113,7 +148,6 @@ pub fn build_router(state: AppState) -> Router {
             "/reader3/readRemoteSourceFile",
             post(handlers::read_remote_source_file),
         )
-        .route("/reader3/readSourceFile", post(handlers::read_source_file))
         .route(
             "/reader3/searchBook",
             get(handlers::search_book).post(handlers::search_book),
@@ -160,8 +194,6 @@ pub fn build_router(state: AppState) -> Router {
             "/reader3/removeBookGroupMulti",
             post(handlers::remove_book_group_multi),
         )
-        .route("/reader3/uploadTxtBook", post(handlers::upload_txt_book))
-        .route("/reader3/uploadEpubBook", post(handlers::upload_epub_book))
         .route("/reader3/saveBook", post(handlers::save_book))
         .route("/reader3/saveBooks", post(handlers::save_books))
         .route("/reader3/setBookSource", post(handlers::set_book_source))
@@ -226,10 +258,6 @@ pub fn build_router(state: AppState) -> Router {
         .route(
             "/reader3/previewChapterImport",
             post(handlers::preview_chapter_import),
-        )
-        .route(
-            "/reader3/importChapterText",
-            post(handlers::import_chapter_text),
         )
         .route(
             "/reader3/getChapterImportDiff",
@@ -344,10 +372,6 @@ pub fn build_router(state: AppState) -> Router {
         )
         .route("/reader3/getWebdavFile", get(handlers::get_webdav_file))
         .route(
-            "/reader3/uploadFileToWebdav",
-            post(handlers::upload_file_to_webdav),
-        )
-        .route(
             "/reader3/deleteWebdavFile",
             post(handlers::delete_webdav_file),
         )
@@ -360,8 +384,12 @@ pub fn build_router(state: AppState) -> Router {
         .route("/reader3/getUserConfig", get(handlers::get_user_config))
         .route("/reader3/getUserdata", get(handlers::get_userdata))
         .route("/reader3/saveUserdata", post(handlers::save_userdata))
-        .route("/reader3/uploadFile", post(handlers::upload_file))
         .route("/reader3/deleteFile", post(handlers::delete_file))
+        // 组级默认上限（8MB）：挂在普通路由之后、合并放宽子路由之前，
+        // 只包住本组常规接口；放宽路由在各自子路由上已带更内侧的上限
+        .layer(DefaultBodyLimit::max(PROTECTED_BODY_LIMIT_BYTES))
+        .merge(bulk_sources_routes)
+        .merge(big_body_routes)
         .layer(middleware::from_fn_with_state(state.clone(), require_auth))
         .with_state(state.clone());
 
@@ -431,7 +459,9 @@ pub fn build_router(state: AppState) -> Router {
     Router::new()
         .merge(api)
         .merge(static_web)
-        .layer(DefaultBodyLimit::max(100 * 1024 * 1024))
+        // 最外层兜底：只对没挂组级/路由级上限的路径生效（如 WebDAV）。
+        // DefaultBodyLimit 走请求扩展覆盖，最内层的限制先生效
+        .layer(DefaultBodyLimit::max(MAX_BODY_LIMIT_BYTES))
         // SSE 响应统一加 X-Accel-Buffering: no：nginx 默认 proxy_buffering on，
         // 会把整条事件流攒到结束才一次性转发——直连后端进度逐帧正常、经反代
         // 就变成「缓存结束后进度一下走完」。这个头是 nginx 关流式缓冲的标准开关。
