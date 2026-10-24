@@ -147,12 +147,16 @@ pub async fn save_userdata(
 pub async fn login(
     State(state): State<AppState>,
     ConnectInfo(addr): ConnectInfo<std::net::SocketAddr>,
+    headers: axum::http::HeaderMap,
     Json(req): Json<LoginRequest>,
 ) -> Result<Json<ApiResponse<Value>>, AppError> {
     let username = req.username.unwrap_or_default();
     let password = req.password.unwrap_or_default();
-    // 限速按对端 IP 记账（ConnectInfo 由 into_make_service_with_connect_info 注入）
-    let client_ip = addr.ip().to_string();
+    // 限速按客户端 IP 记账：对端命中 TRUSTED_PROXIES 时从 X-Forwarded-For
+    // 还原真实地址（挂 nginx/Docker NAT 后全体请求同 socket IP，会互相连坐），
+    // 否则一律用 socket 地址（ConnectInfo 由 into_make_service_with_connect_info 注入）
+    let trusted = crate::util::client_ip::parse_or_default(&state.config.trusted_proxies);
+    let client_ip = crate::util::client_ip::resolve_client_ip(addr.ip(), &headers, &trusted);
     let data = state
         .user_service
         .login(&username, &password, Some(&client_ip))

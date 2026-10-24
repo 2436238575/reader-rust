@@ -75,6 +75,15 @@ pub struct AppConfig {
     ///
     /// 设为 `true` 时跳过用户名维度与 IP 维度的登录失败封禁。生产部署**不应**开启。
     pub rate_limit_disabled: bool,
+    /// 登录限速的受信代理列表（逗号分隔，IP 或 CIDR）。
+    ///
+    /// 生产部署挂在 nginx/Caddy/Docker NAT 后时，所有请求的对端地址都是代理
+    /// IP——攻击者错 5 次会把全体访问者封 6 小时。配置后仅当对端命中受信
+    /// 列表时才解析 `X-Forwarded-For` 还原真实客户端地址（从右往左第一个
+    /// 非受信地址；格式非法或全受信回退 socket 地址）。**留空（默认）不信任
+    /// 任何代理头**，一律按 socket 地址记账。条目只认 IP / CIDR（如
+    /// `172.17.0.1, 172.17.0.0/16`），见 `util::client_ip`。
+    pub trusted_proxies: String,
     /// 是否启用 Python agent sidecar（AI 资料的编排与生成）。
     ///
     /// 启用后 AI 资料更新由后端拉起 `AGENT_SIDECAR_COMMAND` 指定的 Python
@@ -131,6 +140,7 @@ impl Default for AppConfig {
             private_network_whitelist: String::new(),
             cors_allowed_origins: String::new(),
             rate_limit_disabled: false,
+            trusted_proxies: String::new(),
             agent_sidecar_enabled: true,
             agent_sidecar_command: "python -m agent_sidecar".to_string(),
             agent_sidecar_chapter_timeout_secs: 1800,
@@ -200,6 +210,7 @@ pub fn load() -> anyhow::Result<AppConfig> {
         )?
         .set_default("cors_allowed_origins", defaults.cors_allowed_origins)?
         .set_default("rate_limit_disabled", defaults.rate_limit_disabled)?
+        .set_default("trusted_proxies", defaults.trusted_proxies)?
         .set_default("agent_sidecar_enabled", defaults.agent_sidecar_enabled)?
         .set_default("agent_sidecar_command", defaults.agent_sidecar_command)?
         .set_default(
@@ -211,6 +222,12 @@ pub fn load() -> anyhow::Result<AppConfig> {
         .build()?;
     let mut cfg: AppConfig = cfg.try_deserialize()?;
     normalize_token_ttls(&mut cfg);
+    // TRUSTED_PROXIES 解析失败必须启动告警并按空列表生效（最保守：
+    // 不信任任何代理头），不能静默吞掉——否则「配错了」与「没配」不可区分。
+    if let Err(error) = crate::util::client_ip::parse_trusted_proxies(&cfg.trusted_proxies) {
+        eprintln!("WARN TRUSTED_PROXIES 配置无效（{error}），已忽略，登录限速按直连地址记账");
+        cfg.trusted_proxies = String::new();
+    }
     Ok(cfg)
 }
 

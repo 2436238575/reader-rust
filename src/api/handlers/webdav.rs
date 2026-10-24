@@ -227,8 +227,11 @@ pub async fn webdav_handler(
     headers: HeaderMap,
     req: Request,
 ) -> Response {
-    // Basic 认证与登录接口共享限速，按对端 IP 记账
-    let client_ip = addr.ip().to_string();
+    // Basic 认证与登录接口共享限速，按客户端 IP 记账；对端命中
+    // TRUSTED_PROXIES 时从 X-Forwarded-For 还原真实地址（挂 nginx/Docker
+    // NAT 后全体请求同 socket IP，会互相连坐），否则一律用 socket 地址
+    let trusted = crate::util::client_ip::parse_or_default(&state.config.trusted_proxies);
+    let client_ip = crate::util::client_ip::resolve_client_ip(addr.ip(), &headers, &trusted);
     let user_ns = match resolve_webdav_user(&state, &headers, Some(&client_ip)).await {
         Ok(ns) => ns,
         Err(status) => return status.into_response(),

@@ -1,6 +1,7 @@
 pub mod asset;
 pub mod atomic_write;
 pub mod bounded_map;
+pub mod client_ip;
 pub mod crypto;
 pub mod hash;
 pub mod safe_path;
