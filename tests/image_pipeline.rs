@@ -101,6 +101,19 @@ async fn start_upstream() -> (String, Counter) {
                 Json(serde_json::to_value(hits.lock().unwrap().clone()).unwrap())
             }),
         )
+        // 慢速小图（300ms）：拉宽并发首取的竞态窗口
+        .route(
+            "/slow.jpg",
+            get(|| async {
+                tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+                let mut resp = Response::new(axum::body::Body::from(TINY_HEIC.to_vec()));
+                resp.headers_mut().insert(
+                    header::CONTENT_TYPE,
+                    header::HeaderValue::from_static("image/jpeg"),
+                );
+                resp
+            }),
+        )
         .with_state(hits.clone());
 
     let counter = hits.clone();
@@ -371,4 +384,51 @@ async fn non_heic_images_pass_through_and_unknown_id_is_404() {
     // 没登记过的 id：404，而不是把上游错误暴露出去
     let resp = server.get_image("/reader3/image/deadbeefdeadbeef").await;
     assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+}
+
+/// 并发首取同一张图：按 id 单飞，上游只被打一次，两个请求拿到相同字节。
+#[tokio::test]
+async fn concurrent_first_load_of_same_image_hits_upstream_once() {
+    let server = TestServer::start().await;
+    // 入架一本封面指向慢速图（300ms）的书：书架改写只登记映射、不抓图，
+    // 随后两个取图请求都是未命中
+    let book = json!({
+        "name": "并发取图书",
+        "author": "作者",
+        "bookUrl": server.book_url(),
+        "bookSourceId": server.book_source_id.get(),
+        "coverUrl": format!("{}/slow.jpg?sig=1", server.upstream_url),
+    });
+    let resp = server
+        .client
+        .post(format!("{}/reader3/saveBook", server.base_url))
+        .bearer_auth(&server.token)
+        .json(&book)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let route = server.shelf_cover_route().await;
+    assert!(route.starts_with("/reader3/image/"), "实际 {route}");
+
+    let (a, b) = tokio::join!(server.get_image(&route), server.get_image(&route));
+    assert_eq!(a.status(), StatusCode::OK);
+    assert_eq!(b.status(), StatusCode::OK);
+    let (bytes_a, bytes_b) = (a.bytes().await.unwrap(), b.bytes().await.unwrap());
+    assert_eq!(bytes_a, bytes_b, "两个请求应拿到相同字节");
+
+    let hits: HashMap<String, usize> = {
+        let resp = server
+            .client
+            .get(format!("{}/__hits", server.upstream_url))
+            .send()
+            .await
+            .unwrap();
+        resp.json().await.unwrap()
+    };
+    assert_eq!(
+        hits.get("/slow.jpg").copied().unwrap_or(0),
+        1,
+        "单飞：并发首取同一张图上游只能被打一次: {hits:?}"
+    );
 }

@@ -20,10 +20,13 @@ use crate::crawler::{
 };
 use crate::error::error::AppError;
 use crate::storage::cache::file_cache::enforce_flat_dir_capacity;
+use crate::util::atomic_write::write_atomic;
+use crate::util::bounded_map::BoundedMap;
 use crate::util::hash::md5_hex;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::fs;
 
@@ -35,6 +38,9 @@ const IMAGE_DIR: &str = "cache/image";
 
 /// JPEG 转码质量：封面/插图这类展示用图，85 已经看不出损失。
 const JPEG_QUALITY: u8 = 85;
+
+/// 取图单飞锁表上限：正常路径用完即清，上限只为兜住取消/panic 遗留的条目。
+const IMAGE_LOAD_LOCK_MAX_ENTRIES: usize = 256;
 
 /// 一条图片映射记录。
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -61,6 +67,9 @@ pub struct ImageService {
     storage_dir: PathBuf,
     /// 图片缓存目录容量上限（0 = 不限），与封面缓存共用同一个配置。
     limit_bytes: u64,
+    /// 取图单飞：`id -> 按键互斥锁`。并发首取同一张图只有一个真正抓上游
+    /// + HEIC 转码，其余等键锁后复用落盘结果。BoundedMap 限条数兜底。
+    load_locks: std::sync::Mutex<BoundedMap<Arc<tokio::sync::Mutex<()>>>>,
 }
 
 impl ImageService {
@@ -69,6 +78,7 @@ impl ImageService {
             http,
             storage_dir: storage_dir.into(),
             limit_bytes,
+            load_locks: std::sync::Mutex::new(BoundedMap::new(IMAGE_LOAD_LOCK_MAX_ENTRIES)),
         }
     }
 
@@ -257,6 +267,9 @@ impl ImageService {
     }
 
     /// 取图：缓存命中直接返回，否则抓上游（必要时转码）后落盘。
+    ///
+    /// 并发首取同一张图按 id 单飞：等键锁的请求拿到锁后先再看一次 body
+    /// 文件，等锁期间首个请求可能已经落盘，直接复用不再打上游。
     pub async fn load(&self, id: &str) -> Result<(Vec<u8>, String), AppError> {
         let Some(mut record) = self.record(id).await else {
             return Err(AppError::NotFound("图片不存在".to_string()));
@@ -264,6 +277,26 @@ impl ImageService {
         if let Ok(bytes) = fs::read(self.body_path(id)).await {
             return Ok((bytes, record.content_type));
         }
+        let lock = self.acquire_load_lock(id);
+        let _key_guard = lock.lock().await;
+        // 二次检查：首个请求可能刚把图落盘
+        if let Ok(bytes) = fs::read(self.body_path(id)).await {
+            drop(_key_guard);
+            self.release_load_lock(id, &lock);
+            return Ok((bytes, record.content_type));
+        }
+        let result = self.fetch_and_store(id, &mut record).await;
+        drop(_key_guard);
+        self.release_load_lock(id, &lock);
+        result
+    }
+
+    /// 抓上游 + 转码 + 落盘 + 更新记录（在键锁内执行）。
+    async fn fetch_and_store(
+        &self,
+        id: &str,
+        record: &mut ImageRecord,
+    ) -> Result<(Vec<u8>, String), AppError> {
         let res = self.fetch(&record.source_url).await.map_err(|err| {
             tracing::warn!(
                 "图片抓取失败 id={} url={} err={:?}",
@@ -277,22 +310,44 @@ impl ImageService {
         let (bytes, content_type, ext) = tokio::task::spawn_blocking(move || transcode(res))
             .await
             .map_err(|e| AppError::Internal(e.into()))??;
-        let dir = self.dir();
-        fs::create_dir_all(&dir)
-            .await
-            .map_err(|e| AppError::Internal(e.into()))?;
+        // 本体 tmp + rename 原子落盘：并发读侧要么看到旧图、要么看到完整
+        // 新图，不会读到半截文件（`<id>.bin.<n>.tmp` 与目标同目录）
         let path = self.body_path(id);
-        fs::write(&path, &bytes)
+        write_atomic(&path, &bytes)
             .await
             .map_err(|e| AppError::Internal(e.into()))?;
-        enforce_flat_dir_capacity(&dir, self.limit_bytes, bytes.len() as u64).await;
+        enforce_flat_dir_capacity(&self.dir(), self.limit_bytes, bytes.len() as u64).await;
 
         record.content_type = content_type.clone();
         record.ext = ext;
         record.updated_at = now_secs();
         record.failed_at = None;
-        self.save_record(&record).await;
+        self.save_record(record).await;
         Ok((bytes, content_type))
+    }
+
+    /// 登记并返回 id 的取图键锁：已存在则复用，否则新建。
+    /// 纯同步短临界区，std Mutex 不跨 await。
+    fn acquire_load_lock(&self, id: &str) -> Arc<tokio::sync::Mutex<()>> {
+        let mut locks = self.load_locks.lock().unwrap();
+        if let Some(existing) = locks.get(id) {
+            return Arc::clone(existing);
+        }
+        let fresh = Arc::new(tokio::sync::Mutex::new(()));
+        locks.insert(id.to_string(), Arc::clone(&fresh));
+        fresh
+    }
+
+    /// 用完清理：表里还是这把锁、且没有别的等待者持有克隆时摘掉条目。
+    fn release_load_lock(&self, id: &str, lock: &Arc<tokio::sync::Mutex<()>>) {
+        let mut locks = self.load_locks.lock().unwrap();
+        let unused = match locks.get(id) {
+            Some(current) => Arc::ptr_eq(current, lock) && Arc::strong_count(current) <= 2,
+            None => false,
+        };
+        if unused {
+            locks.remove(id);
+        }
     }
 
     async fn fetch(&self, url: &str) -> Result<FetchedImage, AppError> {
