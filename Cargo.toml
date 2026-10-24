@@ -37,7 +37,7 @@ scraper = "0.20"
 # 方言差异：不支持 `=~` 正则过滤，改用 match()/search() 函数（见 docs/reference/book-source-rules.md §9.1）
 jsonpath-rfc9535 = "0.1.2"
 regex = "1"
-rquickjs = { version = "0.7", features = ["futures"] }
+rquickjs = { version = "0.14", features = ["futures", "classes", "properties"] }
 tower-http = { version = "0.5", features = ["trace", "cors", "request-id", "fs", "set-header", "compression-gzip"] }
 http = "1"
 urlencoding = "2"

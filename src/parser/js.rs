@@ -44,6 +44,9 @@ const JS_LIB_CACHE_MAX_ENTRIES: usize = 256;
 const JS_MEMORY_LIMIT_BYTES: usize = 128 * 1024 * 1024;
 const JS_MAX_STACK_BYTES: usize = 1024 * 1024;
 /// 单次求值的最长时间；由中断处理器打断并抛出不可捕获异常。
+/// rquickjs 0.14（QuickJS-NG）下该中断在字节码边界与 libregexp 的执行循环
+/// （`lre_poll_timeout`，约每 1 万步轮询一次）都会触发，因此正则灾难性
+/// 回溯同样受这 5 秒约束，不会永久占住 worker 线程。
 const JS_EVAL_TIMEOUT: Duration = Duration::from_secs(5);
 /// 单次求值允许返回的最大字符串长度。
 const JS_MAX_RESULT_BYTES: usize = 32 * 1024 * 1024;
@@ -1016,6 +1019,29 @@ mod tests {
         match eval_watched("while(true){}", Duration::from_secs(20)) {
             None => panic!("JS 死循环未被中断处理器打断：20s 内未返回"),
             Some(Ok(v)) => panic!("JS 死循环竟然返回成功: {v:?}"),
+            Some(Err(_)) => {}
+        }
+    }
+
+    #[test]
+    fn js_regex_backtracking_is_interrupted() {
+        // 灾难性回溯：/(a+)+$ 对「40 个 a + 结尾非 a 字符」要穷举 2^39 种分组，
+        // 纯回溯引擎永远跑不完。rquickjs 0.7（Bellard QuickJS）的 libregexp
+        // 执行循环不检查中断标志，这类脚本会永久占住一个 spawn_blocking 线程，
+        // 内存上限也管不住（耗时间不分配）；rquickjs 0.9+ 换用 QuickJS-NG，
+        // libregexp 每约 1 万步轮询一次 lre_check_timeout → 中断处理器可以打断。
+        // 注意负载必须「不匹配」（结尾加 b）：纯 'a' 串会被首次贪婪匹配直接吃掉，
+        // 不产生回溯。
+        // 先自证正则本身合法且引擎对「可匹配」输入立即成功：防止把正则语法
+        // 错误之类的即时 Err 误当「成功中断」的假阳性。
+        assert_eq!(
+            eval_js("new RegExp('(a+)+$').test('a'.repeat(40))", "", "").unwrap(),
+            "true"
+        );
+        let script = "new RegExp('(a+)+$').test('a'.repeat(40) + 'b')";
+        match eval_watched(script, Duration::from_secs(10)) {
+            None => panic!("正则灾难性回溯未被中断处理器打断：10s 内未返回"),
+            Some(Ok(v)) => panic!("指数回溯竟然正常返回: {v:?}（中断未生效）"),
             Some(Err(_)) => {}
         }
     }
