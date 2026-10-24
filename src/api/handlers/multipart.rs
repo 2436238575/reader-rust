@@ -30,8 +30,9 @@ pub(crate) async fn next_field_limited<'a>(
 
 /// 流式读取单个 multipart 字段并在超过 `max_bytes` 时中止。
 ///
-/// axum 的 `DefaultBodyLimit` 不覆盖 multipart 字段，`Field::bytes()/text()`
-/// 会把整个字段无界读入内存，必须走逐块计数。
+/// axum 0.7.9 的 `Multipart` 会让请求体总量受 `DefaultBodyLimit` 约束，
+/// 但单个字段没有独立的字节上限，`Field::bytes()/text()` 仍会把整个字段
+/// 读入内存；这里按字段逐块计数并限量。
 pub(crate) async fn read_limited_multipart_field(
     mut field: Field<'_>,
     max_bytes: usize,
