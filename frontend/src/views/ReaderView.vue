@@ -763,9 +763,11 @@ const baseChapterHtml = computed(() =>
   buildBaseChapterHtml(store.displayContent || '', baseRenderOpts.value)
 )
 
-// 装饰层：划线回显 + 章节配图 + 段评气泡 + 本地 EPUB 资源改写 + 搜索/关键词高亮，
+// 装饰层：划线回显 + 章节配图 + 段评气泡 + 本地 EPUB 资源改写 + 常驻关键词高亮，
 // 作用在基础 HTML 之上。划线包的是 span（不在 walker 排除名单），最先注入——
-// 后续搜索/关键词的 mark 还能进 span 内部叠加（下划线 + 底色共存）
+// 后续关键词的 mark 还能进 span 内部叠加（下划线 + 底色共存）。
+// 搜索高亮不走这里：它是渲染后的 DOM 级标记（见 applySearchHighlightToDom），
+// 否则搜索框每敲一个字都会沿 formattedContent 依赖链重建整章 DOM
 function decorateChapterHtml(baseHtml: string, withBubbles: boolean, chapterIndex?: number) {
   const wrapper = document.createElement('div')
   wrapper.innerHTML = baseHtml
@@ -793,8 +795,8 @@ function decorateChapterHtml(baseHtml: string, withBubbles: boolean, chapterInde
     }
   }
   appendLocalEpubAssetAuth(wrapper)
-  highlightSearchText(wrapper, showSearch.value ? searchQuery.value : '')
-  // 常驻关键词高亮排在搜索之后：搜索高亮先注入的 mark 受 walker 保护，重叠时搜索赢
+  // 常驻关键词高亮注入 mark.kw-highlight；搜索高亮已移到渲染后 DOM 级处理，
+  // 不再参与 HTML 字符串构建（applySearchHighlightToDom，见 watch 群）
   highlightKeywords(wrapper, activeKeywordMarks.value)
   return wrapper.innerHTML
 }
@@ -1961,6 +1963,7 @@ onUnmounted(() => {
   document.removeEventListener('visibilitychange', handleVisibilityChange)
   disposeOfflineBanner()
   if (rebuildHorizontalTimer) clearTimeout(rebuildHorizontalTimer)
+  if (searchHighlightTimer) clearTimeout(searchHighlightTimer)
   disposeReadingPosition()
   disposeSelection()
   disposeContinuousReading()
@@ -2021,9 +2024,8 @@ watch(
   }
 )
 
-// 段评计数、章节配图、搜索高亮都是异步到达/会变化的装饰层：
-// 竖滚模式由 v-html 自动跟随，横翻模式的分页快照需要主动重排。
-// 不重置页码——rebuildHorizontalPages 内部只 clamp 不归零。
+// 段评计数与章节配图是异步到达的装饰层：竖滚模式由 v-html 自动跟随，
+// 横翻模式的分页快照需要主动重排。不重置页码——rebuildHorizontalPages 内部只 clamp 不归零。
 watch(formattedContent, () => {
   if (isHorizontalPageMode.value) scheduleRebuildHorizontalPages()
 })
@@ -2047,8 +2049,8 @@ watch(
     () => config.value.firstLineIndent,
     () => config.value.showChapterImages,
     // showSearch/searchQuery 曾是依赖：开搜索面板、每敲一个字都会把横翻页码
-    // 归零丢回本章首页。搜索高亮走 DOM 级处理（highlightSearchText），
-    // 重排由 formattedContent 的 watch 覆盖，这里不需要也不该归零
+    // 归零丢回本章首页。搜索高亮已改成渲染后 DOM 级标记（applySearchHighlightToDom），
+    // 不进 formattedContent 依赖链，这里不需要也不该归零
   ],
   () => {
     if (isHorizontalPageMode.value) {
@@ -2175,14 +2177,12 @@ watch(
 
 watch(
   [
-    showSearch,
-    searchQuery,
     () => config.value.paragraphSpacing,
     () => config.value.firstLineIndent,
     () => config.value.showChapterImages,
     () => config.value.chineseMode,
     () => store.replaceRules,
-    // 常驻关键词高亮配置变化：重跑装饰层上色（与搜索高亮同链）
+    // 常驻关键词高亮配置变化：重跑装饰层上色
     () => store.keywordRules,
     // 划线增删：回显的摘录文本集合变了要重跑装饰层
     () => store.bookmarks,
@@ -2197,6 +2197,79 @@ watch(
     }
     handlePresentationUpdated()
   }
+)
+
+/* ─── 搜索高亮：渲染后 DOM 级标记 ───
+ * 不进 formattedContent 依赖链（否则搜索框每敲一个字都重建整章 DOM，
+ * 横翻模式还会级联重排）。输入防抖 250ms 后直接在已渲染 DOM 上
+ * 清旧 mark、打新 mark；正文重渲染（v-html 重建）后再补回。
+ * 模板里竖滚/横翻的正文容器已有 chapterTextRef，但连续模式每章一个
+ * 正文根，统一按滚动容器内的 .chapter-text 收集，三种模式一套代码。 */
+function searchHighlightRoots(): HTMLElement[] {
+  const container = scrollContainerRef.value
+  if (!container) return []
+  return Array.from(container.querySelectorAll('.chapter-text')) as HTMLElement[]
+}
+
+/** 只摘搜索高亮的 mark（mark.search-highlight）：划线 span、diff 标记、
+ *  段评气泡与常驻关键词 mark.kw-highlight 都原样保留。unwrap 后 normalize
+ *  合并相邻文本节点，恢复成单文本节点，下次高亮才能跨原标记边界匹配 */
+function clearSearchHighlightMarks() {
+  for (const root of searchHighlightRoots()) {
+    root.querySelectorAll('mark.search-highlight').forEach((mark) => {
+      const parent = mark.parentNode
+      if (!parent) return
+      mark.replaceWith(...Array.from(mark.childNodes))
+      parent.normalize()
+    })
+  }
+}
+
+function applySearchHighlightToDom() {
+  clearSearchHighlightMarks()
+  const query = showSearch.value ? searchQuery.value : ''
+  if (!query) return
+  for (const root of searchHighlightRoots()) {
+    highlightSearchText(root, query)
+  }
+}
+
+let searchHighlightTimer: number | null = null
+
+watch([searchQuery, showSearch], () => {
+  if (searchHighlightTimer) {
+    clearTimeout(searchHighlightTimer)
+    searchHighlightTimer = null
+  }
+  if (!showSearch.value) {
+    // 关闭面板立即清干净，不留 250ms 残影
+    applySearchHighlightToDom()
+    return
+  }
+  searchHighlightTimer = window.setTimeout(() => {
+    searchHighlightTimer = null
+    applySearchHighlightToDom()
+    // 结果集刷新与命中定位沿用原链路（打字时面板结果跟着变）；
+    // 放在标记之后，scrollToMatch 才能找到新 mark
+    handlePresentationUpdated()
+  }, 250)
+})
+
+// 正文重渲染后补回搜索高亮：切章/强刷/装饰层重跑（竖滚 + 横翻重排）与
+// 连续模式章 html 重建/占位回载都会让 v-html 生成全新 DOM。只往 DOM 打
+// mark、不回写任何响应式状态，不会反过来再触发 formattedContent 或横翻重排
+watch([formattedContent, horizontalPages], async () => {
+  await nextTick()
+  applySearchHighlightToDom()
+})
+
+watch(
+  continuousChapters,
+  async () => {
+    await nextTick()
+    applySearchHighlightToDom()
+  },
+  { deep: true }
 )
 
 watch(
