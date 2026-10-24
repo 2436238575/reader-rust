@@ -2,7 +2,7 @@
 
 可再生缓存的显式清理与占用统计。
 
-**章节正文和版本历史不在可清理范围内**：它们存在 SQLite 正文池与版本时间线里，严格保留、不自动淘汰，也不提供清理入口。其余缓存大多**不按时间过期**，直到被显式清理或超出容量上限被淘汰；按时间过期的例外是章节列表与书籍详情（1 小时 TTL）与评论（7 天 TTL）。`purgeCache` 是显式回收手段，`cacheStats` 用来确认清理效果。
+**章节正文和版本历史不在可清理范围内**：它们存在 SQLite 正文池与版本时间线里，严格保留、不自动淘汰，也不提供清理入口。其余缓存大多**不按时间过期**，直到被显式清理或超出容量上限被淘汰；按时间过期的例外是章节列表、书籍详情与换源候选（1 小时 TTL）与评论（7 天 TTL）。`purgeCache` 是显式回收手段，`cacheStats` 用来确认清理效果。
 
 ## 缓存分层
 
@@ -14,7 +14,7 @@
 | `cover`          | `storage/cache/image/<md5(去查询串地址)>.{bin,json}`          | 书源图片（封面、章节配图、评论配图）统一存放，全局共享；`.json` 记录含 `book_id`，供按书清理与回源自愈 |
 | `chapterList`    | `storage/cache/<ns>/toc/<bookId>.json`                        | 章节列表，1 小时 TTL                          |
 | `bookInfo`       | `storage/cache/bookinfo/<ns>/<bookId>.json`                   | 书籍详情，1 小时 TTL（`refresh=1` 强刷）      |
-| `searchResults`  | `storage/cache/<ns>/source_candidates/<bookId>.json`          | 某本书在各书源中的换源候选搜索结果            |
+| `searchResults`  | `storage/cache/<ns>/source_candidates/<bookId>.json`          | 某本书在各书源中的换源候选搜索结果，1 小时 TTL |
 | `review`         | `storage/cache/reviews/<ns>/<bookId>/…`                       | 章评/段评，7 天 TTL                           |
 | `invalidSources` | `storage/cache/invalid_book_sources/<ns>.json`                | 失效书源清单                                  |
 

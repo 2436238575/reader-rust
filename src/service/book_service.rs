@@ -173,6 +173,11 @@ const BOOK_INFO_CACHE_DIR: &str = "bookinfo";
 /// 那些路径宁可读到旧目录，也不该顺手删掉还能用的文件。
 const CHAPTER_LIST_CACHE_TTL: Duration = Duration::from_secs(3600);
 
+/// 换源候选缓存的存活时间（1 小时），与章节列表同口径：文件 mtime 判定，
+/// 过期按未命中处理（不删除，留给换源改绑等裸读路径），由调用方重搜后
+/// 整份覆盖写回。只作用于「把缓存直接喂给响应」的读路径。
+const SOURCE_CANDIDATES_CACHE_TTL: Duration = Duration::from_secs(3600);
+
 /// 「作者相关」的评论：作者本人发的、作者赞过的、或有内联回复来自作者/被作者赞过。
 ///
 /// 「作者回复过」只能看到内联回复预览里的那几条（站点的完整回复串不在
@@ -2916,6 +2921,30 @@ impl BookService {
         }
     }
 
+    /// 带 TTL 的换源候选缓存读取：超过 `SOURCE_CANDIDATES_CACHE_TTL` 的文件
+    /// 按未命中处理（不删除，留给其他裸读路径），由调用方重搜后覆盖写回。
+    /// 仅限「缓存直接喂响应」的路径使用。
+    pub async fn load_fresh_book_sources_cache(
+        &self,
+        user_ns: &str,
+        book_id: &str,
+    ) -> Result<Option<Vec<SearchBook>>, AppError> {
+        let path = self.book_source_cache_path(user_ns, book_id);
+        let expired = match fs::metadata(&path).await {
+            Ok(meta) => meta
+                .modified()
+                .ok()
+                .and_then(|m| m.elapsed().ok())
+                .map(|age| age > SOURCE_CANDIDATES_CACHE_TTL)
+                .unwrap_or(true),
+            Err(_) => false,
+        };
+        if expired {
+            return Ok(None);
+        }
+        self.load_book_sources_cache(user_ns, book_id).await
+    }
+
     pub async fn save_book_sources_cache(
         &self,
         user_ns: &str,
@@ -4039,6 +4068,57 @@ mod tests {
             .unwrap();
         let loaded = service.load_chapter_list_cache(ns, book_id).await.unwrap();
         assert_eq!(loaded.unwrap().len(), 1);
+
+        pool.close().await;
+        let _ = std::fs::remove_dir_all(&storage_dir);
+    }
+
+    #[tokio::test]
+    async fn fresh_book_sources_cache_expires_after_ttl() {
+        let storage_dir =
+            std::env::temp_dir().join(format!("reader-rust-candidates-ttl-{}", std::process::id()));
+        let (service, pool) = test_service(&storage_dir).await;
+        let ns = "test-candidates-ttl";
+        let book_id = "book_1";
+
+        let list = vec![SearchBook {
+            name: "书".into(),
+            author: "作者".into(),
+            book_url: "https://example.com/book".into(),
+            origin: "https://example.com".into(),
+            ..Default::default()
+        }];
+        service
+            .save_book_sources_cache(ns, book_id, &list)
+            .await
+            .unwrap();
+
+        // 新鲜缓存：fresh 与裸读都命中
+        assert!(service
+            .load_fresh_book_sources_cache(ns, book_id)
+            .await
+            .unwrap()
+            .is_some());
+
+        // 把 mtime 拨到 2 小时前：fresh 按未命中（不删文件），裸读仍能拿到内容
+        let path = service.book_source_cache_path(ns, book_id);
+        let file = std::fs::File::options().write(true).open(&path).unwrap();
+        let two_hours_ago = std::time::SystemTime::now() - std::time::Duration::from_secs(2 * 3600);
+        file.set_times(std::fs::FileTimes::new().set_modified(two_hours_ago))
+            .unwrap();
+        drop(file);
+
+        assert!(
+            service
+                .load_fresh_book_sources_cache(ns, book_id)
+                .await
+                .unwrap()
+                .is_none(),
+            "过期候选应按未命中处理"
+        );
+        let stale = service.load_book_sources_cache(ns, book_id).await.unwrap();
+        assert_eq!(stale.unwrap().len(), 1, "裸读路径不看 TTL，仍能读到旧候选");
+        assert!(path.exists(), "过期不删除文件");
 
         pool.close().await;
         let _ = std::fs::remove_dir_all(&storage_dir);

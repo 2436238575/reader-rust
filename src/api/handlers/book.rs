@@ -1272,10 +1272,11 @@ pub async fn set_book_source(
         .await?
         .ok_or_else(|| AppError::BadRequest("书源不存在".to_string()))?;
 
-    // 换源候选清单先读出来（下面清缓存不删它，候选对下一次换源仍然有效）
+    // 换源候选清单先读出来（下面清缓存不删它，候选对下一次换源仍然有效）；
+    // 超过 1h TTL 的旧候选不再用于回填元数据（随后 get_book_info 强刷兜底）
     let candidates = state
         .book_service
-        .load_book_sources_cache(&user_ns, &book_id)
+        .load_fresh_book_sources_cache(&user_ns, &book_id)
         .await?
         .unwrap_or_default();
 
@@ -2188,7 +2189,7 @@ pub async fn get_available_book_source(
     if !paged_request {
         if let Some(list) = state
             .book_service
-            .load_book_sources_cache(&user_ns, &book_id)
+            .load_fresh_book_sources_cache(&user_ns, &book_id)
             .await?
         {
             // 换源候选不含当前源（SSE 路径同款过滤）
@@ -2341,7 +2342,7 @@ pub async fn get_available_book_source_sse(
     if !refresh && last_index_start < 0 {
         if let Some(cached) = state
             .book_service
-            .load_book_sources_cache(&user_ns, &book_id)
+            .load_fresh_book_sources_cache(&user_ns, &book_id)
             .await?
         {
             let cached = take_available_source_cached_matches(
