@@ -2984,6 +2984,18 @@ fn eval_field_json_with_ctx(
         false,
         String::new,
         |pure| {
+            // `$` 开头且是合法 JsonPath 的规则优先按 JsonPath 求值：
+            // 过滤表达式（$.data[?(@.x==1)].title）与多下标（$.a[0,1]）
+            // 含 `?`/`=`/`,` 等字符，此前被下面的字面量启发式吞成规则文本本身。
+            // 多命中与字段级组合符同口径：按 value_to_string 逐个转换后用 \n 连接
+            let trimmed = pure.trim();
+            if trimmed.starts_with('$') && jsonpath::jsonpath_parses(trimmed) {
+                return jsonpath::jsonpath_query(v, trimmed)
+                    .iter()
+                    .filter_map(jsonpath::value_to_string)
+                    .collect::<Vec<_>>()
+                    .join("\n");
+            }
             // 「字面量启发式」：插值后仍含模板痕迹或带 URL/列表特征的规则按字面量返回
             if (pure.contains("{{") && pure.contains("}}"))
                 || pure.contains('/')
@@ -3658,6 +3670,52 @@ mod tests {
         assert_eq!(results[0].author, "Tester");
         assert_eq!(results[0].kind.as_deref(), Some("玄幻,仙侠"));
         assert_eq!(results[0].book_url, "https://books.example/a");
+    }
+
+    #[test]
+    fn test_json_field_rules_with_filter_and_multi_index_parse_as_jsonpath() {
+        let engine = RuleEngine::new().unwrap();
+        let source = BookSource {
+            book_source_name: "Json".to_string(),
+            book_source_url: "https://source.example".to_string(),
+            rule_search: Some(SearchRule {
+                book_list: Some("$.data[*]".to_string()),
+                // 含 ? 和 == 的过滤表达式此前被字面量启发式吞成规则文本本身
+                name: Some("$.items[?(@.x==1)].title".to_string()),
+                // 多下标含逗号，同样被吞；现在解析出两个值（\n 连接）
+                author: Some("$.a[0,1]".to_string()),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let body = r#"{"data":[{
+            "items":[{"x":1,"title":"命中"},{"x":2,"title":"跳过"}],
+            "a":["作者甲","作者乙"]
+        }]}"#;
+
+        let results = engine.search_books(&source, body, "https://books.example");
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].name, "命中");
+        assert_eq!(results[0].author, "作者甲\n作者乙");
+    }
+
+    #[test]
+    fn test_json_field_literal_heuristic_still_returns_urls_verbatim() {
+        // 非 JsonPath 的字面量（URL、带查询串）必须原样返回，不受新分支影响
+        let v: Value = serde_json::from_str(r#"{"data":{"list":[]}}"#).unwrap();
+        assert_eq!(
+            eval_field_json("http://example.com?x=1&y=2", &v, ""),
+            Some("http://example.com?x=1&y=2".to_string())
+        );
+        assert_eq!(
+            eval_field_json("a/b/c,d", &v, ""),
+            Some("a/b/c,d".to_string())
+        );
+        // `$` 开头但不是合法 JsonPath（且带 URL 特征字符）时仍走字面量启发式
+        assert_eq!(
+            eval_field_json("$.a[?invalid", &v, ""),
+            Some("$.a[?invalid".to_string())
+        );
     }
 
     #[test]

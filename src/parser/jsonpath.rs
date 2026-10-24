@@ -58,6 +58,14 @@ pub fn jsonpath_within_limits(rule: &str) -> bool {
     true
 }
 
+/// 规则是否是可解析的合法 JsonPath 表达式（带资源预检）。
+///
+/// 供字段级求值在「字面量启发式」之前判断用：`$.data[?(@.x==1)].title`
+/// 这类含 `?`/`=`/`,` 的合法表达式不能因为带了 URL 风格的字符被当成字面量。
+pub fn jsonpath_parses(rule: &str) -> bool {
+    jsonpath_within_limits(rule) && JsonPath::parse(rule).is_ok()
+}
+
 /// 单条 JsonPath 求值，不处理 `&&`/`||`/`%%` 组合符。
 pub fn jsonpath_query(value: &Value, rule: &str) -> Vec<Value> {
     if let Some(rendered) = render_embedded_paths(value, rule) {
