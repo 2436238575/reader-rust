@@ -275,6 +275,50 @@ async fn search_truncates_at_max_results() {
     assert_eq!(data["truncated"], json!(true));
 }
 
+/// 跨 blocking 批次（每批 100 章）的顺序与命中限额：250 章全命中，
+/// maxResults=150 让限额落在第 2 批中段。
+#[tokio::test]
+async fn search_keeps_order_across_blocking_batches_and_limits_inside_later_batch() {
+    let server = TestServer::start().await;
+    let book_id = server.register_book("跨批顺序测试", "占位").await;
+
+    let chapter_list: Vec<(String, String)> = (0..250)
+        .map(|i| (format!("第{}章", i + 1), format!("http://up/batch/{i}")))
+        .collect();
+    let refs: Vec<(&str, &str)> = chapter_list
+        .iter()
+        .map(|(t, u)| (t.as_str(), u.as_str()))
+        .collect();
+    server.seed_toc(&book_id, &refs);
+    for (i, (_, url)) in chapter_list.iter().enumerate() {
+        server
+            .seed_chapter_cache(&book_id, url, &format!("第{i}节的雪山与长风。"))
+            .await;
+    }
+
+    let (status, payload) = server
+        .search(json!({ "bookId": book_id, "query": "雪山", "maxResults": 150 }))
+        .await;
+
+    assert_eq!(status, StatusCode::OK);
+    let data = &payload["data"];
+    let results = data["results"].as_array().unwrap();
+    assert_eq!(results.len(), 150, "命中限额在 150 生效");
+    // 顺序必须严格按章递增（第 1 批 100 条 + 第 2 批 50 条，无跨批错乱）
+    for (i, hit) in results.iter().enumerate() {
+        assert_eq!(
+            hit["chapterIndex"],
+            json!(i),
+            "第 {i} 条命中应来自第 {i} 章"
+        );
+    }
+    // 限额落在第 149 章（第 2 批中段），后面还有 100 章 → 截断为真
+    assert_eq!(data["truncated"], json!(true));
+    // 参与检索的章节数：批粒度加载不虚报（150 章实际过了一遍）
+    assert_eq!(data["cachedChapters"], json!(150));
+    assert_eq!(data["totalChapters"], json!(250));
+}
+
 #[tokio::test]
 async fn search_validates_input_and_handles_empty_cache() {
     let server = TestServer::start().await;
