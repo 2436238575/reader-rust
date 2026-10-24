@@ -14,7 +14,7 @@
 | -------- | ----------------------------------------------------------------------- |
 | `git`    | 提交与打 tag                                                            |
 | `cargo`  | 交叉编译后端                                                            |
-| `npm`    | 同步版本号（`node` 随 npm 提供，版本基线也靠它读 `package.json`）        |
+| `npm`    | 同步版本号（`node` 随 npm 提供，版本基线也由它读取 `package.json`）      |
 | `podman` | 构建与推送镜像                                                          |
 | `gh`     | 创建 GitHub Release                                                     |
 | `awk`    | 改写 `Cargo.toml` 里的版本号                                            |
@@ -23,7 +23,7 @@
 
 - **`gh` 必须已登录**：`gh auth login`
 - **`podman` 必须已登录 Docker Hub**：`podman login docker.io`
-- **工作区必须完全干净**，包括**没有未跟踪文件**（脚本会跑 `git ls-files --others --exclude-standard` 检查）。注意 `.env`、`storage/`、`docs/.vitePress/dist` 等都应在 `.gitignore` 里，否则会挡住发布
+- **工作区必须完全干净**，包括**没有未跟踪文件**（脚本会跑 `git ls-files --others --exclude-standard` 检查）。注意 `.env`、`storage/`、`docs/.vitepress/dist` 等都应在 `.gitignore` 里，否则会挡住发布
 - 前后端都在 Docker 多阶段构建里**从源码编译**，本机不需要预编译，也不需要 musl 目标与交叉 linker
 
 ## 用法
@@ -42,9 +42,9 @@
 
 版本号推导规则：
 
-1. 显式给了版本号 → 用它（前缀 `v` 可有可无）
+1. 显式给出发布版本号时，直接使用该版本号（前缀 `v` 可有可无）。
 2. 否则以 **workspace 版本号**为基准（`Cargo.toml` / 根 `package.json` / `frontend/package.json`），按 `--major` / `--minor` / `--patch` 递增
-3. 三处版本号不一致 → 直接报错退出。发布脚本每次都会同步写这三处，不一致说明有人手工只改了其中一处，先对齐再发
+3. 三处版本号不一致时，脚本会直接报错退出。发布脚本每次都会同步写这三处，不一致说明有人手工只改了其中一处，应先对齐再发布
 4. git tag **只做存在性校验**（目标 tag 已存在即拒绝发布），不作为版本基准：仓库版本可能整体重置（如 pre-beta 回到 `0.1.0`），而历史 tag 停在更高的旧序列上，按 tag 递增会把下一个版本号跳回旧序列
 
 ## 脚本做了什么
@@ -58,17 +58,17 @@
    - `Cargo.toml` 的 `[package] version`（用 `awk` 只改 `[package]` 段内的第一处）
    - 根 `package.json`（`npm version --no-git-tag-version`）
    - `frontend/package.json`（同上）
-   - 然后 `cargo update -w` 把新版本号推进 `Cargo.lock`（不动依赖树），并用 `cargo metadata --locked` 自检——Docker 构建里 `cargo build --release --locked` 会在 lock 落后时直接失败
-5. **提交并打 tag** —— `git add` 六个版本文件（含两个 lock 文件）；若暂存区为空（版本号本来就一致），跳过提交、直接给当前提交打 tag。tag 是带注释的：`git tag -a vX.Y.Z`
+   - 然后用 `cargo update -w` 把新版本号写入 `Cargo.lock`（不改动依赖树），再用 `cargo metadata --locked` 检查一致性：Docker 构建里的 `cargo build --release --locked` 在 lock 落后时会直接失败
+5. **提交并打 tag** —— `git add` 版本文件（含两个 lock 文件）；若暂存区为空（版本号本来就一致），跳过提交、直接给当前提交打 tag。tag 是带注释的：`git tag -a vX.Y.Z`
 6. **构建镜像** —— Docker 多阶段构建从源码编译（前端 `npm ci` + `npm run build`，后端 musl 静态链接 `--locked`），单一 `Dockerfile` 用 `TARGET_TRIPLE` 区分目标：
    - `--platform linux/amd64 --build-arg TARGET_TRIPLE=x86_64-unknown-linux-musl` → `docker.io/givenge/reader-rust:vX.Y.Z-x86_64`
    - `--platform linux/arm64 --build-arg TARGET_TRIPLE=aarch64-unknown-linux-musl` → `docker.io/givenge/reader-rust:vX.Y.Z-aarch64`
 
-   arm64 在 x86 主机上经 qemu 仿真构建，是整条链路最常见的失败点，所以排在推送之前
-7. **校验镜像架构** —— `podman image inspect` 结果必须是 `amd64 linux` 与 `arm64 linux`。失败则**自动删除本地 tag 并退出**：git 与镜像仓库的远端都没收到任何东西，本地的版本提交保留，修复后用 `./scripts/release.sh <同版本>` 原地补发
+   arm64 镜像在 x86 主机上通过 qemu 仿真构建，是整条链路最常见的失败环节，因此排在推送之前。
+7. **校验镜像架构** —— `podman image inspect` 结果必须是 `amd64 linux` 与 `arm64 linux`。失败时脚本会**自动删除本地 tag 并退出**，Git 远端与镜像仓库都没有收到任何变更；本地的版本提交仍然保留，修复后用 `./scripts/release.sh <同版本>` 重新发布
 8. **推送 git refs** —— 此时镜像已验证可构建，才推送当前分支与 tag 到 `origin`
 9. **推送版本化镜像标签**
-10. **更新并推送滚动标签** —— `latest` ← x86_64，`latest-aarch64` ← arm64
+10. **更新并推送滚动标签** —— `latest` 指向 x86_64，`latest-aarch64` 指向 arm64
 11. **创建 GitHub Release** —— `gh release create --generate-notes`
 
 成功后会打印 GitHub Release 地址与四个镜像标签。
@@ -92,9 +92,9 @@ DOCKER_REPO=docker.io/yourname/reader-rust ./scripts/release.sh
 `docs/` 由独立的 GitHub Actions 工作流 `.github/workflows/docs.yml` 部署 —— 推送到 `master` / `main` 且改动涉及 `docs/**` 时自动构建并发布到 GitHub Pages。因此**改文档不需要跑 release.sh**。
 :::
 
-## 手动兜底
+## 手动补发
 
-正常情况下永远不需要手动执行。若脚本在第 8 步之后失败（git refs 已推、镜像推送中断），可按下面的命令补齐，**不要重新跑 `release.sh`**（tag 已存在，会被冲突检查挡住）：
+正常情况下永远不需要手动执行。如果脚本在第 8 步之后失败（git refs 已经推送，镜像推送中断），可按下面的命令补齐，**不要重新跑 `release.sh`**（tag 已存在，会被冲突检查挡住）：
 
 ```bash
 export TAG=v1.0.9
@@ -136,6 +136,6 @@ podman manifest push --all docker.io/givenge/reader-rust:${TAG}
 | `GitHub CLI is not authenticated`   | 没跑 `gh auth login`                                                              |
 | `Missing required command: podman`  | Podman 未安装或不在 PATH                                                          |
 | `Tag vX.Y.Z already exists locally` | 重复发布同一版本；要重发必须先删本地 tag，且确认远端也要处理                      |
-| 镜像构建/架构校验失败                | 脚本会**自动删除本地 tag** 并退出，远端零变更（git 与镜像仓库都没收到）；常见原因是 arm64 经 qemu 仿真构建失败。版本提交仍在本地分支，修复后 `./scripts/release.sh <同版本>` 原地补发 |
+| 镜像构建/架构校验失败                | 脚本会**自动删除本地 tag** 并退出，Git 远端与镜像仓库都没有收到变更；常见原因是 arm64 镜像通过 qemu 仿真构建失败。版本提交仍在本地分支，修复后用 `./scripts/release.sh <同版本>` 重新发布 |
 
-镜像内的前后端都在 Docker 多阶段构建里从源码编译（可复现），本机不预编译；编译正确性由 CI 的 `cargo test` + `npm run build` 兜底。
+镜像内的前后端都在 Docker 多阶段构建里从源码编译（可复现），本机不需要预编译；编译正确性由 CI 的 `cargo test` 与 `npm run build` 负责验证。

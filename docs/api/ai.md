@@ -35,7 +35,7 @@ POST /reader3/deleteAiBookMemory
 ## AI 资料编排任务
 
 AI 资料的生成循环运行在**后端拉起的 Python sidecar 进程**里（批量章节循环在 Rust 侧）。
-前端只触发、轮询与展示；任务在服务端跑，**关页面不取消**。三个端点均为 `POST`、需登录。
+前端只触发、轮询与展示；任务在服务端跑，**关页面不取消**。这些端点均为 `POST`，且需要登录。
 
 ### 提交任务
 
@@ -111,7 +111,7 @@ POST /reader3/aiProxy
 | `kind`            | string? | `text`/`image`/`speech`，用于服务端配置的默认值补全                                                     |
 | `body`            | object  | 透传给上游的请求体                                                                                      |
 
-> **注意**：`useServerConfig=false`（客户端自带端点，含 `fullUrl=true` 任意路径）等价于向任意地址发 POST 的通用代理——单用户下登录者即所有者，不再收敛；出站安全由 `ALLOW_PRIVATE_NETWORK=false`（默认）兜底。
+> **注意**：`useServerConfig=false`（客户端自带端点，含 `fullUrl=true` 任意路径）等价于向任意地址发 POST 的通用代理——单用户下登录者即所有者，不再收敛；出站安全由 `ALLOW_PRIVATE_NETWORK=false`（默认）负责拦截。
 
 成功响应**流式透传**（上游边发边转发，`stream: true` 的客户端按块收到数据；
 流上累计超过 32MB 即掐断）。错误响应（上游非 2xx）整读限量后返回用户可读
@@ -123,7 +123,7 @@ POST /reader3/aiProxy
 POST /reader3/aiProxyImage
 ```
 
-请求体：`{ "url": "https://..." }`。拉取远程图片并回传（上限 20MB），用于绕开图片防盗链。URL 仅允许 http/https 且过出站守卫；**上游响应的 Content-Type 必须是位图格式 `image/jpeg`/`image/png`/`image/gif`/`image/webp`/`image/avif`/`image/bmp`**，否则 400——`image/svg+xml` 等可携带脚本的类型同样拒绝（防自 XSS：可控 URL 返回 HTML/SVG 不透传）。
+请求体：`{ "url": "https://..." }`。拉取远程图片并回传（上限 20MB），用于绕开图片防盗链。URL 仅允许 http/https 且过出站守卫；**上游响应的 Content-Type 必须是位图格式 `image/jpeg`/`image/png`/`image/gif`/`image/webp`/`image/avif`/`image/bmp`**，否则返回 400。`image/svg+xml` 等可以携带脚本的类型同样会被拒绝，防止可控 URL 返回的 HTML 或 SVG 在本站域名下执行（自 XSS）。
 
 > **未实现调用方**：本端点目前无前端调用方（AI 资料的地图图片改由后端直接下载落盘到
 > `ASSETS_DIR`，依据：`src/service/agent_sidecar_service.rs`），端点保留备用。

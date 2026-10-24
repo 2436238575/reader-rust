@@ -42,7 +42,7 @@ Reader-Rust 通过**环境变量**配置，支持从 `.env` 文件读取。代�
 | `REFRESH_TOKEN_TTL_SECS`    | `604800`（7 天）  | Refresh Token 有效期，**滑动续期**：每次换取都签发新令牌并重新计时，闲置超过该时长才失效。客户端超过 30 秒宽限窗口后重放已消费令牌会吊销整条会话                                                                                                                                                                                                                              |
 | `JWT_TTL_SECS`              | 空（已废弃）      | 旧版单令牌方案的有效期。未显式配置 `ACCESS_TOKEN_TTL_SECS` 时作为其兼容别名生效并打印启动警告；两者都配置时以新变量为准                                                                                                                                                                                                                                                      |
 | `RATE_LIMIT_DISABLED`       | `false`          | 豁免登录失败限速（开发与测试环境用）。默认规则：IP 登录失败 5 次封该 IP 登录 6h；用户名登录失败 10 次封该用户名登录 6h。限速为进程内状态，多实例部署各自计数                                                                                                                                                                                                               |
-| `TRUSTED_PROXIES`           | 空               | 登录限速的受信代理列表（逗号分隔，IP 或 CIDR，如 `"172.17.0.1, 172.17.0.0/16"`）。生产部署挂在 nginx/Caddy/Docker NAT 后时，所有请求的对端地址都是代理 IP——攻击者错 5 次会把全体访问者封 6 小时。配置后仅当对端命中受信列表时才解析 `X-Forwarded-For` 还原真实客户端地址（从右往左第一个非受信地址；格式非法或全受信回退直连地址）。**留空（默认）不信任任何代理头**，一律按直连地址记账。值含逗号时必须用双引号包裹 |
+| `TRUSTED_PROXIES`           | 空               | 登录限速的受信代理列表（逗号分隔，IP 或 CIDR，如 `"172.17.0.1, 172.17.0.0/16"`）。生产部署挂在 nginx/Caddy/Docker NAT 后面时，所有请求的对端地址都是代理 IP；攻击者连续输错 5 次密码，会使全体访问者被封禁 6 小时。配置后，只有对端地址命中受信列表时才解析 `X-Forwarded-For` 还原真实客户端地址（从右往左找第一个不在受信列表里的地址；格式非法或全部受信时回退到直连地址）。**留空（默认）不信任任何代理头**，一律按直连地址记账。值含逗号时必须用双引号包裹 |
 | `ALLOW_PRIVATE_NETWORK`     | `false`          | 是否允许服务端出站请求访问私网/环回/链路本地地址（`10.x`、`192.168.x`、`127.0.0.1`、`169.254.169.254` 等）。默认 `false`（安全优先）：公网暴露的部署开箱即不会被打成内网探测代理。书源/模型服务在局域网时（如 `http://192.168.x.x:9999`），显式设为 `true` 整体放行，或保持 `false` 用 `PRIVATE_NETWORK_WHITELIST` 精确放行 |
 | `PRIVATE_NETWORK_WHITELIST` | 空               | 私网白名单（逗号分隔），仅在 `ALLOW_PRIVATE_NETWORK=false` 时生效。条目支持 IP（`192.168.100.99`）、网段（`192.168.100.0/24`）、域名（`nas.lan`），均可带端口（`192.168.100.99:9999`，带端口时目标端口也须一致）。**名单为空时一律拦截**（不等同 `ALLOW_PRIVATE_NETWORK=true`）；名单非空时只有命中的目标可以出站，其余私网/环回地址一律拦截 |
 | `CORS_ALLOWED_ORIGINS`      | 空               | 允许跨域访问的来源白名单（逗号分隔）。留空表示**仅同源**——不发送任何 CORS 响应头；仅在前后端分离且前端独立域名部署时配置                                                                                                                                                                                                                                                   |
@@ -95,17 +95,15 @@ Python 进程**里（Rust 只负责提交任务、转发进度与落库）。宿
 | ----------------------------------- | -------------------------- | -------------------------------------------------------------------------------------------------------- |
 | `AGENT_SIDECAR_ENABLED`             | `true`                     | 是否启用 AI 资料编排；关闭后 AI 资料更新接口返回明确错误                                                 |
 | `AGENT_SIDECAR_COMMAND`             | `python -m agent_sidecar`  | sidecar 启动命令（按空白切分，支持双引号包裹含空格的路径），进程工作目录为 `sidecar/`                    |
-| `AGENT_SIDECAR_CHAPTER_TIMEOUT_SECS`| `1800`                     | 单章处理超时；超时即终止 sidecar 进程并中止批量任务（sidecar 内模型调用总预算 5×300s 与此对齐，错误会带真实原因回来而不是被截成超时）                                                      |
+| `AGENT_SIDECAR_CHAPTER_TIMEOUT_SECS`| `1800`                     | 单章处理超时；超时即终止 sidecar 进程并中止批量任务（sidecar 内模型调用的总预算为 5×300 秒，与此值对齐；错误会带回真实原因，不会被截成超时）                                                      |
 | `AGENT_SIDECAR_UV`                  | 空                        | uv 二进制路径；非空/PATH 可探测时由 uv 自动管理依赖（推荐），都没有时降级为 AGENT_SIDECAR_COMMAND      |
-
-| `AGENT_SIDECAR_UV`                  | 空                         | uv 二进制的显式路径；非空时由 uv 自动管理依赖（见下）                                                |
 
 部署注意：
 
 - **推荐 uv**：宿主机装好 [uv](https://docs.astral.sh/uv/)（Windows 为
   `winget install astral-sh.uv` 或官方脚本）后**无需任何额外操作**——后端自动探测
   PATH 里的 uv，用 `uv run` 拉起 sidecar，按 `sidecar/pyproject.toml` 自动建
-  `sidecar/.venv` 并安装钉死的依赖，系统 Python 完全不沾。
+  `sidecar/.venv` 并安装固定版本的依赖，系统 Python 完全不沾。
   `AGENT_SIDECAR_UV` 可显式指定 uv 二进制路径。
 - **备选（手动 pip）**：没有 uv 时降级为直接跑 `python -m agent_sidecar`，需要宿主机
   已安装 Python >=3.11 并执行 `pip install httpx==0.28.1 pydantic==2.11.7`（版本
@@ -150,7 +148,7 @@ LOG_LEVEL=debug
 `PRIVATE_NETWORK_WHITELIST`、`CORS_ALLOWED_ORIGINS`）时必须用双引号包裹，如
 `PRIVATE_NETWORK_WHITELIST="192.168.1.1:9999, 192.168.1.0/24"`。不加引号时
 dotenvy 会在该行**中断加载**——之前的变量正常、之后的所有变量静默失效，
-且大多有代码默认值兜底，极难察觉（后端启动日志会对加载失败打 WARN）。
+且大多有代码默认值作为后备，很难察觉（后端启动日志会对加载失败打 WARN）。
 
 :::
 

@@ -17,7 +17,7 @@ Reader-Rust 提供 RESTful API，所有接口都以 `/reader3` 为前缀（仅 `
 }
 ```
 
-探活只需看 HTTP 200 与 `status`；`version` 用于确认运行实例的实际版本（Docker 镜像的 HEALTHCHECK 依赖此端点）。
+判断服务是否存活，只需看 HTTP 200 与 `status`；`version` 用来确认运行实例的实际版本，Docker 镜像的 HEALTHCHECK 依赖这个端点。
 
 ## 基础 URL
 
@@ -82,7 +82,7 @@ http://localhost:8080/reader3
 | `GET`          | 读取类接口，参数走 query string                                                          |
 | `POST`         | 写入类接口与「参数较多/含敏感字段」的读取类接口，参数走 JSON body                        |
 | `GET` + `POST` | 不少接口同时注册两种方法，同名参数两种传法都接受                                         |
-| `any`          | `bookSourceProxy`、`bookSourceClientLog`、`webdav` 系列，以及兜底的 `/reader3(/*rest)`，接受任意 HTTP 方法 |
+| `any`          | `bookSourceProxy`、`bookSourceClientLog`、`webdav` 系列，以及作为后备的 `/reader3(/*rest)`，接受任意 HTTP 方法 |
 
 因为大量接口同时支持 `GET` 与 `POST`，各接口页面会以 `GET /reader3/xxx` 或 `POST /reader3/xxx` 的形式标注实际注册的方法。
 

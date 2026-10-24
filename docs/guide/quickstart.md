@@ -107,7 +107,7 @@ cp .env.example .env
 
 **端口被占用（Windows 上常见 `os error 10013`）**
 
-Windows 存在系统保留端口段，绑定落在保留段内的端口会直接失败。换一个端口即可：
+Windows 存在系统保留端口段，绑定到保留段内的端口会直接失败。换一个端口即可：
 
 ```bash
 SERVER_PORT=18080 cargo run

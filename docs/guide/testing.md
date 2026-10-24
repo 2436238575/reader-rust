@@ -6,9 +6,9 @@
 
 | 层级                 | 命令                      | 覆盖范围                       |
 | -------------------- | ------------------------- | ------------------------------ |
-| Rust 单元 + 集成测试 | `cargo test`              | 401 个用例（见下）             |
-| 前端单元测试         | `cd frontend && npm test` | 40 个 `*.test.ts`（vitest）    |
-| 端到端冒烟           | `npm run test:e2e`        | Playwright，零配置自起后端     |
+| Rust 单元 + 集成测试 | `cargo test`              | 467 个用例（见下）             |
+| 前端单元测试         | `cd frontend && npm test` | 41 个 `*.test.ts`（vitest）    |
+| 端到端测试           | `npm run test:e2e`        | Playwright，零配置自起后端     |
 | 手工全量回归         | 见文末清单                | 依赖真实书源、账号、缓存的功能 |
 
 ## 1. Rust 测试
@@ -19,15 +19,14 @@ cargo test book_source         # 按名称过滤
 cargo test --lib               # 只跑 src 内的内联单元测试
 ```
 
-Rust 侧共 **401 个用例**（276 个内联单元测试 + 125 个集成用例），另外 `tests/yckceo_live_sources.rs` 的 2 个用例默认 `#[ignore]`。
+Rust 侧共 **467 个用例**（322 个内联单元测试 + 145 个集成用例），另外 `tests/yckceo_live_sources.rs` 的 2 个用例默认 `#[ignore]`。
 
-`cargo test` 的输出合计会显示 677：`src/main.rs` 以 `mod` 的方式重新声明了全部模块，
-bin 目标的单元测试把同一批 276 个用例又跑了一遍，统计时别重复计算。
+`cargo test` 输出的合计就是实际用例数：`src/main.rs` 只是入口文件，bin 目标没有单元测试，不存在重复计数。
 
-- **`tests/` 下的集成测试**（21 个文件，125 个用例）：`book_source_compat.rs`（用例最多，17 个，覆盖书源格式兼容）、`auth_flow.rs`、`cached_search_flow.rs`、`chapter_edit_flow.rs`、`chapter_image_flow.rs`、`image_pipeline.rs`、`review_flow.rs`、`webdav_flow.rs`、`agent_sidecar_flow.rs`、`local_txt_book.rs`、`local_epub_book.rs`、`ai_book_memory.rs`、`ai_proxy.rs`、`js_compat.rs`、`userdata_flow.rs`、`upstream_error_flow.rs`、`chapter_cache_key.rs`、`book_source_validation.rs`、`book_source_headers.rs`、`global_identity.rs`、`yckceo_live_sources.rs`
-- **`src/` 内的内联单元测试**（276 个）：解析器、URL 处理、repo、正文池与版本时间线、TXT 章节拆分与匹配、服务层纯逻辑
+- **`tests/` 下的集成测试**（24 个文件，145 个用例）：`auth_flow.rs`（用例最多，18 个）、`book_source_compat.rs`（17 个，覆盖书源格式兼容）、`book_source_proxy_flow.rs`、`security_headers.rs`、`content_singleflight.rs`、`cached_search_flow.rs`、`chapter_edit_flow.rs`、`chapter_image_flow.rs`、`image_pipeline.rs`、`review_flow.rs`、`webdav_flow.rs`、`agent_sidecar_flow.rs`、`local_txt_book.rs`、`local_epub_book.rs`、`ai_book_memory.rs`、`ai_proxy.rs`、`js_compat.rs`、`userdata_flow.rs`、`upstream_error_flow.rs`、`chapter_cache_key.rs`、`book_source_validation.rs`、`book_source_headers.rs`、`global_identity.rs`、`yckceo_live_sources.rs`
+- **`src/` 内的内联单元测试**（322 个）：解析器、URL 处理、repo、正文池与版本时间线、TXT 章节拆分与匹配、服务层纯逻辑
 
-::: warning 有一个用例会真的联网
+::: warning 有一个用例会访问真实网络
 `tests/yckceo_live_sources.rs` 会抓取在线书源列表，在无网络或受限环境下失败属于预期行为，不代表代码有问题。
 :::
 
@@ -39,7 +38,7 @@ npm install
 npm test                       # vitest run
 ```
 
-覆盖 Pinia store 与工具函数，共 40 个 `.test.ts`（249 个用例）。
+覆盖 Pinia store 与工具函数，共 41 个 `.test.ts`（280 个用例）。
 
 ## 3. 构建与静态检查
 
@@ -79,8 +78,10 @@ npm run test:e2e:ui         # UI 模式
 
 **零配置**：不设任何环境变量时，globalSetup 会用 `target/debug/reader-rust.exe`
 在 18081 起一个临时后端（构建产物不存在时自动先跑 `cargo build`），运行期数据
-全部落在独立临时目录（storage/数据库/assets），固定凭据 reader1/password123，
-跑完即清。18081 被占用时会直接报错，不会连到别的实例上。
+全部放在独立临时目录（storage/数据库/assets），固定凭据 reader1/password123，
+运行结束后自动清理。18081 被占用时会直接报错，不会连到别的实例上。
+
+CI 中也有对应的 e2e job，只在手动触发与每周定时运行时执行。
 
 要跑自己的实例：设 `PLAYWRIGHT_BASE_URL` 并同时给 `E2E_USERNAME`/`E2E_PASSWORD`：
 
@@ -88,7 +89,7 @@ npm run test:e2e:ui         # UI 模式
 PLAYWRIGHT_BASE_URL=http://127.0.0.1:18080 E2E_USERNAME=admin E2E_PASSWORD=12345678 npm run test:e2e
 ```
 
-### 当前自动冒烟覆盖范围
+### 当前端到端测试覆盖范围
 
 - 顶部导航切换、设置抽屉、搜索模式与范围切换
 - 书架、发现、搜索主页面可打开；分组管理、缓存管理弹窗可打开
@@ -201,5 +202,4 @@ E2E_SOURCE_IMPORT_FILE=/absolute/path/to/book-sources.json npm run test:e2e
 
 - 为 Playwright 增加专用 fixture 数据
 - 增加测试账号与测试书源的初始化脚本
-- 在 CI 中加入 e2e 冒烟任务
 - 增加移动端视口与 PWA 模式专项测试

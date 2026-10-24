@@ -126,14 +126,14 @@ cp .env.example .env
 | `PRIVATE_NETWORK_WHITELIST`     | 空                                  | 私网白名单（逗号分隔），仅 `ALLOW_PRIVATE_NETWORK=false` 时生效。条目支持 IP / CIDR 网段 / 域名，均可带端口（如 `192.168.100.99:9999, 192.168.100.0/24, nas.lan`）。**名单为空时一律拦截**（不等同 `true`）；名单非空时只有命中的目标可以出站 |
 | `CORS_ALLOWED_ORIGINS`          | 空                                  | 跨域来源白名单；留空仅同源                                                                                                                                                                                                                  |
 | `RATE_LIMIT_DISABLED`           | `false`                             | 豁免登录限速（开发/测试用）。默认：IP 登录败 5 次封该 IP 登录 6h、用户名败 10 次封 6h。e2e 跑测试时建议后端开此项                                                                                                                           |
-| `TRUSTED_PROXIES`               | 空                                  | 登录限速的受信代理列表（逗号分隔，IP / CIDR）。挂 nginx/Caddy/Docker NAT 后所有请求同 socket IP，攻击者错 5 次会封全体 6h；配置后仅当对端命中受信列表时才解析 `X-Forwarded-For` 取真实客户端 IP（从右往左第一个非受信地址，格式非法/全受信回退 socket IP）。**留空不信任任何代理头**，一律按 socket 地址记账 |
+| `TRUSTED_PROXIES`               | 空                                  | 登录限速的受信代理列表（逗号分隔，IP / CIDR）。服务挂在 nginx/Caddy/Docker NAT 后面时，所有请求的对端地址都是代理 IP；攻击者连续输错 5 次密码，会使全体访问者被封禁 6 小时。配置后，只有对端地址命中受信列表时才解析 `X-Forwarded-For` 取真实客户端 IP（从右往左找第一个不在受信列表里的地址；格式非法或全部受信时回退到 socket IP）。**留空不信任任何代理头**，一律按 socket 地址记账 |
 | `AI_TEXT_*` / `AI_IMAGE_*` / `AI_SPEECH_*` | 空                         | 后端 AI 模型配置（`ENABLED`/`BASE_URL`/`API_KEY`/`MODEL`/`USE_FULL_URL`，图片另有 `SIZE`，语音另有 `VOICE`/`FORMAT`）。**只在服务端维护，从不下发到浏览器**；`getAiModelConfig` 只返回各类型「是否可用」的布尔值                           |
 | `AGENT_SIDECAR_ENABLED`              | `true`                    | AI 资料编排 sidecar 开关；关闭后 AI 资料更新接口返回明确错误                                            |
-| `AGENT_SIDECAR_COMMAND`              | `python -m agent_sidecar` | sidecar 启动命令，进程 cwd 为 `sidecar/`；保持默认时若 `sidecar/.venv` 存在自动优先其 Python，自定义（含 Docker ENV）则不兜底 |
+| `AGENT_SIDECAR_COMMAND`              | `python -m agent_sidecar` | sidecar 启动命令，进程 cwd 为 `sidecar/`；保持默认时若 `sidecar/.venv` 存在自动优先其 Python，自定义（含 Docker ENV）时不自动回退 |
 | `AGENT_SIDECAR_UV`                   | 空                        | uv 二进制路径；非空/PATH 可探测时由 uv 自动管理依赖（推荐），都没有时降级为 AGENT_SIDECAR_COMMAND      |
-| `AGENT_SIDECAR_CHAPTER_TIMEOUT_SECS` | `1800`                    | 单章处理超时；超时即终止 sidecar 进程并中止批量任务（sidecar 内模型调用有 5×300s 总 deadline，与看门狗对齐，错误会带真实原因回来而不是被截成超时）                                                     |
+| `AGENT_SIDECAR_CHAPTER_TIMEOUT_SECS` | `1800`                    | 单章处理超时；超时即终止 sidecar 进程并中止批量任务（sidecar 内的模型调用有 5×300 秒的总预算，与看门狗对齐；错误会带回真实原因，不会被截成超时）                                                     |
 
-三点需要注意：
+以下几点需要注意：
 
 - **配置结构是扁平的**，没有嵌套层级，因此不存在「用 `__` 表示层级」这种用法。
 - **`.env` 值含逗号/空格必须用双引号包裹**：dotenvy 在解析不了的行会中断加载，该行之后的所有变量静默失效（启动日志会对加载失败打 WARN）。典型受害者：`PRIVATE_NETWORK_WHITELIST`、`CORS_ALLOWED_ORIGINS`。
@@ -201,7 +201,7 @@ scripts/release.sh        发布脚本
 storage/                  运行期数据，gitignored，首次启动自动创建
 ```
 
-规模参照（便于判断改动影响面）：后端 `src/` 共 94 个 `.rs`、约 36800 行，其中最大的三个文件是
+规模参照（便于判断改动影响面）：后端 `src/` 共 94 个 `.rs`、约 36800 行，其中最大的几个文件是
 `parser/rule_engine.rs`（约 4900 行）、`service/book_service.rs`（约 4000 行）、`api/handlers/book.rs`（约 3000 行）；
 前端 `src/` 下 186 个文件（133 个 `.ts`，其中 41 个是测试；49 个 `.vue`；2 个 CSS + SVG/PNG 各 1）。阅读器按职责拆成 composable（views/ReaderView.vue 只做模板与编排接线；横翻分页/连续滚动/位置恢复/搜索/选字/TTS/自动播放/手势各自成簇），纯计算下沉 `utils/`（chapterRender/horizontalPaging/readingPosition 等）。
 
@@ -223,7 +223,7 @@ HTTP 请求
 各层依赖方向（已核实）：`api → service → parser → crawler`，另有 `service → auth`（签发令牌用 `auth::jwt`）。
 `parser/` 与 `crawler/` 都**不依赖** `service/`；
 `parser` 与 `crawler` 之间是双向编译期依赖（解析经 crawler 抓取并过出站守卫；crawler 展开 URL 内联 JS 时回调 parser 的 JS 求值）；
-`model/`、`util/`、`error/` 是被各层共用的底座模块；`storage/` 由 `service/` 使用。
+`model/`、`util/`、`error/` 是被各层共用的基础模块；`storage/` 由 `service/` 使用。
 `auth/` 是 HTTP 层的横向关注点：`service` 只用它的令牌编解码，中间件自己持有一条只读的身份查询，不反向依赖 service。
 
 响应一律包装为：
@@ -277,7 +277,7 @@ HTTP 请求
 地址按站点顺序原样返回，挑哪个格式渲染是客户端的事（番茄会同时给 HEIC 与 JPEG）。
 排序参数 `sort`（`hot` 默认 / `time`）通过 `{{sort}}` 传给书源模板，并计入缓存键；
 书源模板没用 `{{sort}}` 时响应里的 `serverSort` 为 false，前端据此说明「最新」只重排已加载的条目。
-前端对「最新」**始终**做一次客户端重排兜底——上游对 `sort` 的支持并不完全可靠
+前端对「最新」**始终**做一次客户端重排作为后备——上游对 `sort` 的支持并不完全可靠
 （实测番茄书源部分章节的章评列表会忽略 sort 返回热度序），站点排对时这是无操作。
 空的 `sort=` 参数在求值后自动剔除（FQWeb 对空串直接报参数错误）。
 内联回复一律按时间升序返回（时间不是时间戳时保持站点顺序）。
@@ -388,7 +388,7 @@ XPath 有资源上限（长度 8KB / 嵌套 64 层 / 总步数 100、`//` 50）�
 
 ## 测试
 
-Rust 侧共 **467 个测试**（322 个内联单元测试 + 145 个集成用例，另有 2 个 `#[ignore]` 的真实网络用例）。`cargo test` 输出的合计即实际用例数——`src/main.rs` 只是薄入口，不再以 `mod` 重声明模块，bin 目标没有单元测试，不存在重复计数。分布为：
+Rust 侧共 **467 个测试**（322 个内联单元测试 + 145 个集成用例，另有 2 个 `#[ignore]` 的真实网络用例）。`cargo test` 输出的合计就是实际用例数：`src/main.rs` 只是入口文件，不再重复声明模块，bin 目标没有单元测试，不存在重复计数。分布为：
 
 - `tests/` 下 24 个集成测试文件（145 个常规用例；`yckceo_live_sources.rs` 只装那 2 个默认忽略的真实网络用例），其中 `auth_flow.rs` 用例最多（18 个）；
   `auth_flow.rs`、`review_flow.rs`、`chapter_image_flow.rs`、`image_pipeline.rs` 与
@@ -402,7 +402,7 @@ Rust 侧共 **467 个测试**（322 个内联单元测试 + 145 个集成用例�
   （机器上需要有 Node）；
 - `src/` 内的内联单元测试模块（322 个）。
 
-sidecar 使用 pytest（95 个用例，
+sidecar 使用 pytest（115 个用例，
 见「常用命令」），含从旧前端实现 1:1 移植的领域规则用例与新增编排能力用例。
 
 需要注意：
