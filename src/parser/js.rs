@@ -30,9 +30,9 @@ static JS_LIB_CACHE: Lazy<Mutex<BoundedMap<(String, std::time::Instant)>>> =
     Lazy::new(|| Mutex::new(BoundedMap::new(JS_LIB_CACHE_MAX_ENTRIES)));
 /// 全局 KV / jsLib 缓存的条目上限。
 ///
-/// 这两张表都没有淘汰机制，而键由书源（第三方内容）决定：一个不断写入新键的
-/// 书源可以把进程内存吃光。超出上限时整表清空——书源 KV 只用于跨请求缓存，
-/// 清空只影响性能，不会破坏正确性。
+/// 键由书源（第三方内容）决定：一个不断写入新键的书源可以把进程内存吃光，
+/// 因此两张表都收进 BoundedMap——超出上限按 FIFO 逐出最旧条目。书源 KV
+/// 只用于跨请求缓存，逐出只影响性能，不会破坏正确性。
 const JS_KV_MAX_ENTRIES: usize = 4096;
 /// KV 总字节上限：value 由书源决定大小，只限条数内存仍可无界增长
 const JS_KV_MAX_BYTES: usize = 8 * 1024 * 1024;
@@ -75,11 +75,11 @@ fn js_http_timeout() -> Duration {
 ///
 /// 同样按用户命名空间隔离：否则 A 用户在站点登录得到的会话 Cookie
 /// 会被 B 用户书源的 `java.ajax` 自动带上。
-/// 命名空间 client 池上限：超出整表清空重建（单用户常态只有 1-2 个条目，
-/// 上限只是防失控的保险）。旧值 8 在并发活跃命名空间稍多（代理书源、
-/// 多标签页并发解析等）时会 FIFO 静默逐出，`java.ajax` 的站点 Cookie jar
-/// 随机丢失；提到 256 后常态远触不到上限。注意这仍是兜底而非真正的 LRU
-/// （超限时整表清空，不区分冷热），需要更精细的淘汰策略可后续再做。
+/// 命名空间 client 池上限：BoundedMap 满时按 FIFO 逐出最旧条目（单用户
+/// 常态只有 1-2 个条目，上限只是防失控的保险）。旧值 8 在并发活跃命名
+/// 空间稍多（代理书源、多标签页并发解析等）时会频繁逐出，`java.ajax`
+/// 的站点 Cookie jar 随机丢失；提到 256 后常态远触不到上限。注意 FIFO
+/// 逐出不是真正的 LRU（不区分冷热），需要更精细的淘汰策略可后续再做。
 const JS_HTTP_CLIENT_MAX: usize = 256;
 static JS_HTTP_CLIENTS: Lazy<Mutex<BoundedMap<Client>>> =
     Lazy::new(|| Mutex::new(BoundedMap::new(JS_HTTP_CLIENT_MAX)));
