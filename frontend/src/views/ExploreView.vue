@@ -88,7 +88,15 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
+import {
+  ref,
+  computed,
+  watch,
+  onMounted,
+  onUnmounted,
+  onActivated,
+  onDeactivated,
+} from 'vue'
 import { usePreserveScroll } from '../composables/usePreserveScroll'
 import { useExploreStore } from '../stores/explore'
 import { useBookshelfStore } from '../stores/bookshelf'
@@ -131,12 +139,44 @@ onMounted(async () => {
   if (!shelfStore.books.length) {
     void shelfStore.fetchBooks().catch(() => undefined)
   }
+  startObserveSources()
   await store.init()
   tryFetchMore()
 })
 
+// 书源列表变化的对账只在本页激活期间存在；store 里的全局 watch 会让
+// 任何页面拉到书源后都自动选中并请求 exploreBook（误请求的根因）。
+// 本页在 keep-alive 列表里：onMounted 只跑一次，切走触发 onDeactivated，
+// 切回触发 onActivated，因此观察的生命周期必须挂这对钩子。
+let stopSourceWatch: (() => void) | null = null
+
+function startObserveSources() {
+  if (stopSourceWatch) return
+  stopSourceWatch = watch(
+    () => store.exploreSources,
+    () => store.ensureActiveSource()
+  )
+}
+
+function stopObserveSources() {
+  stopSourceWatch?.()
+  stopSourceWatch = null
+}
+
+onActivated(() => {
+  startObserveSources()
+  // 先对账一次：停用期间书源可能已变化（如删除了当前源），
+  // 新建的 watch 不会回放停用期间发生过的变更
+  store.ensureActiveSource()
+})
+
+onDeactivated(() => {
+  stopObserveSources()
+})
+
 onUnmounted(() => {
   stopWatchers()
+  stopObserveSources()
 })
 
 // 哨兵（列表末尾占位）距面板底部 200px 内视为「该翻页」；

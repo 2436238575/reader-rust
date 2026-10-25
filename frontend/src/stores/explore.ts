@@ -1,5 +1,5 @@
 import { defineStore } from 'pinia'
-import { ref, computed, watch } from 'vue'
+import { ref, computed } from 'vue'
 import { exploreBook } from '../api/explore'
 import { useSourceStore } from './source'
 import type { SearchBook, BookSource } from '../types'
@@ -170,9 +170,9 @@ export const useExploreStore = defineStore('explore', () => {
     ensureActiveSource()
   }
 
-  watch(exploreSources, () => {
-    ensureActiveSource()
-  })
+  // 注意：这里刻意不 watch(exploreSources)。store 一旦被实例化（如顶栏拼搜索链接），
+  // 全局 watch 就会在任何页面拉到书源列表后自动选中第一个源并发起 exploreBook 请求。
+  // 书源列表变化的对账由发现页在激活期间自行观察（见 ExploreView 的 onActivated/onDeactivated）。
 
   return {
     activeSourceId,
@@ -186,6 +186,7 @@ export const useExploreStore = defineStore('explore', () => {
     currentSource,
     categories,
     init,
+    ensureActiveSource,
     setSource,
     setCategory,
     fetchMore,

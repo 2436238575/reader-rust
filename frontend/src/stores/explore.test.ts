@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { nextTick, watch } from 'vue'
 import { createPinia, setActivePinia } from 'pinia'
 import { useExploreStore } from './explore'
 import { useSourceStore } from './source'
@@ -103,11 +104,57 @@ describe('explore store source sync', () => {
     await store.init()
     expect(store.error).toBe('服务器开小差')
   })
+
+  // 以下两条守护「误请求」回归：store 实例化本身不得带任何自动请求副作用，
+  // 书源列表变化的观察由发现页在激活期间自行挂载（ExploreView onActivated/onDeactivated）
+
+  it('只实例化 store、不启动观察时，书源列表变化不会调用 exploreBook', async () => {
+    const sourceStore = useSourceStore()
+    const store = useExploreStore()
+
+    sourceStore.sources = [sourceWithExplore()]
+    await nextTick()
+    await nextTick()
+
+    expect(exploreBookMock).not.toHaveBeenCalled()
+    // 没有观察者就不会自动选中书源
+    expect(store.activeSourceId).toBeNull()
+  })
+
+  it('启动观察后书源变化会触发请求，停止观察后不再触发', async () => {
+    const sourceStore = useSourceStore()
+    const store = useExploreStore()
+
+    // 与 ExploreView 激活期间的接线一致：观察 exploreSources，变化时对账
+    const stop = watch(
+      () => store.exploreSources,
+      () => store.ensureActiveSource()
+    )
+
+    sourceStore.sources = [sourceWithExplore()]
+    await vi.waitFor(() => expect(exploreBookMock).toHaveBeenCalledTimes(1))
+    expect(store.activeSourceId).toBe(1)
+
+    stop()
+    exploreBookMock.mockClear()
+
+    // 换成首分类不同的书源（id=2）：若观察仍在，会切源并发起新请求
+    sourceStore.sources = [sourceWithExplore(2, '/book/other.html')]
+    await nextTick()
+    await nextTick()
+
+    expect(exploreBookMock).not.toHaveBeenCalled()
+    // 停止观察后书源变化不再对账，选中状态保持不变
+    expect(store.activeSourceId).toBe(1)
+  })
 })
 
-function sourceWithExplore(): BookSource {
+function sourceWithExplore(
+  bookSourceId = 1,
+  firstCategoryUrl = '/book/category/catalog.html'
+): BookSource {
   return {
-    bookSourceId: 1,
+    bookSourceId,
     bookSourceName: 'm.cuoceng.com',
     bookSourceUrl: 'https://m.cuoceng.com',
     enabledExplore: true,
@@ -115,7 +162,7 @@ function sourceWithExplore(): BookSource {
       {
         style: { layout_flexBasisPercent: 1.0, layout_flexGrow: 1 },
         title: '书 库',
-        url: '/book/category/catalog.html',
+        url: firstCategoryUrl,
       },
       {
         style: { layout_flexBasisPercent: 0.25, layout_flexGrow: 1 },

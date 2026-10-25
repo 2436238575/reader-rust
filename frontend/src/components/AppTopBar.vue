@@ -113,7 +113,6 @@ const router = useRouter()
 const route = useRoute()
 const appStore = useAppStore()
 const shelfStore = useBookshelfStore()
-const exploreStore = useExploreStore()
 
 const searchFocused = ref(false)
 const searchValue = ref('')
@@ -177,10 +176,15 @@ function handleSearch() {
   // 最近页的搜索框只做本地过滤，不跳全局搜索
   if (isRecentPage.value) return
 
-  // 发现页发起的搜索限定在当前浏览的书源内
+  // 发现页发起的搜索限定在当前浏览的书源内。
+  // explore store 按需实例化：顶栏在所有非阅读页常驻，顶层实例化会让
+  // store 过早建立（历史版本曾因此挂上全局 watch，在别的页面误触发 exploreBook）
   const query: Record<string, string> = { q: value }
-  if (route.path === '/explore' && exploreStore.activeSourceId != null) {
-    query.source = String(exploreStore.activeSourceId)
+  if (route.path === '/explore') {
+    const exploreStore = useExploreStore()
+    if (exploreStore.activeSourceId != null) {
+      query.source = String(exploreStore.activeSourceId)
+    }
   }
   router.push({ path: '/search', query })
 }
