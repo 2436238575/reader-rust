@@ -203,7 +203,7 @@ storage/                  运行期数据，gitignored，首次启动自动创�
 
 规模参照（便于判断改动影响面）：后端 `src/` 共 96 个 `.rs`、约 39700 行，其中最大的几个文件是
 `parser/rule_engine.rs`（约 5000 行）、`service/book_service.rs`（约 4600 行）、`api/handlers/book.rs`（约 3000 行）；
-前端 `src/` 下 186 个文件（133 个 `.ts`，其中 41 个是测试；49 个 `.vue`；2 个 CSS + SVG/PNG 各 1）。阅读器按职责拆成 composable（views/ReaderView.vue 只做模板与编排接线；横翻分页/连续滚动/位置恢复/搜索/选字/TTS/自动播放/手势各自成簇），纯计算下沉 `utils/`（chapterRender/horizontalPaging/readingPosition 等）。
+前端 `src/` 下 191 个文件（136 个 `.ts`，其中 43 个是测试；49 个 `.vue`；2 个 CSS + SVG/PNG 各 1）。阅读器按职责拆成 composable（views/ReaderView.vue 只做模板与编排接线；横翻分页/连续滚动/位置恢复/搜索/选字/TTS/自动播放/手势各自成簇），纯计算下沉 `utils/`（chapterRender/horizontalPaging/readingPosition 等）。
 
 ---
 
