@@ -38,7 +38,7 @@ npm install
 npm test                       # vitest run
 ```
 
-覆盖 Pinia store 与工具函数，共 43 个 `.test.ts`（320 个用例）。
+覆盖 Pinia store 与工具函数，共 43 个 `.test.ts`（323 个用例）。
 
 ## 3. 构建与静态检查
 
