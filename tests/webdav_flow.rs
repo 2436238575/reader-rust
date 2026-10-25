@@ -666,8 +666,9 @@ async fn lock_blocks_write_until_unlock() {
 
 /// JSON 接口的 multipart 上传（uploadFileToWebdav）流式落盘：约 1.5MB 二进制
 /// 逐字节一致（流式化改造前是整读进内存再 fs::write，这里用字节级比对守住
-/// 回归）；同名覆盖上传后内容更新（覆盖 Windows 上 rename 的先删后改名回退
-/// 分支），且成功后不残留 `.upload-*.tmp` 临时文件。
+/// 回归）；同名覆盖上传后内容更新（覆盖 Windows 上 rename 的备份替换回退
+/// 分支），且成功后不残留 `.upload-*.tmp` 临时文件与 `.reader-upload-backup-*`
+/// 备份文件。
 #[tokio::test]
 async fn upload_file_to_webdav_streams_binary_and_overwrites() {
     let app = TestServer::start().await;
@@ -737,11 +738,11 @@ async fn upload_file_to_webdav_streams_binary_and_overwrites() {
         .unwrap()
         .filter_map(|e| e.ok())
         .map(|e| e.file_name().to_string_lossy().to_string())
-        .filter(|name| name.contains(".upload-"))
+        .filter(|name| name.contains(".upload-") || name.starts_with(".reader-upload-backup-"))
         .collect();
     assert!(
         leftovers.is_empty(),
-        "成功上传后不应残留临时文件: {leftovers:?}"
+        "成功上传后不应残留临时/备份文件: {leftovers:?}"
     );
 
     // 同名覆盖：大小与内容都不同，落盘内容必须更新
@@ -759,11 +760,11 @@ async fn upload_file_to_webdav_streams_binary_and_overwrites() {
         .unwrap()
         .filter_map(|e| e.ok())
         .map(|e| e.file_name().to_string_lossy().to_string())
-        .filter(|name| name.contains(".upload-"))
+        .filter(|name| name.contains(".upload-") || name.starts_with(".reader-upload-backup-"))
         .collect();
     assert!(
         leftovers.is_empty(),
-        "覆盖上传后不应残留临时文件: {leftovers:?}"
+        "覆盖上传后不应残留临时/备份文件: {leftovers:?}"
     );
 }
 

@@ -198,7 +198,8 @@ pub async fn upload_file_to_webdav(
 }
 
 /// multipart 文件字段流式落盘到 `target`：逐块读字段、边读边写目标同目录的
-/// 临时文件，全部写完并 flush 后 rename 到目标路径，返回写入的字节数。
+/// 临时文件，全部写完并 flush 后 rename 到目标路径（Windows 上覆盖失败时
+/// 先备份目标再替换，见 [`rename_overwrite_with_backup`]），返回写入的字节数。
 ///
 /// 临时文件 `<文件名>.upload-<uuid>.tmp` 放在目标同目录，保证 rename 不跨卷。
 /// 内存占用只有当前 chunk（对比 [`read_limited_multipart_field`] 把整个字段
@@ -251,33 +252,97 @@ async fn stream_multipart_field_to_file(
     }
     // 先关句柄再 rename：Windows 上被占用的文件无法改名
     drop(file);
-    match fs::rename(&temp, target).await {
-        // POSIX 的 rename 原子覆盖已存在目标。Windows 的 MoveFileEx(
-        // MOVEFILE_REPLACE_EXISTING) 通常也能覆盖，但目标被其他进程以不兼容
-        // 的共享模式打开时会失败（表现为 AlreadyExists/PermissionDenied）；
-        // 此时先删目标再重试一次。删除与重命名之间存在短暂窗口，因此
-        // Windows 上不是严格原子覆盖（Linux 不走这条分支）。
+    // POSIX 的 rename 原子覆盖已存在目标。Windows 的 MoveFileEx(
+    // MOVEFILE_REPLACE_EXISTING) 通常也能覆盖，但目标被其他进程以不兼容的
+    // 共享模式打开、或 temp 被杀毒/索引服务短时锁住时会失败（表现为
+    // AlreadyExists/PermissionDenied）。此时走「先备份目标再替换」：
+    // 绝不先删旧文件——旧文件若先删、重试又失败，旧备份与新内容就一起丢
+    // 了（Linux 不走这条分支，见 [`rename_overwrite_with_backup`]）。
+    overwrite_via_rename(&temp, target)
+        .await
+        .map_err(|e| AppError::Internal(e.into()))?;
+    // rename 成功：临时文件已不存在，解除守卫避免误删同名新文件
+    guard.disarm();
+    Ok(written)
+}
+
+/// 生产环境的覆盖 rename 实现：[`tokio::fs::rename`] + 备份替换语义。
+async fn overwrite_via_rename(from: &std::path::Path, to: &std::path::Path) -> std::io::Result<()> {
+    rename_overwrite_with_backup(
+        from,
+        to,
+        |f, t| async move { tokio::fs::rename(&f, &t).await },
+    )
+    .await
+}
+
+/// 覆盖写语义：把 `from` rename 到 `to`，保证任意失败路径下旧文件要么已被
+/// 新内容替换、要么原样保留，绝不出现「先删旧文件、重试又失败」的两头空。
+///
+/// 流程：
+/// 1. 直接 rename（POSIX 原子覆盖，绝大多数调用到此为止）；
+/// 2. 失败且错误类型为 AlreadyExists/PermissionDenied（Windows 上目标被
+///    其他进程以不兼容共享模式打开，或 `from` 被杀毒/索引服务短时锁住）
+///    时进入备份替换：把旧目标 rename 成同目录点前缀备份
+///    `.reader-upload-backup-<uuid>.tmp`；
+///    - 备份 rename 返回 NotFound：目标已不存在（首次失败另有原因，如瞬时
+///      共享冲突），直接重试一次覆盖，仍失败返回错误；
+///    - 备份 rename 其他失败：返回错误，旧文件原样保留（temp 交由
+///      [`TempUploadGuard`] 清理），**不删目标**；
+///    - 备份成功后重试覆盖：成功则 best-effort 删除备份；失败则把备份
+///      rename 回目标恢复旧文件——恢复成功返回原始错误；恢复失败时错误
+///      信息带上备份路径，备份绝不删除，留给人工恢复。
+///
+/// `rename_op` 注入 rename 动作（生产为 [`tokio::fs::rename`]），失败分支
+/// 因此可以确定性测试；不进备份分支的其他错误类型（NotFound 等）直接透传。
+async fn rename_overwrite_with_backup<F, Fut>(
+    from: &std::path::Path,
+    to: &std::path::Path,
+    mut rename_op: F,
+) -> std::io::Result<()>
+where
+    F: FnMut(PathBuf, PathBuf) -> Fut,
+    Fut: std::future::Future<Output = std::io::Result<()>>,
+{
+    match rename_op(from.to_path_buf(), to.to_path_buf()).await {
+        Ok(()) => return Ok(()),
         Err(e)
             if !matches!(
                 e.kind(),
                 std::io::ErrorKind::AlreadyExists | std::io::ErrorKind::PermissionDenied
             ) =>
         {
-            return Err(AppError::Internal(e.into()));
+            return Err(e);
         }
-        Err(_) => {
-            if let Err(rm) = fs::remove_file(target).await {
-                return Err(AppError::Internal(rm.into()));
-            }
-            if let Err(e) = fs::rename(&temp, target).await {
-                return Err(AppError::Internal(e.into()));
-            }
-        }
-        Ok(()) => {}
+        Err(_) => {}
     }
-    // rename 成功：临时文件已不存在，解除守卫避免误删同名新文件
-    guard.disarm();
-    Ok(written)
+    let backup = to.with_file_name(format!(
+        ".reader-upload-backup-{}.tmp",
+        uuid::Uuid::new_v4()
+    ));
+    if let Err(backup_err) = rename_op(to.to_path_buf(), backup.clone()).await {
+        if backup_err.kind() == std::io::ErrorKind::NotFound {
+            // 目标已不存在：首次失败另有原因，重试一次覆盖，仍失败返回错误
+            return rename_op(from.to_path_buf(), to.to_path_buf()).await;
+        }
+        // 目标被占用等：返回错误，旧文件原样保留
+        return Err(backup_err);
+    }
+    match rename_op(from.to_path_buf(), to.to_path_buf()).await {
+        Ok(()) => {
+            // 覆盖成功：备份只是旧版本副本，best-effort 清理
+            let _ = tokio::fs::remove_file(&backup).await;
+            Ok(())
+        }
+        Err(e) => match rename_op(backup.clone(), to.to_path_buf()).await {
+            // 恢复成功：旧文件回到原位，返回原始错误
+            Ok(()) => Err(e),
+            Err(restore_err) => Err(std::io::Error::other(format!(
+                "覆盖写入失败（{e}），恢复原文件也失败（{restore_err}）；原文件已保留在备份 {}",
+                backup.display()
+            ))),
+        },
+    }
 }
 
 /// 上传临时文件的兜底清理守卫：armed 状态下 Drop 时删除临时文件。
@@ -583,5 +648,290 @@ mod tests {
             download_content_type(Path::new("/backup/noext")),
             "application/octet-stream"
         );
+    }
+
+    // ---- rename_overwrite_with_backup 的备份替换语义 ----
+
+    type BoxRenameFuture =
+        std::pin::Pin<Box<dyn std::future::Future<Output = std::io::Result<()>>>>;
+
+    /// 测试沙盒目录：target/ 下按 uuid 隔离，测试结束自行清理。
+    fn sandbox(tag: &str) -> PathBuf {
+        let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("target")
+            .join("agent-test")
+            .join(format!("webdav-replace-{tag}-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    /// 目录里残留的备份文件名（应为空时断言用）。
+    fn backup_residues(dir: &std::path::Path) -> Vec<String> {
+        std::fs::read_dir(dir)
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .map(|e| e.file_name().to_string_lossy().to_string())
+            .filter(|name| name.starts_with(".reader-upload-backup-"))
+            .collect()
+    }
+
+    /// 构造按脚本注入失败的 rename 闭包：第 n 次调用（0 起）命中 `fail_at`
+    /// 时返回 PermissionDenied（不动磁盘），其余调用执行真实
+    /// `std::fs::rename`。返回（闭包, 实际调用次数单元格）供断言调用序列。
+    /// Windows「目标被杀毒/索引服务锁住」等真实占用无法在测试里稳定复现
+    /// （进程内无法模拟跨进程共享冲突），用脚本化失败确定性覆盖各分支。
+    fn scripted_rename(
+        fail_at: Vec<usize>,
+    ) -> (
+        impl FnMut(PathBuf, PathBuf) -> BoxRenameFuture,
+        std::rc::Rc<std::cell::RefCell<usize>>,
+    ) {
+        use std::cell::RefCell;
+        use std::rc::Rc;
+        let fails = Rc::new(RefCell::new(fail_at));
+        let calls = Rc::new(RefCell::new(0usize));
+        let fails_c = Rc::clone(&fails);
+        let calls_c = Rc::clone(&calls);
+        let op = move |f: PathBuf, t: PathBuf| {
+            let n = {
+                let mut c = calls_c.borrow_mut();
+                let n = *c;
+                *c += 1;
+                n
+            };
+            let fail = fails_c.borrow().contains(&n);
+            let fut: BoxRenameFuture = Box::pin(async move {
+                if fail {
+                    return Err(std::io::Error::from(std::io::ErrorKind::PermissionDenied));
+                }
+                std::fs::rename(&f, &t)
+            });
+            fut
+        };
+        (op, calls)
+    }
+
+    /// 真实 rename 的注入实现（不注入失败的成功路径用）。
+    fn real_rename() -> (
+        impl FnMut(PathBuf, PathBuf) -> BoxRenameFuture,
+        std::rc::Rc<std::cell::RefCell<usize>>,
+    ) {
+        use std::cell::RefCell;
+        use std::rc::Rc;
+        let calls = Rc::new(RefCell::new(0usize));
+        let calls_c = Rc::clone(&calls);
+        let op = move |f: PathBuf, t: PathBuf| {
+            *calls_c.borrow_mut() += 1;
+            let fut: BoxRenameFuture = Box::pin(async move { std::fs::rename(&f, &t) });
+            fut
+        };
+        (op, calls)
+    }
+
+    #[tokio::test]
+    async fn overwrite_replaces_target_and_leaves_no_backup() {
+        let dir = sandbox("success");
+        let target = dir.join("book.epub");
+        std::fs::write(&target, b"old").unwrap();
+        let temp = dir.join("book.epub.upload-x.tmp");
+        std::fs::write(&temp, b"new").unwrap();
+
+        let (op, calls) = scripted_rename(vec![]);
+        rename_overwrite_with_backup(&temp, &target, op)
+            .await
+            .unwrap();
+        assert_eq!(*calls.borrow(), 1, "成功路径只应调用一次 rename");
+
+        assert_eq!(std::fs::read(&target).unwrap(), b"new", "目标应是新内容");
+        assert!(!temp.exists(), "temp 应已改名到目标");
+        assert!(
+            backup_residues(&dir).is_empty(),
+            "不应残留备份: {:?}",
+            backup_residues(&dir)
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn overwrite_creates_target_when_absent() {
+        let dir = sandbox("absent");
+        let target = dir.join("book.epub");
+        let temp = dir.join("book.epub.upload-x.tmp");
+        std::fs::write(&temp, b"new").unwrap();
+
+        let (op, calls) = real_rename();
+        rename_overwrite_with_backup(&temp, &target, op)
+            .await
+            .unwrap();
+        assert_eq!(*calls.borrow(), 1);
+
+        assert_eq!(std::fs::read(&target).unwrap(), b"new");
+        assert!(backup_residues(&dir).is_empty());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn overwrite_passes_through_non_retryable_errors() {
+        // NotFound 等其他错误类型不进备份分支，直接透传
+        let dir = sandbox("passthrough");
+        let target = dir.join("book.epub");
+        let missing_temp = dir.join("no-such.upload-x.tmp");
+
+        let (op, calls) = real_rename();
+        let err = rename_overwrite_with_backup(&missing_temp, &target, op)
+            .await
+            .unwrap_err();
+        assert_eq!(err.kind(), std::io::ErrorKind::NotFound);
+        assert_eq!(*calls.borrow(), 1, "不应进入备份分支");
+        assert!(!target.exists());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn overwrite_retries_once_when_target_vanishes() {
+        // 首次 rename 注入失败（PermissionDenied）但目标其实不存在：
+        // 备份 rename 返回 NotFound，核心直接重试一次覆盖
+        let dir = sandbox("vanish");
+        let target = dir.join("book.epub");
+        let temp = dir.join("book.epub.upload-x.tmp");
+        std::fs::write(&temp, b"new").unwrap();
+
+        // 调用序：0 首次(注入失败) → 1 备份(真实, target 缺失 → NotFound)
+        //        → 2 重试(真实, 成功)
+        let (op, calls) = scripted_rename(vec![0]);
+        rename_overwrite_with_backup(&temp, &target, op)
+            .await
+            .unwrap();
+        assert_eq!(
+            *calls.borrow(),
+            3,
+            "应经历 失败→备份(NotFound)→重试 三次调用"
+        );
+        assert_eq!(std::fs::read(&target).unwrap(), b"new");
+        assert!(backup_residues(&dir).is_empty());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn overwrite_returns_error_when_retry_after_vanish_fails() {
+        // NotFound 重试仍失败就返回错误，不引入备份也不删 temp
+        let dir = sandbox("vanish-fail");
+        let target = dir.join("book.epub");
+        let temp = dir.join("book.epub.upload-x.tmp");
+        std::fs::write(&temp, b"new").unwrap();
+
+        // 调用序：0 首次(注入失败) → 1 备份(真实, NotFound) → 2 重试(注入失败)
+        let (op, calls) = scripted_rename(vec![0, 2]);
+        let err = rename_overwrite_with_backup(&temp, &target, op)
+            .await
+            .unwrap_err();
+        assert_eq!(err.kind(), std::io::ErrorKind::PermissionDenied);
+        assert_eq!(*calls.borrow(), 3);
+        assert!(!target.exists());
+        assert_eq!(std::fs::read(&temp).unwrap(), b"new", "temp 应原样保留");
+        assert!(backup_residues(&dir).is_empty());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn overwrite_restores_backup_when_second_rename_fails() {
+        // 第二次覆盖 rename 失败（如 temp 被杀毒/索引服务锁住）：
+        // 旧文件必须从备份恢复，绝不两头空
+        let dir = sandbox("restore");
+        let target = dir.join("book.epub");
+        std::fs::write(&target, b"old").unwrap();
+        let temp = dir.join("book.epub.upload-x.tmp");
+        std::fs::write(&temp, b"new").unwrap();
+
+        // 调用序：0 首次(注入失败) → 1 备份(真实, target→backup)
+        //        → 2 重试(注入失败) → 3 恢复(真实, backup→target)
+        let (op, calls) = scripted_rename(vec![0, 2]);
+        let err = rename_overwrite_with_backup(&temp, &target, op)
+            .await
+            .unwrap_err();
+        assert_eq!(
+            err.kind(),
+            std::io::ErrorKind::PermissionDenied,
+            "应返回重试失败的原始错误"
+        );
+        assert_eq!(
+            *calls.borrow(),
+            4,
+            "应经历 失败→备份→重试失败→恢复 四次调用"
+        );
+        assert_eq!(
+            std::fs::read(&target).unwrap(),
+            b"old",
+            "旧文件应从备份恢复"
+        );
+        assert!(
+            backup_residues(&dir).is_empty(),
+            "恢复后不应残留备份: {:?}",
+            backup_residues(&dir)
+        );
+        assert_eq!(
+            std::fs::read(&temp).unwrap(),
+            b"new",
+            "temp 由 TempUploadGuard 清理，核心不动它"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn overwrite_keeps_backup_when_restore_also_fails() {
+        // 恢复也失败：错误信息带备份路径，备份保留待人工恢复，绝不删除
+        let dir = sandbox("restore-fail");
+        let target = dir.join("book.epub");
+        std::fs::write(&target, b"old").unwrap();
+        let temp = dir.join("book.epub.upload-x.tmp");
+        std::fs::write(&temp, b"new").unwrap();
+
+        // 调用序：0 首次(注入失败) → 1 备份(真实) → 2 重试(注入失败) → 3 恢复(注入失败)
+        let (op, calls) = scripted_rename(vec![0, 2, 3]);
+        let err = rename_overwrite_with_backup(&temp, &target, op)
+            .await
+            .unwrap_err();
+        assert_eq!(*calls.borrow(), 4);
+        let residues = backup_residues(&dir);
+        assert_eq!(residues.len(), 1, "恢复失败时备份必须保留: {residues:?}");
+        let backup_name = residues.into_iter().next().unwrap();
+        assert!(
+            err.to_string().contains(&backup_name),
+            "错误信息必须带备份路径: {}",
+            err
+        );
+        assert_eq!(
+            std::fs::read(dir.join(&backup_name)).unwrap(),
+            b"old",
+            "备份内容应是旧文件"
+        );
+        assert!(!target.exists(), "恢复失败时目标不应出现半成品");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn overwrite_keeps_target_when_backup_rename_fails() {
+        // 备份 rename 失败（目标被占用）：直接返回错误，旧文件原样保留
+        let dir = sandbox("backup-fail");
+        let target = dir.join("book.epub");
+        std::fs::write(&target, b"old").unwrap();
+        let temp = dir.join("book.epub.upload-x.tmp");
+        std::fs::write(&temp, b"new").unwrap();
+
+        // 调用序：0 首次(注入失败) → 1 备份(注入失败)
+        let (op, calls) = scripted_rename(vec![0, 1]);
+        let err = rename_overwrite_with_backup(&temp, &target, op)
+            .await
+            .unwrap_err();
+        assert_eq!(err.kind(), std::io::ErrorKind::PermissionDenied);
+        assert_eq!(*calls.borrow(), 2);
+        assert_eq!(
+            std::fs::read(&target).unwrap(),
+            b"old",
+            "备份失败时旧文件必须原样保留"
+        );
+        assert!(backup_residues(&dir).is_empty());
+        assert_eq!(std::fs::read(&temp).unwrap(), b"new");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
