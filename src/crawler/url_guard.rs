@@ -418,6 +418,12 @@ pub async fn ensure_outbound_url_str_allowed(raw: &str) -> Result<Url, String> {
 /// 语义与异步版本一致。
 pub fn ensure_outbound_url_str_allowed_blocking(raw: &str) -> Result<Url, String> {
     let url = Url::parse(raw.trim()).map_err(|e| format!("URL 解析失败: {e}"))?;
+    // 协议检查放在放行早退之前，与异步版保持一致：即使守卫关闭，
+    // file:/ftp: 之类也不该放行给下游（reqwest 会兜底拒绝，但守卫
+    // 自身保持同一语义，且报错更可读）
+    if !matches!(url.scheme(), "http" | "https") {
+        return Err(format!("不支持的协议: {}", url.scheme()));
+    }
     if !guard_active() {
         return Ok(url);
     }
@@ -798,5 +804,21 @@ mod tests {
         // 环回主机名走主机名黑名单，同样拦
         assert!(ensure_outbound_url_str_allowed_blocking("http://localhost:6379/").is_err());
         restore_guard_defaults();
+    }
+
+    #[test]
+    fn blocking_guard_rejects_non_http_scheme_even_when_disabled() {
+        let _lock = TEST_SERIALIZER.lock().unwrap();
+        // 守卫关闭（放行私网）时，file: 之类非 http/https 协议也必须拒绝，
+        // 与异步版 ensure_outbound_url_allowed 的语义一致
+        set_allow_private_network(true);
+        set_private_network_whitelist(Vec::new());
+        let err = ensure_outbound_url_str_allowed_blocking("file:///C:/Windows/win.ini")
+            .expect_err("file: 协议应被拒绝");
+        assert!(err.contains("不支持的协议"), "实际报错: {err}");
+        assert!(ensure_outbound_url_str_allowed_blocking("ftp://example.com/x").is_err());
+        restore_guard_defaults();
+        // 守卫开启时同样拒绝（不依赖 DNS/内网判定）
+        assert!(ensure_outbound_url_str_allowed_blocking("file:///etc/passwd").is_err());
     }
 }
