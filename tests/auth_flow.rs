@@ -76,8 +76,12 @@ impl TestServer {
         format!("{}{}", self.base_url, path)
     }
 
-    /// 用预设账号登录，返回完整 data（Access + Refresh 令牌）。
-    async fn login_session(&self) -> serde_json::Value {
+    /// 登录并返回 (JSON data, Set-Cookie 列表)。
+    ///
+    /// 令牌已迁移到 HttpOnly Cookie：refreshToken 只出现在 Set-Cookie 里，
+    /// JSON 保留 accessToken（API 客户端 Bearer 用）。reqwest 默认不开
+    /// cookie store，Set-Cookie 由测试手动接管。
+    async fn login_with_cookies(&self) -> (serde_json::Value, Vec<String>) {
         let response = self
             .client
             .post(self.url("/reader3/login"))
@@ -89,22 +93,46 @@ impl TestServer {
             .await
             .unwrap();
         assert_eq!(response.status(), 200, "登录应成功");
+        let cookies = response
+            .headers()
+            .get_all("set-cookie")
+            .iter()
+            .filter_map(|value| value.to_str().ok().map(str::to_string))
+            .collect();
         let body: serde_json::Value = response.json().await.unwrap();
-        body["data"].clone()
+        (body["data"].clone(), cookies)
     }
 
-    /// 用预设账号登录，只返回 Access Token。
+    /// 用预设账号登录，只返回 Access Token（JSON 仍保留它供 Bearer 客户端）。
     async fn login(&self) -> String {
-        self.login_session().await["accessToken"]
+        self.login_with_cookies().await.0["accessToken"]
             .as_str()
             .expect("登录响应应含 accessToken")
             .to_string()
     }
 
+    /// 登录并把两枚会话 Cookie 拼成请求 Cookie 头（浏览器语义的手工等价物）。
+    async fn login_cookie_header(&self) -> String {
+        let (_, cookies) = self.login_with_cookies().await;
+        cookie_header(&cookies)
+    }
+
     async fn get(&self, path: &str, token: Option<&str>) -> reqwest::Response {
+        self.get_with_cookie(path, token, None).await
+    }
+
+    async fn get_with_cookie(
+        &self,
+        path: &str,
+        token: Option<&str>,
+        cookie: Option<&str>,
+    ) -> reqwest::Response {
         let mut request = self.client.get(self.url(path));
         if let Some(token) = token {
             request = request.bearer_auth(token);
+        }
+        if let Some(cookie) = cookie {
+            request = request.header("Cookie", cookie);
         }
         request.send().await.unwrap()
     }
@@ -121,6 +149,33 @@ impl TestServer {
         }
         request.send().await.unwrap()
     }
+}
+
+/// 从 Set-Cookie 列表取指定名称的完整条目（含属性）。
+fn set_cookie_of<'a>(cookies: &'a [String], name: &str) -> Option<&'a String> {
+    cookies
+        .iter()
+        .find(|cookie| cookie.starts_with(&format!("{name}=")))
+}
+
+/// 从 Set-Cookie 条目取裸值（等号后、首个分号前）。
+fn set_cookie_value(cookie: &str) -> &str {
+    cookie
+        .split(';')
+        .next()
+        .unwrap_or("")
+        .split_once('=')
+        .map(|(_, value)| value)
+        .unwrap_or("")
+}
+
+/// 把响应的 Set-Cookie 列表拼成请求 Cookie 头。
+fn cookie_header(cookies: &[String]) -> String {
+    cookies
+        .iter()
+        .map(|cookie| cookie.split(';').next().unwrap_or("").to_string())
+        .collect::<Vec<_>>()
+        .join("; ")
 }
 
 impl Drop for TestServer {
@@ -150,19 +205,34 @@ async fn protected_routes_require_a_token_and_answer_401() {
     assert_eq!(response.status(), 200);
 }
 
+/// 查询串令牌只保留给书源登录代理页的限定令牌：其他路径（含 SSE）一律
+/// 忽略，浏览器端点改由 HttpOnly Cookie 鉴权。
 #[tokio::test]
-async fn token_is_accepted_from_the_query_parameter_for_event_source() {
+async fn query_token_is_only_accepted_on_proxy_paths() {
     let server = TestServer::start().await;
     let token = server.login().await;
 
-    // EventSource 无法设置请求头，只能把令牌放进查询串
+    // SSE 等端点曾依赖查询串令牌（EventSource 无法设置请求头），现在走 Cookie
     let response = server
         .client
         .get(server.url(&format!("/reader3/getBookshelf?accessToken={token}")))
         .send()
         .await
         .unwrap();
-    assert_eq!(response.status(), 200);
+    assert_eq!(response.status(), 401, "非代理路径应忽略查询串令牌");
+
+    // 代理路径仍接受查询串令牌：主 JWT 无 scope，鉴权通过后由 handler 报缺参数
+    let response = server
+        .client
+        .get(server.url(&format!("/reader3/bookSourceProxy?accessToken={token}")))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(
+        response.status(),
+        400,
+        "代理路径的查询串令牌应被接受（此处因缺 bookSourceId 报 400，而不是 401）"
+    );
 }
 
 #[tokio::test]
@@ -245,7 +315,7 @@ async fn changing_password_revokes_old_tokens_but_keeps_the_current_device() {
 #[tokio::test]
 async fn login_issues_short_lived_access_and_rotating_refresh_token() {
     let server = TestServer::start().await;
-    let data = server.login_session().await;
+    let (data, cookies) = server.login_with_cookies().await;
 
     let access = data["accessToken"].as_str().expect("应含 accessToken");
     let claims = decode_token(access, b"integration-test-secret").unwrap();
@@ -255,19 +325,104 @@ async fn login_issues_short_lived_access_and_rotating_refresh_token() {
         6 * 3600,
         "Access Token 默认 6 小时"
     );
+    assert_eq!(data["accessTokenExpiresIn"], serde_json::json!(6 * 3600));
 
-    let refresh = data["refreshToken"].as_str().expect("应含 refreshToken");
+    // refreshToken 不再交给 JS：JSON 里没有，只在 HttpOnly Cookie 里
+    assert!(
+        data.get("refreshToken").is_none(),
+        "JSON 不应再返回 refreshToken"
+    );
+    let refresh_cookie =
+        set_cookie_of(&cookies, "reader_refresh").expect("登录应下发 reader_refresh Cookie");
+    let refresh = set_cookie_value(refresh_cookie);
     assert!(refresh.starts_with("rt_"));
     assert_ne!(refresh, access, "Refresh Token 不能是 Access Token 本身");
-    assert_eq!(data["accessTokenExpiresIn"], serde_json::json!(6 * 3600));
 }
 
+/// Cookie 属性契约：HttpOnly、SameSite=Strict、Path=/reader3、Max-Age 取
+/// 各自 TTL；host-only（不设 Domain）。
 #[tokio::test]
-async fn refresh_rotates_tokens_and_token_types_are_not_interchangeable() {
+async fn session_cookies_carry_the_contracted_attributes() {
     let server = TestServer::start().await;
-    let data = server.login_session().await;
+    let (_, cookies) = server.login_with_cookies().await;
+
+    let access = set_cookie_of(&cookies, "reader_access").expect("应下发 reader_access");
+    for attr in [
+        "HttpOnly",
+        "SameSite=Strict",
+        "Path=/reader3",
+        "Max-Age=21600",
+    ] {
+        assert!(
+            access.contains(attr),
+            "reader_access 缺属性 {attr}: {access}"
+        );
+    }
+    assert!(
+        !access.contains("Domain="),
+        "host-only Cookie 不能设 Domain"
+    );
+
+    let refresh = set_cookie_of(&cookies, "reader_refresh").expect("应下发 reader_refresh");
+    for attr in [
+        "HttpOnly",
+        "SameSite=Strict",
+        "Path=/reader3",
+        "Max-Age=604800",
+    ] {
+        assert!(
+            refresh.contains(attr),
+            "reader_refresh 缺属性 {attr}: {refresh}"
+        );
+    }
+    assert!(!refresh.contains("Domain="));
+}
+
+/// 受保护接口只带 Cookie（无 Bearer）也能通过；不带任何凭据仍 401。
+#[tokio::test]
+async fn protected_routes_accept_the_session_cookie_alone() {
+    let server = TestServer::start().await;
+    let cookie = server.login_cookie_header().await;
+
+    let response = server
+        .get_with_cookie("/reader3/getBookshelf", None, Some(&cookie))
+        .await;
+    assert_eq!(response.status(), 200, "仅凭 Cookie 应通过鉴权");
+
+    // 对照：不带任何凭据 401
+    let response = server.get("/reader3/getBookshelf", None).await;
+    assert_eq!(response.status(), 401);
+}
+
+/// 图片接口（<img> 无法设置请求头）改由 Cookie 鉴权：无凭据 401，
+/// 带 Cookie 到达业务层（此处按非法 id 报 404，无网络依赖）。
+#[tokio::test]
+async fn image_endpoint_accepts_the_session_cookie() {
+    let server = TestServer::start().await;
+    let cookie = server.login_cookie_header().await;
+
+    let response = server
+        .get_with_cookie("/reader3/image/zz", None, None)
+        .await;
+    assert_eq!(response.status(), 401, "无凭据应在鉴权层被拦下");
+
+    let response = server
+        .get_with_cookie("/reader3/image/zz", None, Some(&cookie))
+        .await;
+    assert_eq!(
+        response.status(),
+        404,
+        "带 Cookie 应通过鉴权并到达业务校验（非法 id 报 404）"
+    );
+}
+
+/// 刷新轮换与令牌不可互换（JSON body 回退路径——旧客户端/CLI 的迁移通道）。
+#[tokio::test]
+async fn refresh_rotates_tokens_via_body_fallback_and_types_stay_interchangeable() {
+    let server = TestServer::start().await;
+    let (data, cookies) = server.login_with_cookies().await;
     let access = data["accessToken"].as_str().unwrap().to_string();
-    let refresh = data["refreshToken"].as_str().unwrap().to_string();
+    let refresh = set_cookie_value(set_cookie_of(&cookies, "reader_refresh").unwrap()).to_string();
 
     // Access Token 不能用来换新令牌
     let response = server
@@ -288,6 +443,7 @@ async fn refresh_rotates_tokens_and_token_types_are_not_interchangeable() {
         401
     );
 
+    // 旧客户端把 refresh 放进 body 仍可刷新（迁移通道）
     let response = server
         .post(
             "/reader3/refreshToken",
@@ -298,8 +454,10 @@ async fn refresh_rotates_tokens_and_token_types_are_not_interchangeable() {
     assert_eq!(response.status(), 200);
     let body: serde_json::Value = response.json().await.unwrap();
     let new_access = body["data"]["accessToken"].as_str().unwrap().to_string();
-    let new_refresh = body["data"]["refreshToken"].as_str().unwrap().to_string();
-    assert_ne!(new_refresh, refresh, "换取后必须下发新的 Refresh Token");
+    assert!(
+        body["data"].get("refreshToken").is_none(),
+        "刷新响应的 JSON 不应再返回 refreshToken"
+    );
     assert_eq!(
         server
             .get("/reader3/getBookshelf", Some(&new_access))
@@ -335,12 +493,121 @@ async fn refresh_rotates_tokens_and_token_types_are_not_interchangeable() {
     );
 }
 
+/// 浏览器主路径：refresh 走 Cookie，成功后轮换出新的两枚 Cookie。
+#[tokio::test]
+async fn refresh_via_cookie_rotates_the_cookie_pair() {
+    let server = TestServer::start().await;
+    let (_, cookies) = server.login_with_cookies().await;
+    let refresh_cookie = set_cookie_of(&cookies, "reader_refresh").unwrap().clone();
+    let cookie = cookie_header(&cookies);
+
+    // 空 body + Cookie（前端契约：body 正常为空对象）
+    let response = server
+        .client
+        .post(server.url("/reader3/refreshToken"))
+        .header("Cookie", &cookie)
+        .json(&serde_json::json!({}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    let new_cookies: Vec<String> = response
+        .headers()
+        .get_all("set-cookie")
+        .iter()
+        .filter_map(|value| value.to_str().ok().map(str::to_string))
+        .collect();
+    let new_refresh =
+        set_cookie_of(&new_cookies, "reader_refresh").expect("刷新应换发 reader_refresh");
+    assert_ne!(
+        set_cookie_value(new_refresh),
+        set_cookie_value(&refresh_cookie),
+        "换取后必须下发新的 Refresh Token"
+    );
+    // Access 是确定性 JWT（同秒签发值相同），只验证换发动作本身存在
+    assert!(
+        set_cookie_of(&new_cookies, "reader_access").is_some(),
+        "刷新应同时换发 reader_access"
+    );
+    // 新 Cookie 属性与登录时一致
+    for attr in [
+        "HttpOnly",
+        "SameSite=Strict",
+        "Path=/reader3",
+        "Max-Age=604800",
+    ] {
+        assert!(
+            new_refresh.contains(attr),
+            "新 reader_refresh 缺属性 {attr}: {new_refresh}"
+        );
+    }
+
+    // 新 Cookie 立即可用
+    let response = server
+        .get_with_cookie(
+            "/reader3/getBookshelf",
+            None,
+            Some(&cookie_header(&new_cookies)),
+        )
+        .await;
+    assert_eq!(response.status(), 200);
+}
+
+/// 刷新失败（伪造/无凭据）统一 401 并清除两枚 Cookie。
+#[tokio::test]
+async fn failed_refresh_clears_both_cookies() {
+    let server = TestServer::start().await;
+
+    // 伪造 Cookie
+    let response = server
+        .client
+        .post(server.url("/reader3/refreshToken"))
+        .header(
+            "Cookie",
+            "reader_refresh=rt_forged; reader_access=forged.jwt",
+        )
+        .json(&serde_json::json!({}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 401);
+    let cookies: Vec<String> = response
+        .headers()
+        .get_all("set-cookie")
+        .iter()
+        .filter_map(|value| value.to_str().ok().map(str::to_string))
+        .collect();
+    assert_eq!(cookies.len(), 2, "失败时应清除两枚 Cookie: {cookies:?}");
+    for name in ["reader_access", "reader_refresh"] {
+        let cleared = set_cookie_of(&cookies, name).expect("应包含清除 {name} 的 Set-Cookie");
+        assert!(
+            cleared.contains("Max-Age=0"),
+            "{name} 应以 Max-Age=0 清除: {cleared}"
+        );
+    }
+
+    // 完全没有凭据：同样 401 + 清除
+    let response = server
+        .client
+        .post(server.url("/reader3/refreshToken"))
+        .json(&serde_json::json!({}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 401);
+    assert!(
+        response.headers().get_all("set-cookie").iter().count() == 2,
+        "无凭据的刷新也应清除 Cookie"
+    );
+}
+
 #[tokio::test]
 async fn password_change_revokes_refresh_tokens_and_issues_a_new_pair() {
     let server = TestServer::start().await;
-    let data = server.login_session().await;
+    let (data, cookies) = server.login_with_cookies().await;
     let access = data["accessToken"].as_str().unwrap().to_string();
-    let old_refresh = data["refreshToken"].as_str().unwrap().to_string();
+    let old_refresh =
+        set_cookie_value(set_cookie_of(&cookies, "reader_refresh").unwrap()).to_string();
 
     let response = server
         .post(
@@ -350,11 +617,22 @@ async fn password_change_revokes_refresh_tokens_and_issues_a_new_pair() {
         )
         .await;
     assert_eq!(response.status(), 200);
+    // 新 refresh 只在 Set-Cookie 里（json() 会消耗 response，先取头）
+    let new_cookies: Vec<String> = response
+        .headers()
+        .get_all("set-cookie")
+        .iter()
+        .filter_map(|value| value.to_str().ok().map(str::to_string))
+        .collect();
     let body: serde_json::Value = response.json().await.unwrap();
-    let new_refresh = body["data"]["refreshToken"]
-        .as_str()
-        .expect("改密码应换发新的 Refresh Token")
-        .to_string();
+    assert!(
+        body["data"].get("refreshToken").is_none(),
+        "改密响应的 JSON 不应再返回 refreshToken"
+    );
+    let new_refresh = set_cookie_value(
+        set_cookie_of(&new_cookies, "reader_refresh").expect("改密应换发 reader_refresh"),
+    )
+    .to_string();
     assert_ne!(new_refresh, old_refresh);
 
     assert_eq!(
@@ -383,19 +661,36 @@ async fn password_change_revokes_refresh_tokens_and_issues_a_new_pair() {
 }
 
 #[tokio::test]
-async fn logout_revokes_the_refresh_family_and_never_fails() {
+async fn logout_revokes_the_refresh_family_clears_cookies_and_stays_idempotent() {
     let server = TestServer::start().await;
-    let data = server.login_session().await;
-    let refresh = data["refreshToken"].as_str().unwrap().to_string();
+    let (_, cookies) = server.login_with_cookies().await;
+    let refresh = set_cookie_value(set_cookie_of(&cookies, "reader_refresh").unwrap()).to_string();
+    let cookie = cookie_header(&cookies);
 
+    // 浏览器路径：凭 Cookie 登出
     let response = server
-        .post(
-            "/reader3/logout",
-            None,
-            serde_json::json!({ "refreshToken": &refresh }),
-        )
-        .await;
+        .client
+        .post(server.url("/reader3/logout"))
+        .header("Cookie", &cookie)
+        .send()
+        .await
+        .unwrap();
     assert_eq!(response.status(), 200);
+    let cleared: Vec<String> = response
+        .headers()
+        .get_all("set-cookie")
+        .iter()
+        .filter_map(|value| value.to_str().ok().map(str::to_string))
+        .collect();
+    for name in ["reader_access", "reader_refresh"] {
+        let entry = set_cookie_of(&cleared, name).unwrap_or_else(|| panic!("登出应清除 {name}"));
+        assert!(
+            entry.contains("Max-Age=0"),
+            "{name} 应以 Max-Age=0 清除: {entry}"
+        );
+    }
+
+    // 该会话家族已吊销：旧 refresh 无论走 body 还是 Cookie 都换不到新令牌
     assert_eq!(
         server
             .post(
@@ -408,8 +703,20 @@ async fn logout_revokes_the_refresh_family_and_never_fails() {
         401,
         "登出后该会话家族应被吊销"
     );
+    assert_eq!(
+        server
+            .client
+            .post(server.url("/reader3/refreshToken"))
+            .header("Cookie", format!("reader_refresh={refresh}"))
+            .json(&serde_json::json!({}))
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        401
+    );
 
-    // 无 body 的登出仍然成功：客户端本地已无令牌时也走这条路
+    // 无 body 的登出仍然成功：客户端本地已无令牌时也走这条路（幂等）
     let response = server
         .client
         .post(server.url("/reader3/logout"))
@@ -417,6 +724,10 @@ async fn logout_revokes_the_refresh_family_and_never_fails() {
         .await
         .unwrap();
     assert_eq!(response.status(), 200);
+    assert!(
+        response.headers().get_all("set-cookie").iter().count() == 2,
+        "幂等登出同样要清 Cookie"
+    );
 }
 
 #[tokio::test]

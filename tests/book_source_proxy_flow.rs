@@ -8,7 +8,7 @@ mod common;
 use reader_rust::api::router::build_router;
 use reader_rust::app::bootstrap::build_state;
 use reader_rust::app::config::AppConfig;
-use reader_rust::auth::jwt::{encode_token, Claims, PROXY_TOKEN_SCOPE};
+use reader_rust::auth::jwt::{decode_token, encode_token, Claims, PROXY_TOKEN_SCOPE};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
@@ -45,6 +45,28 @@ async fn start_upstream() -> (String, CookieLog) {
         let _ = axum::serve(listener, app).await;
     });
     (format!("http://{addr}"), log)
+}
+
+/// 返回 HTML 登录页的假上游（观察代理响应的安全头用）。
+async fn start_html_upstream() -> String {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let app = axum::Router::new().route(
+        "/*path",
+        axum::routing::any(|| async {
+            (
+                [(
+                    axum::http::header::CONTENT_TYPE,
+                    axum::http::HeaderValue::from_static("text/html; charset=utf-8"),
+                )],
+                "<html><head><title>login</title></head><body><form action=\"/login\"><input name=\"u\"></form></body></html>",
+            )
+        }),
+    );
+    tokio::spawn(async move {
+        let _ = axum::serve(listener, app).await;
+    });
+    format!("http://{addr}")
 }
 
 struct TestServer {
@@ -252,4 +274,205 @@ async fn rejected_proxy_request_writes_no_source_cookie() {
             "合法请求写入的 cookie 应被 searchBook 抓取带上，实际 {log:?}"
         );
     }
+}
+
+/// mintBookSourceProxyToken：返回的限定令牌 30 分钟、scope=代理、绑定该书源；
+/// 参数校验与存在性校验与 bookSourceProxy 一致；令牌可走查询串进代理路径。
+#[tokio::test]
+async fn mint_book_source_proxy_token_binds_the_source_with_scoped_claims() {
+    let (upstream, _cookie_log) = start_upstream().await;
+    let server = TestServer::start().await;
+
+    let source_b = server
+        .save_source(
+            "源B",
+            &upstream,
+            &format!("{upstream}/search?key={{{{key}}}}&page={{{{page}}}}"),
+        )
+        .await;
+    let source_a = server
+        .save_source(
+            "源A",
+            "http://source-a.example",
+            "http://source-a.example/s",
+        )
+        .await;
+
+    // 缺 bookSourceId 400
+    let resp = server
+        .client
+        .post(format!(
+            "{}/reader3/mintBookSourceProxyToken",
+            server.base_url
+        ))
+        .bearer_auth(&server.token)
+        .json(&serde_json::json!({}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 400, "缺 bookSourceId 应 400");
+
+    // 不存在的书源 404
+    let resp = server
+        .client
+        .post(format!(
+            "{}/reader3/mintBookSourceProxyToken",
+            server.base_url
+        ))
+        .bearer_auth(&server.token)
+        .json(&serde_json::json!({ "bookSourceId": 9999 }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 404, "未登记的书源应 404");
+
+    // 未认证 401（受保护接口）
+    let resp = server
+        .client
+        .post(format!(
+            "{}/reader3/mintBookSourceProxyToken",
+            server.base_url
+        ))
+        .json(&serde_json::json!({ "bookSourceId": source_b }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 401);
+
+    // 正常签发：30 分钟、scope=代理、绑定书源
+    let resp = server
+        .client
+        .post(format!(
+            "{}/reader3/mintBookSourceProxyToken",
+            server.base_url
+        ))
+        .bearer_auth(&server.token)
+        .json(&serde_json::json!({ "bookSourceId": source_a }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let body: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(body["data"]["expiresIn"], serde_json::json!(1800));
+    let token = body["data"]["token"]
+        .as_str()
+        .expect("应返回 token")
+        .to_string();
+    let claims = decode_token(&token, TEST_JWT_SECRET.as_bytes()).unwrap();
+    assert_eq!(claims.scope.as_deref(), Some(PROXY_TOKEN_SCOPE));
+    assert_eq!(claims.bsid, Some(source_a));
+    assert_eq!(claims.exp - claims.iat, 1800, "限定令牌 30 分钟");
+
+    // 绑定 A 的令牌代理 B：400 拒绝（与 bookSourceProxy 的绑定校验一致）
+    let resp = server
+        .client
+        .get(format!("{}/reader3/bookSourceProxy", server.base_url))
+        .bearer_auth(&token)
+        .query(&[
+            ("bookSourceId", source_b.to_string()),
+            ("url", format!("{upstream}/probe")),
+        ])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 400, "绑定 A 的令牌不能代理 B");
+
+    // 代理页脚本把令牌放查询串：代理路径仍接受（无 Bearer 头）
+    let resp = server
+        .client
+        .get(format!(
+            "{}/reader3/bookSourceProxy?accessToken={token}",
+            server.base_url
+        ))
+        .query(&[
+            ("bookSourceId", source_a.to_string()),
+            ("url", format!("{upstream}/probe")),
+        ])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200, "查询串限定令牌在代理路径应被接受");
+}
+
+/// 代理 HTML 响应带 CSP sandbox（不透明源，读不到主站）并保留 no-store；
+/// 非 HTML（JSON API）响应不加 sandbox。
+#[tokio::test]
+async fn proxy_html_response_carries_sandbox_csp() {
+    let upstream = start_html_upstream().await;
+    let server = TestServer::start().await;
+    let source = server
+        .save_source(
+            "HTML源",
+            &upstream,
+            &format!("{upstream}/search?key={{{{key}}}}"),
+        )
+        .await;
+
+    let resp = server
+        .client
+        .get(format!("{}/reader3/bookSourceProxy", server.base_url))
+        .bearer_auth(&server.token)
+        .query(&[
+            ("bookSourceId", source.to_string()),
+            ("url", format!("{upstream}/login")),
+        ])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let csp = resp
+        .headers()
+        .get("content-security-policy")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or_default()
+        .to_string();
+    assert!(
+        csp.contains("sandbox"),
+        "代理 HTML 应带 sandbox CSP，实际: {csp}"
+    );
+    assert!(
+        csp.contains("allow-scripts") && csp.contains("allow-forms"),
+        "登录页需要脚本与表单，实际: {csp}"
+    );
+    assert!(
+        !csp.contains("allow-same-origin"),
+        "不能带 allow-same-origin，否则代理页仍在主站源里，实际: {csp}"
+    );
+    let cache_control = resp
+        .headers()
+        .get("cache-control")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or_default();
+    assert_eq!(cache_control, "no-store", "no-store 应保留");
+    // HTML 重写仍生效：代理脚本注入在被沙箱化的页面里继续用限定令牌
+    let body = resp.text().await.unwrap();
+    assert!(
+        body.contains("readerBookSourceProxy"),
+        "代理脚本应注入 HTML: {body}"
+    );
+
+    // 对照：JSON 上游响应不加 sandbox（CSP 只针对 HTML）
+    let (json_upstream, _log) = start_upstream().await;
+    let json_source = server
+        .save_source("JSON源", &json_upstream, &format!("{json_upstream}/s"))
+        .await;
+    let resp = server
+        .client
+        .get(format!("{}/reader3/bookSourceProxy", server.base_url))
+        .bearer_auth(&server.token)
+        .query(&[
+            ("bookSourceId", json_source.to_string()),
+            ("url", format!("{json_upstream}/probe")),
+        ])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    assert!(
+        resp.headers()
+            .get("content-security-policy")
+            .and_then(|v| v.to_str().ok())
+            .is_none_or(|v| !v.contains("sandbox")),
+        "非 HTML 响应不应带 sandbox CSP"
+    );
 }
