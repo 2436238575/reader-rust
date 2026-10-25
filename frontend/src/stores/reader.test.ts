@@ -263,6 +263,55 @@ describe('reader local txt chapters', () => {
     expect(listChapterEdits).toHaveBeenCalledWith('book_1')
   })
 
+  it('离线开书时用上次落盘的编辑章集合，不把编辑章当普通章节', async () => {
+    localStorage.setItem(
+      'reader-edited-chapters',
+      JSON.stringify({
+        book_1: { urls: ['https://example.org/1'], savedAt: 1 },
+      })
+    )
+    const { getChapterList } = await import('../api/bookshelf')
+    vi.mocked(getChapterList).mockResolvedValue([
+      { title: '第一章', url: 'https://example.org/1', index: 0 },
+    ])
+    // 离线：清单请求失败，内存集合只能来自上一次成功拉取时的落盘快照
+    vi.mocked(listChapterEdits).mockRejectedValue(new Error('offline'))
+    const readerStore = useReaderStore()
+
+    await readerStore.loadBook({
+      name: '网络书',
+      author: '作者',
+      origin: 'https://example.org',
+      bookId: 'book_1',
+      bookUrl: 'https://example.org/book',
+      durChapterIndex: 0,
+    })
+
+    expect(readerStore.editedChapterKeys.has('https://example.org/1')).toBe(true)
+  })
+
+  it('成功拉取编辑章清单后落盘，供下次离线打开使用', async () => {
+    const { getChapterList } = await import('../api/bookshelf')
+    vi.mocked(getChapterList).mockResolvedValue([
+      { title: '第一章', url: 'https://example.org/1', index: 0 },
+    ])
+    vi.mocked(listChapterEdits).mockResolvedValue(['https://example.org/1'])
+    const readerStore = useReaderStore()
+
+    await readerStore.loadBook({
+      name: '网络书',
+      author: '作者',
+      origin: 'https://example.org',
+      bookId: 'book_1',
+      bookUrl: 'https://example.org/book',
+      durChapterIndex: 0,
+    })
+
+    const raw = localStorage.getItem('reader-edited-chapters')
+    expect(raw).not.toBeNull()
+    expect(JSON.parse(raw || '{}').book_1?.urls).toEqual(['https://example.org/1'])
+  })
+
   it('评论 enabled:false 的结论被记住，同书翻章不再重复请求', async () => {
     vi.mocked(getParaCommentIndex).mockResolvedValue({
       enabled: false,

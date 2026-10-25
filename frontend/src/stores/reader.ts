@@ -171,6 +171,48 @@ export const fontPresets = [
   { label: '仿宋', value: 'fangsong', family: '"FangSong", "STFangsong", serif' },
 ]
 
+/* 已编辑章节集合的本地快照：离线打开书时 listChapterEdits 拉不到，
+   没有快照就会把编辑章当成普通章节，从浏览器缓存读到编辑前的旧正文。
+   只保留最近 20 本书；写满或数据损坏时静默放弃，在线打开会重新同步。 */
+const EDITED_CHAPTERS_CACHE_KEY = 'reader-edited-chapters'
+const EDITED_CHAPTERS_CACHE_MAX_BOOKS = 20
+
+interface EditedChaptersCacheEntry {
+  urls: string[]
+  savedAt: number
+}
+
+function readEditedChaptersCache(): Record<string, EditedChaptersCacheEntry> {
+  try {
+    const raw = localStorage.getItem(EDITED_CHAPTERS_CACHE_KEY)
+    if (!raw) return {}
+    const parsed = JSON.parse(raw) as Record<string, EditedChaptersCacheEntry>
+    return parsed && typeof parsed === 'object' ? parsed : {}
+  } catch {
+    return {}
+  }
+}
+
+function loadCachedEditedChapterKeys(bookId: string): string[] {
+  const entry = readEditedChaptersCache()[bookId]
+  return Array.isArray(entry?.urls)
+    ? entry.urls.filter((url): url is string => typeof url === 'string')
+    : []
+}
+
+function saveCachedEditedChapterKeys(bookId: string, urls: string[]) {
+  try {
+    const cache = readEditedChaptersCache()
+    cache[bookId] = { urls, savedAt: Date.now() }
+    const trimmed = Object.entries(cache)
+      .sort((a, b) => (b[1]?.savedAt || 0) - (a[1]?.savedAt || 0))
+      .slice(0, EDITED_CHAPTERS_CACHE_MAX_BOOKS)
+    safeLocalSet(EDITED_CHAPTERS_CACHE_KEY, JSON.stringify(Object.fromEntries(trimmed)))
+  } catch {
+    /* 快照只是离线兜底，写不进去不影响在线阅读 */
+  }
+}
+
 export const useReaderStore = defineStore('reader', () => {
   type ReaderPanel =
     | 'catalog'
@@ -233,15 +275,16 @@ export const useReaderStore = defineStore('reader', () => {
     try {
       const urls = await listChapterEdits(bookId)
       if (book.value?.bookId !== bookId) return
-      const previous = editedChapterKeys.value
       // 先把新集合写回内存再删缓存：集合生效后正文读写才会跳过编辑章；
       // 反过来的话，并发的正文读取会在删完后又把旧上游正文写回 IndexedDB
       editedChapterKeys.value = new Set(urls)
-      // 新增的编辑章多半来自另一台设备：本地浏览器缓存里是编辑前的上游
-      // 正文，删掉避免离线兜底读到旧内容（本机编辑路径本就单独删过，这里幂等）
-      const added = urls.filter((url) => !previous.has(url))
-      if (added.length) {
-        await deleteBrowserCachedChapters(bookId, added).catch(() => undefined)
+      // 落盘一份供离线打开：离线时拉不到清单，没有快照会把编辑章当普通章节
+      saveCachedEditedChapterKeys(bookId, urls)
+      // 编辑章的浏览器缓存都是编辑前的上游正文：全部删掉（幂等，批量删除会
+      // 按实际存在的记录扣 summary）。带上旧快照里的章节，避免上次删除失败
+      // 或升级前留下的记录继续被离线兜底读到
+      if (urls.length) {
+        await deleteBrowserCachedChapters(bookId, urls).catch(() => undefined)
       }
     } catch {
       /* 离线/失败时保持现状 */
@@ -665,9 +708,10 @@ export const useReaderStore = defineStore('reader', () => {
     chapters.value = []
     content.value = ''
     resetReviews()
-    // 清掉上一本书的编辑章集合：bookId 换了，旧集合会把这本书的章节
-    // 误判成已编辑（或漏判），下面再与目录并行重新拉取本书的集合
-    editedChapterKeys.value = new Set()
+    // 先用上次成功拉取时落盘的快照：离线开书时清单拉不到，没有快照就会
+    // 把编辑章当普通章节读浏览器缓存（编辑前的旧正文）。在线时下面的
+    // refreshEditedChapterKeys 会用服务端结果覆盖并更新快照
+    editedChapterKeys.value = new Set(b.bookId ? loadCachedEditedChapterKeys(b.bookId) : [])
     // 书源级「不支持评论/配图」结论也按书失效：换书/换源后重新判断
     paraReviewsDisabledBySource = false
     chapterReviewsDisabledBySource = false
