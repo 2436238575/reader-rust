@@ -259,6 +259,7 @@ import { useRouter } from 'vue-router'
 import { useAppStore } from '../stores/app'
 import { useBookshelfStore } from '../stores/bookshelf'
 import { changePassword, logout as apiLogout } from '../api/user'
+import { flushUserdataQueue } from '../utils/userdataQueue'
 
 const props = defineProps<{
   modelValue: boolean
@@ -301,6 +302,8 @@ async function handleLogout() {
   if (loggingOut.value) return
   loggingOut.value = true
   try {
+    // 登出会清 Cookie 会话，先把待写的 userdata 批量发出去；失败不阻塞登出
+    await flushUserdataQueue().catch(() => undefined)
     await apiLogout()
     appStore.clearUser()
     // clearUser 刚清掉本地登录态，重查必须绕过新鲜期，不能复用登出前的旧结果
