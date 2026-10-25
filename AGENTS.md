@@ -427,6 +427,7 @@ sidecar 使用 pytest（115 个用例，
 4. **发布只走 `scripts/release.sh`**。脚本会自动同步 `Cargo.toml`、根 `package.json`、`frontend/package.json` 的版本号，并要求工作区干净（**包括没有未跟踪文件**）。
 5. 修改前端后至少跑一次 `npm run build`，确保类型检查通过。
 6. `AGENTS.md` 与 `CLAUDE.md` 保持单一来源：`CLAUDE.md` 只是导入入口，内容不要在这里重复维护。
+7. 合并前在本地跑 `cargo fmt --check`、`cargo clippy --all-targets -- -D warnings` 与 `cargo test`；格式化问题不要留到推送后再补。
 
 ## 前端 UI 约定
 
