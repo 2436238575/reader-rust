@@ -5,6 +5,7 @@ import {
   getBookGroups,
   deleteBook as apiDeleteBook,
   deleteBooks as apiDeleteBooks,
+  saveBook as apiSaveBook,
   saveBookGroupId as apiSaveBookGroupId,
   saveBookGroup as apiSaveBookGroup,
   deleteBookGroup as apiDeleteBookGroup,
@@ -174,6 +175,34 @@ export const useBookshelfStore = defineStore('bookshelf', () => {
     })()
     return inFlightFetch
   }
+  /* 单本入架/更新：saveBook 返回落库后的完整 Book，直接按 bookId 在本地
+     替换或追加，不再整架重拉（千级书架加一本就全量 GET 一遍太浪费）。
+     失败原样抛给调用方 toast；书架顺序等权威状态交给下次标脏重拉对账 */
+  async function addBook(book: Partial<Book>): Promise<Book> {
+    const saved = await apiSaveBook(book)
+    const bookId = saved.bookId
+    if (bookId) {
+      const index = books.value.findIndex((b) => b.bookId === bookId)
+      // saveBook 响应不含前端注入的本地缓存章数：替换时沿用旧值，新书为 0
+      const browserCachedChapterCount =
+        !isLocalBook(saved) && index >= 0
+          ? (books.value[index].browserCachedChapterCount ?? 0)
+          : 0
+      const next: ShelfBook = { ...saved, browserCachedChapterCount }
+      if (index >= 0) {
+        books.value[index] = next
+      } else {
+        books.value.push(next)
+      }
+      saveShelfSnapshot()
+      // 最近阅读里若躺着这本书（读过又移出书架等），归并最新书架数据
+      if (recentBooks.value.some((b) => b.bookId === bookId)) {
+        await refreshRecentBooks()
+      }
+    }
+    return saved
+  }
+
   async function removeBook(book: Book) {
     if (!book.bookId) return
     await apiDeleteBook(book.bookId)
@@ -372,6 +401,7 @@ export const useBookshelfStore = defineStore('bookshelf', () => {
     shelfDirty,
     markShelfDirty,
     fetchBooks,
+    addBook,
     removeBook,
     refreshRecentBooks,
     removeRecentBook,

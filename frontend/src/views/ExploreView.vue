@@ -101,7 +101,6 @@ import { usePreserveScroll } from '../composables/usePreserveScroll'
 import { useExploreStore } from '../stores/explore'
 import { useBookshelfStore } from '../stores/bookshelf'
 import { useOpenBook } from '../composables/useOpenBook'
-import { saveBook } from '../api/bookshelf'
 import { useAppStore } from '../stores/app'
 import BookGrid from '../components/BookGrid.vue'
 import BookDetailModal from '../components/BookDetailModal.vue'
@@ -230,7 +229,8 @@ async function handleAddToShelf(book: Book | SearchBook) {
   if (!bookId || addingIds.value.has(bookId)) return
   addingIds.value.add(bookId)
   try {
-    await saveBook({
+    // 单本 upsert：store 内按 bookId 替换/追加，书架不再整架重拉
+    await shelfStore.addBook({
       bookId,
       bookSourceId: book.bookSourceId,
       name: book.name,
@@ -240,8 +240,6 @@ async function handleAddToShelf(book: Book | SearchBook) {
       coverUrl: book.coverUrl,
     })
     appStore.showToast(`"${book.name}" 已加入书架`, 'success')
-    // 刷新书架列表，让「加入书架」按钮翻转为「已在书架」
-    await shelfStore.fetchBooks().catch(() => undefined)
   } catch (e: unknown) {
     appStore.showToast((e as Error).message, 'error')
   } finally {
