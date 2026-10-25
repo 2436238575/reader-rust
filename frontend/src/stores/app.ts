@@ -277,12 +277,19 @@ export const useAppStore = defineStore('app', () => {
   const toasts = ref<Array<{ id: number; message: string; type: string }>>([])
   let toastId = 0
 
+  /** 按类型分时长：错误文案通常较长需要读完，成功提示尽量不打断 */
+  const TOAST_DURATION_MS: Record<'success' | 'warning' | 'error', number> = {
+    success: 3000,
+    warning: 4500,
+    error: 6000,
+  }
+
   function showToast(message: string, type: 'success' | 'error' | 'warning' = 'success') {
     const id = ++toastId
     toasts.value.push({ id, message, type })
     setTimeout(() => {
       toasts.value = toasts.value.filter((t) => t.id !== id)
-    }, 3000)
+    }, TOAST_DURATION_MS[type])
   }
 
   function setOnlineStatus(value: boolean) {
