@@ -683,11 +683,20 @@ pub async fn get_chapter_list(
         .get_chapter_list_first_page(&user_ns, &resolved.source, &toc_url)
         .await?;
 
-    // Save first page to cache immediately
-    let _ = state
-        .book_service
-        .save_chapter_list_cache(&user_ns, &book_id, &chapters)
-        .await;
+    // Save first page to cache immediately.
+    // 还有待补全的分页时先标记未完成（读侧只给 60s 短 TTL），后台补全成功
+    // 由 append 把 meta 置为完成；单页目录本身就是完整目录，直接按完成落盘。
+    if pagination.pending_urls.is_empty() {
+        let _ = state
+            .book_service
+            .save_chapter_list_cache(&user_ns, &book_id, &chapters)
+            .await;
+    } else {
+        let _ = state
+            .book_service
+            .save_chapter_list_cache_incomplete(&user_ns, &book_id, &chapters)
+            .await;
+    }
 
     // If there are more pages to fetch, do it in background.
     // 同一本书的补全任务并发去重：双击/刷新在首屏落盘前竞态时，

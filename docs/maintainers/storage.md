@@ -22,7 +22,8 @@ storage/
 │  └─ reader-rust.log.YYYY-MM-DD  按天滚动，stdout 同内容另有一份
 ├─ cache/                         可再生数据：删掉只会让下次访问重新抓取
 │  ├─ <ns>/
-│  │  ├─ toc/book_<n>.json                           目录（1 小时 TTL）
+│  │  ├─ toc/book_<n>.json                           目录（1 小时 TTL；未完成缓存 60 秒）
+│  │  │  └─ book_<n>.meta.json                       目录完成标志旁路元数据
 │  │  ├─ source_candidates/book_<n>.json             换源候选
 │  │  └─ cover/                                      旧版封面目录，只统计与清理历史文件
 │  ├─ bookinfo/<ns>/book_<n>.json                    书籍详情（1 小时 TTL）
@@ -68,7 +69,7 @@ storage/
 
 ### 目录与书籍详情
 
-- 目录：`cache/<ns>/toc/book_<n>.json`，1 小时 TTL。
+- 目录：`cache/<ns>/toc/book_<n>.json`，1 小时 TTL。分页目录首屏先落盘并在旁路 `book_<n>.meta.json` 标记 `complete=false`，后台补全成功（append）才置完成；未完成缓存只复用 60 秒，避免后台补全失败时残缺目录被当成完整目录服务一小时。meta 缺失（升级前的存量缓存）按已完成处理。
 - 书籍详情：`cache/bookinfo/<ns>/book_<n>.json`，1 小时 TTL。详情过期会在读取时删除；目录过期只在「直接返回响应」的路径按未命中处理，文件保留给内部只读路径，等重抓后覆盖。
 - 两者都归 `CacheKind::ChapterList` 清理（详情与目录同属书籍元数据）。
 

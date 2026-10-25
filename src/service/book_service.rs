@@ -179,6 +179,25 @@ const BOOK_INFO_CACHE_DIR: &str = "bookinfo";
 /// 那些路径宁可读到旧目录，也不该顺手删掉还能用的文件。
 const CHAPTER_LIST_CACHE_TTL: Duration = Duration::from_secs(3600);
 
+/// 未完成目录缓存（首屏只落了第一页、后台补全尚未成功）的存活时间（60 秒）。
+///
+/// 首屏先落盘是为了让紧随其后的请求（翻目录、读者点开第一章）立即命中，
+/// 但后台补全失败时这份缓存只有第一页——按完整 TTL（1 小时）复用会让
+/// 「残缺目录」被当成全书目录服务一小时。未完成缓存只复用一小段时间，
+/// 过期后调用方重抓首屏并重新拉起补全；补全成功由 append 把 meta 置为
+/// 完成，之后按 `CHAPTER_LIST_CACHE_TTL` 走。
+const INCOMPLETE_TOC_CACHE_TTL: Duration = Duration::from_secs(60);
+
+/// 目录缓存的旁路元数据（`<bookId>.meta.json`，与目录文件同目录）。
+///
+/// `complete` 标记目录是否覆盖全部分页：`saved_at` 是落盘时的 Unix 秒，
+/// 仅供排查参考（TTL 判定仍用目录文件 mtime，与升级前口径一致）。
+#[derive(serde::Serialize, serde::Deserialize)]
+struct ChapterListCacheMeta {
+    complete: bool,
+    saved_at: i64,
+}
+
 /// 换源候选缓存的存活时间（1 小时），与章节列表同口径：文件 mtime 判定，
 /// 过期按未命中处理（不删除，留给换源改绑等裸读路径），由调用方重搜后
 /// 整份覆盖写回。只作用于「把缓存直接喂给响应」的读路径。
@@ -3017,6 +3036,50 @@ impl BookService {
             .join(format!("{}.json", book_id_path_segment(book_id)))
     }
 
+    /// 目录缓存的旁路元数据路径：与目录文件同目录，`<bookId>.meta.json`。
+    fn chapter_list_cache_meta_path(&self, user_ns: &str, book_id: &str) -> PathBuf {
+        self.storage_dir
+            .join("cache")
+            .join(user_ns)
+            .join("toc")
+            .join(format!("{}.meta.json", book_id_path_segment(book_id)))
+    }
+
+    /// 写目录缓存的完成标志旁路元数据（best-effort：目录文件才是权威数据，
+    /// meta 写失败只打 WARN——读侧会按「存量缓存」回退 complete=true）。
+    async fn write_chapter_list_cache_meta(&self, user_ns: &str, book_id: &str, complete: bool) {
+        let meta = ChapterListCacheMeta {
+            complete,
+            saved_at: crate::util::time::now_ts(),
+        };
+        let meta_path = self.chapter_list_cache_meta_path(user_ns, book_id);
+        match serde_json::to_string(&meta) {
+            Ok(raw) => {
+                if let Err(e) = write_atomic(&meta_path, raw.as_bytes()).await {
+                    tracing::warn!("failed to write chapter list cache meta: {e}");
+                }
+            }
+            Err(e) => tracing::warn!("failed to serialize chapter list cache meta: {e}"),
+        }
+    }
+
+    /// 读目录缓存的完成标志。meta 缺失（升级前的存量缓存，或 meta 写失败）
+    /// 按 complete=true 处理，保持升级前行为；存在但损坏同样回退 complete=true
+    /// 并打 WARN（原子写下这几乎不可达）。
+    async fn chapter_list_cache_complete(&self, user_ns: &str, book_id: &str) -> bool {
+        let meta_path = self.chapter_list_cache_meta_path(user_ns, book_id);
+        match fs::read_to_string(&meta_path).await {
+            Ok(raw) => match serde_json::from_str::<ChapterListCacheMeta>(&raw) {
+                Ok(meta) => meta.complete,
+                Err(e) => {
+                    tracing::warn!("chapter list cache meta corrupted, assume complete: {e}");
+                    true
+                }
+            },
+            Err(_) => true,
+        }
+    }
+
     /// 缓存内全文检索：只扫已缓存章节的正文文件（可再生数据），不触发任何
     /// 上游请求。本地书不走这套缓存，自然不在检索范围。`query` 是纯文本
     /// 子串匹配（大小写不敏感），不做正则语法——用户输错正则不该炸掉搜索。
@@ -3180,21 +3243,28 @@ impl BookService {
         }
     }
 
-    /// 带 TTL 的目录缓存读取：超过 `CHAPTER_LIST_CACHE_TTL` 的文件按未命中
-    /// 处理（不删除，留给其他裸读路径），由调用方重抓后覆盖写回。
-    /// 仅限「缓存直接喂响应」的路径使用。
+    /// 带 TTL 的目录缓存读取：超过 TTL 的文件按未命中处理（不删除，留给
+    /// 其他裸读路径），由调用方重抓后覆盖写回。仅限「缓存直接喂响应」的
+    /// 路径使用。TTL 按旁路 meta 的完成标志分档：未完成（首屏分页）只给
+    /// `INCOMPLETE_TOC_CACHE_TTL`，完成（或存量缓存无 meta）按
+    /// `CHAPTER_LIST_CACHE_TTL`。
     pub async fn load_fresh_chapter_list_cache(
         &self,
         user_ns: &str,
         book_id: &str,
     ) -> Result<Option<Vec<BookChapter>>, AppError> {
         let path = self.chapter_list_cache_path(user_ns, book_id);
+        let ttl = if self.chapter_list_cache_complete(user_ns, book_id).await {
+            CHAPTER_LIST_CACHE_TTL
+        } else {
+            INCOMPLETE_TOC_CACHE_TTL
+        };
         let expired = match fs::metadata(&path).await {
             Ok(meta) => meta
                 .modified()
                 .ok()
                 .and_then(|m| m.elapsed().ok())
-                .map(|age| age > CHAPTER_LIST_CACHE_TTL)
+                .map(|age| age > ttl)
                 .unwrap_or(true),
             Err(_) => false,
         };
@@ -3210,6 +3280,29 @@ impl BookService {
         book_id: &str,
         chapters: &Vec<BookChapter>,
     ) -> Result<(), AppError> {
+        self.save_chapter_list_cache_with_state(user_ns, book_id, chapters, true)
+            .await
+    }
+
+    /// 首屏分页落盘：目录尚未覆盖全部分页，meta 标记 `complete=false`，
+    /// 后台补全成功（append）后置为完成。读侧对未完成缓存只给短 TTL。
+    pub async fn save_chapter_list_cache_incomplete(
+        &self,
+        user_ns: &str,
+        book_id: &str,
+        chapters: &Vec<BookChapter>,
+    ) -> Result<(), AppError> {
+        self.save_chapter_list_cache_with_state(user_ns, book_id, chapters, false)
+            .await
+    }
+
+    async fn save_chapter_list_cache_with_state(
+        &self,
+        user_ns: &str,
+        book_id: &str,
+        chapters: &Vec<BookChapter>,
+        complete: bool,
+    ) -> Result<(), AppError> {
         let path = self.chapter_list_cache_path(user_ns, book_id);
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent)
@@ -3223,6 +3316,10 @@ impl BookService {
         write_atomic(&path, data.as_bytes())
             .await
             .map_err(|e| AppError::Internal(e.into()))?;
+        // 先写目录本体再写 meta：读者最坏情况是把未完成目录当存量缓存
+        // （complete=true）多复用一会儿，不会反过来把残缺目录标成已完成。
+        self.write_chapter_list_cache_meta(user_ns, book_id, complete)
+            .await;
         self.invalidate_toc_snapshot(user_ns, book_id);
         Ok(())
     }
@@ -3264,9 +3361,15 @@ impl BookService {
                 added = true;
             }
         }
+        // 补全任务成功走到这里意味着全部分页都已并入缓存（新增章节全部与
+        // 缓存重叠时内容同样完整）：无论是否重写目录本体，都要把 meta 置为
+        // 完成，让读侧从短 TTL 回到正常的 1 小时。
         if added {
             self.save_chapter_list_cache(user_ns, book_id, &existing)
                 .await?;
+        } else {
+            self.write_chapter_list_cache_meta(user_ns, book_id, true)
+                .await;
         }
         Ok(existing)
     }
@@ -3282,6 +3385,8 @@ impl BookService {
                 .await
                 .map_err(|e| AppError::Internal(e.into()))?;
         }
+        // 旁路 meta 一并清理，避免留下「无目录的孤儿 meta」
+        let _ = fs::remove_file(self.chapter_list_cache_meta_path(user_ns, book_id)).await;
         self.invalidate_toc_snapshot(user_ns, book_id);
         Ok(())
     }
@@ -4192,6 +4297,131 @@ mod tests {
         assert_eq!(final_list.len(), 60, "并发 append 不允许丢章");
         let indexes: HashSet<i32> = final_list.iter().map(|c| c.index).collect();
         assert_eq!(indexes.len(), 60, "index 必须连续不重复");
+
+        pool.close().await;
+        let _ = std::fs::remove_dir_all(&storage_dir);
+    }
+
+    /// 把文件 mtime 拨到指定时长前（模拟缓存过期）。
+    fn set_file_age(path: &std::path::Path, age: std::time::Duration) {
+        let file = std::fs::File::options().write(true).open(path).unwrap();
+        let modified = std::time::SystemTime::now() - age;
+        file.set_times(std::fs::FileTimes::new().set_modified(modified))
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn incomplete_toc_cache_meta_controls_ttl_and_cleanup() {
+        let storage_dir =
+            std::env::temp_dir().join(format!("reader-rust-toc-meta-{}", std::process::id()));
+        let (service, pool) = test_service(&storage_dir).await;
+        let ns = "test-toc-meta";
+        let book_id = "book_1";
+
+        let mk = |index: i32, url: &str| BookChapter {
+            url: url.to_string(),
+            title: url.to_string(),
+            index,
+            ..Default::default()
+        };
+        let toc_path = service.chapter_list_cache_path(ns, book_id);
+        let meta_path = service.chapter_list_cache_meta_path(ns, book_id);
+        let read_meta = || {
+            serde_json::from_str::<ChapterListCacheMeta>(
+                &std::fs::read_to_string(&meta_path).unwrap(),
+            )
+            .unwrap()
+        };
+
+        // 1) 首屏 incomplete 落盘：meta 存在且 complete=false；60s 内可命中
+        service
+            .save_chapter_list_cache_incomplete(ns, book_id, &vec![mk(0, "a"), mk(1, "b")])
+            .await
+            .unwrap();
+        assert!(toc_path.exists());
+        assert!(!read_meta().complete);
+        assert_eq!(
+            service
+                .load_fresh_chapter_list_cache(ns, book_id)
+                .await
+                .unwrap()
+                .unwrap()
+                .len(),
+            2,
+            "未完成缓存 60s 内可命中"
+        );
+
+        // 超过 60s：按未命中（不删文件），裸读路径仍能拿到内容
+        set_file_age(&toc_path, std::time::Duration::from_secs(61));
+        assert!(
+            service
+                .load_fresh_chapter_list_cache(ns, book_id)
+                .await
+                .unwrap()
+                .is_none(),
+            "未完成缓存超过 60s 按未命中处理"
+        );
+        assert!(toc_path.exists(), "过期不删除目录文件");
+        assert_eq!(
+            service
+                .load_chapter_list_cache(ns, book_id)
+                .await
+                .unwrap()
+                .unwrap()
+                .len(),
+            2,
+            "裸读路径不看 TTL"
+        );
+
+        // 2) 后台补全 append 后：meta 置为 complete，同样 61s 的年龄不再过期
+        service
+            .append_chapter_list_cache(ns, book_id, &vec![mk(9, "c")])
+            .await
+            .unwrap();
+        assert!(read_meta().complete, "append 后 meta 置完成");
+        set_file_age(&toc_path, std::time::Duration::from_secs(61));
+        assert!(
+            service
+                .load_fresh_chapter_list_cache(ns, book_id)
+                .await
+                .unwrap()
+                .is_some(),
+            "完成缓存 61s 仍在 1h TTL 内"
+        );
+        set_file_age(&toc_path, std::time::Duration::from_secs(2 * 3600));
+        assert!(
+            service
+                .load_fresh_chapter_list_cache(ns, book_id)
+                .await
+                .unwrap()
+                .is_none(),
+            "完成缓存超过 1h 按未命中处理"
+        );
+
+        // 3) meta 缺失（升级前的存量缓存）按 complete=true 处理
+        std::fs::remove_file(&meta_path).unwrap();
+        set_file_age(&toc_path, std::time::Duration::from_secs(61));
+        assert!(
+            service
+                .load_fresh_chapter_list_cache(ns, book_id)
+                .await
+                .unwrap()
+                .is_some(),
+            "meta 缺失按存量缓存（complete）处理"
+        );
+
+        // 4) 完整落盘写 complete=true；delete 同时清理目录与 meta
+        service
+            .save_chapter_list_cache(ns, book_id, &vec![mk(0, "a")])
+            .await
+            .unwrap();
+        assert!(read_meta().complete);
+        service
+            .delete_chapter_list_cache(ns, book_id)
+            .await
+            .unwrap();
+        assert!(!toc_path.exists(), "delete 删除目录文件");
+        assert!(!meta_path.exists(), "delete 连带删除 meta");
 
         pool.close().await;
         let _ = std::fs::remove_dir_all(&storage_dir);
