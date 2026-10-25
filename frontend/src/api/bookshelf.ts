@@ -105,7 +105,11 @@ const chapterListCache = new Map<string, { data: BookChapter[]; expiresAt: numbe
 const chapterListInFlight = new Map<string, Promise<BookChapter[]>>()
 
 function invalidateChapterList(bookId: string | undefined) {
-  if (bookId) chapterListCache.delete(bookId)
+  if (!bookId) return
+  chapterListCache.delete(bookId)
+  // 在途请求也要摘掉：换源/清缓存后紧接着的 getChapterList 不能复用旧源
+  // 还没回来的结果。旧请求的 then 会因身份不再匹配而不写缓存
+  chapterListInFlight.delete(bookId)
 }
 
 export function getChapterList(params: { bookId: string; refresh?: number }) {

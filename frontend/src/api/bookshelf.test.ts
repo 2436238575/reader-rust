@@ -131,6 +131,30 @@ describe('getChapterList 会话内缓存', () => {
     expect(postMock).toHaveBeenCalledTimes(3)
   })
 
+  it('换源时丢弃在途的旧目录请求，旧响应不会写回缓存', async () => {
+    let releaseOld!: (value: { data: unknown }) => void
+    postMock.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          releaseOld = resolve
+        })
+    )
+    const oldRequest = getChapterList({ bookId: 'switch-inflight' })
+    await setBookSource({ bookId: 'switch-inflight', targetBookId: 'candidate-2' })
+
+    postMock.mockResolvedValueOnce({ data: [{ title: '新源目录' }] })
+    const fresh = await getChapterList({ bookId: 'switch-inflight' })
+    expect(fresh).toEqual([{ title: '新源目录' }])
+
+    // 旧请求迟到：调用方仍拿到它自己的结果，但不能覆盖新源缓存
+    releaseOld({ data: [{ title: '旧源目录' }] })
+    expect(await oldRequest).toEqual([{ title: '旧源目录' }])
+
+    const cached = await getChapterList({ bookId: 'switch-inflight' })
+    expect(cached).toEqual([{ title: '新源目录' }])
+    expect(postMock).toHaveBeenCalledTimes(3)
+  })
+
   it('缓存最多保留 20 本，按插入序淘汰最旧', async () => {
     // 前面的测试可能已占用部分名额：一次性插入 25 本新书，
     // 无论此前状态如何，缓存最终恰好保留最后 20 本（bulk-5..bulk-24）
