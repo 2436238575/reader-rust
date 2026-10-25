@@ -330,8 +330,10 @@ mod tests {
             ("True", "true"),
             ("FALSE", "false"),
         ] {
-            let mut cfg = AppConfig::default();
-            cfg.cookie_secure = raw.to_string();
+            let mut cfg = AppConfig {
+                cookie_secure: raw.to_string(),
+                ..Default::default()
+            };
             normalize_cookie_secure(&mut cfg).unwrap();
             assert_eq!(cfg.cookie_secure, expected, "{raw} 应归一为 {expected}");
         }
@@ -340,8 +342,10 @@ mod tests {
     #[test]
     fn cookie_secure_rejects_unknown_values() {
         // Secure 属性影响会话能否建立，笔误必须让启动失败而不是静默回退
-        let mut cfg = AppConfig::default();
-        cfg.cookie_secure = "yes".to_string();
+        let mut cfg = AppConfig {
+            cookie_secure: "yes".to_string(),
+            ..Default::default()
+        };
         assert!(normalize_cookie_secure(&mut cfg).is_err());
     }
 }
