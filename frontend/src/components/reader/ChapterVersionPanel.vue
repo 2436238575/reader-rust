@@ -35,12 +35,13 @@
                 整书换回上游
               </button>
               <button class="ghost-btn" :disabled="loading" @click="reload">刷新</button>
-              <button class="close-btn" @click="close" aria-label="关闭">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                  <path d="M18 6 6 18M6 6l12 12" />
-                </svg>
-              </button>
             </div>
+            <!-- 关闭按钮独立于操作区：移动端操作区横向滚动时不会被裁剪，始终钉在头部右上角 -->
+            <button class="close-btn" @click="close" aria-label="关闭">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M18 6 6 18M6 6l12 12" />
+              </svg>
+            </button>
           </div>
 
           <div v-if="loading" class="empty">加载中…</div>
@@ -515,7 +516,6 @@ watch(
 
 .modal-head {
   display: flex;
-  justify-content: space-between;
   align-items: center;
   gap: 16px;
   margin-bottom: 14px;
@@ -539,6 +539,8 @@ watch(
   gap: 8px;
   flex-wrap: wrap;
   justify-content: flex-end;
+  /* 关闭按钮移出后头部有 3 个 flex 子项：用 auto 外边距保持操作区右对齐（桌面端布局不变） */
+  margin-left: auto;
 }
 
 .ghost-btn {
@@ -575,6 +577,11 @@ watch(
   border: none;
   cursor: pointer;
   flex-shrink: 0;
+}
+
+/* 桌面端：关闭按钮原是操作区最后一项（间距 8px），移出后抵消 modal-head 的 16px 间距保持一致 */
+.modal-head > .close-btn {
+  margin-left: -8px;
 }
 
 .close-btn:hover {
@@ -882,7 +889,8 @@ watch(
   .head-actions .ghost-btn {
     flex-shrink: 0;
   }
-  .head-actions .close-btn {
+  .modal-head > .close-btn {
+    /* 关闭按钮是 modal-head 的直接子元素，与横向滚动的操作区彻底解耦 */
     position: absolute;
     top: 0;
     right: 0;
