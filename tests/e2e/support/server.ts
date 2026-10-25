@@ -99,10 +99,12 @@ async function waitForFixture(url: string, child: ChildProcess): Promise<boolean
       })
       if (resp.status === 200) {
         const payload = (await resp.json()) as {
-          data?: { accessToken?: string; refreshToken?: string }
+          data?: { accessToken?: string }
         }
-        // 双令牌都拿到才说明是自己刚 bootstrap 的新后端（旧产物没有 refreshToken）
-        if (payload?.data?.accessToken && payload?.data?.refreshToken) return true
+        // 新版后端把 Refresh Token 放进 HttpOnly Cookie，JSON 里不再回吐；
+        // 用「accessToken + reader_refresh Set-Cookie」确认是自己刚 bootstrap 的实例
+        const setCookie = resp.headers.get('set-cookie') || ''
+        if (payload?.data?.accessToken && setCookie.includes('reader_refresh=')) return true
       }
     } catch {
       // 还没起来

@@ -8,16 +8,16 @@ const config = readE2EConfig()
  *  文件名带时间戳：共享 storage 的重复运行互不污染（同内容同 hash 会复用同一本书，
  *  上次跑到的阅读进度会串到本次断言里）。 */
 async function seedLocalTxtBook(page): Promise<{ bookId: string; name: string }> {
-  await page.waitForFunction(() => !!localStorage.getItem('accessToken'))
+  // 会话在 HttpOnly Cookie 里：页面内 fetch 同源自动带 Cookie，
+  // localStorage 只剩非敏感登录提示
+  await page.waitForFunction(() => !!localStorage.getItem('reader-auth-hint'))
   const seed = await page.evaluate(async () => {
-    const token = localStorage.getItem('accessToken')
     const content =
       '第一章 开始\n第一章正文内容。\n第二章 中段\n第二章正文内容。\n第三章 收尾\n第三章正文内容。\n'
     const form = new FormData()
     form.append('file', new File([content], `阅读器冒烟-${Date.now()}.txt`, { type: 'text/plain' }))
     const resp = await fetch('/reader3/uploadTxtBook', {
       method: 'POST',
-      headers: { Authorization: `Bearer ${token}` },
       body: form,
     })
     if (!resp.ok) return null
@@ -30,10 +30,9 @@ async function seedLocalTxtBook(page): Promise<{ bookId: string; name: string }>
 
 /** 上传一本长文多章的 TXT：横翻需要一章撑出多页，连续滚动裁剪需要多章堆叠。 */
 async function seedLongBook(page, chapterCount: number, paragraphsPerChapter: number) {
-  await page.waitForFunction(() => !!localStorage.getItem('accessToken'))
+  await page.waitForFunction(() => !!localStorage.getItem('reader-auth-hint'))
   const seed = await page.evaluate(
     async ({ chapterCount, paragraphsPerChapter }) => {
-      const token = localStorage.getItem('accessToken')
       const para =
         '这一章的正文段落足够长，用来撑满阅读器的页面高度。书页上的字迹清晰，内容连续不断，'.repeat(
           4
@@ -51,7 +50,6 @@ async function seedLongBook(page, chapterCount: number, paragraphsPerChapter: nu
       )
       const resp = await fetch('/reader3/uploadTxtBook', {
         method: 'POST',
-        headers: { Authorization: `Bearer ${token}` },
         body: form,
       })
       if (!resp.ok) return null
@@ -419,11 +417,9 @@ test.describe('Standard E2E: reader', () => {
     const { bookId, name } = await seedLocalTxtBook(page)
     // 预置一条划线书签（第一章正文含「第一章正文内容」）
     const saved = await page.evaluate(async (bookId) => {
-      const token = localStorage.getItem('accessToken')
       const resp = await fetch('/reader3/saveBookmark', {
         method: 'POST',
         headers: {
-          Authorization: `Bearer ${token}`,
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({

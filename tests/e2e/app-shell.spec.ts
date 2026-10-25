@@ -11,15 +11,14 @@ async function seedTwoSources(page) {
     bookSourceUrl: `https://fake-source-${id}.example`,
     enabled: true,
   })
-  // 登录点击返回后 localStorage 落笔是异步的，先等令牌出现
-  await page.waitForFunction(() => !!localStorage.getItem('accessToken'))
+  // 登录点击返回后 hint 落笔是异步的：先等它出现；会话 Cookie 会随同源
+  // fetch 自动携带，不再从 localStorage 取令牌
+  await page.waitForFunction(() => !!localStorage.getItem('reader-auth-hint'))
   const ok = await page.evaluate(async (sources) => {
-    const token = localStorage.getItem('accessToken')
     const resp = await fetch('/reader3/saveBookSources', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        Authorization: `Bearer ${token}`,
       },
       body: JSON.stringify(sources),
     })
