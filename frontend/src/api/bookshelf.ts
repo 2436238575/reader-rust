@@ -95,8 +95,53 @@ export interface ChapterContentResponse {
   diffError?: string | null
 }
 
+// ─── 目录列表会话内缓存 ─────────────────────────────────────────────────
+// 千章书的目录全量几十到几百 KB，详情弹窗、开书、批量缓存会在短时间内重复拉
+// 同一本；这里做 60 秒新鲜期 + 并发合并。refresh=1（阅读器「刷新目录」）绕过；
+// 换源与按书清缓存会主动失效对应条目，避免换源后 60 秒内还显示旧源目录。
+const CHAPTER_LIST_TTL_MS = 60_000
+const CHAPTER_LIST_CACHE_MAX = 20
+const chapterListCache = new Map<string, { data: BookChapter[]; expiresAt: number }>()
+const chapterListInFlight = new Map<string, Promise<BookChapter[]>>()
+
+function invalidateChapterList(bookId: string | undefined) {
+  if (bookId) chapterListCache.delete(bookId)
+}
+
 export function getChapterList(params: { bookId: string; refresh?: number }) {
-  return http.post<BookChapter[]>('/getChapterList', params).then((r) => r.data)
+  const { bookId, refresh } = params
+  const forceRefresh = refresh === 1
+  if (!forceRefresh) {
+    const cached = chapterListCache.get(bookId)
+    if (cached && cached.expiresAt > Date.now()) {
+      return Promise.resolve(cached.data)
+    }
+    const inFlight = chapterListInFlight.get(bookId)
+    if (inFlight) return inFlight
+  }
+  const request = http
+    .post<BookChapter[]>('/getChapterList', params)
+    .then((r) => {
+      const data = r.data
+      // 只有仍是该书最新一次请求时才写缓存：force 请求可能已抢先写入更新的
+      // 结果，慢到的旧请求不应把缓存盖回旧数据。失败不进缓存：回调只在成功时执行
+      if (chapterListInFlight.get(bookId) === request) {
+        // 上限 20 本，Map 按插入序淘汰最旧，避免会话内无限增长
+        chapterListCache.set(bookId, { data, expiresAt: Date.now() + CHAPTER_LIST_TTL_MS })
+        if (chapterListCache.size > CHAPTER_LIST_CACHE_MAX) {
+          const oldest = chapterListCache.keys().next().value
+          if (oldest !== undefined) chapterListCache.delete(oldest)
+        }
+      }
+      return data
+    })
+    .finally(() => {
+      if (chapterListInFlight.get(bookId) === request) {
+        chapterListInFlight.delete(bookId)
+      }
+    })
+  chapterListInFlight.set(bookId, request)
+  return request
 }
 
 export function getBookContent(params: {
@@ -120,7 +165,12 @@ export function saveBookProgress(params: { bookId: string; index: number; positi
 }
 
 export function deleteBookCache(bookId: string) {
-  return http.post('/deleteBookCache', { bookId }).then((r) => r.data)
+  return http.post('/deleteBookCache', { bookId }).then((r) => {
+    // 服务端已按书清掉目录等可再生缓存：本地目录缓存一并失效，
+    // 避免 60 秒新鲜期内还返回清缓存前的旧目录
+    invalidateChapterList(bookId)
+    return r.data
+  })
 }
 
 // ─── Groups ───
@@ -142,7 +192,12 @@ export function saveBookGroupId(bookId: string, groupId: number) {
 
 /** 换源：目标是换源候选（搜索结果）自己的 bookId，当前书的 bookId 不变 */
 export function setBookSource(params: { bookId: string; targetBookId: string }) {
-  return http.post<Book>('/setBookSource', params).then((r) => r.data)
+  return http.post<Book>('/setBookSource', params).then((r) => {
+    // 换源只改 bookId 的书源绑定，目录会整体变化：立即失效本地目录缓存，
+    // 详情弹窗换源后的重拉（不带 refresh）也能拿到新源目录
+    invalidateChapterList(params.bookId)
+    return r.data
+  })
 }
 
 // ─── Cover helper ───
