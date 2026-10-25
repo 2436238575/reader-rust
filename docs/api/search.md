@@ -176,9 +176,18 @@ GET /reader3/getChapterList
 | `bookId`  | string | 是   | 书籍 ID             |
 | `refresh` | number | 否   | 非 0 时强制刷新缓存 |
 
+请求头 `If-None-Match`（可选）：上次响应返回的 ETag（宽松比较：逗号分隔列表、
+`W/` 弱前缀、`*` 均可命中）。命中时返回 **304** 空 body，客户端复用本地缓存。
+
 目录结果按 `bookId` 缓存 1 小时（`refresh=1` 强刷），过期后重新抓取并整份覆盖。
 
 响应：
+
+- `200`：目录未变或客户端未带可命中的 `If-None-Match`。
+- `304`：目录与 `If-None-Match` 一致，body 为空。
+- 两种响应都带 `ETag`（章节列表内容的 md5 强验证器，`"<hex>"` 格式）与
+  `Cache-Control: private, no-cache`（允许浏览器私有缓存，但每次使用前必须再验证）。
+  目录内容变化（章节增删、标题/URL 变化）必然产生新 ETag。
 
 ```json
 {
