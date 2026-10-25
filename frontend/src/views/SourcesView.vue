@@ -8,7 +8,7 @@
       :loading="loading"
       :testing="testingSources"
       :invalid-count="invalidSources.length"
-      @refresh="loadSources"
+      @refresh="refreshSources"
       @import-local="triggerFileImport"
       @open-subscriptions="subscriptionPanelVisible = true"
       @export="exportSources"
@@ -137,19 +137,15 @@ import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 import { onBeforeRouteLeave, useRouter } from 'vue-router'
 import { API_BASE } from '../utils/appBase'
 import {
-  getBookSources,
-  deleteBookSource,
-  deleteBookSources,
-  deleteInvalidBookSources,
   loginBookSource,
   mintBookSourceProxyToken,
-  saveBookSource,
-  saveBookSources,
   testBookSources,
   readRemoteSourceFile,
   readSourceFile,
 } from '../api/source'
+import { storeToRefs } from 'pinia'
 import { useAppStore } from '../stores/app'
+import { useSourceStore } from '../stores/source'
 import type { BookSource } from '../types'
 import {
   filterBookSources,
@@ -173,11 +169,12 @@ type SourceSubscription = {
 const SUBSCRIPTION_KEY = 'reader-source-subscriptions'
 
 const appStore = useAppStore()
+// 书源列表与增删改收口到 source store（含 24h 非敏感快照）；本组件只留筛选/选择/订阅等 UI 状态
+const sourceStore = useSourceStore()
+const { sources, loading } = storeToRefs(sourceStore)
 const router = useRouter()
 const { isMobileLayout } = useMobileLayout()
 
-const sources = ref<BookSource[]>([])
-const loading = ref(false)
 const testingSources = ref(false)
 const filterText = ref('')
 const filterGroup = ref('')
@@ -268,23 +265,24 @@ function persistSubscriptions() {
   localStorage.setItem(SUBSCRIPTION_KEY, JSON.stringify(subscriptions.value))
 }
 
-async function loadSources() {
-  loading.value = true
+// 头部刷新按钮：强制拉全量（快照场景的选择对账由 watch 兜底）
+async function refreshSources() {
   try {
-    sources.value = await getBookSources()
-    pruneSelection()
+    await sourceStore.fetchSources({ force: true })
   } catch (e: unknown) {
     appStore.showToast((e as Error).message, 'error')
-  } finally {
-    loading.value = false
   }
 }
 
 async function toggleSource(source: BookSource) {
-  const next = { ...source, enabled: source.enabled === false ? true : false }
+  if (source.bookSourceId == null) return
   try {
-    await saveBookSource(next)
-    Object.assign(source, next)
+    // 列表可能只是快照（无规则字段）：先等全量就位，再以全量对象为基准翻转开关，
+    // 否则用残缺对象保存会把规则清空
+    await sourceStore.ensureFullSources()
+    const full = sourceStore.sources.find((item) => item.bookSourceId === source.bookSourceId)
+    if (!full) throw new Error('书源已不存在')
+    await sourceStore.saveSource({ ...full, enabled: full.enabled === false ? true : false })
     appStore.showToast('书源状态已更新', 'success')
   } catch (e: unknown) {
     appStore.showToast((e as Error).message, 'error')
@@ -295,8 +293,7 @@ async function removeSource(source: BookSource) {
   if (source.bookSourceId == null) return
   if (!confirm(`确定删除书源 "${source.bookSourceName}"？`)) return
   try {
-    await deleteBookSource(source.bookSourceId)
-    sources.value = sources.value.filter((s) => s.bookSourceId !== source.bookSourceId)
+    await sourceStore.deleteSource(source.bookSourceId)
     selectedSourceIds.value.delete(source.bookSourceId)
     if (editingSource.value?.bookSourceId === source.bookSourceId) {
       createSource()
@@ -315,11 +312,8 @@ async function removeSelectedSources() {
   }
   if (!confirm(`确定删除选中的 ${targets.length} 个书源？`)) return
   try {
-    await deleteBookSources(targets.map((source) => ({ bookSourceId: source.bookSourceId })))
     const targetIds = new Set(targets.map((source) => source.bookSourceId))
-    sources.value = sources.value.filter(
-      (source) => source.bookSourceId == null || !targetIds.has(source.bookSourceId)
-    )
+    await sourceStore.deleteSources(targets.map((source) => source.bookSourceId))
     selectedSourceIds.value.clear()
     if (
       editingSource.value?.bookSourceId != null &&
@@ -348,6 +342,8 @@ async function testSources() {
 
   testingSources.value = true
   try {
+    // 测试会按结果改写分组（标记失效）：先确保本地是全量，再按 id 送测
+    await sourceStore.ensureFullSources()
     const ids = targets
       .map((source) => source.bookSourceId)
       .filter((id): id is number => id != null)
@@ -362,7 +358,7 @@ async function testSources() {
       )
     }
     const result = mergeBookSourceTestResponses(responses)
-    await loadSources()
+    await sourceStore.fetchSources({ force: true })
     if (result.invalid > 0) {
       filterGroup.value = '失效'
     }
@@ -384,15 +380,12 @@ async function removeInvalidSources() {
   }
   if (!confirm(`确定删除 ${invalidSources.value.length} 个失效书源？此操作不可撤销。`)) return
   try {
-    const result = await deleteInvalidBookSources()
     const invalidIds = new Set(
       invalidSources.value
         .map((source) => source.bookSourceId)
         .filter((id): id is number => id != null)
     )
-    sources.value = sources.value.filter(
-      (source) => source.bookSourceId == null || !invalidIds.has(source.bookSourceId)
-    )
+    const result = await sourceStore.deleteInvalidSources()
     selectedSourceIds.value.clear()
     if (
       editingSource.value?.bookSourceId != null &&
@@ -444,16 +437,36 @@ function pruneSelection() {
   })
 }
 
+// 快照先渲染、后台全量替换（或任何 mutation 局部更新）后，选择集都可能含失效 id
+watch(sources, pruneSelection)
+
 function createSource() {
   editingSource.value = null
   editorText.value = JSON.stringify(createEmptySource(), null, 2)
   lastSavedEditorText.value = editorText.value
 }
 
-function editSource(source: BookSource) {
+function openInEditor(source: BookSource) {
   editingSource.value = source
   editorText.value = JSON.stringify(source, null, 2)
   lastSavedEditorText.value = editorText.value
+}
+
+async function editSource(source: BookSource) {
+  try {
+    // 快照对象没有规则字段：等全量就位后再按 id 取全量对象进编辑器，
+    // 否则保存会把 rule*/searchUrl 等字段清空
+    await sourceStore.ensureFullSources()
+  } catch (e: unknown) {
+    appStore.showToast((e as Error).message, 'error')
+    return
+  }
+  const full = sourceStore.sources.find((item) => item.bookSourceId === source.bookSourceId)
+  if (!full) {
+    appStore.showToast('书源已不存在', 'warning')
+    return
+  }
+  openInEditor(full)
 }
 
 function formatEditor() {
@@ -476,13 +489,12 @@ async function saveEditor() {
     if (!parsed.bookSourceUrl?.trim()) {
       throw new Error('书源链接不能为空')
     }
-    const saved = await saveBookSource(parsed)
+    const saved = await sourceStore.saveSource(parsed)
     appStore.showToast('保存书源成功', 'success')
-    await loadSources()
-    // 新建书源保存后才有身份：以返回的 bookSourceId 匹配回填本地列表
-    const latest = sources.value.find((item) => item.bookSourceId === saved.bookSourceId)
+    // 新建书源保存后才有身份：store 局部 upsert 已带返回的 bookSourceId，直接回填
+    const latest = sourceStore.sources.find((item) => item.bookSourceId === saved.bookSourceId)
     if (latest) {
-      editSource(latest)
+      openInEditor(latest)
     } else {
       lastSavedEditorText.value = editorText.value
     }
@@ -507,12 +519,11 @@ async function handleSourceLogin() {
     // 编辑器内容相对已加载书源有改动（或新建）时先落盘，登录走保存后返回的 id
     let sourceId = parsed.bookSourceId ?? null
     if (!editingSource.value || editingSource.value.bookSourceUrl !== parsed.bookSourceUrl) {
-      const saved = await saveBookSource(parsed)
+      const saved = await sourceStore.saveSource(parsed)
       sourceId = saved.bookSourceId
-      await loadSources()
-      const latest = sources.value.find((item) => item.bookSourceId === saved.bookSourceId)
+      const latest = sourceStore.sources.find((item) => item.bookSourceId === saved.bookSourceId)
       if (latest) {
-        editSource(latest)
+        openInEditor(latest)
       }
     }
     if (sourceId == null) {
@@ -565,9 +576,8 @@ async function handleFileImport(event: Event) {
     if (!imported.length) {
       throw new Error('文件中没有可导入的书源')
     }
-    await saveBookSources(imported)
+    await sourceStore.saveSources(imported)
     appStore.showToast(`成功导入 ${imported.length} 个书源`, 'success')
-    await loadSources()
   } catch (e: unknown) {
     appStore.showToast((e as Error).message || '导入失败', 'error')
   } finally {
@@ -589,10 +599,9 @@ async function importRemoteSource() {
     if (!parsed.length) {
       throw new Error('远程书源文件为空或格式错误')
     }
-    await saveBookSources(parsed)
+    await sourceStore.saveSources(parsed)
     touchSubscription(remoteUrl.value)
     appStore.showToast(`成功同步 ${parsed.length} 个书源`, 'success')
-    await loadSources()
   } catch (e: unknown) {
     appStore.showToast((e as Error).message || '远程同步失败', 'error')
   } finally {
@@ -632,8 +641,15 @@ function touchSubscription(url: string) {
   persistSubscriptions()
 }
 
-function exportSources() {
-  const blob = new Blob([JSON.stringify(sources.value, null, 2)], {
+async function exportSources() {
+  try {
+    // 快照对象缺规则字段，导出前必须等全量，否则导出文件是残缺的
+    await sourceStore.ensureFullSources()
+  } catch (e: unknown) {
+    appStore.showToast((e as Error).message, 'error')
+    return
+  }
+  const blob = new Blob([JSON.stringify(sourceStore.sources, null, 2)], {
     type: 'application/json;charset=utf-8',
   })
   const url = URL.createObjectURL(blob)
@@ -672,8 +688,10 @@ function handleBeforeUnload(e: BeforeUnloadEvent) {
 
 onMounted(() => {
   window.addEventListener('beforeunload', handleBeforeUnload)
-  // 每次进入都重拉：书源可能在别处变动过（阅读器内换源/订阅同步）
-  loadSources()
+  // 每次进入都拉取：有新鲜快照时先快照渲染、后台自动替换全量（书源可能在别处变动过）
+  sourceStore.fetchSources().catch((e: unknown) => {
+    appStore.showToast((e as Error).message, 'error')
+  })
 })
 
 onUnmounted(() => {
