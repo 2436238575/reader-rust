@@ -10,6 +10,7 @@ vi.mock('./http', () => ({
   },
 }))
 
+const getMock = http.get as unknown as Mock
 const postMock = http.post as unknown as Mock
 
 describe('getCoverUrl', () => {
@@ -40,22 +41,35 @@ describe('getCoverUrl', () => {
 
 describe('getChapterList 会话内缓存', () => {
   beforeEach(() => {
+    getMock.mockReset()
+    getMock.mockResolvedValue({ data: [{ title: '第一章' }] })
     postMock.mockReset()
-    postMock.mockResolvedValue({ data: [{ title: '第一章' }] })
+    postMock.mockResolvedValue({ data: '' })
+  })
+
+  it('走 GET 请求：响应带 ETag 时浏览器可自动携 If-None-Match 复用 304', async () => {
+    await getChapterList({ bookId: 'get-book', refresh: 1 })
+
+    expect(getMock).toHaveBeenCalledTimes(1)
+    expect(getMock).toHaveBeenCalledWith('/getChapterList', {
+      params: { bookId: 'get-book', refresh: 1 },
+    })
+    // POST 不再用于目录拉取（POST 不进 HTTP 缓存，享受不到 ETag 协商）
+    expect(postMock).not.toHaveBeenCalled()
   })
 
   it('TTL 内两次调用只请求一次', async () => {
     const first = await getChapterList({ bookId: 'ttl-book' })
     const second = await getChapterList({ bookId: 'ttl-book' })
 
-    expect(postMock).toHaveBeenCalledTimes(1)
-    expect(postMock).toHaveBeenCalledWith('/getChapterList', { bookId: 'ttl-book' })
+    expect(getMock).toHaveBeenCalledTimes(1)
+    expect(getMock).toHaveBeenCalledWith('/getChapterList', { params: { bookId: 'ttl-book' } })
     expect(second).toEqual(first)
   })
 
   it('并发的同书请求合并为一次', async () => {
     let release!: (value: { data: unknown }) => void
-    postMock.mockImplementation(
+    getMock.mockImplementation(
       () =>
         new Promise((resolve) => {
           release = resolve
@@ -66,73 +80,75 @@ describe('getChapterList 会话内缓存', () => {
     release({ data: [{ title: '第一章' }] })
     const [a, b] = await Promise.all([first, second])
 
-    expect(postMock).toHaveBeenCalledTimes(1)
+    expect(getMock).toHaveBeenCalledTimes(1)
     expect(b).toEqual(a)
   })
 
   it('refresh=1 绕过缓存重新请求并更新缓存', async () => {
-    postMock.mockResolvedValueOnce({ data: [{ title: '第一版' }] })
-    postMock.mockResolvedValueOnce({ data: [{ title: '第二版' }] })
+    getMock.mockResolvedValueOnce({ data: [{ title: '第一版' }] })
+    getMock.mockResolvedValueOnce({ data: [{ title: '第二版' }] })
 
     const initial = await getChapterList({ bookId: 'refresh-book', refresh: 1 })
-    expect(postMock).toHaveBeenCalledTimes(1)
+    expect(getMock).toHaveBeenCalledTimes(1)
 
     // refresh 的结果已写回缓存：不带 refresh 的后续调用不再请求
     const cached = await getChapterList({ bookId: 'refresh-book' })
     expect(cached).toEqual(initial)
-    expect(postMock).toHaveBeenCalledTimes(1)
+    expect(getMock).toHaveBeenCalledTimes(1)
 
     // 再次 refresh=1 绕过旧缓存，拿到新结果并覆盖缓存
     const refreshed = await getChapterList({ bookId: 'refresh-book', refresh: 1 })
-    expect(postMock).toHaveBeenCalledTimes(2)
+    expect(getMock).toHaveBeenCalledTimes(2)
     expect(refreshed).toEqual([{ title: '第二版' }])
     const after = await getChapterList({ bookId: 'refresh-book' })
     expect(after).toEqual([{ title: '第二版' }])
-    expect(postMock).toHaveBeenCalledTimes(2)
+    expect(getMock).toHaveBeenCalledTimes(2)
   })
 
   it('请求失败不缓存失败结果', async () => {
-    postMock.mockRejectedValueOnce(new Error('网络错误'))
+    getMock.mockRejectedValueOnce(new Error('网络错误'))
     await expect(getChapterList({ bookId: 'fail-book' })).rejects.toThrow('网络错误')
 
     const retry = await getChapterList({ bookId: 'fail-book' })
-    expect(postMock).toHaveBeenCalledTimes(2)
+    expect(getMock).toHaveBeenCalledTimes(2)
     expect(retry).toEqual([{ title: '第一章' }])
   })
 
   it('不同 bookId 互不影响', async () => {
     await getChapterList({ bookId: 'book-a' })
     await getChapterList({ bookId: 'book-b' })
-    expect(postMock).toHaveBeenCalledTimes(2)
+    expect(getMock).toHaveBeenCalledTimes(2)
 
     await getChapterList({ bookId: 'book-a' })
     await getChapterList({ bookId: 'book-b' })
-    expect(postMock).toHaveBeenCalledTimes(2)
+    expect(getMock).toHaveBeenCalledTimes(2)
   })
 
   it('setBookSource 成功后失效该书的目录缓存', async () => {
     await getChapterList({ bookId: 'switch-book' })
+    expect(getMock).toHaveBeenCalledTimes(1)
     await setBookSource({ bookId: 'switch-book', targetBookId: 'candidate-1' })
-    expect(postMock).toHaveBeenCalledTimes(2)
+    expect(postMock).toHaveBeenCalledTimes(1)
 
     // 换源后目录已整体变化：缓存失效，重新请求
     await getChapterList({ bookId: 'switch-book' })
-    expect(postMock).toHaveBeenCalledTimes(3)
+    expect(getMock).toHaveBeenCalledTimes(2)
   })
 
   it('deleteBookCache 成功后失效该书的目录缓存', async () => {
     await getChapterList({ bookId: 'purge-book' })
+    expect(getMock).toHaveBeenCalledTimes(1)
     await deleteBookCache('purge-book')
-    expect(postMock).toHaveBeenCalledTimes(2)
+    expect(postMock).toHaveBeenCalledTimes(1)
 
     // 服务端已按书清掉目录缓存：本地缓存同步失效
     await getChapterList({ bookId: 'purge-book' })
-    expect(postMock).toHaveBeenCalledTimes(3)
+    expect(getMock).toHaveBeenCalledTimes(2)
   })
 
   it('换源时丢弃在途的旧目录请求，旧响应不会写回缓存', async () => {
     let releaseOld!: (value: { data: unknown }) => void
-    postMock.mockImplementationOnce(
+    getMock.mockImplementationOnce(
       () =>
         new Promise((resolve) => {
           releaseOld = resolve
@@ -141,7 +157,7 @@ describe('getChapterList 会话内缓存', () => {
     const oldRequest = getChapterList({ bookId: 'switch-inflight' })
     await setBookSource({ bookId: 'switch-inflight', targetBookId: 'candidate-2' })
 
-    postMock.mockResolvedValueOnce({ data: [{ title: '新源目录' }] })
+    getMock.mockResolvedValueOnce({ data: [{ title: '新源目录' }] })
     const fresh = await getChapterList({ bookId: 'switch-inflight' })
     expect(fresh).toEqual([{ title: '新源目录' }])
 
@@ -151,24 +167,24 @@ describe('getChapterList 会话内缓存', () => {
 
     const cached = await getChapterList({ bookId: 'switch-inflight' })
     expect(cached).toEqual([{ title: '新源目录' }])
-    expect(postMock).toHaveBeenCalledTimes(3)
+    expect(getMock).toHaveBeenCalledTimes(2)
   })
 
   it('缓存最多保留 20 本，按插入序淘汰最旧', async () => {
     // 前面的测试可能已占用部分名额：一次性插入 25 本新书，
     // 无论此前状态如何，缓存最终恰好保留最后 20 本（bulk-5..bulk-24）
     for (let i = 0; i < 25; i++) {
-      postMock.mockResolvedValueOnce({ data: [{ title: `第${i}章` }] })
+      getMock.mockResolvedValueOnce({ data: [{ title: `第${i}章` }] })
       await getChapterList({ bookId: `bulk-${i}` })
     }
-    const postsAfterFill = postMock.mock.calls.length
+    const getsAfterFill = getMock.mock.calls.length
 
     // bulk-4 及更早的都已被淘汰：再次请求会重新发请求
     await getChapterList({ bookId: 'bulk-4' })
-    expect(postMock.mock.calls.length).toBe(postsAfterFill + 1)
+    expect(getMock.mock.calls.length).toBe(getsAfterFill + 1)
 
     // 最后写入的 bulk-24 仍在缓存里
     await getChapterList({ bookId: 'bulk-24' })
-    expect(postMock.mock.calls.length).toBe(postsAfterFill + 1)
+    expect(getMock.mock.calls.length).toBe(getsAfterFill + 1)
   })
 })

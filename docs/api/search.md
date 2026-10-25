@@ -203,7 +203,9 @@ GET /reader3/getChapterList
 }
 ```
 
-也可使用 `POST /reader3/getChapterList`。
+也可使用 `POST /reader3/getChapterList`。前端固定走 GET：浏览器依据响应 ETag 自动携带
+`If-None-Match` 重验证，命中 304 直接复用本地缓存（其上前端还有 60 秒会话内缓存与
+同书在途去重，`refresh=1` 绕过）。
 
 ## 获取书架
 

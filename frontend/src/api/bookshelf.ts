@@ -122,8 +122,10 @@ export function getChapterList(params: { bookId: string; refresh?: number }) {
     const inFlight = chapterListInFlight.get(bookId)
     if (inFlight) return inFlight
   }
+  // GET 而非 POST：响应带强 ETag 时浏览器会自动携 If-None-Match 重验证，
+  // 命中 304 直接复用本地缓存；POST 不进 HTTP 缓存，享受不到这层协商
   const request = http
-    .post<BookChapter[]>('/getChapterList', params)
+    .get<BookChapter[]>('/getChapterList', { params })
     .then((r) => {
       const data = r.data
       // 只有仍是该书最新一次请求时才写缓存：force 请求可能已抢先写入更新的
