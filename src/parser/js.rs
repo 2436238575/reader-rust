@@ -114,8 +114,16 @@ struct ParseBudgetState {
 /// 第一次进入时设 deadline = now + [`JS_PARSE_BUDGET`]；嵌套进入只加深度；
 /// drop 时减深度、归零时整表清空（下一次解析重新计时）。解析入口都是同步
 /// 函数，guard 只在进入解析的同一线程内生效，不跨 await 持有。
+///
+/// 预算是 thread_local 状态，守卫跨线程持有会泄漏/错扣别的线程的预算，
+/// 因此用 `PhantomData<Cell<()>>` 把它标记成 !Send/!Sync——这是编译期
+/// 约束：试图把守卫跨 await 持有（让 future 变成 !Send）或直接发往别的
+/// 线程都会直接编译失败，而不是运行期悄悄算错预算。
 #[derive(Debug)]
-pub struct ParseBudgetGuard;
+pub struct ParseBudgetGuard {
+    /// 仅用于让守卫 !Send/!Sync 的标记字段，不承载数据。
+    _not_send: std::marker::PhantomData<std::cell::Cell<()>>,
+}
 
 pub fn begin_parse_budget() -> ParseBudgetGuard {
     PARSE_BUDGET.with(|cell| {
@@ -130,7 +138,9 @@ pub fn begin_parse_budget() -> ParseBudgetGuard {
             }
         }
     });
-    ParseBudgetGuard
+    ParseBudgetGuard {
+        _not_send: std::marker::PhantomData,
+    }
 }
 
 impl Drop for ParseBudgetGuard {
