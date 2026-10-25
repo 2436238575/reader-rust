@@ -303,7 +303,8 @@ async function handleLogout() {
   try {
     await apiLogout()
     appStore.clearUser()
-    await appStore.fetchUserInfo()
+    // clearUser 刚清掉本地登录态，重查必须绕过新鲜期，不能复用登出前的旧结果
+    await appStore.fetchUserInfo({ force: true })
     close()
     shelfStore.fetchBooks()
   } finally {

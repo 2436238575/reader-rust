@@ -55,6 +55,19 @@ export const useAppStore = defineStore('app', () => {
   const userInfo = ref<UserInfo | null>(null)
   const isLoggedIn = ref(false)
 
+  // getUserInfo 的 60 秒成功新鲜期与进行中请求：App bootstrap（bootstrapAuth）、
+  // HomeView / AiBookView 的 onMounted 会重复调用 fetchUserInfo，实测冷启动 3 连发。
+  // 新鲜期内直接复用内存态，进行中的合并复用同一个请求；网络失败不记新鲜时间，
+  // 下一次调用立即重试。need-login、登出后的核验走 force 绕过。
+  const USER_INFO_FRESH_MS = 60_000
+  let userInfoFreshAt = 0
+  let userInfoInFlight: Promise<void> | null = null
+
+  /** 拿到服务端返回的用户信息时记录新鲜时间（fetchUserInfo / bootstrapAuth / setUser）。 */
+  function markUserInfoFresh() {
+    userInfoFreshAt = Date.now()
+  }
+
   // 每个会话只做一次后端合并；登出后复位
   let statsSynced = false
 
@@ -69,15 +82,32 @@ export const useAppStore = defineStore('app', () => {
       .catch(() => undefined)
   }
 
-  async function fetchUserInfo() {
-    try {
-      const data = await getUserInfo()
-      userInfo.value = data.userInfo
-      isLoggedIn.value = !!data.userInfo?.username
-    } catch {
-      isLoggedIn.value = false
+  async function fetchUserInfo(options: { force?: boolean } = {}) {
+    if (!options.force) {
+      // 启动期 bootstrapAuth 正在鉴权时等它落定：成功会记录新鲜期，
+      // 落定后走下面的新鲜期检查，冷启动就只发一次 getUserInfo
+      if (bootstrapPromise) await bootstrapPromise.catch(() => undefined)
+      if (userInfoFreshAt && Date.now() - userInfoFreshAt < USER_INFO_FRESH_MS) return
+      if (userInfoInFlight) return userInfoInFlight
     }
-    syncStatsOnce()
+    // request 是含 finally 的完整链：finally 回调里比较的就是存进映射的同一个
+    // promise，落定后指针才能被正确清除（拆开存会导致身份不等、指针永不清除）
+    const request = (async () => {
+      try {
+        const data = await getUserInfo()
+        userInfo.value = data.userInfo
+        isLoggedIn.value = !!data.userInfo?.username
+        // 只有真的拿到响应才记新鲜时间；网络失败不记，方便马上重试
+        markUserInfoFresh()
+      } catch {
+        isLoggedIn.value = false
+      }
+      syncStatsOnce()
+    })().finally(() => {
+      if (userInfoInFlight === request) userInfoInFlight = null
+    })
+    userInfoInFlight = request
+    return request
   }
 
   /** 登录/改密响应缺省时按后端默认的 6 小时计。 */
@@ -101,6 +131,9 @@ export const useAppStore = defineStore('app', () => {
   function setUser(user: UserInfo) {
     userInfo.value = user
     isLoggedIn.value = true
+    // 服务端登录响应带来的用户信息是新鲜的：登录后 HomeView 立刻调用的
+    // fetchUserInfo 直接复用，不再发一次 getUserInfo
+    markUserInfoFresh()
     persistLoginTokens(user)
     // 登录后不一定经过会调 fetchUserInfo 的页面，直接在登录点触发
     syncStatsOnce()
@@ -143,6 +176,8 @@ export const useAppStore = defineStore('app', () => {
         if (data.userInfo?.username) {
           userInfo.value = data.userInfo
           isLoggedIn.value = true
+          // 这次响应就是权威登录态：随后的 fetchUserInfo 复用，不再重复请求
+          markUserInfoFresh()
           startAuthLifecycle()
           syncStatsOnce()
           return
@@ -164,6 +199,7 @@ export const useAppStore = defineStore('app', () => {
         userInfo.value = data.userInfo
         isLoggedIn.value = !!data.userInfo?.username
         if (isLoggedIn.value) {
+          markUserInfoFresh()
           startAuthLifecycle()
           syncStatsOnce()
         } else {
@@ -194,6 +230,8 @@ export const useAppStore = defineStore('app', () => {
   function updateUserInfo(next: UserInfo | null) {
     userInfo.value = next
     isLoggedIn.value = !!next?.username
+    // 只有写入了服务端返回的真实用户信息才算新鲜；置空/登出不记
+    if (next?.username) markUserInfoFresh()
   }
 
   // ─── UI State ───

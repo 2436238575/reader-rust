@@ -50,7 +50,9 @@ onMounted(() => {
 })
 
 async function handleNeedLogin() {
-  await appStore.fetchUserInfo()
+  // 401 触发的重查必须绕过新鲜期：令牌可能刚被服务端吊销，
+  // 复用几十秒前的成功结果会漏掉「实际已登出」的真相
+  await appStore.fetchUserInfo({ force: true })
   if (appStore.isLoggedIn || route.name === 'login') return
   const redirect = route.fullPath && route.fullPath !== '/' ? route.fullPath : undefined
   router.push({ name: 'login', query: redirect ? { redirect } : {} })
