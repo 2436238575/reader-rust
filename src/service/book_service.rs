@@ -102,6 +102,12 @@ const TOC_SNAPSHOT_MEMO_MAX_ENTRIES: usize = 16;
 /// 遗留的条目。
 const REFRESH_LOCK_MAX_ENTRIES: usize = 256;
 
+/// 目录分页总页数上限：单链分支跟随书源给的 next 链接，恶意/失控书源
+/// 每次回一个新 URL 就会变成无限请求。500 页按每页几十章估算覆盖数万章，
+/// 大书足够；达到上限停止翻页并保留已抓章节（与正文 MAX_CONTENT_PAGES
+/// 同一思路）。
+const MAX_TOC_PAGES: usize = 500;
+
 /// 一次抓取得到的章节正文（分页已拼接）。
 struct FetchedChapter {
     content: String,
@@ -1099,6 +1105,10 @@ impl BookService {
     /// 整页重复熔断、章节 URL 去重都在此收口。
     /// fetch_remaining_chapters 与 get_chapter_list_with_pagination 此前各持有
     /// 一份逐行复制的 130 行实现，修 bug 必然 drift。
+    ///
+    /// 总页数受 `MAX_TOC_PAGES` 限制：单链分支是「跟着书源给的下一页走」的
+    /// 循环，环检测只能挡住重复 URL，恶意/失控书源每次回一个新 URL 就会把
+    /// 抓取变成无限请求。达到上限记 warn 并停止翻页，已抓到的章节照常返回。
     async fn fetch_paginated_chapters(
         &self,
         user_ns: &str,
@@ -1113,6 +1123,7 @@ impl BookService {
             .into_iter()
             .filter(|u| !visited_page_urls.contains(u))
             .collect();
+        let mut pages_fetched = 0usize;
 
         /// 页内公共动作：整页重复熔断 + 逐章去重追加。
         macro_rules! absorb_page {
@@ -1141,10 +1152,18 @@ impl BookService {
         if pending_urls.len() > 1 {
             // Multiple URLs from option dropdown - fetch all pages
             for url in pending_urls {
+                if pages_fetched >= MAX_TOC_PAGES {
+                    tracing::warn!(
+                        "目录分页达到 {MAX_TOC_PAGES} 页上限，停止翻页（书源 {} 可能失控）",
+                        source.book_source_url
+                    );
+                    break;
+                }
                 if visited_page_urls.contains(&url) {
                     continue;
                 }
                 visited_page_urls.insert(url.clone());
+                pages_fetched += 1;
 
                 let res = self
                     .fetch_source_url(user_ns, source, &url, &source.book_source_url)
@@ -1161,10 +1180,18 @@ impl BookService {
             // Single next page link - follow sequentially
             let mut current_url = pending_urls[0].clone();
             loop {
+                if pages_fetched >= MAX_TOC_PAGES {
+                    tracing::warn!(
+                        "目录分页达到 {MAX_TOC_PAGES} 页上限，停止翻页（书源 {} 可能失控）",
+                        source.book_source_url
+                    );
+                    break;
+                }
                 if visited_page_urls.contains(&current_url) {
                     break;
                 }
                 visited_page_urls.insert(current_url.clone());
+                pages_fetched += 1;
 
                 let res = self
                     .fetch_source_url(user_ns, source, &current_url, &source.book_source_url)

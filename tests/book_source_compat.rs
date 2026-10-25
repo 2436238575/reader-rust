@@ -469,6 +469,123 @@ async fn content_pagination_stops_before_next_chapter_url() {
     assert_eq!(next_chapter_hits.load(Ordering::SeqCst), 0);
 }
 
+async fn toc_endless_page(State(hits): State<Arc<AtomicUsize>>) -> Html<String> {
+    let n = hits.fetch_add(1, Ordering::SeqCst);
+    // 每页都给一个从未见过的 next 链接：环检测挡不住，只能靠页数上限停
+    Html(format!(
+        r#"<html><body><div class="toc"><a href="/ch/{n}.html">第{n}章</a></div><a class="next" href="/toc/{}">下一页</a></body></html>"#,
+        n + 1
+    ))
+}
+
+#[tokio::test]
+async fn toc_pagination_stops_at_page_cap_for_endless_next_links() {
+    allow_private_network();
+    let hits = Arc::new(AtomicUsize::new(0));
+    let app = Router::new()
+        .route("/toc/:n", get(toc_endless_page))
+        .with_state(hits.clone());
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let server = tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+
+    common::clean_stale_temp_dirs();
+    let storage_dir = std::env::temp_dir().join(format!("reader-rust-toc-cap-{}", Uuid::new_v4()));
+    let (service, pool) = test_book_service(&storage_dir).await;
+    let source = BookSource {
+        book_source_name: "Endless TOC".to_string(),
+        book_source_url: format!("http://{}", addr),
+        rule_toc: Some(TocRule {
+            chapter_list: Some(".toc".to_string()),
+            chapter_name: Some("a@text".to_string()),
+            chapter_url: Some("a@href".to_string()),
+            next_toc_url: Some("a.next@href".to_string()),
+            ..Default::default()
+        }),
+        ..Default::default()
+    };
+
+    let chapters = service
+        .get_chapter_list(
+            "default",
+            "book_1",
+            &source,
+            &format!("http://{addr}/toc/0"),
+        )
+        .await
+        .unwrap();
+
+    server.abort();
+    pool.close().await;
+    common::remove_dir_retried(&storage_dir);
+
+    // 首页 + MAX_TOC_PAGES（500）页后停止：请求数与章节数都钉在上限上，
+    // 不随「每页都有新 next」无限增长
+    assert_eq!(hits.load(Ordering::SeqCst), 501);
+    assert_eq!(chapters.len(), 501);
+    assert_eq!(chapters[0].title, "第0章");
+}
+
+async fn toc_first_page() -> Html<&'static str> {
+    Html(
+        r#"<html><body><div class="toc"><a href="/ch/1.html">第一章</a></div><a class="next" href="/toc/last">下一页</a></body></html>"#,
+    )
+}
+
+async fn toc_last_page() -> Html<&'static str> {
+    Html(r#"<html><body><div class="toc"><a href="/ch/2.html">第二章</a></div></body></html>"#)
+}
+
+#[tokio::test]
+async fn toc_pagination_normal_two_pages_unaffected_by_cap() {
+    allow_private_network();
+    let app = Router::new()
+        .route("/toc/1", get(toc_first_page))
+        .route("/toc/last", get(toc_last_page));
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let server = tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+
+    common::clean_stale_temp_dirs();
+    let storage_dir = std::env::temp_dir().join(format!("reader-rust-toc-two-{}", Uuid::new_v4()));
+    let (service, pool) = test_book_service(&storage_dir).await;
+    let source = BookSource {
+        book_source_name: "Two page TOC".to_string(),
+        book_source_url: format!("http://{}", addr),
+        rule_toc: Some(TocRule {
+            chapter_list: Some(".toc".to_string()),
+            chapter_name: Some("a@text".to_string()),
+            chapter_url: Some("a@href".to_string()),
+            next_toc_url: Some("a.next@href".to_string()),
+            ..Default::default()
+        }),
+        ..Default::default()
+    };
+
+    let chapters = service
+        .get_chapter_list(
+            "default",
+            "book_1",
+            &source,
+            &format!("http://{addr}/toc/1"),
+        )
+        .await
+        .unwrap();
+
+    server.abort();
+    pool.close().await;
+    common::remove_dir_retried(&storage_dir);
+
+    assert_eq!(chapters.len(), 2);
+    assert_eq!(chapters[0].title, "第一章");
+    assert_eq!(chapters[1].title, "第二章");
+    assert!(chapters[1].url.ends_with("/ch/2.html"));
+}
+
 #[tokio::test]
 async fn explore_kinds_support_text_and_js_rules() {
     common::clean_stale_temp_dirs();
