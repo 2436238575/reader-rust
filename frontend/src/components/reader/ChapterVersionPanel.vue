@@ -854,7 +854,8 @@ watch(
   }
   .body {
     grid-template-columns: 1fr;
-    grid-template-rows: minmax(120px, 40%) minmax(0, 1fr);
+    /* 列表行按内容收缩（上限由 version-list 的 40vh 约束），剩余空间全给预览区 */
+    grid-template-rows: auto minmax(0, 1fr);
   }
   .version-list {
     max-height: 40vh;
