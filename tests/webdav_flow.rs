@@ -298,6 +298,73 @@ async fn downloads_carry_explicit_content_type() {
     }
 }
 
+/// .html/.xml/.svg 以可渲染类型同源直出，浏览器直接打开时内嵌脚本会在
+/// 主站源下执行：协议端点与 getWebdavFile 都要补 Content-Security-Policy:
+/// sandbox（保留渲染、禁脚本/表单）。纯文本下载不受这条规则影响。
+#[tokio::test]
+async fn active_content_downloads_get_sandbox_csp() {
+    let app = TestServer::start().await;
+    app.dav("PUT", "/reader3/webdav/note.html")
+        .body("<html><script>alert(1)</script></html>")
+        .send()
+        .await
+        .unwrap();
+
+    // 协议端点（dav-server 的 mime_guess 给 text/html）
+    let res = app
+        .dav("GET", "/reader3/webdav/note.html")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let csp = res
+        .headers()
+        .get("Content-Security-Policy")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
+    assert!(
+        csp.contains("sandbox"),
+        "协议 GET .html 应带沙箱 CSP，实际: {csp:?}"
+    );
+
+    // JSON 接口端点（download_content_type 给 text/html; charset=utf-8）
+    let token = app.login_token().await;
+    let res = app
+        .client
+        .get(app.url("/reader3/getWebdavFile"))
+        .query(&[("path", "/note.html"), ("accessToken", token.as_str())])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let csp = res
+        .headers()
+        .get("Content-Security-Policy")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
+    assert!(
+        csp.contains("sandbox"),
+        "getWebdavFile .html 应带沙箱 CSP，实际: {csp:?}"
+    );
+
+    // 纯文本不在活性类型清单里，不加这条 CSP
+    app.dav("PUT", "/reader3/webdav/plain.txt")
+        .body("hello")
+        .send()
+        .await
+        .unwrap();
+    let res = app
+        .dav("GET", "/reader3/webdav/plain.txt")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    assert!(
+        res.headers().get("Content-Security-Policy").is_none(),
+        "text/plain 不应带沙箱 CSP"
+    );
+}
+
 #[tokio::test]
 async fn propfind_root_bare_and_trailing_slash() {
     let app = TestServer::start().await;

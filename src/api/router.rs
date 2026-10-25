@@ -74,6 +74,8 @@ pub fn build_router(state: AppState) -> Router {
         .route("/reader3/webdav", any(handlers::webdav_handler))
         .route("/reader3/webdav/", any(handlers::webdav_handler))
         .route("/reader3/webdav/*path", any(handlers::webdav_handler))
+        // .html/.xml/.svg 以可渲染类型同源直出，直接打开时补沙箱 CSP
+        .layer(middleware::from_fn(sandbox_active_webdav_content))
         .with_state(state.clone());
 
     // ── 大请求体路由：先挂各自放宽的上限（最内层先生效），再并入 protected ──
@@ -377,7 +379,11 @@ pub fn build_router(state: AppState) -> Router {
             "/reader3/getWebdavFileList",
             get(handlers::get_webdav_file_list),
         )
-        .route("/reader3/getWebdavFile", get(handlers::get_webdav_file))
+        .route(
+            "/reader3/getWebdavFile",
+            get(handlers::get_webdav_file)
+                .layer(middleware::from_fn(sandbox_active_webdav_content)),
+        )
         .route(
             "/reader3/deleteWebdavFile",
             post(handlers::delete_webdav_file),
@@ -608,6 +614,41 @@ async fn sandbox_epub_svg_assets(
         response.headers_mut().insert(
             axum::http::header::CONTENT_SECURITY_POLICY,
             axum::http::HeaderValue::from_static(crate::service::local_epub_book::SVG_ASSET_CSP),
+        );
+    }
+    response
+}
+
+/// WebDAV 下载的活性内容沙箱：.html/.xml/.svg 会以可渲染类型同源直出
+///（getWebdavFile 的 download_content_type 与 dav-server 协议端点的
+/// mime_guess 口径一致），浏览器直接打开时内嵌脚本在主站源下执行。
+/// 对这些 Content-Type 补 Content-Security-Policy: sandbox——保留渲染、
+/// 禁脚本与表单；不改成 Content-Disposition: attachment，那会牺牲备份
+/// 文件在浏览器里直接预览的可用性。if_not_present：不打翻已特化的值。
+async fn sandbox_active_webdav_content(
+    request: axum::extract::Request,
+    next: middleware::Next,
+) -> axum::response::Response {
+    let mut response = next.run(request).await;
+    let is_active = response
+        .headers()
+        .get(axum::http::header::CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+        .map(|value| value.to_ascii_lowercase())
+        .is_some_and(|value| {
+            value.starts_with("text/html")
+                || value.starts_with("application/xml")
+                || value.starts_with("text/xml")
+                || value.starts_with("image/svg+xml")
+        });
+    if is_active
+        && !response
+            .headers()
+            .contains_key(axum::http::header::CONTENT_SECURITY_POLICY)
+    {
+        response.headers_mut().insert(
+            axum::http::header::CONTENT_SECURITY_POLICY,
+            axum::http::HeaderValue::from_static("sandbox"),
         );
     }
     response
