@@ -107,7 +107,9 @@ export const useAppStore = defineStore('app', () => {
         markUserInfoFresh()
       } catch {
         if (seq !== userInfoSeq) return
-        isLoggedIn.value = false
+        // 网络失败：有登录提示时保留登录态用于离线（真正的失效由 401 与
+        // 刷新失败处理）；没有提示才按未登录处理
+        if (!hasAuthHint()) isLoggedIn.value = false
       }
       syncStatsOnce()
     })().finally(() => {

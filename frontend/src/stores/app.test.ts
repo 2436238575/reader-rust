@@ -130,6 +130,18 @@ describe('app store fetchUserInfo 合并与新鲜期', () => {
     expect(store.isLoggedIn).toBe(true)
   })
 
+  it('网络失败但存在登录提示时保留离线登录态', async () => {
+    const store = useAppStore()
+    // 模拟已经离线启动（bootstrap 依据 hint 保持登录态）后，页面又调了一次
+    // fetchUserInfo：网络失败不能把登录态翻回未登录
+    store.setUser(createUserInfo())
+    getUserInfoMock.mockRejectedValue(new Error('网络错误'))
+
+    await store.fetchUserInfo({ force: true })
+
+    expect(store.isLoggedIn).toBe(true)
+  })
+
   it('setUser 写入服务端用户信息后，fetchUserInfo 直接复用不再请求', async () => {
     const store = useAppStore()
     store.setUser(createUserInfo())
