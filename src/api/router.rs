@@ -2,14 +2,14 @@ use crate::api::{handlers, AppState};
 use crate::auth::{optional_auth, require_auth};
 use axum::{
     extract::DefaultBodyLimit,
-    http::HeaderValue,
+    http::{header, HeaderName, HeaderValue, Method},
     middleware,
     routing::{any, get, post},
     Router,
 };
 use std::path::PathBuf;
 use tower_http::compression::CompressionLayer;
-use tower_http::cors::{AllowOrigin, Any, CorsLayer};
+use tower_http::cors::{AllowOrigin, CorsLayer};
 use tower_http::request_id::{MakeRequestUuid, PropagateRequestIdLayer, SetRequestIdLayer};
 use tower_http::services::{ServeDir, ServeFile};
 use tower_http::set_header::SetResponseHeaderLayer;
@@ -30,6 +30,12 @@ const MAX_BODY_LIMIT_BYTES: usize = 100 * 1024 * 1024;
 /// 此前使用 `very_permissive()`，等于向任意站点反射 Origin 并允许携带凭据，
 /// 任何第三方页面都能用受害者的登录态读取本服务响应。默认改为**仅同源**
 /// （不发送 CORS 头）；确需跨域时用 `CORS_ALLOWED_ORIGINS` 显式列出来源。
+///
+/// 显式配置了来源列表时同时开 `allow_credentials`：会话已迁移到 HttpOnly
+/// Cookie，跨域前端必须带凭据才能维持登录。注意 tower-http 禁止
+/// credentials 与通配 methods/headers 组合（运行时直接 panic），且浏览器
+/// 也会拒绝 `*` + credentials 的响应，因此 methods/headers 一并改成显式
+/// 列表（覆盖本服务全部路由方法与浏览器端点会发的头）。
 fn build_cors_layer(cors_allowed_origins: &str) -> CorsLayer {
     let origins: Vec<HeaderValue> = cors_allowed_origins
         .split(',')
@@ -42,8 +48,24 @@ fn build_cors_layer(cors_allowed_origins: &str) -> CorsLayer {
     }
     CorsLayer::new()
         .allow_origin(AllowOrigin::list(origins))
-        .allow_methods(Any)
-        .allow_headers(Any)
+        .allow_methods([
+            Method::GET,
+            Method::POST,
+            Method::PUT,
+            Method::PATCH,
+            Method::DELETE,
+            Method::HEAD,
+            Method::OPTIONS,
+        ])
+        .allow_headers([
+            header::CONTENT_TYPE,
+            header::AUTHORIZATION,
+            header::ACCEPT,
+            header::ORIGIN,
+            // 代理页与部分书源前端会带的自定义头
+            HeaderName::from_static("x-requested-with"),
+        ])
+        .allow_credentials(true)
 }
 
 pub fn build_router(state: AppState) -> Router {
