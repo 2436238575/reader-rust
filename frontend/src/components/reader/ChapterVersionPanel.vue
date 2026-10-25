@@ -27,7 +27,7 @@
                 跟随最新
               </button>
               <button
-                class="ghost-btn"
+                class="ghost-btn danger"
                 :disabled="resettingBook"
                 title="所有章节改回显示最新上游正文（本地书回到原文）；历史版本保留在正文历史里"
                 @click="handleResetBookToUpstream"
@@ -556,6 +556,12 @@ watch(
   cursor: default;
 }
 
+/* 破坏性操作保持 ghost 形态，仅用危险色提示（同 CacheLibraryModal 的 scope-btn.danger） */
+.ghost-btn.danger {
+  color: var(--color-danger);
+  border-color: currentColor;
+}
+
 .close-btn {
   width: 32px;
   height: 32px;
@@ -853,8 +859,32 @@ watch(
   .version-list {
     max-height: 40vh;
   }
+  .modal-head {
+    flex-wrap: wrap;
+    position: relative;
+    gap: 10px;
+  }
+  .head-main {
+    /* 标题独占第一行，右侧给绝对定位的关闭按钮（32px + 间隙）让位 */
+    flex: 1 1 100%;
+    padding-right: 40px;
+  }
   .head-actions {
+    /* 操作按钮独占第二行，超出时横向滚动，不再挤压标题与关闭按钮 */
+    flex: 1 1 100%;
+    flex-wrap: nowrap;
+    justify-content: flex-start;
     gap: 6px;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+  .head-actions .ghost-btn {
+    flex-shrink: 0;
+  }
+  .head-actions .close-btn {
+    position: absolute;
+    top: 0;
+    right: 0;
   }
 }
 </style>
