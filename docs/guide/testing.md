@@ -6,8 +6,8 @@
 
 | 层级                 | 命令                      | 覆盖范围                       |
 | -------------------- | ------------------------- | ------------------------------ |
-| Rust 单元 + 集成测试 | `cargo test`              | 504 个用例（见下）             |
-| 前端单元测试         | `cd frontend && npm test` | 44 个 `*.test.ts`（vitest）    |
+| Rust 单元 + 集成测试 | `cargo test`              | 547 个用例（见下）             |
+| 前端单元测试         | `cd frontend && npm test` | 46 个 `*.test.ts`（vitest）    |
 | 端到端测试           | `npm run test:e2e`        | Playwright，零配置自起后端     |
 | 手工全量回归         | 见文末清单                | 依赖真实书源、账号、缓存的功能 |
 
@@ -19,12 +19,12 @@ cargo test book_source         # 按名称过滤
 cargo test --lib               # 只跑 src 内的内联单元测试
 ```
 
-Rust 侧共 **504 个用例**（346 个内联单元测试 + 158 个集成用例），另外 `tests/yckceo_live_sources.rs` 的 2 个用例默认 `#[ignore]`。
+Rust 侧共 **547 个用例**（372 个内联单元测试 + 175 个集成用例），另外 `tests/yckceo_live_sources.rs` 的 2 个用例默认 `#[ignore]`。
 
 `cargo test` 输出的合计就是实际用例数：`src/main.rs` 只是入口文件，bin 目标没有单元测试，不存在重复计数。
 
-- **`tests/` 下的集成测试**（24 个文件，158 个用例）：`auth_flow.rs`（用例最多，24 个）、`book_source_compat.rs`（17 个，覆盖书源格式兼容）、`book_source_proxy_flow.rs`、`security_headers.rs`、`content_singleflight.rs`、`cached_search_flow.rs`、`chapter_edit_flow.rs`、`chapter_image_flow.rs`、`image_pipeline.rs`、`review_flow.rs`、`webdav_flow.rs`、`agent_sidecar_flow.rs`、`local_txt_book.rs`、`local_epub_book.rs`、`ai_book_memory.rs`、`ai_proxy.rs`、`js_compat.rs`、`userdata_flow.rs`、`upstream_error_flow.rs`、`chapter_cache_key.rs`、`book_source_validation.rs`、`book_source_headers.rs`、`global_identity.rs`、`yckceo_live_sources.rs`
-- **`src/` 内的内联单元测试**（346 个）：解析器、URL 处理、repo、正文池与版本时间线、TXT 章节拆分与匹配、服务层纯逻辑、Cookie 会话工具
+- **`tests/` 下的集成测试**（27 个文件，175 个用例）：`auth_flow.rs`（用例最多，24 个）、`book_source_compat.rs`（17 个，覆盖书源格式兼容）、`book_source_proxy_flow.rs`、`security_headers.rs`、`content_singleflight.rs`、`cached_search_flow.rs`、`batch_content_flow.rs`、`chapter_edit_flow.rs`、`chapter_image_flow.rs`、`chapter_list_etag.rs`、`image_pipeline.rs`、`review_flow.rs`、`webdav_flow.rs`、`agent_sidecar_flow.rs`、`local_txt_book.rs`、`local_epub_book.rs`、`ai_book_memory.rs`、`ai_proxy.rs`、`ai_proxy_flow.rs`、`js_compat.rs`、`userdata_flow.rs`、`upstream_error_flow.rs`、`chapter_cache_key.rs`、`book_source_validation.rs`、`book_source_headers.rs`、`global_identity.rs`、`yckceo_live_sources.rs`
+- **`src/` 内的内联单元测试**（372 个）：解析器、URL 处理、repo、正文池与版本时间线、TXT 章节拆分与匹配、服务层纯逻辑、Cookie 会话工具、入站守卫、图片派生与批量接口
 
 ::: warning 有一个用例会访问真实网络
 `tests/yckceo_live_sources.rs` 会抓取在线书源列表，在无网络或受限环境下失败属于预期行为，不代表代码有问题。
@@ -38,7 +38,7 @@ npm install
 npm test                       # vitest run
 ```
 
-覆盖 Pinia store 与工具函数，共 44 个 `.test.ts`（344 个用例）。
+覆盖 Pinia store 与工具函数，共 46 个 `.test.ts`（388 个用例）。
 
 ## 3. 构建与静态检查
 
