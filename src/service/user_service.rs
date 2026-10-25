@@ -143,7 +143,7 @@ impl UserService {
     /// 启动时保证唯一账号存在，并应用 `ADMIN_PASSWORD` 覆盖。
     ///
     /// - 账号不存在：按 `ADMIN_USERNAME` 建号；`ADMIN_PASSWORD` 非空用它，
-    ///   否则随机生成强密码并打印到启动日志。
+    ///   否则随机生成强密码并打印到启动 stderr（不进滚动日志文件）。
     /// - 账号已存在且 `ADMIN_PASSWORD` 非空、与当前密码不同：强制覆盖并
     ///   自增 `token_version`（旧令牌全部失效）——这是忘记密码时的找回通道；
     ///   与当前密码相同则是 no-op，避免每次重启都踢掉所有登录态。
@@ -188,7 +188,10 @@ impl UserService {
         };
         self.upsert_user_row(&user).await?;
         if generated {
-            tracing::warn!(
+            // 初始随机密码只打到进程 stderr，不走 tracing：日志按天滚动落盘到
+            // storage/logs/，经 tracing 输出等于把可登录凭据长期写进日志文件。
+            // 这是首启唯一的密码告知通道，不能改成写文件（同样落盘）或静默。
+            eprintln!(
                 "\n============================================================\n  首次启动已创建账号 {username}\n  初始随机密码：{password}\n  请登录后在「设置 → 修改密码」中修改。\n  忘记密码：设置 ADMIN_PASSWORD 环境变量后重启即可强制重置。\n============================================================"
             );
         } else {
