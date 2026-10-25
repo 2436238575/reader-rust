@@ -203,10 +203,11 @@ export const useAiBookStore = defineStore('aiBook', () => {
   async function maybeAutoUpdate(book: Book, completedChapterIndex: number) {
     try {
       if (!book.bookId) return
+      // 复用 load() 回写 memory.value：null 结果会写成 emptyMemory(book)，
+      // 没开 AI 的书下一次翻章直接命中本地记忆，不再逐章询问 getAiBookMemory；
+      // 请求失败时 load() 抛错、由外层 catch 静默吞掉，memory 保持原状（与原行为一致）
       const current =
-        memory.value?.bookId === book.bookId
-          ? memory.value
-          : await getAiBookMemory(book.bookId).catch(() => null)
+        memory.value?.bookId === book.bookId ? memory.value : await load(book)
       if (!current?.enabled) return
       if ((current.processedChapterIndex ?? -1) >= completedChapterIndex) return
       await startTask(book, 'update_to_current', completedChapterIndex)
