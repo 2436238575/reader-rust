@@ -480,6 +480,26 @@ async fn font_shards_get_immutable_cache_while_plain_files_revalidate() {
         "字体分片应带 immutable 缓存头，实际: {cache_control}"
     );
 
+    // 分片索引样式表（约 96KB）：内容长期稳定，与分片同档 immutable，
+    // 走 /fonts.css 显式路由而不是 fallback
+    std::fs::write(
+        server.temp_dir.join("dist").join("fonts.css"),
+        "@font-face{font-family:MiSans}",
+    )
+    .unwrap();
+    let response = server.get("/fonts.css", None).await;
+    assert_eq!(response.status(), 200);
+    let cache_control = response
+        .headers()
+        .get("cache-control")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("")
+        .to_string();
+    assert!(
+        cache_control.contains("immutable"),
+        "fonts.css 应带 immutable 缓存头，实际: {cache_control}"
+    );
+
     // 无 hash 的根级文件保持每次重验证，不会被 fonts 规则误伤
     let response = server.get("/sw.js", None).await;
     let cache_control = response

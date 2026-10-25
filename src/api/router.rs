@@ -467,6 +467,16 @@ pub fn build_router(state: AppState) -> Router {
             "/fonts",
             ServeDir::new(PathBuf::from(&web_root).join("fonts")),
         )
+        .layer(immutable_cache.clone());
+
+    // 字体索引样式表（约 96KB）：内容随字体分片长期稳定（woff2 分片带
+    // 内容 hash，样式表只是分片清单），与分片同档 immutable。显式路由
+    // 先于 fallback 命中；no_cache 是 if_not_present，不会覆盖这里的值
+    let fonts_css_web = Router::new()
+        .route_service(
+            "/fonts.css",
+            ServeFile::new(PathBuf::from(&web_root).join("fonts.css")),
+        )
         .layer(immutable_cache);
 
     // 首页：CSP 只加在 HTML 响应上（脚本/样式/连接全部自托管收口到
@@ -482,6 +492,7 @@ pub fn build_router(state: AppState) -> Router {
         .merge(index_web)
         .merge(assets_web)
         .merge(fonts_web)
+        .merge(fonts_css_web)
         .fallback_service(ServeDir::new(web_root).append_index_html_on_directories(false))
         // HTML CSP 挂整个静态层：/ 走上面的 ServeFile，/index.html 由
         // fallback 的 ServeDir 提供——两处都要带 CSP。中间件内部按
