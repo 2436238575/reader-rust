@@ -668,6 +668,10 @@ export const useReaderStore = defineStore('reader', () => {
     // 清掉上一本书的编辑章集合：bookId 换了，旧集合会把这本书的章节
     // 误判成已编辑（或漏判），下面再与目录并行重新拉取本书的集合
     editedChapterKeys.value = new Set()
+    // 书源级「不支持评论/配图」结论也按书失效：换书/换源后重新判断
+    paraReviewsDisabledBySource = false
+    chapterReviewsDisabledBySource = false
+    chapterImagesDisabledBySource = false
     appStore.markBookOpened(b.bookId || b.bookUrl)
     currentIndex.value = b.durChapterIndex || 0
     chapterScrollProgress.value = 0
@@ -923,6 +927,14 @@ export const useReaderStore = defineStore('reader', () => {
 
   /* ─── 评论（章评 / 段评） ─── */
 
+  /* 书源级「不支持」结论：后端 enabled:false 只取决于书源声明没声明规则，
+     与章节无关。同一本书记住后翻章不再重复请求（loadBook 时重置，换书/换源
+     重新判断；显式刷新正文也会重新判断）。取舍：书源规则改了，要刷新本章
+     或重开这本书才生效，不做自动轮询 */
+  let paraReviewsDisabledBySource = false
+  let chapterReviewsDisabledBySource = false
+  let chapterImagesDisabledBySource = false
+
   /**
    * 拉取当前章节的段评概览与章评第一页。
    *
@@ -938,6 +950,13 @@ export const useReaderStore = defineStore('reader', () => {
     }
     // 只认自己那次请求的结果，避免快速翻章时旧响应覆盖新章节
     const requestedChapterUrl = chapter.url
+    const skipParaReviews = !refresh && paraReviewsDisabledBySource
+    const skipChapterReviews = !refresh && chapterReviewsDisabledBySource
+    // 两条规则都不支持：不再发任何请求，同时清掉上一章残留的评论
+    if (skipParaReviews && skipChapterReviews) {
+      resetReviews()
+      return
+    }
     reviewsLoading.value = true
     try {
       if (!currentBook.bookId) throw new Error('书籍缺少 bookId')
@@ -956,16 +975,32 @@ export const useReaderStore = defineStore('reader', () => {
               ? 'edited'
               : config.contentVersion,
       }
-      // 顺序请求：第二个请求能复用第一个已经取回的章节正文响应
-      const indexResp = await getParaCommentIndex(params)
-      const chapterResp = await getChapterComments({ ...params, page: 1 })
-      if (chapters.value[currentIndex.value]?.url !== requestedChapterUrl) return
-      paraReviewEnabled.value = indexResp.enabled
-      paraReviewIndex.value = indexResp.data?.paras || []
-      reviewEnabled.value = chapterResp.enabled
-      reviewAuthorMarks.value = chapterResp.authorMarks === true
-      chapterCommentTotal.value = chapterResp.data?.total || 0
-      chapterComments.value = chapterResp.data || null
+      // 段评与章评是两条独立规则：只禁用其一时，另一个仍然请求
+      if (skipParaReviews) {
+        paraReviewEnabled.value = false
+        paraReviewIndex.value = []
+      } else {
+        // 先取段评概览：后面的章评请求能复用这次取回的章节正文响应
+        const indexResp = await getParaCommentIndex(params)
+        if (chapters.value[currentIndex.value]?.url !== requestedChapterUrl) return
+        paraReviewsDisabledBySource = indexResp.enabled !== true
+        paraReviewEnabled.value = indexResp.enabled
+        paraReviewIndex.value = indexResp.data?.paras || []
+      }
+      if (skipChapterReviews) {
+        reviewEnabled.value = false
+        reviewAuthorMarks.value = false
+        chapterCommentTotal.value = 0
+        chapterComments.value = null
+      } else {
+        const chapterResp = await getChapterComments({ ...params, page: 1 })
+        if (chapters.value[currentIndex.value]?.url !== requestedChapterUrl) return
+        chapterReviewsDisabledBySource = chapterResp.enabled !== true
+        reviewEnabled.value = chapterResp.enabled
+        reviewAuthorMarks.value = chapterResp.authorMarks === true
+        chapterCommentTotal.value = chapterResp.data?.total || 0
+        chapterComments.value = chapterResp.data || null
+      }
     } catch {
       if (chapters.value[currentIndex.value]?.url === requestedChapterUrl) resetReviews()
     } finally {
@@ -998,6 +1033,12 @@ export const useReaderStore = defineStore('reader', () => {
     }
     // 只认自己那次请求的结果，避免快速翻章时旧响应覆盖新章节
     const requestedChapterUrl = chapter.url
+    // 书源没有配图规则是书源级结论（见 loadChapterReviews 上方的标记说明）：
+    // 记住后本书翻章不再请求，只清掉上一章的配图避免残留在新章上
+    if (chapterImagesDisabledBySource) {
+      resetChapterImages()
+      return
+    }
     try {
       if (!currentBook.bookId) throw new Error('书籍缺少 bookId')
       const resp = await getChapterImages({
@@ -1007,6 +1048,7 @@ export const useReaderStore = defineStore('reader', () => {
       if (chapters.value[currentIndex.value]?.url !== requestedChapterUrl) return
       chapterImagesEnabled.value = resp?.enabled === true
       chapterImages.value = resp?.images || []
+      if (resp?.enabled !== true) chapterImagesDisabledBySource = true
     } catch {
       if (chapters.value[currentIndex.value]?.url === requestedChapterUrl) resetChapterImages()
     }
@@ -1175,6 +1217,10 @@ export const useReaderStore = defineStore('reader', () => {
 
   async function refreshContent() {
     if (!book.value || !chapters.value[currentIndex.value]) return
+    // 显式刷新绕过「书源不支持配图」的缓存结论重新判断：书源可能刚补了
+    // 规则。reset 在 setActiveChapterState 之前，随后触发的 loadChapterImages
+    // 就会真正发请求（评论走 loadChapterReviews(index, true)，自带重判）
+    chapterImagesDisabledBySource = false
     // 快照当前章节：await 期间用户可能已翻章，旧正文不能盖到新章上。
     // 与 loadChapter 共用序号，翻章后迟到的刷新结果直接作废。
     const index = currentIndex.value
