@@ -451,7 +451,7 @@ export function appendLocalEpubAssetAuth(root: HTMLElement) {
   })
 }
 
-/** 搜索关键字高亮：空 query 直接跳过。 */
+/** 搜索关键字高亮：空 query 直接跳过。已有 MARK（如常驻关键词）不进入，重叠处关键词优先。 */
 export function highlightSearchText(root: HTMLElement, query: string) {
   if (!query) return
   const regex = new RegExp(escapeRegExp(query), 'gi')
@@ -583,9 +583,10 @@ export function applyUnderlineMarks(root: HTMLElement, marks: UnderlineMarkSpec[
 /**
  * 常驻关键词高亮：命中处包 `<mark class="kw-highlight">` 并上底色。
  *
- * 调用点要排在 highlightSearchText 之后：TreeWalker 不进已有 MARK 内部，
- * 搜索高亮先注入，重叠时搜索赢（用户正在找的词优先显眼）。多个关键词按
- * 数组顺序逐趟标记，先注入的关键词在重叠命中处赢。
+ * 现在的注入顺序是关键词先于搜索高亮：关键词在 HTML 构建阶段包 mark，
+ * 搜索高亮是渲染后的 DOM 后处理；搜索的 TreeWalker 不进已有 MARK 内部，
+ * 重叠时关键词底色优先。多个关键词按数组顺序逐趟标记，先注入的关键词
+ * 在重叠命中处赢。
  *
  * 已知限制（与搜索高亮一致）：横翻分页器对含内联标签的段落走字符切分
  * 重建，跨页切段里 mark 会丢，整段放进一页时正常。
