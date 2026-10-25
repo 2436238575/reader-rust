@@ -331,32 +331,30 @@ function togglePasswordPanel() {
   }
 }
 
-async function handleChangePassword() {
-  if (!passwordForm.oldPassword || !passwordForm.newPassword || !passwordForm.confirmPassword) {
-    appStore.showToast('请填写完整的密码信息', 'warning')
-    return
-  }
-  if (passwordForm.newPassword !== passwordForm.confirmPassword) {
-    appStore.showToast('两次输入的新密码不一致', 'warning')
-    return
-  }
-  changingPassword.value = true
-  try {
-    const updated = await changePassword(passwordForm.oldPassword, passwordForm.newPassword)
-    // 后端改密时自增 token_version 并为当前设备换发新的一对令牌，必须保存，
-    // 否则当前设备会被静默登出
-    if (updated?.accessToken) {
-      appStore.setAuthTokens(updated)
+  async function handleChangePassword() {
+    if (!passwordForm.oldPassword || !passwordForm.newPassword || !passwordForm.confirmPassword) {
+      appStore.showToast('请填写完整的密码信息', 'warning')
+      return
     }
-    appStore.showToast('密码修改成功', 'success')
-    showPasswordPanel.value = false
-    resetPasswordForm()
-  } catch (error) {
-    appStore.showToast((error as Error).message || '密码修改失败', 'error')
-  } finally {
-    changingPassword.value = false
+    if (passwordForm.newPassword !== passwordForm.confirmPassword) {
+      appStore.showToast('两次输入的新密码不一致', 'warning')
+      return
+    }
+    changingPassword.value = true
+    try {
+      const updated = await changePassword(passwordForm.oldPassword, passwordForm.newPassword)
+      // 后端改密时自增 token_version（其他设备登出）并已为当前设备换发
+      // Cookie；前端只更新用户信息与 hint（新过期时间），不保存任何令牌
+      appStore.setUser(updated)
+      appStore.showToast('密码修改成功', 'success')
+      showPasswordPanel.value = false
+      resetPasswordForm()
+    } catch (error) {
+      appStore.showToast((error as Error).message || '密码修改失败', 'error')
+    } finally {
+      changingPassword.value = false
+    }
   }
-}
 
 function openSourceManager() {
   close()

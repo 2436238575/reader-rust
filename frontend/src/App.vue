@@ -44,7 +44,8 @@ const appStore = useAppStore()
 const showHeader = computed(() => route.name !== 'reader')
 
 onMounted(() => {
-  // 过期/缺失的 Access Token 在这里先用 Refresh Token 换新，避免首屏请求集体 401
+  // 会话凭据在 HttpOnly Cookie 里：这里先做旧令牌迁移与 Cookie 有效性核验
+  // （getUserInfo 为空时刷新再取），避免首屏请求集体 401
   void appStore.bootstrapAuth()
   startAuthLifecycle()
 })
