@@ -30,8 +30,9 @@ export { DUAL_PAGE_MIN_WIDTH }
  *
  * 必须遍历 childNodes 而不是 children：正文 HTML 顶层可能直接挂着文本节点
  * （如「开头文字<p>段落</p>」），只取元素子节点会把裸文本整个丢掉。
- * 非空白文本节点包一个 <p> 保留原文（走 buildParagraphHtml 转义，与正常段落
- * 同构，后续可参与按字符拆页）；纯空白节点跳过；元素节点保持原样——p 仍走
+ * 非空白文本节点包一个 <p> 保留原文（走 buildParagraphHtml 转义，并带上
+ * reader-indent 再过 normalizeParagraphHtml，与正常段落同构——首行缩进一致，
+ * 后续可参与按字符拆页）；纯空白节点跳过；元素节点保持原样——p 仍走
  * normalizeParagraphHtml 补缩进样式，figure/img 等原子块原样保留、不包不切。
  */
 export function splitTopLevelBlocks(html: string): string[] {
@@ -42,7 +43,9 @@ export function splitTopLevelBlocks(html: string): string[] {
     if (node.nodeType === Node.TEXT_NODE) {
       const text = node.textContent || ''
       if (!text.trim()) return
-      blocks.push(buildParagraphHtml('', text))
+      // 裸文本与正常段落同构：补 reader-indent 后 normalize 出首行缩进，
+      // 否则该段在横翻下没有 text-indent（CSS 只认 p.reader-indent）
+      blocks.push(normalizeParagraphHtml(buildParagraphHtml('', text, 'reader-indent')))
       return
     }
     if (node.nodeType !== Node.ELEMENT_NODE) return

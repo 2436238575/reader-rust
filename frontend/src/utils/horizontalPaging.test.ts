@@ -133,16 +133,26 @@ describe('splitTopLevelBlocks 顶层块拆分', () => {
   it('开头裸文本包成 <p> 保留，不丢字、顺序不变', () => {
     const blocks = splitTopLevelBlocks('开头文字<p>段落</p>')
     expect(blocks).toHaveLength(2)
-    expect(blocks[0]).toBe('<p>开头文字</p>')
+    expect(blocks[0]).toBe('<p class="reader-indent" style="text-indent: 2em">开头文字</p>')
     expect(blocks[1]).toContain('<p')
     expect(blocks[1]).toContain('段落')
+  })
+
+  it('顶层裸文本段落带 reader-indent 首行缩进，与正常段落同构', () => {
+    const bare = splitTopLevelBlocks('裸文本段落')
+    expect(bare).toHaveLength(1)
+    expect(bare[0]).toContain('reader-indent')
+    expect(bare[0]).toContain('text-indent: 2em')
+    // 与同内容正常段落经 normalize 后的结果完全一致
+    const normal = splitTopLevelBlocks('<p class="reader-indent">裸文本段落</p>')
+    expect(bare[0]).toBe(normal[0])
   })
 
   it('章末裸文本同样保留；文本里的实体按原文转义回写', () => {
     const blocks = splitTopLevelBlocks('<p>段落</p>结尾 &lt; 文字')
     expect(blocks).toHaveLength(2)
     expect(blocks[0]).toContain('段落')
-    expect(blocks[1]).toBe('<p>结尾 &lt; 文字</p>')
+    expect(blocks[1]).toBe('<p class="reader-indent" style="text-indent: 2em">结尾 &lt; 文字</p>')
   })
 
   it('元素间的纯空白文本节点跳过，不产生空段落', () => {
@@ -165,7 +175,7 @@ describe('splitTopLevelBlocks 顶层块拆分', () => {
       '图前说明<figure class="chapter-figure"><img src="x" alt=""></figure>'
     )
     expect(blocks).toHaveLength(2)
-    expect(blocks[0]).toBe('<p>图前说明</p>')
+    expect(blocks[0]).toBe('<p class="reader-indent" style="text-indent: 2em">图前说明</p>')
     expect(blocks[1]).toContain('<figure')
     expect(blocks[1]).toContain('<img')
     expect(blocks[1]).toContain('chapter-figure')
