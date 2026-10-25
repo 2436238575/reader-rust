@@ -310,6 +310,11 @@ pub fn build_router(state: AppState) -> Router {
             "/reader3/getBookContent",
             get(handlers::get_book_content).post(handlers::get_book_content),
         )
+        // 批量正文（预加载用）：单章语义不变，一次最多 10 章、并发 4
+        .route(
+            "/reader3/getBookContents",
+            post(handlers::get_book_contents),
+        )
         .route(
             "/reader3/getChapterImages",
             get(handlers::get_chapter_images).post(handlers::get_chapter_images),

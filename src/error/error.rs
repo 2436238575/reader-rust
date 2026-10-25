@@ -147,26 +147,38 @@ impl AppError {
             other => other.to_string(),
         }
     }
+
+    /// 面向客户端的错误文案：与 `IntoResponse` 落进 `errorMsg` 的字符串一致。
+    ///
+    /// 批量接口（如 getBookContents）单条失败不走 HTTP 状态码，而是把每章的
+    /// 失败原因写进响应里的 `error` 字段；用这个方法保证同一种错误在单章接口
+    /// 的 `errorMsg` 与批量接口的 `error` 里文案一致。内部细节（Db/Http/Internal）
+    /// 只暴露笼统文案，不泄露 URL 或堆栈。
+    pub fn client_message(&self) -> String {
+        match self {
+            AppError::Unauthorized(msg)
+            | AppError::NotFound(msg)
+            | AppError::BadRequest(msg)
+            | AppError::Blocked(msg)
+            | AppError::Conflict(msg) => msg.clone(),
+            AppError::Upstream { message, .. } => message.clone(),
+            AppError::Db(_) => "database error".to_string(),
+            AppError::Http(_) => "upstream error".to_string(),
+            AppError::Internal(_) => "internal error".to_string(),
+        }
+    }
 }
 
 impl IntoResponse for AppError {
     fn into_response(self) -> Response {
-        let (status, message) = match &self {
-            AppError::Unauthorized(msg) => (StatusCode::UNAUTHORIZED, msg.clone()),
-            AppError::NotFound(msg) => (StatusCode::NOT_FOUND, msg.clone()),
-            AppError::BadRequest(msg) => (StatusCode::BAD_REQUEST, msg.clone()),
-            AppError::Blocked(msg) => (StatusCode::BAD_REQUEST, msg.clone()),
-            AppError::Conflict(msg) => (StatusCode::CONFLICT, msg.clone()),
-            AppError::Upstream { message, .. } => (StatusCode::BAD_GATEWAY, message.clone()),
-            AppError::Db(_) => (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "database error".to_string(),
-            ),
-            AppError::Http(_) => (StatusCode::BAD_GATEWAY, "upstream error".to_string()),
-            AppError::Internal(_) => (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "internal error".to_string(),
-            ),
+        let status = match &self {
+            AppError::Unauthorized(_) => StatusCode::UNAUTHORIZED,
+            AppError::NotFound(_) => StatusCode::NOT_FOUND,
+            AppError::BadRequest(_) | AppError::Blocked(_) => StatusCode::BAD_REQUEST,
+            AppError::Conflict(_) => StatusCode::CONFLICT,
+            AppError::Upstream { .. } => StatusCode::BAD_GATEWAY,
+            AppError::Db(_) | AppError::Internal(_) => StatusCode::INTERNAL_SERVER_ERROR,
+            AppError::Http(_) => StatusCode::BAD_GATEWAY,
         };
         // 走 tracing 而非 println!：可被统一收集/过滤，也避免向 stdout 倾倒。
         // 4xx 是调用方的问题，warn 即可；一律 error! 会把「未登录」这类
@@ -177,7 +189,7 @@ impl IntoResponse for AppError {
         } else {
             tracing::warn!(error = %self.log_summary(), "请求被拒绝");
         }
-        let body = Json(ApiResponse::<serde_json::Value>::err(message));
+        let body = Json(ApiResponse::<serde_json::Value>::err(self.client_message()));
         (status, body).into_response()
     }
 }

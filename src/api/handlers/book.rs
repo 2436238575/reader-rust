@@ -90,6 +90,36 @@ pub struct BookContentRequest {
     pub variant: Option<String>,
 }
 
+/// 批量正文（预加载）单次章节数上限。
+pub const MAX_BATCH_CONTENT_CHAPTERS: usize = 10;
+/// 批量正文的章节读取并发上限：预加载不该打满上游。
+const BATCH_CONTENT_CONCURRENCY: usize = 4;
+
+#[derive(Debug, Deserialize)]
+pub struct BatchContentChapter {
+    pub index: Option<i32>,
+    #[serde(rename = "chapterUrl")]
+    pub chapter_url: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct BookContentsBatchRequest {
+    /// 网络书必填；本地 TXT/EPUB（chapterUrl 自带 local: 前缀）可缺省。
+    #[serde(rename = "bookId")]
+    pub book_id: Option<String>,
+    pub chapters: Vec<BatchContentChapter>,
+    /// 与单章接口同义：`upstream` 返回上游原版，缺省/其它值返回默认版本。
+    pub variant: Option<String>,
+}
+
+/// 批量接口里单章的结果：某章失败只写 `error`，不影响其他章节。
+#[derive(Debug, Serialize)]
+pub struct BatchContentItem {
+    pub index: i32,
+    pub data: Option<serde_json::Value>,
+    pub error: Option<String>,
+}
+
 /// 正文版本：默认版本（用户选择 > 用户版本 > 最新上游），或只预览最新上游。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ContentVariant {
@@ -817,18 +847,121 @@ pub async fn get_book_content(
     QueryOrBody(req): QueryOrBody<BookContentRequest>,
 ) -> Result<Json<ApiResponse<serde_json::Value>>, AppError> {
     let user_ns = user.0.ns.clone();
-
-    let do_refresh = req.refresh.unwrap_or(0) > 0;
     let variant = ContentVariant::parse(req.variant.as_deref());
-    let force_upstream = variant == ContentVariant::Upstream;
+    let data = read_chapter_content(
+        &state,
+        &user_ns,
+        req.book_id.as_deref(),
+        req.chapter_url.as_deref(),
+        req.index,
+        variant,
+        req.refresh.unwrap_or(0) > 0,
+    )
+    .await?;
+    Ok(Json(ApiResponse::ok(
+        serde_json::to_value(data).unwrap_or_default(),
+    )))
+}
 
-    if req.chapter_url.as_deref().is_some_and(is_local_txt_url) {
-        let url = req
+/// 批量读取章节正文（预加载用）：一次最多 10 章、并发上限 4。
+///
+/// 每章独立成败——失败章节 `data` 为 null、原因写进 `error`，其余章节照常
+/// 返回；整体始终 HTTP 200。章节数量或 chapterUrl 缺失这类请求本身的问题
+/// 是 400（整批拒绝，避免半执行）。不做 refresh：预加载不需要强刷。
+pub async fn get_book_contents(
+    State(state): State<AppState>,
+    user: CurrentUser,
+    Json(req): Json<BookContentsBatchRequest>,
+) -> Result<Json<ApiResponse<serde_json::Value>>, AppError> {
+    if req.chapters.is_empty() || req.chapters.len() > MAX_BATCH_CONTENT_CHAPTERS {
+        return Err(AppError::BadRequest(format!(
+            "chapters 需要提供 1 到 {MAX_BATCH_CONTENT_CHAPTERS} 条"
+        )));
+    }
+    if let Some(position) = req.chapters.iter().position(|chapter| {
+        chapter
             .chapter_url
             .as_deref()
-            .ok_or_else(|| AppError::BadRequest("chapterUrl required".to_string()))?;
+            .is_none_or(|v| v.trim().is_empty())
+    }) {
+        return Err(AppError::BadRequest(format!(
+            "第 {} 条章节缺少 chapterUrl",
+            position + 1
+        )));
+    }
+
+    let user_ns = user.0.ns.clone();
+    let variant = ContentVariant::parse(req.variant.as_deref());
+    let book_id = req.book_id.filter(|v| !v.trim().is_empty());
+
+    let mut results: Vec<(usize, BatchContentItem)> = futures::stream::iter(
+        req.chapters
+            .into_iter()
+            .enumerate()
+            .map(|(position, chapter)| {
+                let state = state.clone();
+                let user_ns = user_ns.clone();
+                let book_id = book_id.clone();
+                async move {
+                    let index = chapter.index.unwrap_or(0);
+                    let outcome = read_chapter_content(
+                        &state,
+                        &user_ns,
+                        book_id.as_deref(),
+                        chapter.chapter_url.as_deref(),
+                        chapter.index,
+                        variant,
+                        false,
+                    )
+                    .await;
+                    let item = match outcome {
+                        Ok(data) => BatchContentItem {
+                            index,
+                            data: Some(serde_json::to_value(data).unwrap_or_default()),
+                            error: None,
+                        },
+                        Err(error) => BatchContentItem {
+                            index,
+                            data: None,
+                            error: Some(error.client_message()),
+                        },
+                    };
+                    (position, item)
+                }
+            }),
+    )
+    .buffer_unordered(BATCH_CONTENT_CONCURRENCY)
+    .collect::<Vec<_>>()
+    .await;
+    // buffer_unordered 按完成顺序产出：按请求顺序回排，前端按下标对号入座。
+    results.sort_unstable_by_key(|(position, _)| *position);
+    let chapters: Vec<BatchContentItem> = results.into_iter().map(|(_, item)| item).collect();
+
+    Ok(Json(ApiResponse::ok(
+        serde_json::to_value(chapters).unwrap_or_default(),
+    )))
+}
+/// 单章正文的完整读取链路：本地 TXT/EPUB 分支 + 网络书分支
+/// （版本解析、强刷、超期后台回源）。
+///
+/// 单章 getBookContent 与批量 getBookContents 共用这一份实现，
+/// 避免两套版本解析/回源/本地书逻辑各自漂移。
+async fn read_chapter_content(
+    state: &AppState,
+    user_ns: &str,
+    book_id: Option<&str>,
+    chapter_url: Option<&str>,
+    index: Option<i32>,
+    variant: ContentVariant,
+    do_refresh: bool,
+) -> Result<ChapterContentData, AppError> {
+    let force_upstream = variant == ContentVariant::Upstream;
+
+    if chapter_url.is_some_and(is_local_txt_url) {
+        let url =
+            chapter_url.ok_or_else(|| AppError::BadRequest("chapterUrl required".to_string()))?;
         let chapter_url = if is_local_txt_url(url) && !url.contains('#') {
-            let index = req.index.unwrap_or(0).max(0) as usize;
+            let index = index.unwrap_or(0).max(0) as usize;
             format!(
                 "{}#{}",
                 repair_encoded_url(url).trim_end_matches('#'),
@@ -838,9 +971,9 @@ pub async fn get_book_content(
             repair_encoded_url(url)
         };
         return local_book_content(
-            &state,
-            &user_ns,
-            req.book_id.as_deref().filter(|v| !v.trim().is_empty()),
+            state,
+            user_ns,
+            book_id.filter(|v| !v.trim().is_empty()),
             &chapter_url,
             variant,
             |ns, url| {
@@ -854,13 +987,11 @@ pub async fn get_book_content(
         .await;
     }
 
-    if req.chapter_url.as_deref().is_some_and(is_local_epub_url) {
-        let url = req
-            .chapter_url
-            .as_deref()
-            .ok_or_else(|| AppError::BadRequest("chapterUrl required".to_string()))?;
+    if chapter_url.is_some_and(is_local_epub_url) {
+        let url =
+            chapter_url.ok_or_else(|| AppError::BadRequest("chapterUrl required".to_string()))?;
         let chapter_url = if is_local_epub_url(url) && !url.contains('#') {
-            let index = req.index.unwrap_or(0).max(0) as usize;
+            let index = index.unwrap_or(0).max(0) as usize;
             format!(
                 "{}#{}",
                 repair_encoded_url(url).trim_end_matches('#'),
@@ -870,9 +1001,9 @@ pub async fn get_book_content(
             repair_encoded_url(url)
         };
         return local_book_content(
-            &state,
-            &user_ns,
-            req.book_id.as_deref().filter(|v| !v.trim().is_empty()),
+            state,
+            user_ns,
+            book_id.filter(|v| !v.trim().is_empty()),
             &chapter_url,
             variant,
             |ns, url| {
@@ -886,31 +1017,29 @@ pub async fn get_book_content(
         .await;
     }
 
-    let book_id = req
-        .book_id
+    let book_id = book_id
         .filter(|v| !v.trim().is_empty())
         .ok_or_else(|| AppError::BadRequest("bookId required".to_string()))?;
-    let chapter_url = req
-        .chapter_url
+    let chapter_url = chapter_url
         .filter(|v| !v.trim().is_empty())
-        .map(|v| repair_encoded_url(&v))
+        .map(repair_encoded_url)
         .ok_or_else(|| AppError::BadRequest("chapterUrl required".to_string()))?;
-    let resolved = resolve_book(&state, &user_ns, &book_id).await?;
+    let resolved = resolve_book(state, user_ns, book_id).await?;
 
     // 强刷：抓一份新的上游版本。失败时 refresh_chapter_content 已经回退到
     // 已有缓存；没有缓存才把错误抛出来。
     if do_refresh {
         state
             .book_service
-            .refresh_chapter_content(&user_ns, &book_id, &resolved.source, &chapter_url)
+            .refresh_chapter_content(user_ns, book_id, &resolved.source, &chapter_url)
             .await?;
     }
 
     let read = state
         .book_service
         .read_content(
-            &user_ns,
-            &book_id,
+            user_ns,
+            book_id,
             &resolved.source,
             &chapter_url,
             force_upstream,
@@ -920,8 +1049,8 @@ pub async fn get_book_content(
     if read.needs_revalidate && !do_refresh {
         let service = state.book_service.clone();
         let source = resolved.source.clone();
-        let user_ns = user_ns.clone();
-        let book_id = book_id.clone();
+        let user_ns = user_ns.to_string();
+        let book_id = book_id.to_string();
         let chapter_url = chapter_url.clone();
         tokio::spawn(async move {
             service
@@ -929,10 +1058,7 @@ pub async fn get_book_content(
                 .await;
         });
     }
-    let data = network_content_data(&state, &book_id, &chapter_url, read, force_upstream).await;
-    Ok(Json(ApiResponse::ok(
-        serde_json::to_value(data).unwrap_or_default(),
-    )))
+    Ok(network_content_data(state, book_id, &chapter_url, read, force_upstream).await)
 }
 
 /// 本地书的正文读取。用户版本来自正文池，上游原文来自本地文件。
@@ -944,7 +1070,7 @@ async fn local_book_content<F, Fut>(
     variant: ContentVariant,
     read_upstream: F,
     label: &str,
-) -> Result<Json<ApiResponse<serde_json::Value>>, AppError>
+) -> Result<ChapterContentData, AppError>
 where
     F: FnOnce(&str, &str) -> Fut,
     Fut: std::future::Future<Output = Result<String, AppError>>,
@@ -983,9 +1109,7 @@ where
         force_upstream,
     )
     .await;
-    Ok(Json(ApiResponse::ok(
-        serde_json::to_value(data).unwrap_or_default(),
-    )))
+    Ok(data)
 }
 
 pub async fn delete_book_cache(

@@ -95,6 +95,49 @@ GET /reader3/getBookContent
 吐出 HTML 时原样返回）。HTML 正文里的 `<img>` 由前端直接渲染——漫画/图集源、出版书插图、
 富文本正文都走这条路，不需要任何额外规则。
 
+## 批量获取章节正文（预加载）
+
+```text
+POST /reader3/getBookContents
+```
+
+一次请求读取最多 10 章正文，供前端预加载附近章节使用。请求体：
+
+| 参数        | 类型   | 必填 | 说明                                                        |
+| ----------- | ------ | ---- | ----------------------------------------------------------- |
+| `bookId`    | string | 否   | 网络书必填；本地 TXT/EPUB（`chapterUrl` 自带 `local-` 前缀）可缺省 |
+| `chapters`  | array  | 是   | 1 到 10 条；每项 `{ "index": number, "chapterUrl": string }`，`chapterUrl` 必填 |
+| `variant`   | string | 否   | 透传给每章，语义同单章接口                                   |
+
+```json
+{
+  "bookId": "book_1",
+  "chapters": [
+    { "index": 2, "chapterUrl": "https://example.com/c3" },
+    { "index": 3, "chapterUrl": "https://example.com/c4" }
+  ]
+}
+```
+
+响应 `data` 是与请求同序的数组，每章独立成败——**整体始终 HTTP 200**：
+
+```json
+{
+  "isSuccess": true,
+  "errorMsg": "",
+  "data": [
+    { "index": 2, "data": { "content": "...", "edited": false, "...": "同 getBookContent 的 data" }, "error": null },
+    { "index": 3, "data": null, "error": "上游站点返回错误（HTTP 403）" }
+  ]
+}
+```
+
+- `data` 与单章 `getBookContent` 的 `data` 完全同构（共用同一条读取链路）。
+- 某章失败只写该条的 `error`（文案与单章接口失败时的 `errorMsg` 一致），其余章节照常返回。
+- `chapters` 为空、超过 10 条或某条缺 `chapterUrl` 时整批拒绝，返回 **HTTP 400**（不做半执行）。
+- 章节读取并发上限 4，不会打满上游；不支持 `refresh`——预加载不需要强刷，超期章节与单章
+  接口一样由后台回源。
+
 ### 编辑版与版本历史
 
 用户编辑和手动导入都进同一个正文池，作为时间线里的用户版本；删除当前用户版本只清指针，
