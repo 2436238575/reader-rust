@@ -151,11 +151,17 @@ describe('bookshelf dirty flag and fetch dedup', () => {
   })
 
   it('keeps the shelf dirty when a fetch fails', async () => {
-    vi.mocked(getBookshelfWithCacheInfo).mockRejectedValue(new Error('网络错误'))
     const store = useBookshelfStore()
 
+    // 先成功一轮把 dirty 清掉：模拟「书架本来干净，加书/换源后主动重拉」
+    await store.fetchBooks()
+    expect(store.shelfDirty).toBe(false)
+
+    vi.mocked(getBookshelfWithCacheInfo).mockRejectedValue(new Error('网络错误'))
     await expect(store.fetchBooks()).rejects.toThrow('网络错误')
 
+    // 这次失败必须重新标脏，否则返回书架时 onActivated 会跳过，
+    // 新增/变更的书要等到下一次其他标脏操作才出现
     expect(store.shelfDirty).toBe(true)
   })
 })

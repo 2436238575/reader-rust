@@ -152,6 +152,10 @@ export const useBookshelfStore = defineStore('bookshelf', () => {
           shelfDirty.value = false
         }
       } catch (error) {
+        // 失败一定要保持脏：调用方可能在书架已干净时主动重拉（加书/换源后），
+        // 这次失败若把 dirty 留在 false，返回书架时 onActivated 会直接跳过，
+        // 新增/变更的内容要等到下一次其他标脏操作才出现
+        shelfDirty.value = true
         // 失败回退到最近一次成功的快照，不是空书架。原因要如实——
         // 后端可达但上游挂了（502）与浏览器离线是两回事
         if (!books.value.length && hydrateShelfSnapshot()) {
