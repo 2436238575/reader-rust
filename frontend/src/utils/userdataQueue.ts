@@ -93,6 +93,27 @@ function scheduleRetry() {
 }
 
 /**
+ * 登出/会话拆除时调用：丢弃全部待写文档并取消防抖与退避重试定时器。
+ * 会话 Cookie 随登出失效，任何残留发送都只会 401 并触发 need-login，
+ * 把刚登出的用户强制弹去登录页。各文档本地都有镜像（localStorage），
+ * 下次登录的同步合并会推回，丢弃不丢数据。
+ * 在途批量无法中断，但其落地回调对空队列全部 no-op（成功时引用守卫
+ * 找不到条目、失败时 scheduleRetry 因 pending 为空直接返回）。
+ */
+export function cancelUserdataQueue() {
+  if (debounceTimer) {
+    clearTimeout(debounceTimer)
+    debounceTimer = null
+  }
+  if (retryTimer) {
+    clearTimeout(retryTimer)
+    retryTimer = null
+  }
+  retryAttempts = 0
+  pending.clear()
+}
+
+/**
  * 卸载/切后台时的最后一搏：发完即清，不等结果。这几类文档本地都有镜像
  * （localStorage），即使丢失也会在下次同步时补回；重复写是同值覆盖，无副作用。
  */

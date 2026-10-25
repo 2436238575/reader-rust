@@ -145,6 +145,61 @@ describe('失败重试', () => {
   })
 })
 
+describe('登出取消', () => {
+  it('cancelUserdataQueue 丢弃待写文档并取消防抖定时器', async () => {
+    const queue = await loadQueue()
+    queue.queueUserdataSave('reading-stats', { totalSeconds: 1 })
+
+    queue.cancelUserdataQueue()
+
+    await vi.advanceTimersByTimeAsync(10_000)
+    expect(saveUserdataBatch).not.toHaveBeenCalled()
+  })
+
+  it('登出时 flush 失败已排期的退避重试被取消，不再发出请求（否则必然 401 触发 need-login）', async () => {
+    saveUserdataBatch.mockRejectedValue(new Error('offline'))
+    const queue = await loadQueue()
+    queue.queueUserdataSave('a', 1)
+    await vi.advanceTimersByTimeAsync(200) // 首发失败，已排 1s 退避重试
+    expect(saveUserdataBatch).toHaveBeenCalledTimes(1)
+
+    queue.cancelUserdataQueue()
+
+    await vi.advanceTimersByTimeAsync(120_000)
+    expect(saveUserdataBatch).toHaveBeenCalledTimes(1)
+  })
+
+  it('取消时在途批量随后失败也不再排退避重试', async () => {
+    const inFlightReq = deferred()
+    saveUserdataBatch.mockReturnValueOnce(inFlightReq.promise)
+    const queue = await loadQueue()
+    queue.queueUserdataSave('a', 1)
+    await vi.advanceTimersByTimeAsync(200) // 首发在途
+    expect(saveUserdataBatch).toHaveBeenCalledTimes(1)
+
+    queue.cancelUserdataQueue()
+    inFlightReq.reject(new Error('offline'))
+
+    await vi.advanceTimersByTimeAsync(120_000)
+    expect(saveUserdataBatch).toHaveBeenCalledTimes(1)
+  })
+
+  it('取消后重新入队正常工作：防抖、发送与重试预算都复位', async () => {
+    saveUserdataBatch.mockRejectedValue(new Error('offline'))
+    const queue = await loadQueue()
+    queue.queueUserdataSave('a', 1)
+    await vi.advanceTimersByTimeAsync(200)
+    queue.cancelUserdataQueue()
+
+    saveUserdataBatch.mockResolvedValue(undefined)
+    queue.queueUserdataSave('b', 2)
+    await vi.advanceTimersByTimeAsync(200)
+
+    expect(saveUserdataBatch).toHaveBeenCalledTimes(2)
+    expect(saveUserdataBatch).toHaveBeenLastCalledWith([{ name: 'b', value: 2 }])
+  })
+})
+
 describe('页面卸载补发', () => {
   it('pagehide 时用裸 fetch + keepalive 补发当前队列', async () => {
     const fetchMock = vi.fn().mockResolvedValue(undefined)

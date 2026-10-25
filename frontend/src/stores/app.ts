@@ -17,6 +17,7 @@ import {
   startAuthLifecycle,
   stopAuthLifecycle,
 } from '../utils/authSession'
+import { cancelUserdataQueue } from '../utils/userdataQueue'
 import {
   loadLocalReadingStats,
   persistLocalReadingStats,
@@ -239,6 +240,10 @@ export const useAppStore = defineStore('app', () => {
     statsSynced = false
     clearAuthHint()
     stopAuthLifecycle()
+    // 会话 Cookie 已失效：取消 userdata 待写队列，否则残留的退避重试会
+    // 401 触发 need-login，把刚登出的用户强制弹去登录页；待写文档本地有镜像，
+    // 下次登录的同步合并会推回，丢弃不丢数据
+    cancelUserdataQueue()
   }
 
   function updateUserInfo(next: UserInfo | null) {

@@ -4,6 +4,7 @@ import { createPinia, setActivePinia } from 'pinia'
 import { useAppStore } from './app'
 import { getUserInfo } from '../api/user'
 import { refreshAccessToken } from '../utils/authSession'
+import { cancelUserdataQueue } from '../utils/userdataQueue'
 import {
   LEGACY_ACCESS_TOKEN_EXPIRES_AT_STORAGE_KEY,
   LEGACY_ACCESS_TOKEN_STORAGE_KEY,
@@ -59,8 +60,14 @@ vi.mock('../utils/systemUi', () => ({
   applySystemTheme: vi.fn(),
 }))
 
+// clearUser 要取消 userdata 待写队列；mock 掉避免真实模块挂 window 监听
+vi.mock('../utils/userdataQueue', () => ({
+  cancelUserdataQueue: vi.fn(),
+}))
+
 const getUserInfoMock = vi.mocked(getUserInfo)
 const refreshMock = vi.mocked(refreshAccessToken)
+const cancelUserdataQueueMock = vi.mocked(cancelUserdataQueue)
 
 function createUserInfo(username = 'admin'): UserInfo {
   return { username }
@@ -83,6 +90,7 @@ beforeEach(() => {
   setActivePinia(createPinia())
   getUserInfoMock.mockReset()
   refreshMock.mockReset()
+  cancelUserdataQueueMock.mockReset()
 })
 
 describe('app store fetchUserInfo 合并与新鲜期', () => {
@@ -173,6 +181,15 @@ describe('app store fetchUserInfo 合并与新鲜期', () => {
     expect(hasAuthHint()).toBe(false)
     expect(store.isLoggedIn).toBe(false)
     expect(store.userInfo).toBeNull()
+  })
+
+  it('clearUser 同时取消 userdata 待写队列，避免登出后残留重试 401 触发 need-login', () => {
+    const store = useAppStore()
+    store.setUser(createUserInfo())
+
+    store.clearUser()
+
+    expect(cancelUserdataQueueMock).toHaveBeenCalledTimes(1)
   })
 
   it('bootstrapAuth 成功后记录新鲜期，随后的 fetchUserInfo 不再请求', async () => {
