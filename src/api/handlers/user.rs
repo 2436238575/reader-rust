@@ -1,8 +1,14 @@
 use crate::api::AppState;
+use crate::app::config::AppConfig;
+use crate::auth::cookie::{
+    build_cookie, clear_cookie, cookie_secure, cookie_value, ACCESS_COOKIE, REFRESH_COOKIE,
+};
 use crate::auth::{CurrentUser, MaybeUser};
 use axum::{
     body::Bytes,
     extract::{ConnectInfo, Multipart, Query, State},
+    http::{header, HeaderMap},
+    response::{IntoResponse, Response},
     Json,
 };
 use serde::Deserialize;
@@ -143,16 +149,99 @@ pub async fn save_userdata(
     Ok(Json(ApiResponse::ok(Value::String(String::new()))))
 }
 
-/// 公开端点：登录。成功时返回含 JWT 的用户信息。
+/// 从请求 `Host` 头取值（Cookie 的 `Secure` 判定用）。
+fn host_header_value(headers: &HeaderMap) -> Option<&str> {
+    headers
+        .get(header::HOST)
+        .and_then(|value| value.to_str().ok())
+}
+
+/// 当前请求下会话 Cookie 是否加 `Secure`（COOKIE_SECURE 三态，见 auth::cookie）。
+fn session_cookie_secure(config: &AppConfig, headers: &HeaderMap) -> bool {
+    cookie_secure(&config.cookie_secure, host_header_value(headers))
+}
+
+/// 登录/改密/刷新成功的响应：两枚 HttpOnly Cookie + JSON。
+///
+/// `refreshToken` 仍由 service 返回（service 内部单测直接读它），在
+/// handler 层移出 JSON 转入 `Set-Cookie`；JSON 保留 `accessToken`
+/// 供 API 客户端（`Authorization: Bearer`）继续使用。
+fn session_response(config: &AppConfig, headers: &HeaderMap, mut data: Value) -> Response {
+    let access = data["accessToken"].as_str().unwrap_or_default().to_string();
+    let refresh = data["refreshToken"]
+        .as_str()
+        .unwrap_or_default()
+        .to_string();
+    if let Some(obj) = data.as_object_mut() {
+        obj.remove("refreshToken");
+    }
+    let secure = session_cookie_secure(config, headers);
+    let mut cookies = HeaderMap::new();
+    cookies.append(
+        header::SET_COOKIE,
+        build_cookie(ACCESS_COOKIE, &access, config.access_token_ttl_secs, secure),
+    );
+    cookies.append(
+        header::SET_COOKIE,
+        build_cookie(
+            REFRESH_COOKIE,
+            &refresh,
+            config.refresh_token_ttl_secs,
+            secure,
+        ),
+    );
+    (cookies, Json(ApiResponse::ok(data))).into_response()
+}
+
+/// 登出/会话失效的响应：`Max-Age=0` 清掉两枚 Cookie，其余属性与下发时
+/// 一致（同名同路径覆盖删除），JSON 仍按统一包装返回。
+fn session_cleared_response(config: &AppConfig, headers: &HeaderMap, data: Value) -> Response {
+    let secure = session_cookie_secure(config, headers);
+    let mut cookies = HeaderMap::new();
+    cookies.append(header::SET_COOKIE, clear_cookie(ACCESS_COOKIE, secure));
+    cookies.append(header::SET_COOKIE, clear_cookie(REFRESH_COOKIE, secure));
+    (cookies, Json(ApiResponse::ok(data))).into_response()
+}
+
+/// 刷新失败的 401：错误响应也要带清除 Cookie 的头。
+///
+/// 走 `Ok(...)` 而不是 `Err(AppError::Unauthorized)`：`AppError` 的
+/// `IntoResponse` 不知道会话 Cookie，`Err` 分支挂不上 `Set-Cookie`。
+fn unauthorized_with_cleared_cookies(config: &AppConfig, headers: &HeaderMap) -> Response {
+    let secure = session_cookie_secure(config, headers);
+    let mut response = AppError::Unauthorized(NEED_LOGIN.to_string()).into_response();
+    response
+        .headers_mut()
+        .append(header::SET_COOKIE, clear_cookie(ACCESS_COOKIE, secure));
+    response
+        .headers_mut()
+        .append(header::SET_COOKIE, clear_cookie(REFRESH_COOKIE, secure));
+    response
+}
+
+/// 从请求里取 Refresh Token：优先 `reader_refresh` Cookie，回退 JSON body
+/// `refreshToken`（旧客户端/CLI 的迁移路径；body 解析失败按缺失处理）。
+fn refresh_token_from_request(headers: &HeaderMap, body: &[u8]) -> Option<String> {
+    if let Some(token) = cookie_value(headers, REFRESH_COOKIE) {
+        return Some(token);
+    }
+    serde_json::from_slice::<RefreshTokenRequest>(body)
+        .ok()
+        .and_then(|req| req.refresh_token)
+        .filter(|token| !token.trim().is_empty())
+}
+
+/// 公开端点：登录。成功时下发两枚 HttpOnly Cookie，JSON 只保留用户信息
+/// 与 `accessToken` / `accessTokenExpiresIn`（`refreshToken` 不再交给 JS）。
 ///
 /// 不提供注册：唯一账号由启动时的 bootstrap 创建（`ADMIN_USERNAME` /
 /// `ADMIN_PASSWORD`，见 `UserService::bootstrap_admin`）。
 pub async fn login(
     State(state): State<AppState>,
     ConnectInfo(addr): ConnectInfo<std::net::SocketAddr>,
-    headers: axum::http::HeaderMap,
+    headers: HeaderMap,
     Json(req): Json<LoginRequest>,
-) -> Result<Json<ApiResponse<Value>>, AppError> {
+) -> Result<Response, AppError> {
     let username = req.username.unwrap_or_default();
     let password = req.password.unwrap_or_default();
     // 限速按客户端 IP 记账：对端命中 TRUSTED_PROXIES 时从 X-Forwarded-For
@@ -164,43 +253,49 @@ pub async fn login(
         .user_service
         .login(&username, &password, Some(&client_ip))
         .await?;
-    Ok(Json(ApiResponse::ok(data)))
+    Ok(session_response(&state.config, &headers, data))
 }
 
 /// 公开端点：用一次性 Refresh Token 换一对新令牌。
 ///
-/// 成功返回新的 `accessToken` + `refreshToken`；任何失败（不存在、已过期、
-/// 已吊销、重放）统一 401 `需要登录`，前端据此清理本地令牌并回到登录页。
+/// 令牌优先从 `reader_refresh` Cookie 读取，缺失时回退 JSON body
+/// `refreshToken`（旧客户端/CLI 迁移）。成功换发两枚新 Cookie（Refresh
+/// 重新计时）；任何失败（不存在、已过期、已吊销、重放）统一 401
+/// `需要登录`，并清除两枚 Cookie，让浏览器无感知地退出会话。
 pub async fn refresh_token(
     State(state): State<AppState>,
-    Json(req): Json<RefreshTokenRequest>,
-) -> Result<Json<ApiResponse<Value>>, AppError> {
-    let token = req.refresh_token.unwrap_or_default();
-    if token.trim().is_empty() {
-        return Err(AppError::Unauthorized(NEED_LOGIN.to_string()));
+    headers: HeaderMap,
+    body: Bytes,
+) -> Result<Response, AppError> {
+    let Some(token) = refresh_token_from_request(&headers, &body) else {
+        return Ok(unauthorized_with_cleared_cookies(&state.config, &headers));
+    };
+    match state.user_service.refresh_session(&token).await {
+        Ok(data) => Ok(session_response(&state.config, &headers, data)),
+        Err(_) => Ok(unauthorized_with_cleared_cookies(&state.config, &headers)),
     }
-    let data = state.user_service.refresh_session(&token).await?;
-    Ok(Json(ApiResponse::ok(data)))
 }
 
 /// 登出。
 ///
-/// Refresh Token 需要在服务端吊销，因此从 body 读取；body 为空或已损坏时
-/// 仍返回成功——令牌已过期的情况下，前端同样只需要清掉本地状态。
+/// Refresh Token 需要在服务端吊销：优先读 `reader_refresh` Cookie，回退
+/// body。两者都缺失或已损坏时仍返回成功并清除 Cookie——令牌已过期的
+/// 情况下，前端同样只需要清掉本地状态（幂等）。
 pub async fn logout(
     State(state): State<AppState>,
+    headers: HeaderMap,
     body: Bytes,
-) -> Result<Json<ApiResponse<Value>>, AppError> {
-    if !body.is_empty() {
-        if let Ok(req) = serde_json::from_slice::<RefreshTokenRequest>(&body) {
-            if let Some(token) = req.refresh_token.filter(|token| !token.trim().is_empty()) {
-                if let Err(error) = state.user_service.revoke_refresh_token(&token).await {
-                    tracing::warn!("登出时吊销 Refresh Token 失败: {error}");
-                }
-            }
+) -> Result<Response, AppError> {
+    if let Some(token) = refresh_token_from_request(&headers, &body) {
+        if let Err(error) = state.user_service.revoke_refresh_token(&token).await {
+            tracing::warn!("登出时吊销 Refresh Token 失败: {error}");
         }
     }
-    Ok(Json(ApiResponse::ok(Value::String(String::new()))))
+    Ok(session_cleared_response(
+        &state.config,
+        &headers,
+        Value::String(String::new()),
+    ))
 }
 
 /// 可选鉴权：未登录时返回 `userInfo: null`，不报错。
@@ -235,15 +330,16 @@ pub async fn get_user_config(
     Ok(Json(ApiResponse::ok(cfg)))
 }
 
-/// 修改密码；响应携带换发的新令牌。
+/// 修改密码；响应换发两枚新的会话 Cookie。
 ///
 /// 改密码会自增撤销版本号，令其他设备上的令牌立即失效；当前设备用
-/// 返回的新令牌继续使用，避免用户改完密码就被登出。
+/// 换发的新令牌继续使用，避免用户改完密码就被登出。
 pub async fn change_password(
     State(state): State<AppState>,
     user: CurrentUser,
+    headers: HeaderMap,
     Json(req): Json<ChangePasswordRequest>,
-) -> Result<Json<ApiResponse<Value>>, AppError> {
+) -> Result<Response, AppError> {
     let old_password = req.old_password.unwrap_or_default();
     let new_password = req.new_password.unwrap_or_default();
     if old_password.is_empty() || new_password.is_empty() {
@@ -253,7 +349,7 @@ pub async fn change_password(
         .user_service
         .change_password(&user.0.username, &old_password, &new_password)
         .await?;
-    Ok(Json(ApiResponse::ok(data)))
+    Ok(session_response(&state.config, &headers, data))
 }
 
 pub async fn upload_file(
