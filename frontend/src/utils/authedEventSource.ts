@@ -1,12 +1,15 @@
-// 带鉴权的 EventSource 包装器。
+// 带会话的 EventSource 包装器。
 //
-// `EventSource` 不能设置请求头，只能把 Access Token 放进查询串。代价是
-// URL 在创建时就把令牌固定下来：原生自动重连会一直用旧令牌。这里包装一层，
-// 在令牌临近/已经过期且传输失败时，先用 Refresh Token 换新，再用新令牌重建。
+// `EventSource` 不能设置请求头，但浏览器会自动携带 HttpOnly 会话 Cookie
+// （reader_access），因此 URL 不再拼任何令牌。原生自动重连复用同一 Cookie，
+// 本来就能跟着静默续期走；这里再兜一层：传输失败时若 Cookie 临近/已经过期
+// （依据非敏感 hint 里的过期时间），或连续第二次失败，主动 refreshAccessToken()
+// 换新 Cookie 后重连，避免原生重连一直撞 401。刷新失败按 SessionExpiredError
+// （refreshAccessToken 已广播登录通知，这里关闭连接）/RefreshNetworkError
+// （退避重试）处理。
 import { API_BASE } from './appBase'
-import { notifyNeedLogin } from './authEvents'
 import { RefreshNetworkError, SessionExpiredError, refreshAccessToken } from './authSession'
-import { readAccessToken, readAccessTokenExpiresAt, readRefreshToken } from './secureAccess'
+import { readAccessTokenExpiresAt } from './secureAccess'
 
 /** SSE 消费方实际用到的最小接口；原生 EventSource 也满足它。 */
 export interface SseConnection {
@@ -32,7 +35,7 @@ type ListenerEntry = {
   options?: boolean | AddEventListenerOptions
 }
 
-/** 距离过期不足该时长时，传输失败就按「令牌过期」处理。 */
+/** 距离过期不足该时长时，传输失败就按「会话临近过期」处理。 */
 const EXPIRY_MARGIN_MS = 60 * 1000
 const MAX_RECONNECT_ATTEMPTS = 3
 
@@ -40,7 +43,6 @@ class AuthedEventSource implements SseConnection {
   private readonly path: string
   private readonly params: Record<string, string | number | undefined>
   private current: EventSource | null = null
-  private currentToken?: string
   private readonly listeners: ListenerEntry[] = []
   private messageHandler: ((this: EventSource, ev: MessageEvent) => unknown) | null = null
   private errorHandler: ((this: EventSource, ev: Event) => unknown) | null = null
@@ -119,8 +121,7 @@ class AuthedEventSource implements SseConnection {
     for (const [key, value] of Object.entries(this.params)) {
       if (value !== undefined) query.set(key, String(value))
     }
-    this.currentToken = readAccessToken()
-    if (this.currentToken) query.set('accessToken', this.currentToken)
+    // 会话凭据在 HttpOnly Cookie 里，由浏览器自动携带；URL 不携带任何令牌
 
     const source = new EventSource(`${API_BASE}${this.path}?${query.toString()}`)
     this.current = source
@@ -147,18 +148,13 @@ class AuthedEventSource implements SseConnection {
   private onTransportError() {
     if (this.closed || this.reconnectTimer) return
     if (!this.tokenLikelyExpired()) {
-      // 令牌还新鲜：先交给浏览器原生重连，避免网络抖动也触发轮换。
-      // 连续第二次失败再主动换一次，覆盖「服务端换了签名密钥 / 版本号已失效」
-      // 但 exp 还没到的情况。
+      // Cookie 仍新鲜：先交给浏览器原生重连，避免网络抖动也触发刷新。
+      // 连续第二次失败再主动换一次，覆盖「服务端换了签名密钥 / 会话已被吊销」
+      // 但本地 hint 里的过期时间还没到的情况。
       this.transportErrors += 1
       if (this.transportErrors < 2) return
     }
     this.transportErrors = 0
-    if (!readRefreshToken()) {
-      notifyNeedLogin()
-      this.close()
-      return
-    }
     this.scheduleReconnect(0)
   }
 
@@ -178,25 +174,21 @@ class AuthedEventSource implements SseConnection {
 
   private async reconnect() {
     if (this.closed) return
-    const staleToken = this.currentToken
     this.current?.close()
     this.current = null
     try {
-      await refreshAccessToken(staleToken)
+      await refreshAccessToken()
       if (this.closed) return
       this.connect()
       this.attempts = 0
     } catch (error) {
       if (error instanceof SessionExpiredError) {
+        // refreshAccessToken 已经清掉登录提示并广播登录通知：这里只需关闭
         this.close()
         return
       }
-      // 网络/服务端故障：令牌仍在，退避后继续尝试
-      if (
-        error instanceof RefreshNetworkError &&
-        this.attempts < MAX_RECONNECT_ATTEMPTS &&
-        readRefreshToken()
-      ) {
+      // 网络/服务端故障：Cookie 仍在，退避后继续尝试刷新
+      if (error instanceof RefreshNetworkError && this.attempts < MAX_RECONNECT_ATTEMPTS) {
         this.attempts += 1
         this.scheduleReconnect(this.attempts)
       }
@@ -211,7 +203,7 @@ class AuthedEventSource implements SseConnection {
   }
 }
 
-/** 构造带鉴权查询串、并在令牌过期后自动换新重连的 SSE 连接。 */
+/** 构造依赖会话 Cookie 的 SSE 连接；传输失败且会话临近过期时自动刷新后重连。 */
 export function createAuthedEventSource(
   path: string,
   params: Record<string, string | number | undefined>
