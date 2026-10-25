@@ -36,13 +36,28 @@ export function useContinuousReading(
   renderChapterHtml: (rawText: string, chapterIndex?: number) => string,
   isContinuousMode: ComputedRef<boolean>,
   hideReadChaptersMode: ComputedRef<boolean>,
-  scrollContainerRef: Ref<HTMLElement | undefined>
+  scrollContainerRef: Ref<HTMLElement | undefined>,
+  onChapterLoadError?: (error: unknown, index: number) => void
 ) {
   const continuousChapters = ref<ContinuousChapterItem[]>([])
   const continuousLoadingNext = ref(false)
   const suppressContinuousSync = ref(false)
   let continuousStateSyncTimer: number | null = null
   const rehydratingIndexes = new Set<number>()
+  // 同一本书同一章只提示一次加载失败：连续滚动会在用户继续下滑时反复
+  // 触发下一章加载，不能每次失败都弹一条 toast；成功加载后允许再次提示
+  const notifiedLoadErrors = new Set<string>()
+
+  function loadErrorKey(index: number) {
+    return `${store.book?.bookId || ''}:${index}`
+  }
+
+  function notifyLoadError(error: unknown, index: number) {
+    const key = loadErrorKey(index)
+    if (notifiedLoadErrors.has(key)) return
+    notifiedLoadErrors.add(key)
+    onChapterLoadError?.(error, index)
+  }
 
   function shouldHideChapter(index: number, keepIndex?: number) {
     if (!hideReadChaptersMode.value) return false
@@ -155,14 +170,22 @@ export function useContinuousReading(
   async function buildContinuousChapter(index: number, forceRefresh = false) {
     const chapter = store.chapters[index]
     if (!chapter) return null
-    const chapterContent = await store.fetchChapterContent(index, forceRefresh)
-    if (chapterContent == null) return null
-    return {
-      index,
-      title: chapter.title,
-      content: chapterContent,
-      html: renderChapterHtml(chapterContent, index),
-    } satisfies ContinuousChapterItem
+    try {
+      const chapterContent = await store.fetchChapterContent(index, forceRefresh)
+      if (chapterContent == null) return null
+      notifiedLoadErrors.delete(loadErrorKey(index))
+      return {
+        index,
+        title: chapter.title,
+        content: chapterContent,
+        html: renderChapterHtml(chapterContent, index),
+      } satisfies ContinuousChapterItem
+    } catch (error) {
+      // 连续滚动是多章加载，单章失败不能变成未处理的 rejection：提示一次后
+      // 返回 null，调用方按「这章暂时没有」跳过；页面模式仍有正文区的重试入口
+      notifyLoadError(error, index)
+      return null
+    }
   }
 
   function syncContinuousChapterHtml() {

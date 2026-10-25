@@ -1191,7 +1191,13 @@ const {
   renderChapterHtml,
   isContinuousMode,
   hideReadChaptersMode,
-  scrollContainerRef
+  scrollContainerRef,
+  // 连续滚动没有页面模式那样的正文区错误占位与重试按钮：单章加载失败
+  // （离线编辑章、网络错误）至少给一条提示，同一本书同一章只提示一次
+  (error, index) => {
+    const message = (error as Error)?.message || `第 ${index + 1} 章加载失败`
+    appStore.showToast(message, 'error')
+  }
 )
 
 // 阅读位置的保存与恢复（本地+服务端选新、三模式分支、重试与抑制窗）收进 composable
