@@ -12,7 +12,7 @@ pub struct AppConfig {
     pub request_timeout_secs: u64,
     /// JWT 签名密钥。留空时启动阶段生成随机密钥并持久化到
     /// `<STORAGE_DIR>/jwt_secret`；多实例部署必须显式配置同一个值。
-    #[serde(deserialize_with = "deserialize_secret")]
+    #[serde(deserialize_with = "deserialize_scalar_string")]
     pub jwt_secret: String,
     /// Access Token 有效期（秒），默认 6 小时。
     ///
@@ -22,6 +22,13 @@ pub struct AppConfig {
     /// Refresh Token 有效期（秒），默认 7 天，按滑动续期计算：
     /// 每次换取都会签发新令牌并重新计时，闲置超过该时长才失效。
     pub refresh_token_ttl_secs: u64,
+    /// 会话 Cookie 的 `Secure` 属性三态开关：`auto`（默认）/ `true` / `false`。
+    ///
+    /// `auto` 按请求 Host 判定：`localhost` / `127.0.0.1` / `[::1]` 不加
+    /// `Secure`（本地开发走 HTTP），其余一律加。HTTP + 非回环主机的部署
+    /// 应改 HTTPS，或显式设 `false`（不推荐，Cookie 可被明文链路截获）。
+    #[serde(deserialize_with = "deserialize_scalar_string")]
+    pub cookie_secure: String,
     /// 已废弃：旧版单令牌方案的有效期。
     ///
     /// 仅为兼容既有 `.env` 保留：`JWT_TTL_SECS` 有值时会作为
@@ -126,6 +133,7 @@ impl Default for AppConfig {
             jwt_secret: String::new(),
             access_token_ttl_secs: 6 * 3600,
             refresh_token_ttl_secs: 7 * 24 * 3600,
+            cookie_secure: "auto".to_string(),
             // 0 = 未配置；load() 里按兼容规则归一到 access_token_ttl_secs
             jwt_ttl_secs: 0,
             admin_username: "admin".to_string(),
@@ -179,6 +187,7 @@ pub fn load() -> anyhow::Result<AppConfig> {
             "refresh_token_ttl_secs",
             defaults.refresh_token_ttl_secs as i64,
         )?
+        .set_default("cookie_secure", defaults.cookie_secure)?
         .set_default("jwt_ttl_secs", defaults.jwt_ttl_secs as i64)?
         .set_default("admin_username", defaults.admin_username)?
         .set_default("admin_password", defaults.admin_password)?
@@ -222,6 +231,7 @@ pub fn load() -> anyhow::Result<AppConfig> {
         .build()?;
     let mut cfg: AppConfig = cfg.try_deserialize()?;
     normalize_token_ttls(&mut cfg);
+    normalize_cookie_secure(&mut cfg)?;
     // TRUSTED_PROXIES 解析失败必须启动告警并按空列表生效（最保守：
     // 不信任任何代理头），不能静默吞掉——否则「配错了」与「没配」不可区分。
     if let Err(error) = crate::util::client_ip::parse_trusted_proxies(&cfg.trusted_proxies) {
@@ -265,26 +275,45 @@ fn normalize_token_ttls(cfg: &mut AppConfig) {
     }
 }
 
-/// 密钥读取时容忍纯数字。
+/// 归一 `COOKIE_SECURE`：大小写宽容；非法值让启动失败。
 ///
-/// `config` 的 `try_parsing` 会把 `JWT_SECRET=123456789` 解析成整数，
-/// 直接反序列化到 `String` 会导致启动失败——而随机生成的密钥恰好经常
-/// 是纯数字串，这是个很容易踩的坑。
-fn deserialize_secret<'de, D>(deserializer: D) -> Result<String, D::Error>
+/// `Secure` 属性直接影响登录会话能否建立（HTTP + 非回环主机下带 Secure
+/// 的 Cookie 会被浏览器拒收），配置笔误静默回退比启动报错更难排查，
+/// 因此这里不像 `TRUSTED_PROXIES` 那样降级告警，而是直接失败。
+fn normalize_cookie_secure(cfg: &mut AppConfig) -> anyhow::Result<()> {
+    let raw = cfg.cookie_secure.trim().to_ascii_lowercase();
+    match raw.as_str() {
+        "auto" | "true" | "false" => {
+            cfg.cookie_secure = raw;
+            Ok(())
+        }
+        other => anyhow::bail!("COOKIE_SECURE 只接受 auto/true/false，当前值: {other}"),
+    }
+}
+
+/// 标量读取时容忍布尔/数字（统一转字符串）。
+///
+/// `config` 的 `try_parsing` 会把 `COOKIE_SECURE=true` 解析成布尔、
+/// `JWT_SECRET=123456789` 解析成整数，直接反序列化到 `String` 会启动失败
+/// ——而 `true`/`false` 恰是 `COOKIE_SECURE` 的合法值，纯数字串也常出现在
+/// 随机生成的密钥里，这是个很容易踩的坑。
+fn deserialize_scalar_string<'de, D>(deserializer: D) -> Result<String, D::Error>
 where
     D: Deserializer<'de>,
 {
     #[derive(Deserialize)]
     #[serde(untagged)]
-    enum Secret {
+    enum Scalar {
         Text(String),
+        Boolean(bool),
         Integer(i64),
         Float(f64),
     }
 
-    Ok(match Secret::deserialize(deserializer)? {
-        Secret::Text(value) => value,
-        Secret::Integer(value) => value.to_string(),
-        Secret::Float(value) => value.to_string(),
+    Ok(match Scalar::deserialize(deserializer)? {
+        Scalar::Text(value) => value,
+        Scalar::Boolean(value) => value.to_string(),
+        Scalar::Integer(value) => value.to_string(),
+        Scalar::Float(value) => value.to_string(),
     })
 }

@@ -4,6 +4,7 @@
 //! 本模块不反向依赖任何 service——中间件自己持有一条只读的身份查询，
 //! 用来校验撤销版本号。
 
+pub mod cookie;
 pub mod extractor;
 pub mod jwt;
 pub mod middleware;
