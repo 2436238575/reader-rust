@@ -13,6 +13,7 @@ import {
 import type { Book, BookGroup, SearchBookDisplay, ShelfBook } from '../types'
 import { deleteBrowserBookCache, listBrowserCacheSummary } from '../utils/browserCache'
 import { isLocalBook } from '../utils/localBook'
+import { describeRequestFailure } from '../utils/requestFailure'
 import { useAppStore } from './app'
 import {
   clearRecentReadBooks,
@@ -131,9 +132,14 @@ export const useBookshelfStore = defineStore('bookshelf', () => {
       await refreshRecentBooks()
       saveShelfSnapshot()
     } catch (error) {
-      // 离线/后端不可达：书架回退到最近一次成功的快照，不是空书架
+      // 失败回退到最近一次成功的快照，不是空书架。原因要如实——
+      // 后端可达但上游挂了（502）与浏览器离线是两回事
       if (!books.value.length && hydrateShelfSnapshot()) {
-        useAppStore().showToast('离线中：书架展示的是最近缓存', 'warning')
+        const appStore = useAppStore()
+        appStore.showToast(
+          `${describeRequestFailure(error, appStore.isOnline)}：书架展示的是最近缓存`,
+          'warning'
+        )
         return
       }
       throw error

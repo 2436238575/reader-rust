@@ -93,7 +93,7 @@
                 加载目录中...
               </div>
               <div v-else-if="chaptersFailed" class="chapter-failed">
-                目录加载失败
+                目录加载失败：{{ chaptersError }}
                 <button class="chapter-retry-btn" @click="loadChapters">重试</button>
               </div>
             </div>
@@ -165,6 +165,7 @@ import { useEscClose } from '../composables/useEscClose'
 import { useRouter } from 'vue-router'
 import { getCoverUrl, getChapterList, setBookSource } from '../api/bookshelf'
 import { getBrowserCatalog, setBrowserCatalog } from '../utils/browserCache'
+import { describeRequestFailure } from '../utils/requestFailure'
 import { useMobileLayout } from '../composables/useMobileLayout'
 import { useOpenBook } from '../composables/useOpenBook'
 import { useBookshelfStore } from '../stores/bookshelf'
@@ -202,6 +203,7 @@ const coverFailed = ref(false)
 const chapters = ref<BookChapter[]>([])
 const chaptersLoading = ref(false)
 const chaptersFailed = ref(false)
+const chaptersError = ref('')
 const showAllChapters = ref(false)
 
 const coverSrc = computed(() => {
@@ -218,6 +220,7 @@ const displayChapters = computed(() => {
 async function loadChapters() {
   if (!book.value) return
   chaptersFailed.value = false
+  chaptersError.value = ''
   chaptersLoading.value = true
   try {
     const b = book.value as Book
@@ -226,14 +229,18 @@ async function loadChapters() {
     chapters.value = list
     // 落浏览器目录缓存：离线时详情弹窗与阅读器都能回退
     void setBrowserCatalog(b.bookId, list)
-  } catch {
-    // 离线兜底：先翻浏览器里的目录缓存，实在没有才报失败
+  } catch (error) {
+    // 失败兜底：先翻浏览器里的目录缓存，实在没有才报失败。
+    // 原因如实告知——后端可达但上游挂了（502）与浏览器离线是两回事
+    const reason = describeRequestFailure(error, appStore.isOnline)
     const cached = await getBrowserCatalog<BookChapter>((book.value as Book).bookId || '')
     if (cached) {
       chapters.value = cached
+      appStore.showToast(`${reason}：目录来自浏览器缓存`, 'warning')
     } else {
       // 此前静默吞掉：目录区直接空白，用户分不清「没目录」还是「加载失败」
       chapters.value = []
+      chaptersError.value = reason
       chaptersFailed.value = true
     }
   } finally {

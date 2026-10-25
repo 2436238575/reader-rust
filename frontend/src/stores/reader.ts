@@ -36,6 +36,7 @@ import {
   setBrowserCatalog,
 } from '../utils/browserCache'
 import { isLocalBook } from '../utils/localBook'
+import { describeRequestFailure } from '../utils/requestFailure'
 import { saveRecentReadBook } from '../utils/recentBooks'
 import { listChapterEdits, selectChapterVersion } from '../api/chapterEdit'
 import type { ChapterVersionKind, ContentVariant } from '../api/bookshelf'
@@ -674,14 +675,18 @@ export const useReaderStore = defineStore('reader', () => {
       if (cachedCatalog && loadSeq === bookLoadSeq) {
         chapters.value = cachedCatalog
         chaptersLoading.value = false
-        appStore.showToast('离线中：目录来自浏览器缓存', 'warning')
+        // 原因要如实：后端在线但上游挂了（502）与浏览器离线是两回事
+        appStore.showToast(
+          `${describeRequestFailure(error, appStore.isOnline)}：目录来自浏览器缓存`,
+          'warning'
+        )
         return
       }
       if (loadSeq === bookLoadSeq) {
         loading.value = false
         chapters.value = []
         content.value = ''
-        loadError.value = (error as Error)?.message || '打开书籍失败'
+        loadError.value = describeRequestFailure(error, appStore.isOnline)
         appStore.showToast(loadError.value, 'error')
       }
       throw error
@@ -788,7 +793,10 @@ export const useReaderStore = defineStore('reader', () => {
       if (fallback) {
         chapterDiffs.delete(index)
         chapterVersions.delete(index)
-        appStore.showToast('网络请求失败，已切换到本地缓存章节', 'warning')
+        appStore.showToast(
+          `${describeRequestFailure(error, appStore.isOnline)}，已切换到本地缓存章节`,
+          'warning'
+        )
         return fallback
       }
       throw error
@@ -858,7 +866,7 @@ export const useReaderStore = defineStore('reader', () => {
       // 对着旧章或空白分不清「还在加载」还是「已经失败」。不再向外抛：所有
       // 调用方（翻章/目录/开书）都不接异常，抛出去只会变成 unhandled rejection。
       if (loadSeq === chapterLoadSeq) {
-        loadError.value = (error as Error)?.message || '章节加载失败'
+        loadError.value = describeRequestFailure(error, appStore.isOnline)
         failedChapterIndex.value = index
         appStore.showToast(loadError.value, 'error')
       }
