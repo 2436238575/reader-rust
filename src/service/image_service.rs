@@ -121,19 +121,14 @@ impl ImageService {
     }
 
     async fn save_record(&self, record: &ImageRecord) {
-        let dir = self.dir();
-        if fs::create_dir_all(&dir).await.is_err() {
-            return;
-        }
         let Ok(data) = serde_json::to_vec(record) else {
             return;
         };
-        // 先写临时文件再改名：并发读到的要么是旧记录、要么是新记录，不会是半截
-        let path = self.record_path(&record.id);
-        let tmp = path.with_extension("json.tmp");
-        if fs::write(&tmp, &data).await.is_ok() {
-            let _ = fs::rename(&tmp, &path).await;
-        }
+        // 原子落盘：并发读到的要么是旧记录、要么是完整新记录；临时文件名
+        // 带进程号与进程内序号，同一 id 并发 register/update_source_url
+        // 不会互踩同一个 json.tmp。记录写盘失败只丢一次更新（下次抓取
+        // 会重建），不影响主流程，故沿用忽略错误的约定
+        let _ = write_atomic(&self.record_path(&record.id), &data).await;
     }
 
     /// 登记一张图，返回它的 id。
@@ -685,6 +680,47 @@ mod tests {
         assert_eq!(service.remove_by_book_id("../..").await, 0);
         assert_eq!(service.remove_by_book_id("book_7").await, 1);
         assert!(service.record(&id).await.is_none());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// 同一 id 并发写记录：最终落盘的必须是某一方的完整 JSON，
+    /// 互踩同一个固定 tmp 文件会产生截断/混杂内容（解析失败）。
+    #[tokio::test]
+    async fn concurrent_save_record_lands_intact() {
+        let dir = std::env::temp_dir().join(format!(
+            "reader-rust-img-conc-{}-{}",
+            std::process::id(),
+            crate::util::crypto::random_string(6)
+        ));
+        let service = Arc::new(ImageService::new(
+            crate::crawler::http_client::HttpClient::new(5, None).unwrap(),
+            dir.to_str().unwrap(),
+            0,
+        ));
+        let id = "0123456789abcdef0123456789abcdef".to_string();
+        let mut handles = Vec::new();
+        for i in 0..16i64 {
+            let service = Arc::clone(&service);
+            let id = id.clone();
+            handles.push(tokio::spawn(async move {
+                let record = ImageRecord {
+                    id,
+                    kind: "cover".to_string(),
+                    source_url: format!("https://img.example/x-{i}.jpg"),
+                    book_id: Some("book_1".to_string()),
+                    content_type: "image/jpeg".to_string(),
+                    ext: "jpg".to_string(),
+                    updated_at: i,
+                    failed_at: None,
+                };
+                service.save_record(&record).await;
+            }));
+        }
+        for h in handles {
+            h.await.unwrap();
+        }
+        let record = service.record(&id).await.expect("记录必须是完整 JSON");
+        assert_eq!(record.id, id);
         let _ = std::fs::remove_dir_all(&dir);
     }
 

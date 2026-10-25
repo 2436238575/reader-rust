@@ -8,18 +8,20 @@ use tokio::fs;
 static TMP_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 /// 目标文件的临时落盘路径：与目标同目录（同卷，rename 才是原子的），
-/// 文件名带进程内唯一编号，多个写者并发写同一目标时不会互踩。
+/// 文件名带进程号 + 进程内唯一编号，多进程共目录与进程内并发写同一
+/// 目标时都不会互踩对方的 tmp 文件。
 fn tmp_path_for(path: &Path) -> PathBuf {
     let seq = TMP_COUNTER.fetch_add(1, Ordering::Relaxed);
+    let pid = std::process::id();
     let mut name = path
         .file_name()
         .map(|n| n.to_os_string())
         .unwrap_or_default();
-    name.push(format!(".{seq}.tmp"));
+    name.push(format!(".{pid}.{seq}.tmp"));
     path.with_file_name(name)
 }
 
-/// 原子写入文件：`<目标>.<n>.tmp` 写完整内容后 rename 覆盖目标。
+/// 原子写入文件：`<目标>.<pid>.<n>.tmp` 写完整内容后 rename 覆盖目标。
 ///
 /// 读者要么看到旧内容、要么看到完整新内容，绝不会读到半截写入
 /// （进程中途被杀只会留下一个 `.tmp` 孤儿文件，不影响目标）。
