@@ -477,6 +477,14 @@ pub fn build_router(state: AppState) -> Router {
         .route("/reader3/getUserConfig", get(handlers::get_user_config))
         .route("/reader3/getUserdata", get(handlers::get_userdata))
         .route("/reader3/saveUserdata", post(handlers::save_userdata))
+        .route(
+            "/reader3/getUserdataBatch",
+            get(handlers::get_userdata_batch),
+        )
+        .route(
+            "/reader3/saveUserdataBatch",
+            post(handlers::save_userdata_batch),
+        )
         .route("/reader3/deleteFile", post(handlers::delete_file))
         // 组级默认上限（8MB）：挂在普通路由之后、合并放宽子路由之前，
         // 只包住本组常规接口；放宽路由在各自子路由上已带更内侧的上限

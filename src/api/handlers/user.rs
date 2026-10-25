@@ -109,6 +109,11 @@ fn validate_userdata_name(name: &str) -> bool {
             .all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '_' || c == '-')
 }
 
+/// 批量 userdata 接口的文档数上限：一次首屏所需的全部 userdata 文档
+/// （最近阅读、阅读统计、已读标记等）远低于 20；上限用来防拼接失控的
+/// 客户端把批量接口当无限通道。
+const MAX_USERDATA_BATCH: usize = 20;
+
 /// 读取当前用户的 JSON 文档（如最近阅读、阅读统计）。不存在时返回 null。
 pub async fn get_userdata(
     State(state): State<AppState>,
@@ -147,6 +152,112 @@ pub async fn save_userdata(
         .set_value(&user.0.ns, &name, &value)
         .await?;
     Ok(Json(ApiResponse::ok(Value::String(String::new()))))
+}
+
+#[derive(Debug, Deserialize)]
+pub struct UserdataBatchQuery {
+    pub names: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct UserdataBatchDoc {
+    pub name: Option<String>,
+    pub value: Option<Value>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct SaveUserdataBatchRequest {
+    pub docs: Option<Vec<UserdataBatchDoc>>,
+}
+
+/// 把逗号分隔的 names 参数拆成去重后的文档名列表；空参数 400，条目数
+/// 超上限 400（按原始条目计，与 saveUserdataBatch 口径一致），任一条目
+/// 不通过文档名白名单也 400。
+fn parse_userdata_batch_names(raw: &str) -> Result<Vec<String>, AppError> {
+    if raw.trim().is_empty() {
+        return Err(AppError::BadRequest("文档名列表不能为空".to_string()));
+    }
+    let items = raw.split(',').collect::<Vec<_>>();
+    if items.len() > MAX_USERDATA_BATCH {
+        return Err(AppError::BadRequest(format!(
+            "一次最多读取 {MAX_USERDATA_BATCH} 个文档"
+        )));
+    }
+    let mut names: Vec<String> = Vec::new();
+    for item in items {
+        let name = item.trim();
+        if !validate_userdata_name(name) {
+            return Err(AppError::BadRequest("文档名不合法".to_string()));
+        }
+        if !names.iter().any(|n| n == name) {
+            names.push(name.to_string());
+        }
+    }
+    Ok(names)
+}
+
+/// 批量读取当前用户的 JSON 文档：`?names=a,b,c`，缺失的文档在 `docs`
+/// 映射里为 `null`。把首屏的 N 次单文档 GET 合成一次往返。
+pub async fn get_userdata_batch(
+    State(state): State<AppState>,
+    user: CurrentUser,
+    Query(q): Query<UserdataBatchQuery>,
+) -> Result<Json<ApiResponse<Value>>, AppError> {
+    let names = parse_userdata_batch_names(q.names.as_deref().unwrap_or_default())?;
+    let docs = state
+        .json_document_service
+        .get_many(&user.0.ns, &names)
+        .await?;
+    let mut mapping = serde_json::Map::with_capacity(docs.len());
+    for (name, value) in docs {
+        mapping.insert(name, value.unwrap_or(Value::Null));
+    }
+    Ok(Json(ApiResponse::ok(
+        serde_json::json!({ "docs": Value::Object(mapping) }),
+    )))
+}
+
+/// 批量保存当前用户的 JSON 文档（各自整文档覆盖写，单文档沿用 4MB 上限）。
+/// 全部条目先校验后写入：任一文档名非法或缺内容/超限时整批拒绝、一个都
+/// 不落库（服务层再套一层事务，见 `JsonDocumentService::set_many`）；
+/// 同名文档按最后一次为准。响应 `data.saved` 为实际写入的文档数。
+pub async fn save_userdata_batch(
+    State(state): State<AppState>,
+    user: CurrentUser,
+    Json(req): Json<SaveUserdataBatchRequest>,
+) -> Result<Json<ApiResponse<Value>>, AppError> {
+    let incoming = req.docs.unwrap_or_default();
+    if incoming.is_empty() {
+        return Err(AppError::BadRequest("文档列表不能为空".to_string()));
+    }
+    if incoming.len() > MAX_USERDATA_BATCH {
+        return Err(AppError::BadRequest(format!(
+            "一次最多保存 {MAX_USERDATA_BATCH} 个文档"
+        )));
+    }
+    let mut docs: Vec<(String, Value)> = Vec::with_capacity(incoming.len());
+    for doc in incoming {
+        let name = doc.name.unwrap_or_default();
+        if !validate_userdata_name(&name) {
+            return Err(AppError::BadRequest("文档名不合法".to_string()));
+        }
+        let Some(value) = doc.value else {
+            return Err(AppError::BadRequest("缺少文档内容".to_string()));
+        };
+        let serialized = serde_json::to_vec(&value)
+            .map_err(|e| AppError::BadRequest(format!("文档序列化失败: {e}")))?;
+        ensure_document_within_limit(&serialized)?;
+        match docs.iter_mut().find(|(n, _)| *n == name) {
+            // 同名文档按最后一次为准：后面的覆盖前面的
+            Some(slot) => slot.1 = value,
+            None => docs.push((name, value)),
+        }
+    }
+    let saved = state
+        .json_document_service
+        .set_many(&user.0.ns, &docs)
+        .await?;
+    Ok(Json(ApiResponse::ok(serde_json::json!({ "saved": saved }))))
 }
 
 /// 从请求 `Host` 头取值（Cookie 的 `Secure` 判定用）。

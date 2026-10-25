@@ -212,3 +212,54 @@ POST /reader3/saveUserdata
 ```
 
 **整文档覆盖写**：`value` 可以是任意 JSON（对象/数组/标量），服务端不做合并——多端合并语义由客户端负责（前端内置的最近阅读与阅读统计会在启动时做并集/取大合并后回写）。响应 `data` 为空字符串；`name` 不合法或缺少 `value` 时返回 `isSuccess: false`。
+
+## 批量读取用户数据文档
+
+```text
+GET /reader3/getUserdataBatch?names=<名称1>,<名称2>,...
+```
+
+一次读取当前用户的多个 JSON 文档，把首屏的 N 次单文档 GET（最近阅读、阅读统计、已读标记等）合成一次往返。
+
+- `names` 逗号分隔，**最多 20 个**，逐个校验 `name` 规则（同上），任一非法返回 400；`names` 缺失或为空返回 400；
+- 同名条目在响应映射里只出现一次；
+- 不存在的文档在 `docs` 映射里对应 `null`。
+
+```json
+{
+  "isSuccess": true,
+  "data": {
+    "docs": {
+      "reading-stats": { "totalSeconds": 3600 },
+      "recent-books": null
+    }
+  },
+  "errorMsg": ""
+}
+```
+
+## 批量保存用户数据文档
+
+```text
+POST /reader3/saveUserdataBatch
+```
+
+请求体：
+
+```json
+{
+  "docs": [
+    { "name": "reading-stats", "value": { "totalSeconds": 3600 } },
+    { "name": "recent-books", "value": [] }
+  ]
+}
+```
+
+- `docs` **最多 20 个**，为空返回 400；每个文档各自整文档覆盖写，单文档沿用 4MB 上限；
+- **全部先校验后写入**：任一文档名非法、缺少 `value` 或超限时整批返回 400，一个都不落库；服务层写入再套一层事务，任一条失败整批回滚；
+- 同名文档**按最后一次为准**，只写一份；
+- 响应 `data.saved` 为实际写入的文档数（去重后）。
+
+```json
+{ "isSuccess": true, "data": { "saved": 2 }, "errorMsg": "" }
+```

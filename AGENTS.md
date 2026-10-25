@@ -22,7 +22,7 @@ Reader-Rust 是 [阅读3.0](https://github.com/hectorqin/reader) 的 Rust 重写
 cargo run                      # 开发模式运行，默认监听 127.0.0.1:8080（Docker 镜像显式设 0.0.0.0）
 cargo build                    # 调试构建
 cargo build --release          # 发布构建
-cargo test                     # 全部测试（Rust 侧共 516 个，另有 2 个真实网络用例默认忽略）
+cargo test                     # 全部测试（Rust 侧共 524 个，另有 2 个真实网络用例默认忽略）
 cargo test <关键字>             # 按名称过滤测试
 cargo clippy --all-targets     # 静态检查
 cargo fmt                      # 格式化
@@ -364,7 +364,7 @@ XPath 有资源上限（长度 8KB / 嵌套 64 层 / 总步数 100、`//` 50）�
 ## 数据与存储
 
 - SQLite 通过 `sqlx` 访问，连接池 10 条连接，开启 WAL（`synchronous=NORMAL`），启动时自动执行 `src/storage/db/migrations/` 下的迁移。
-- 主要表：`book_sources`（书源 JSON，整部署共享，`book_source_id INTEGER PRIMARY KEY AUTOINCREMENT` + `book_source_url` 唯一索引；**`book_source_id` 是书源的身份键**，删除后不复用，导入/订阅按 URL 去重时保号）、`books`（**书籍登记表**，整部署共享：`book_id INTEGER PRIMARY KEY AUTOINCREMENT` + `book_url` 唯一索引；对外一律 `book_<n>` 文本，repo 边界转换，绑定 `book_source_id`，换源只改绑不改 id；本地书 source_id 为 NULL；登记行不随清缓存删除）、`shelf_books`（**书架**，`(user_ns, book_id)` 主键，全列展开进度/分组/排序/元数据快照，读取时 JOIN books 注入 bookUrl/origin 等绑定字段）、`users`（`uid` 主键、用户数据命名空间锚点，命名空间一律 `user_<uid>`；username 仅登录与展示，唯一索引）、`json_documents`（`(user_ns, name)` 主键，通用键值）、`bookmarks`（书签/划线实体表，`(user_ns, book_id, chapter_index, chapter_pos, kind)` 主键——kind 区分章书签 bookmark / 划线 underline，`chapter_pos` 是万分比章内进度 0–10000、章书签恒 0；删书级联 `DELETE WHERE book_id`）、`replace_rules`（替换规则实体表）、`ai_book_memories`（`(user_ns, book_id)` 主键，`book_url` 只作数据快照）、`book_groups`（书架分组实体表：`(user_ns, group_id)` 主键；**group_id 是位域、分配 2 的幂**（1/2/4/8…），与阅读3.0 的位掩码约定一致）。逐字段说明见 docs/maintainers/database.md。
+- 主要表：`book_sources`（书源 JSON，整部署共享，`book_source_id INTEGER PRIMARY KEY AUTOINCREMENT` + `book_source_url` 唯一索引；**`book_source_id` 是书源的身份键**，删除后不复用，导入/订阅按 URL 去重时保号）、`books`（**书籍登记表**，整部署共享：`book_id INTEGER PRIMARY KEY AUTOINCREMENT` + `book_url` 唯一索引；对外一律 `book_<n>` 文本，repo 边界转换，绑定 `book_source_id`，换源只改绑不改 id；本地书 source_id 为 NULL；登记行不随清缓存删除）、`shelf_books`（**书架**，`(user_ns, book_id)` 主键，全列展开进度/分组/排序/元数据快照，读取时 JOIN books 注入 bookUrl/origin 等绑定字段）、`users`（`uid` 主键、用户数据命名空间锚点，命名空间一律 `user_<uid>`；username 仅登录与展示，唯一索引）、`json_documents`（`(user_ns, name)` 主键，通用键值；userdata 另有 `getUserdataBatch`/`saveUserdataBatch` 批量读写接口，单次 ≤20 个文档、任一条目非法整批 400 不落库、批量写走单事务任一失败整体回滚）、`bookmarks`（书签/划线实体表，`(user_ns, book_id, chapter_index, chapter_pos, kind)` 主键——kind 区分章书签 bookmark / 划线 underline，`chapter_pos` 是万分比章内进度 0–10000、章书签恒 0；删书级联 `DELETE WHERE book_id`）、`replace_rules`（替换规则实体表）、`ai_book_memories`（`(user_ns, book_id)` 主键，`book_url` 只作数据快照）、`book_groups`（书架分组实体表：`(user_ns, group_id)` 主键；**group_id 是位域、分配 2 的幂**（1/2/4/8…），与阅读3.0 的位掩码约定一致）。逐字段说明见 docs/maintainers/database.md。
 - **正文版本表（整部署共享，不带 `user_ns`）**：`chapter_contents`（正文池，`content_hash` 唯一，只插入不更新；`codec=1` 为 zstd）、`chapter_versions`（版本时间线，`kind` 为 upstream/edited/imported，含 `base_version_id` 与书源/章节快照，只插入不更新）、`chapter_latest`（最新上游/用户版本指针与回源时间，唯一允许更新的正文表）、`chapter_view_state`（`(user_ns, book_id, chapter_url)` 主键，每用户选中的版本；删除行表示跟随最新）。阅读页的 diff **始终以最新上游正文为基准**（评论源只对最新上游取段号，diff 标记要和它对齐）；`base_version_id` 只记录编辑时基于哪一版，不参与阅读页 diff。
 - **身份模型**：请求的身份参数只认 `bookId`（书籍）与 `bookSourceId`（书源）；`bookUrl`/`bookSourceUrl`/`origin` 只是数据字段（爬虫取数、导入去重），不参与「同 id 同书」校验。书籍与书源 id 都是 AUTOINCREMENT、删除后不复用，正文历史不会串书。搜索/发现产出即登记（响应必带 bookId）；书籍级接口经 `resolve_book`（handlers/book.rs）由 bookId 解析出当前绑定的 bookUrl + 书源。升级存量部署（beta 之前）：删除 `storage/` 后重启重建。
 - **正文存储**：章节正文已从文件缓存迁到 SQLite 正文池；阅读默认版本按「用户选择 > 最近用户版本 > 最新上游」解析。读取时距上次回源尝试超过 `CONTENT_REVALIDATE_TTL_SECS` 会在后台回源，失败继续返回缓存并标记 `stale`。`refresh=1` 与历史面板的“检查更新”同步回源，失败也回退缓存。正文历史**严格保留，不自动淘汰，也不提供清理入口**。文本源返回空正文按失败处理，不写 0 字节上游版本；只有 `bookSourceType=2` 的图片源允许空正文，且只更新检查时间。存量空上游版本可用 `docs/maintainers/database.md` 的维护 SQL 手工清理。
@@ -392,9 +392,9 @@ XPath 有资源上限（长度 8KB / 嵌套 64 层 / 总步数 100、`//` 50）�
 
 ## 测试
 
-Rust 侧共 **516 个测试**（355 个内联单元测试 + 161 个集成用例，另有 2 个 `#[ignore]` 的真实网络用例）。`cargo test` 输出的合计就是实际用例数：`src/main.rs` 只是入口文件，不再重复声明模块，bin 目标没有单元测试，不存在重复计数。分布为：
+Rust 侧共 **524 个测试**（358 个内联单元测试 + 166 个集成用例，另有 2 个 `#[ignore]` 的真实网络用例）。`cargo test` 输出的合计就是实际用例数：`src/main.rs` 只是入口文件，不再重复声明模块，bin 目标没有单元测试，不存在重复计数。分布为：
 
-- `tests/` 下 25 个集成测试文件（161 个常规用例；`yckceo_live_sources.rs` 只装那 2 个默认忽略的真实网络用例），其中 `auth_flow.rs` 用例最多（24 个）；
+- `tests/` 下 25 个集成测试文件（166 个常规用例；`yckceo_live_sources.rs` 只装那 2 个默认忽略的真实网络用例），其中 `auth_flow.rs` 用例最多（24 个）；
   `auth_flow.rs`、`review_flow.rs`、`chapter_image_flow.rs`、`image_pipeline.rs` 与
   `webdav_flow.rs` 起真实监听端口，前者覆盖 401、静态回落、缓存清理与改密吊销令牌，
   中间三个各用一个假上游覆盖评论规则（7 天缓存、按类型清理）、章节配图（配图规则、
@@ -404,7 +404,7 @@ Rust 侧共 **516 个测试**（355 个内联单元测试 + 161 个集成用例�
 - `agent_sidecar_flow.rs` 用 Node 假 sidecar（`tests/helpers/fake_agent_sidecar.mjs`）
   走全流程：批量更新、章节跳过、工具回调（正文/搜索钳制）、地图落盘与降级、看门狗与取消
   （机器上需要有 Node）；
-- `src/` 内的内联单元测试模块（355 个）。
+- `src/` 内的内联单元测试模块（358 个）。
 
 sidecar 使用 pytest（116 个用例，
 见「常用命令」），含从旧前端实现 1:1 移植的领域规则用例与新增编排能力用例。

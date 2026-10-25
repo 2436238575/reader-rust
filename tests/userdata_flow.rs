@@ -124,6 +124,20 @@ async fn userdata_requires_a_token() {
         )
         .await;
     assert_eq!(response.status(), 401);
+
+    let response = server
+        .get("/reader3/getUserdataBatch?names=recent-books", None)
+        .await;
+    assert_eq!(response.status(), 401);
+
+    let response = server
+        .post(
+            "/reader3/saveUserdataBatch",
+            None,
+            serde_json::json!({ "docs": [{ "name": "recent-books", "value": [] }] }),
+        )
+        .await;
+    assert_eq!(response.status(), 401);
 }
 
 #[tokio::test]
@@ -343,4 +357,262 @@ async fn oversized_user_documents_are_rejected() {
         body["data"]["blob"].as_str().map(str::len),
         Some(1024 * 1024)
     );
+}
+
+#[tokio::test]
+async fn userdata_batch_save_then_individual_and_batch_get() {
+    let server = TestServer::start().await;
+    let token = server.login().await;
+
+    let response = server
+        .post(
+            "/reader3/saveUserdataBatch",
+            Some(&token),
+            serde_json::json!({ "docs": [
+                { "name": "reading-stats", "value": { "totalSeconds": 3600 } },
+                { "name": "recent-books", "value": [
+                    { "bookUrl": "https://example.com/1", "name": "书一", "recentReadAt": 100 },
+                ] },
+                { "name": "read-marks", "value": { "https://example.com/1": [1, 2, 3] } },
+            ]}),
+        )
+        .await;
+    assert_eq!(response.status(), 200, "批量保存应成功");
+    let body: serde_json::Value = response.json().await.unwrap();
+    assert!(
+        body["isSuccess"].as_bool().unwrap(),
+        "批量保存应成功: {body}"
+    );
+    assert_eq!(body["data"]["saved"], 3, "应报告写入 3 个文档");
+
+    // 逐个单文档 get 可见
+    let response = server
+        .get("/reader3/getUserdata?name=reading-stats", Some(&token))
+        .await;
+    let body: serde_json::Value = response.json().await.unwrap();
+    assert_eq!(body["data"]["totalSeconds"], 3600);
+    let response = server
+        .get("/reader3/getUserdata?name=read-marks", Some(&token))
+        .await;
+    let body: serde_json::Value = response.json().await.unwrap();
+    assert_eq!(
+        body["data"]["https://example.com/1"],
+        serde_json::json!([1, 2, 3])
+    );
+
+    // 批量 get 一并读回
+    let response = server
+        .get(
+            "/reader3/getUserdataBatch?names=recent-books,read-marks,reading-stats",
+            Some(&token),
+        )
+        .await;
+    assert_eq!(response.status(), 200);
+    let body: serde_json::Value = response.json().await.unwrap();
+    let docs = body["data"]["docs"]
+        .as_object()
+        .expect("data.docs 应是映射");
+    assert_eq!(docs.len(), 3);
+    assert_eq!(docs["reading-stats"]["totalSeconds"], 3600);
+    assert_eq!(
+        docs["read-marks"]["https://example.com/1"],
+        serde_json::json!([1, 2, 3])
+    );
+    assert_eq!(docs["recent-books"][0]["name"], "书一");
+}
+
+#[tokio::test]
+async fn userdata_batch_invalid_name_rejects_whole_batch() {
+    let server = TestServer::start().await;
+    let token = server.login().await;
+
+    // 混入非法文档名：整批 400，合法的那个也不能被写入
+    let response = server
+        .post(
+            "/reader3/saveUserdataBatch",
+            Some(&token),
+            serde_json::json!({ "docs": [
+                { "name": "reading-stats", "value": { "totalSeconds": 1 } },
+                { "name": "../evil", "value": { "x": 1 } },
+            ]}),
+        )
+        .await;
+    assert_eq!(response.status(), 400, "混入非法名的批量保存应 400");
+    let body: serde_json::Value = response.json().await.unwrap();
+    assert!(!body["isSuccess"].as_bool().unwrap());
+
+    let response = server
+        .get("/reader3/getUserdata?name=reading-stats", Some(&token))
+        .await;
+    let body: serde_json::Value = response.json().await.unwrap();
+    assert!(body["data"].is_null(), "被拒的批量不应留下部分写入");
+
+    // 批量 get 里的非法名同样 400（逐个校验，任一非法即拒）
+    let query = urlencoding::encode("../evil");
+    let response = server
+        .get(
+            &format!("/reader3/getUserdataBatch?names=reading-stats,{query}"),
+            Some(&token),
+        )
+        .await;
+    assert_eq!(response.status(), 400, "批量 get 混入非法名应 400");
+
+    // 空 names / 空 docs 都是 400
+    let response = server
+        .get("/reader3/getUserdataBatch?names=", Some(&token))
+        .await;
+    assert_eq!(response.status(), 400, "空 names 应 400");
+    let response = server.get("/reader3/getUserdataBatch", Some(&token)).await;
+    assert_eq!(response.status(), 400, "缺 names 参数应 400");
+    let response = server
+        .post(
+            "/reader3/saveUserdataBatch",
+            Some(&token),
+            serde_json::json!({ "docs": [] }),
+        )
+        .await;
+    assert_eq!(response.status(), 400, "空 docs 应 400");
+
+    // 批量保存同样受单文档 4MB 上限约束，且超限时整批拒绝
+    let big = "x".repeat(5 * 1024 * 1024);
+    let response = server
+        .post(
+            "/reader3/saveUserdataBatch",
+            Some(&token),
+            serde_json::json!({ "docs": [
+                { "name": "small-doc", "value": { "ok": true } },
+                { "name": "big-doc", "value": { "blob": big } },
+            ]}),
+        )
+        .await;
+    assert_eq!(response.status(), 400, "混入超限文档的批量应 400");
+    let response = server
+        .get("/reader3/getUserdata?name=small-doc", Some(&token))
+        .await;
+    let body: serde_json::Value = response.json().await.unwrap();
+    assert!(body["data"].is_null(), "超限批量不应留下部分写入");
+}
+
+#[tokio::test]
+async fn userdata_batch_get_missing_docs_returns_null() {
+    let server = TestServer::start().await;
+    let token = server.login().await;
+
+    server
+        .post(
+            "/reader3/saveUserdataBatch",
+            Some(&token),
+            serde_json::json!({ "docs": [{ "name": "exists", "value": 42 }] }),
+        )
+        .await;
+
+    let response = server
+        .get(
+            "/reader3/getUserdataBatch?names=exists,missing-a,missing-b",
+            Some(&token),
+        )
+        .await;
+    assert_eq!(response.status(), 200);
+    let body: serde_json::Value = response.json().await.unwrap();
+    let docs = body["data"]["docs"]
+        .as_object()
+        .expect("data.docs 应是映射");
+    assert_eq!(docs.len(), 3, "缺失文档也应出现在映射里");
+    assert_eq!(docs["exists"], 42);
+    assert!(docs["missing-a"].is_null(), "缺失文档应为 null");
+    assert!(docs["missing-b"].is_null(), "缺失文档应为 null");
+}
+
+#[tokio::test]
+async fn userdata_batch_rejects_more_than_twenty_docs() {
+    let server = TestServer::start().await;
+    let token = server.login().await;
+
+    let twenty_one_names = (0..21)
+        .map(|i| format!("doc-{i}"))
+        .collect::<Vec<_>>()
+        .join(",");
+    let response = server
+        .get(
+            &format!("/reader3/getUserdataBatch?names={twenty_one_names}"),
+            Some(&token),
+        )
+        .await;
+    assert_eq!(response.status(), 400, "21 个名字的批量 get 应 400");
+
+    let twenty_one_docs = (0..21)
+        .map(|i| serde_json::json!({ "name": format!("doc-{i}"), "value": i }))
+        .collect::<Vec<_>>();
+    let response = server
+        .post(
+            "/reader3/saveUserdataBatch",
+            Some(&token),
+            serde_json::json!({ "docs": twenty_one_docs }),
+        )
+        .await;
+    assert_eq!(response.status(), 400, "21 个文档的批量保存应 400");
+    let body: serde_json::Value = response.json().await.unwrap();
+    assert!(!body["isSuccess"].as_bool().unwrap());
+    // 拒绝后一个都没写
+    let response = server
+        .get("/reader3/getUserdata?name=doc-0", Some(&token))
+        .await;
+    let body: serde_json::Value = response.json().await.unwrap();
+    assert!(body["data"].is_null());
+
+    // 20 个恰好放行
+    let twenty_docs = (0..20)
+        .map(|i| serde_json::json!({ "name": format!("doc-{i}"), "value": i }))
+        .collect::<Vec<_>>();
+    let response = server
+        .post(
+            "/reader3/saveUserdataBatch",
+            Some(&token),
+            serde_json::json!({ "docs": twenty_docs }),
+        )
+        .await;
+    assert_eq!(response.status(), 200, "20 个文档应放行");
+    let body: serde_json::Value = response.json().await.unwrap();
+    assert_eq!(body["data"]["saved"], 20);
+}
+
+#[tokio::test]
+async fn userdata_batch_duplicate_name_last_write_wins() {
+    let server = TestServer::start().await;
+    let token = server.login().await;
+
+    // 同名文档按最后一次为准：只写一份，值为后者
+    let response = server
+        .post(
+            "/reader3/saveUserdataBatch",
+            Some(&token),
+            serde_json::json!({ "docs": [
+                { "name": "reading-stats", "value": { "totalSeconds": 1 } },
+                { "name": "other-doc", "value": "kept" },
+                { "name": "reading-stats", "value": { "totalSeconds": 99 } },
+            ]}),
+        )
+        .await;
+    assert_eq!(response.status(), 200);
+    let body: serde_json::Value = response.json().await.unwrap();
+    assert_eq!(body["data"]["saved"], 2, "去重后应只写 2 个文档");
+
+    let response = server
+        .get("/reader3/getUserdata?name=reading-stats", Some(&token))
+        .await;
+    let body: serde_json::Value = response.json().await.unwrap();
+    assert_eq!(body["data"]["totalSeconds"], 99, "同名文档应取最后一次的值");
+
+    // 批量 get 的 names 含重复时，映射里同名只出现一次
+    let response = server
+        .get(
+            "/reader3/getUserdataBatch?names=reading-stats,reading-stats,other-doc",
+            Some(&token),
+        )
+        .await;
+    let body: serde_json::Value = response.json().await.unwrap();
+    let docs = body["data"]["docs"].as_object().unwrap();
+    assert_eq!(docs.len(), 2);
+    assert_eq!(docs["reading-stats"]["totalSeconds"], 99);
+    assert_eq!(docs["other-doc"], "kept");
 }
