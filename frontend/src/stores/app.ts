@@ -4,11 +4,12 @@ import { getUserInfo } from '../api/user'
 import type { UserInfo } from '../types'
 import { applySystemTheme } from '../utils/systemUi'
 import {
-  ACCESS_TOKEN_STORAGE_KEY,
-  clearAuthTokens,
-  readAccessToken,
-  readRefreshToken,
-  storeAuthTokens,
+  clearAuthHint,
+  clearLegacyAuthTokens,
+  hasAuthHint,
+  readAuthHint,
+  readLegacyRefreshToken,
+  storeAuthHint,
 } from '../utils/secureAccess'
 import {
   SessionExpiredError,
@@ -119,73 +120,72 @@ export const useAppStore = defineStore('app', () => {
   /** 登录/改密响应缺省时按后端默认的 6 小时计。 */
   const DEFAULT_ACCESS_TOKEN_TTL_SECS = 6 * 3600
 
-  function persistLoginTokens(user: Pick<UserInfo, 'accessToken' | 'refreshToken' | 'accessTokenExpiresIn'>) {
-    if (!user.accessToken) return
-    if (!user.refreshToken) {
-      // 兼容尚未升级的后端：只存 Access Token，拿不到刷新能力
-      localStorage.setItem(ACCESS_TOKEN_STORAGE_KEY, user.accessToken)
-      return
-    }
-    storeAuthTokens({
-      accessToken: user.accessToken,
-      refreshToken: user.refreshToken,
-      accessTokenExpiresIn: user.accessTokenExpiresIn ?? DEFAULT_ACCESS_TOKEN_TTL_SECS,
-    })
-    startAuthLifecycle()
-  }
-
   function setUser(user: UserInfo) {
     userInfo.value = user
     isLoggedIn.value = true
     // 服务端登录响应带来的用户信息是新鲜的：登录后 HomeView 立刻调用的
     // fetchUserInfo 直接复用，不再发一次 getUserInfo
     markUserInfoFresh()
-    persistLoginTokens(user)
+    // 凭据在 HttpOnly Cookie 里，前端只留非敏感 hint（用户名 + 过期时间）
+    storeAuthHint({
+      username: user.username,
+      accessTokenExpiresAt:
+        Date.now() + (user.accessTokenExpiresIn ?? DEFAULT_ACCESS_TOKEN_TTL_SECS) * 1000,
+    })
+    startAuthLifecycle()
     // 登录后不一定经过会调 fetchUserInfo 的页面，直接在登录点触发
     syncStatsOnce()
   }
 
-  /**
-   * 改密码等场景换发的令牌对。
-   *
-   * 服务端会自增撤销版本号作废其他设备，同时为当前设备换发新的一对；
-   * 不保存的话当前设备也会被登出。
-   */
-  function setAuthTokens(
-    tokens: Pick<UserInfo, 'accessToken' | 'refreshToken' | 'accessTokenExpiresIn'>
-  ) {
-    persistLoginTokens(tokens)
+  /** 服务端确认的用户信息落地：hint 已存在时补齐用户名（迁移首刷时可能未知）。 */
+  function syncHintUsername(username: string) {
+    const hint = readAuthHint()
+    // 不新造 hint：会话刚失效（hint 已清）时不能把登录提示又造回来
+    if (hint) {
+      storeAuthHint({ username, accessTokenExpiresAt: hint.accessTokenExpiresAt })
+    }
   }
 
   /**
-   * 启动时恢复会话。
-   *
-   * `getUserInfo` 是可选鉴权端点：Access Token 过期时它返回 200 + null，
-   * 不会触发 axios 的 401 刷新，所以这里要主动用 Refresh Token 换一次。
-   * 网络故障时保留令牌（离线不应把用户登出），等后续请求再试。
+   * 启动时恢复会话。会话凭据在 HttpOnly Cookie 里，浏览器自动携带：
+   * 1. 旧版 localStorage 的 Refresh Token 先做一次性迁移（放进刷新 body
+   *    换 Cookie 会话），迁移完（无论成败）删除旧键；
+   * 2. 没有 hint 视为未登录（真正的会话有效性由 API 401 兜底）；
+   * 3. getUserInfo 是可选鉴权端点：Cookie 过期时它返回 200 + null，此时
+   *    刷新一次再取；
+   * 4. 网络故障且 hint 存在时保持登录态（离线打开仍能进阅读器），等
+   *    后续请求再试。
    */
   let bootstrapPromise: Promise<void> | null = null
   function bootstrapAuth(): Promise<void> {
     if (bootstrapPromise) return bootstrapPromise
     bootstrapPromise = (async () => {
-      const hasAccess = !!readAccessToken()
-      const hasRefresh = !!readRefreshToken()
-      if (!hasAccess && !hasRefresh) {
+      // ── 旧令牌迁移 ──
+      if (readLegacyRefreshToken()) {
+        try {
+          await refreshAccessToken()
+        } catch {
+          // 400/401 会清 hint（会话确实没了）；网络失败保留已有的 hint。
+          // 无论成败旧键都删：失败重试救不回一次性轮换的旧令牌
+        }
+        clearLegacyAuthTokens()
+      }
+
+      if (!hasAuthHint()) {
         isLoggedIn.value = false
         return
       }
 
-      let fetched = false
       // 与 fetchUserInfo 共用序号：force 重查可能在这两次请求在途时发生，
       // 迟到的 bootstrap 响应不能再把刚核验出的登录态写回去
       const bootstrapSeq = ++userInfoSeq
       try {
         const data = await getUserInfo()
-        fetched = true
         if (bootstrapSeq !== userInfoSeq) return
         if (data.userInfo?.username) {
           userInfo.value = data.userInfo
           isLoggedIn.value = true
+          syncHintUsername(data.userInfo.username)
           // 这次响应就是权威登录态：随后的 fetchUserInfo 复用，不再重复请求
           markUserInfoFresh()
           startAuthLifecycle()
@@ -193,14 +193,7 @@ export const useAppStore = defineStore('app', () => {
           return
         }
       } catch {
-        // 网络故障：继续尝试刷新；刷新失败同样保留令牌
-      }
-
-      if (!hasRefresh) {
-        // 升级前的旧会话：Access Token 已失效且无法续期，清掉避免路由守卫反复放行
-        if (fetched && hasAccess) clearAuthTokens()
-        isLoggedIn.value = false
-        return
+        // 网络故障：继续尝试刷新；刷新也失败则按离线登录态处理
       }
 
       let seq = bootstrapSeq
@@ -212,11 +205,13 @@ export const useAppStore = defineStore('app', () => {
         userInfo.value = data.userInfo
         isLoggedIn.value = !!data.userInfo?.username
         if (isLoggedIn.value) {
+          syncHintUsername(data.userInfo!.username)
           markUserInfoFresh()
           startAuthLifecycle()
           syncStatsOnce()
         } else {
-          clearAuthTokens()
+          // Cookie 刚换新仍取不到用户：会话确实没了
+          clearAuthHint()
           stopAuthLifecycle()
         }
       } catch (error) {
@@ -224,8 +219,11 @@ export const useAppStore = defineStore('app', () => {
         if (error instanceof SessionExpiredError) {
           userInfo.value = null
           isLoggedIn.value = false
+          return
         }
-        // 网络错误：令牌保留，下一次请求会再次触发刷新
+        // 网络错误：hint 保留，按离线登录态放行（路由守卫依赖 hint），
+        // 下一次请求会再次触发刷新
+        if (hasAuthHint()) isLoggedIn.value = true
       }
     })().finally(() => {
       bootstrapPromise = null
@@ -237,7 +235,7 @@ export const useAppStore = defineStore('app', () => {
     userInfo.value = null
     isLoggedIn.value = false
     statsSynced = false
-    clearAuthTokens()
+    clearAuthHint()
     stopAuthLifecycle()
   }
 
@@ -245,7 +243,10 @@ export const useAppStore = defineStore('app', () => {
     userInfo.value = next
     isLoggedIn.value = !!next?.username
     // 只有写入了服务端返回的真实用户信息才算新鲜；置空/登出不记
-    if (next?.username) markUserInfoFresh()
+    if (next?.username) {
+      markUserInfoFresh()
+      syncHintUsername(next.username)
+    }
   }
 
   // ─── UI State ───
@@ -387,7 +388,6 @@ export const useAppStore = defineStore('app', () => {
     fetchUserInfo,
     bootstrapAuth,
     setUser,
-    setAuthTokens,
     clearUser,
     updateUserInfo,
     showSettingsDrawer,
