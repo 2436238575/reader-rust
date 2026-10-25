@@ -58,6 +58,10 @@ quick-xml = "0.41"
 zip = { version = "9", default-features = false, features = ["deflate"] }
 heic-rs = { version = "0.1", default-features = false, features = ["std"] }
 jpeg-encoder = "0.7"
+# 图片按宽度缩放（load_variant）：只开 jpeg/png/bmp 解码，GIF/AVIF 一律原样透传
+image = { version = "0.25", default-features = false, features = ["jpeg", "png", "bmp"] }
+# Accept 协商的有损 webp 编码（libwebp 绑定）；image 的 webp 只有无损，不能冒充省流
+webp = "0.3"
 # WebDAV 协议实现（PROPFIND/PUT/LOCK 等），litmus 验证过的成熟实现；
 # Basic 认证与 Windows 路径加固仍在 axum 层（src/api/handlers/webdav.rs）。
 dav-server = { version = "0.11", default-features = false, features = ["localfs"] }

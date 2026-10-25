@@ -128,6 +128,18 @@ async fn start_upstream() -> (String, Counter) {
                 resp
             }),
         )
+        // 128x128 PNG：按宽度派生 + webp 协商的解码源
+        .route(
+            "/pic.png",
+            get(|| async {
+                let mut resp = Response::new(axum::body::Body::from(make_png(128, 128)));
+                resp.headers_mut().insert(
+                    header::CONTENT_TYPE,
+                    header::HeaderValue::from_static("image/png"),
+                );
+                resp
+            }),
+        )
         .with_state(hits.clone());
 
     let counter = hits.clone();
@@ -504,4 +516,138 @@ async fn concurrent_first_load_of_heic_returns_fresh_content_type() {
         1,
         "单飞：并发首取 HEIC 上游只能被打一次: {hits:?}"
     );
+}
+
+/// 生成一张着色 PNG（load_variant 端到端用例的解码源）。
+fn make_png(width: u32, height: u32) -> Vec<u8> {
+    let img = image::RgbaImage::from_fn(width, height, |x, y| {
+        image::Rgba([
+            ((x * 255) / width.max(1)) as u8,
+            (y % 256) as u8,
+            0x80,
+            0xFF,
+        ])
+    });
+    let mut out = Vec::new();
+    image::DynamicImage::ImageRgba8(img)
+        .write_to(&mut std::io::Cursor::new(&mut out), image::ImageFormat::Png)
+        .unwrap();
+    out
+}
+
+/// handler 级：`?w=` 按宽度派生、Accept 协商 webp、响应带 `Vary: Accept`；
+/// 兼容入口 `/reader3/cover` 同样支持 `w`。
+#[tokio::test]
+async fn image_endpoint_negotiates_webp_and_scales() {
+    let server = TestServer::start().await;
+    let png_url = format!("{}/pic.png", server.upstream_url);
+    let id = reader_rust::service::image_service::ImageService::image_key(&png_url);
+
+    // 0) 兼容入口先登记这张图（不带 w 也不带 webp 的旧调用方式：原样 PNG，
+    //    行为与改动前一致），顺便验证 id 推导正确
+    let resp = server
+        .client
+        .get(format!("{}/reader3/cover", server.base_url))
+        .bearer_auth(&server.token)
+        .query(&[("path", png_url.as_str())])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    assert_eq!(
+        resp.headers()
+            .get(header::CONTENT_TYPE)
+            .and_then(|v| v.to_str().ok()),
+        Some("image/png"),
+        "无 w 无 webp 时原图直出"
+    );
+    let bytes = resp.bytes().await.unwrap();
+    let decoded = image::load_from_memory(&bytes).expect("应当是原样 PNG");
+    assert_eq!(decoded.width(), 128, "无 w 时不缩放");
+
+    // 1) w=64 + Accept 含 image/webp：webp 输出 + Vary: Accept
+    let resp = server
+        .client
+        .get(format!("{}/reader3/image/{id}", server.base_url))
+        .query(&[("w", "64")])
+        .header("Cookie", format!("reader_access={}", server.token))
+        .header(
+            "Accept",
+            "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8",
+        )
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    assert_eq!(
+        resp.headers()
+            .get(header::CONTENT_TYPE)
+            .and_then(|v| v.to_str().ok()),
+        Some("image/webp"),
+        "Accept 含 image/webp 时应输出 webp"
+    );
+    assert_eq!(
+        resp.headers()
+            .get(header::VARY)
+            .and_then(|v| v.to_str().ok()),
+        Some("Accept"),
+        "内容随 Accept 变化，必须带 Vary: Accept"
+    );
+    let bytes = resp.bytes().await.unwrap();
+    let decoded = webp::Decoder::new(&bytes)
+        .decode()
+        .expect("应当是可解码的 webp");
+    assert_eq!(decoded.width(), 64, "应当缩到 64 宽");
+
+    // 2) 同一 id 不带 webp 的 Accept：JPEG + Vary: Accept（同一 URL 两种表示）
+    let resp = server
+        .client
+        .get(format!("{}/reader3/image/{id}", server.base_url))
+        .query(&[("w", "64")])
+        .header("Cookie", format!("reader_access={}", server.token))
+        .header("Accept", "image/jpeg,image/png")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    assert_eq!(
+        resp.headers()
+            .get(header::CONTENT_TYPE)
+            .and_then(|v| v.to_str().ok()),
+        Some("image/jpeg"),
+        "Accept 不含 webp 时应输出 JPEG"
+    );
+    assert_eq!(
+        resp.headers()
+            .get(header::VARY)
+            .and_then(|v| v.to_str().ok()),
+        Some("Accept")
+    );
+    let bytes = resp.bytes().await.unwrap();
+    let decoded = image::load_from_memory(&bytes).expect("应当是可解码的 JPEG");
+    assert_eq!(decoded.width(), 64);
+
+    // 3) 兼容入口 /reader3/cover 也支持 w
+    let resp = server
+        .client
+        .get(format!("{}/reader3/cover", server.base_url))
+        .bearer_auth(&server.token)
+        .query(&[("path", png_url.as_str()), ("w", "64")])
+        .header("Accept", "image/webp")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    assert_eq!(
+        resp.headers()
+            .get(header::CONTENT_TYPE)
+            .and_then(|v| v.to_str().ok()),
+        Some("image/webp"),
+        "兼容入口也应按 Accept 输出 webp"
+    );
+    let bytes = resp.bytes().await.unwrap();
+    let decoded = webp::Decoder::new(&bytes)
+        .decode()
+        .expect("应当是可解码的 webp");
+    assert_eq!(decoded.width(), 64, "兼容入口也应按 w 缩放");
 }

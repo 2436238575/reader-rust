@@ -118,7 +118,7 @@ http://localhost:8080/reader3
 
 - [书源管理](./book-source) - 书源的增删改查、调试与导入导出
 - [书籍搜索](./search) - 搜索书籍、发现页、获取详情与目录
-- [章节内容](./chapter) - 获取章节列表和正文、缓存与进度
+- [章节内容](./chapter) - 获取章节列表和正文、缓存与进度、图片管道（`/reader3/image/<id>?w=` 与 `/reader3/cover`，支持按宽度缩放与 `Accept` 头的 webp 协商）
 - [缓存管理](./cache) - 缓存清理与占用统计
 - [账号](./user) - 登录、配置与文件
 

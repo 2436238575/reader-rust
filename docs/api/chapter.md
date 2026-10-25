@@ -339,7 +339,7 @@ POST /reader3/saveReadProgress
 ## 获取图片（封面等）
 
 ```text
-GET /reader3/image/<id>
+GET /reader3/image/<id>?w=<像素宽>
 ```
 
 浏览器里 `<img>` 会自动携带 HttpOnly Cookie `reader_access`，URL 不需要再拼令牌；API 客户端仍可用 `Authorization: Bearer <jwt>`。其他路径的 `?accessToken=` 查询参数已不再接受。
@@ -358,17 +358,31 @@ GET /reader3/image/<id>
 - 映射与图片本体存放在 `<STORAGE_DIR>/cache/image/`：`<id>.json` 是记录（上游地址 + 所属书籍的 `book_id`，供按书清理与回源自愈），
   `<id>.bin` 是图片字节；目录本身即「id → 记录」的映射表。
 
-单个图片最大 32MiB；目录容量上限与封面共用 `CACHE_COVER_LIMIT_BYTES`（超限按最旧优先淘汰）。
-上游失败、id 未登记、出站守卫拦截都返回 404。目标地址同样过出站守卫。
+### 按宽度缩放（`w`）与 webp 协商（`Accept`）
+
+查询参数 `w` 是**目标像素宽**：把图缩小到该宽度（等比，Triangle 滤镜），用于封面/章节配图
+按展示尺寸取图省流。规则：
+
+- 取值范围 clamp 到 `[64, 2048]`，**只降不升**——`w` 大于等于原图宽度时返回原图尺寸；
+- 请求头 `Accept` 含 `image/webp` 时输出**有损 webp（质量 80）**，否则缩放结果编码为
+  **JPEG（质量 85）**；响应都带 `Vary: Accept`（同一 URL 有两种表示，缓存须按 Accept 区分）；
+- 只有 JPEG/PNG/BMP 会参与缩放与转码；**GIF（动画）/WebP/AVIF/SVG/ICO 原样透传**，
+  避免 `w` / Accept 破坏动画与矢量；
+- 不带 `w` 且 `Accept` 不含 webp 时返回原图，行为与旧版完全一致；
+- 派生图落盘为 `<id>.w<实际宽度>.<webp|jpg>`，与原图同目录、共用 `CACHE_COVER_LIMIT_BYTES`
+  容量上限与最旧优先淘汰，命中后不再重复编码。
+
+单个图片最大 32MiB；上游失败、id 未登记、出站守卫拦截都返回 404。目标地址同样过出站守卫。
 
 ## 获取封面（兼容入口）
 
 ```text
-GET /reader3/cover?path=<封面URL>
+GET /reader3/cover?path=<封面URL>&w=<像素宽>
 ```
 
 `customCoverUrl`（用户自定义封面）等历史入口存的还是书源地址，这个接口保留兼容：把 `path` 登记成 id
-后走上面同一条管道（转码、缓存、自愈一致）。**需要登录**，浏览器由 HttpOnly Cookie 携带会话，
+后走上面同一条管道（转码、缓存、自愈一致），同样支持 `w` 缩放与 `Accept` 的 webp 协商。**需要登录**，
+浏览器由 HttpOnly Cookie 携带会话，
 API 客户端用 `Authorization` 头；`?accessToken=` 查询参数已不再接受。书源下发的封面地址（`coverUrl`）在响应里已被改写成 `/reader3/image/<id>`，正常调用方不需要走这个入口。
 
 ## 获取本地 EPUB 资源

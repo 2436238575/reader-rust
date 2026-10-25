@@ -22,7 +22,7 @@ Reader-Rust 是 [阅读3.0](https://github.com/hectorqin/reader) 的 Rust 重写
 cargo run                      # 开发模式运行，默认监听 127.0.0.1:8080（Docker 镜像显式设 0.0.0.0）
 cargo build                    # 调试构建
 cargo build --release          # 发布构建
-cargo test                     # 全部测试（Rust 侧共 535 个，另有 2 个真实网络用例默认忽略）
+cargo test                     # 全部测试（Rust 侧共 545 个，另有 2 个真实网络用例默认忽略）
 cargo test <关键字>             # 按名称过滤测试
 cargo clippy --all-targets     # 静态检查
 cargo fmt                      # 格式化
@@ -171,6 +171,7 @@ src/
     chapter_content_service.rs 正文池与版本时间线：sha256 去重、zstd 压缩、版本追加、
                           最新指针、每用户版本选择、24h 回源判定
     image_service.rs       图片管道：id 映射 + HEIC→JPEG + 永久缓存 + 回源自愈
+                          + ?w= 按宽度派生缓存 + Accept 协商有损 webp（load_variant）
     chapter_diff_service.rs 章节版本 diff：进程内 imara-diff（git 同款 Histogram 算法）
                           + 变更块相似度配对 + 结果缓存
     refresh_token_service.rs Refresh Token 轮换：SHA-256 摘要落库、一次性消费、30 秒宽限、
@@ -310,7 +311,10 @@ HTTP 请求
 `/reader3/image/<id>`，前端不接触书源地址。评论配图的多个格式变体由后端挑一张能渲染的
 （`pick_renderable`，HEIC 会被管道转成 JPEG），所以数组里只剩一个元素。
 id = `md5(去掉查询串的地址)`；抓取失败时按登记时的书籍上下文回源刷新一次（封面走书籍详情，
-章节/评论配图靠下一次拉取重新登记）。
+章节/评论配图靠下一次拉取重新登记）。取图支持 `?w=<像素宽>` 按宽度派生缓存（clamp 64..=2048、
+只降不升，Triangle 滤镜）与 `Accept` 头协商的有损 webp（质量 80，否则 JPEG 质量 85）：
+派生文件 `<id>.w<宽>.<webp|jpg>` 与原图同目录、共用容量记账，响应带 `Vary: Accept`；
+GIF/WebP/AVIF/SVG/ICO 原样透传（不破坏动画与矢量），不带 `w` 也不要 webp 时原图直出。
 
 ### 解析方式识别
 
@@ -379,7 +383,8 @@ XPath 有资源上限（长度 8KB / 嵌套 64 层 / 总步数 100、`//` 50）�
 - **评论缓存**（`storage/cache/reviews/<ns>/<bookId>/`）是会变的第三方数据，
   保留 7 天 TTL（`REVIEW_CACHE_TTL_SECS`），同时也受容量上限约束。
 - **图片缓存**（`storage/cache/image/`）是书源图片的统一出口：`<id>.bin` 是图片本体、
-  `<id>.json` 是映射记录（id = `md5(去掉查询串的地址)`，含上游地址与所属 `book_id`）。
+  `<id>.json` 是映射记录（id = `md5(去掉查询串的地址)`，含上游地址与所属 `book_id`），
+  `<id>.w<宽>.<webp|jpg>` 是按宽度/webp 协商的派生图（`?w=`，详见「图片管道」段）。
   它**不按时间过期**（id 稳定，抓下来就长期复用），容量与封面共用 `CACHE_COVER_LIMIT_BYTES`；
   上游地址失效时按 `book_id` 解析当前绑定回源刷新一次再试（`service/image_service.rs`）。
 - 另有若干**进程内**小缓存，重启即失效：书源正则编译缓存、JS `cache`/`kv` 与 jsLib 编译缓存、
@@ -398,21 +403,21 @@ XPath 有资源上限（长度 8KB / 嵌套 64 层 / 总步数 100、`//` 50）�
 
 ## 测试
 
-Rust 侧共 **535 个测试**（361 个内联单元测试 + 174 个集成用例，另有 2 个 `#[ignore]` 的真实网络用例）。`cargo test` 输出的合计就是实际用例数：`src/main.rs` 只是入口文件，不再重复声明模块，bin 目标没有单元测试，不存在重复计数。分布为：
+Rust 侧共 **545 个测试**（370 个内联单元测试 + 175 个集成用例，另有 2 个 `#[ignore]` 的真实网络用例）。`cargo test` 输出的合计就是实际用例数：`src/main.rs` 只是入口文件，不再重复声明模块，bin 目标没有单元测试，不存在重复计数。分布为：
 
-- `tests/` 下 27 个集成测试文件（174 个常规用例；`yckceo_live_sources.rs` 只装那 2 个默认忽略的真实网络用例），其中 `auth_flow.rs` 用例最多（24 个）；
+- `tests/` 下 27 个集成测试文件（175 个常规用例；`yckceo_live_sources.rs` 只装那 2 个默认忽略的真实网络用例），其中 `auth_flow.rs` 用例最多（24 个）；
   `auth_flow.rs`、`review_flow.rs`、`chapter_image_flow.rs`、`image_pipeline.rs` 与
   `webdav_flow.rs` 起真实监听端口，前者覆盖 401、静态回落、缓存清理与改密吊销令牌，
   中间三个各用一个假上游覆盖评论规则（7 天缓存、按类型清理）、章节配图（配图规则、
   无图不报错、正文 HTML 内嵌图片透传）与图片管道（封面地址改写、HEIC→JPEG、过期签名
-  回源自愈、缓存命中不重抓），`webdav_flow.rs` 覆盖 WebDAV 协议端点（Basic 认证、
+  回源自愈、缓存命中不重抓、`?w=` 缩放与 Accept webp 协商的 `Vary: Accept`），`webdav_flow.rs` 覆盖 WebDAV 协议端点（Basic 认证、
   CRUD、Depth、Destination、锁语义与 Windows 路径安全门）；
 - `agent_sidecar_flow.rs` 用 Node 假 sidecar（`tests/helpers/fake_agent_sidecar.mjs`）
   走全流程：批量更新、章节跳过、工具回调（正文/搜索钳制）、地图落盘与降级、看门狗与取消
   （机器上需要有 Node）；
 - `batch_content_flow.rs` 用假上游覆盖批量正文接口 `getBookContents`：多章按请求顺序返回、
   单章失败不影响其他章节（整体 200）、空/超量/缺 `chapterUrl` 整批 400、与单章接口同构；
-- `src/` 内的内联单元测试模块（361 个）。
+- `src/` 内的内联单元测试模块（370 个）。
 
 sidecar 使用 pytest（116 个用例，
 见「常用命令」），含从旧前端实现 1:1 移植的领域规则用例与新增编排能力用例。

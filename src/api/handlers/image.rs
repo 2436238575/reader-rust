@@ -1,7 +1,7 @@
 use axum::{
     body::Body,
     extract::{Path, Query, State},
-    http::{header, HeaderValue, StatusCode},
+    http::{header, HeaderMap, HeaderValue, StatusCode},
     response::{IntoResponse, Response},
     Json,
 };
@@ -18,6 +18,15 @@ use crate::error::error::AppError;
 #[derive(Debug, Deserialize)]
 pub struct CoverQuery {
     pub path: Option<String>,
+    /// 目标像素宽（64..=2048，只降不升）；缺省表示原图宽度。
+    pub w: Option<u32>,
+}
+
+/// `/reader3/image/<id>` 的查询参数。
+#[derive(Debug, Deserialize)]
+pub struct ImageQuery {
+    /// 目标像素宽（64..=2048，只降不升）；缺省表示原图宽度。
+    pub w: Option<u32>,
 }
 
 /// 图片 id 只能是 md5 hex：axum 会把 `%2F` 解码进路径段，
@@ -29,22 +38,48 @@ fn is_valid_image_id(id: &str) -> bool {
             .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
 }
 
+/// Accept 头里是否明确列了 `image/webp`。
+///
+/// `*/*` 不算：没开口就不冒进，免得把 webp 硬塞给不认它的客户端。
+fn accepts_webp(headers: &HeaderMap) -> bool {
+    headers
+        .get(header::ACCEPT)
+        .and_then(|v| v.to_str().ok())
+        .map(|v| {
+            v.split(',')
+                .filter_map(|item| item.split(';').next())
+                .any(|mime| mime.trim().eq_ignore_ascii_case("image/webp"))
+        })
+        .unwrap_or(false)
+}
+
 /// 本站取图：`/reader3/image/<id>`。
 ///
 /// 缓存命中直接返回；没命中就抓上游（HEIC 转 JPEG）后落盘，之后长期命中。
 /// 上游地址过期（签名失效）时，用登记时留下的书籍上下文回源刷新一次再试。
+///
+/// 查询参数 `w`（可选）：按宽度缩小（只降不升）；请求头 `Accept` 含
+/// `image/webp` 时输出有损 webp，否则 JPEG——内容随 Accept 变化，响应带
+/// `Vary: Accept`。
 pub async fn get_image(
     State(state): State<AppState>,
     user: CurrentUser,
     Path(id): Path<String>,
+    Query(q): Query<ImageQuery>,
+    headers: HeaderMap,
 ) -> Result<Response<Body>, AppError> {
     if !is_valid_image_id(&id) {
         return Err(AppError::NotFound("图片不存在".to_string()));
     }
     let user_ns = user.0.ns.clone();
-    match state.image_service.load(&id).await {
+    let accept_webp = accepts_webp(&headers);
+    match state
+        .image_service
+        .load_variant(&id, q.w, accept_webp)
+        .await
+    {
         Ok((bytes, content_type)) => Ok(image_response(bytes, content_type)),
-        Err(err) => match heal_source_url(&state, &user_ns, &id).await {
+        Err(err) => match heal_source_url(&state, &user_ns, &id, q.w, accept_webp).await {
             Some((bytes, content_type)) => Ok(image_response(bytes, content_type)),
             None => Err(err),
         },
@@ -56,19 +91,25 @@ pub async fn get_book_cover(
     State(state): State<AppState>,
     user: CurrentUser,
     Query(q): Query<CoverQuery>,
+    headers: HeaderMap,
 ) -> Result<Response<Body>, AppError> {
     let user_ns = user.0.ns.clone();
     let Some(url) = q.path.as_deref().map(str::trim).filter(|u| !u.is_empty()) else {
         return Ok(StatusCode::NOT_FOUND.into_response());
     };
+    let accept_webp = accepts_webp(&headers);
     let Some(id) = state.image_service.register("cover", url, None).await else {
         return Ok(StatusCode::NOT_FOUND.into_response());
     };
-    match state.image_service.load(&id).await {
+    match state
+        .image_service
+        .load_variant(&id, q.w, accept_webp)
+        .await
+    {
         Ok((bytes, content_type)) => Ok(image_response(bytes, content_type)),
         Err(err) => {
             // 兼容入口（customCoverUrl）没有书籍上下文，无法回源刷新
-            let _ = heal_source_url(&state, &user_ns, &id).await;
+            let _ = heal_source_url(&state, &user_ns, &id, q.w, accept_webp).await;
             let _ = err;
             Ok(StatusCode::NOT_FOUND.into_response())
         }
@@ -76,8 +117,15 @@ pub async fn get_book_cover(
 }
 
 /// 上游地址失效时回源刷新一次：按记录里的 bookId 解析当前绑定（换源后
-/// 也能拿到当前书源），重新求值书源的封面地址。
-async fn heal_source_url(state: &AppState, user_ns: &str, id: &str) -> Option<(Vec<u8>, String)> {
+/// 也能拿到当前书源），重新求值书源的封面地址。刷新成功后**重新走
+/// `load_variant`**——自愈不能把未缩放的原图漏给要派生图的请求。
+async fn heal_source_url(
+    state: &AppState,
+    user_ns: &str,
+    id: &str,
+    width: Option<u32>,
+    accept_webp: bool,
+) -> Option<(Vec<u8>, String)> {
     let record = state.image_service.record(id).await?;
     let book_id = record.book_id.clone()?;
     let row = state
@@ -100,7 +148,11 @@ async fn heal_source_url(state: &AppState, user_ns: &str, id: &str) -> Option<(V
         .ok()?;
     let fresh = info.cover_url.filter(|url| !url.trim().is_empty())?;
     state.image_service.update_source_url(id, &fresh).await;
-    match state.image_service.load(id).await {
+    match state
+        .image_service
+        .load_variant(id, width, accept_webp)
+        .await
+    {
         Ok(pair) => {
             tracing::info!("图片地址已回源刷新 id={id}");
             Some(pair)
@@ -120,6 +172,8 @@ fn image_response(bytes: Vec<u8>, content_type: String) -> Response<Body> {
         header::CACHE_CONTROL,
         HeaderValue::from_static("public, max-age=31536000, immutable"),
     );
+    // 同一 URL 的表示随 Accept 协商变化，缓存必须按 Accept 区分
+    headers.insert(header::VARY, HeaderValue::from_static("Accept"));
     if let Ok(value) = HeaderValue::from_str(&content_type) {
         headers.insert(header::CONTENT_TYPE, value);
     }
@@ -141,7 +195,8 @@ pub(crate) async fn ok_with_cover_routes(
 
 #[cfg(test)]
 mod tests {
-    use super::is_valid_image_id;
+    use super::{accepts_webp, is_valid_image_id};
+    use axum::http::{header, HeaderMap, HeaderValue};
 
     #[test]
     fn image_id_must_be_lowercase_md5_hex() {
@@ -153,5 +208,35 @@ mod tests {
         assert!(!is_valid_image_id("../../etc/passwd"));
         assert!(!is_valid_image_id("..%2F..%2Fetc"));
         assert!(!is_valid_image_id(""));
+    }
+
+    #[test]
+    fn accept_header_webp_negotiation() {
+        let mut headers = HeaderMap::new();
+        assert!(!accepts_webp(&headers), "无 Accept 头不算支持 webp");
+
+        headers.insert(
+            header::ACCEPT,
+            HeaderValue::from_static(
+                "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8",
+            ),
+        );
+        assert!(accepts_webp(&headers), "浏览器常见 Accept 应命中");
+
+        headers.insert(
+            header::ACCEPT,
+            HeaderValue::from_static("text/html,application/xhtml+xml,application/xml;q=0.9"),
+        );
+        assert!(!accepts_webp(&headers));
+
+        headers.insert(header::ACCEPT, HeaderValue::from_static("*/*"));
+        assert!(!accepts_webp(&headers), "*/* 不算明确支持 webp");
+
+        // 带权重的写法也要认得
+        headers.insert(
+            header::ACCEPT,
+            HeaderValue::from_static("image/jpeg;q=0.9,IMAGE/WEBP;q=0.8"),
+        );
+        assert!(accepts_webp(&headers), "大小写与 q 权重都不影响判定");
     }
 }

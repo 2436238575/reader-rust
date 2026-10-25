@@ -11,6 +11,9 @@
 //!   前端请求 `/reader3/image/<id>`，不接触书源地址；
 //! - **首次取图时抓上游并落盘**：HEIC 转成 JPEG，其余格式原样缓存；
 //! - **之后长期命中本地缓存**：签名过期不影响已经抓下来的图；
+//! - **按宽度派生 + webp 协商**：`?w=` 缩放（只降不升）与 Accept 头协商的有损
+//!   webp 都落成派生文件 `<id>.w<宽>.<webp|jpg>`，与原图同目录同一套容量记账；
+//!   GIF（动画）/WebP/AVIF/SVG/ICO 原样透传，不做任何转换；
 //! - **映射表**：`<storage>/cache/image/<id>.json` 是记录（上游地址 + 书籍上下文），
 //!   `<id>.bin` 是图片本体。目录本身就是「id → 记录」的映射表，不需要额外的库表。
 
@@ -38,6 +41,17 @@ const IMAGE_DIR: &str = "cache/image";
 
 /// JPEG 转码质量：封面/插图这类展示用图，85 已经看不出损失。
 const JPEG_QUALITY: u8 = 85;
+
+/// 有损 webp 编码质量（Accept 协商命中时）：80 在省流与画质间取平衡。
+const WEBP_QUALITY: f32 = 80.0;
+
+/// 派生图（`?w=` 缩放）请求宽度的上下限。
+const VARIANT_MIN_WIDTH: u32 = 64;
+const VARIANT_MAX_WIDTH: u32 = 2048;
+
+/// 可以缩放/转码的原图类型。GIF（动画）、WebP、AVIF、SVG、ICO 原样透传：
+/// 动画重编码会丢帧，矢量放大反而失真。
+const CONVERTIBLE_CONTENT_TYPES: &[&str] = &["image/jpeg", "image/png", "image/bmp"];
 
 /// 取图单飞锁表上限：正常路径用完即清，上限只为兜住取消/panic 遗留的条目。
 const IMAGE_LOAD_LOCK_MAX_ENTRIES: usize = 256;
@@ -108,6 +122,14 @@ impl ImageService {
 
     fn body_path(&self, id: &str) -> PathBuf {
         self.dir().join(format!("{id}.bin"))
+    }
+
+    /// 派生图（按宽度缩放 / webp 转码）的落盘路径，与原图同目录。
+    fn variant_path(&self, id: &str, width: u32, webp: bool) -> PathBuf {
+        self.dir().join(format!(
+            "{id}.w{width}.{}",
+            if webp { "webp" } else { "jpg" }
+        ))
     }
 
     fn record_path(&self, id: &str) -> PathBuf {
@@ -292,6 +314,92 @@ impl ImageService {
         result
     }
 
+    /// 取图变体：`?w=` 可选按宽度缩小（只降不升），并按请求头 Accept 协商
+    /// 输出有损 webp（质量 80），否则 JPEG（质量 85）。
+    ///
+    /// - 先走 [`Self::load`] 确保原图已在本地（抓上游 / HEIC 转码 / 按 id 单飞
+    ///   全部复用同一条链路）；
+    /// - 只有 JPEG/PNG/BMP 会转换；GIF（动画）/WebP/AVIF/SVG/ICO 原样返回；
+    /// - 请求宽度 clamp 到 `[64, 2048]`，且 >= 原图宽度时不放大；
+    /// - 无 `width` 且不要 webp 时直接返回原图，不产生派生缓存；
+    /// - 派生文件 `<id>.w<实际宽度>.<webp|jpg>` 与原图同目录、同一套容量记账，
+    ///   并按 `v:<id>|<宽>|<格式>` 单独单飞（前缀避免与原图的 id 键冲突）。
+    pub async fn load_variant(
+        &self,
+        id: &str,
+        width: Option<u32>,
+        accept_webp: bool,
+    ) -> Result<(Vec<u8>, String), AppError> {
+        // 先确保原图就位；失败（含上游抓取失败）直接上抛，由 handler 决定是否回源自愈
+        let (original, content_type) = self.load(id).await?;
+        if !CONVERTIBLE_CONTENT_TYPES.contains(&content_type.as_str()) {
+            return Ok((original, content_type));
+        }
+        // 快路径：无 width 且不要 webp，原图直出，连尺寸都不用解析
+        let requested = width.map(|w| w.clamp(VARIANT_MIN_WIDTH, VARIANT_MAX_WIDTH));
+        if requested.is_none() && !accept_webp {
+            return Ok((original, content_type));
+        }
+        // 只解析文件头拿原图宽度；解不出尺寸（内容损坏/格式对不上）就保守原图直出
+        let Ok(orig_width) = read_width(&original) else {
+            return Ok((original, content_type));
+        };
+        // 只降不升：请求宽度 >= 原图宽度时不缩放（但仍可按 Accept 转 webp）
+        let scale_down = requested.is_some_and(|w| w < orig_width);
+        if !scale_down && !accept_webp {
+            return Ok((original, content_type));
+        }
+        let target_width = if scale_down {
+            requested.unwrap_or(orig_width)
+        } else {
+            orig_width
+        };
+        let variant = self.variant_path(id, target_width, accept_webp);
+        let lock_key = format!(
+            "v:{id}|{target_width}|{}",
+            if accept_webp { "webp" } else { "jpg" }
+        );
+        let lock = self.acquire_load_lock(&lock_key);
+        let _key_guard = lock.lock().await;
+        // 二次检查：等锁期间别的请求可能已把同一派生图落盘
+        if let Ok(bytes) = fs::read(&variant).await {
+            drop(_key_guard);
+            self.release_load_lock(&lock_key, &lock);
+            return Ok((bytes, variant_content_type(accept_webp)));
+        }
+        let encoded = {
+            // 解码 + 缩放 + 编码是 CPU 活，不占 async worker；克隆一份进闭包，
+            // 原图留在原地，转码失败时还能原图兜底
+            let source = original.clone();
+            tokio::task::spawn_blocking(move || encode_variant(&source, target_width, accept_webp))
+                .await
+        };
+        let (bytes, out_type) = match encoded {
+            Ok(Ok(pair)) => pair,
+            Ok(Err(err)) => {
+                // 派生图生成失败不致命：原图仍然完整可用，只是没省成流
+                tracing::warn!("图片变体生成失败 id={id} w={target_width} err={err}");
+                drop(_key_guard);
+                self.release_load_lock(&lock_key, &lock);
+                return Ok((original, content_type));
+            }
+            Err(e) => {
+                drop(_key_guard);
+                self.release_load_lock(&lock_key, &lock);
+                return Err(AppError::Internal(e.into()));
+            }
+        };
+        // 落盘失败只影响下次命中，不影响本次响应；容量记账与原图同一套
+        if let Err(e) = write_atomic(&variant, &bytes).await {
+            tracing::warn!("图片变体落盘失败 id={id} w={target_width} err={e:?}");
+        } else {
+            enforce_flat_dir_capacity(&self.dir(), self.limit_bytes, bytes.len() as u64).await;
+        }
+        drop(_key_guard);
+        self.release_load_lock(&lock_key, &lock);
+        Ok((bytes, out_type))
+    }
+
     /// 抓上游 + 转码 + 落盘 + 更新记录（在键锁内执行）。
     async fn fetch_and_store(
         &self,
@@ -452,6 +560,70 @@ fn decode_heic(bytes: &[u8]) -> Result<(Vec<u8>, u16, u16), String> {
         return Err(format!("像素数据不完整：{} < {expected}", image.data.len()));
     }
     Ok((image.data, image.width as u16, image.height as u16))
+}
+
+/// 只解析文件头拿图片宽度（不解码像素）。
+fn read_width(bytes: &[u8]) -> Result<u32, String> {
+    let reader = image::ImageReader::new(std::io::Cursor::new(bytes))
+        .with_guessed_format()
+        .map_err(|e| e.to_string())?;
+    let (width, _) = reader.into_dimensions().map_err(|e| e.to_string())?;
+    Ok(width)
+}
+
+/// 派生图内容类型。
+fn variant_content_type(webp: bool) -> String {
+    if webp {
+        "image/webp".to_string()
+    } else {
+        "image/jpeg".to_string()
+    }
+}
+
+/// 解码原图 →（可选）Triangle 缩放 → RGBA → 有损 webp（质量 80）/ JPEG（质量 85）。
+///
+/// 只处理 JPEG/PNG/BMP（调用方已按 content_type 过滤）；解码与编码都在
+/// `spawn_blocking` 里执行。
+fn encode_variant(
+    original: &[u8],
+    target_width: u32,
+    accept_webp: bool,
+) -> Result<(Vec<u8>, String), String> {
+    let img = image::load_from_memory(original).map_err(|e| e.to_string())?;
+    let img = if target_width < img.width() {
+        let ratio = target_width as f64 / img.width() as f64;
+        let target_height = ((img.height() as f64 * ratio).round() as u32).max(1);
+        image::DynamicImage::ImageRgba8(image::imageops::resize(
+            &img.to_rgba8(),
+            target_width,
+            target_height,
+            image::imageops::FilterType::Triangle,
+        ))
+    } else {
+        img
+    };
+    let rgba = img.to_rgba8();
+    let (width, height) = (rgba.width(), rgba.height());
+    let pixels = rgba.as_raw();
+    if accept_webp {
+        let encoded = webp::Encoder::from_rgba(pixels, width, height).encode(WEBP_QUALITY);
+        Ok((encoded.to_vec(), variant_content_type(true)))
+    } else {
+        // JPEG 路径只在缩小时走到（宽度 ≤ 2048），但极端长图的高度仍可能超限
+        if width > u16::MAX as u32 || height > u16::MAX as u32 {
+            return Err(format!("尺寸超出 JPEG 编码上限 {width}x{height}"));
+        }
+        let mut out = Vec::new();
+        jpeg_encoder::Encoder::new(&mut out, JPEG_QUALITY)
+            .encode(
+                pixels,
+                width as u16,
+                height as u16,
+                jpeg_encoder::ColorType::Rgba,
+            )
+            .map_err(|e| e.to_string())?;
+        Ok((out, variant_content_type(false)))
+    }
 }
 
 /// 去掉 URL 的查询串与片段。
@@ -856,5 +1028,179 @@ mod tests {
             value["books"][0]["customCoverUrl"],
             json!("https://user.example/mine.png")
         );
+    }
+
+    // ---------- load_variant：按宽度派生 + webp 协商 ----------
+
+    /// 生成一张着色 PNG（带横向渐变，缩放后肉眼可辨）。
+    fn make_png(width: u32, height: u32) -> Vec<u8> {
+        let img = image::RgbaImage::from_fn(width, height, |x, y| {
+            image::Rgba([
+                ((x * 255) / width.max(1)) as u8,
+                (y % 256) as u8,
+                0x80,
+                0xFF,
+            ])
+        });
+        let mut out = Vec::new();
+        image::DynamicImage::ImageRgba8(img)
+            .write_to(&mut std::io::Cursor::new(&mut out), image::ImageFormat::Png)
+            .unwrap();
+        out
+    }
+
+    /// 建临时 ImageService，直接落一张已就位的图（record + body，不走网络）。
+    async fn service_with_stored_image(
+        content_type: &str,
+        bytes: Vec<u8>,
+    ) -> (ImageService, String, std::path::PathBuf) {
+        let dir = std::env::temp_dir().join(format!(
+            "reader-rust-img-variant-{}-{}",
+            std::process::id(),
+            crate::util::crypto::random_string(6)
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let service = ImageService::new(
+            crate::crawler::http_client::HttpClient::new(5, None).unwrap(),
+            dir.to_str().unwrap(),
+            0,
+        );
+        let id = "0123456789abcdef0123456789abcdef".to_string();
+        service
+            .save_record(&ImageRecord {
+                id: id.clone(),
+                kind: "chapter".to_string(),
+                source_url: "https://img.example/x.png".to_string(),
+                book_id: None,
+                content_type: content_type.to_string(),
+                ext: "png".to_string(),
+                updated_at: 0,
+                failed_at: None,
+            })
+            .await;
+        std::fs::write(service.body_path(&id), bytes).unwrap();
+        (service, id, dir)
+    }
+
+    /// storage 根目录下的派生文件（<id>.w*.webp/jpg）名字列表。
+    fn derived_files(storage_dir: &Path) -> Vec<String> {
+        let dir = storage_dir.join(IMAGE_DIR);
+        std::fs::read_dir(dir)
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .map(|e| e.file_name().to_string_lossy().to_string())
+            .filter(|name| name.starts_with("0123456789abcdef0123456789abcdef.w"))
+            .collect()
+    }
+
+    /// w=64 + Accept webp：输出可解码的有损 webp、宽 64，派生文件按实际宽度落盘。
+    #[tokio::test]
+    async fn load_variant_scales_and_encodes_webp() {
+        let (service, id, dir) = service_with_stored_image("image/png", make_png(128, 128)).await;
+        let (bytes, content_type) = service.load_variant(&id, Some(64), true).await.unwrap();
+        assert_eq!(content_type, "image/webp");
+        let decoded = webp::Decoder::new(&bytes)
+            .decode()
+            .expect("应当是可解码的 webp");
+        assert_eq!((decoded.width(), decoded.height()), (64, 64));
+        assert_eq!(
+            derived_files(&dir),
+            vec![format!("{id}.w64.webp")],
+            "派生文件应按实际宽度落盘"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// w=64 不要 webp：转成 JPEG（质量 85），宽 64。
+    #[tokio::test]
+    async fn load_variant_scales_and_encodes_jpeg_without_webp() {
+        let (service, id, dir) = service_with_stored_image("image/png", make_png(128, 128)).await;
+        let (bytes, content_type) = service.load_variant(&id, Some(64), false).await.unwrap();
+        assert_eq!(content_type, "image/jpeg");
+        let decoded = image::load_from_memory(&bytes).expect("应当是可解码的 JPEG");
+        assert_eq!(decoded.width(), 64);
+        assert_eq!(
+            derived_files(&dir),
+            vec![format!("{id}.w64.jpg")],
+            "不要 webp 时派生 JPEG"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// 请求宽度 >= 原图宽度：不放大，原图直出，也不产生派生缓存。
+    #[tokio::test]
+    async fn load_variant_never_upscales() {
+        let original = make_png(128, 128);
+        let (service, id, dir) = service_with_stored_image("image/png", original.clone()).await;
+        let (bytes, content_type) = service.load_variant(&id, Some(512), false).await.unwrap();
+        assert_eq!(content_type, "image/png", "不缩放也不要 webp 时应原图直出");
+        assert_eq!(bytes, original, "字节应与原图一致");
+        assert!(derived_files(&dir).is_empty(), "不该产生派生缓存");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// 无 width 且不要 webp：原图直出的快路径，不解析尺寸、不落派生文件。
+    #[tokio::test]
+    async fn load_variant_without_width_or_webp_returns_original() {
+        let original = make_png(128, 128);
+        let (service, id, dir) = service_with_stored_image("image/png", original.clone()).await;
+        let (bytes, content_type) = service.load_variant(&id, None, false).await.unwrap();
+        assert_eq!(bytes, original);
+        assert_eq!(content_type, "image/png");
+        assert!(derived_files(&dir).is_empty());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// 无 width 但要 webp：保持原始宽高转 webp（不缩放）。
+    #[tokio::test]
+    async fn load_variant_webp_full_size_without_width() {
+        let (service, id, dir) = service_with_stored_image("image/png", make_png(96, 48)).await;
+        let (bytes, content_type) = service.load_variant(&id, None, true).await.unwrap();
+        assert_eq!(content_type, "image/webp");
+        let decoded = webp::Decoder::new(&bytes).decode().expect("可解码 webp");
+        assert_eq!(
+            (decoded.width(), decoded.height()),
+            (96, 48),
+            "不缩放，保持原始宽高"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// GIF（动画）原样透传：不缩放、不转码，避免破坏动画。
+    #[tokio::test]
+    async fn load_variant_passes_gif_through() {
+        let gif: Vec<u8> = b"GIF89a\x01\x00\x01\x00\x80\x00\x00\x00\x00\x00\xff\xff\xff,\
+             !\xf9\x04\x01\x00\x00\x00\x00,\x00\x00\x00\x00\x01\x00\x01\x00\x00\x02\x02D\x01\x00;"
+            .to_vec();
+        let (service, id, dir) = service_with_stored_image("image/gif", gif.clone()).await;
+        let (bytes, content_type) = service.load_variant(&id, Some(64), true).await.unwrap();
+        assert_eq!(content_type, "image/gif");
+        assert_eq!(bytes, gif);
+        assert!(derived_files(&dir).is_empty(), "透传不该产生派生缓存");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// 宽度 clamp：过小的请求宽度（w=1）抬到下限 64。
+    #[tokio::test]
+    async fn load_variant_clamps_width_floor() {
+        let (service, id, dir) = service_with_stored_image("image/png", make_png(128, 128)).await;
+        let (bytes, content_type) = service.load_variant(&id, Some(1), false).await.unwrap();
+        assert_eq!(content_type, "image/jpeg");
+        let decoded = image::load_from_memory(&bytes).unwrap();
+        assert_eq!(decoded.width(), 64, "过小的宽度应被 clamp 到 64");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// 派生缓存命中：第二次请求直接读派生文件，不再重新编码。
+    #[tokio::test]
+    async fn load_variant_reuses_derived_cache() {
+        let (service, id, dir) = service_with_stored_image("image/png", make_png(128, 128)).await;
+        let _ = service.load_variant(&id, Some(64), true).await.unwrap();
+        let marker = b"cached-bytes".to_vec();
+        std::fs::write(dir.join(IMAGE_DIR).join(format!("{id}.w64.webp")), &marker).unwrap();
+        let (bytes, content_type) = service.load_variant(&id, Some(64), true).await.unwrap();
+        assert_eq!(bytes, marker, "第二次应直接读派生文件");
+        assert_eq!(content_type, "image/webp");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
