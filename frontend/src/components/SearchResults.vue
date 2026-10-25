@@ -222,12 +222,19 @@ function doSearch(key: string, force = false) {
   const effectiveScope = sourceOptions.value.length === 1 ? 'all' : searchScope.value
 
   if (effectiveScope === 'group' && !selectedGroup.value) {
+    // 条件暂不完整时也要停掉上一轮 SSE：否则旧搜索还在往已清空的结果里写
+    closeEventSource()
+    searchSeen = new Set()
+    searchFailed.value = false
     shelfStore.searchResults = []
     shelfStore.isSearching = false
     return
   }
 
   if (effectiveScope === 'source' && selectedSourceId.value == null) {
+    closeEventSource()
+    searchSeen = new Set()
+    searchFailed.value = false
     shelfStore.searchResults = []
     shelfStore.isSearching = false
     return
