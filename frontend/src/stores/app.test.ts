@@ -174,4 +174,36 @@ describe('app store fetchUserInfo 合并与新鲜期', () => {
     await oldRequest
     expect(store.isLoggedIn).toBe(false)
   })
+
+  it('bootstrapAuth 的迟到响应不覆盖 force 核验出的未登录态', async () => {
+    localStorage.setItem(ACCESS_TOKEN_STORAGE_KEY, 'token')
+    let releaseBootstrap!: (value: { userInfo: UserInfo | null }) => void
+    let releaseForce!: (value: { userInfo: UserInfo | null }) => void
+    getUserInfoMock
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            releaseBootstrap = resolve
+          })
+      )
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            releaseForce = resolve
+          })
+      )
+    const store = useAppStore()
+
+    const bootstrap = store.bootstrapAuth()
+    const force = store.fetchUserInfo({ force: true })
+
+    releaseForce({ userInfo: null })
+    await force
+    expect(store.isLoggedIn).toBe(false)
+
+    // bootstrap 的响应迟到：序号已过期，不能再写回登录态
+    releaseBootstrap({ userInfo: createUserInfo() })
+    await bootstrap
+    expect(store.isLoggedIn).toBe(false)
+  })
 })

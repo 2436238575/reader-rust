@@ -176,9 +176,13 @@ export const useAppStore = defineStore('app', () => {
       }
 
       let fetched = false
+      // 与 fetchUserInfo 共用序号：force 重查可能在这两次请求在途时发生，
+      // 迟到的 bootstrap 响应不能再把刚核验出的登录态写回去
+      const bootstrapSeq = ++userInfoSeq
       try {
         const data = await getUserInfo()
         fetched = true
+        if (bootstrapSeq !== userInfoSeq) return
         if (data.userInfo?.username) {
           userInfo.value = data.userInfo
           isLoggedIn.value = true
@@ -199,9 +203,12 @@ export const useAppStore = defineStore('app', () => {
         return
       }
 
+      let seq = bootstrapSeq
       try {
         await refreshAccessToken()
+        seq = ++userInfoSeq
         const data = await getUserInfo()
+        if (seq !== userInfoSeq) return
         userInfo.value = data.userInfo
         isLoggedIn.value = !!data.userInfo?.username
         if (isLoggedIn.value) {
@@ -213,6 +220,7 @@ export const useAppStore = defineStore('app', () => {
           stopAuthLifecycle()
         }
       } catch (error) {
+        if (seq !== userInfoSeq) return
         if (error instanceof SessionExpiredError) {
           userInfo.value = null
           isLoggedIn.value = false
