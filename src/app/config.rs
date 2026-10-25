@@ -317,3 +317,31 @@ where
         Scalar::Float(value) => value.to_string(),
     })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn cookie_secure_normalizes_case_and_whitespace() {
+        for (raw, expected) in [
+            ("auto", "auto"),
+            (" AUTO ", "auto"),
+            ("True", "true"),
+            ("FALSE", "false"),
+        ] {
+            let mut cfg = AppConfig::default();
+            cfg.cookie_secure = raw.to_string();
+            normalize_cookie_secure(&mut cfg).unwrap();
+            assert_eq!(cfg.cookie_secure, expected, "{raw} 应归一为 {expected}");
+        }
+    }
+
+    #[test]
+    fn cookie_secure_rejects_unknown_values() {
+        // Secure 属性影响会话能否建立，笔误必须让启动失败而不是静默回退
+        let mut cfg = AppConfig::default();
+        cfg.cookie_secure = "yes".to_string();
+        assert!(normalize_cookie_secure(&mut cfg).is_err());
+    }
+}
