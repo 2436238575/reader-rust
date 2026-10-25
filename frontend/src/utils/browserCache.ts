@@ -176,8 +176,19 @@ export async function getBrowserCachedChapter(bookId: string, chapterUrl: string
 
 /** 删单章的浏览器缓存（编辑版保存/删除后调用，让下一次读取回源拿最新） */
 export async function deleteBrowserCachedChapter(bookId: string, chapterUrl: string) {
-  return withStore('readwrite', async (store) => {
-    await requestToPromise(store.delete(cacheKey(bookId, chapterUrl)))
+  return withStores('readwrite', async ({ chapters, summary }) => {
+    const key = cacheKey(bookId, chapterUrl)
+    // 先读回记录拿 size：summary 只记增量，不读就不知道该扣多少字节
+    const existing = (await requestToPromise(chapters.get(key))) as
+      | BrowserChapterCacheRecord
+      | undefined
+    await requestToPromise(chapters.delete(key))
+    if (!existing) return
+    await writeSummary(summary, bookId, (current) => ({
+      ...current,
+      cachedChapterCount: Math.max(0, current.cachedChapterCount - 1),
+      bytes: Math.max(0, current.bytes - (existing.size || 0)),
+    }))
   })
 }
 
@@ -203,8 +214,11 @@ export async function deleteBrowserCachedChapters(bookId: string, chapterUrls: s
     await Promise.all(existing.map((record) => requestToPromise(chapters.delete(record.key))))
     await writeSummary(summary, bookId, (current) => ({
       ...current,
-      cachedChapterCount: current.cachedChapterCount - existing.length,
-      bytes: current.bytes - existing.reduce((total, record) => total + (record.size || 0), 0),
+      cachedChapterCount: Math.max(0, current.cachedChapterCount - existing.length),
+      bytes: Math.max(
+        0,
+        current.bytes - existing.reduce((total, record) => total + (record.size || 0), 0)
+      ),
     }))
   })
 }
