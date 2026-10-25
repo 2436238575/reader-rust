@@ -215,25 +215,28 @@ fn epub_fixture_with_svg() -> Vec<u8> {
 async fn index_html_gets_csp_and_global_security_headers() {
     let server = TestServer::start().await;
 
-    let response = server.client.get(server.url("/")).send().await.unwrap();
-    assert_eq!(response.status(), 200);
-    let headers = response.headers();
-    assert_eq!(
-        headers.get("x-content-type-options").unwrap(),
-        "nosniff",
-        "index.html 应带 nosniff"
-    );
-    assert_eq!(headers.get("referrer-policy").unwrap(), "same-origin");
-    // SAMEORIGIN 而不是 DENY：SourcesView 用同源 iframe 打开 bookSourceProxy
-    assert_eq!(headers.get("x-frame-options").unwrap(), "SAMEORIGIN");
-    let csp = headers
-        .get("content-security-policy")
-        .unwrap()
-        .to_str()
-        .unwrap();
-    assert!(csp.contains("default-src 'self'"), "CSP: {csp}");
-    assert!(csp.contains("script-src 'self'"), "CSP: {csp}");
-    assert!(csp.contains("object-src 'none'"), "CSP: {csp}");
+    // `/` 走显式 ServeFile，`/index.html` 走 ServeDir fallback，两处都要带 CSP
+    for path in ["/", "/index.html"] {
+        let response = server.client.get(server.url(path)).send().await.unwrap();
+        assert_eq!(response.status(), 200, "{path} 应可取");
+        let headers = response.headers();
+        assert_eq!(
+            headers.get("x-content-type-options").unwrap(),
+            "nosniff",
+            "{path} 应带 nosniff"
+        );
+        assert_eq!(headers.get("referrer-policy").unwrap(), "same-origin");
+        // SAMEORIGIN 而不是 DENY：SourcesView 用同源 iframe 打开 bookSourceProxy
+        assert_eq!(headers.get("x-frame-options").unwrap(), "SAMEORIGIN");
+        let csp = headers
+            .get("content-security-policy")
+            .unwrap_or_else(|| panic!("{path} 应带 HTML CSP"))
+            .to_str()
+            .unwrap();
+        assert!(csp.contains("default-src 'self'"), "{path} CSP: {csp}");
+        assert!(csp.contains("script-src 'self'"), "{path} CSP: {csp}");
+        assert!(csp.contains("object-src 'none'"), "{path} CSP: {csp}");
+    }
 }
 
 #[tokio::test]
@@ -243,8 +246,11 @@ async fn assets_responses_carry_nosniff_and_sandbox_csp() {
     std::fs::create_dir_all(&assets_dir).unwrap();
     std::fs::write(assets_dir.join("probe.js"), b"console.log(1)").unwrap();
     std::fs::write(assets_dir.join("probe.svg"), b"<svg/>").unwrap();
+    // HTML 资产也要保持 sandbox：外层的 HTML CSP 中间件是 if_not_present，
+    // 不能把 sandbox 升级成主站 CSP
+    std::fs::write(assets_dir.join("probe.html"), b"<html></html>").unwrap();
 
-    for name in ["probe.js", "probe.svg"] {
+    for name in ["probe.js", "probe.svg", "probe.html"] {
         let response = server
             .client
             .get(server.url(&format!("/assets/{name}")))

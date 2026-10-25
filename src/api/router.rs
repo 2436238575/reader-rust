@@ -465,19 +465,22 @@ pub fn build_router(state: AppState) -> Router {
 
     // 首页：CSP 只加在 HTML 响应上（脚本/样式/连接全部自托管收口到
     // 'self'，样式保留 unsafe-inline 供 Vue 运行时注入），不扩散到
-    // /assets 的 JS/CSS——那里的 sandbox CSP 语义不同
-    let index_web = Router::new()
-        .route_service(
-            "/",
-            ServeFile::new(PathBuf::from(&web_root).join("index.html")),
-        )
-        .layer(middleware::from_fn(apply_html_csp));
+    // /assets 的 JS/CSS——那里的 sandbox CSP 语义不同。apply_html_csp
+    // 统一挂在下面的 static_web 上，/ 与 /index.html 都覆盖
+    let index_web = Router::new().route_service(
+        "/",
+        ServeFile::new(PathBuf::from(&web_root).join("index.html")),
+    );
 
     let static_web = Router::new()
         .merge(index_web)
         .merge(assets_web)
         .merge(fonts_web)
         .fallback_service(ServeDir::new(web_root).append_index_html_on_directories(false))
+        // HTML CSP 挂整个静态层：/ 走上面的 ServeFile，/index.html 由
+        // fallback 的 ServeDir 提供——两处都要带 CSP。中间件内部按
+        // if_not_present 处理，/assets 已有的 sandbox CSP 不会被覆盖
+        .layer(middleware::from_fn(apply_html_csp))
         .layer(no_cache);
 
     Router::new()
@@ -554,8 +557,9 @@ const HTML_CSP: &str = "default-src 'self'; script-src 'self'; style-src 'self' 
      img-src 'self' data: blob:; font-src 'self'; connect-src 'self'; media-src 'self' blob:; \
      worker-src 'self' blob:; object-src 'none'; base-uri 'self'; frame-ancestors 'self'";
 
-/// 只给 HTML 响应加 CSP（`/` 的 index.html）。内容类型不是 HTML 的响应
-/// （如 ServeFile 的 404）不动，CSP 也不加到 /assets 的 JS/CSS 上。
+/// 只给 HTML 响应加 CSP（`/` 与 fallback 的 `/index.html`）。内容类型不是
+/// HTML 的响应（如 ServeFile 的 404、sw.js）不动；已带 CSP 的响应
+/// （/assets 的 sandbox）不覆盖——两边的 CSP 语义不同。
 async fn apply_html_csp(
     request: axum::extract::Request,
     next: middleware::Next,
@@ -566,7 +570,11 @@ async fn apply_html_csp(
         .get(axum::http::header::CONTENT_TYPE)
         .and_then(|value| value.to_str().ok())
         .is_some_and(|value| value.to_ascii_lowercase().starts_with("text/html"));
-    if is_html {
+    if is_html
+        && !response
+            .headers()
+            .contains_key(axum::http::header::CONTENT_SECURITY_POLICY)
+    {
         response.headers_mut().insert(
             axum::http::header::CONTENT_SECURITY_POLICY,
             axum::http::HeaderValue::from_static(HTML_CSP),
