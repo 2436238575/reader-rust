@@ -378,3 +378,47 @@ async fn ai_proxy_image_rejects_svg_upstream() {
     assert_eq!(response.status(), 200, "PNG 上游应透传");
     assert_eq!(response.headers().get("content-type").unwrap(), "image/png");
 }
+
+/// 压缩层挂在最外层 Router 上：/reader3 的 JSON 与静态资源共用一层。
+/// reqwest 默认自动解压并剥掉 content-encoding 头，这里用 no_gzip 客户端
+/// 才能看到线上真实的响应头。
+#[tokio::test]
+async fn api_json_responses_are_gzip_compressed_when_accepted() {
+    let server = TestServer::start().await;
+    let client = reqwest::Client::builder()
+        .no_gzip()
+        .no_brotli()
+        .no_deflate()
+        .build()
+        .unwrap();
+
+    // /health 响应约 70 字节，超过 DefaultPredicate 的 32 字节下限
+    let response = client
+        .get(server.url("/health"))
+        .header("accept-encoding", "gzip")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    assert_eq!(
+        response.headers().get("content-encoding").unwrap(),
+        "gzip",
+        "声明接受 gzip 时 /reader3 的 JSON 应被压缩"
+    );
+    let body = response.bytes().await.unwrap();
+    assert_eq!(
+        &body[..2],
+        &[0x1f, 0x8b],
+        "响应体应是 gzip 魔数开头的压缩流"
+    );
+
+    // 不声明 accept-encoding 时不压缩
+    let response = client.get(server.url("/health")).send().await.unwrap();
+    assert!(response.headers().get("content-encoding").is_none());
+    let body: serde_json::Value = response.json().await.unwrap();
+    assert_eq!(body["data"]["status"], serde_json::json!("ok"));
+
+    // SSE（text/event-stream）被 tower-http 的 DefaultPredicate 按 content-type
+    // 排除（还有 gRPC、image/* 与 <32 字节的响应），压缩层对其走 Identity 透传、
+    // 不缓冲事件流；起真实 SSE 流要触发抓取，集成成本过高，此处不覆断言。
+}

@@ -478,14 +478,16 @@ pub fn build_router(state: AppState) -> Router {
         .merge(assets_web)
         .merge(fonts_web)
         .fallback_service(ServeDir::new(web_root).append_index_html_on_directories(false))
-        .layer(no_cache)
-        // 压缩只加在静态层：/reader3 的 SSE 流式响应不能被压缩层缓冲。
-        // tower-http 0.5 由 compression-gzip feature 直接启用 gzip，无需再逐算法开启
-        .layer(CompressionLayer::new());
+        .layer(no_cache);
 
     Router::new()
         .merge(api)
         .merge(static_web)
+        // gzip 压缩挂在最外层：/reader3 的 JSON 与静态资源共用一层（不重复挂）。
+        // tower-http 的 DefaultPredicate 已排除 gRPC、image/*、text/event-stream
+        // 与小于 32 字节的响应——SSE 事件流走 Identity 透传，不会被压缩层缓冲，
+        // 图片管道与字体分片也不会被二次压缩
+        .layer(CompressionLayer::new())
         // 最外层兜底：只对没挂组级/路由级上限的路径生效（如 WebDAV）。
         // DefaultBodyLimit 走请求扩展覆盖，最内层的限制先生效
         .layer(DefaultBodyLimit::max(MAX_BODY_LIMIT_BYTES))
