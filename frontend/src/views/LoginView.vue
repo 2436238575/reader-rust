@@ -58,12 +58,10 @@ import { reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { login } from '../api/user'
 import { useAppStore } from '../stores/app'
-import { useBookshelfStore } from '../stores/bookshelf'
 
 const route = useRoute()
 const router = useRouter()
 const appStore = useAppStore()
-const shelfStore = useBookshelfStore()
 
 const submitting = ref(false)
 const form = reactive({
@@ -98,8 +96,8 @@ async function handleSubmit() {
     const user = await login(form.username, form.password)
     appStore.setUser(user)
     appStore.showToast('登录成功', 'success')
-    shelfStore.fetchBooks()
-    shelfStore.fetchGroups()
+    // 不在这里预热书架：首页激活时按脏标记自行拉取（初始为脏，必拉），
+    // 跳转到非首页时也不需要这次请求
     router.replace(redirectTarget())
   } catch (e: unknown) {
     appStore.showToast((e as Error).message || '登录失败', 'error')

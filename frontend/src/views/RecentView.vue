@@ -79,9 +79,11 @@ const filteredRecentBooks = computed(() => {
   )
 })
 
-// 保活页面：onActivated 在首次挂载与每次返回时都触发——
-// 从阅读器返回后最近阅读排序/进度已变，必须重拉
+// 保活页面：onActivated 在首次挂载与每次返回时都触发。
+// 只在书架标脏（阅读进度/缓存章数变了才会标）时重拉，零改动的返回不再全量请求；
+// 脏标记初始为 true，首载必拉
 onActivated(async () => {
+  if (!shelfStore.shelfDirty) return
   await shelfStore.fetchBooks().catch(() => undefined)
   await shelfStore.refreshRecentBooks().catch((error) => {
     // 加载失败不能静默：否则用户看到「暂无最近阅读」的误导性空态

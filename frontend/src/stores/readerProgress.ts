@@ -77,6 +77,9 @@ export function createReaderProgress(deps: ReaderProgressDeps) {
 
   function markProgressDirty() {
     progressDirty.value = true
+    // 同步标脏书架：从阅读器返回书架时要重拉进度。不能等网络保存成功才标——
+    // 返回时上报可能还没落地，漏标会让书架显示旧进度
+    shelfStore.markShelfDirty()
   }
 
   /* ─── 本地会话（localStorage：书 + 目录 + 章内进度） ─── */

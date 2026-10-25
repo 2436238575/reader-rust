@@ -228,6 +228,8 @@ async function purgeBrowser() {
   try {
     await clearAllBrowserCache()
     appStore.showToast('浏览器缓存已清空', 'success')
+    // 全部书籍的本地缓存章数清零，书架卡片需要重拉
+    shelfStore.markShelfDirty()
     await refreshData()
   } catch (error) {
     appStore.showToast((error as Error).message || '清空失败', 'error')
@@ -334,6 +336,8 @@ function cacheServer(book: Book) {
     sse.close()
     cachingUrls.value.delete(book.bookId || '')
     appStore.showToast(message, kind)
+    // 远程缓存章数（书架卡片「远程 N 章」）变了：完成/失败都可能已缓存部分章节
+    shelfStore.markShelfDirty()
     await refreshData()
   }
   consumeSSE(sse, {
@@ -354,6 +358,8 @@ async function cacheBrowser(book: Book) {
   } catch (error) {
     appStore.showToast((error as Error).message || '浏览器缓存失败', 'error')
   } finally {
+    // 本地缓存章数（书架卡片「本地 N 章」）变了：完成/失败都可能已写入部分章节
+    shelfStore.markShelfDirty()
     cachingUrls.value.delete(book.bookId || '')
   }
 }
@@ -366,6 +372,8 @@ async function clearServer(book: Book) {
   } catch (error) {
     appStore.showToast((error as Error).message || '清除服务端缓存失败', 'error')
   } finally {
+    // 远程缓存章数清零，书架卡片需要重拉
+    shelfStore.markShelfDirty()
     await refreshData()
   }
 }
@@ -378,6 +386,8 @@ async function clearBrowser(book: Book) {
   } catch (error) {
     appStore.showToast((error as Error).message || '清除浏览器缓存失败', 'error')
   } finally {
+    // 本地缓存章数清零，书架卡片需要重拉
+    shelfStore.markShelfDirty()
     await refreshData()
   }
 }

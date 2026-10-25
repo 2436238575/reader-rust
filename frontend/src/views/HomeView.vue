@@ -230,9 +230,11 @@ onMounted(async () => {
   }
 })
 
-// 保活页面：onActivated 在首次挂载与每次返回时都触发。
-// 从阅读器返回时进度已变，必须重拉（onMounted 在保活复用时不再触发）
+// 保活页面：onActivated 在首次挂载与每次返回时都触发（onMounted 在保活复用时不再触发）。
+// 书架带脏标记：进度/缓存章数等展示数据变了才会标脏（脏标记初始为 true，首载必拉），
+// 零改动的返回不再全量重拉
 onActivated(async () => {
+  if (!shelfStore.shelfDirty) return
   // 首载失败不能静默：否则用户看到「书架空空如也」的误导性空态
   const results = await Promise.allSettled([shelfStore.fetchBooks(), shelfStore.fetchGroups()])
   const failed = results.find((r): r is PromiseRejectedResult => r.status === 'rejected')

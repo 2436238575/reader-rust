@@ -122,6 +122,7 @@ import type { SseConnection } from '../../utils/authedEventSource'
 import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useReaderStore } from '../../stores/reader'
 import { useAppStore } from '../../stores/app'
+import { useBookshelfStore } from '../../stores/bookshelf'
 import { cacheBookSSE } from '../../api/cache'
 import { getBookshelfWithCacheInfo, deleteBookCache } from '../../api/bookshelf'
 import { countBrowserBookCache, deleteBrowserBookCache } from '../../utils/browserCache'
@@ -130,6 +131,7 @@ import { isLocalBook } from '../../utils/localBook'
 
 const store = useReaderStore()
 const appStore = useAppStore()
+const shelfStore = useBookshelfStore()
 const theme = computed(() => store.currentTheme)
 
 const working = ref(false)
@@ -206,6 +208,8 @@ function startServerCaching(count: number) {
     currentStatus.value = status
     if (done) progress.value = 100
     closeSSE()
+    // 远程缓存章数（书架卡片「远程 N 章」）变了：完成/失败都可能已缓存部分章节
+    shelfStore.markShelfDirty()
     await refreshStats()
     window.setTimeout(
       () => {
@@ -265,6 +269,8 @@ async function startBrowserCaching(count: number) {
     currentStatus.value = '浏览器缓存失败'
     appStore.showToast((error as Error).message || '浏览器缓存失败', 'error')
   } finally {
+    // 本地缓存章数（书架卡片「本地 N 章」）变了：完成/失败/取消都可能已写入部分章节
+    shelfStore.markShelfDirty()
     await refreshStats()
     window.setTimeout(() => {
       working.value = false
@@ -281,6 +287,8 @@ async function clearServerCache() {
   } catch (error) {
     appStore.showToast((error as Error).message || '清除服务端缓存失败', 'error')
   } finally {
+    // 远程缓存章数清零，书架卡片需要重拉
+    shelfStore.markShelfDirty()
     await refreshStats()
   }
 }
@@ -294,6 +302,8 @@ async function clearBrowserCache() {
   } catch (error) {
     appStore.showToast((error as Error).message || '清除浏览器缓存失败', 'error')
   } finally {
+    // 本地缓存章数清零，书架卡片需要重拉
+    shelfStore.markShelfDirty()
     await refreshStats()
   }
 }

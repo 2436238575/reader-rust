@@ -115,37 +115,60 @@ export const useBookshelfStore = defineStore('bookshelf', () => {
     await refreshRecentBooks()
   }
 
+  /* 书架脏标记：会改书架展示数据（阅读进度、本地/远程缓存章数等）的地方
+     同步标脏，返回书架（onActivated）时只在脏时重拉，零改动不再全量请求。
+     dirty 初始 true 保证首载必拉；generation 处理「fetch 进行中又标脏」的竞态——
+     成功后仅当代数没变才清 dirty；失败（含快照兜底路径）保持脏以便下次重试 */
+  const shelfDirty = ref(true)
+  let shelfGeneration = 0
+  let inFlightFetch: Promise<void> | null = null
+
+  function markShelfDirty() {
+    shelfDirty.value = true
+    shelfGeneration += 1
+  }
+
   async function fetchBooks() {
+    // 同一时刻只发一轮请求：并发调用共享同一个 Promise（快速切换页面等场景不双拉）
+    if (inFlightFetch) return inFlightFetch
+    const generationAtStart = shelfGeneration
     loading.value = true
-    try {
-      const [serverBooks, browserSummaries] = await Promise.all([
-        getBookshelfWithCacheInfo(),
-        listBrowserCacheSummary().catch(() => []),
-      ])
-      const browserMap = new Map(
-        browserSummaries.map((item) => [item.bookId, item.cachedChapterCount])
-      )
-      books.value = serverBooks.map((book) => ({
-        ...book,
-        browserCachedChapterCount: isLocalBook(book) ? 0 : browserMap.get(book.bookId || '') || 0,
-      }))
-      await refreshRecentBooks()
-      saveShelfSnapshot()
-    } catch (error) {
-      // 失败回退到最近一次成功的快照，不是空书架。原因要如实——
-      // 后端可达但上游挂了（502）与浏览器离线是两回事
-      if (!books.value.length && hydrateShelfSnapshot()) {
-        const appStore = useAppStore()
-        appStore.showToast(
-          `${describeRequestFailure(error, appStore.isOnline)}：书架展示的是最近缓存`,
-          'warning'
+    inFlightFetch = (async () => {
+      try {
+        const [serverBooks, browserSummaries] = await Promise.all([
+          getBookshelfWithCacheInfo(),
+          listBrowserCacheSummary().catch(() => []),
+        ])
+        const browserMap = new Map(
+          browserSummaries.map((item) => [item.bookId, item.cachedChapterCount])
         )
-        return
+        books.value = serverBooks.map((book) => ({
+          ...book,
+          browserCachedChapterCount: isLocalBook(book) ? 0 : browserMap.get(book.bookId || '') || 0,
+        }))
+        await refreshRecentBooks()
+        saveShelfSnapshot()
+        if (shelfGeneration === generationAtStart) {
+          shelfDirty.value = false
+        }
+      } catch (error) {
+        // 失败回退到最近一次成功的快照，不是空书架。原因要如实——
+        // 后端可达但上游挂了（502）与浏览器离线是两回事
+        if (!books.value.length && hydrateShelfSnapshot()) {
+          const appStore = useAppStore()
+          appStore.showToast(
+            `${describeRequestFailure(error, appStore.isOnline)}：书架展示的是最近缓存`,
+            'warning'
+          )
+          return
+        }
+        throw error
+      } finally {
+        loading.value = false
+        inFlightFetch = null
       }
-      throw error
-    } finally {
-      loading.value = false
-    }
+    })()
+    return inFlightFetch
   }
   async function removeBook(book: Book) {
     if (!book.bookId) return
@@ -342,6 +365,8 @@ export const useBookshelfStore = defineStore('bookshelf', () => {
     recentFilter,
     loading,
     sorting,
+    shelfDirty,
+    markShelfDirty,
     fetchBooks,
     removeBook,
     refreshRecentBooks,

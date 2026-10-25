@@ -14,7 +14,8 @@ function makeDeps(overrides: Record<string, unknown> = {}) {
     chapters: ref([{ title: '第1章', url: 'u0' }]),
     currentIndex: ref(0),
     chapterScrollProgress: ref(0),
-    shelfStore: { books: [] },
+    // markProgressDirty 会同步标脏书架，stub 里补上对应方法
+    shelfStore: { books: [], markShelfDirty: vi.fn() },
     ...overrides,
   } as never
 }
