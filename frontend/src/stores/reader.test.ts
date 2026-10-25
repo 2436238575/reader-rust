@@ -2,7 +2,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
 import { useAppStore } from './app'
 import { useReaderStore } from './reader'
-import { getBookContent, getChapterImages } from '../api/bookshelf'
+import { getBookContent, getBookContents, getChapterImages } from '../api/bookshelf'
+import type { ChapterContentResponse } from '../api/bookshelf'
 import { listChapterEdits } from '../api/chapterEdit'
 import { getChapterComments, getParaCommentIndex } from '../api/review'
 import {
@@ -14,6 +15,7 @@ import {
 vi.mock('../api/bookshelf', () => ({
   getChapterList: vi.fn(),
   getBookContent: vi.fn(),
+  getBookContents: vi.fn(),
   getChapterImages: vi.fn(),
   saveBookProgress: vi.fn(),
   setBookSource: vi.fn(),
@@ -75,6 +77,7 @@ describe('reader local txt chapters', () => {
       clear: vi.fn(() => storage.clear()),
     })
     vi.mocked(getBookContent).mockReset()
+    vi.mocked(getBookContents).mockReset()
     vi.mocked(getBrowserCachedChapter).mockReset()
     vi.mocked(setBrowserCachedChapter).mockReset()
     vi.mocked(listChapterEdits).mockReset().mockResolvedValue([])
@@ -468,3 +471,122 @@ describe('reader progress conflict timestamps', () => {
     expect(readerStore.serverProgressTime).toBe(0)
   })
 })
+
+describe('reader preloadAroundChapter 批量预加载', () => {
+  function makeContentResponse(content: string): ChapterContentResponse {
+    return {
+      content,
+      edited: false,
+      variant: 'default',
+      upstreamChanged: false,
+      selectionSource: 'upstream',
+      stale: false,
+    }
+  }
+
+  function setupOnlineBook() {
+    const appStore = useAppStore()
+    appStore.setOnlineStatus(true)
+    const readerStore = useReaderStore()
+    readerStore.book = {
+      name: '网络书',
+      author: '作者',
+      origin: 'https://example.org',
+      bookId: 'book_1',
+      bookUrl: 'https://example.org/book',
+      bookSourceId: 1,
+    }
+    readerStore.chapters = [0, 1, 2, 3, 4].map((i) => ({
+      title: `第${i}章`,
+      url: `https://example.org/${i}`,
+      index: i,
+    }))
+    return readerStore
+  }
+
+  beforeEach(() => {
+    setActivePinia(createPinia())
+    const storage = new Map<string, string>()
+    vi.stubGlobal('localStorage', {
+      getItem: vi.fn((key: string) => storage.get(key) ?? null),
+      setItem: vi.fn((key: string, value: string) => storage.set(key, value)),
+      removeItem: vi.fn((key: string) => storage.delete(key)),
+      clear: vi.fn(() => storage.clear()),
+    })
+    vi.mocked(getBookContent).mockReset()
+    vi.mocked(getBookContents).mockReset()
+    vi.mocked(getBrowserCachedChapter).mockReset()
+    // recordChapterContent 会 await 浏览器缓存写入：必须给 Promise，否则 .catch 抛 TypeError
+    vi.mocked(setBrowserCachedChapter).mockReset().mockResolvedValue(undefined)
+  })
+
+  it('3 个目标章合成一次批量请求并全部写入预加载池', async () => {
+    vi.mocked(getBookContents).mockResolvedValue([
+      { index: 2, data: makeContentResponse('正文二'), error: null },
+      { index: 3, data: makeContentResponse('正文三'), error: null },
+      { index: 0, data: makeContentResponse('正文零'), error: null },
+    ])
+    const readerStore = setupOnlineBook()
+
+    await readerStore.preloadAroundChapter(1)
+
+    expect(getBookContents).toHaveBeenCalledTimes(1)
+    expect(getBookContents).toHaveBeenCalledWith({
+      bookId: 'book_1',
+      chapters: [
+        { index: 2, chapterUrl: 'https://example.org/2' },
+        { index: 3, chapterUrl: 'https://example.org/3' },
+        { index: 0, chapterUrl: 'https://example.org/0' },
+      ],
+      variant: 'default',
+    })
+    // 批量成功：不再逐章请求
+    expect(getBookContent).not.toHaveBeenCalled()
+
+    // 已写入 preloadedContent：读到这些章直接命中，不再发单章请求
+    await expect(readerStore.fetchChapterContent(2)).resolves.toBe('正文二')
+    await expect(readerStore.fetchChapterContent(3)).resolves.toBe('正文三')
+    await expect(readerStore.fetchChapterContent(0)).resolves.toBe('正文零')
+    expect(getBookContent).not.toHaveBeenCalled()
+    // 版本信息与单章路径同口径落账
+    expect(readerStore.chapterVersions.get(2)?.selectionSource).toBe('upstream')
+  })
+
+  it('批量响应里单章 error 跳过，其余章节照常写入', async () => {
+    vi.mocked(getBookContents).mockResolvedValue([
+      { index: 2, data: makeContentResponse('正文二'), error: null },
+      { index: 3, data: null, error: '上游 403' },
+      { index: 0, data: makeContentResponse('正文零'), error: null },
+    ])
+    const readerStore = setupOnlineBook()
+
+    await readerStore.preloadAroundChapter(1)
+
+    // 单章失败不触发整批回退
+    expect(getBookContent).not.toHaveBeenCalled()
+    await expect(readerStore.fetchChapterContent(2)).resolves.toBe('正文二')
+
+    // 失败的第 3 章不在预加载池：真正读到时走单章接口
+    vi.mocked(getBookContent).mockResolvedValue(makeContentResponse('正文三'))
+    await expect(readerStore.fetchChapterContent(3)).resolves.toBe('正文三')
+    expect(getBookContent).toHaveBeenCalledTimes(1)
+  })
+
+  it('整批失败时回退逐章 fetchChapterContent，行为与接入批量前一致', async () => {
+    vi.mocked(getBookContents).mockRejectedValue(new Error('网络错误'))
+    vi.mocked(getBookContent).mockImplementation(async (params) =>
+      makeContentResponse(`正文${params.index}`)
+    )
+    const readerStore = setupOnlineBook()
+
+    await readerStore.preloadAroundChapter(1)
+
+    expect(getBookContents).toHaveBeenCalledTimes(1)
+    // 逐章回退：3 个目标章各一次单章请求
+    expect(getBookContent).toHaveBeenCalledTimes(3)
+    await expect(readerStore.fetchChapterContent(2)).resolves.toBe('正文2')
+    await expect(readerStore.fetchChapterContent(0)).resolves.toBe('正文0')
+    expect(getBookContent).toHaveBeenCalledTimes(3)
+  })
+})
+

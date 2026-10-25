@@ -7,6 +7,7 @@ import { useAiBookStore } from './aiBook'
 import {
   getChapterList,
   getBookContent,
+  getBookContents,
   getChapterImages,
   setBookSource as apiSetBookSource,
 } from '../api/bookshelf'
@@ -41,7 +42,11 @@ import { isLocalBook } from '../utils/localBook'
 import { describeRequestFailure } from '../utils/requestFailure'
 import { saveRecentReadBook } from '../utils/recentBooks'
 import { listChapterEdits, selectChapterVersion } from '../api/chapterEdit'
-import type { ChapterVersionKind, ContentVariant } from '../api/bookshelf'
+import type {
+  ChapterContentResponse,
+  ChapterVersionKind,
+  ContentVariant,
+} from '../api/bookshelf'
 import { hydrateDiffOps, type ParagraphDiffOp } from '../utils/chapterDiff'
 import {
   loadLocalKeywordRules,
@@ -798,6 +803,57 @@ export const useReaderStore = defineStore('reader', () => {
     markProgressDirty()
   }
 
+  /**
+   * 正文落账：版本信息、diff 标记与浏览器缓存写入。单章 fetchChapterContent 与
+   * 批量预加载（preloadChaptersBatch）共用这一份，避免两条路径的版本记录与
+   * 缓存行为各自漂移。
+   */
+  async function recordChapterContent(
+    index: number,
+    chapter: BookChapter,
+    response: ChapterContentResponse,
+    context: { bookId: string; isLocal: boolean; variant: ContentVariant }
+  ) {
+    chapterVersions.set(index, {
+      versionId: response.versionId,
+      kind: response.versionKind,
+      baseVersionId: response.baseVersionId,
+      latestUserVersionId: response.latestUserVersionId,
+      latestUpstreamVersionId: response.latestUpstreamVersionId,
+      upstreamChanged: response.upstreamChanged,
+      selectionSource: response.selectionSource,
+      stale: response.stale,
+    })
+    if (response.edited) {
+      // 后端为省流量不给 equal 行带文本，这里用编辑版正文补齐
+      const ops = response.diff?.ops ? hydrateDiffOps(response.diff.ops, response.content) : null
+      chapterDiffs.set(index, {
+        edited: true,
+        ops,
+        error: response.diffError || '',
+        variant: response.variant,
+      })
+    } else {
+      chapterDiffs.delete(index)
+    }
+
+    // 上游预览不写浏览器缓存：缓存只存默认版本，否则离线时会读到另一版。
+    // 编辑章同样不写（isEditedChapter），它的最新内容只存在于服务端
+    const isEditedChapter = editedChapterKeys.value.has(chapter.url)
+    if (!context.isLocal && !isEditedChapter && context.variant !== 'upstream') {
+      await setBrowserCachedChapter({
+        bookId: context.bookId,
+        chapterUrl: chapter.url,
+        chapterTitle: chapter.title,
+        content: response.content,
+      }).catch((error) => {
+        // 写不进浏览器缓存（配额写满且无可淘汰）不该静默：阅读功能本身不受影响，
+        // 但「缓存永远 0 章」这种症状没有日志就完全无法定位
+        console.warn('[reader] 浏览器章节缓存写入失败', error)
+      })
+    }
+  }
+
   async function fetchChapterContent(index: number, forceRefresh = false) {
     if (!book.value?.bookId || !chapters.value[index]) return null
 
@@ -841,28 +897,7 @@ export const useReaderStore = defineStore('reader', () => {
         variant,
       })
       chapterContent = response.content
-      chapterVersions.set(index, {
-        versionId: response.versionId,
-        kind: response.versionKind,
-        baseVersionId: response.baseVersionId,
-        latestUserVersionId: response.latestUserVersionId,
-        latestUpstreamVersionId: response.latestUpstreamVersionId,
-        upstreamChanged: response.upstreamChanged,
-        selectionSource: response.selectionSource,
-        stale: response.stale,
-      })
-      if (response.edited) {
-        // 后端为省流量不给 equal 行带文本，这里用编辑版正文补齐
-        const ops = response.diff?.ops ? hydrateDiffOps(response.diff.ops, response.content) : null
-        chapterDiffs.set(index, {
-          edited: true,
-          ops,
-          error: response.diffError || '',
-          variant: response.variant,
-        })
-      } else {
-        chapterDiffs.delete(index)
-      }
+      await recordChapterContent(index, chapter, response, { bookId, isLocal, variant })
     } catch (error) {
       // 在线失败的缓存兜底同样跳过编辑章：理由同上，它的缓存是编辑前的旧正文
       const fallback =
@@ -880,22 +915,6 @@ export const useReaderStore = defineStore('reader', () => {
         return fallback
       }
       throw error
-    }
-
-    // 上游预览不写浏览器缓存：缓存只存默认版本，否则离线时会读到另一版。
-    // 编辑章同样不写（isEditedChapter），它的最新内容只存在于服务端
-    const useBrowserCache = !isLocal && !isEditedChapter && variant !== 'upstream'
-    if (useBrowserCache) {
-      await setBrowserCachedChapter({
-        bookId,
-        chapterUrl: chapter.url,
-        chapterTitle: chapter.title,
-        content: chapterContent,
-      }).catch((error) => {
-        // 写不进浏览器缓存（配额写满且无可淘汰）不该静默：阅读功能本身不受影响，
-        // 但「缓存永远 0 章」这种症状没有日志就完全无法定位
-        console.warn('[reader] 浏览器章节缓存写入失败', error)
-      })
     }
 
     return chapterContent
@@ -1119,9 +1138,65 @@ export const useReaderStore = defineStore('reader', () => {
       (target, pos, list) =>
         target >= 0 && target < chapters.value.length && list.indexOf(target) === pos
     )
+    // 批量接口一次取回全部目标章（后端上限 10，这里最多 3 条）；整批失败
+    // （断网/401/400）时回退逐章预加载，行为与接入批量前一致
+    const pending = targets.filter((target) => !preloadedContent.value.has(target))
+    if (pending.length > 0 && (await preloadChaptersBatch(pending))) return
     for (const target of targets) {
       await preloadNextChapter(target)
     }
+  }
+
+  /**
+   * 批量预加载：一次 getBookContents 请求取回多章正文写入 preloadedContent。
+   * 每章独立成败——失败章节跳过（不打扰用户）；返回 false 表示整批失败，
+   * 由调用方回退到逐章 fetchChapterContent。
+   */
+  async function preloadChaptersBatch(targets: number[]): Promise<boolean> {
+    const currentBook = book.value
+    if (!currentBook?.bookId) return false
+    const bookId = currentBook.bookId
+    const isLocal = isLocalBook(currentBook)
+    const variant: ContentVariant = config.contentVersion === 'upstream' ? 'upstream' : 'default'
+    // 发送时的 index → chapterUrl 快照：响应回来时按它核对章节列表是否已变化
+    const sentUrls = new Map<number, string>()
+    const chaptersPayload = targets.flatMap((chapterIndex) => {
+      const chapter = chapters.value[chapterIndex]
+      if (!chapter) return []
+      sentUrls.set(chapterIndex, chapter.url)
+      return [{ index: chapterIndex, chapterUrl: chapter.url }]
+    })
+    if (chaptersPayload.length === 0) return false
+
+    let items
+    try {
+      items = await getBookContents({ bookId, chapters: chaptersPayload, variant })
+    } catch {
+      return false
+    }
+    if (!Array.isArray(items)) return false
+    // 响应期间换书/换源：旧请求的结果不能写进新书的预加载池（换书已清空
+    // preloadedContent，这里直接丢弃，不算失败、也不再回退逐章）
+    if (book.value?.bookId !== bookId) return true
+
+    for (const item of items) {
+      if (!item?.data) continue // 单章失败：原因在 error，跳过即可
+      const chapterIndex = item.index
+      const sentUrl = sentUrls.get(chapterIndex)
+      if (sentUrl === undefined) continue
+      const chapter = chapters.value[chapterIndex]
+      if (!chapter || chapter.url !== sentUrl) continue
+      if (preloadedContent.value.has(chapterIndex)) continue
+      // 与 preloadNextChapter 同一套容量约束：超出即淘汰最旧的一条
+      if (preloadedContent.value.size > 3) {
+        const firstKey = preloadedContent.value.keys().next().value
+        if (firstKey !== undefined) preloadedContent.value.delete(firstKey)
+      }
+      preloadedContent.value.set(chapterIndex, item.data.content)
+      // 版本信息/diff/浏览器缓存与单章路径同口径落账
+      await recordChapterContent(chapterIndex, chapter, item.data, { bookId, isLocal, variant })
+    }
+    return true
   }
 
   async function preloadNextChapter(index: number) {

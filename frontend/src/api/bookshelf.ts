@@ -158,6 +158,26 @@ export function getBookContent(params: {
   return http.post<ChapterContentResponse>('/getBookContent', params).then((r) => r.data)
 }
 
+/** 批量接口里单章的结果：某章失败只写 `error`，不影响其他章节（整体恒 200） */
+export interface BatchChapterContentItem {
+  index: number
+  data: ChapterContentResponse | null
+  error: string | null
+}
+
+/**
+ * 批量读取章节正文（预加载用）：一次最多 10 章，与单章 getBookContent 同一条
+ * 读取链路；每章独立成败。不做 refresh：预加载不需要强刷。
+ */
+export function getBookContents(params: {
+  bookId: string
+  chapters: { index?: number; chapterUrl: string }[]
+  /** `upstream` 只预览最新上游；缺省/default 按服务端选择解析 */
+  variant?: ContentVariant
+}) {
+  return http.post<BatchChapterContentItem[]>('/getBookContents', params).then((r) => r.data)
+}
+
 /** 本章配图；书源没声明配图规则时返回 `enabled: false` */
 export function getChapterImages(params: { bookId: string; chapterUrl: string }) {
   return http.post<ChapterImages>('/getChapterImages', params).then((r) => r.data)
