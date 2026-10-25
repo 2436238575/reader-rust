@@ -72,21 +72,21 @@
       <div class="settings-sep"></div>
       <!-- 预加载 -->
       <div class="setting-row">
-        <label>&#x9884;&#x52A0;&#x8F7D;</label>
+        <label>预加载</label>
         <div class="btn-group">
           <button
             class="opt-btn"
             :class="{ active: config.enablePreload }"
             @click="store.updateConfig('enablePreload', true)"
           >
-            &#x5F00;&#x542F;
+            开启
           </button>
           <button
             class="opt-btn"
             :class="{ active: !config.enablePreload }"
             @click="store.updateConfig('enablePreload', false)"
           >
-            &#x5173;&#x95ED;
+            关闭
           </button>
         </div>
       </div>
