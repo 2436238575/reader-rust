@@ -9,6 +9,10 @@ __pycache__/
 *.py[cod]
 *.pyo
 
+# Python 静态检查缓存
+.mypy_cache/
+.ruff_cache/
+
 # IDE
 .idea/
 .vscode/

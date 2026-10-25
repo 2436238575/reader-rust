@@ -118,7 +118,7 @@ npm install && npm run test:e2e   # Playwright 端到端测试（需先启动后
 ./scripts/release.sh           # 自动递增 patch 并发布前后端与镜像
 ```
 
-详见 [`RELEASE_WORKFLOW.md`](./RELEASE_WORKFLOW.md)。
+详见 [`发布流程`](./docs/maintainers/release.md)。
 
 ## 相关工具
 
