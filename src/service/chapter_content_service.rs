@@ -257,7 +257,11 @@ impl ChapterContentService {
 
     /// 整书换回最新上游：清掉本书全部版本选择与用户版本指针，每章显示
     /// 回落到最新上游；历史版本严格保留。返回摘掉指针的章节数。
-    pub async fn reset_book_to_upstream(&self, user_ns: &str, book_id: &str) -> Result<u64, AppError> {
+    pub async fn reset_book_to_upstream(
+        &self,
+        user_ns: &str,
+        book_id: &str,
+    ) -> Result<u64, AppError> {
         self.repo.reset_book_to_upstream(user_ns, book_id).await
     }
 

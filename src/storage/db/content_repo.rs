@@ -521,7 +521,8 @@ impl ChapterContentRepo {
 
     /// 清除当前用户版本（删除编辑版 / 恢复上游）。历史不删。
     /// 如果视图状态正好指向被清掉的版本，一并删除；指向其他版本则保留。
-    pub async fn clear_current_user_version(        &self,
+    pub async fn clear_current_user_version(
+        &self,
         user_ns: &str,
         book_id: &str,
         chapter_url: &str,
@@ -558,7 +559,11 @@ impl ChapterContentRepo {
     /// 整书换回最新上游：摘掉本书所有章节的用户版本指针，并清掉该用户的
     /// 全部版本选择，每章回落到最新上游（本地书回到原文）。历史版本严格保留。
     /// 返回摘掉用户版本指针的章节数。
-    pub async fn reset_book_to_upstream(&self, user_ns: &str, book_id: &str) -> Result<u64, AppError> {
+    pub async fn reset_book_to_upstream(
+        &self,
+        user_ns: &str,
+        book_id: &str,
+    ) -> Result<u64, AppError> {
         let Some(id) = parse_book_id(book_id) else {
             return Ok(0);
         };
