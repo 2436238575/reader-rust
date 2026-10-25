@@ -133,6 +133,10 @@ const {
 let eventSource: SseConnection | null = null
 // 跨 SSE 消息维护的去重集合；每次发起新搜索时重建
 let searchSeen: Set<string> | null = null
+// 上一次实际发起的搜索的签名（搜索词 + 有效范围 + 分组/书源 id）。
+// 用于抑制 ensureSearchSelection 自动校正引起的同参数重搜（见 doSearch 内注释）；
+// 清空搜索时重置，保证同一关键词再次输入仍会重新搜索
+let lastSearchSignature: string | null = null
 const showBookDetail = ref(false)
 const selectedBook = ref<Book | SearchBook | null>(null)
 
@@ -212,11 +216,7 @@ function ensureSearchSelection() {
   }
 }
 
-function doSearch(key: string) {
-  closeEventSource()
-  searchSeen = new Set()
-  searchFailed.value = false
-
+function doSearch(key: string, force = false) {
   // 只启用一个书源时筛选区整条隐藏，范围等同「全部书源」——
   // 避免上次选过的分组/单源在隐藏后仍悄悄限制结果
   const effectiveScope = sourceOptions.value.length === 1 ? 'all' : searchScope.value
@@ -233,6 +233,24 @@ function doSearch(key: string) {
     return
   }
 
+  // 签名 = 搜索词 + 有效范围 + 分组/书源 id，识别「同参数的重复发起」：
+  // 下方 watch 的依赖包含 selectedGroup/selectedSourceId，ensureSearchSelection
+  // 的自动校正会在同一次 flush 里改写它们并再次触发 watch，把刚建立的 SSE
+  // close 再原样重建，服务端白跑一轮多源抓取。签名相同且非强制时直接跳过。
+  // 这只是抑制自动校正的副作用，不取消用户主动重试（retrySearch 传
+  // force=true）；用户改搜索词/范围/分组/书源后签名不同，照常搜索。
+  const signature =
+    effectiveScope === 'group'
+      ? `${key}|group|${selectedGroup.value}`
+      : effectiveScope === 'source'
+        ? `${key}|source|${selectedSourceId.value ?? ''}`
+        : `${key}|all`
+  if (!force && signature === lastSearchSignature) return
+
+  closeEventSource()
+  searchSeen = new Set()
+  searchFailed.value = false
+
   shelfStore.searchResults = []
   shelfStore.isSearching = true
 
@@ -242,6 +260,10 @@ function doSearch(key: string) {
     bookSourceGroup: effectiveScope === 'group' ? selectedGroup.value : undefined,
     bookSourceId: effectiveScope === 'source' ? (selectedSourceId.value ?? undefined) : undefined,
   })
+
+  // 只有真正创建了 EventSource 才记录签名；上面参数校验失败的提前返回
+  // 不会走到这里，条件补全后（如分组列表加载出来）仍能正常发起搜索
+  lastSearchSignature = signature
 
   eventSource.onmessage = (event) => {
     try {
@@ -300,7 +322,8 @@ function doSearch(key: string) {
 
 function retrySearch() {
   if (!searchKey.value || shelfStore.isSearching) return
-  doSearch(searchKey.value)
+  // 用户主动重试：force 跳过签名去重，即使与上次同参数也重新发起
+  doSearch(searchKey.value, true)
 }
 
 watch(
@@ -313,6 +336,8 @@ watch(
       closeEventSource()
       shelfStore.searchResults = []
       shelfStore.isSearching = false
+      // 清空搜索后重置签名：结果已清空，同一关键词再次输入时应重新搜索
+      lastSearchSignature = null
     }
   },
   { immediate: true }
