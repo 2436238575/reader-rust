@@ -80,9 +80,10 @@ const SIDECAR_ENV_KEYS: &[&str] = &[
     "SystemRoot",
     "SystemDrive",
     "ComSpec",
-    // 临时目录（pip/uv 落盘要用）
+    // 临时目录（pip/uv 落盘要用；TMPDIR 是 Unix 侧的约定名）
     "TEMP",
     "TMP",
+    "TMPDIR",
     // 用户目录与漫游数据（uv 缓存默认在 %LOCALAPPDATA%\uv）
     "HOME",
     "USERPROFILE",
@@ -95,15 +96,18 @@ const SIDECAR_ENV_KEYS: &[&str] = &[
     "LC_ALL",
     "PYTHONIOENCODING",
     "PYTHONUTF8",
-    // TLS 证书与系统代理（大小写两种都放行）
+    // TLS 证书与系统代理（大小写两种都放行；ALL_PROXY 是 httpx/curl
+    // 认的通用代理变量，SOCKS 代理只走它）
     "SSL_CERT_FILE",
     "SSL_CERT_DIR",
     "REQUESTS_CA_BUNDLE",
     "HTTP_PROXY",
     "HTTPS_PROXY",
+    "ALL_PROXY",
     "NO_PROXY",
     "http_proxy",
     "https_proxy",
+    "all_proxy",
     "no_proxy",
 ];
 
@@ -1752,6 +1756,8 @@ mod tests {
             ("DATABASE_URL", "sqlite:storage/reader.db"),
             ("UV_PYTHON", "3.12"),
             ("HTTPS_PROXY", "http://proxy:7890"),
+            ("ALL_PROXY", "socks5://proxy:1080"),
+            ("TMPDIR", "/var/tmp"),
         ];
         let allowlist = sidecar_env_allowlist_from(vars);
         let names: Vec<&str> = allowlist.iter().map(|(k, _)| k.as_str()).collect();
@@ -1762,6 +1768,11 @@ mod tests {
         );
         assert!(names.contains(&"UV_PYTHON"), "应保留 UV_ 前缀：{names:?}");
         assert!(names.contains(&"HTTPS_PROXY"), "应保留代理配置：{names:?}");
+        assert!(
+            names.contains(&"ALL_PROXY"),
+            "应保留 ALL_PROXY（httpx/curl 认）：{names:?}"
+        );
+        assert!(names.contains(&"TMPDIR"), "应保留 TMPDIR：{names:?}");
         for secret in [
             "JWT_SECRET",
             "ADMIN_PASSWORD",
