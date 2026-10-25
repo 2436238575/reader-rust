@@ -62,6 +62,9 @@ export const useAppStore = defineStore('app', () => {
   const USER_INFO_FRESH_MS = 60_000
   let userInfoFreshAt = 0
   let userInfoInFlight: Promise<void> | null = null
+  // 每发起一次请求自增：force 重查可能赶在旧请求前面返回，旧响应迟到时
+  // 不能再把刚拿到的登录态覆盖回去（登出核验尤其要紧）
+  let userInfoSeq = 0
 
   /** 拿到服务端返回的用户信息时记录新鲜时间（fetchUserInfo / bootstrapAuth / setUser）。 */
   function markUserInfoFresh() {
@@ -92,14 +95,17 @@ export const useAppStore = defineStore('app', () => {
     }
     // request 是含 finally 的完整链：finally 回调里比较的就是存进映射的同一个
     // promise，落定后指针才能被正确清除（拆开存会导致身份不等、指针永不清除）
+    const seq = ++userInfoSeq
     const request = (async () => {
       try {
         const data = await getUserInfo()
+        if (seq !== userInfoSeq) return
         userInfo.value = data.userInfo
         isLoggedIn.value = !!data.userInfo?.username
         // 只有真的拿到响应才记新鲜时间；网络失败不记，方便马上重试
         markUserInfoFresh()
       } catch {
+        if (seq !== userInfoSeq) return
         isLoggedIn.value = false
       }
       syncStatsOnce()

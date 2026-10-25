@@ -142,4 +142,36 @@ describe('app store fetchUserInfo 合并与新鲜期', () => {
     expect(getUserInfoMock).toHaveBeenCalledTimes(1)
     expect(store.isLoggedIn).toBe(true)
   })
+
+  it('force 重查先返回时，迟到的旧响应不覆盖登录态', async () => {
+    let releaseOld!: (value: { userInfo: UserInfo | null }) => void
+    let releaseForce!: (value: { userInfo: UserInfo | null }) => void
+    getUserInfoMock
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            releaseOld = resolve
+          })
+      )
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            releaseForce = resolve
+          })
+      )
+    const store = useAppStore()
+
+    const oldRequest = store.fetchUserInfo()
+    const forceRequest = store.fetchUserInfo({ force: true })
+
+    // 登出核验先回来：服务端已无会话
+    releaseForce({ userInfo: null })
+    await forceRequest
+    expect(store.isLoggedIn).toBe(false)
+
+    // 旧请求迟到，带着登出前的用户信息：不能把登录态又翻回 true
+    releaseOld({ userInfo: createUserInfo() })
+    await oldRequest
+    expect(store.isLoggedIn).toBe(false)
+  })
 })
