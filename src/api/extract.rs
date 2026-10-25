@@ -94,15 +94,20 @@ where
         }
         // 终态统一走 form 语义解析：标量字符串自动强转数字/布尔，
         // 数组展开成重复键（serde_html_form 原生支持，axum Form 同库）。
-        let encoded = merged
+        // 嵌套对象/数组没有表单对应物，必须 400 而不是抹成空串静默丢参数。
+        let mut pairs: Vec<(String, String)> = Vec::with_capacity(merged.len());
+        for (k, v) in &merged {
+            match v {
+                Value::Array(items) => {
+                    for item in items {
+                        pairs.push((k.clone(), scalar_to_string(item)?));
+                    }
+                }
+                other => pairs.push((k.clone(), scalar_to_string(other)?)),
+            }
+        }
+        let encoded = pairs
             .iter()
-            .flat_map(|(k, v)| match v {
-                Value::Array(items) => items
-                    .iter()
-                    .map(|item| (k.clone(), scalar_to_string(item)))
-                    .collect::<Vec<_>>(),
-                other => vec![(k.clone(), scalar_to_string(other))],
-            })
             .map(|(k, v)| {
                 format!(
                     "{}={}",
@@ -118,12 +123,15 @@ where
     }
 }
 
-fn scalar_to_string(v: &Value) -> String {
+fn scalar_to_string(v: &Value) -> Result<String, AppError> {
     match v {
-        Value::String(s) => s.clone(),
-        Value::Bool(b) => b.to_string(),
-        Value::Number(n) => n.to_string(),
-        _ => String::new(),
+        Value::String(s) => Ok(s.clone()),
+        Value::Bool(b) => Ok(b.to_string()),
+        Value::Number(n) => Ok(n.to_string()),
+        Value::Null => Ok(String::new()),
+        Value::Array(_) | Value::Object(_) => Err(AppError::BadRequest(
+            "参数值不支持嵌套的 JSON 对象/数组".to_string(),
+        )),
     }
 }
 
@@ -165,9 +173,9 @@ mod tests {
             .flat_map(|(k, v)| match v {
                 Value::Array(items) => items
                     .iter()
-                    .map(|item| (k.clone(), scalar_to_string(item)))
+                    .map(|item| (k.clone(), scalar_to_string(item).expect("测试只喂扁平值")))
                     .collect::<Vec<_>>(),
-                other => vec![(k.clone(), scalar_to_string(other))],
+                other => vec![(k.clone(), scalar_to_string(other).expect("测试只喂扁平值"))],
             })
             .map(|(k, v)| {
                 format!(
@@ -270,5 +278,33 @@ mod tests {
         let req = build_request("page=1", r#"[1,2,3]"#, Some("application/json"));
         let result = QueryOrBody::<Req>::from_request(req, &()).await;
         assert!(result.is_err(), "非对象 JSON 无法做字段级合并，应 400");
+    }
+
+    #[tokio::test]
+    async fn nested_object_value_is_rejected() {
+        // {"a":{"b":1}} 过去被抹成 a= 静默丢参数，现在必须 400
+        let req = build_request("page=1", r#"{"a":{"b":1}}"#, Some("application/json"));
+        let result = QueryOrBody::<Req>::from_request(req, &()).await;
+        assert!(
+            matches!(result, Err(AppError::BadRequest(_))),
+            "嵌套对象值应 400"
+        );
+    }
+
+    #[tokio::test]
+    async fn nested_value_inside_array_is_rejected() {
+        // 数组里的对象/数组元素同样没有表单对应物
+        let req = build_request("", r#"{"ids":[{"b":1}]}"#, Some("application/json"));
+        let result = QueryOrBody::<Req>::from_request(req, &()).await;
+        assert!(
+            matches!(result, Err(AppError::BadRequest(_))),
+            "数组内的嵌套元素应 400"
+        );
+        let req = build_request("", r#"{"ids":[[1,2]]}"#, Some("application/json"));
+        let result = QueryOrBody::<Req>::from_request(req, &()).await;
+        assert!(
+            matches!(result, Err(AppError::BadRequest(_))),
+            "数组内的嵌套数组应 400"
+        );
     }
 }
