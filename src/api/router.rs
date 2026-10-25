@@ -460,8 +460,11 @@ pub fn build_router(state: AppState) -> Router {
 
     // 入站慢请求防护：并发上限在超时**之内**（先 .layer 并发再 .layer 超时，
     // 外层后挂），排队等信号量的时间一并计入 120s——排不上的请求以 408
-    // 收场而不是无限堆积。max == 0（不限制）时不能挂：
-    // ConcurrencyLimitLayer::new(0) 会 panic。
+    // 收场而不是无限堆积。max == 0（不限制）时不能挂：0 许可的信号量会让
+    // 所有请求永久排队到超时。concurrency_layer 必须是共享
+    // Arc<Semaphore> 的 GlobalConcurrencyLimitLayer：axum 逐路由实例化
+    // Router::layer 挂上的层，逐路由独立建信号量的实现等于每条路由各有一份
+    // 上限（见 inbound_guard.rs 的说明与跨路由共享测试）。
     //
     // SSE 端点不需要白名单：timeout 中间件只约束到 handler 产出 Response
     // 为止，SSE handler 立即返回流式响应（cacheBookSSE 等），事件流在

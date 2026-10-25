@@ -54,10 +54,20 @@ pub async fn timeout_middleware(
 /// 立即拒绝），排队时间由外层的 [`timeout_middleware`] 计入超时，排不上的
 /// 请求最终以 408 收场而不是无限堆积。
 ///
-/// 注意 `ConcurrencyLimitLayer::new(0)` 会 panic：`max == 0`（不限制）时
-/// **调用方不得挂载本层**，见 `api/router.rs` 的条件挂载。
-pub fn concurrency_layer(max: usize) -> tower::limit::ConcurrencyLimitLayer {
-    tower::limit::ConcurrencyLimitLayer::new(max)
+/// 必须用共享信号量的 `GlobalConcurrencyLimitLayer`，不能用
+/// `ConcurrencyLimitLayer`：axum 的 `Router::layer` 对**每条路由分别**实例化
+/// 层（path_router 逐路由调 `endpoint.layer(layer.clone())`），而
+/// `ConcurrencyLimitLayer::layer` 每次都新建一个 `Semaphore`——结果 N 条路由
+/// 各自持有 max 个许可，总在途请求数可达 max×N，跨路由分散的慢请求根本
+/// 不受同一上限约束。本层把 `Arc<Semaphore>` 持在层实例里，clone 共享同一
+/// 份；需要在多个分组间共享同一上限时，构造一次层实例、按 clone 分发
+/// （见 `api/router.rs`）。
+///
+/// 注意 0 许可的信号量不会 panic，但会让所有请求永久排队（直到外层超时
+/// 408）：`max == 0`（不限制）时**调用方不得挂载本层**，见 `api/router.rs`
+/// 的条件挂载。
+pub fn concurrency_layer(max: usize) -> tower::limit::GlobalConcurrencyLimitLayer {
+    tower::limit::GlobalConcurrencyLimitLayer::new(max)
 }
 
 #[cfg(test)]
@@ -109,9 +119,9 @@ mod tests {
 
     #[tokio::test]
     async fn zero_concurrency_means_layer_not_mounted() {
-        // max == 0 表示不限制：ConcurrencyLimitLayer::new(0) 会 panic，
-        // 调用方约定此时不挂并发层——验证 256 个并发请求全部放行（若误挂
-        // max=0 的层，第一个请求就会 panic/卡死）。
+        // max == 0 表示不限制：0 许可的信号量会让所有请求永久排队（直到
+        // 超时 408），调用方约定此时不挂并发层——验证 256 个并发请求全部
+        // 放行（若误挂 max=0 的层，请求会一直排到超时）。
         // 这里直接构造与 router.rs 相同的挂载分支：0 → 不加层。
         let max = 0usize;
         let router = Router::new().route(
@@ -147,5 +157,31 @@ mod tests {
         let (first, second) = tokio::join!(send(router.clone(), "/fast"), send(router, "/fast"));
         assert_eq!(first.0, StatusCode::OK);
         assert_eq!(second.0, StatusCode::OK, "超出并发的请求应排队而非被拒");
+    }
+
+    #[tokio::test]
+    async fn concurrency_limit_is_shared_across_routes() {
+        // 跨路由共享同一份信号量是本层存在的意义：axum 的 Router::layer 对
+        // 每条路由分别实例化层，逐路由独立的 ConcurrencyLimitLayer 会给每条
+        // 路由各发一个信号量（/a 与 /b 并行放行）；换成共享 Arc<Semaphore>
+        // 的 GlobalConcurrencyLimitLayer 后，上限 1 必须把打到不同路由的
+        // 并发请求也串行化——两轮各 80ms 的 handler 至少要 160ms 才能完成。
+        let handler = || async {
+            tokio::time::sleep(Duration::from_millis(80)).await;
+            "ok"
+        };
+        let router = Router::new()
+            .route("/a", get(handler))
+            .route("/b", get(handler))
+            .layer(concurrency_layer(1));
+        let start = std::time::Instant::now();
+        let (first, second) = tokio::join!(send(router.clone(), "/a"), send(router, "/b"));
+        assert_eq!(first.0, StatusCode::OK);
+        assert_eq!(second.0, StatusCode::OK);
+        assert!(
+            start.elapsed() >= Duration::from_millis(150),
+            "不同路由的并发请求应共享同一信号量串行执行，实际耗时 {:?}",
+            start.elapsed()
+        );
     }
 }
