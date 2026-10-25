@@ -41,9 +41,13 @@ def _dump(frame: dict[str, Any]) -> str:
     return json.dumps(frame, ensure_ascii=False, separators=(",", ":"))
 
 
-def _decode(chunk: bytes | str) -> str:
-    """二进制输入按 UTF-8 解码（坏字节替换，交给 JSON 解析跳过）。"""
-    return chunk.decode("utf-8", errors="replace") if isinstance(chunk, bytes) else chunk
+def _decode(line: bytes) -> str:
+    """完整行按 UTF-8 解码（坏字节替换，交给 JSON 解析跳过）。
+
+    只对按 b"\\n" 切出的完整行调用：\\n 不可能是 UTF-8 多字节序列的
+    延续字节，完整行里不会残留被切断的半个字符。
+    """
+    return line.decode("utf-8", errors="replace")
 
 
 class StdioChannel:
@@ -52,8 +56,9 @@ class StdioChannel:
         # Python 对管道按 ANSI 代码页解码把中文帧读坏
         self._stdin = stdin if stdin is not None else sys.stdin.buffer
         self._stdout = stdout if stdout is not None else sys.stdout
-        # 未读完的残余（内部统一为 str；二进制块读入时立即解码）
-        self._pending: str = ""
+        # 未读完的残余字节：按 b"\n" 切出完整行后才一次性 UTF-8 解码，
+        # 避免逐块 decode 把跨块的多字节字符（如中文）切成 U+FFFD 静默污染数据
+        self._pending: bytes = b""
 
     # -- 输出 ---------------------------------------------------------------
 
@@ -71,23 +76,24 @@ class StdioChannel:
         """
         pending = self._pending
         while True:
-            newline = pending.find("\n")
+            newline = pending.find(b"\n")
             if newline >= 0:
                 if newline > MAX_LINE_BYTES:
                     raise ProtocolError(
                         f"输入单行超过 {MAX_LINE_BYTES // (1024 * 1024)}MB 上限，判定对端失控"
                     )
                 self._pending = pending[newline + 1 :]
-                return pending[:newline]
+                return _decode(pending[:newline])
             if len(pending) > MAX_LINE_BYTES:
                 raise ProtocolError(
                     f"输入单行超过 {MAX_LINE_BYTES // (1024 * 1024)}MB 上限，判定对端失控"
                 )
             chunk = self._stdin.read(_CHUNK_SIZE)
             if not chunk:
-                self._pending = ""
-                return pending or None
-            pending += _decode(chunk) if isinstance(chunk, bytes) else chunk
+                self._pending = b""
+                return _decode(pending) if pending else None
+            # 文本流（测试用 StringIO）统一编码成字节，与二进制路径共用同一缓冲
+            pending += chunk if isinstance(chunk, bytes) else chunk.encode("utf-8")
             self._pending = pending
 
     def read_frame(self) -> dict[str, Any] | None:

@@ -68,6 +68,23 @@ def test_read_frame_reassembles_line_across_chunks(monkeypatch):
     assert channel.read_frame() == {"type": "status"}
 
 
+def test_read_frame_decodes_utf8_split_across_read_chunks():
+    # 中文「章」的 UTF-8 三字节被拆进两个 read 块：跨块拼接后整行一次解码，
+    # 不得在块边界产生 U+FFFD 替换字符
+    line = '{"type":"run","jobId":"j","title":"第九章"}\n'.encode("utf-8")
+    cut = line.index("章".encode("utf-8")) + 1  # 在「章」的第一个字节后切断
+    chunks = iter([line[:cut], line[cut:]])
+
+    class ScriptedStdin:
+        def read(self, size: int = -1):
+            return next(chunks, b"")
+
+    channel = StdioChannel(stdin=ScriptedStdin(), stdout=io.StringIO())
+    frame = channel.read_frame()
+    assert frame == {"type": "run", "jobId": "j", "title": "第九章"}
+    assert "\ufffd" not in frame["title"]
+
+
 def test_read_frame_rejects_oversized_line(monkeypatch):
     # 对端失控吐出超长行：必须在累积阶段抛协议错误，而不是读完整行
     monkeypatch.setattr(protocol, "MAX_LINE_BYTES", 64)
