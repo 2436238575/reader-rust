@@ -1,4 +1,5 @@
 import { getUserdata, saveUserdata } from '../api/userdata'
+import { queueUserdataSave } from './userdataQueue'
 
 // 后端 userdata 文档名（/reader3/getUserdata・saveUserdata），跨浏览器同步用
 export const READING_STATS_DOC_NAME = 'reading-stats'
@@ -84,6 +85,7 @@ export async function syncReadingStatsFromBackend(local: ReadingStats): Promise<
   return merged
 }
 
+/** 推入批量写队列：与其他 userdata 文档合并为一次批量写，失败由队列退避重试 */
 export function pushReadingStatsToBackend(stats: ReadingStats) {
-  void saveUserdata(READING_STATS_DOC_NAME, stats).catch(() => undefined)
+  queueUserdataSave(READING_STATS_DOC_NAME, stats)
 }

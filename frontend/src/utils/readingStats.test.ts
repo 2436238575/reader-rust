@@ -1,12 +1,14 @@
 // @vitest-environment jsdom
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-const { getUserdata, saveUserdata } = vi.hoisted(() => ({
+const { getUserdata, saveUserdata, queueUserdataSave } = vi.hoisted(() => ({
   getUserdata: vi.fn(),
   saveUserdata: vi.fn(() => Promise.resolve()),
+  queueUserdataSave: vi.fn(),
 }))
 
 vi.mock('../api/userdata', () => ({ getUserdata, saveUserdata }))
+vi.mock('./userdataQueue', () => ({ queueUserdataSave }))
 
 import {
   loadLocalReadingStats,
@@ -100,9 +102,11 @@ describe('syncReadingStatsFromBackend', () => {
 })
 
 describe('pushReadingStatsToBackend', () => {
-  it('推送失败不抛错', async () => {
-    saveUserdata.mockRejectedValueOnce(new Error('network'))
-    expect(() => pushReadingStatsToBackend(stats({}))).not.toThrow()
+  it('推入 userdata 批量写队列而不直接落库', () => {
+    const value = stats({ totalSeconds: 60 })
+    pushReadingStatsToBackend(value)
+    expect(queueUserdataSave).toHaveBeenCalledWith('reading-stats', value)
+    expect(saveUserdata).not.toHaveBeenCalled()
   })
 })
 

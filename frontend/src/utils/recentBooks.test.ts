@@ -1,12 +1,14 @@
 // @vitest-environment jsdom
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-const { getUserdata, saveUserdata } = vi.hoisted(() => ({
+const { getUserdata, saveUserdata, queueUserdataSave } = vi.hoisted(() => ({
   getUserdata: vi.fn(),
   saveUserdata: vi.fn(() => Promise.resolve()),
+  queueUserdataSave: vi.fn(),
 }))
 
 vi.mock('../api/userdata', () => ({ getUserdata, saveUserdata }))
+vi.mock('./userdataQueue', () => ({ queueUserdataSave }))
 
 import {
   clearRecentReadBooks,
@@ -67,29 +69,29 @@ describe('mergeRecentLists', () => {
 })
 
 describe('本地读写与后端推送', () => {
-  it('saveRecentReadBook 写本地并防抖推后端', async () => {
+  it('saveRecentReadBook 写本地并防抖推入批量写队列', async () => {
     vi.useFakeTimers()
     saveRecentReadBook(book({ bookId: 'id-1', recentReadAt: 100 }))
 
     expect(loadRecentReadBooks()).toHaveLength(1)
-    expect(saveUserdata).not.toHaveBeenCalled()
+    expect(queueUserdataSave).not.toHaveBeenCalled()
 
     await vi.advanceTimersByTimeAsync(2500)
-    expect(saveUserdata).toHaveBeenCalledTimes(1)
-    expect(saveUserdata).toHaveBeenCalledWith('recent-books', [
+    expect(queueUserdataSave).toHaveBeenCalledTimes(1)
+    expect(queueUserdataSave).toHaveBeenCalledWith('recent-books', [
       expect.objectContaining({ bookId: 'id-1' }),
     ])
     vi.useRealTimers()
   })
 
-  it('连续保存合并为一次后端写入', async () => {
+  it('连续保存合并为一次推送', async () => {
     vi.useFakeTimers()
     saveRecentReadBook(book({ bookId: 'id-1', recentReadAt: 100 }))
     saveRecentReadBook(book({ bookId: 'id-2', recentReadAt: 200 }))
 
     await vi.advanceTimersByTimeAsync(2500)
-    expect(saveUserdata).toHaveBeenCalledTimes(1)
-    const pushed = (saveUserdata.mock.calls[0] as unknown as [string, RecentReadBook[]])[1]
+    expect(queueUserdataSave).toHaveBeenCalledTimes(1)
+    const pushed = (queueUserdataSave.mock.calls[0] as unknown as [string, RecentReadBook[]])[1]
     expect(pushed.map((item) => item.bookId)).toEqual(['id-2', 'id-1'])
     vi.useRealTimers()
   })
@@ -101,7 +103,7 @@ describe('本地读写与后端推送', () => {
 
     expect(loadRecentReadBooks()).toHaveLength(0)
     await vi.advanceTimersByTimeAsync(2500)
-    expect(saveUserdata).toHaveBeenLastCalledWith('recent-books', [])
+    expect(queueUserdataSave).toHaveBeenLastCalledWith('recent-books', [])
     vi.useRealTimers()
   })
 })

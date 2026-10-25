@@ -1,6 +1,7 @@
 import type { Book, ShelfBook } from '../types'
 import { safeLocalSet } from './storage'
 import { getUserdata, saveUserdata } from '../api/userdata'
+import { queueUserdataSave } from './userdataQueue'
 
 const RECENT_BOOKS_KEY = 'reader-recent-books'
 // 后端 userdata 文档名（/reader3/getUserdata・saveUserdata），跨浏览器同步用
@@ -81,7 +82,8 @@ function schedulePush() {
   if (pushTimer) clearTimeout(pushTimer)
   pushTimer = setTimeout(() => {
     pushTimer = null
-    void saveUserdata(BACKEND_DOC_NAME, readLocal()).catch(() => undefined)
+    // 推入批量写队列：与其他 userdata 文档合并为一次批量写，失败由队列退避重试
+    queueUserdataSave(BACKEND_DOC_NAME, readLocal())
   }, PUSH_DEBOUNCE_MS)
 }
 

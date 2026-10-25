@@ -17,7 +17,8 @@ import {
   deleteBookmarks as apiDeleteBookmarks,
 } from '../api/bookmark'
 import { getChapterComments, getParaCommentIndex } from '../api/review'
-import { getUserdata, saveUserdata } from '../api/userdata'
+import { getUserdata } from '../api/userdata'
+import { queueUserdataSave } from '../utils/userdataQueue'
 import { getReplaceRules } from '../api/replaceRule'
 import type {
   Book,
@@ -631,7 +632,8 @@ export const useReaderStore = defineStore('reader', () => {
       const merged = Array.from(new Set([...remote, ...keys]))
       if (merged.length === remote.size) return
       doc[bookId] = merged
-      await saveUserdata(READ_HISTORY_DOC, doc)
+      // 推入批量写队列：与其他 userdata 文档合并为一次批量写，失败由队列退避重试
+      queueUserdataSave(READ_HISTORY_DOC, doc)
     } catch {
       // 离线/未登录：本地已持久化，下次同步会补上
     }
