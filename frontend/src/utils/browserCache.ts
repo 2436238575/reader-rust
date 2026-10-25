@@ -181,6 +181,34 @@ export async function deleteBrowserCachedChapter(bookId: string, chapterUrl: str
   })
 }
 
+/** 批量删多章的浏览器缓存（开书时发现跨设备新增了编辑章，旧上游缓存作废）。
+ *  一次 readwrite 事务删完，避免逐章各开一个事务；summary 的章数/字节同步扣减 */
+export async function deleteBrowserCachedChapters(bookId: string, chapterUrls: string[]) {
+  const urls = Array.from(new Set(chapterUrls))
+  if (!urls.length) return
+  await withStores('readwrite', async ({ chapters, summary }) => {
+    // 先读回记录拿 size：summary 只记增量，不读就不知道该扣多少字节
+    const records = await Promise.all(
+      urls.map(
+        (url) =>
+          requestToPromise(chapters.get(cacheKey(bookId, url))) as Promise<
+            BrowserChapterCacheRecord | undefined
+          >
+      )
+    )
+    const existing = records.filter(
+      (record): record is BrowserChapterCacheRecord => record != null
+    )
+    if (!existing.length) return
+    await Promise.all(existing.map((record) => requestToPromise(chapters.delete(record.key))))
+    await writeSummary(summary, bookId, (current) => ({
+      ...current,
+      cachedChapterCount: current.cachedChapterCount - existing.length,
+      bytes: current.bytes - existing.reduce((total, record) => total + (record.size || 0), 0),
+    }))
+  })
+}
+
 export async function setBrowserCachedChapter(params: {
   bookId: string
   chapterUrl: string

@@ -2153,7 +2153,8 @@ watch(
   () => {
     loadSavedReadingPosition()
     scheduleRefreshOfflineCacheState()
-    void store.refreshEditedChapterKeys()
+    // 编辑章清单的刷新由 store.loadBook 负责（与目录并行取，落定后才返回），
+    // 这里不再重复触发，避免开书瞬间并发拿到上一本书的集合
   }
 )
 

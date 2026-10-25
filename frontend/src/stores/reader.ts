@@ -30,6 +30,7 @@ import type {
 } from '../types'
 import {
   deleteBrowserCachedChapter,
+  deleteBrowserCachedChapters,
   getBrowserCachedChapter,
   getBrowserCatalog,
   setBrowserCachedChapter,
@@ -222,12 +223,26 @@ export const useReaderStore = defineStore('reader', () => {
   const chapterVersions = reactive(new Map<number, ChapterVersionState>())
 
   async function refreshEditedChapterKeys() {
-    if (!book.value?.bookId) {
+    // bookId 进函数先快照：请求期间可能换书（loadBook 并行/onMounted 触发），
+    // 迟到的旧书结果不能写回，否则会顶掉刚打开的新书集合
+    const bookId = book.value?.bookId
+    if (!bookId) {
       editedChapterKeys.value = new Set()
       return
     }
     try {
-      editedChapterKeys.value = new Set(await listChapterEdits(book.value.bookId))
+      const urls = await listChapterEdits(bookId)
+      if (book.value?.bookId !== bookId) return
+      const previous = editedChapterKeys.value
+      // 先把新集合写回内存再删缓存：集合生效后正文读写才会跳过编辑章；
+      // 反过来的话，并发的正文读取会在删完后又把旧上游正文写回 IndexedDB
+      editedChapterKeys.value = new Set(urls)
+      // 新增的编辑章多半来自另一台设备：本地浏览器缓存里是编辑前的上游
+      // 正文，删掉避免离线兜底读到旧内容（本机编辑路径本就单独删过，这里幂等）
+      const added = urls.filter((url) => !previous.has(url))
+      if (added.length) {
+        await deleteBrowserCachedChapters(bookId, added).catch(() => undefined)
+      }
     } catch {
       /* 离线/失败时保持现状 */
     }
@@ -650,6 +665,9 @@ export const useReaderStore = defineStore('reader', () => {
     chapters.value = []
     content.value = ''
     resetReviews()
+    // 清掉上一本书的编辑章集合：bookId 换了，旧集合会把这本书的章节
+    // 误判成已编辑（或漏判），下面再与目录并行重新拉取本书的集合
+    editedChapterKeys.value = new Set()
     appStore.markBookOpened(b.bookId || b.bookUrl)
     currentIndex.value = b.durChapterIndex || 0
     chapterScrollProgress.value = 0
@@ -661,7 +679,13 @@ export const useReaderStore = defineStore('reader', () => {
     chaptersLoading.value = true
     try {
       if (!b.bookId) throw new Error('书籍缺少 bookId')
-      const list = await getChapterList({ bookId: b.bookId })
+      // 目录与编辑章清单并行；loadBook 返回前两者都要落定，否则开书后的
+      // 正文请求可能赶在集合就位前走浏览器缓存/写回旧缓存。
+      // refreshEditedChapterKeys 内部已吞异常，不会让 Promise.all reject
+      const [list] = await Promise.all([
+        getChapterList({ bookId: b.bookId }),
+        refreshEditedChapterKeys(),
+      ])
       if (loadSeq !== bookLoadSeq) return
       chapters.value = list
       // 目录落浏览器缓存：离线时同一本书还能打开
@@ -738,8 +762,10 @@ export const useReaderStore = defineStore('reader', () => {
     const variant: ContentVariant = config.contentVersion === 'upstream' ? 'upstream' : 'default'
     // 在线时总是问后端：手动选择的版本记在服务端，浏览器缓存可能落后于另一台设备。
     // 浏览器缓存只在离线时作为正文来源，以及请求失败时兜底。
+    // 编辑章例外：它的浏览器缓存是编辑前的上游正文，离线返回它等于回退到旧内容
+    const isEditedChapter = editedChapterKeys.value.has(chapter.url)
     const browserCached =
-      !isLocal && !appStore.isOnline
+      !isLocal && !appStore.isOnline && !isEditedChapter
         ? await getBrowserCachedChapter(bookId, chapter.url).catch(() => null)
         : null
 
@@ -748,6 +774,9 @@ export const useReaderStore = defineStore('reader', () => {
         chapterDiffs.delete(index)
         chapterVersions.delete(index)
         return browserCached
+      }
+      if (isEditedChapter) {
+        throw new Error('本章有编辑版，需要联网读取')
       }
       throw new Error('当前处于离线状态，且该章节未缓存到浏览器')
     }
@@ -785,9 +814,10 @@ export const useReaderStore = defineStore('reader', () => {
         chapterDiffs.delete(index)
       }
     } catch (error) {
+      // 在线失败的缓存兜底同样跳过编辑章：理由同上，它的缓存是编辑前的旧正文
       const fallback =
         browserCached ??
-        (isLocal
+        (isLocal || isEditedChapter
           ? null
           : await getBrowserCachedChapter(bookId, chapter.url).catch(() => null))
       if (fallback) {
@@ -803,8 +833,8 @@ export const useReaderStore = defineStore('reader', () => {
     }
 
     // 上游预览不写浏览器缓存：缓存只存默认版本，否则离线时会读到另一版。
-    const isEdited = editedChapterKeys.value.has(chapter.url)
-    const useBrowserCache = !isLocal && !isEdited && variant !== 'upstream'
+    // 编辑章同样不写（isEditedChapter），它的最新内容只存在于服务端
+    const useBrowserCache = !isLocal && !isEditedChapter && variant !== 'upstream'
     if (useBrowserCache) {
       await setBrowserCachedChapter({
         bookId,

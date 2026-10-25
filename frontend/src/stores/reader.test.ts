@@ -3,7 +3,12 @@ import { createPinia, setActivePinia } from 'pinia'
 import { useAppStore } from './app'
 import { useReaderStore } from './reader'
 import { getBookContent, getChapterImages } from '../api/bookshelf'
-import { getBrowserCachedChapter } from '../utils/browserCache'
+import { listChapterEdits } from '../api/chapterEdit'
+import {
+  deleteBrowserCachedChapters,
+  getBrowserCachedChapter,
+  setBrowserCachedChapter,
+} from '../utils/browserCache'
 
 vi.mock('../api/bookshelf', () => ({
   getChapterList: vi.fn(),
@@ -11,6 +16,11 @@ vi.mock('../api/bookshelf', () => ({
   getChapterImages: vi.fn(),
   saveBookProgress: vi.fn(),
   setBookSource: vi.fn(),
+}))
+
+vi.mock('../api/chapterEdit', () => ({
+  listChapterEdits: vi.fn(),
+  selectChapterVersion: vi.fn(),
 }))
 
 vi.mock('../api/bookmark', () => ({
@@ -27,6 +37,8 @@ vi.mock('../api/replaceRule', () => ({
 vi.mock('../utils/browserCache', () => ({
   getBrowserCachedChapter: vi.fn(),
   setBrowserCachedChapter: vi.fn(),
+  deleteBrowserCachedChapter: vi.fn().mockResolvedValue(undefined),
+  deleteBrowserCachedChapters: vi.fn().mockResolvedValue(undefined),
   getBrowserCatalog: vi.fn().mockResolvedValue(null),
   setBrowserCatalog: vi.fn().mockResolvedValue(undefined),
 }))
@@ -57,6 +69,9 @@ describe('reader local txt chapters', () => {
     })
     vi.mocked(getBookContent).mockReset()
     vi.mocked(getBrowserCachedChapter).mockReset()
+    vi.mocked(setBrowserCachedChapter).mockReset()
+    vi.mocked(listChapterEdits).mockReset().mockResolvedValue([])
+    vi.mocked(deleteBrowserCachedChapters).mockReset()
     vi.mocked(getChapterImages).mockResolvedValue({ enabled: false, images: [] })
   })
 
@@ -148,6 +163,95 @@ describe('reader local txt chapters', () => {
       })
     )
   })
+
+  it('离线时编辑章不回退浏览器缓存，明确报需要联网', async () => {
+    // 缓存里躺着编辑前的旧正文：一旦被读到就等于把另一台设备的编辑回退了
+    vi.mocked(getBrowserCachedChapter).mockResolvedValue('编辑前的旧正文')
+    const appStore = useAppStore()
+    const readerStore = useReaderStore()
+    appStore.setOnlineStatus(false)
+    readerStore.book = {
+      name: '网络书',
+      author: '作者',
+      origin: 'https://example.org',
+      bookId: 'book_1',
+      bookUrl: 'https://example.org/book',
+      bookSourceId: 1,
+    }
+    readerStore.chapters = [{ title: '第一章', url: 'https://example.org/1', index: 0 }]
+    readerStore.editedChapterKeys = new Set(['https://example.org/1'])
+
+    await expect(readerStore.fetchChapterContent(0)).rejects.toThrow('本章有编辑版，需要联网读取')
+    expect(getBrowserCachedChapter).not.toHaveBeenCalled()
+  })
+
+  it('在线读取编辑章时不写浏览器缓存', async () => {
+    vi.mocked(getBookContent).mockResolvedValue({
+      content: '编辑版正文',
+      edited: true,
+      variant: 'default',
+      upstreamChanged: false,
+      selectionSource: 'edited',
+      stale: false,
+    })
+    vi.mocked(getBrowserCachedChapter).mockResolvedValue(null)
+    const appStore = useAppStore()
+    appStore.setOnlineStatus(true)
+    const readerStore = useReaderStore()
+    readerStore.book = {
+      name: '网络书',
+      author: '作者',
+      origin: 'https://example.org',
+      bookId: 'book_1',
+      bookUrl: 'https://example.org/book',
+      bookSourceId: 1,
+    }
+    readerStore.chapters = [{ title: '第一章', url: 'https://example.org/1', index: 0 }]
+    readerStore.editedChapterKeys = new Set(['https://example.org/1'])
+
+    await expect(readerStore.fetchChapterContent(0)).resolves.toBe('编辑版正文')
+    expect(setBrowserCachedChapter).not.toHaveBeenCalled()
+  })
+
+  it('刷新编辑章清单时删除新增编辑章的浏览器缓存', async () => {
+    vi.mocked(listChapterEdits).mockResolvedValue(['https://example.org/1'])
+    const readerStore = useReaderStore()
+    readerStore.book = {
+      name: '网络书',
+      author: '作者',
+      origin: 'https://example.org',
+      bookId: 'book_1',
+      bookUrl: 'https://example.org/book',
+      bookSourceId: 1,
+    }
+    readerStore.editedChapterKeys = new Set<string>()
+
+    await readerStore.refreshEditedChapterKeys()
+
+    expect(readerStore.editedChapterKeys.has('https://example.org/1')).toBe(true)
+    expect(deleteBrowserCachedChapters).toHaveBeenCalledWith('book_1', ['https://example.org/1'])
+  })
+
+  it('loadBook 返回前清掉上一本书的编辑章集合并拉取本书集合', async () => {
+    const { getChapterList } = await import('../api/bookshelf')
+    vi.mocked(getChapterList).mockResolvedValue([
+      { title: '第一章', url: 'https://example.org/1', index: 0 },
+    ])
+    const readerStore = useReaderStore()
+    readerStore.editedChapterKeys = new Set(['https://previous.example/old'])
+
+    await readerStore.loadBook({
+      name: '网络书',
+      author: '作者',
+      origin: 'https://example.org',
+      bookId: 'book_1',
+      bookUrl: 'https://example.org/book',
+      durChapterIndex: 0,
+    })
+
+    expect(readerStore.editedChapterKeys.size).toBe(0)
+    expect(listChapterEdits).toHaveBeenCalledWith('book_1')
+  })
 })
 
 describe('reader progress conflict timestamps', () => {
@@ -167,6 +271,8 @@ describe('reader progress conflict timestamps', () => {
     vi.mocked(getChapterList).mockResolvedValue([
       { title: '第一章', url: 'https://example.com/1', index: 0 },
     ])
+    // loadBook 会并行拉编辑章清单：给个确定值，避免依赖别的 describe 的 mock 残留
+    vi.mocked(listChapterEdits).mockResolvedValue([])
     const readerStore = useReaderStore()
     const serverSavedAt = 1_700_000_000_000
 
