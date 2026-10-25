@@ -283,7 +283,8 @@ async fn downloads_carry_explicit_content_type() {
         let res = app
             .client
             .get(app.url("/reader3/getWebdavFile"))
-            .query(&[("path", path), ("accessToken", token.as_str())])
+            .query(&[("path", path)])
+            .header("Cookie", format!("reader_access={token}"))
             .send()
             .await
             .unwrap();
@@ -332,7 +333,8 @@ async fn active_content_downloads_get_sandbox_csp() {
     let res = app
         .client
         .get(app.url("/reader3/getWebdavFile"))
-        .query(&[("path", "/note.html"), ("accessToken", token.as_str())])
+        .query(&[("path", "/note.html")])
+        .header("Cookie", format!("reader_access={token}"))
         .send()
         .await
         .unwrap();

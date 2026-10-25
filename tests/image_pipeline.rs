@@ -279,7 +279,8 @@ impl TestServer {
     async fn get_image(&self, route: &str) -> reqwest::Response {
         self.client
             .get(format!("{}{}", self.base_url, route))
-            .query(&[("accessToken", self.token.as_str())])
+            // 会话在 HttpOnly Cookie 里：图片端点不再接受查询串主令牌
+            .header("Cookie", format!("reader_access={}", self.token))
             .send()
             .await
             .unwrap()

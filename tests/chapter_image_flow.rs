@@ -358,7 +358,7 @@ async fn chapter_images_come_from_the_source_rule() {
     let resp = server
         .client
         .get(format!("{}{route}", server.base_url))
-        .query(&[("accessToken", server.token.as_str())])
+        .header("Cookie", format!("reader_access={}", server.token))
         .send()
         .await
         .unwrap();
