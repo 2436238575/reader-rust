@@ -1,7 +1,7 @@
-const SHELL_CACHE = 'reader-shell-v1-0-3'
-const RUNTIME_CACHE = 'reader-runtime-v1-0-3'
-const API_CACHE = 'reader-api-v1-0-3'
-const IMAGE_CACHE = 'reader-image-v1-0-3'
+const SHELL_CACHE = 'reader-shell-v1-0-4'
+const RUNTIME_CACHE = 'reader-runtime-v1-0-4'
+const API_CACHE = 'reader-api-v1-0-4'
+const IMAGE_CACHE = 'reader-image-v1-0-4'
 // 部署前缀按 SW 自身的位置推导（`/read/sw.js` → `/read/`）：
 // public/ 下的文件不经过构建处理，写死根路径在子路径部署下会全部 404
 const BASE = new URL('./', self.location).pathname
