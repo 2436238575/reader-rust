@@ -19,6 +19,13 @@ export function loginBookSource(bookSourceId: number) {
     .then((r) => r.data)
 }
 
+/** 换取书源代理限定令牌：绑定单个书源、30 分钟有效，只能访问代理路径；主 JWT 不进 URL。 */
+export function mintBookSourceProxyToken(params: { bookSourceId: number }) {
+  return http
+    .post<{ token: string; expiresIn: number }>('/mintBookSourceProxyToken', params)
+    .then((r) => r.data)
+}
+
 export function saveBookSource(source: BookSource) {
   return http
     .post<{ saved: boolean; bookSourceId: number }>('/saveBookSource', source)
