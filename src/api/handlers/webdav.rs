@@ -11,12 +11,14 @@ use axum::{
 };
 use base64::Engine;
 use dav_server::{localfs::LocalFs, memls::MemLs, DavHandler};
+use futures::StreamExt;
 use http_body_util::{BodyExt, Limited};
 use serde::Deserialize;
 use serde_json::Value;
 use std::path::PathBuf;
 use std::sync::OnceLock;
 use tokio::fs;
+use tokio::io::AsyncWriteExt;
 
 #[derive(Debug, Deserialize)]
 pub struct WebdavPathRequest {
@@ -173,18 +175,14 @@ pub async fn upload_file_to_webdav(
         let Some(filename) = crate::util::safe_path::sanitize_file_name(&filename) else {
             return Err(AppError::BadRequest("非法文件名".to_string()));
         };
-        let data =
-            read_limited_multipart_field(field, MAX_WEBDAV_UPLOAD_BYTES, "文件不能超过 100MB")
-                .await?;
+        // 先收敛路径并建目录，再流式落盘：100MB 级文件不整读进内存
         let rel = normalize_rel_path(&path)?;
         let dir = join_parts(&home, &rel);
         fs::create_dir_all(&dir)
             .await
             .map_err(|e| AppError::Internal(e.into()))?;
         let target = dir.join(&filename);
-        fs::write(&target, data)
-            .await
-            .map_err(|e| AppError::Internal(e.into()))?;
+        stream_multipart_field_to_file(field, &target, MAX_WEBDAV_UPLOAD_BYTES).await?;
         let meta = fs::metadata(&target)
             .await
             .map_err(|e| AppError::Internal(e.into()))?;
@@ -197,6 +195,84 @@ pub async fn upload_file_to_webdav(
         }));
     }
     Ok(Json(ApiResponse::ok(Value::from(file_list))))
+}
+
+/// multipart 文件字段流式落盘到 `target`：逐块读字段、边读边写目标同目录的
+/// 临时文件，全部写完并 flush 后 rename 到目标路径，返回写入的字节数。
+///
+/// 临时文件 `<文件名>.upload-<uuid>.tmp` 放在目标同目录，保证 rename 不跨卷。
+/// 内存占用只有当前 chunk（对比 [`read_limited_multipart_field`] 把整个字段
+/// 读进 Vec）。任何失败路径都显式删除临时文件——文件句柄没有 Drop 清理，
+/// 更不存在 async Drop 可靠性这回事。
+async fn stream_multipart_field_to_file(
+    mut field: axum::extract::multipart::Field<'_>,
+    target: &std::path::Path,
+    limit: usize,
+) -> Result<u64, AppError> {
+    let dir = target.parent().ok_or_else(|| {
+        AppError::Internal(anyhow::anyhow!("WebDAV 上传目标缺少父目录: {target:?}"))
+    })?;
+    let stem = target
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("file");
+    let temp = dir.join(format!("{stem}.upload-{}.tmp", uuid::Uuid::new_v4()));
+    let mut file = match fs::File::create(&temp).await {
+        Ok(f) => f,
+        Err(e) => {
+            let _ = fs::remove_file(&temp).await;
+            return Err(AppError::Internal(e.into()));
+        }
+    };
+    let mut written: u64 = 0;
+    while let Some(chunk) = field.next().await {
+        let chunk = match chunk {
+            Ok(c) => c,
+            // 字段读取失败按 400 透传，与 read_limited_multipart_field 同口径
+            Err(e) => {
+                let _ = fs::remove_file(&temp).await;
+                return Err(AppError::BadRequest(e.to_string()));
+            }
+        };
+        written = written.saturating_add(chunk.len() as u64);
+        if written > limit as u64 {
+            let _ = fs::remove_file(&temp).await;
+            return Err(AppError::BadRequest("文件不能超过 100MB".to_string()));
+        }
+        if let Err(e) = file.write_all(&chunk).await {
+            let _ = fs::remove_file(&temp).await;
+            return Err(AppError::Internal(e.into()));
+        }
+    }
+    if let Err(e) = file.flush().await {
+        let _ = fs::remove_file(&temp).await;
+        return Err(AppError::Internal(e.into()));
+    }
+    // 先关句柄再 rename：Windows 上被占用的文件无法改名
+    drop(file);
+    if let Err(e) = fs::rename(&temp, target).await {
+        // POSIX 的 rename 原子覆盖已存在目标。Windows 的 MoveFileEx(
+        // MOVEFILE_REPLACE_EXISTING) 通常也能覆盖，但目标被其他进程以不兼容
+        // 的共享模式打开时会失败（表现为 AlreadyExists/PermissionDenied）；
+        // 此时先删目标再重试一次。删除与重命名之间存在短暂窗口，因此
+        // Windows 上不是严格原子覆盖（Linux 不走这条分支）。
+        if !matches!(
+            e.kind(),
+            std::io::ErrorKind::AlreadyExists | std::io::ErrorKind::PermissionDenied
+        ) {
+            let _ = fs::remove_file(&temp).await;
+            return Err(AppError::Internal(e.into()));
+        }
+        if let Err(rm) = fs::remove_file(target).await {
+            let _ = fs::remove_file(&temp).await;
+            return Err(AppError::Internal(rm.into()));
+        }
+        if let Err(e) = fs::rename(&temp, target).await {
+            let _ = fs::remove_file(&temp).await;
+            return Err(AppError::Internal(e.into()));
+        }
+    }
+    Ok(written)
 }
 
 pub async fn delete_webdav_file(

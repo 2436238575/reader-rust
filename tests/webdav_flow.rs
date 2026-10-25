@@ -657,3 +657,106 @@ async fn lock_blocks_write_until_unlock() {
         .unwrap();
     assert!(res.status().is_success());
 }
+
+/// JSON 接口的 multipart 上传（uploadFileToWebdav）流式落盘：约 1.5MB 二进制
+/// 逐字节一致（流式化改造前是整读进内存再 fs::write，这里用字节级比对守住
+/// 回归）；同名覆盖上传后内容更新（覆盖 Windows 上 rename 的先删后改名回退
+/// 分支），且成功后不残留 `.upload-*.tmp` 临时文件。
+#[tokio::test]
+async fn upload_file_to_webdav_streams_binary_and_overwrites() {
+    let app = TestServer::start().await;
+    let token = app.login_token().await;
+
+    // 确定性伪随机字节：覆盖 0x00/0xFF 与 \r\n，确保不是碰巧能当文本处理的内容
+    let payload: Vec<u8> = (0..1_500_000usize)
+        .map(|i| (i.wrapping_mul(31) % 251) as u8)
+        .collect();
+    let upload = |payload: &[u8]| {
+        // reqwest 主 crate 没开 multipart feature：手工拼 multipart body
+        let boundary = "----webdavuploadboundary";
+        let mut body: Vec<u8> = Vec::new();
+        body.extend_from_slice(
+            format!(
+                "--{boundary}\r\nContent-Disposition: form-data; name=\"path\"\r\n\r\n/backup\r\n"
+            )
+            .as_bytes(),
+        );
+        body.extend_from_slice(
+            format!(
+                "--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"backup.bin\"\r\nContent-Type: application/octet-stream\r\n\r\n"
+            )
+            .as_bytes(),
+        );
+        body.extend_from_slice(payload);
+        body.extend_from_slice(format!("\r\n--{boundary}--\r\n").as_bytes());
+        app.client
+            .post(app.url("/reader3/uploadFileToWebdav"))
+            .header("Cookie", format!("reader_access={token}"))
+            .header(
+                "Content-Type",
+                format!("multipart/form-data; boundary={boundary}"),
+            )
+            .body(body)
+    };
+
+    // 首次上传
+    let res = upload(&payload).send().await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK, "上传应成功");
+    let body: serde_json::Value = res.json().await.unwrap();
+    assert_eq!(body["isSuccess"], serde_json::json!(true));
+    assert_eq!(body["data"][0]["name"], "backup.bin");
+    assert_eq!(body["data"][0]["size"], serde_json::json!(payload.len()));
+
+    // 下载逐字节一致
+    let res = app
+        .client
+        .get(app.url("/reader3/getWebdavFile"))
+        .query(&[("path", "/backup/backup.bin")])
+        .header("Cookie", format!("reader_access={token}"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::OK, "下载应成功");
+    let downloaded = res.bytes().await.unwrap();
+    assert_eq!(
+        downloaded.as_ref(),
+        payload.as_slice(),
+        "下载内容应与上传内容逐字节一致"
+    );
+
+    // 落盘内容一致，且不残留临时文件
+    let disk = std::fs::read(app.home().join("backup").join("backup.bin")).unwrap();
+    assert_eq!(disk, payload, "落盘内容应与上传内容逐字节一致");
+    let leftovers: Vec<String> = std::fs::read_dir(app.home().join("backup"))
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .map(|e| e.file_name().to_string_lossy().to_string())
+        .filter(|name| name.contains(".upload-"))
+        .collect();
+    assert!(
+        leftovers.is_empty(),
+        "成功上传后不应残留临时文件: {leftovers:?}"
+    );
+
+    // 同名覆盖：大小与内容都不同，落盘内容必须更新
+    let payload2: Vec<u8> = (0..900_000usize)
+        .map(|i| (i.wrapping_mul(17) % 249) as u8)
+        .collect();
+    let res = upload(&payload2).send().await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK, "同名覆盖上传应成功");
+    let body: serde_json::Value = res.json().await.unwrap();
+    assert_eq!(body["isSuccess"], serde_json::json!(true));
+    assert_eq!(body["data"][0]["size"], serde_json::json!(payload2.len()));
+    let disk = std::fs::read(app.home().join("backup").join("backup.bin")).unwrap();
+    assert_eq!(disk, payload2, "覆盖上传后落盘内容应更新");
+    let leftovers: Vec<String> = std::fs::read_dir(app.home().join("backup"))
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .map(|e| e.file_name().to_string_lossy().to_string())
+        .filter(|name| name.contains(".upload-"))
+        .collect();
+    assert!(
+        leftovers.is_empty(),
+        "覆盖上传后不应残留临时文件: {leftovers:?}"
+    );
+}
