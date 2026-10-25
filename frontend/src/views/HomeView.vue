@@ -239,6 +239,9 @@ onActivated(async () => {
   const results = await Promise.allSettled([shelfStore.fetchBooks(), shelfStore.fetchGroups()])
   const failed = results.find((r): r is PromiseRejectedResult => r.status === 'rejected')
   if (failed) {
+    // 失败可能只是分组这一路：fetchBooks 成功会清掉脏标记，这里必须补回来，
+    // 否则下次激活会直接跳过，分组列表一直空着
+    shelfStore.markShelfDirty()
     appStore.showToast((failed.reason as Error)?.message || '书架加载失败', 'error')
   }
 })

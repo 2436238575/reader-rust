@@ -58,10 +58,12 @@ import { reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { login } from '../api/user'
 import { useAppStore } from '../stores/app'
+import { useBookshelfStore } from '../stores/bookshelf'
 
 const route = useRoute()
 const router = useRouter()
 const appStore = useAppStore()
+const shelfStore = useBookshelfStore()
 
 const submitting = ref(false)
 const form = reactive({
@@ -96,8 +98,10 @@ async function handleSubmit() {
     const user = await login(form.username, form.password)
     appStore.setUser(user)
     appStore.showToast('登录成功', 'success')
-    // 不在这里预热书架：首页激活时按脏标记自行拉取（初始为脏，必拉），
-    // 跳转到非首页时也不需要这次请求
+    // 不在这里直接拉书架：首页激活时按脏标记自行拉取。但要先标脏——
+    // 登录前书架可能已有旧数据（脏标记为 false），别的设备在登出期间
+    // 加的书会被漏掉
+    shelfStore.markShelfDirty()
     router.replace(redirectTarget())
   } catch (e: unknown) {
     appStore.showToast((e as Error).message || '登录失败', 'error')
