@@ -438,6 +438,34 @@ fn mint_proxy_token(
     crate::auth::jwt::encode_token(&claims, state.auth.jwt_secret())
 }
 
+/// 为书源登录预览签发限定代理令牌（30 分钟、scope=代理、绑定该书源）。
+///
+/// 前端打开 iframe 前先取这把令牌拼 URL，主 JWT 不再出现在 URL 里。
+/// 参数与存在性校验口径与 `bookSourceProxy` 一致（按当前用户命名空间读）。
+pub async fn mint_book_source_proxy_token(
+    State(state): State<AppState>,
+    user: CurrentUser,
+    Json(param): Json<BookSourceIdParam>,
+) -> Result<Json<ApiResponse<serde_json::Value>>, AppError> {
+    let source_id = param
+        .book_source_id
+        .ok_or_else(|| AppError::BadRequest("bookSourceId required".to_string()))?;
+    // 校验口径与 bookSourceProxy 一致：书源必须存在于当前用户命名空间
+    if state
+        .book_source_service
+        .get_by_id(&user.0.ns, source_id)
+        .await?
+        .is_none()
+    {
+        return Err(AppError::NotFound("bookSource not found".to_string()));
+    }
+    let token = mint_proxy_token(&state, &user.0, source_id)?;
+    Ok(Json(ApiResponse::ok(serde_json::json!({
+        "token": token,
+        "expiresIn": PROXY_TOKEN_TTL_SECS,
+    }))))
+}
+
 #[derive(Debug, Deserialize)]
 pub struct BookSourceClientLogParam {
     message: Option<String>,
@@ -688,7 +716,20 @@ async fn forward_book_source_request(
     }
     response_headers.insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
 
-    let body = if is_html_response(content_type.as_deref(), &bytes) {
+    // 代理页是第三方书源的 HTML/JS，与主站同源吐出：补 CSP sandbox 把它
+    // 关进不透明源（不带 allow-same-origin），直接打开或被嵌入都读不到
+    // 主站存储与会话 Cookie；allow-scripts/allow-forms 保住登录页的脚本与
+    // 表单。用 append 而不是 insert：上游若带自己的 CSP，多道策略并存取
+    // 交集，sandbox 始终生效。
+    let is_html = is_html_response(content_type.as_deref(), &bytes);
+    if is_html {
+        response_headers.append(
+            header::CONTENT_SECURITY_POLICY,
+            HeaderValue::from_static("sandbox allow-scripts allow-forms"),
+        );
+    }
+
+    let body = if is_html {
         let text = String::from_utf8_lossy(&bytes).to_string();
         rewrite_login_html(&text, &final_url, source.book_source_id, access_token).into_bytes()
     } else {

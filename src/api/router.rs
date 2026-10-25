@@ -166,6 +166,11 @@ pub fn build_router(state: AppState) -> Router {
             "/reader3/bookSourceClientLog",
             any(handlers::book_source_client_log),
         )
+        // 书源登录预览的限定令牌签发：前端拼 iframe URL 前先取它，主 JWT 不进 URL
+        .route(
+            "/reader3/mintBookSourceProxyToken",
+            post(handlers::mint_book_source_proxy_token),
+        )
         .route("/reader3/saveBookSource", post(handlers::save_book_source))
         .route(
             "/reader3/deleteBookSource",
