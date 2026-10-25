@@ -30,7 +30,7 @@ GET /reader3/getWebdavFile?path=/a.txt
 POST /reader3/uploadFileToWebdav
 ```
 
-`multipart/form-data`：`path` 字段为目标目录（缺省 `/`），`file` 字段为文件。单文件上限 100MB，服务端边接收边流式落盘；单请求 multipart 字段数上限 20 个（超限 400）。响应 `data` 为已写入条目数组。
+`multipart/form-data`：`path` 字段为目标目录（缺省 `/`），`file` 字段为文件。单文件上限 100MB，服务端边接收边流式落盘；单请求 multipart 字段数上限 20 个（超限 400）。响应 `data` 为已写入条目数组。上传先写目标同目录的 `.upload-*.tmp` 临时文件、完成后再原子改名；任何失败**或中途取消**（客户端断连、上传超时 `INBOUND_UPLOAD_TIMEOUT_SECS` 掐断）都会清理临时文件，不在目录里留孤儿。
 
 ### 删除文件
 

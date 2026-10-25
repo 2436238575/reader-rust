@@ -30,6 +30,11 @@ impl Drop for TestServer {
 
 impl TestServer {
     async fn start() -> Self {
+        Self::start_with(|_| {}).await
+    }
+
+    /// 按需覆盖配置启动（如缩短入站上传超时以快速触发取消路径）。
+    async fn start_with(mutate_cfg: impl FnOnce(&mut AppConfig)) -> Self {
         common::clean_stale_temp_dirs();
         let temp_dir =
             std::env::temp_dir().join(format!("reader-rust-webdav-{}", uuid::Uuid::new_v4()));
@@ -42,7 +47,7 @@ impl TestServer {
         )
         .unwrap();
 
-        let cfg = AppConfig {
+        let mut cfg = AppConfig {
             server_host: "127.0.0.1".to_string(),
             server_port: 0,
             database_url: format!("sqlite:{}?mode=rwc", temp_dir.join("reader.db").display()),
@@ -55,6 +60,7 @@ impl TestServer {
             rate_limit_disabled: true,
             ..AppConfig::default()
         };
+        mutate_cfg(&mut cfg);
 
         let state = build_state(cfg).await.unwrap();
         let app = build_router(state);
@@ -758,5 +764,92 @@ async fn upload_file_to_webdav_streams_binary_and_overwrites() {
     assert!(
         leftovers.is_empty(),
         "覆盖上传后不应残留临时文件: {leftovers:?}"
+    );
+}
+
+/// 递归收集 webdav 家目录下所有 `.upload-*.tmp` 临时文件。
+fn collect_upload_temps(root: &std::path::Path) -> Vec<String> {
+    let mut found = Vec::new();
+    let Ok(entries) = std::fs::read_dir(root) else {
+        return found;
+    };
+    for entry in entries.filter_map(|e| e.ok()) {
+        let path = entry.path();
+        if path.is_dir() {
+            found.extend(collect_upload_temps(&path));
+        } else if entry.file_name().to_string_lossy().contains(".upload-") {
+            found.push(path.to_string_lossy().to_string());
+        }
+    }
+    found
+}
+
+/// 中途断流的上传（客户端断连 / 上传超时取消 handler future）不得残留
+/// `.upload-*.tmp` 临时文件：流式化改造后临时文件只在显式错误分支删除，
+/// future 被丢弃时无人清理，孤儿文件会留在用户 WebDAV 主目录里并出现在
+/// 文件列表中。守卫（Drop 清理）必须覆盖取消路径。
+///
+/// 用「发完 multipart 前缀后永久挂起的请求体流」复现取消：上传超时
+/// （本测试缩短为 2s）触发 408，服务端丢弃 handler future。
+#[tokio::test]
+async fn aborted_upload_does_not_leak_temp_file() {
+    let app = TestServer::start_with(|cfg| cfg.inbound_upload_timeout_secs = 2).await;
+    let token = app.login_token().await;
+
+    let boundary = "----webdavabortboundary";
+    let mut prefix: Vec<u8> = Vec::new();
+    prefix.extend_from_slice(
+        format!("--{boundary}\r\nContent-Disposition: form-data; name=\"path\"\r\n\r\n/backup\r\n")
+            .as_bytes(),
+    );
+    prefix.extend_from_slice(
+        format!(
+            "--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"leak.bin\"\r\nContent-Type: application/octet-stream\r\n\r\n"
+        )
+        .as_bytes(),
+    );
+    // 部分文件字节：让服务端已经建好临时文件、写了一部分，然后流挂起
+    prefix.extend_from_slice(&[0xABu8; 8192]);
+
+    let (mut tx, rx) = futures::channel::mpsc::channel::<Result<bytes::Bytes, std::io::Error>>(1);
+    futures::SinkExt::send(&mut tx, Ok(bytes::Bytes::from(prefix)))
+        .await
+        .unwrap();
+    // tx 不再发送也不 drop：请求体流永久挂起
+
+    let res = app
+        .client
+        .post(app.url("/reader3/uploadFileToWebdav"))
+        .header("Cookie", format!("reader_access={token}"))
+        .header(
+            "Content-Type",
+            format!("multipart/form-data; boundary={boundary}"),
+        )
+        .body(reqwest::Body::wrap_stream(rx))
+        .send()
+        .await;
+    // 服务端 2s 超时后应答 408；客户端也可能先遇到连接被重置（提前应答 +
+    // 请求体仍在流），两者都算取消路径已触发，断言重点在服务端清理
+    match res {
+        Ok(res) => assert_eq!(
+            res.status(),
+            StatusCode::REQUEST_TIMEOUT,
+            "挂起的流式上传应被上传超时 408 掐断"
+        ),
+        Err(e) => eprintln!("客户端在收到 408 前连接被重置（可接受）: {e}"),
+    }
+    drop(tx);
+
+    // 守卫在 future 析构时清理；留一点余量给句柄释放的延迟重试兜底
+    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+    let leftovers = collect_upload_temps(&app.home());
+    assert!(
+        leftovers.is_empty(),
+        "取消的上传不应残留临时文件: {leftovers:?}"
+    );
+    // 半途而废的正文也不应出现成正式文件
+    assert!(
+        !app.home().join("backup").join("leak.bin").exists(),
+        "中断的上传不得留下目标文件"
     );
 }

@@ -202,8 +202,9 @@ pub async fn upload_file_to_webdav(
 ///
 /// 临时文件 `<文件名>.upload-<uuid>.tmp` 放在目标同目录，保证 rename 不跨卷。
 /// 内存占用只有当前 chunk（对比 [`read_limited_multipart_field`] 把整个字段
-/// 读进 Vec）。任何失败路径都显式删除临时文件——文件句柄没有 Drop 清理，
-/// 更不存在 async Drop 可靠性这回事。
+/// 读进 Vec）。清理统一交给 [`TempUploadGuard`]：显式错误分支、**取消路径**
+/// （handler future 被丢弃——客户端断连、上传超时在收流中途触发、panic）都会
+/// 经守卫的 Drop 删除临时文件，不存在 async Drop 可靠性这回事。
 async fn stream_multipart_field_to_file(
     mut field: axum::extract::multipart::Field<'_>,
     target: &std::path::Path,
@@ -217,62 +218,107 @@ async fn stream_multipart_field_to_file(
         .and_then(|n| n.to_str())
         .unwrap_or("file");
     let temp = dir.join(format!("{stem}.upload-{}.tmp", uuid::Uuid::new_v4()));
+    // 守卫必须声明在 File **之前**：局部按逆声明序析构，句柄先关（空闲时
+    // tokio File 的 Arc<StdFile> 同步关掉）、守卫后删——顺序反了的话 Windows
+    // 上删一个仍被句柄占用的文件会静默失败。File::create 失败时磁盘上没有
+    // 文件，守卫在武装成功前保持无害。
+    let mut guard = TempUploadGuard {
+        path: temp.clone(),
+        armed: false,
+    };
     let mut file = match fs::File::create(&temp).await {
         Ok(f) => f,
-        Err(e) => {
-            let _ = fs::remove_file(&temp).await;
-            return Err(AppError::Internal(e.into()));
-        }
+        Err(e) => return Err(AppError::Internal(e.into())),
     };
+    guard.armed = true;
     let mut written: u64 = 0;
     while let Some(chunk) = field.next().await {
         let chunk = match chunk {
             Ok(c) => c,
             // 字段读取失败按 400 透传，与 read_limited_multipart_field 同口径
-            Err(e) => {
-                let _ = fs::remove_file(&temp).await;
-                return Err(AppError::BadRequest(e.to_string()));
-            }
+            Err(e) => return Err(AppError::BadRequest(e.to_string())),
         };
         written = written.saturating_add(chunk.len() as u64);
         if written > limit as u64 {
-            let _ = fs::remove_file(&temp).await;
             return Err(AppError::BadRequest("文件不能超过 100MB".to_string()));
         }
         if let Err(e) = file.write_all(&chunk).await {
-            let _ = fs::remove_file(&temp).await;
             return Err(AppError::Internal(e.into()));
         }
     }
     if let Err(e) = file.flush().await {
-        let _ = fs::remove_file(&temp).await;
         return Err(AppError::Internal(e.into()));
     }
     // 先关句柄再 rename：Windows 上被占用的文件无法改名
     drop(file);
-    if let Err(e) = fs::rename(&temp, target).await {
+    match fs::rename(&temp, target).await {
         // POSIX 的 rename 原子覆盖已存在目标。Windows 的 MoveFileEx(
         // MOVEFILE_REPLACE_EXISTING) 通常也能覆盖，但目标被其他进程以不兼容
         // 的共享模式打开时会失败（表现为 AlreadyExists/PermissionDenied）；
         // 此时先删目标再重试一次。删除与重命名之间存在短暂窗口，因此
         // Windows 上不是严格原子覆盖（Linux 不走这条分支）。
-        if !matches!(
-            e.kind(),
-            std::io::ErrorKind::AlreadyExists | std::io::ErrorKind::PermissionDenied
-        ) {
-            let _ = fs::remove_file(&temp).await;
+        Err(e)
+            if !matches!(
+                e.kind(),
+                std::io::ErrorKind::AlreadyExists | std::io::ErrorKind::PermissionDenied
+            ) =>
+        {
             return Err(AppError::Internal(e.into()));
         }
-        if let Err(rm) = fs::remove_file(target).await {
-            let _ = fs::remove_file(&temp).await;
-            return Err(AppError::Internal(rm.into()));
+        Err(_) => {
+            if let Err(rm) = fs::remove_file(target).await {
+                return Err(AppError::Internal(rm.into()));
+            }
+            if let Err(e) = fs::rename(&temp, target).await {
+                return Err(AppError::Internal(e.into()));
+            }
         }
-        if let Err(e) = fs::rename(&temp, target).await {
-            let _ = fs::remove_file(&temp).await;
-            return Err(AppError::Internal(e.into()));
+        Ok(()) => {}
+    }
+    // rename 成功：临时文件已不存在，解除守卫避免误删同名新文件
+    guard.disarm();
+    Ok(written)
+}
+
+/// 上传临时文件的兜底清理守卫：armed 状态下 Drop 时删除临时文件。
+///
+/// tokio 没有 async Drop，handler future 被取消时任何显式错误分支都不会
+/// 执行，唯一可靠的清理点是 future 状态机析构时的逐局部 Drop。同步删除
+/// 在句柄已被关闭后（见 [`stream_multipart_field_to_file`] 的声明序说明）
+/// 对常见取消点（等下一块网络数据）直接生效；若句柄仍被在途写持有
+/// （Windows 上表现为共享冲突），退化为在运行时上延迟重试一次。
+struct TempUploadGuard {
+    path: PathBuf,
+    armed: bool,
+}
+
+impl TempUploadGuard {
+    /// 成功落盘后解除清理义务（消费 self，Drop 变为无操作）。
+    fn disarm(mut self) {
+        self.armed = false;
+    }
+}
+
+impl Drop for TempUploadGuard {
+    fn drop(&mut self) {
+        if !self.armed {
+            return;
+        }
+        if std::fs::remove_file(&self.path).is_ok() {
+            return;
+        }
+        // 典型残留原因：句柄仍被在途写持有（tokio File 的 Arc<StdFile> 在
+        // 阻塞池任务手里），Windows 上删除共享冲突。延迟重试兜底；
+        // 不在运行时上（如进程退出路径）则放弃。
+        if let Ok(handle) = tokio::runtime::Handle::try_current() {
+            let path = self.path.clone();
+            // 直接丢弃 JoinHandle（分离任务）：清理尽力而为，无人等待它
+            handle.spawn(async move {
+                tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+                let _ = fs::remove_file(&path).await;
+            });
         }
     }
-    Ok(written)
 }
 
 pub async fn delete_webdav_file(
