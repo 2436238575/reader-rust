@@ -604,6 +604,18 @@ mod tests {
     }
 
     #[test]
+    fn redact_url_strips_query_and_fragment() {
+        // 签名/登录态参数不落日志：查询串与片段整体剥掉，保留主机与路径
+        assert_eq!(
+            redact_url_for_log("https://pic.example/x/y.heic?x-expires=1&x-signature=abc#f"),
+            "https://pic.example/x/y.heic"
+        );
+        // 解析失败的串至少截掉 ? / # 之后的部分
+        assert_eq!(redact_url_for_log("not a url?sig=1"), "not a url");
+        assert_eq!(redact_url_for_log("not a url#frag"), "not a url");
+    }
+
+    #[test]
     fn blocks_internal_hostnames() {
         for host in [
             "localhost",

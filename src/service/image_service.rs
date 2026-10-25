@@ -302,7 +302,8 @@ impl ImageService {
             tracing::warn!(
                 "图片抓取失败 id={} url={} err={:?}",
                 id,
-                record.source_url,
+                // 上游地址带时效签名（x-signature 等），日志只留脱敏后的地址
+                crate::crawler::url_guard::redact_url_for_log(&record.source_url),
                 err
             );
             AppError::NotFound("图片抓取失败".to_string())
@@ -421,7 +422,10 @@ fn transcode(image: FetchedImage) -> Result<(Vec<u8>, String, String), AppError>
 
     // 浏览器普遍解不了 HEIC（Chrome 直接 img.onerror），统一转 JPEG
     let rgb = decode_heic(&image.bytes).map_err(|err| {
-        tracing::warn!("HEIC 转码失败 url={} err={err}", image.url);
+        tracing::warn!(
+            "HEIC 转码失败 url={} err={err}",
+            crate::crawler::url_guard::redact_url_for_log(&image.url)
+        );
         AppError::NotFound("图片转码失败".to_string())
     })?;
     let (data, width, height) = rgb;

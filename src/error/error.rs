@@ -107,6 +107,48 @@ impl<T> ApiResponse<T> {
     }
 }
 
+impl AppError {
+    /// 写日志用的脱敏摘要。
+    ///
+    /// 不能 `?self` 整个打印：Http 变体的 reqwest 错误 Display/Debug 会带
+    /// 完整 URL，上游图片/正文地址里的时效签名（`x-signature`）与登录态
+    /// 参数会随之落进日志文件。Http 变体只给错误类别 + 去掉查询串/片段的
+    /// URL；其余变体的 Display 本就是面向客户端的安全文案，原样使用。
+    fn log_summary(&self) -> String {
+        match self {
+            AppError::Http(err) => {
+                let category = if err.is_timeout() {
+                    "timeout"
+                } else if err.is_connect() {
+                    "connect"
+                } else if err.is_redirect() {
+                    "redirect"
+                } else if err.is_decode() {
+                    "decode"
+                } else if err.is_body() {
+                    "body"
+                } else if err.is_status() {
+                    "status"
+                } else if err.is_request() {
+                    "request"
+                } else if err.is_builder() {
+                    "builder"
+                } else {
+                    "other"
+                };
+                match err.url() {
+                    Some(url) => format!(
+                        "http error ({category}): {}",
+                        crate::crawler::url_guard::redact_url_for_log(url.as_str())
+                    ),
+                    None => format!("http error ({category})"),
+                }
+            }
+            other => other.to_string(),
+        }
+    }
+}
+
 impl IntoResponse for AppError {
     fn into_response(self) -> Response {
         let (status, message) = match &self {
@@ -129,10 +171,11 @@ impl IntoResponse for AppError {
         // 走 tracing 而非 println!：可被统一收集/过滤，也避免向 stdout 倾倒。
         // 4xx 是调用方的问题，warn 即可；一律 error! 会把「未登录」这类
         // 日常事件淹没在错误日志里，掩盖真正的服务端故障。
+        // 日志字段用脱敏摘要而不是 ?self：reqwest 错误会带完整 URL。
         if status.is_server_error() {
-            tracing::error!(error = ?self, "请求处理失败");
+            tracing::error!(error = %self.log_summary(), "请求处理失败");
         } else {
-            tracing::warn!(error = ?self, "请求被拒绝");
+            tracing::warn!(error = %self.log_summary(), "请求被拒绝");
         }
         let body = Json(ApiResponse::<serde_json::Value>::err(message));
         (status, body).into_response()
@@ -197,5 +240,39 @@ mod tests {
             .unwrap_err();
         let error: AppError = anyhow::Error::new(err).into();
         assert!(matches!(error, AppError::Upstream { .. }));
+    }
+
+    #[tokio::test]
+    async fn http_error_log_summary_redacts_url_query() {
+        // 连接一个必然失败的本地端口制造带 URL 的 reqwest 错误：
+        // 日志摘要只保留类别与去查询串的地址，签名参数不落日志
+        let err = reqwest::Client::new()
+            .get("http://127.0.0.1:1/pic?x-signature=secret&x-expires=9")
+            .send()
+            .await
+            .unwrap_err();
+        let summary = AppError::Http(err).log_summary();
+        assert!(
+            !summary.contains("x-signature") && !summary.contains("secret"),
+            "摘要不得带查询串: {summary}"
+        );
+        assert!(summary.contains("http error"), "应带错误类别: {summary}");
+        assert!(
+            summary.contains("127.0.0.1:1/pic"),
+            "应保留主机与路径: {summary}"
+        );
+    }
+
+    #[test]
+    fn non_http_variants_log_display_text() {
+        let error = AppError::Upstream {
+            status: 403,
+            message: "上游站点返回错误（HTTP 403）".to_string(),
+        };
+        assert!(error.log_summary().contains("403"));
+        assert_eq!(
+            AppError::NotFound("没了".to_string()).log_summary(),
+            "not found: 没了"
+        );
     }
 }
