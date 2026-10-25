@@ -78,12 +78,14 @@ pub fn user_ns_of(uid: i64) -> String {
     format!("user_{uid}")
 }
 
-/// 令牌从 `Authorization` 头取，回退到查询参数 `accessToken`。
+/// 令牌取值顺序：`Authorization: Bearer` 头 → Cookie `reader_access` →
+/// 查询参数 `accessToken`。
 ///
-/// 查询参数不是可选的兼容路径：SSE 端点由浏览器 `EventSource` 发起，
-/// 无法设置请求头，前端只能把令牌放进查询串
-/// （见 `frontend/src/utils/secureAccess.ts`）。`/reader3/cover` 的
-/// `<img src>` 同理。
+/// 浏览器会话走 Cookie（HttpOnly，见 `auth::cookie`）；API 客户端/e2e 走
+/// Bearer 头。查询串令牌会进反代访问日志与浏览器历史，只保留给书源登录
+/// 代理页的 30 分钟限定令牌（`bookSourceProxy` / `bookSourceClientLog`，
+/// 与限定令牌的路径白名单同一份口径）；SSE 与 `<img>` 无法设置请求头，
+/// 改由浏览器自动携带的会话 Cookie 鉴权，其他路径不再接受查询串令牌。
 fn extract_token<B>(request: &axum::http::Request<B>) -> Option<String> {
     if let Some(raw) = request
         .headers()
@@ -93,6 +95,14 @@ fn extract_token<B>(request: &axum::http::Request<B>) -> Option<String> {
         if let Some(token) = parse_bearer(raw) {
             return Some(token);
         }
+    }
+    if let Some(token) =
+        crate::auth::cookie::cookie_value(request.headers(), crate::auth::cookie::ACCESS_COOKIE)
+    {
+        return Some(token);
+    }
+    if !scoped_token_path_allowed(request.uri().path()) {
+        return None;
     }
     let query = request.uri().query()?;
     url::form_urlencoded::parse(query.as_bytes())
@@ -128,13 +138,21 @@ fn unauthorized() -> AppError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use axum::http::Request;
+    use axum::http::{header, Request};
 
     fn request_with_header(value: &str) -> Request<()> {
         let mut request = Request::new(());
         request
             .headers_mut()
             .insert(AUTHORIZATION, value.parse().unwrap());
+        request
+    }
+
+    fn request_with_cookie(value: &str) -> Request<()> {
+        let mut request = Request::new(());
+        request
+            .headers_mut()
+            .insert(header::COOKIE, value.parse().unwrap());
         request
     }
 
@@ -170,18 +188,38 @@ mod tests {
     }
 
     #[test]
-    fn falls_back_to_query_parameter_for_event_source() {
+    fn reads_token_from_access_cookie() {
+        let request = request_with_cookie("other=1; reader_access=token-from-cookie");
+        assert_eq!(
+            extract_token(&request).as_deref(),
+            Some("token-from-cookie")
+        );
+    }
+
+    #[test]
+    fn query_token_is_accepted_only_on_proxy_paths() {
+        // SSE 等浏览器端点改由 Cookie 鉴权，查询串主 JWT 不再放行
         let request = Request::builder()
             .uri("/reader3/searchBookMultiSSE?key=x&accessToken=token-from-query")
+            .body(())
+            .unwrap();
+        assert_eq!(extract_token(&request), None);
+
+        // 代理页的限定令牌仍走查询串（iframe/内嵌脚本拼 URL 最简单）
+        let request = Request::builder()
+            .uri("/reader3/bookSourceProxy?url=x&accessToken=token-from-query")
             .body(())
             .unwrap();
         assert_eq!(extract_token(&request).as_deref(), Some("token-from-query"));
     }
 
     #[test]
-    fn header_wins_over_query_parameter() {
+    fn header_wins_over_cookie_and_query_parameter() {
         let mut request = request_with_header("token-from-header");
-        *request.uri_mut() = "/reader3/x?accessToken=token-from-query".parse().unwrap();
+        request
+            .headers_mut()
+            .insert(header::COOKIE, "reader_access=from-cookie".parse().unwrap());
+        *request.uri_mut() = "/reader3/x?accessToken=from-query".parse().unwrap();
         assert_eq!(
             extract_token(&request).as_deref(),
             Some("token-from-header")
@@ -189,9 +227,29 @@ mod tests {
     }
 
     #[test]
+    fn cookie_wins_over_query_parameter() {
+        let mut request = request_with_cookie("reader_access=from-cookie");
+        *request.uri_mut() = "/reader3/x?accessToken=from-query".parse().unwrap();
+        assert_eq!(
+            extract_token(&request).as_deref(),
+            Some("from-cookie"),
+            "非代理路径的查询串令牌本就忽略，Cookie 也应排在它前面"
+        );
+    }
+
+    #[test]
+    fn cookie_on_proxy_path_still_beats_query_parameter() {
+        let mut request = request_with_cookie("reader_access=from-cookie");
+        *request.uri_mut() = "/reader3/bookSourceProxy?accessToken=from-query"
+            .parse()
+            .unwrap();
+        assert_eq!(extract_token(&request).as_deref(), Some("from-cookie"));
+    }
+
+    #[test]
     fn blank_query_token_is_ignored() {
         let request = Request::builder()
-            .uri("/reader3/x?accessToken=%20")
+            .uri("/reader3/bookSourceProxy?accessToken=%20")
             .body(())
             .unwrap();
         assert_eq!(extract_token(&request), None);
