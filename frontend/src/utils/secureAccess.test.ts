@@ -1,14 +1,16 @@
 import { describe, expect, it } from 'vitest'
 import {
-  ACCESS_TOKEN_EXPIRES_AT_STORAGE_KEY,
-  ACCESS_TOKEN_STORAGE_KEY,
-  REFRESH_TOKEN_STORAGE_KEY,
-  appendAuthQueryParams,
-  clearAuthTokens,
-  readAccessToken,
+  AUTH_HINT_STORAGE_KEY,
+  LEGACY_ACCESS_TOKEN_EXPIRES_AT_STORAGE_KEY,
+  LEGACY_ACCESS_TOKEN_STORAGE_KEY,
+  LEGACY_REFRESH_TOKEN_STORAGE_KEY,
+  clearAuthHint,
+  clearLegacyAuthTokens,
+  hasAuthHint,
   readAccessTokenExpiresAt,
-  readRefreshToken,
-  storeAuthTokens,
+  readAuthHint,
+  readLegacyRefreshToken,
+  storeAuthHint,
 } from './secureAccess'
 
 function storageWith(entries: Record<string, string>) {
@@ -28,50 +30,71 @@ function writableStorage() {
   }
 }
 
-describe('secureAccess', () => {
-  it('reads the stored JWT verbatim', () => {
-    const storage = storageWith({ [ACCESS_TOKEN_STORAGE_KEY]: ' header.payload.signature ' })
-    expect(readAccessToken(storage)).toBe('header.payload.signature')
-  })
-
-  it('treats missing or blank tokens as absent', () => {
-    expect(readAccessToken(storageWith({}))).toBeUndefined()
-    expect(readAccessToken(storageWith({ [ACCESS_TOKEN_STORAGE_KEY]: '   ' }))).toBeUndefined()
-  })
-
-  it('adds the token to event source query params', () => {
-    const params = new URLSearchParams()
-    appendAuthQueryParams(params, storageWith({ [ACCESS_TOKEN_STORAGE_KEY]: 'alice-token' }))
-    expect(params.get('accessToken')).toBe('alice-token')
-  })
-
-  it('omits the param entirely when there is no token', () => {
-    const params = new URLSearchParams()
-    appendAuthQueryParams(params, storageWith({}))
-    expect(params.has('accessToken')).toBe(false)
-  })
-
-  it('stores and clears the access/refresh pair with an absolute expiry', () => {
+describe('secureAccess 登录提示', () => {
+  it('hint 读写往返：用户名与过期时间都保留', () => {
     const storage = writableStorage()
-    storeAuthTokens(
-      { accessToken: 'access-a', refreshToken: 'rt_a', accessTokenExpiresIn: 3600 },
-      storage
-    )
+    const expiresAt = Date.now() + 3600 * 1000
+    storeAuthHint({ username: 'alice', accessTokenExpiresAt: expiresAt }, storage)
 
-    expect(readAccessToken(storage)).toBe('access-a')
-    expect(readRefreshToken(storage)).toBe('rt_a')
-    const expiresAt = readAccessTokenExpiresAt(storage)
-    expect(expiresAt).toBeTypeOf('number')
-    expect(expiresAt!).toBeGreaterThan(Date.now())
+    expect(hasAuthHint(storage)).toBe(true)
+    expect(readAuthHint(storage)).toEqual({ username: 'alice', accessTokenExpiresAt: expiresAt })
+    expect(readAccessTokenExpiresAt(storage)).toBe(expiresAt)
 
-    clearAuthTokens(storage)
-    expect(storage.getItem(ACCESS_TOKEN_STORAGE_KEY)).toBeNull()
-    expect(storage.getItem(REFRESH_TOKEN_STORAGE_KEY)).toBeNull()
-    expect(storage.getItem(ACCESS_TOKEN_EXPIRES_AT_STORAGE_KEY)).toBeNull()
+    clearAuthHint(storage)
+    expect(hasAuthHint(storage)).toBe(false)
+    expect(readAuthHint(storage)).toBeUndefined()
+    expect(storage.getItem(AUTH_HINT_STORAGE_KEY)).toBeNull()
   })
 
-  it('ignores a corrupted expiry value', () => {
-    const storage = storageWith({ [ACCESS_TOKEN_EXPIRES_AT_STORAGE_KEY]: 'not-a-number' })
+  it('过期时间缺省的 hint 也算有效（未知到期时间不等于未登录）', () => {
+    const storage = writableStorage()
+    storeAuthHint({ username: 'alice' }, storage)
+
+    expect(hasAuthHint(storage)).toBe(true)
+    expect(readAuthHint(storage)).toEqual({ username: 'alice', accessTokenExpiresAt: undefined })
     expect(readAccessTokenExpiresAt(storage)).toBeUndefined()
+  })
+
+  it('内容损坏（非法 JSON / 非对象 / 非法过期值）按没有提示处理', () => {
+    expect(readAuthHint(storageWith({ [AUTH_HINT_STORAGE_KEY]: '{not-json' }))).toBeUndefined()
+    expect(readAuthHint(storageWith({ [AUTH_HINT_STORAGE_KEY]: '"a-string"' }))).toBeUndefined()
+    expect(
+      readAccessTokenExpiresAt(
+        storageWith({ [AUTH_HINT_STORAGE_KEY]: JSON.stringify({ username: 'a', accessTokenExpiresAt: 'soon' }) })
+      )
+    ).toBeUndefined()
+    expect(hasAuthHint(storageWith({ [AUTH_HINT_STORAGE_KEY]: '{not-json' }))).toBe(false)
+  })
+
+  it('空存储下所有读取都返回空值（无令牌可读）', () => {
+    const storage = storageWith({})
+    expect(readAuthHint(storage)).toBeUndefined()
+    expect(hasAuthHint(storage)).toBe(false)
+    expect(readAccessTokenExpiresAt(storage)).toBeUndefined()
+    expect(readLegacyRefreshToken(storage)).toBeUndefined()
+  })
+})
+
+describe('secureAccess 旧版令牌迁移', () => {
+  it('readLegacyRefreshToken 读取旧键，空白视为不存在', () => {
+    expect(readLegacyRefreshToken(storageWith({ [LEGACY_REFRESH_TOKEN_STORAGE_KEY]: ' rt_old ' }))).toBe(
+      'rt_old'
+    )
+    expect(readLegacyRefreshToken(storageWith({ [LEGACY_REFRESH_TOKEN_STORAGE_KEY]: '   ' }))).toBeUndefined()
+  })
+
+  it('clearLegacyAuthTokens 删除三个旧键，不动 hint', () => {
+    const storage = writableStorage()
+    storage.setItem(LEGACY_ACCESS_TOKEN_STORAGE_KEY, 'old-access')
+    storage.setItem(LEGACY_REFRESH_TOKEN_STORAGE_KEY, 'rt_old')
+    storage.setItem(LEGACY_ACCESS_TOKEN_EXPIRES_AT_STORAGE_KEY, '123')
+    storeAuthHint({ username: 'alice' }, storage)
+
+    clearLegacyAuthTokens(storage)
+
+    expect(storage.getItem(LEGACY_ACCESS_TOKEN_STORAGE_KEY)).toBeNull()
+    expect(storage.getItem(LEGACY_REFRESH_TOKEN_STORAGE_KEY)).toBeNull()
+    expect(storage.getItem(LEGACY_ACCESS_TOKEN_EXPIRES_AT_STORAGE_KEY)).toBeNull()
+    expect(hasAuthHint(storage)).toBe(true)
   })
 })

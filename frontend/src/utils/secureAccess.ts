@@ -1,90 +1,95 @@
-export const ACCESS_TOKEN_STORAGE_KEY = 'accessToken'
-export const REFRESH_TOKEN_STORAGE_KEY = 'refreshToken'
-export const ACCESS_TOKEN_EXPIRES_AT_STORAGE_KEY = 'accessTokenExpiresAt'
+// 会话凭据的前端存储。
+//
+// Access/Refresh Token 已全部改由 HttpOnly Cookie 承载，JS 读不到也存不了；
+// 这里只维护一份非敏感的登录提示（hint）：用户名 + Access Token 过期时间，
+// 供离线 UI、路由守卫与「到期前主动续期」使用，不含任何凭据。
+//
+// 旧版留在 localStorage 的三个令牌键只用于一次性迁移：把旧 Refresh Token
+// 放进 /refreshToken 的 body 换取 Cookie 会话，迁移后即删除（见
+// utils/authSession.ts 与 stores/app.ts 的 bootstrapAuth）。
+
+/** 登录提示键：`{username, accessTokenExpiresAt}`，不含令牌。 */
+export const AUTH_HINT_STORAGE_KEY = 'reader-auth-hint'
+
+/** 旧版 Access Token 键：只读不写，迁移后删除。 */
+export const LEGACY_ACCESS_TOKEN_STORAGE_KEY = 'accessToken'
+/** 旧版 Refresh Token 键：迁移时读一次放进刷新 body，之后删除。 */
+export const LEGACY_REFRESH_TOKEN_STORAGE_KEY = 'refreshToken'
+/** 旧版过期时间键：只用于迁移后清理。 */
+export const LEGACY_ACCESS_TOKEN_EXPIRES_AT_STORAGE_KEY = 'accessTokenExpiresAt'
 
 type StorageLike = Pick<Storage, 'getItem'>
 type WritableStorageLike = Pick<Storage, 'getItem' | 'setItem' | 'removeItem'>
 
-export interface AuthTokens {
-  accessToken: string
-  refreshToken: string
-  /** Access Token 有效秒数（来自登录/刷新响应） */
-  accessTokenExpiresIn: number
+/** 非敏感登录提示：用户名与 Access Token 的绝对过期时间。 */
+export interface AuthHint {
+  username: string
+  /** Access Token 过期时间（毫秒）；未知时缺省。 */
+  accessTokenExpiresAt?: number
+}
+
+function parseHint(raw: string | null): AuthHint | undefined {
+  if (!raw) return undefined
+  try {
+    const parsed: unknown = JSON.parse(raw)
+    if (typeof parsed !== 'object' || parsed === null) return undefined
+    const record = parsed as Partial<AuthHint>
+    const expiresAt =
+      typeof record.accessTokenExpiresAt === 'number' &&
+      Number.isFinite(record.accessTokenExpiresAt) &&
+      record.accessTokenExpiresAt > 0
+        ? record.accessTokenExpiresAt
+        : undefined
+    return {
+      username: typeof record.username === 'string' ? record.username : '',
+      accessTokenExpiresAt: expiresAt,
+    }
+  } catch {
+    // 内容损坏（手改/写一半崩溃）：按没有提示处理
+    return undefined
+  }
+}
+
+/** 读取登录提示；不存在或内容损坏时返回 undefined。 */
+export function readAuthHint(storage: StorageLike = localStorage): AuthHint | undefined {
+  return parseHint(storage.getItem(AUTH_HINT_STORAGE_KEY))
+}
+
+/** 登录 / 刷新 / 改密成功后保存提示（覆盖式）。 */
+export function storeAuthHint(hint: AuthHint, storage: WritableStorageLike = localStorage) {
+  storage.setItem(AUTH_HINT_STORAGE_KEY, JSON.stringify(hint))
+}
+
+/** 登出或会话失效时清掉提示。 */
+export function clearAuthHint(storage: WritableStorageLike = localStorage) {
+  storage.removeItem(AUTH_HINT_STORAGE_KEY)
 }
 
 /**
- * 读取本地保存的 Access Token。
+ * 是否存在登录提示。
  *
- * 令牌由服务端签发、前端只负责原样回传；其内部格式（`sub`/`exp` 等）
- * 完全由后端定义，前端不做任何解析。
+ * 提示只说明「这台设备最近登录过」，不代表会话仍有效；
+ * 真正的失效由 API 401 与刷新失败兜底。
  */
-export function readAccessToken(storage: StorageLike = localStorage): string | undefined {
-  return storage.getItem(ACCESS_TOKEN_STORAGE_KEY)?.trim() || undefined
+export function hasAuthHint(storage: StorageLike = localStorage): boolean {
+  return readAuthHint(storage) !== undefined
 }
 
-/** 读取 Refresh Token；它只在换取 Access Token 时提交，不进任何 URL。 */
-export function readRefreshToken(storage: StorageLike = localStorage): string | undefined {
-  return storage.getItem(REFRESH_TOKEN_STORAGE_KEY)?.trim() || undefined
-}
-
-/** Access Token 的绝对过期时间（毫秒）；缺失或损坏时返回 undefined。 */
+/** Access Token 的绝对过期时间（毫秒），从 hint 读取；缺失或损坏时返回 undefined。 */
 export function readAccessTokenExpiresAt(
   storage: StorageLike = localStorage
 ): number | undefined {
-  const raw = storage.getItem(ACCESS_TOKEN_EXPIRES_AT_STORAGE_KEY)
-  if (!raw) return undefined
-  const value = Number(raw)
-  return Number.isFinite(value) && value > 0 ? value : undefined
+  return readAuthHint(storage)?.accessTokenExpiresAt
 }
 
-/** 登录 / 刷新 / 改密成功后保存一对新令牌。 */
-export function storeAuthTokens(
-  tokens: AuthTokens,
-  storage: WritableStorageLike = localStorage
-) {
-  storage.setItem(ACCESS_TOKEN_STORAGE_KEY, tokens.accessToken)
-  storage.setItem(REFRESH_TOKEN_STORAGE_KEY, tokens.refreshToken)
-  storage.setItem(
-    ACCESS_TOKEN_EXPIRES_AT_STORAGE_KEY,
-    String(Date.now() + tokens.accessTokenExpiresIn * 1000)
-  )
+/** 读取旧版 localStorage Refresh Token；仅在迁移（换 Cookie 会话）时使用。 */
+export function readLegacyRefreshToken(storage: StorageLike = localStorage): string | undefined {
+  return storage.getItem(LEGACY_REFRESH_TOKEN_STORAGE_KEY)?.trim() || undefined
 }
 
-/** 登出或会话失效时清空全部令牌与过期时间。 */
-export function clearAuthTokens(storage: WritableStorageLike = localStorage) {
-  storage.removeItem(ACCESS_TOKEN_STORAGE_KEY)
-  storage.removeItem(REFRESH_TOKEN_STORAGE_KEY)
-  storage.removeItem(ACCESS_TOKEN_EXPIRES_AT_STORAGE_KEY)
-}
-
-/**
- * 构造带 JWT 的请求头，供裸 fetch 路径使用（keepalive 上报 / blob 下载 /
- * FormData 上传）；axios 实例由 http.ts 的拦截器统一处理，不要走这里。
- * 存储不可读（隐私模式等）时返回空头，与未登录等价。
- */
-export function buildAuthHeaders(storage?: StorageLike): Record<string, string> {
-  try {
-    // localStorage 在无 DOM 环境（Node 测试）里可能根本不存在，引用要放在 try 内
-    const token = readAccessToken(storage ?? localStorage)
-    return token ? { Authorization: `Bearer ${token}` } : {}
-  } catch {
-    return {}
-  }
-}
-
-/**
- * 把 Access Token 放进查询参数。
- *
- * SSE 由浏览器 `EventSource` 发起、`<img>` 也带不了请求头，这些请求只能
- * 用查询参数携带身份，因此这条路径不是可选的兼容分支。
- * Refresh Token 永远不放进 URL。
- */
-export function appendAuthQueryParams(
-  params: URLSearchParams,
-  storage: StorageLike = localStorage
-) {
-  const token = readAccessToken(storage)
-  if (token) {
-    params.set('accessToken', token)
-  }
+/** 删除旧版 localStorage 的三个令牌键；迁移完成（无论成败）后调用。 */
+export function clearLegacyAuthTokens(storage: WritableStorageLike = localStorage) {
+  storage.removeItem(LEGACY_ACCESS_TOKEN_STORAGE_KEY)
+  storage.removeItem(LEGACY_REFRESH_TOKEN_STORAGE_KEY)
+  storage.removeItem(LEGACY_ACCESS_TOKEN_EXPIRES_AT_STORAGE_KEY)
 }
