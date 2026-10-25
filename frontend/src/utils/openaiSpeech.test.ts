@@ -7,9 +7,8 @@ afterEach(() => {
 })
 
 describe('openaiSpeech', () => {
-  it('routes server configured speech through aiProxy without browser credentials', async () => {
+  it('routes server configured speech through aiProxy with session cookies', async () => {
     installLocalStorage()
-    localStorage.setItem('accessToken', 'alice-token')
     const fetchMock = vi.fn(async (_url: RequestInfo | URL, _init?: RequestInit) => ({
       ok: true,
       blob: async () => new Blob(['audio'], { type: 'audio/mpeg' }),
@@ -33,13 +32,13 @@ describe('openaiSpeech', () => {
       '/reader3/aiProxy',
       expect.objectContaining({
         method: 'POST',
-        headers: expect.objectContaining({
-          Authorization: 'Bearer alice-token',
-          'Content-Type': 'application/json',
-        }),
+        credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
       })
     )
     const init = fetchMock.mock.calls[0]?.[1] as unknown as RequestInit
+    // 会话在 HttpOnly Cookie 里：请求头不能出现任何令牌
+    expect(init.headers).not.toHaveProperty('Authorization')
     expect(JSON.parse(String(init.body))).toMatchObject({
       useServerConfig: true,
       kind: 'speech',
@@ -55,15 +54,12 @@ describe('openaiSpeech', () => {
 
   it('refreshes once and retries an expired server speech request', async () => {
     installLocalStorage()
-    localStorage.setItem('accessToken', 'old-token')
-    localStorage.setItem('refreshToken', 'rt_old')
     const post = vi.spyOn(axios, 'post').mockResolvedValue({
       data: {
         isSuccess: true,
         errorMsg: '',
         data: {
           accessToken: 'new-token',
-          refreshToken: 'rt_new',
           accessTokenExpiresIn: 21600,
         },
       },
@@ -97,7 +93,9 @@ describe('openaiSpeech', () => {
     expect(post).toHaveBeenCalledTimes(1)
     expect(fetchMock).toHaveBeenCalledTimes(2)
     const retryInit = fetchMock.mock.calls[1]?.[1] as unknown as RequestInit
-    expect(retryInit.headers).toMatchObject({ Authorization: 'Bearer new-token' })
+    // 刷新后重试仍靠 Cookie，不能在请求头里出现令牌
+    expect(retryInit.headers).not.toHaveProperty('Authorization')
+    expect(retryInit.credentials).toBe('same-origin')
   })
 })
 
