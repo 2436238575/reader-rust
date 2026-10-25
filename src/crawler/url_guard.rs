@@ -284,6 +284,16 @@ fn is_forbidden_v6(ip: &Ipv6Addr) -> bool {
             let obfuscated = ((s[6] as u32) << 16) | s[7] as u32;
             is_forbidden_v4(&Ipv4Addr::from(!obfuscated))
         })
+        // NAT64（64:ff9b::/96，RFC 6052）：最后 32 位（s[6]、s[7]）是内嵌的
+        // IPv4 地址——64:ff9b::a00:1 即 10.0.0.1。前缀是公网段，不还原
+        // 判定即可借 NAT64 封装绕过私网拦截
+        || (s[0] == 0x0064
+            && s[1] == 0xff9b
+            && s[2] == 0
+            && s[3] == 0
+            && s[4] == 0
+            && s[5] == 0
+            && is_forbidden_v4(&embedded_v4(s[6], s[7])))
 }
 
 /// 由两个 16 位段拼出内嵌的 IPv4 地址（6to4 用，未取反）。
@@ -572,6 +582,19 @@ mod tests {
             let ip: IpAddr = ip.parse().unwrap();
             assert!(!is_forbidden_ip(&ip), "{ip} 内嵌公网 IPv4，不应被拦截");
         }
+    }
+
+    #[test]
+    fn blocks_nat64_embedding_private_v4() {
+        // NAT64（64:ff9b::/96，RFC 6052）：最后 32 位是内嵌 IPv4
+        // 64:ff9b::a00:1 → 10.0.0.1；64:ff9b::7f00:1 → 127.0.0.1
+        for ip in ["64:ff9b::a00:1", "64:ff9b::7f00:1"] {
+            let ip: IpAddr = ip.parse().unwrap();
+            assert!(is_forbidden_ip(&ip), "{ip} 内嵌私网 IPv4，应被拦截");
+        }
+        // NAT64 内嵌公网地址：放行（64:ff9b::808:808 → 8.8.8.8）
+        let ip: IpAddr = "64:ff9b::808:808".parse().unwrap();
+        assert!(!is_forbidden_ip(&ip), "{ip} 内嵌公网 IPv4，不应被拦截");
     }
 
     #[test]
