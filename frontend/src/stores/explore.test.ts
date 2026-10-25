@@ -9,6 +9,11 @@ import type { BookSource, SearchBook } from '../types'
 
 vi.mock('../api/source', () => ({
   getBookSources: vi.fn(),
+  saveBookSource: vi.fn(),
+  saveBookSources: vi.fn(),
+  deleteBookSource: vi.fn(),
+  deleteBookSources: vi.fn(),
+  deleteInvalidBookSources: vi.fn(),
 }))
 
 vi.mock('../api/explore', () => ({
@@ -103,6 +108,24 @@ describe('explore store source sync', () => {
     const store = useExploreStore()
     await store.init()
     expect(store.error).toBe('服务器开小差')
+  })
+
+  it('书源处于快照占位（partial）时，init 等全量就位再选源', async () => {
+    const sourceStore = useSourceStore()
+    // 快照里的书源没有 exploreUrl：直接据此选源会得出「无带有发现规则的书源」
+    sourceStore.sources = [
+      { bookSourceId: 1, bookSourceName: '快照源', bookSourceUrl: 'https://example.test' },
+    ]
+    sourceStore.partial = true
+    getBookSourcesMock.mockResolvedValueOnce([sourceWithExplore()])
+    const store = useExploreStore()
+
+    await store.init()
+
+    expect(getBookSourcesMock).toHaveBeenCalledTimes(1)
+    expect(store.error).toBeNull()
+    expect(store.activeSourceId).toBe(1)
+    expect(store.activeCategoryUrl).toBe('/book/category/catalog.html')
   })
 
   // 以下两条守护「误请求」回归：store 实例化本身不得带任何自动请求副作用，

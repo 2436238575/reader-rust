@@ -158,8 +158,9 @@ export const useExploreStore = defineStore('explore', () => {
   async function init() {
     error.value = null
     try {
-      if (sourceStore.sources.length === 0) {
-        await sourceStore.fetchSources()
+      // 快照占位的书源没有 exploreUrl，发现页必须等全量就位再选源
+      if (sourceStore.partial || sourceStore.sources.length === 0) {
+        await sourceStore.ensureFullSources()
       }
     } catch (err: any) {
       // 书源列表都拉不到时把错误摆到内容区（带重试），而不是抛给 onMounted
