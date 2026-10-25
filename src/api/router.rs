@@ -78,6 +78,10 @@ pub fn build_router(state: AppState) -> Router {
     let inbound_timeout = Duration::from_secs(state.config.inbound_request_timeout_secs);
     let upload_timeout = Duration::from_secs(state.config.inbound_upload_timeout_secs);
     let inbound_max_concurrency = state.config.inbound_max_concurrency;
+    // 并发层只构造一次、clone 分发：GlobalConcurrencyLimitLayer 的
+    // Arc<Semaphore> 持在层实例里，clone 共享同一份许可（见上）。
+    let concurrency =
+        (inbound_max_concurrency > 0).then(|| concurrency_layer(inbound_max_concurrency));
 
     // ── 公开：无需任何凭据 ──
     let public = Router::new()
@@ -163,6 +167,28 @@ pub fn build_router(state: AppState) -> Router {
             upload_timeout,
             timeout_middleware,
         ));
+
+    // ── AI 代理路由：与上传同档的超时，不进 120s 常规组 ──
+    // 非流式调用（不带 stream:true 的 chat、/v1/images/generations、
+    // /v1/audio/speech）的响应头要等上游**生成完**才返回，慢模型轻松超过
+    // 常规接口的 120s，而 ai_proxy 自己的 reqwest 客户端预算是 300s
+    //（model/ai_proxy.rs）——挂在 120s 组里等于把 120–300s 区间的长生成
+    // 全部误杀成 408。这里用 upload_timeout（默认 900s）兜底：正常情况下
+    // 上游要么在 300s 内返回（超时由 reqwest 给出可读错误），流式调用则在
+    // 响应头到达后即脱离超时约束，900s 只是病理场景的最后防线。
+    // 并发上限与需登录组共享同一份信号量。
+    let ai_proxy_routes = Router::new()
+        .route("/reader3/aiProxy", post(handlers::ai_proxy))
+        .route("/reader3/aiProxyImage", post(handlers::ai_proxy_image))
+        .layer(DefaultBodyLimit::max(PROTECTED_BODY_LIMIT_BYTES));
+    let ai_proxy_routes = match &concurrency {
+        Some(layer) => ai_proxy_routes.layer(layer.clone()),
+        None => ai_proxy_routes,
+    };
+    let ai_proxy_routes = ai_proxy_routes.layer(middleware::from_fn_with_state(
+        upload_timeout,
+        timeout_middleware,
+    ));
 
     // ── 其余全部需要登录 ──
     let protected_routes = Router::new()
@@ -403,8 +429,6 @@ pub fn build_router(state: AppState) -> Router {
             "/reader3/getAiModelConfig",
             get(handlers::get_ai_model_config),
         )
-        .route("/reader3/aiProxy", post(handlers::ai_proxy))
-        .route("/reader3/aiProxyImage", post(handlers::ai_proxy_image))
         .route("/reader3/runAgentTask", post(handlers::run_agent_task))
         .route(
             "/reader3/getAgentTaskStatus",
@@ -469,11 +493,11 @@ pub fn build_router(state: AppState) -> Router {
     // SSE 端点不需要白名单：timeout 中间件只约束到 handler 产出 Response
     // 为止，SSE handler 立即返回流式响应（cacheBookSSE 等），事件流在
     // body 里继续，不受该层约束。WebDAV 协议端点因流式 PUT 豁免——它在
-    // 最外层各防护层之后才 merge（见下方）；大上传路由则单独用 900s。
-    let protected = if inbound_max_concurrency > 0 {
-        protected_routes.layer(concurrency_layer(inbound_max_concurrency))
-    } else {
-        protected_routes
+    // 最外层各防护层之后才 merge（见下方）；大上传路由与 AI 代理路由则
+    // 单独用 900s（前者是接收慢，后者是上游生成慢，见 ai_proxy_routes）。
+    let protected = match &concurrency {
+        Some(layer) => protected_routes.layer(layer.clone()),
+        None => protected_routes,
     };
     let protected = protected
         .layer(middleware::from_fn_with_state(
@@ -484,6 +508,8 @@ pub fn build_router(state: AppState) -> Router {
         // 只受各自子路由上的 upload_timeout（默认 900s）约束。
         .merge(bulk_sources_routes)
         .merge(big_body_routes)
+        // AI 代理路由同样在 120s 层之外 merge（自带共享并发层与 900s 超时）
+        .merge(ai_proxy_routes)
         .layer(middleware::from_fn_with_state(state.clone(), require_auth))
         .with_state(state.clone());
 

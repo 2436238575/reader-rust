@@ -85,7 +85,7 @@ http://localhost:8080/reader3
 }
 ```
 
-覆盖公开、可选登录与需登录三组 `/reader3` 接口（含 `/health`）。豁免：SSE 端点在开始返回事件流后即不受此约束；WebDAV 协议端点（流式传输）；大上传路由（TXT/EPUB 导入、资源上传、`saveBookSources` 等）单独使用 `INBOUND_UPLOAD_TIMEOUT_SECS`（默认 900 秒）。需登录接口另有 `INBOUND_MAX_CONCURRENCY`（默认 256）并发上限，超出的请求排队等待且排队时间计入超时。
+覆盖公开、可选登录与需登录三组 `/reader3` 接口（含 `/health`）。豁免：SSE 端点在开始返回事件流后即不受此约束；WebDAV 协议端点（流式传输）；大上传路由（TXT/EPUB 导入、资源上传、`saveBookSources` 等）与 AI 代理路由（`aiProxy`/`aiProxyImage`，非流式生成要等上游出结果）单独使用 `INBOUND_UPLOAD_TIMEOUT_SECS`（默认 900 秒）。需登录接口（含 AI 代理）另有 `INBOUND_MAX_CONCURRENCY`（默认 256）并发上限——全部需登录路由共享同一份并发许可，超出的请求排队等待且排队时间计入超时。
 
 ## 请求方法
 

@@ -23,8 +23,11 @@ use std::time::Duration;
 /// - 日志只记 method / path / 超时秒数，**不记 query**：`accessToken` 允许
 ///   经查询串传递（SSE 无法设请求头），口径与 router.rs 的 TraceLayer 对齐。
 /// - 中间件只约束到 handler **产出 Response** 为止。SSE 端点立即返回流式
-///   响应、事件流在 body 里继续，因此 SSE 不需要白名单；同理任何
-///   `Body::from_stream` 的流式透传（如 aiProxy）也不受影响。
+///   响应、事件流在 body 里继续，因此 SSE 不需要白名单；`Body::from_stream`
+///   的流式透传（如 aiProxy 的 stream:true）同理——但前提是**响应头已到达**。
+///   非流式的 aiProxy 调用要等上游生成完才拿到响应头，天然会撞常规超时，
+///   因此 aiProxy/aiProxyImage 路由在 router.rs 里与上传路由同档用
+///   `INBOUND_UPLOAD_TIMEOUT_SECS`（其上游调用自身另有 300s 客户端预算）。
 pub async fn timeout_middleware(
     State(timeout): State<Duration>,
     request: Request,
