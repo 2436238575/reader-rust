@@ -116,6 +116,11 @@ describe('authSession', () => {
 
 describe('authSession 跨标签页软锁回退（无 navigator.locks）', () => {
   const LOCK_KEY = 'reader.auth.refresh.lock'
+  // 与 authSession.ts 内部的锁记录结构一致；类型不导出，这里本地声明
+  interface LockRecord {
+    owner: string
+    expiresAt: number
+  }
 
   // jsdom 没有 Web Locks API，回退路径本就会被走到；这里再显式把
   // navigator.locks 置为 undefined，保证未来测试环境实现了 locks 时，
@@ -198,5 +203,43 @@ describe('authSession 跨标签页软锁回退（无 navigator.locks）', () => 
     await expect(refreshAccessToken('old-access')).resolves.toBe('new-access')
     expect(post).toHaveBeenCalledTimes(1)
     expect(readAccessToken()).toBe('new-access')
+  })
+
+  it('软锁租约大于刷新超时：15s 时锁仍属于原 owner，30s 后才可被抢占', async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-01-01T00:00:00Z'))
+    seedTokens()
+    // 慢刷新：请求挂起，持锁标签页在整个超时窗口内一直占着锁
+    let rejectPost: (error: Error) => void = () => {}
+    const post = vi.spyOn(axios, 'post').mockImplementation(
+      () =>
+        new Promise<never>((_, reject) => {
+          rejectPost = reject
+        })
+    )
+
+    const pending = refreshAccessToken('old-access')
+    await vi.advanceTimersByTimeAsync(0)
+    expect(post).toHaveBeenCalledTimes(1)
+
+    const held = JSON.parse(localStorage.getItem(LOCK_KEY)!) as LockRecord
+    // 租约 30s = 2×刷新超时（15s）
+    expect(held.expiresAt - Date.now()).toBe(30_000)
+
+    // 刷新超时点（15s）：租约未到期，锁仍属于原 owner，其他标签页不能抢占
+    await vi.advanceTimersByTimeAsync(15_000)
+    const atTimeout = JSON.parse(localStorage.getItem(LOCK_KEY)!) as LockRecord
+    expect(atTimeout.owner).toBe(held.owner)
+    expect(atTimeout.expiresAt).toBeGreaterThan(Date.now())
+
+    // 30s 后租约才到期，此刻起其他标签页允许抢占（acquire 条件 expiresAt <= now）
+    await vi.advanceTimersByTimeAsync(15_000)
+    const atExpiry = JSON.parse(localStorage.getItem(LOCK_KEY)!) as LockRecord
+    expect(atExpiry.owner).toBe(held.owner)
+    expect(atExpiry.expiresAt).toBeLessThanOrEqual(Date.now())
+
+    // 收尾：让挂起的刷新失败落地，避免模块级 inflight 泄漏到后续用例
+    rejectPost(new Error('offline'))
+    await expect(pending).rejects.toBeInstanceOf(RefreshNetworkError)
   })
 })

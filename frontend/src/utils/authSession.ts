@@ -30,8 +30,13 @@ const REFRESH_TIMEOUT_MS = 15_000
 const LOCK_NAME = 'reader-rust-auth-refresh'
 /** 无 Web Locks 时的 localStorage 软锁键名。 */
 const FALLBACK_LOCK_KEY = 'reader.auth.refresh.lock'
-/** 软锁租约时长：持锁标签页崩溃也不会永久卡死其他页面。 */
-const FALLBACK_LOCK_LEASE_MS = 15_000
+/**
+ * 软锁租约时长：持锁标签页崩溃也不会永久卡死其他页面。
+ * 租约必须明显大于任务超时（REFRESH_TIMEOUT_MS）：两者相等时，慢刷新占满
+ * 整个超时窗口的瞬间租约恰好到期，另一标签页会抢锁并发刷新，把一次性
+ * Refresh Token 的轮换变成竞态。
+ */
+const FALLBACK_LOCK_LEASE_MS = 2 * REFRESH_TIMEOUT_MS
 /** 等锁上限：超时退化为无锁直接执行，宁可竞态也不永久卡住用户。 */
 const FALLBACK_LOCK_WAIT_MS = 5_000
 /** 等锁轮询间隔。 */
