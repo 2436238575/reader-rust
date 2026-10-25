@@ -45,6 +45,11 @@ const JPEG_QUALITY: u8 = 85;
 /// 有损 webp 编码质量（Accept 协商命中时）：80 在省流与画质间取平衡。
 const WEBP_QUALITY: f32 = 80.0;
 
+/// libwebp 的单边尺寸上限（`WEBP_MAX_DIMENSION`）。webp crate 0.3 的 `encode()`
+/// 对超限是 unwrap panic（`VP8_ENC_ERROR_BAD_DIMENSION`），必须在调用前判掉，
+/// 让条漫长图走调用方的原图兜底，而不是 panic 穿透 `spawn_blocking` 变 500。
+const WEBP_MAX_DIMENSION: u32 = 16383;
+
 /// 派生图（`?w=` 缩放）请求宽度的上下限。
 const VARIANT_MIN_WIDTH: u32 = 64;
 const VARIANT_MAX_WIDTH: u32 = 2048;
@@ -606,6 +611,11 @@ fn encode_variant(
     let (width, height) = (rgba.width(), rgba.height());
     let pixels = rgba.as_raw();
     if accept_webp {
+        // 单边超 16383 会被 libwebp 拒绝（webp crate 对此是 unwrap panic），
+        // 提前判掉走 Err → 调用方原图兜底；条漫长图（高度轻松超限）不至于整张 500
+        if width > WEBP_MAX_DIMENSION || height > WEBP_MAX_DIMENSION {
+            return Err(format!("尺寸超出 webp 编码上限 {width}x{height}"));
+        }
         let encoded = webp::Encoder::from_rgba(pixels, width, height).encode(WEBP_QUALITY);
         Ok((encoded.to_vec(), variant_content_type(true)))
     } else {
@@ -1201,6 +1211,44 @@ mod tests {
         let (bytes, content_type) = service.load_variant(&id, Some(64), true).await.unwrap();
         assert_eq!(bytes, marker, "第二次应直接读派生文件");
         assert_eq!(content_type, "image/webp");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// webp 编码器的单边尺寸上限是 libwebp 的 `WEBP_MAX_DIMENSION`（16383），
+    /// 而 webp crate 0.3 的 `encode()` 对超限是 unwrap panic——不提前判掉的话，
+    /// panic 会穿透 `spawn_blocking` 变成 JoinError → 500。这里断言超限走
+    /// `Err`（调用方回退原图）而不是 panic。
+    #[test]
+    fn encode_variant_rejects_webp_oversize_dimensions() {
+        // 条漫长图：高度刚好超限（16384 > 16383）
+        let tall = make_png(4, 16384);
+        assert!(
+            encode_variant(&tall, 4, true).is_err(),
+            "高度超出 webp 上限应返回 Err 而非 panic"
+        );
+        // 宽扁图：不缩放路径（target_width == 原宽）下单边同样可能超限
+        let wide = make_png(16384, 4);
+        assert!(
+            encode_variant(&wide, 16384, true).is_err(),
+            "宽度超出 webp 上限应返回 Err 而非 panic"
+        );
+        // 对照：两边都在限内的小图正常编码
+        assert!(encode_variant(&make_png(8, 8), 8, true).is_ok());
+    }
+
+    /// 服务级兜底：Chrome `<img>` 默认 Accept 带 `image/webp`，条漫长图
+    /// （单边 > 16383）请求 webp 变体时必须回退原图，不能 500。
+    #[tokio::test]
+    async fn load_variant_falls_back_to_original_when_webp_dimension_exceeded() {
+        let original = make_png(32, 16384);
+        let (service, id, dir) = service_with_stored_image("image/png", original.clone()).await;
+        let (bytes, content_type) = service
+            .load_variant(&id, None, true)
+            .await
+            .expect("超限尺寸应回退原图而不是 Internal 错误");
+        assert_eq!(bytes, original, "回退时应原图直出");
+        assert_eq!(content_type, "image/png");
+        assert!(derived_files(&dir).is_empty(), "编码失败不该落派生文件");
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

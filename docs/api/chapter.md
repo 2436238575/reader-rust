@@ -368,6 +368,8 @@ GET /reader3/image/<id>?w=<像素宽>
   **JPEG（质量 85）**；响应都带 `Vary: Accept`（同一 URL 有两种表示，缓存须按 Accept 区分）；
 - 只有 JPEG/PNG/BMP 会参与缩放与转码；**GIF（动画）/WebP/AVIF/SVG/ICO 原样透传**，
   避免 `w` / Accept 破坏动画与矢量；
+- 单边尺寸超出编码器上限（webp 16383 像素、JPEG 65535 像素）的极端长图不转码，
+  **回退原图直出**（缩放后的目标尺寸也在检查范围内）；
 - 不带 `w` 且 `Accept` 不含 webp 时返回原图，行为与旧版完全一致；
 - 派生图落盘为 `<id>.w<实际宽度>.<webp|jpg>`，与原图同目录、共用 `CACHE_COVER_LIMIT_BYTES`
   容量上限与最旧优先淘汰，命中后不再重复编码。
