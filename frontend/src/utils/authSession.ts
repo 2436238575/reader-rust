@@ -1,31 +1,37 @@
-// Access Token 的自动续期编排。
+// Cookie 会话的自动续期编排。
 //
-// 服务端把登录拆成两枚令牌：6 小时的 Access Token（JWT）与 7 天的
-// Refresh Token（一次性随机串）。这里负责：
-// - 401 后单飞刷新并让调用方重放请求；
+// Access/Refresh Token 都在 HttpOnly Cookie 里，由浏览器自动携带，前端
+// 不再读写任何令牌。这里负责：
+// - 401 后单飞刷新（POST /refreshToken，凭 Cookie）并让调用方重放请求；
 // - 跨标签页互斥（Web Locks 优先，缺失时退化为 localStorage 软锁），
-//   避免两个页面同时消费同一枚 Refresh Token；
-// - 到期前 5 分钟主动续期，给已渲染的图片 URL 留出旧令牌的有效余量。
+//   避免两个页面同时刷新造成 Cookie 轮换竞态；
+// - 到期前 5 分钟主动续期（依据非敏感 hint 里的过期时间）；
+// - 页面重新可见/聚焦时核对过期时间，必要时提前续期。
 import axios, { AxiosError } from 'axios'
 import { API_BASE } from './appBase'
 import { notifyNeedLogin } from './authEvents'
 import {
-  ACCESS_TOKEN_EXPIRES_AT_STORAGE_KEY,
-  ACCESS_TOKEN_STORAGE_KEY,
-  REFRESH_TOKEN_STORAGE_KEY,
-  clearAuthTokens,
-  readAccessToken,
+  AUTH_HINT_STORAGE_KEY,
+  clearAuthHint,
+  hasAuthHint,
   readAccessTokenExpiresAt,
-  readRefreshToken,
-  storeAuthTokens,
+  readAuthHint,
+  readLegacyRefreshToken,
+  storeAuthHint,
 } from './secureAccess'
 
 /** 到期前多久主动续期。 */
 const REFRESH_AHEAD_MS = 5 * 60 * 1000
-/** 主动续期失败后的重试间隔（网络/服务端故障，令牌不丢）。 */
+/** 主动续期失败后的重试间隔（网络/服务端故障，会话不丢）。 */
 const RETRY_DELAY_MS = 60 * 1000
 /** 刷新请求单独设定超时，避免拖住所有等待中的业务请求。 */
 const REFRESH_TIMEOUT_MS = 15_000
+/**
+ * 刚刷新成功后的短路窗口。Cookie 会话拿不到「新令牌值」可以做比对，
+ * 用时间戳代替：短窗口内的再次 401 多为并发时序抖动，直接复用刚换的
+ * Cookie，不再打刷新接口。
+ */
+const REFRESH_SUCCESS_DEDUPE_MS = 30_000
 /** 跨标签页互斥锁的名字。 */
 const LOCK_NAME = 'reader-rust-auth-refresh'
 /** 无 Web Locks 时的 localStorage 软锁键名。 */
@@ -34,7 +40,7 @@ const FALLBACK_LOCK_KEY = 'reader.auth.refresh.lock'
  * 软锁租约时长：持锁标签页崩溃也不会永久卡死其他页面。
  * 租约必须明显大于任务超时（REFRESH_TIMEOUT_MS）：两者相等时，慢刷新占满
  * 整个超时窗口的瞬间租约恰好到期，另一标签页会抢锁并发刷新，把一次性
- * Refresh Token 的轮换变成竞态。
+ * 轮换的刷新变成竞态。
  */
 const FALLBACK_LOCK_LEASE_MS = 2 * REFRESH_TIMEOUT_MS
 /** 等锁上限：超时退化为无锁直接执行，宁可竞态也不永久卡住用户。 */
@@ -42,7 +48,7 @@ const FALLBACK_LOCK_WAIT_MS = 5_000
 /** 等锁轮询间隔。 */
 const FALLBACK_LOCK_POLL_MS = 300
 
-/** 服务端明确判定会话失效：本地令牌已清空，需要重新登录。 */
+/** 服务端明确判定会话失效：本地登录提示已清空，需要重新登录。 */
 export class SessionExpiredError extends Error {
   constructor() {
     super('登录状态已失效')
@@ -50,7 +56,7 @@ export class SessionExpiredError extends Error {
   }
 }
 
-/** 刷新请求没能完成（断网 / 5xx）：令牌保留，可稍后重试。 */
+/** 刷新请求没能完成（断网 / 5xx）：会话保留，可稍后重试。 */
 export class RefreshNetworkError extends Error {
   constructor(message = '网络异常，请稍后重试') {
     super(message)
@@ -59,24 +65,25 @@ export class RefreshNetworkError extends Error {
 }
 
 interface RefreshPayload {
-  accessToken: string
-  refreshToken: string
   accessTokenExpiresIn: number
 }
 
-let inflight: Promise<string> | null = null
+let inflight: Promise<void> | null = null
 let refreshTimer: ReturnType<typeof setTimeout> | null = null
 let lifecycleStarted = false
+/** 上次刷新成功的时间戳（Date.now()）；用于短路短窗口内的重复刷新。 */
+let lastRefreshAt = 0
 
 /**
- * 用 Refresh Token 换一对新令牌。
+ * 凭 Cookie 刷新会话：成功后服务端换发两枚 Cookie，这里只更新 hint 里的
+ * 过期时间（用户名保留，迁移首刷时可能还没有用户名）。
  *
- * `staleAccessToken` 是刚刚收到 401 的请求所用令牌：进锁后如果发现本地
- * 令牌已被其他标签页换掉，直接复用新令牌，不再消费 Refresh Token。
+ * 旧版 localStorage 里若还有 Refresh Token（一次性迁移），会放进 body；
+ * 旧键的清理由 stores/app.ts 的 bootstrapAuth 负责。
  */
-export function refreshAccessToken(staleAccessToken?: string): Promise<string> {
+export function refreshAccessToken(): Promise<void> {
   if (inflight) return inflight
-  const task = withCrossTabLock(() => doRefresh(staleAccessToken))
+  const task = withCrossTabLock(() => doRefresh())
     .catch((error: unknown) => {
       if (error instanceof SessionExpiredError) {
         notifyNeedLogin()
@@ -90,32 +97,27 @@ export function refreshAccessToken(staleAccessToken?: string): Promise<string> {
   return task
 }
 
-async function doRefresh(staleAccessToken?: string): Promise<string> {
-  const current = readAccessToken()
-  if (staleAccessToken && current && current !== staleAccessToken) {
-    return current
-  }
-  const refreshToken = readRefreshToken()
-  if (!refreshToken) {
-    clearAuthTokens()
-    throw new SessionExpiredError()
-  }
+async function doRefresh(): Promise<void> {
+  // 刚刷新成功过：新 Cookie 已生效，短窗口内的再次 401 多为并发时序，
+  // 直接短路返回，避免把续期接口打成风暴
+  if (Date.now() - lastRefreshAt < REFRESH_SUCCESS_DEDUPE_MS) return
+
+  const legacyRefreshToken = readLegacyRefreshToken()
+  const body = legacyRefreshToken ? { refreshToken: legacyRefreshToken } : {}
 
   let response
   try {
-    response = await axios.post(
-      `${API_BASE}/refreshToken`,
-      { refreshToken },
-      {
-        timeout: REFRESH_TIMEOUT_MS,
-        headers: { 'Content-Type': 'application/json' },
-      }
-    )
+    response = await axios.post(`${API_BASE}/refreshToken`, body, {
+      timeout: REFRESH_TIMEOUT_MS,
+      // 刷新必须带上 reader_refresh Cookie；跨域 CORS 部署同样要发凭据
+      withCredentials: true,
+      headers: { 'Content-Type': 'application/json' },
+    })
   } catch (error) {
     const status = (error as AxiosError)?.response?.status
-    // 400/401 是服务端对令牌的明确否定（过期/重放/版本失效），必须重新登录
+    // 400/401 是服务端对会话的明确否定（Cookie 缺失/过期/重放），必须重新登录
     if (status === 400 || status === 401) {
-      clearAuthTokens()
+      clearAuthHint()
       throw new SessionExpiredError()
     }
     throw new RefreshNetworkError()
@@ -123,25 +125,18 @@ async function doRefresh(staleAccessToken?: string): Promise<string> {
 
   const payload = response?.data
   const data = payload?.data as Partial<RefreshPayload> | undefined
-  if (
-    !payload?.isSuccess ||
-    typeof data?.accessToken !== 'string' ||
-    typeof data.refreshToken !== 'string' ||
-    typeof data.accessTokenExpiresIn !== 'number'
-  ) {
-    clearAuthTokens()
+  if (!payload?.isSuccess || typeof data?.accessTokenExpiresIn !== 'number') {
+    clearAuthHint()
     throw new SessionExpiredError()
   }
 
-  const tokens: RefreshPayload = {
-    accessToken: data.accessToken,
-    refreshToken: data.refreshToken,
-    accessTokenExpiresIn: data.accessTokenExpiresIn,
-  }
-  storeAuthTokens(tokens)
+  lastRefreshAt = Date.now()
+  const hint = readAuthHint()
+  storeAuthHint({
+    username: hint?.username ?? '',
+    accessTokenExpiresAt: Date.now() + data.accessTokenExpiresIn * 1000,
+  })
   scheduleAutoRefresh()
-  dispatchTokenChange()
-  return tokens.accessToken
 }
 
 type LockManagerLike = {
@@ -159,8 +154,8 @@ function withCrossTabLock<T>(task: () => Promise<T>): Promise<T> {
   const locks = (navigator as unknown as { locks?: LockManagerLike }).locks
   if (locks) return locks.request(LOCK_NAME, () => task())
   // 旧 Firefox ESR / 部分 WebView 没有 Web Locks：退化为 localStorage 租约软锁。
-  // 刷新令牌是一次性轮换，两个标签页同时 401 时若不加互斥，输家会被误判成
-  // 会话失效而清空令牌弹登录；软锁把这种情况尽量串行化。
+  // 刷新是一次性轮换，两个标签页同时 401 时若不加互斥，输家会被误判成
+  // 会话失效而清提示弹登录；软锁把这种情况尽量串行化。
   return withFallbackSoftLock(task)
 }
 
@@ -234,12 +229,12 @@ function releaseFallbackLock(owner: string) {
 /**
  * 按本地记录的过期时间安排下一次主动续期。
  *
- * 没有过期时间戳的老会话（升级前登录）会立即换一次，顺带拿到新时间戳。
+ * hint 里没有过期时间戳（异常数据）会立即换一次，顺带拿回新时间戳。
  */
 export function scheduleAutoRefresh() {
   if (typeof window === 'undefined') return
   clearRefreshTimer()
-  if (!readRefreshToken()) return
+  if (!hasAuthHint()) return
 
   const expiresAt = readAccessTokenExpiresAt()
   if (!expiresAt) {
@@ -257,14 +252,13 @@ export function scheduleAutoRefresh() {
 }
 
 async function runScheduledRefresh() {
-  if (!readRefreshToken()) return
-  const current = readAccessToken()
+  if (!hasAuthHint()) return
   try {
-    await refreshAccessToken(current)
+    await refreshAccessToken()
   } catch (error) {
     if (error instanceof SessionExpiredError) return
-    // 网络/服务端故障：令牌还在，稍后重试；离线期间不要把用户登出
-    if (readRefreshToken()) {
+    // 网络/服务端故障：会话还在，稍后重试；离线期间不要把用户登出
+    if (hasAuthHint()) {
       clearRefreshTimer()
       refreshTimer = setTimeout(() => {
         refreshTimer = null
@@ -283,6 +277,9 @@ export function startAuthLifecycle() {
   }
   lifecycleStarted = true
   window.addEventListener('visibilitychange', handleVisibilityChange)
+  // 桌面端切回标签页不一定触发 visibilitychange（如同一窗口内点击），
+  // focus 兜底一次到期核对
+  window.addEventListener('focus', handleResume)
   window.addEventListener('storage', handleStorageChange)
   scheduleAutoRefresh()
 }
@@ -291,14 +288,23 @@ export function startAuthLifecycle() {
 export function stopAuthLifecycle() {
   lifecycleStarted = false
   clearRefreshTimer()
+  // 短路时间戳随会话一起作废：新会话不该被旧会话的刷新记录挡住
+  lastRefreshAt = 0
   if (typeof window !== 'undefined') {
     window.removeEventListener('visibilitychange', handleVisibilityChange)
+    window.removeEventListener('focus', handleResume)
     window.removeEventListener('storage', handleStorageChange)
   }
 }
 
 function handleVisibilityChange() {
-  if (document.visibilityState !== 'visible' || !readRefreshToken()) return
+  if (document.visibilityState !== 'visible') return
+  handleResume()
+}
+
+/** 页面恢复可见/聚焦：隔了很久时先核对到期时间，临近到期就先续上。 */
+function handleResume() {
+  if (!hasAuthHint()) return
   const expiresAt = readAccessTokenExpiresAt()
   if (!expiresAt || expiresAt - Date.now() <= REFRESH_AHEAD_MS) {
     void runScheduledRefresh()
@@ -308,11 +314,8 @@ function handleVisibilityChange() {
 }
 
 function handleStorageChange(event: StorageEvent) {
-  if (
-    event.key === ACCESS_TOKEN_STORAGE_KEY ||
-    event.key === ACCESS_TOKEN_EXPIRES_AT_STORAGE_KEY ||
-    event.key === REFRESH_TOKEN_STORAGE_KEY
-  ) {
+  // 其他标签页刷新成功会更新 hint：按新过期时间重排本页的下一次续期
+  if (event.key === AUTH_HINT_STORAGE_KEY) {
     scheduleAutoRefresh()
   }
 }
@@ -321,11 +324,5 @@ function clearRefreshTimer() {
   if (refreshTimer) {
     clearTimeout(refreshTimer)
     refreshTimer = null
-  }
-}
-
-function dispatchTokenChange() {
-  if (typeof window !== 'undefined') {
-    window.dispatchEvent(new CustomEvent('auth-token-changed'))
   }
 }
