@@ -1,7 +1,13 @@
 // @vitest-environment jsdom
 import { beforeEach, describe, expect, it, vi, type Mock } from 'vitest'
 import http from './http'
-import { deleteBookCache, getChapterList, getCoverUrl, setBookSource } from './bookshelf'
+import {
+  deleteBookCache,
+  getChapterList,
+  getCoverUrl,
+  setBookSource,
+  withImageWidth,
+} from './bookshelf'
 
 vi.mock('./http', () => ({
   default: {
@@ -36,6 +42,66 @@ describe('getCoverUrl', () => {
   it('returns empty for missing cover', () => {
     expect(getCoverUrl(undefined)).toBe('')
     expect(getCoverUrl('')).toBe('')
+  })
+
+  it('本站取图地址带宽度：?w=<width>', () => {
+    const url = getCoverUrl('/reader3/image/9a30fa276d46103ce2fdc0ef47f508d3', 320)
+    expect(url).toBe('/reader3/image/9a30fa276d46103ce2fdc0ef47f508d3?w=320')
+  })
+
+  it('本站取图地址已有查询串时用 & 拼宽度', () => {
+    const url = getCoverUrl('/reader3/image/9a30fa276d46103ce2fdc0ef47f508d3?x=1', 320)
+    expect(url).toBe('/reader3/image/9a30fa276d46103ce2fdc0ef47f508d3?x=1&w=320')
+  })
+
+  it('兼容封面入口（书源原始地址）同样带宽度', () => {
+    const url = getCoverUrl('https://img.example/a.jpg', 640)
+    expect(url.startsWith('/reader3/cover?path=')).toBe(true)
+    expect(url).toContain('&w=640')
+    expect(url).toContain(encodeURIComponent('https://img.example/a.jpg'))
+  })
+
+  it('本地 epub 资源与非本站地址不加宽度', () => {
+    expect(getCoverUrl('/reader3/localEpubAsset?path=user_1/a.epub', 320)).toBe(
+      '/reader3/localEpubAsset?path=user_1/a.epub'
+    )
+    // 不以 http 或 / 开头的地址（如 data: URI）原样返回，不参与图片管道
+    const dataUri = 'data:image/png;base64,iVBORw0KGgo='
+    expect(getCoverUrl(dataUri, 320)).toBe(dataUri)
+  })
+
+  it('不传宽度时地址保持原样', () => {
+    expect(getCoverUrl('/reader3/image/9a30fa276d46103ce2fdc0ef47f508d3')).toBe(
+      '/reader3/image/9a30fa276d46103ce2fdc0ef47f508d3'
+    )
+    expect(getCoverUrl('https://img.example/a.jpg')).not.toContain('w=')
+  })
+})
+
+describe('withImageWidth', () => {
+  it('本站取图地址追加 ?w=<width>', () => {
+    expect(withImageWidth('/reader3/image/abc123', 1200)).toBe('/reader3/image/abc123?w=1200')
+  })
+
+  it('已有查询串时用 & 拼接', () => {
+    expect(withImageWidth('/reader3/image/abc123?x=1', 480)).toBe('/reader3/image/abc123?x=1&w=480')
+    expect(withImageWidth('/reader3/cover?path=https%3A%2F%2Fa.example%2Fx.jpg', 320)).toBe(
+      '/reader3/cover?path=https%3A%2F%2Fa.example%2Fx.jpg&w=320'
+    )
+  })
+
+  it('第三方直链、本地资源与其他地址一律原样返回', () => {
+    expect(withImageWidth('https://cdn.example/a.jpg', 480)).toBe('https://cdn.example/a.jpg')
+    expect(withImageWidth('http://cdn.example/a.jpg?y=2', 480)).toBe('http://cdn.example/a.jpg?y=2')
+    expect(withImageWidth('/reader3/localEpubAsset?path=user_1/a.epub', 480)).toBe(
+      '/reader3/localEpubAsset?path=user_1/a.epub'
+    )
+    expect(withImageWidth('/reader3/getBookContent', 480)).toBe('/reader3/getBookContent')
+  })
+
+  it('宽度缺失或非正数时不加参数', () => {
+    expect(withImageWidth('/reader3/image/abc123')).toBe('/reader3/image/abc123')
+    expect(withImageWidth('/reader3/image/abc123', 0)).toBe('/reader3/image/abc123')
   })
 })
 

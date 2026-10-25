@@ -315,6 +315,10 @@ id = `md5(去掉查询串的地址)`；抓取失败时按登记时的书籍上�
 只降不升，Triangle 滤镜）与 `Accept` 头协商的有损 webp（质量 80，否则 JPEG 质量 85）：
 派生文件 `<id>.w<宽>.<webp|jpg>` 与原图同目录、共用容量记账，响应带 `Vary: Accept`；
 GIF/WebP/AVIF/SVG/ICO 原样透传（不破坏动画与矢量），不带 `w` 也不要 webp 时原图直出。
+前端按渲染场景给取图地址带宽度档位（`api/bookshelf.ts` 的 `getCoverUrl(coverUrl, width)` 与
+`withImageWidth(url, width)`，后者同时认 `/reader3/image/` 与 `/reader3/cover?` 两种本站地址）：
+封面列表 320、书籍详情 640、章节配图 1200、评论配图 480；宽度只是提示，后端只降不升；
+本地 epub 资源（`/reader3/localEpubAsset`）与第三方直链一律不加参数。
 
 ### 解析方式识别
 

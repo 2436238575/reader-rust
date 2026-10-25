@@ -18,8 +18,8 @@
         @click="openBook(book)"
       >
         <img
-          v-if="getCoverUrl(book.coverUrl)"
-          :src="getCoverUrl(book.coverUrl)"
+          v-if="listCoverUrl(book.coverUrl)"
+          :src="listCoverUrl(book.coverUrl)"
           class="book-cover"
         />
         <div v-else class="book-cover placeholder">无封面</div>
@@ -45,6 +45,9 @@ import type { Book } from '../../types'
 const store = useBookshelfStore()
 const readerStore = useReaderStore()
 const theme = computed(() => readerStore.currentTheme)
+
+// 列表小封面按 320 宽取派生图（只降不升），配合 webp 协商省流
+const listCoverUrl = (url?: string) => getCoverUrl(url, 320)
 
 if (!store.books.length) {
   store.fetchBooks()

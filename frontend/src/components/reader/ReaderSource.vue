@@ -167,8 +167,9 @@ import type { Book, SearchBook } from '../../types'
 const store = useReaderStore()
 const appStore = useAppStore()
 const theme = computed(() => store.currentTheme)
-/// 封面要经后端取图接口并带上令牌（<img> 带不了请求头）
-const coverSrc = computed(() => getCoverUrl(store.book?.coverUrl))
+/// 封面要经后端取图接口并带上令牌（<img> 带不了请求头）；
+/// 列表小图按 320 宽取派生图（只降不升），配合 webp 协商省流
+const coverSrc = computed(() => getCoverUrl(store.book?.coverUrl, 320))
 const selectedCandidate = ref<AvailableSourceCandidate | null>(null)
 const candidatePreview = ref<Book | null>(null)
 const resolveSourceName = useSourceNameResolver()

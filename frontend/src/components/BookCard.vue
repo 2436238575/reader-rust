@@ -177,7 +177,8 @@ const coverSrc = computed(() => {
   if (coverFailed.value) return ''
   const url = (props.book as Book).customCoverUrl || props.book.coverUrl
   if (!url) return ''
-  return getCoverUrl(url)
+  // 列表封面按 320 宽取派生图（只降不升），配合 webp 协商省流
+  return getCoverUrl(url, 320)
 })
 
 const unreadCount = computed(() => {

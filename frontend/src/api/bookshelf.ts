@@ -226,7 +226,20 @@ export function setBookSource(params: { bookId: string; targetBookId: string }) 
 }
 
 // ─── Cover helper ───
-export function getCoverUrl(coverUrl?: string) {
+/**
+ * 给图片管道地址追加目标像素宽（`?w=`）：后端按宽度派生缓存（clamp 64..=2048、
+ * 只降不升），配合 Accept 头的 webp 协商省流。只认 `/reader3/image/<id>` 与
+ * `/reader3/cover?path=...`；本地 epub 资源、第三方直链与其他地址原样返回
+ * （加了参数也没人认，反而污染缓存键之外的语义）。
+ */
+export function withImageWidth(url: string, width?: number) {
+  if (!width || !Number.isFinite(width) || width <= 0) return url
+  if (!url.startsWith('/reader3/image/') && !url.startsWith('/reader3/cover?')) return url
+  const sep = url.includes('?') ? '&' : '?'
+  return `${url}${sep}w=${Math.round(width)}`
+}
+
+export function getCoverUrl(coverUrl?: string, width?: number) {
   if (!coverUrl) return ''
   if (coverUrl.startsWith('/reader3/localEpubAsset')) {
     return withAppBase(coverUrl)
@@ -234,12 +247,12 @@ export function getCoverUrl(coverUrl?: string) {
   // 后端已经把书源地址换成了本站取图地址（`/reader3/image/<id>`）：
   // id 由后端映射表维护，前端不接触会过期的书源地址，会话 Cookie 随 <img> 自动携带
   if (coverUrl.startsWith('/reader3/image/')) {
-    return withAppBase(coverUrl)
+    return withAppBase(withImageWidth(coverUrl, width))
   }
   if (coverUrl.startsWith('http') || coverUrl.startsWith('/')) {
     // 兼容入口：customCoverUrl 是用户自设的任意地址，走封面接口代理
     const params = new URLSearchParams({ path: coverUrl })
-    return withAppBase(`/reader3/cover?${params.toString()}`)
+    return withAppBase(withImageWidth(`/reader3/cover?${params.toString()}`, width))
   }
   return coverUrl
 }

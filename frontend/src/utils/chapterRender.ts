@@ -2,7 +2,7 @@
 // 消毒/段落样式的基础渲染、章节配图插入、段评气泡、EPUB 资源改写、搜索高亮。
 // 全部是「输入 → DOM/HTML 字符串」的确定性函数，不持有响应式状态。
 
-import { withAuthQuery } from '../api/bookshelf'
+import { withAuthQuery, withImageWidth } from '../api/bookshelf'
 import { sanitizeUntrustedHtml } from './sanitize'
 import type { ChapterImage, ParaReviewCount } from '../types'
 import { inlineDiff, type ParagraphDiffOp } from './chapterDiff'
@@ -428,8 +428,10 @@ export function renderChapterImageFigures(images: ChapterImage[], paragraphText:
         caption && caption !== paragraphText
           ? `<figcaption>${escapeHtmlText(caption)}</figcaption>`
           : ''
-      // 后端把配图收口成 /reader3/image/<id>：<img> 带不了请求头，令牌只能进查询串
-      const src = withAuthQuery(image.url)
+      // 后端把配图收口成 /reader3/image/<id>：<img> 带不了请求头，令牌只能进查询串。
+      // 章节配图按 1200 宽取派生图（只降不升），配合 webp 协商省流；
+      // 非本站地址 withImageWidth 原样放行，第三方直链不加参数
+      const src = withAuthQuery(withImageWidth(image.url, 1200))
       return (
         '<figure class="chapter-figure">' +
         `<img src="${escapeHtmlAttr(src)}" alt="${escapeHtmlAttr(caption)}"` +

@@ -209,7 +209,8 @@ const showAllChapters = ref(false)
 const coverSrc = computed(() => {
   if (coverFailed.value || !book.value) return ''
   const url = (book.value as Book).customCoverUrl || book.value.coverUrl
-  return url ? getCoverUrl(url) : ''
+  // 详情大图按 640 宽取派生图（只降不升），配合 webp 协商省流
+  return url ? getCoverUrl(url, 640) : ''
 })
 
 const displayChapters = computed(() => {
