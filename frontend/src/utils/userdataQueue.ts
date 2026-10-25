@@ -1,0 +1,130 @@
+/**
+ * userdata 批量写队列。
+ *
+ * 阅读统计、最近阅读、已读标记等模块各自把整文档推给后端；这里把同一
+ * 窗口内的写按文档名合并（同名后写覆盖前写），200ms 防抖后合成一次
+ * /reader3/saveUserdataBatch，并保持单飞（同一时刻只有一个批量在途）。
+ * 失败时未发送成功的文档留在队列里，按退避间隔自动重试（至多 3 次，
+ * 不无限重试；下一次写入会重开一轮重试预算）。
+ *
+ * 页面卸载（pagehide）或切入后台（visibilitychange=hidden）时用裸
+ * fetch + keepalive 补发最后一次批量写——axios 不支持 keepalive，卸载
+ * 阶段普通请求会被浏览器取消。URL 经 API_BASE 拼接，跟随子路径部署。
+ */
+import { saveUserdataBatch } from '../api/userdata'
+import { API_BASE } from './appBase'
+
+const DEBOUNCE_MS = 200
+// 失败后的退避重试间隔；用完即放弃，等下一次写入再试
+const RETRY_DELAYS_MS = [1000, 2000, 4000]
+
+const pending = new Map<string, unknown>()
+let debounceTimer: ReturnType<typeof setTimeout> | null = null
+let retryTimer: ReturnType<typeof setTimeout> | null = null
+let retryAttempts = 0
+let inFlight: Promise<void> | null = null
+
+/** 把一个文档的整量新值排入写队列；同名文档后写覆盖前写。 */
+export function queueUserdataSave(name: string, value: unknown) {
+  pending.set(name, value)
+  // 新写入重开一轮重试预算，并取代已排期的退避重试（200ms 防抖比退避更快）
+  retryAttempts = 0
+  if (retryTimer) {
+    clearTimeout(retryTimer)
+    retryTimer = null
+  }
+  scheduleFlush(DEBOUNCE_MS)
+}
+
+function scheduleFlush(delay: number) {
+  if (debounceTimer) clearTimeout(debounceTimer)
+  debounceTimer = setTimeout(() => {
+    debounceTimer = null
+    void flushUserdataQueue().catch(() => undefined)
+  }, delay)
+}
+
+/**
+ * 立即把当前待写文档合成一次批量写发出；返回的 Promise 在发送完成后 settle
+ * （失败时 reject，同时文档留在队列里等退避重试，调用方自行兜底）。
+ * 单飞：已有批量在途时，等它结束后对剩余待写文档再补一轮。
+ */
+export function flushUserdataQueue(): Promise<void> {
+  if (debounceTimer) {
+    clearTimeout(debounceTimer)
+    debounceTimer = null
+  }
+  if (inFlight) {
+    // 失败路径已由在途那次安排了退避重试，这里只需把拒绝透传给调用方
+    return inFlight.then(() => flushUserdataQueue())
+  }
+  if (pending.size === 0) return Promise.resolve()
+  const docs = [...pending.entries()].map(([name, value]) => ({ name, value }))
+  inFlight = saveUserdataBatch(docs).then(
+    () => {
+      // 只清掉发送后没被新值覆盖的文档；在途期间的新写留下一轮补发
+      for (const doc of docs) {
+        if (pending.get(doc.name) === doc.value) pending.delete(doc.name)
+      }
+      retryAttempts = 0
+      inFlight = null
+      if (pending.size > 0) scheduleFlush(DEBOUNCE_MS)
+    },
+    (err: unknown) => {
+      // 文档本就留在 pending 里（被覆盖的已是新值），安排退避重试
+      inFlight = null
+      scheduleRetry()
+      throw err
+    }
+  )
+  return inFlight
+}
+
+function scheduleRetry() {
+  if (pending.size === 0) return
+  if (retryAttempts >= RETRY_DELAYS_MS.length) return
+  const delay = RETRY_DELAYS_MS[retryAttempts]
+  retryAttempts += 1
+  if (retryTimer) clearTimeout(retryTimer)
+  retryTimer = setTimeout(() => {
+    retryTimer = null
+    void flushUserdataQueue().catch(() => undefined)
+  }, delay)
+}
+
+/**
+ * 卸载/切后台时的最后一搏：发完即清，不等结果。这几类文档本地都有镜像
+ * （localStorage），即使丢失也会在下次同步时补回；重复写是同值覆盖，无副作用。
+ */
+function flushWithKeepalive() {
+  if (pending.size === 0) return
+  const docs = [...pending.entries()].map(([name, value]) => ({ name, value }))
+  if (debounceTimer) {
+    clearTimeout(debounceTimer)
+    debounceTimer = null
+  }
+  if (retryTimer) {
+    clearTimeout(retryTimer)
+    retryTimer = null
+  }
+  try {
+    void fetch(`${API_BASE}/saveUserdataBatch`, {
+      method: 'POST',
+      keepalive: true,
+      credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ docs }),
+    })
+    // fetch 成功发起才清队列；同步抛错（如 fetch 不可用）时保留待写
+    pending.clear()
+  } catch {
+    // 卸载阶段无能为力
+  }
+}
+
+if (typeof window !== 'undefined') {
+  window.addEventListener('pagehide', flushWithKeepalive)
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'hidden') flushWithKeepalive()
+  })
+}
