@@ -1,6 +1,5 @@
 import http from './http'
 import type { Book, BookChapter, BookGroup, ChapterImages } from '../types'
-import { appendAuthQueryParams } from '../utils/secureAccess'
 import { withAppBase } from '../utils/appBase'
 
 export function getBookshelf() {
@@ -208,30 +207,27 @@ export function setBookSource(params: { bookId: string; targetBookId: string }) 
 export function getCoverUrl(coverUrl?: string) {
   if (!coverUrl) return ''
   if (coverUrl.startsWith('/reader3/localEpubAsset')) {
-    return withAuthQuery(coverUrl)
+    return withAppBase(coverUrl)
   }
   // 后端已经把书源地址换成了本站取图地址（`/reader3/image/<id>`）：
-  // id 由后端映射表维护，前端不接触会过期的书源地址，补个令牌直接用
+  // id 由后端映射表维护，前端不接触会过期的书源地址，会话 Cookie 随 <img> 自动携带
   if (coverUrl.startsWith('/reader3/image/')) {
-    return withAuthQuery(coverUrl)
+    return withAppBase(coverUrl)
   }
   if (coverUrl.startsWith('http') || coverUrl.startsWith('/')) {
     // 兼容入口：customCoverUrl 是用户自设的任意地址，走封面接口代理
     const params = new URLSearchParams({ path: coverUrl })
-    appendAuthQueryParams(params)
     return withAppBase(`/reader3/cover?${params.toString()}`)
   }
   return coverUrl
 }
 
-/// 给需要鉴权的直链（本地书资源、封面、配图等）补上令牌与部署前缀。
-/// 令牌只发给本站路径：完整的 http(s) 地址指向第三方主机，拼上 accessToken
-/// 等于把登录态随浏览器取图送出去——外源 URL 原样返回（约定上后端已把书源
-/// 图片收口为 /reader3/image/<id>，走到这里的外源地址是兜底场景，宁可不渲染）。
+/// 给需要鉴权的直链（本地书资源、封面、配图等）套上部署前缀。
+/// 会话凭据由 HttpOnly Cookie 承载，<img>/直链请求浏览器自动携带，URL 不再
+/// 拼任何令牌；完整的 http(s) 地址指向第三方主机，原样返回（约定上后端已把
+/// 书源图片收口为 /reader3/image/<id>，走到这里的外源地址是兜底场景，
+/// 宁可不渲染）。
 export function withAuthQuery(url: string) {
   if (/^https?:\/\//i.test(url)) return url
-  const [path, rawQuery = ''] = url.split('?')
-  const params = new URLSearchParams(rawQuery)
-  appendAuthQueryParams(params)
-  return `${withAppBase(path)}?${params.toString()}`
+  return withAppBase(url)
 }

@@ -13,23 +13,22 @@ vi.mock('./http', () => ({
 const postMock = http.post as unknown as Mock
 
 describe('getCoverUrl', () => {
-  beforeEach(() => {
-    localStorage.clear()
-  })
-
-  it('passes the backend image route through with the token', () => {
-    localStorage.setItem('accessToken', 'tok')
+  it('后端取图地址直接可用，不再携带令牌（会话 Cookie 随 <img> 自动携带）', () => {
     // 后端把书源地址改写成了本站取图地址：id 由后端映射表维护，前端原样使用
     const url = getCoverUrl('/reader3/image/9a30fa276d46103ce2fdc0ef47f508d3')
-    expect(url).toBe('/reader3/image/9a30fa276d46103ce2fdc0ef47f508d3?accessToken=tok')
+    expect(url).toBe('/reader3/image/9a30fa276d46103ce2fdc0ef47f508d3')
   })
 
-  it('still routes raw source urls through the compat cover endpoint', () => {
-    localStorage.setItem('accessToken', 'tok')
+  it('本地书资源地址保留查询串且不带令牌', () => {
+    const url = getCoverUrl('/reader3/localEpubAsset?path=user_1/a.epub')
+    expect(url).toBe('/reader3/localEpubAsset?path=user_1/a.epub')
+  })
+
+  it('仍把书源原始地址走兼容封面入口，且不带令牌', () => {
     // 历史书架记录里存的是书源地址（含签名），走兼容入口
     const url = getCoverUrl('https://img.example/a.heic?x-signature=abc')
     expect(url.startsWith('/reader3/cover?path=')).toBe(true)
-    expect(url).toContain('accessToken=tok')
+    expect(url).not.toContain('accessToken')
     expect(url).toContain(encodeURIComponent('https://img.example/a.heic?x-signature=abc'))
   })
 
