@@ -1,6 +1,6 @@
-import axios, { AxiosHeaders, type InternalAxiosRequestConfig } from 'axios'
+import axios, { type InternalAxiosRequestConfig } from 'axios'
 import type { ApiResponse } from '../types'
-import { readAccessToken, readRefreshToken } from '../utils/secureAccess'
+import { hasAuthHint } from '../utils/secureAccess'
 import { API_BASE } from '../utils/appBase'
 import { notifyNeedLogin } from '../utils/authEvents'
 import {
@@ -14,6 +14,8 @@ type RetriableConfig = InternalAxiosRequestConfig & { _authRetried?: boolean }
 const http = axios.create({
   baseURL: API_BASE,
   timeout: 120000,
+  // 会话凭据在 HttpOnly Cookie 里，浏览器自动携带；跨域 CORS 部署也要发凭据
+  withCredentials: true,
   headers: { 'Content-Type': 'application/json' },
 })
 
@@ -24,22 +26,8 @@ function isAuthFreePath(url: string | undefined): boolean {
   return path === '/login' || path === '/refreshToken' || path === '/logout'
 }
 
-function bearerTokenOf(config: RetriableConfig): string | undefined {
-  const header = AxiosHeaders.from(config.headers).get('Authorization')
-  if (typeof header !== 'string') return undefined
-  return header.replace(/^Bearer\s+/i, '').trim() || undefined
-}
-
-// ─── Request interceptor: attach the access token ───
-http.interceptors.request.use((config) => {
-  const accessToken = readAccessToken(localStorage)
-  if (accessToken) {
-    config.headers.Authorization = `Bearer ${accessToken}`
-  }
-  return config
-})
-
 // ─── Response interceptor: unwrap ApiResponse, refresh on 401 ───
+// 请求侧不再注入 Authorization：浏览器会自动带上 HttpOnly Cookie。
 http.interceptors.response.use(
   (response) => {
     const data = response.data as ApiResponse
@@ -59,28 +47,23 @@ http.interceptors.response.use(
     const status = error.response?.status
     const config = error.config as RetriableConfig | undefined
 
-    // 未登录/令牌失效统一为 HTTP 401。有 Refresh Token 时先静默换新并重放
-    // 一次；换不到才拉起登录框。并发 401 由 authSession 的单飞逻辑合并。
+    // 未登录/会话失效统一为 HTTP 401。本地有登录提示时先静默刷新（凭
+    // Cookie 换新）并重放一次；换不到才拉起登录框。并发 401 由
+    // authSession 的单飞逻辑合并。
     if (status === 401) {
       const canRetry =
-        !!config &&
-        !config._authRetried &&
-        !isAuthFreePath(config.url) &&
-        !!readRefreshToken()
+        !!config && !config._authRetried && !isAuthFreePath(config.url) && hasAuthHint()
       if (canRetry && config) {
         config._authRetried = true
         try {
-          const fresh = await refreshAccessToken(bearerTokenOf(config))
-          const headers = AxiosHeaders.from(config.headers)
-          headers.set('Authorization', `Bearer ${fresh}`)
-          config.headers = headers
+          await refreshAccessToken()
           return http.request(config)
         } catch (refreshError) {
           if (refreshError instanceof RefreshNetworkError) {
             return Promise.reject(withStatus(refreshError, status))
           }
           if (refreshError instanceof SessionExpiredError) {
-            // refreshAccessToken 已清空令牌并通知登录
+            // refreshAccessToken 已清空提示并通知登录
             return Promise.reject(withStatus(new Error('需要登录'), status))
           }
           return Promise.reject(withStatus(new Error('需要登录'), status))

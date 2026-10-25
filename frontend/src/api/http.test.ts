@@ -7,6 +7,7 @@ import {
   SessionExpiredError,
   refreshAccessToken,
 } from '../utils/authSession'
+import { storeAuthHint } from '../utils/secureAccess'
 
 vi.mock('../utils/authSession', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../utils/authSession')>()
@@ -41,9 +42,8 @@ function ok(config: InternalAxiosRequestConfig): AxiosResponse {
   }
 }
 
-function seedTokens() {
-  localStorage.setItem('accessToken', 'old-access')
-  localStorage.setItem('refreshToken', 'rt_old')
+function seedHint() {
+  storeAuthHint({ username: 'admin', accessTokenExpiresAt: Date.now() + 3600 * 1000 })
 }
 
 beforeEach(() => {
@@ -58,29 +58,33 @@ afterEach(() => {
 })
 
 describe('http auth interceptor', () => {
-  it('refreshes on 401 and replays the original request with the new token', async () => {
-    seedTokens()
-    refreshMock.mockImplementation(async () => {
-      localStorage.setItem('accessToken', 'fresh-access')
-      localStorage.setItem('refreshToken', 'rt_fresh')
-      return 'fresh-access'
-    })
-    const seen: string[] = []
+  it('401 后刷新会话并重放一次；请求全程不带 Authorization，Cookie 由浏览器携带', async () => {
+    seedHint()
+    refreshMock.mockResolvedValue(undefined)
+    const seen: Array<string | undefined> = []
+    const withCredentials: boolean[] = []
+    let calls = 0
     http.defaults.adapter = async (config) => {
-      seen.push(String(config.headers.Authorization ?? ''))
-      return seen.length === 1 ? unauthorized(config) : ok(config)
+      calls += 1
+      seen.push(String(config.headers?.Authorization ?? ''))
+      withCredentials.push(config.withCredentials === true)
+      return calls === 1 ? unauthorized(config) : ok(config)
     }
 
     const response = await http.get('/getBookshelf')
 
     expect(response.data).toEqual({ ok: true })
     expect(refreshMock).toHaveBeenCalledTimes(1)
-    expect(seen).toEqual(['Bearer old-access', 'Bearer fresh-access'])
+    expect(calls).toBe(2)
+    // 请求拦截器不再注入 Bearer：两次请求都没有 Authorization 头
+    expect(seen).toEqual(['', ''])
+    // 会话凭据走 Cookie：withCredentials 必须打开
+    expect(withCredentials).toEqual([true, true])
   })
 
   it('retries a 401 only once even if the replay also fails', async () => {
-    seedTokens()
-    refreshMock.mockResolvedValue('fresh-access')
+    seedHint()
+    refreshMock.mockResolvedValue(undefined)
     let calls = 0
     http.defaults.adapter = async (config) => {
       calls += 1
@@ -93,7 +97,7 @@ describe('http auth interceptor', () => {
   })
 
   it('reports expiry when the refresh is rejected', async () => {
-    seedTokens()
+    seedHint()
     refreshMock.mockRejectedValue(new SessionExpiredError())
     let calls = 0
     http.defaults.adapter = async (config) => {
@@ -106,15 +110,14 @@ describe('http auth interceptor', () => {
   })
 
   it('keeps the network error message when the refresh cannot reach the server', async () => {
-    seedTokens()
+    seedHint()
     refreshMock.mockRejectedValue(new RefreshNetworkError())
     http.defaults.adapter = async (config) => unauthorized(config)
 
     await expect(http.get('/getBookshelf')).rejects.toThrow('网络异常，请稍后重试')
   })
 
-  it('does not attempt a refresh without a refresh token', async () => {
-    localStorage.setItem('accessToken', 'old-access')
+  it('does not attempt a refresh without an auth hint', async () => {
     http.defaults.adapter = async (config) => unauthorized(config)
 
     await expect(http.get('/getBookshelf')).rejects.toThrow('需要登录')
@@ -122,7 +125,7 @@ describe('http auth interceptor', () => {
   })
 
   it('never refreshes the login endpoint itself', async () => {
-    localStorage.setItem('refreshToken', 'rt_old')
+    seedHint()
     http.defaults.adapter = async (config) => unauthorized(config)
 
     await expect(http.post('/login', { username: 'a', password: 'b' })).rejects.toThrow(
