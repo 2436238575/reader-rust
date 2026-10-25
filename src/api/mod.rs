@@ -1,5 +1,6 @@
 pub mod extract;
 pub mod handlers;
+pub mod inbound_guard;
 pub mod router;
 
 use crate::app::config::AppConfig;

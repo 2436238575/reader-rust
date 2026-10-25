@@ -1,3 +1,4 @@
+use crate::api::inbound_guard::{concurrency_layer, timeout_middleware};
 use crate::api::{handlers, AppState};
 use crate::auth::{optional_auth, require_auth};
 use axum::{
@@ -8,6 +9,7 @@ use axum::{
     Router,
 };
 use std::path::PathBuf;
+use std::time::Duration;
 use tower_http::compression::CompressionLayer;
 use tower_http::cors::{AllowOrigin, CorsLayer};
 use tower_http::request_id::{MakeRequestUuid, PropagateRequestIdLayer, SetRequestIdLayer};
@@ -69,6 +71,14 @@ fn build_cors_layer(cors_allowed_origins: &str) -> CorsLayer {
 }
 
 pub fn build_router(state: AppState) -> Router {
+    // ── 入站慢请求防护（见 api/inbound_guard.rs）──
+    // 常规接口 120s、大上传路由 900s、需登录组另有并发上限。
+    // Router::layer 只作用于调用时已添加的路由，因此这些层必须在各分组
+    // 内部挂载，不能挂在最终合成的大 Router 上（那会把 WebDAV 也包进去）。
+    let inbound_timeout = Duration::from_secs(state.config.inbound_request_timeout_secs);
+    let upload_timeout = Duration::from_secs(state.config.inbound_upload_timeout_secs);
+    let inbound_max_concurrency = state.config.inbound_max_concurrency;
+
     // ── 公开：无需任何凭据 ──
     let public = Router::new()
         .route("/health", get(handlers::health))
@@ -79,6 +89,10 @@ pub fn build_router(state: AppState) -> Router {
         // （axum-core 0.4 的 DefaultBodyLimitService 对扩展是 insert 覆盖写），
         // 因此这里的 1MB 优先于最外层的 100MB 兜底
         .layer(DefaultBodyLimit::max(PUBLIC_BODY_LIMIT_BYTES))
+        .layer(middleware::from_fn_with_state(
+            inbound_timeout,
+            timeout_middleware,
+        ))
         .with_state(state.clone());
 
     // ── 可选鉴权：未登录也返回成功，只是内容为空 ──
@@ -87,6 +101,10 @@ pub fn build_router(state: AppState) -> Router {
         .route("/reader3/logout", post(handlers::logout))
         .layer(middleware::from_fn_with_state(state.clone(), optional_auth))
         .layer(DefaultBodyLimit::max(PUBLIC_BODY_LIMIT_BYTES))
+        .layer(middleware::from_fn_with_state(
+            inbound_timeout,
+            timeout_middleware,
+        ))
         .with_state(state.clone());
 
     // ── WebDAV 文件接口：自带 HTTP Basic 认证，不经 JWT ──
@@ -101,7 +119,10 @@ pub fn build_router(state: AppState) -> Router {
         .with_state(state.clone());
 
     // ── 大请求体路由：先挂各自放宽的上限（最内层先生效），再并入 protected ──
-    // 整本书/大文件上传（TXT、EPUB、章节正文导入、资源与 WebDAV 中转）
+    // 整本书/大文件上传（TXT、EPUB、章节正文导入、资源与 WebDAV 中转）。
+    // 这些路由单独用 upload_timeout（默认 900s）：100MB 级请求体在慢速链路上
+    // 光接收就可能远超常规接口的 120s。它们在 protected 挂完 120s 超时之后
+    // 才 merge，因此不会被常规超时误杀。
     let big_body_routes = Router::new()
         .route("/reader3/readSourceFile", post(handlers::read_source_file))
         .route("/reader3/uploadTxtBook", post(handlers::upload_txt_book))
@@ -126,17 +147,25 @@ pub fn build_router(state: AppState) -> Router {
             "/reader3/uploadFileToWebdav",
             post(handlers::upload_file_to_webdav),
         )
-        .layer(DefaultBodyLimit::max(MAX_BODY_LIMIT_BYTES));
+        .layer(DefaultBodyLimit::max(MAX_BODY_LIMIT_BYTES))
+        .layer(middleware::from_fn_with_state(
+            upload_timeout,
+            timeout_middleware,
+        ));
     // 批量导入书源：一次性贴几 MB 到几十 MB 的 JSON 数组
     let bulk_sources_routes = Router::new()
         .route(
             "/reader3/saveBookSources",
             post(handlers::save_book_sources),
         )
-        .layer(DefaultBodyLimit::max(SAVE_SOURCES_BODY_LIMIT_BYTES));
+        .layer(DefaultBodyLimit::max(SAVE_SOURCES_BODY_LIMIT_BYTES))
+        .layer(middleware::from_fn_with_state(
+            upload_timeout,
+            timeout_middleware,
+        ));
 
     // ── 其余全部需要登录 ──
-    let protected = Router::new()
+    let protected_routes = Router::new()
         .route(
             "/reader3/getBookSource",
             get(handlers::get_book_source).post(handlers::get_book_source),
@@ -427,7 +456,29 @@ pub fn build_router(state: AppState) -> Router {
         .route("/reader3/deleteFile", post(handlers::delete_file))
         // 组级默认上限（8MB）：挂在普通路由之后、合并放宽子路由之前，
         // 只包住本组常规接口；放宽路由在各自子路由上已带更内侧的上限
-        .layer(DefaultBodyLimit::max(PROTECTED_BODY_LIMIT_BYTES))
+        .layer(DefaultBodyLimit::max(PROTECTED_BODY_LIMIT_BYTES));
+
+    // 入站慢请求防护：并发上限在超时**之内**（先 .layer 并发再 .layer 超时，
+    // 外层后挂），排队等信号量的时间一并计入 120s——排不上的请求以 408
+    // 收场而不是无限堆积。max == 0（不限制）时不能挂：
+    // ConcurrencyLimitLayer::new(0) 会 panic。
+    //
+    // SSE 端点不需要白名单：timeout 中间件只约束到 handler 产出 Response
+    // 为止，SSE handler 立即返回流式响应（cacheBookSSE 等），事件流在
+    // body 里继续，不受该层约束。WebDAV 协议端点因流式 PUT 豁免——它在
+    // 最外层各防护层之后才 merge（见下方）；大上传路由则单独用 900s。
+    let protected = if inbound_max_concurrency > 0 {
+        protected_routes.layer(concurrency_layer(inbound_max_concurrency))
+    } else {
+        protected_routes
+    };
+    let protected = protected
+        .layer(middleware::from_fn_with_state(
+            inbound_timeout,
+            timeout_middleware,
+        ))
+        // 大上传路由在这里才 merge：位于上面的 120s 超时与并发层之外，
+        // 只受各自子路由上的 upload_timeout（默认 900s）约束。
         .merge(bulk_sources_routes)
         .merge(big_body_routes)
         .layer(middleware::from_fn_with_state(state.clone(), require_auth))
@@ -540,7 +591,9 @@ pub fn build_router(state: AppState) -> Router {
         // AsyncStream，结束后被再次轮询会 panic（"async fn resumed after
         // completion"），客户端声明 Accept-Encoding 时连接直接断开。
         // getWebdavFile（在 protected 里）不受影响：它用 tokio ReaderStream，
-        // 重复轮询安全。WebDAV 流量多为已压缩文件（epub/zip），不压缩损失很小
+        // 重复轮询安全。WebDAV 流量多为已压缩文件（epub/zip），不压缩损失很小。
+        // 同时 WebDAV 也因此豁免入站超时（见 api/inbound_guard.rs）：大文件的
+        // 流式 PUT/GET 不该被 120s 掐断
         .merge(webdav)
         // 最外层兜底：只对没挂组级/路由级上限的路径生效（如 WebDAV）。
         // DefaultBodyLimit 走请求扩展覆盖，最内层的限制先生效

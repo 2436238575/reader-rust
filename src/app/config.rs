@@ -10,6 +10,26 @@ pub struct AppConfig {
     pub assets_dir: String,
     pub log_level: String,
     pub request_timeout_secs: u64,
+    /// 入站请求处理超时（秒），默认 120。
+    ///
+    /// 覆盖公开/可选/需登录三组 `/reader3` 接口与 `/health`：handler 在该时长
+    /// 内没有产出响应就返回 HTTP 408 与统一 JSON 错误体（见
+    /// `api/inbound_guard.rs`）。SSE 端点在 handler 返回流式响应后即脱离
+    /// 超时约束，WebDAV 协议端点与大上传路由豁免（后者用
+    /// `inbound_upload_timeout_secs`）。`0` 按配置笔误处理，回落默认值。
+    pub inbound_request_timeout_secs: u64,
+    /// 大上传路由的入站处理超时（秒），默认 900。
+    ///
+    /// 只作用于 TXT/EPUB 导入、资源上传、批量导入书源等大请求体路由：
+    /// 100MB 级请求体在慢速链路上光接收就可能远超常规接口的 120 秒。
+    /// `0` 按配置笔误处理，回落默认值。
+    pub inbound_upload_timeout_secs: u64,
+    /// 需登录接口的并发处理上限，默认 256；`0` 表示不限制。
+    ///
+    /// 超出上限的请求在层内排队等待（不拒绝），排队时间计入请求超时——
+    /// 排不上的请求最终以 408 收场而不是无限堆积。只作用于需登录组，
+    /// 上传路由与大上传体量不受它约束。
+    pub inbound_max_concurrency: usize,
     /// JWT 签名密钥。留空时启动阶段生成随机密钥并持久化到
     /// `<STORAGE_DIR>/jwt_secret`；多实例部署必须显式配置同一个值。
     #[serde(deserialize_with = "deserialize_scalar_string")]
@@ -130,6 +150,9 @@ impl Default for AppConfig {
             assets_dir: "storage/assets".to_string(),
             log_level: "info".to_string(),
             request_timeout_secs: 15,
+            inbound_request_timeout_secs: 120,
+            inbound_upload_timeout_secs: 900,
+            inbound_max_concurrency: 256,
             jwt_secret: String::new(),
             access_token_ttl_secs: 6 * 3600,
             refresh_token_ttl_secs: 7 * 24 * 3600,
@@ -178,6 +201,18 @@ pub fn load() -> anyhow::Result<AppConfig> {
         .set_default("assets_dir", defaults.assets_dir)?
         .set_default("log_level", defaults.log_level)?
         .set_default("request_timeout_secs", defaults.request_timeout_secs as i64)?
+        .set_default(
+            "inbound_request_timeout_secs",
+            defaults.inbound_request_timeout_secs as i64,
+        )?
+        .set_default(
+            "inbound_upload_timeout_secs",
+            defaults.inbound_upload_timeout_secs as i64,
+        )?
+        .set_default(
+            "inbound_max_concurrency",
+            defaults.inbound_max_concurrency as i64,
+        )?
         .set_default("jwt_secret", defaults.jwt_secret)?
         .set_default(
             "access_token_ttl_secs",
@@ -231,6 +266,7 @@ pub fn load() -> anyhow::Result<AppConfig> {
         .build()?;
     let mut cfg: AppConfig = cfg.try_deserialize()?;
     normalize_token_ttls(&mut cfg);
+    normalize_inbound_timeouts(&mut cfg);
     normalize_cookie_secure(&mut cfg)?;
     // TRUSTED_PROXIES 解析失败必须启动告警并按空列表生效（最保守：
     // 不信任任何代理头），不能静默吞掉——否则「配错了」与「没配」不可区分。
@@ -272,6 +308,29 @@ fn normalize_token_ttls(cfg: &mut AppConfig) {
             defaults.refresh_token_ttl_secs
         );
         cfg.refresh_token_ttl_secs = defaults.refresh_token_ttl_secs;
+    }
+}
+
+/// 归一入站超时配置。
+///
+/// 超时设为 0 会让覆盖范围内的所有请求立即 408，按配置笔误处理并回落
+/// 到默认值（与 `normalize_token_ttls` 对 0 TTL 的口径一致）。
+/// `inbound_max_concurrency` 的 0 是合法的「不限制」，不在此归一。
+fn normalize_inbound_timeouts(cfg: &mut AppConfig) {
+    let defaults = AppConfig::default();
+    if cfg.inbound_request_timeout_secs == 0 {
+        eprintln!(
+            "WARN INBOUND_REQUEST_TIMEOUT_SECS 不能为 0，回落到默认 {} 秒",
+            defaults.inbound_request_timeout_secs
+        );
+        cfg.inbound_request_timeout_secs = defaults.inbound_request_timeout_secs;
+    }
+    if cfg.inbound_upload_timeout_secs == 0 {
+        eprintln!(
+            "WARN INBOUND_UPLOAD_TIMEOUT_SECS 不能为 0，回落到默认 {} 秒",
+            defaults.inbound_upload_timeout_secs
+        );
+        cfg.inbound_upload_timeout_secs = defaults.inbound_upload_timeout_secs;
     }
 }
 
@@ -347,5 +406,70 @@ mod tests {
             ..Default::default()
         };
         assert!(normalize_cookie_secure(&mut cfg).is_err());
+    }
+
+    #[test]
+    fn inbound_guard_defaults_match_documentation() {
+        // 默认值写进了 AGENTS.md 与 docs/guide/configuration.md，改动需同步文档
+        let cfg = AppConfig::default();
+        assert_eq!(cfg.inbound_request_timeout_secs, 120);
+        assert_eq!(cfg.inbound_upload_timeout_secs, 900);
+        assert_eq!(cfg.inbound_max_concurrency, 256);
+    }
+
+    #[test]
+    fn inbound_zero_timeouts_fall_back_to_defaults() {
+        // 0 超时 = 覆盖范围内所有请求立即 408，按笔误回落默认值；
+        // 并发上限的 0 是合法的「不限制」，不能被归一掉
+        let mut cfg = AppConfig {
+            inbound_request_timeout_secs: 0,
+            inbound_upload_timeout_secs: 0,
+            inbound_max_concurrency: 0,
+            ..Default::default()
+        };
+        normalize_inbound_timeouts(&mut cfg);
+        let defaults = AppConfig::default();
+        assert_eq!(
+            cfg.inbound_request_timeout_secs,
+            defaults.inbound_request_timeout_secs
+        );
+        assert_eq!(
+            cfg.inbound_upload_timeout_secs,
+            defaults.inbound_upload_timeout_secs
+        );
+        assert_eq!(cfg.inbound_max_concurrency, 0, "0 并发上限应保留（不限制）");
+    }
+
+    #[test]
+    fn inbound_non_numeric_values_fail_deserialization_loudly() {
+        // 环境变量经 Environment::try_parsing 解析：数字串变整数，非数字串
+        // 保持字符串并让类型化反序列化失败（load() 返回 Err → 启动失败）。
+        // 这里用 set_override 直接构造同样的 Value 形态验证该路径确实报错，
+        // 不会静默吞掉笔误。
+        #[derive(Deserialize)]
+        struct InboundOnly {
+            inbound_request_timeout_secs: u64,
+            inbound_max_concurrency: usize,
+        }
+        for bad in ["abc", "12x", "-1"] {
+            let err = config::Config::builder()
+                .set_override("inbound_request_timeout_secs", bad)
+                .unwrap()
+                .build()
+                .unwrap()
+                .try_deserialize::<InboundOnly>();
+            assert!(err.is_err(), "非数字值 {bad} 应让反序列化失败");
+        }
+        let ok = config::Config::builder()
+            .set_override("inbound_request_timeout_secs", "300")
+            .unwrap()
+            .set_override("inbound_max_concurrency", "512")
+            .unwrap()
+            .build()
+            .unwrap()
+            .try_deserialize::<InboundOnly>()
+            .unwrap();
+        assert_eq!(ok.inbound_request_timeout_secs, 300);
+        assert_eq!(ok.inbound_max_concurrency, 512);
     }
 }

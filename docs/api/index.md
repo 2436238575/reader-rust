@@ -73,6 +73,20 @@ http://localhost:8080/reader3
 
 （唯一的例外是 WebDAV 的 `/reader3/webdav/*path`，它走 HTTP Basic 认证，返回裸 401，不带上述 JSON 结构。）
 
+**请求处理超时 —— HTTP 408**
+
+接口在 `INBOUND_REQUEST_TIMEOUT_SECS`（默认 120 秒）内没有处理完成时，返回 **HTTP 408**，响应体为：
+
+```json
+{
+  "isSuccess": false,
+  "errorMsg": "请求超时",
+  "data": null
+}
+```
+
+覆盖公开、可选登录与需登录三组 `/reader3` 接口（含 `/health`）。豁免：SSE 端点在开始返回事件流后即不受此约束；WebDAV 协议端点（流式传输）；大上传路由（TXT/EPUB 导入、资源上传、`saveBookSources` 等）单独使用 `INBOUND_UPLOAD_TIMEOUT_SECS`（默认 900 秒）。需登录接口另有 `INBOUND_MAX_CONCURRENCY`（默认 256）并发上限，超出的请求排队等待且排队时间计入超时。
+
 ## 请求方法
 
 本项目**只注册了 `GET` 与 `POST`**，没有 `PUT` / `DELETE`（依据：`src/api/router.rs`）。
