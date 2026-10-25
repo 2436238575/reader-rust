@@ -40,6 +40,7 @@ Reader-Rust 通过**环境变量**配置，支持从 `.env` 文件读取。代�
 | `JWT_SECRET`                | 空               | JWT 签名密钥。**留空时启动阶段生成随机密钥并写入 `<STORAGE_DIR>/jwt_secret`**，重启后已签发的令牌继续有效。多实例部署必须显式配置同一个值，否则各实例签发的令牌互不认可                                                                                                                                                                                                    |
 | `ACCESS_TOKEN_TTL_SECS`     | `21600`（6 小时） | Access Token（HS256 JWT）有效期。过期后前端用 Refresh Token 静默换新，用户不会感知到固定时长的重新登录                                                                                                                                                                                                                                                                      |
 | `REFRESH_TOKEN_TTL_SECS`    | `604800`（7 天）  | Refresh Token 有效期，**滑动续期**：每次换取都签发新令牌并重新计时，闲置超过该时长才失效。客户端超过 30 秒宽限窗口后重放已消费令牌会吊销整条会话                                                                                                                                                                                                                              |
+| `COOKIE_SECURE`             | `auto`            | 会话 Cookie 的 `Secure` 属性。`auto`（默认）在请求 Host 为 `localhost` / `127.0.0.1` / `[::1]` 时不加 `Secure`（本地 HTTP 开发），其余一律加；`true` / `false` 强制。HTTP + 非回环主机的部署应改用 HTTPS，或显式设 `false`（Cookie 会走明文链路，不推荐）                                                                                                                     |
 | `JWT_TTL_SECS`              | 空（已废弃）      | 旧版单令牌方案的有效期。未显式配置 `ACCESS_TOKEN_TTL_SECS` 时作为其兼容别名生效并打印启动警告；两者都配置时以新变量为准                                                                                                                                                                                                                                                      |
 | `RATE_LIMIT_DISABLED`       | `false`          | 豁免登录失败限速（开发与测试环境用）。默认规则：IP 登录失败 5 次封该 IP 登录 6h；用户名登录失败 10 次封该用户名登录 6h。限速为进程内状态，多实例部署各自计数                                                                                                                                                                                                               |
 | `TRUSTED_PROXIES`           | 空               | 登录限速的受信代理列表（逗号分隔，IP 或 CIDR，如 `"172.17.0.1, 172.17.0.0/16"`）。生产部署挂在 nginx/Caddy/Docker NAT 后面时，所有请求的对端地址都是代理 IP；攻击者连续输错 5 次密码，会使全体访问者被封禁 6 小时。配置后，只有对端地址命中受信列表时才解析 `X-Forwarded-For` 还原真实客户端地址（从右往左找第一个不在受信列表里的地址；格式非法或全部受信时回退到直连地址）。**留空（默认）不信任任何代理头**，一律按直连地址记账。值含逗号时必须用双引号包裹 |
@@ -47,13 +48,18 @@ Reader-Rust 通过**环境变量**配置，支持从 `.env` 文件读取。代�
 | `PRIVATE_NETWORK_WHITELIST` | 空               | 私网白名单（逗号分隔），仅在 `ALLOW_PRIVATE_NETWORK=false` 时生效。条目支持 IP（`192.168.100.99`）、网段（`192.168.100.0/24`）、域名（`nas.lan`），均可带端口（`192.168.100.99:9999`，带端口时目标端口也须一致）。**名单为空时一律拦截**（不等同 `ALLOW_PRIVATE_NETWORK=true`）；名单非空时只有命中的目标可以出站，其余私网/环回地址一律拦截 |
 | `CORS_ALLOWED_ORIGINS`      | 空               | 允许跨域访问的来源白名单（逗号分隔）。留空表示**仅同源**——不发送任何 CORS 响应头；仅在前后端分离且前端独立域名部署时配置                                                                                                                                                                                                                                                   |
 
-鉴权使用 **Access Token + Refresh Token**：Access Token 是 6 小时的 HS256 JWT，Refresh Token 是 7 天的一次性随机串（数据库只存摘要）。**没有「安全模式」开关**：除 `/health`、`/reader3/login`、`/reader3/refreshToken`、`/reader3/getUserInfo`、`/reader3/logout` 与 WebDAV 的 Basic 认证入口外，所有 `/reader3/*` 接口都要求有效令牌，否则返回 401。
+鉴权使用 **Access Token + Refresh Token**：Access Token 是 6 小时的 HS256 JWT，Refresh Token 是 7 天的一次性随机串（数据库只存摘要）。浏览器会话由两枚 HttpOnly Cookie 承载（`reader_access` / `reader_refresh`，`HttpOnly; SameSite=Strict; Path=/reader3`），JS 读不到。**没有「安全模式」开关**：除 `/health`、`/reader3/login`、`/reader3/refreshToken`、`/reader3/getUserInfo`、`/reader3/logout` 与 WebDAV 的 Basic 认证入口外，所有 `/reader3/*` 接口都要求有效令牌，否则返回 401。
 
 令牌传法（详见 [API 概述 · 认证](../api/index#认证)）：
 
-- 请求头：`Authorization: Bearer <jwt>`（仅 Access Token）
-- URL 查询参数：`?accessToken=<jwt>`（SSE 与 `<img>` 无法设置请求头时使用）
-- Refresh Token 只放在 `POST /reader3/refreshToken` 的 JSON body 里，**永远不进 URL**
+- 浏览器：HttpOnly Cookie 自动携带；SSE 与 `<img>` 也靠 Cookie，URL 不再拼令牌。
+- API 客户端：`Authorization: Bearer <jwt>`。
+- 查询参数 `?accessToken=` 只接受书源登录代理的 30 分钟限定令牌（仅 `bookSourceProxy` / `bookSourceClientLog`）。
+- Refresh Token 只随 `reader_refresh` Cookie 发给 `/reader3/refreshToken`；旧客户端/CLI 可在 JSON body 里回退迁移。
+
+::: tip 跨域部署与 Cookie
+Cookie 会话默认面向同源部署。前后端分离且跨域时，除了配置 `CORS_ALLOWED_ORIGINS`，浏览器还要求 `SameSite=None; Secure` 与 CORS 凭据（服务端已在显式来源白名单时开启 `allow_credentials`）；最省事的做法仍是把前端与后端放在同一个站点下。
+:::
 
 ::: tip 生产部署请显式配置 `JWT_SECRET`
 留空虽然能开箱即用，但密钥会写在 `storage/jwt_secret` 里。多实例或容器化部署（每次重建容器都换一份 storage）必须显式配置，否则重启即全体登出。
@@ -170,6 +176,7 @@ WEB_ROOT=frontend/dist
 LOG_LEVEL=info
 ACCESS_TOKEN_TTL_SECS=21600
 REFRESH_TOKEN_TTL_SECS=604800
+COOKIE_SECURE=auto
 ```
 
 `.env` 已被 gitignore，不会被提交。后端即使没有 `.env` 文件也能用代码默认值正常启动。

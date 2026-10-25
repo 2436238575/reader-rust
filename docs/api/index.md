@@ -112,10 +112,10 @@ http://localhost:8080/reader3
 
 鉴权采用 **Access Token + Refresh Token** 双令牌：
 
-| 令牌          | 形态                          | 有效期                         | 用途                                               |
-| ------------- | ----------------------------- | ------------------------------ | -------------------------------------------------- |
-| Access Token  | HS256 JWT                     | 6 小时（`ACCESS_TOKEN_TTL_SECS`） | 访问业务接口；可放请求头或查询参数                 |
-| Refresh Token | `rt_` + 随机串（一次性）      | 7 天滑动续期（`REFRESH_TOKEN_TTL_SECS`） | 只用于 `POST /reader3/refreshToken` 换新，不进 URL |
+| 令牌          | 形态                          | 有效期                         | 传递                                                                 |
+| ------------- | ----------------------------- | ------------------------------ | -------------------------------------------------------------------- |
+| Access Token  | HS256 JWT                     | 6 小时（`ACCESS_TOKEN_TTL_SECS`） | 浏览器走 HttpOnly Cookie `reader_access`；API 客户端可放 `Authorization` 头 |
+| Refresh Token | `rt_` + 随机串（一次性）      | 7 天滑动续期（`REFRESH_TOKEN_TTL_SECS`） | 只随 `reader_refresh` HttpOnly Cookie 发给 `/reader3/refreshToken`；body 回退仅用于旧客户端/CLI 迁移 |
 
 Access Token 载荷：
 
@@ -126,29 +126,45 @@ Access Token 载荷：
 | `iat` / `exp` | 签发时间 / 过期时间（默认 6 小时）     |
 | `ver`         | 撤销版本号，对应 `users.token_version` |
 
-令牌**只以三种方式传递**（依据：`src/auth/middleware.rs`、`src/api/handlers/user.rs`）：
+### 浏览器会话
+
+登录、刷新、改密成功时，服务端下发两枚 Cookie：
+
+```text
+reader_access=<JWT>; reader_refresh=<rt_...>
+HttpOnly; SameSite=Strict; Path=/reader3; Max-Age=<对应 TTL>
+```
+
+- 两枚都是 host-only，JS 读不到，代理页也拿不到；`Secure` 由 `COOKIE_SECURE` 控制（`auto` 默认按 Host 是否回环决定，`true` / `false` 强制）。
+- 浏览器请求、SSE（`EventSource`）与 `<img>` 都由浏览器自动携带 Cookie，URL 里不再需要 `accessToken`。
+- 旧版 localStorage 令牌由前端一次性迁移：启动时用旧 Refresh Token 调用一次刷新，成功后删除旧键；迁移失败也删除旧键并回到登录页。
+- 只有 `Authorization`、Cookie 与两个代理路径的查询参数会参与鉴权；其他路径的 `?accessToken=` 一律忽略。
+
+### API 客户端
 
 | 传法     | 位置                          | 用途                                  |
 | -------- | ----------------------------- | ------------------------------------- |
-| 请求头   | `Authorization: Bearer <jwt>` | 常规请求（仅 Access Token）           |
-| 查询参数 | `accessToken=<jwt>`           | SSE 与 `<img>` 等无法设置请求头的场景 |
-| JSON body | `{"refreshToken":"rt_..."}`  | 仅 `/reader3/refreshToken` 与登出     |
+| 请求头   | `Authorization: Bearer <jwt>` | 常规接口                              |
+| 查询参数 | `accessToken=<限定令牌>`      | 仅 `/reader3/bookSourceProxy` 与 `/reader3/bookSourceClientLog` |
+| JSON body | `{"refreshToken":"rt_..."}`  | 仅 `/reader3/refreshToken` 与 `/reader3/logout` 的迁移/CLI 回退 |
 
-请求头优先于查询参数。裸令牌（不带 `Bearer ` 前缀）也能识别，但推荐始终带上前缀。
+取令牌顺序：`Authorization` 头 → `reader_access` Cookie → 查询参数（仅上面两个代理路径）。裸令牌（不带 `Bearer ` 前缀）也能识别，但推荐始终带上前缀。
 
 ### 刷新与轮换
 
-`POST /reader3/refreshToken` 是公开接口，请求体 `{ "refreshToken": "rt_..." }`，成功返回新的 `accessToken` 与 `refreshToken`。
+`POST /reader3/refreshToken` 是公开接口。浏览器只带 `reader_refresh` Cookie；旧客户端/CLI 可在 body 里提交 `{ "refreshToken": "rt_..." }`（Cookie 优先）。
+
+成功时 `Set-Cookie` 换发两枚新 Cookie，JSON 只返回 `accessToken` 与 `accessTokenExpiresIn`，`refreshToken` 不再交给 JS。失败统一 **HTTP 401 + `需要登录`**，并清除两枚 Cookie。
 
 - **一次性**：换取成功即消费旧令牌，同时下发新令牌；
 - **30 秒宽限窗口**：客户端丢响应或双标签页并发时，已消费令牌在窗口内仍可换取；超过窗口再次出现视为重放，吊销整条登录会话；
 - **7 天滑动续期**：每次换取重新计时；
 - Refresh Token 不是 JWT，不能当访问凭据；Access Token 也不能用于刷新；
-- 失败统一 **HTTP 401 + `需要登录`**。
+- 多设备各自持有独立的会话家族（每次登录新建一条），登出只吊销当前家族。
 
 ### 需要登录的接口
 
-除 `/health`、`/reader3/login`、`/reader3/refreshToken`、`/reader3/getUserInfo`、`/reader3/logout` 与 WebDAV 的 Basic 认证入口外，**所有 `/reader3/*` 接口都要求有效 Access Token**，否则返回 401。
+除 `/health`、`/reader3/login`、`/reader3/refreshToken`、`/reader3/getUserInfo`、`/reader3/logout` 与 WebDAV 的 Basic 认证入口外，**所有 `/reader3/*` 接口都要求有效 Access Token**（浏览器由 Cookie 自动携带），否则返回 401。
 
 `/reader3/getUserInfo` 与 `/reader3/logout` 是**可选鉴权**：未登录也返回 200，只是 `userInfo` 为 `null` / 仅做本地清理确认。
 
@@ -156,9 +172,9 @@ Access Token 载荷：
 
 Access Token 无状态，但服务端每个请求都会比对 `users.token_version`；Refresh Token 另有 `refresh_tokens` 表记录轮换状态。以下操作会让会话立即失效：
 
-- 修改密码（`changePassword`）——自增版本号并吊销该账号全部 Refresh Token，响应为当前设备新开一对令牌
+- 修改密码（`changePassword`）——自增版本号并吊销该账号全部 Refresh Token，响应为当前设备换发新的 Cookie
 - 以不同的 `ADMIN_PASSWORD` 重启服务（强制重置，见 [账号 API](./user#账号的创建与初始密码)）
-- 登出（`logout`）——吊销 body 里那枚 Refresh Token 所属的会话家族；当前 Access Token 最迟 6 小时后自然过期
+- 登出（`logout`）——吊销 Cookie 里那枚 Refresh Token 所属的会话家族并清除两枚 Cookie；当前 Access Token 最迟 6 小时后自然过期
 - 已消费的 Refresh Token 在 30 秒宽限窗口外再次提交——按泄露处理，吊销整条会话家族
 
 [认证方式的完整说明见账号 API](./user)

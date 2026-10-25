@@ -22,7 +22,7 @@ Reader-Rust 是 [阅读3.0](https://github.com/hectorqin/reader) 的 Rust 重写
 cargo run                      # 开发模式运行，默认监听 127.0.0.1:8080（Docker 镜像显式设 0.0.0.0）
 cargo build                    # 调试构建
 cargo build --release          # 发布构建
-cargo test                     # 全部测试（Rust 侧共 467 个，另有 2 个真实网络用例默认忽略）
+cargo test                     # 全部测试（Rust 侧共 504 个，另有 2 个真实网络用例默认忽略）
 cargo test <关键字>             # 按名称过滤测试
 cargo clippy --all-targets     # 静态检查
 cargo fmt                      # 格式化
@@ -113,6 +113,7 @@ cp .env.example .env
 | `JWT_SECRET`                    | 空                                  | JWT 签名密钥；留空时自动生成并持久化到 `<STORAGE_DIR>/jwt_secret`                                                                                                                                                                           |
 | `ACCESS_TOKEN_TTL_SECS`         | `21600`（6 小时）                   | Access Token（HS256 JWT）有效期；过期后前端用 Refresh Token 静默换新                                                                                                                                                                        |
 | `REFRESH_TOKEN_TTL_SECS`        | `604800`（7 天）                    | Refresh Token 有效期，滑动续期：每次换取重新计时。一次性轮换；已消费令牌 30 秒宽限窗口外重放会吊销整条会话                                                                                                                                  |
+| `COOKIE_SECURE`                 | `auto`                              | 会话 Cookie 的 `Secure` 属性。`auto` 在 Host 为 `localhost`/`127.0.0.1`/`[::1]` 时不加，其余加；`true`/`false` 强制。HTTP + 非回环主机应改 HTTPS，或显式设 `false`（不推荐）                                                                  |
 | `JWT_TTL_SECS`                  | 空（已废弃）                        | 旧版单令牌方案的有效期。未显式配置 `ACCESS_TOKEN_TTL_SECS` 时作为其兼容别名生效并打印启动警告；两者都配置时以新变量为准                                                                                                                    |
 | `ADMIN_USERNAME`                | `admin`                             | 唯一账号的用户名，首次启动建号时使用；只允许小写字母/数字/下划线                                                                                                                                                                            |
 | `ADMIN_PASSWORD`                | 空                                  | 唯一账号的密码；非空时每次启动强制覆盖（兼作忘记密码的找回通道），相同则 no-op；留空时首启随机生成并打印到启动 stderr（不写入滚动日志文件）。封禁期内正确密码也会被拒，设置该变量后重启可强制重置并解锁 |
@@ -203,7 +204,7 @@ storage/                  运行期数据，gitignored，首次启动自动创�
 
 规模参照（便于判断改动影响面）：后端 `src/` 共 96 个 `.rs`、约 39700 行，其中最大的几个文件是
 `parser/rule_engine.rs`（约 5000 行）、`service/book_service.rs`（约 4600 行）、`api/handlers/book.rs`（约 3000 行）；
-前端 `src/` 下 189 个文件（136 个 `.ts`，其中 43 个是测试；49 个 `.vue`；2 个 CSS + SVG/PNG 各 1）。阅读器按职责拆成 composable（views/ReaderView.vue 只做模板与编排接线；横翻分页/连续滚动/位置恢复/搜索/选字/TTS/自动播放/手势各自成簇），纯计算下沉 `utils/`（chapterRender/horizontalPaging/readingPosition 等）。
+前端 `src/` 下 190 个文件（137 个 `.ts`，其中 44 个是测试；49 个 `.vue`；2 个 CSS + SVG/PNG 各 1）。阅读器按职责拆成 composable（views/ReaderView.vue 只做模板与编排接线；横翻分页/连续滚动/位置恢复/搜索/选字/TTS/自动播放/手势各自成簇），纯计算下沉 `utils/`（chapterRender/horizontalPaging/readingPosition 等）。
 
 ---
 
@@ -241,7 +242,7 @@ HTTP 请求
 - `/reader3/aiProxyImage` 目前**无前端调用方**（AI 资料的地图图片改由后端直接下载落盘到
   `ASSETS_DIR`），端点保留备用。
 
-鉴权说明：**单用户**，采用 **Access Token + Refresh Token** 双令牌。唯一账号由启动时的 bootstrap 创建：用户名取 `ADMIN_USERNAME`，密码取 `ADMIN_PASSWORD`（非空则每次启动强制覆盖，兼作找回通道），都为空则首启随机生成并打印到启动 stderr（不写入滚动日志文件）；不提供注册、用户管理与角色/权限分层——登录即拥有全部能力。登录返回 `accessToken`（HS256 JWT，默认 6 小时，载荷 `{ sub, uid, iat, exp, ver }`；`sub` 是用户名，仅登录与展示；`uid` 是自增身份 id，存储命名空间一律用 `user_<uid>`）与 `refreshToken`（`rt_` + 32 字节随机串，默认 7 天滑动续期，数据库只存 SHA-256 摘要）。Access Token 的传递方式只有两种：`Authorization: Bearer <jwt>` 头，或查询参数 `accessToken`（SSE 与 `<img>` 无法设置请求头，只能走查询串）；Refresh Token 只放进 `POST /reader3/refreshToken` 的 JSON body，永久不进 URL。刷新是**一次性轮换**：换取成功即消费旧令牌并下发新的一对；已消费令牌有 30 秒宽限窗口（断网重试/双标签页并发），窗口外重放视为泄露并吊销整条登录会话（family）。中间件位于 `src/auth/middleware.rs`，分 `require_auth` / `optional_auth` 两档，在 `api/router.rs` 里按分组挂载；handler 通过 `CurrentUser` 提取器取身份，不再自行解析凭据。撤销分两层：改密码自增 `users.token_version` 并吊销全部 Refresh Token（旧 Access Token 立即失效）；登出吊销当前 Refresh family，当前 Access Token 最迟 6 小时后自然过期。`bookSourceProxy` 注入被代理页面的令牌额外带 `scope`/`bsid`，是只能访问代理路径、绑定单个书源 id 的 30 分钟限定令牌。前端在 `utils/authSession.ts` 里做单飞刷新、到期前 5 分钟主动续期，并用 Web Locks（可用时）协调多标签页。
+鉴权说明：**单用户**，采用 **Access Token + Refresh Token** 双令牌。唯一账号由启动时的 bootstrap 创建：用户名取 `ADMIN_USERNAME`，密码取 `ADMIN_PASSWORD`（非空则每次启动强制覆盖，兼作找回通道），都为空则首启随机生成并打印到启动 stderr（不写入滚动日志文件）；不提供注册、用户管理与角色/权限分层——登录即拥有全部能力。登录、刷新、改密成功时服务端设置两枚 HttpOnly Cookie：`reader_access`（HS256 JWT，默认 6 小时，载荷 `{ sub, uid, iat, exp, ver }`；`sub` 是用户名，仅登录与展示；`uid` 是自增身份 id，存储命名空间一律用 `user_<uid>`）与 `reader_refresh`（`rt_` + 32 字节随机串，默认 7 天滑动续期，数据库只存 SHA-256 摘要）。两枚都是 `HttpOnly; SameSite=Strict; Path=/reader3`、host-only；`Secure` 由 `COOKIE_SECURE`（`auto`/`true`/`false`）决定。浏览器的业务请求、SSE 与 `<img>` 都由浏览器自动携带 Cookie，前端不再从 localStorage 读写令牌；localStorage 只留非敏感 `reader-auth-hint`（用户名 + Access Token 过期时间）用于路由守卫、离线 UI 与提前续期。JSON 响应仍保留 `accessToken` 供 API 客户端用 `Authorization: Bearer`，但不再返回 `refreshToken`。取令牌顺序：`Authorization` 头 → `reader_access` Cookie → 查询参数 `accessToken`；查询串只允许 `bookSourceProxy` / `bookSourceClientLog` 的 30 分钟限定令牌，其他路径不再接受。Refresh Token 只随 `reader_refresh` Cookie 发给 `/reader3/refreshToken`；旧客户端/CLI 可在 JSON body 回退迁移。刷新是**一次性轮换**：换取成功即消费旧令牌并下发新的一对；已消费令牌有 30 秒宽限窗口（断网重试/双标签页并发），窗口外重放视为泄露并吊销整条登录会话（family）。中间件位于 `src/auth/middleware.rs`，分 `require_auth` / `optional_auth` 两档，在 `api/router.rs` 里按分组挂载；handler 通过 `CurrentUser` 提取器取身份，不再自行解析凭据。撤销分两层：改密码自增 `users.token_version` 并吊销全部 Refresh Token（旧 Access Token 立即失效）；登出清两枚 Cookie 并吊销当前 Refresh family，当前 Access Token 最迟 6 小时后自然过期。书源登录预览先用 `POST /reader3/mintBookSourceProxyToken` 换 30 分钟限定令牌（带 `scope`/`bsid`、只能访问代理路径、绑定单个书源 id），主 JWT 不进 iframe URL；代理 HTML 响应带 `Content-Security-Policy: sandbox allow-scripts allow-forms`，直接打开或嵌入都进入不透明源。前端在 `utils/authSession.ts` 里凭 Cookie 做单飞刷新（Web Locks/软锁协调多标签页）、到期前 5 分钟主动续期；旧 localStorage 令牌在启动时一次性迁移后删除。
 
 ### 静态资源与 404
 
@@ -388,9 +389,9 @@ XPath 有资源上限（长度 8KB / 嵌套 64 层 / 总步数 100、`//` 50）�
 
 ## 测试
 
-Rust 侧共 **467 个测试**（322 个内联单元测试 + 145 个集成用例，另有 2 个 `#[ignore]` 的真实网络用例）。`cargo test` 输出的合计就是实际用例数：`src/main.rs` 只是入口文件，不再重复声明模块，bin 目标没有单元测试，不存在重复计数。分布为：
+Rust 侧共 **504 个测试**（346 个内联单元测试 + 158 个集成用例，另有 2 个 `#[ignore]` 的真实网络用例）。`cargo test` 输出的合计就是实际用例数：`src/main.rs` 只是入口文件，不再重复声明模块，bin 目标没有单元测试，不存在重复计数。分布为：
 
-- `tests/` 下 24 个集成测试文件（145 个常规用例；`yckceo_live_sources.rs` 只装那 2 个默认忽略的真实网络用例），其中 `auth_flow.rs` 用例最多（18 个）；
+- `tests/` 下 24 个集成测试文件（158 个常规用例；`yckceo_live_sources.rs` 只装那 2 个默认忽略的真实网络用例），其中 `auth_flow.rs` 用例最多（24 个）；
   `auth_flow.rs`、`review_flow.rs`、`chapter_image_flow.rs`、`image_pipeline.rs` 与
   `webdav_flow.rs` 起真实监听端口，前者覆盖 401、静态回落、缓存清理与改密吊销令牌，
   中间三个各用一个假上游覆盖评论规则（7 天缓存、按类型清理）、章节配图（配图规则、
@@ -400,9 +401,9 @@ Rust 侧共 **467 个测试**（322 个内联单元测试 + 145 个集成用例�
 - `agent_sidecar_flow.rs` 用 Node 假 sidecar（`tests/helpers/fake_agent_sidecar.mjs`）
   走全流程：批量更新、章节跳过、工具回调（正文/搜索钳制）、地图落盘与降级、看门狗与取消
   （机器上需要有 Node）；
-- `src/` 内的内联单元测试模块（322 个）。
+- `src/` 内的内联单元测试模块（346 个）。
 
-sidecar 使用 pytest（115 个用例，
+sidecar 使用 pytest（116 个用例，
 见「常用命令」），含从旧前端实现 1:1 移植的领域规则用例与新增编排能力用例。
 
 需要注意：

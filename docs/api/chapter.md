@@ -296,8 +296,10 @@ POST /reader3/saveReadProgress
 ## 获取图片（封面等）
 
 ```text
-GET /reader3/image/<id>?accessToken=<jwt>
+GET /reader3/image/<id>
 ```
+
+浏览器里 `<img>` 会自动携带 HttpOnly Cookie `reader_access`，URL 不需要再拼令牌；API 客户端仍可用 `Authorization: Bearer <jwt>`。其他路径的 `?accessToken=` 查询参数已不再接受。
 
 书源里的图片地址普遍是**带时效签名的短命 URL**（番茄图床的 `x-expires` / `x-signature`，
 签名还会随宿主会话轮换），而且格式不一定是浏览器能渲染的（番茄封面是 HEIC，Chrome 直接报错）。
@@ -323,8 +325,8 @@ GET /reader3/cover?path=<封面URL>
 ```
 
 `customCoverUrl`（用户自定义封面）等历史入口存的还是书源地址，这个接口保留兼容：把 `path` 登记成 id
-后走上面同一条管道（转码、缓存、自愈一致）。**需要登录**，令牌的携带方式与
-`/reader3/image/<id>` 相同（`Authorization` 头或 `accessToken` 查询参数）。书源下发的封面地址（`coverUrl`）在响应里已被改写成 `/reader3/image/<id>`，正常调用方不需要走这个入口。
+后走上面同一条管道（转码、缓存、自愈一致）。**需要登录**，浏览器由 HttpOnly Cookie 携带会话，
+API 客户端用 `Authorization` 头；`?accessToken=` 查询参数已不再接受。书源下发的封面地址（`coverUrl`）在响应里已被改写成 `/reader3/image/<id>`，正常调用方不需要走这个入口。
 
 ## 获取本地 EPUB 资源
 

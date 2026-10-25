@@ -6,7 +6,7 @@ WebDAV 远端备份/同步接口。所有 JSON 接口响应包裹为统一结构
 
 ## JSON 接口
 
-这几个接口与其他 `/reader3/*` 接口一致，使用 JWT：`Authorization: Bearer <jwt>` 头或 `accessToken` 查询参数。HTTP **Basic 认证只用于下面的协议入口**。
+这几个接口与其他 `/reader3/*` 接口一致，使用会话鉴权：浏览器由 HttpOnly Cookie `reader_access` 自动携带，API 客户端用 `Authorization: Bearer <jwt>`；`?accessToken=` 查询参数只保留给书源登录代理路径，这里不再接受。HTTP **Basic 认证只用于下面的协议入口**。
 
 ### 获取文件列表
 

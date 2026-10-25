@@ -186,6 +186,26 @@ POST /reader3/readSourceFile
 
 上传 `multipart/form-data` 文件（`.json` 或 `.txt`），返回解析出的书源对象数组。单文件上限 32MB；单请求 multipart 字段数上限 20 个（超限 400）。
 
+## 书源代理限定令牌
+
+```text
+POST /reader3/mintBookSourceProxyToken
+```
+
+请求体：
+
+```json
+{ "bookSourceId": 12 }
+```
+
+返回：
+
+```json
+{ "token": "<30 分钟限定令牌>", "expiresIn": 1800 }
+```
+
+受保护接口（浏览器由 HttpOnly Cookie 自动携带，API 客户端用 `Authorization`）。令牌的 claims 带 `scope=bookSourceProxy` 与 `bsid`，只能访问 `bookSourceProxy` / `bookSourceClientLog` 两个路径，且只能代理这一本书源。前端打开书源登录预览时先用它换令牌，再拼 iframe URL；**主 JWT 不进 URL**。
+
 ## 书源代理
 
 ```text
@@ -198,10 +218,11 @@ ANY /reader3/bookSourceProxy
 | -------------- | ------ | ---- | ---------------------------- |
 | `bookSourceId` | number | 是   | 书源 ID                      |
 | `url`          | string | 是   | 需要代理请求的完整或部分 URL |
+| `accessToken`  | string | 是   | 上面接口签发的限定令牌（仅此路径与 `bookSourceClientLog` 接受查询串令牌） |
 
 将目标站点的 HTML 页面注入代理脚本后返回，使页面内相对链接、表单、脚本自动走本代理。支持 GET/POST。
 
-安全设计：注入页面的 `accessToken` 是**限定用途令牌**——短寿命（30 分钟）、通过 claims 里的 `bsid` 绑定单个书源（`bookSourceId`）、且只能访问 `bookSourceProxy` / `bookSourceClientLog` 两个路径；即使被代理页面的第三方脚本窃取，也不能用它调用其它接口或代理其它书源。前端嵌入代理页面时应使用无 `allow-same-origin` 的 sandbox iframe。
+安全设计：注入页面的 `accessToken` 是**限定用途令牌**——短寿命（30 分钟）、通过 claims 里的 `bsid` 绑定单个书源（`bookSourceId`）、且只能访问 `bookSourceProxy` / `bookSourceClientLog` 两个路径；即使被代理页面的第三方脚本窃取，也不能用它调用其它接口或代理其它书源。HTML 响应带 `Content-Security-Policy: sandbox allow-scripts allow-forms`（不含 `allow-same-origin`），直接打开或嵌入 iframe 都会进入不透明源，读不到主站存储与会话 Cookie。前端嵌入代理页面时应使用无 `allow-same-origin` 的 sandbox iframe。
 
 ## 书源客户端日志
 

@@ -230,11 +230,10 @@ export interface BookGroup {
 export interface UserInfo {
   username: string
   lastLoginAt?: number
-  /// 仅在登录与改密码的响应中出现；getUserInfo 不回吐任何凭据
+  /// 登录/改密的 JSON 仍返回，供 API 客户端用 Authorization；浏览器不保存，
+  /// 会话由 HttpOnly Cookie 承载
   accessToken?: string
-  /// 一次性 Refresh Token，换取后立即轮换
-  refreshToken?: string
-  /// Access Token 有效秒数，前端据此主动续期
+  /// Access Token 有效秒数，前端据此安排主动续期
   accessTokenExpiresIn?: number
   createdAt?: number
 }

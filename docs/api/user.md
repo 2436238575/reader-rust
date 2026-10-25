@@ -2,7 +2,7 @@
 
 单用户账号的登录、配置与文件接口。所有响应均包裹为统一结构：`{ "isSuccess": boolean, "data": any, "errorMsg": string }`。
 
-登录后服务端返回一对令牌：**Access Token**（6 小时 HS256 JWT）与 **Refresh Token**（7 天一次性随机串）。Access Token 放在 `Authorization` 头，例如 `Authorization: Bearer <jwt>`；Refresh Token 只通过 `POST /reader3/refreshToken` 换取新令牌，永远不放进 URL。令牌载荷与轮换规则见 [API 概述 · 认证](./index#认证)。
+登录成功后服务端用两枚 HttpOnly Cookie 承载会话：**Access Token**（6 小时 HS256 JWT）与 **Refresh Token**（7 天一次性随机串）。浏览器不需要读写令牌，SSE 与图片请求也会自动携带 Cookie；API 客户端仍可用 `Authorization: Bearer <jwt>`。Cookie 属性、载荷与轮换规则见 [API 概述 · 认证](./index#认证)。
 
 ## 账号的创建与初始密码
 
@@ -36,7 +36,6 @@ POST /reader3/login
   "isSuccess": true,
   "data": {
     "accessToken": "<JWT>",
-    "refreshToken": "rt_<64 位十六进制>",
     "accessTokenExpiresIn": 21600,
     "uid": 1,
     "username": "用户名",
@@ -47,7 +46,9 @@ POST /reader3/login
 }
 ```
 
-`uid` 是后端分配的自增身份 id；存储命名空间一律用 `user_<uid>`，username 仅登录与展示。`accessTokenExpiresIn` 是 Access Token 的有效秒数，前端据此安排主动续期。
+响应头同时下发 `reader_access` 与 `reader_refresh` 两枚 Cookie（`HttpOnly; SameSite=Strict; Path=/reader3`，`Secure` 由 `COOKIE_SECURE` 决定）。`accessToken` 保留给 API 客户端；浏览器不需要保存它，`refreshToken` 不再出现在 JSON 里。
+
+`uid` 是后端分配的自增身份 id；存储命名空间一律用 `user_<uid>`，username 仅登录与展示。`accessTokenExpiresIn` 是 Access Token 的有效秒数，前端据此安排主动续期；`refresh_token_ttl_secs` 决定 `reader_refresh` 的 `Max-Age`。
 
 ## 刷新令牌
 
@@ -55,7 +56,7 @@ POST /reader3/login
 POST /reader3/refreshToken
 ```
 
-公开接口，请求体：
+公开接口。浏览器只带 `reader_refresh` Cookie；旧客户端/CLI 可以在 body 里回退提交：
 
 ```json
 { "refreshToken": "rt_..." }
@@ -66,10 +67,11 @@ POST /reader3/refreshToken
 ```json
 {
   "accessToken": "<新的 JWT>",
-  "refreshToken": "rt_<新的随机串>",
   "accessTokenExpiresIn": 21600
 }
 ```
+
+响应头 `Set-Cookie` 换发两枚新 Cookie，Refresh Token 重新计时；JSON 不再返回 `refreshToken`。
 
 规则：
 
@@ -77,7 +79,7 @@ POST /reader3/refreshToken
 - 已消费令牌在 **30 秒宽限窗口**内重复提交仍可换取（客户端断网重试、双标签页并发），窗口外再次出现视为泄露，吊销整条登录会话；
 - 有效期 **7 天滑动续期**：每次换取重新计时，持续使用的设备不会掉线；
 - Refresh Token 不是 JWT，不能放进 `Authorization` 头访问业务接口；Access Token 也不能用来刷新（哈希查不到）；
-- 任何失败（不存在 / 已过期 / 已吊销 / 重放）统一返回 **HTTP 401 + `需要登录`**，客户端应清空本地令牌并重新登录；
+- 任何失败（不存在 / 已过期 / 已吊销 / 重放）统一返回 **HTTP 401 + `需要登录`**，并清除两枚 Cookie；客户端清理本地登录提示后重新登录；
 - 多设备各自持有独立的会话家族（每次登录新建一条），登出只吊销当前家族。
 
 ## 退出登录
@@ -86,13 +88,9 @@ POST /reader3/refreshToken
 POST /reader3/logout
 ```
 
-请求体可选：
+不需要请求体。服务端优先读 `reader_refresh` Cookie（旧客户端可在 body 里回退 `{ "refreshToken": "rt_..." }`），吊销其所属的登录会话家族并清除两枚 Cookie。
 
-```json
-{ "refreshToken": "rt_..." }
-```
-
-**总是返回成功**，不要求有效 Access Token，body 为空或格式损坏也不报错。带 `refreshToken` 时会吊销其所属的登录会话（同一条轮换家族）；不带则只作客户端清理确认。登出不会立即作废当前 Access Token——它最迟在 6 小时后自然过期；需要立刻踢掉所有设备请使用改密码。
+**总是返回成功**，不要求有效 Access Token，Cookie/body 缺失或格式损坏也不报错。登出不会立即作废已经签发的 Access Token——它最迟在 6 小时后自然过期；需要立刻踢掉所有设备请使用改密码。
 
 ## 获取用户信息
 
@@ -125,7 +123,7 @@ POST /reader3/changePassword
 }
 ```
 
-新密码至少 8 位。改密码会自增 `token_version` 并吊销该账号全部 Refresh Token：其他设备上的 Access Token 与 Refresh Token 立即失效。响应里携带为当前设备新开的一对 `accessToken` / `refreshToken`（客户端必须保存，否则当前设备也会被登出）。
+新密码至少 8 位。改密码会自增 `token_version` 并吊销该账号全部 Refresh Token：其他设备上的 Access Token 与 Refresh Token 立即失效。响应头为当前设备换发两枚新 Cookie，JSON 仍返回 `accessToken` / `accessTokenExpiresIn` 供 API 客户端使用；浏览器不需要保存令牌。
 
 ## 获取用户配置
 
