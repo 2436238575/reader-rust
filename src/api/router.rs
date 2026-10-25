@@ -86,6 +86,17 @@ pub fn build_router(state: AppState) -> Router {
             "/reader3/importChapterText",
             post(handlers::import_chapter_text),
         )
+        // 预览与导入共用 read_chapter_import_request（TXT 上限 50MB），
+        // 预览留在 8MB 组会让 8-50MB 的 TXT 在第一步就 413
+        .route(
+            "/reader3/previewChapterImport",
+            post(handlers::preview_chapter_import),
+        )
+        // JSON body 携带整章正文，与 TXT 导入同属大文本入口
+        .route(
+            "/reader3/importChapterVersion",
+            post(handlers::import_chapter_version),
+        )
         .route("/reader3/uploadFile", post(handlers::upload_file))
         .route(
             "/reader3/uploadFileToWebdav",
@@ -254,14 +265,6 @@ pub fn build_router(state: AppState) -> Router {
         .route(
             "/reader3/resetBookToUpstream",
             post(handlers::reset_book_to_upstream),
-        )
-        .route(
-            "/reader3/importChapterVersion",
-            post(handlers::import_chapter_version),
-        )
-        .route(
-            "/reader3/previewChapterImport",
-            post(handlers::preview_chapter_import),
         )
         .route(
             "/reader3/getChapterImportDiff",

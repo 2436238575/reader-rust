@@ -736,3 +736,46 @@ async fn public_login_body_is_capped_at_1mb() {
     let body: serde_json::Value = response.json().await.unwrap();
     assert_eq!(body["isSuccess"], serde_json::json!(true));
 }
+
+/// previewChapterImport 与 importChapterText 共用 read_chapter_import_request
+/// （TXT 上限 50MB），预览此前留在 protected 的 8MB 组：8-50MB 的 TXT
+/// 在预览一步就 413。移入大请求体组后，9MB 请求应到达业务逻辑（400）。
+#[tokio::test]
+async fn preview_chapter_import_accepts_bodies_over_8mb() {
+    let server = TestServer::start().await;
+    let token = server.login().await;
+
+    // 约 9MB 的 TXT：超过旧的 8MB 组上限，低于 TXT 的 50MB 字段上限
+    let boundary = "----previewbigbodyboundary";
+    let mut body: Vec<u8> = Vec::new();
+    body.extend_from_slice(
+        format!(
+            "--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"big.txt\"\r\nContent-Type: text/plain\r\n\r\n"
+        )
+        .as_bytes(),
+    );
+    body.extend_from_slice(&vec![b'x'; 9 * 1024 * 1024]);
+    body.extend_from_slice(format!("\r\n--{boundary}--\r\n").as_bytes());
+
+    let response = server
+        .client
+        .post(server.url("/reader3/previewChapterImport"))
+        .bearer_auth(&token)
+        .header(
+            "Content-Type",
+            format!("multipart/form-data; boundary={boundary}"),
+        )
+        .body(body)
+        .send()
+        .await
+        .unwrap();
+    assert_ne!(
+        response.status(),
+        413,
+        "9MB 的预览请求不应被请求体上限挡成 413"
+    );
+    // 缺 bookId 的业务 400：证明请求体已完整读入、走到业务校验
+    assert_eq!(response.status(), 400);
+    let body: serde_json::Value = response.json().await.unwrap();
+    assert!(body["errorMsg"].as_str().unwrap().contains("bookId"));
+}
