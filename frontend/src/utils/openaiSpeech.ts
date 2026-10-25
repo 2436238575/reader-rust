@@ -1,7 +1,6 @@
 import { notifyNeedLogin } from './authEvents'
 import { summarizeHttpErrorBody } from './httpError'
 import { API_BASE } from './appBase'
-import { buildAuthHeaders as buildReaderJwtHeaders } from './secureAccess'
 import {
   RefreshNetworkError,
   SessionExpiredError,
@@ -81,8 +80,13 @@ export async function requestOpenAISpeechAudio({
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      ...(serverRequest ? buildReaderJwtHeaders() : buildAuthHeaders(apiKey)),
+      // 服务端代理请求靠同源 Cookie 携带会话，不再塞主 JWT；直连分支
+      // 用的是用户自己的 API Key（不受会话改造影响）
+      ...(serverRequest ? {} : buildAuthHeaders(apiKey)),
     },
+    // same-origin 与 fetch 默认一致，写明意图：后端请求带会话 Cookie，
+    // 直连第三方 API 时不外发任何凭据
+    credentials: 'same-origin',
     body: JSON.stringify(
       serverRequest
         ? { useServerConfig: true, kind: 'speech', path: '/v1/audio/speech', body }

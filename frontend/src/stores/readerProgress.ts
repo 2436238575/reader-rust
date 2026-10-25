@@ -7,7 +7,6 @@
 
 import { ref, type Ref } from 'vue'
 import { API_BASE } from '../utils/appBase'
-import { buildAuthHeaders } from '../utils/secureAccess'
 import { safeLocalSet } from '../utils/storage'
 import { saveBookProgress } from '../api/bookshelf'
 import type { Book, BookChapter } from '../types'
@@ -172,14 +171,14 @@ export function createReaderProgress(deps: ReaderProgressDeps) {
     const nextKey = `${payload.bookId}::${payload.index}::${payload.position}`
     if (!force && !progressDirty.value && lastServerProgressKey.value === nextKey) return
 
-    const headers: Record<string, string> = {
-      'Content-Type': 'application/json',
-      ...buildAuthHeaders(),
-    }
-
+    // 页面卸载时的最后一次上报走 keepalive：凭据靠同源 Cookie 自动携带，
+    // 不再往请求头塞令牌（显式 same-origin 与 fetch 默认一致，写明意图）
     void fetch(`${API_BASE}/saveBookProgress`, {
       method: 'POST',
-      headers,
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      credentials: 'same-origin',
       body: JSON.stringify(payload),
       keepalive: true,
     }).catch(() => undefined)
