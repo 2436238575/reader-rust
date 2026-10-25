@@ -403,10 +403,10 @@ pub fn build_router(state: AppState) -> Router {
     // `/reader3` 是纯 API 命名空间：未匹配的路径返回 JSON 404，
     // 而不是落到静态文件服务上得到一个空响应体的 404。
     // 静态路由优先级高于通配路由，因此这里的通配只兜住真正未注册的路径。
+    // webdav 不在其中：它在最外层压缩层之后才并入（见下方注释）。
     let api = Router::new()
         .merge(public)
         .merge(optional)
-        .merge(webdav)
         .merge(protected)
         .route("/reader3", any(handlers::api_not_found))
         .route("/reader3/", any(handlers::api_not_found))
@@ -491,6 +491,13 @@ pub fn build_router(state: AppState) -> Router {
         // 与小于 32 字节的响应——SSE 事件流走 Identity 透传，不会被压缩层缓冲，
         // 图片管道与字体分片也不会被二次压缩
         .layer(CompressionLayer::new())
+        // WebDAV 协议端点必须在压缩层之后才并入（Router::layer 只作用于
+        // 先添加的路由）：dav-server 的 PROPFIND 流式 body 用的是自家
+        // AsyncStream，结束后被再次轮询会 panic（"async fn resumed after
+        // completion"），客户端声明 Accept-Encoding 时连接直接断开。
+        // getWebdavFile（在 protected 里）不受影响：它用 tokio ReaderStream，
+        // 重复轮询安全。WebDAV 流量多为已压缩文件（epub/zip），不压缩损失很小
+        .merge(webdav)
         // 最外层兜底：只对没挂组级/路由级上限的路径生效（如 WebDAV）。
         // DefaultBodyLimit 走请求扩展覆盖，最内层的限制先生效
         .layer(DefaultBodyLimit::max(MAX_BODY_LIMIT_BYTES))
