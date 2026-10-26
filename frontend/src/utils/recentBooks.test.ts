@@ -1,13 +1,13 @@
 // @vitest-environment jsdom
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-const { getUserdata, saveUserdata, queueUserdataSave } = vi.hoisted(() => ({
-  getUserdata: vi.fn(),
-  saveUserdata: vi.fn(() => Promise.resolve()),
+const { getUserdataBatch, saveUserdataBatch, queueUserdataSave } = vi.hoisted(() => ({
+  getUserdataBatch: vi.fn(),
+  saveUserdataBatch: vi.fn(() => Promise.resolve()),
   queueUserdataSave: vi.fn(),
 }))
 
-vi.mock('../api/userdata', () => ({ getUserdata, saveUserdata }))
+vi.mock('../api/userdata', () => ({ getUserdataBatch, saveUserdataBatch }))
 vi.mock('./userdataQueue', () => ({ queueUserdataSave }))
 
 import {
@@ -114,24 +114,26 @@ describe('syncRecentBooksFromBackend', () => {
       'reader-recent-books',
       JSON.stringify([book({ bookId: 'id-1', recentReadAt: 100 })])
     )
-    getUserdata.mockResolvedValue([book({ bookId: 'id-2', recentReadAt: 200 })])
+    getUserdataBatch.mockResolvedValue({
+      'recent-books': [book({ bookId: 'id-2', recentReadAt: 200 })],
+    })
 
     await syncRecentBooksFromBackend()
 
     const local = loadRecentReadBooks()
     expect(local.map((item) => item.bookId)).toEqual(['id-2', 'id-1'])
     // 合并结果与后端原文不一致 → 推回合并结果
-    expect(saveUserdata).toHaveBeenCalledWith('recent-books', local)
+    expect(saveUserdataBatch).toHaveBeenCalledWith([{ name: 'recent-books', value: local }])
   })
 
   it('后端已是最新时不重复推送', async () => {
     const remoteList = [book({ bookId: 'id-1', recentReadAt: 100 })]
     localStorage.setItem('reader-recent-books', JSON.stringify(remoteList))
-    getUserdata.mockResolvedValue(remoteList)
+    getUserdataBatch.mockResolvedValue({ 'recent-books': remoteList })
 
     await syncRecentBooksFromBackend()
 
-    expect(saveUserdata).not.toHaveBeenCalled()
+    expect(saveUserdataBatch).not.toHaveBeenCalled()
   })
 
   it('后端不可达时保持本地不变', async () => {
@@ -139,22 +141,22 @@ describe('syncRecentBooksFromBackend', () => {
       'reader-recent-books',
       JSON.stringify([book({ bookId: 'id-1', recentReadAt: 100 })])
     )
-    getUserdata.mockRejectedValue(new Error('offline'))
+    getUserdataBatch.mockRejectedValue(new Error('offline'))
 
     await syncRecentBooksFromBackend()
 
     expect(loadRecentReadBooks().map((item) => item.bookId)).toEqual(['id-1'])
-    expect(saveUserdata).not.toHaveBeenCalled()
+    expect(saveUserdataBatch).not.toHaveBeenCalled()
   })
 
   it('同一分钟内重复调用被节流', async () => {
     // 假时钟越过前面用例留下的节流窗口，保证从干净状态开始
     vi.useFakeTimers()
     vi.setSystemTime(Date.now() + 61_000)
-    getUserdata.mockResolvedValue([])
+    getUserdataBatch.mockResolvedValue({ 'recent-books': [] })
     await syncRecentBooksFromBackend()
     await syncRecentBooksFromBackend()
-    expect(getUserdata).toHaveBeenCalledTimes(1)
+    expect(getUserdataBatch).toHaveBeenCalledTimes(1)
     vi.useRealTimers()
   })
 })

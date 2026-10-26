@@ -48,8 +48,8 @@ vi.mock('../utils/browserCache', () => ({
 }))
 
 vi.mock('../api/userdata', () => ({
-  getUserdata: vi.fn().mockResolvedValue(null),
-  saveUserdata: vi.fn().mockResolvedValue(undefined),
+  getUserdataBatch: vi.fn().mockResolvedValue({}),
+  saveUserdataBatch: vi.fn().mockResolvedValue(undefined),
 }))
 
 vi.mock('../utils/recentBooks', () => ({

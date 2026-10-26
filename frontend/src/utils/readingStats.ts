@@ -1,8 +1,8 @@
-import { getUserdata, saveUserdata } from '../api/userdata'
+import { getUserdataBatch, saveUserdataBatch } from '../api/userdata'
 import { queueUserdataSave } from './userdataQueue'
 import { READING_STATS } from './userdataDocs'
 
-// 后端 userdata 文档名（/reader3/getUserdata・saveUserdata），跨浏览器同步用
+// 后端 userdata 文档名（/reader3/getUserdataBatch・saveUserdataBatch），跨浏览器同步用
 export const READING_STATS_DOC_NAME = READING_STATS
 // readChapters 的保留条数上限（只作累计计数用，超出裁掉最旧的）
 export const MAX_READ_CHAPTER_ENTRIES = 5000
@@ -74,13 +74,16 @@ export function persistLocalReadingStats(stats: ReadingStats) {
 export async function syncReadingStatsFromBackend(local: ReadingStats): Promise<ReadingStats> {
   let remote: unknown
   try {
-    remote = await getUserdata(READING_STATS_DOC_NAME)
+    const docs = await getUserdataBatch([READING_STATS_DOC_NAME])
+    remote = docs[READING_STATS_DOC_NAME]
   } catch {
     return local // 离线或未登录
   }
   const merged = mergeReadingStats(local, sanitizeReadingStats(remote))
   if (JSON.stringify(merged) !== JSON.stringify(sanitizeReadingStats(remote))) {
-    await saveUserdata(READING_STATS_DOC_NAME, merged).catch(() => undefined)
+    await saveUserdataBatch([{ name: READING_STATS_DOC_NAME, value: merged }]).catch(
+      () => undefined
+    )
   }
   persistLocalReadingStats(merged)
   return merged

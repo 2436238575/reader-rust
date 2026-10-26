@@ -1,13 +1,13 @@
 // @vitest-environment jsdom
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-const { getUserdata, saveUserdata, queueUserdataSave } = vi.hoisted(() => ({
-  getUserdata: vi.fn(),
-  saveUserdata: vi.fn(() => Promise.resolve()),
+const { getUserdataBatch, saveUserdataBatch, queueUserdataSave } = vi.hoisted(() => ({
+  getUserdataBatch: vi.fn(),
+  saveUserdataBatch: vi.fn(() => Promise.resolve()),
   queueUserdataSave: vi.fn(),
 }))
 
-vi.mock('../api/userdata', () => ({ getUserdata, saveUserdata }))
+vi.mock('../api/userdata', () => ({ getUserdataBatch, saveUserdataBatch }))
 vi.mock('./userdataQueue', () => ({ queueUserdataSave }))
 
 import {
@@ -81,23 +81,25 @@ describe('syncReadingStatsFromBackend', () => {
   it('与后端合并并写回本地与后端', async () => {
     const local = stats({ totalSeconds: 600, openedBooks: ['a'] })
     localStorage.setItem('reader-stats', JSON.stringify(local))
-    getUserdata.mockResolvedValue({ totalSeconds: 1200, openedBooks: ['b'] })
+    getUserdataBatch.mockResolvedValue({
+      'reading-stats': { totalSeconds: 1200, openedBooks: ['b'] },
+    })
 
     const merged = await syncReadingStatsFromBackend(local)
 
     expect(merged.totalSeconds).toBe(1200)
     expect(merged.openedBooks).toEqual(['a', 'b'])
     expect(JSON.parse(localStorage.getItem('reader-stats')!)).toEqual(merged)
-    expect(saveUserdata).toHaveBeenCalledWith('reading-stats', merged)
+    expect(saveUserdataBatch).toHaveBeenCalledWith([{ name: 'reading-stats', value: merged }])
   })
 
   it('后端不可达时保持本地', async () => {
     const local = stats({ totalSeconds: 600 })
-    getUserdata.mockRejectedValue(new Error('offline'))
+    getUserdataBatch.mockRejectedValue(new Error('offline'))
 
     const merged = await syncReadingStatsFromBackend(local)
     expect(merged).toEqual(local)
-    expect(saveUserdata).not.toHaveBeenCalled()
+    expect(saveUserdataBatch).not.toHaveBeenCalled()
   })
 })
 
@@ -106,7 +108,7 @@ describe('pushReadingStatsToBackend', () => {
     const value = stats({ totalSeconds: 60 })
     pushReadingStatsToBackend(value)
     expect(queueUserdataSave).toHaveBeenCalledWith('reading-stats', value)
-    expect(saveUserdata).not.toHaveBeenCalled()
+    expect(saveUserdataBatch).not.toHaveBeenCalled()
   })
 })
 

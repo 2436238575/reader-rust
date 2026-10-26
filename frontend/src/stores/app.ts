@@ -76,7 +76,7 @@ export const useAppStore = defineStore('app', () => {
   let statsSynced = false
 
   // 首屏三份 userdata 文档（阅读统计/最近阅读/已读标记）一次批量预读，
-  // 随后的单文档读取命中 30s 一次性缓存，省三次往返；失败静默由单文档 GET 兜底
+  // 随后的批量读取命中 30s 一次性缓存，省三次往返；失败静默由读取方自行重试
   function prefetchFirstScreenDocs() {
     void prefetchUserdata([READING_STATS, RECENT_BOOKS, READ_HISTORY])
   }

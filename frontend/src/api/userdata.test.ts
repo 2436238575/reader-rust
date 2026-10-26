@@ -13,9 +13,8 @@ vi.mock('./http', () => ({
 
 import {
   clearUserdataPrefetch,
-  getUserdata,
+  getUserdataBatch,
   prefetchUserdata,
-  saveUserdata,
   saveUserdataBatch,
 } from './userdata'
 
@@ -52,21 +51,21 @@ describe('prefetchUserdata 首屏批量预读', () => {
     expect(httpGet).not.toHaveBeenCalled()
   })
 
-  it('预读失败静默（不抛出），随后 getUserdata 不受影响走单文档 GET', async () => {
+  it('预读失败静默（不抛出），随后 getUserdataBatch 不受影响照常发批量 GET', async () => {
     httpGet.mockRejectedValueOnce(new Error('offline'))
 
     await expect(prefetchUserdata(['reading-stats'])).resolves.toBeUndefined()
 
-    httpGet.mockResolvedValueOnce({ data: { totalSeconds: 5 } })
-    const value = await getUserdata<{ totalSeconds: number }>('reading-stats')
+    mockBatchOnce({ 'reading-stats': { totalSeconds: 5 } })
+    const docs = await getUserdataBatch<{ totalSeconds: number }>(['reading-stats'])
     expect(httpGet).toHaveBeenCalledTimes(2)
-    expect(httpGet).toHaveBeenLastCalledWith('/getUserdata?name=reading-stats')
-    expect(value).toEqual({ totalSeconds: 5 })
+    expect(httpGet).toHaveBeenLastCalledWith('/getUserdataBatch?names=reading-stats')
+    expect(docs['reading-stats']).toEqual({ totalSeconds: 5 })
   })
 })
 
-describe('getUserdata 消费预读缓存', () => {
-  it('命中缓存直接返回，不再发单文档 GET', async () => {
+describe('getUserdataBatch 消费预读缓存', () => {
+  it('命中缓存直接返回，不再发批量 GET', async () => {
     mockBatchOnce({
       'reading-stats': { totalSeconds: 7 },
       'recent-books': [{ bookId: 'b1' }],
@@ -75,74 +74,81 @@ describe('getUserdata 消费预读缓存', () => {
     await prefetchUserdata(['reading-stats', 'recent-books', 'readChapterHistory'])
     httpGet.mockClear()
 
-    await expect(getUserdata('reading-stats')).resolves.toEqual({ totalSeconds: 7 })
-    await expect(getUserdata('recent-books')).resolves.toEqual([{ bookId: 'b1' }])
-    // 缺失文档也缓存为 null：命中直接返回 null，不补单文档 GET
-    await expect(getUserdata('readChapterHistory')).resolves.toBeNull()
+    await expect(getUserdataBatch(['reading-stats'])).resolves.toEqual({
+      'reading-stats': { totalSeconds: 7 },
+    })
+    await expect(getUserdataBatch(['recent-books'])).resolves.toEqual({
+      'recent-books': [{ bookId: 'b1' }],
+    })
+    // 缺失文档也缓存为 null：命中直接返回 null，不补请求
+    await expect(getUserdataBatch(['readChapterHistory'])).resolves.toEqual({
+      readChapterHistory: null,
+    })
     expect(httpGet).not.toHaveBeenCalled()
   })
 
-  it('缓存一次性消费：第二次读取回落单文档 GET', async () => {
+  it('缓存一次性消费：第二次读取回落批量 GET', async () => {
     mockBatchOnce({ 'reading-stats': { totalSeconds: 7 } })
     await prefetchUserdata(['reading-stats'])
-    await getUserdata('reading-stats')
+    await getUserdataBatch(['reading-stats'])
 
-    httpGet.mockResolvedValueOnce({ data: { totalSeconds: 9 } })
-    const value = await getUserdata('reading-stats')
-    expect(httpGet).toHaveBeenCalledTimes(2) // 批量 1 次 + 单文档 1 次
-    expect(httpGet).toHaveBeenLastCalledWith('/getUserdata?name=reading-stats')
-    expect(value).toEqual({ totalSeconds: 9 })
+    mockBatchOnce({ 'reading-stats': { totalSeconds: 9 } })
+    const docs = await getUserdataBatch<{ totalSeconds: number }>(['reading-stats'])
+    expect(httpGet).toHaveBeenCalledTimes(2)
+    expect(httpGet).toHaveBeenLastCalledWith('/getUserdataBatch?names=reading-stats')
+    expect(docs['reading-stats']).toEqual({ totalSeconds: 9 })
   })
 
-  it('30s 内命中缓存，过期后回落单文档 GET', async () => {
+  it('30s 内命中缓存，过期后回落批量 GET', async () => {
     mockBatchOnce({ 'reading-stats': 1 })
     await prefetchUserdata(['reading-stats'])
 
     vi.advanceTimersByTime(29_000)
-    await expect(getUserdata('reading-stats')).resolves.toBe(1)
+    await expect(getUserdataBatch(['reading-stats'])).resolves.toEqual({ 'reading-stats': 1 })
     expect(httpGet).toHaveBeenCalledTimes(1)
 
     // 再次预读后放过期
     mockBatchOnce({ 'reading-stats': 2 })
     await prefetchUserdata(['reading-stats'])
     vi.advanceTimersByTime(31_000)
-    httpGet.mockResolvedValueOnce({ data: 3 })
-    await expect(getUserdata('reading-stats')).resolves.toBe(3)
-    expect(httpGet).toHaveBeenLastCalledWith('/getUserdata?name=reading-stats')
+    mockBatchOnce({ 'reading-stats': 3 })
+    await expect(getUserdataBatch(['reading-stats'])).resolves.toEqual({ 'reading-stats': 3 })
+    expect(httpGet).toHaveBeenLastCalledWith('/getUserdataBatch?names=reading-stats')
   })
 
-  it('未预读的文档走单文档 GET，name 做 URL 编码', async () => {
-    httpGet.mockResolvedValueOnce({ data: null })
-    const value = await getUserdata('a b')
-    expect(httpGet).toHaveBeenCalledWith('/getUserdata?name=a%20b')
-    expect(value).toBeNull()
+  it('未预读的文档发批量 GET，name 做 URL 编码', async () => {
+    mockBatchOnce({ 'a b': null })
+    const docs = await getUserdataBatch(['a b'])
+    expect(httpGet).toHaveBeenCalledWith('/getUserdataBatch?names=a%20b')
+    expect(docs).toEqual({ 'a b': null })
+  })
+
+  it('部分命中时只对 miss 的条目发请求，结果与缓存命中合并', async () => {
+    mockBatchOnce({ 'reading-stats': { totalSeconds: 7 } })
+    await prefetchUserdata(['reading-stats'])
+
+    mockBatchOnce({ 'recent-books': [] })
+    const docs = await getUserdataBatch(['reading-stats', 'recent-books'])
+
+    expect(httpGet).toHaveBeenCalledTimes(2) // 预读 1 次 + miss 1 次
+    expect(httpGet).toHaveBeenLastCalledWith('/getUserdataBatch?names=recent-books')
+    expect(docs).toEqual({ 'reading-stats': { totalSeconds: 7 }, 'recent-books': [] })
   })
 })
 
 describe('写后缓存失效', () => {
-  it('saveUserdata 成功后对应缓存失效，下一次读取走单文档 GET', async () => {
-    mockBatchOnce({ 'reading-stats': 1 })
-    await prefetchUserdata(['reading-stats'])
-
-    await saveUserdata('reading-stats', 2)
-
-    httpGet.mockResolvedValueOnce({ data: 3 })
-    await expect(getUserdata('reading-stats')).resolves.toBe(3)
-    expect(httpGet).toHaveBeenLastCalledWith('/getUserdata?name=reading-stats')
-  })
-
-  it('saveUserdataBatch 成功后对应缓存失效', async () => {
+  it('saveUserdataBatch 成功后对应缓存失效，下一次读取走批量 GET', async () => {
     mockBatchOnce({ 'reading-stats': 1, 'recent-books': [] })
     await prefetchUserdata(['reading-stats', 'recent-books'])
 
     await saveUserdataBatch([{ name: 'reading-stats', value: 2 }])
 
     // 被写的文档失效；未被写的文档仍命中缓存
-    httpGet.mockResolvedValueOnce({ data: 3 })
-    await expect(getUserdata('reading-stats')).resolves.toBe(3)
-    expect(httpGet).toHaveBeenLastCalledWith('/getUserdata?name=reading-stats')
+    mockBatchOnce({ 'reading-stats': 3 })
+    await expect(getUserdataBatch(['reading-stats'])).resolves.toEqual({ 'reading-stats': 3 })
+    expect(httpGet).toHaveBeenLastCalledWith('/getUserdataBatch?names=reading-stats')
     httpGet.mockClear()
-    await expect(getUserdata('recent-books')).resolves.toEqual([])
+    await expect(getUserdataBatch(['recent-books'])).resolves.toEqual({ 'recent-books': [] })
     expect(httpGet).not.toHaveBeenCalled()
   })
 
@@ -151,23 +157,25 @@ describe('写后缓存失效', () => {
     await prefetchUserdata(['reading-stats'])
 
     httpPost.mockRejectedValueOnce(new Error('offline'))
-    await expect(saveUserdata('reading-stats', 2)).rejects.toThrow('offline')
+    await expect(saveUserdataBatch([{ name: 'reading-stats', value: 2 }])).rejects.toThrow(
+      'offline'
+    )
 
     httpGet.mockClear()
-    await expect(getUserdata('reading-stats')).resolves.toBe(1)
+    await expect(getUserdataBatch(['reading-stats'])).resolves.toEqual({ 'reading-stats': 1 })
     expect(httpGet).not.toHaveBeenCalled()
   })
 })
 
 describe('clearUserdataPrefetch 登出清理', () => {
-  it('清空后 getUserdata 回落单文档 GET', async () => {
+  it('清空后 getUserdataBatch 回落批量 GET', async () => {
     mockBatchOnce({ 'reading-stats': 1 })
     await prefetchUserdata(['reading-stats'])
 
     clearUserdataPrefetch()
 
-    httpGet.mockResolvedValueOnce({ data: 2 })
-    await expect(getUserdata('reading-stats')).resolves.toBe(2)
-    expect(httpGet).toHaveBeenLastCalledWith('/getUserdata?name=reading-stats')
+    mockBatchOnce({ 'reading-stats': 2 })
+    await expect(getUserdataBatch(['reading-stats'])).resolves.toEqual({ 'reading-stats': 2 })
+    expect(httpGet).toHaveBeenLastCalledWith('/getUserdataBatch?names=reading-stats')
   })
 })

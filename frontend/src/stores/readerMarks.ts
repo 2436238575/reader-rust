@@ -18,7 +18,7 @@ import {
   deleteBookmark as apiDeleteBookmark,
   deleteBookmarks as apiDeleteBookmarks,
 } from '../api/bookmark'
-import { getUserdata } from '../api/userdata'
+import { getUserdataBatch } from '../api/userdata'
 import { queueUserdataSave } from '../utils/userdataQueue'
 import { READ_HISTORY } from '../utils/userdataDocs'
 import type { Book, Bookmark } from '../types'
@@ -87,7 +87,7 @@ export const useReaderMarksStore = defineStore('readerMarks', () => {
     scheduleReadHistoryPush(currentBook)
   }
 
-  // ─── 已读标记的跨浏览器同步（userdata 单文档：{ [bookId]: string[] }） ───
+  // ─── 已读标记的跨浏览器同步（userdata 文档：{ [bookId]: string[] }，经批量接口读写） ───
   const READ_HISTORY_DOC = READ_HISTORY
 
   let readHistoryPushTimer: ReturnType<typeof setTimeout> | null = null
@@ -104,7 +104,8 @@ export const useReaderMarksStore = defineStore('readerMarks', () => {
   // 读-改-写整文档：只动当前书的分片，别的浏览器写的其他书不受影响
   async function pushReadHistory(bookId: string, keys: string[]) {
     try {
-      const doc = (await getUserdata<Record<string, string[]>>(READ_HISTORY_DOC)) || {}
+      const docs = await getUserdataBatch<Record<string, string[]>>([READ_HISTORY_DOC])
+      const doc = docs[READ_HISTORY_DOC] || {}
       const remote = new Set(Array.isArray(doc[bookId]) ? doc[bookId] : [])
       const merged = Array.from(new Set([...remote, ...keys]))
       if (merged.length === remote.size) return
@@ -121,7 +122,8 @@ export const useReaderMarksStore = defineStore('readerMarks', () => {
     if (!bookId) return
     let doc: Record<string, string[]> | null
     try {
-      doc = await getUserdata<Record<string, string[]>>(READ_HISTORY_DOC)
+      const docs = await getUserdataBatch<Record<string, string[]>>([READ_HISTORY_DOC])
+      doc = docs[READ_HISTORY_DOC] ?? null
     } catch {
       return // 离线或未登录：保持本地
     }

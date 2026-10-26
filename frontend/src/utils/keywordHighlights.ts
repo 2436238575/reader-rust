@@ -1,4 +1,4 @@
-import { getUserdata, saveUserdata } from '../api/userdata'
+import { getUserdataBatch, saveUserdataBatch } from '../api/userdata'
 
 /**
  * 常驻关键词高亮的配置存储。
@@ -99,14 +99,17 @@ export async function syncKeywordRulesFromBackend(
 ): Promise<KeywordHighlightRule[]> {
   let remote: unknown
   try {
-    remote = await getUserdata(KEYWORD_HIGHLIGHTS_DOC_NAME)
+    const docs = await getUserdataBatch([KEYWORD_HIGHLIGHTS_DOC_NAME])
+    remote = docs[KEYWORD_HIGHLIGHTS_DOC_NAME]
   } catch {
     return local // 离线或未登录
   }
   const remoteRules = sanitizeKeywordRules(remote)
   const merged = mergeKeywordRules(local, remoteRules)
   if (JSON.stringify(merged) !== JSON.stringify(remoteRules)) {
-    await saveUserdata(KEYWORD_HIGHLIGHTS_DOC_NAME, merged).catch(() => undefined)
+    await saveUserdataBatch([{ name: KEYWORD_HIGHLIGHTS_DOC_NAME, value: merged }]).catch(
+      () => undefined
+    )
   }
   persistLocalKeywordRules(merged)
   return merged
@@ -120,7 +123,9 @@ export function persistAndPushKeywordRules(rules: KeywordHighlightRule[]) {
   if (pushTimer) clearTimeout(pushTimer)
   pushTimer = window.setTimeout(() => {
     pushTimer = null
-    void saveUserdata(KEYWORD_HIGHLIGHTS_DOC_NAME, rules).catch(() => undefined)
+    void saveUserdataBatch([{ name: KEYWORD_HIGHLIGHTS_DOC_NAME, value: rules }]).catch(
+      () => undefined
+    )
   }, PUSH_DEBOUNCE_MS)
 }
 

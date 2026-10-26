@@ -179,6 +179,8 @@ GET /reader3/getTxtTocRules
 GET /reader3/getUserdata?name=<文档名>
 ```
 
+> **废弃**：保留兼容，新客户端请改用 [批量读取](#批量读取用户数据文档)（`GET /reader3/getUserdataBatch`，单文档传单元素 `names` 即可）。
+
 读取当前用户命名空间下的一个 JSON 文档，用于**跨浏览器同步**的轻量用户数据（最近阅读、阅读统计等）。文档不存在时 `data` 为 `null`。
 
 - `name` 仅允许字母数字、`.`、`_`、`-`，首字符必须是字母数字，长度 ≤128（文档名历史上曾拼进文件路径，约束保留下来以保持键形态一致）；
@@ -197,6 +199,8 @@ GET /reader3/getUserdata?name=<文档名>
 ```text
 POST /reader3/saveUserdata
 ```
+
+> **废弃**：保留兼容，新客户端请改用 [批量保存](#批量保存用户数据文档)（`POST /reader3/saveUserdataBatch`，单文档传单元素 `docs` 即可）。
 
 请求体：
 

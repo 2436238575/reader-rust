@@ -1,11 +1,11 @@
 import type { Book, ShelfBook } from '../types'
 import { safeLocalSet } from './storage'
-import { getUserdata, saveUserdata } from '../api/userdata'
+import { getUserdataBatch, saveUserdataBatch } from '../api/userdata'
 import { queueUserdataSave } from './userdataQueue'
 import { RECENT_BOOKS } from './userdataDocs'
 
 const RECENT_BOOKS_KEY = 'reader-recent-books'
-// 后端 userdata 文档名（/reader3/getUserdata・saveUserdata），跨浏览器同步用
+// 后端 userdata 文档名（/reader3/getUserdataBatch・saveUserdataBatch），跨浏览器同步用
 const BACKEND_DOC_NAME = RECENT_BOOKS
 const MAX_RECENT_BOOKS = 100
 // 连续保存（快速开书/切章）合并为一次后端写入
@@ -102,14 +102,15 @@ export async function syncRecentBooksFromBackend(): Promise<void> {
     try {
       let remote: RecentReadBook[] | null
       try {
-        remote = await getUserdata<RecentReadBook[]>(BACKEND_DOC_NAME)
+        const docs = await getUserdataBatch<RecentReadBook[]>([BACKEND_DOC_NAME])
+        remote = docs[BACKEND_DOC_NAME] ?? null
       } catch {
         return // 离线或未登录：继续用本地镜像
       }
       const remoteList = Array.isArray(remote) ? remote : []
       const merged = mergeRecentLists(readLocal(), remoteList)
       if (JSON.stringify(merged) !== JSON.stringify(remoteList)) {
-        await saveUserdata(BACKEND_DOC_NAME, merged).catch(() => undefined)
+        await saveUserdataBatch([{ name: BACKEND_DOC_NAME, value: merged }]).catch(() => undefined)
       }
       writeLocal(merged)
     } finally {
