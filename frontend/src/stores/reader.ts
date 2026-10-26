@@ -57,6 +57,17 @@ import {
 } from '../utils/keywordHighlights'
 import { useReaderTts } from '../composables/useReaderTts'
 import { createReaderProgress } from './readerProgress'
+import { fontPresets, themePresets, type ThemePreset } from '../utils/readerTheme'
+import { convertChineseText, ensureChineseConverter } from '../utils/openccConvert'
+import { applyReplaceRulesToText } from '../utils/replaceRules'
+import {
+  loadCachedEditedChapterKeys,
+  saveCachedEditedChapterKeys,
+} from '../utils/editedChaptersCache'
+
+// 常量已下沉 utils/readerTheme（拆分专项）；这里再导出只是兼容旧 import 路径
+export { fontPresets, themePresets }
+export type { ThemePreset }
 
 const READER_READ_HISTORY_PREFIX = 'reader-read-history:'
 
@@ -147,77 +158,6 @@ function loadConfig(): ReadConfig {
     /* ignore */
   }
   return { ...defaultConfig }
-}
-
-/* ─── Theme presets ─── */
-export interface ThemePreset {
-  name: string
-  body: string
-  content: string
-  fontColor: string
-  popup: string
-}
-
-export const themePresets: ThemePreset[] = [
-  { name: '默认', body: '#f5ede4', content: '#fff9f0', fontColor: '#333', popup: '#fff' },
-  { name: '纯白', body: '#ffffff', content: '#ffffff', fontColor: '#333', popup: '#fff' },
-  { name: '琥珀', body: '#f5e6ce', content: '#faf0e4', fontColor: '#5b4636', popup: '#faf0e4' },
-  { name: '薄荷', body: '#e0f0e8', content: '#eaf5ef', fontColor: '#2d4a3e', popup: '#eaf5ef' },
-  { name: '天蓝', body: '#dce8f0', content: '#e8f0f6', fontColor: '#2c3e50', popup: '#e8f0f6' },
-  { name: '粉白', body: '#f5e4e8', content: '#faf0f3', fontColor: '#4a2d36', popup: '#faf0f3' },
-  { name: '浅灰', body: '#eaeaea', content: '#f5f5f5', fontColor: '#333', popup: '#f5f5f5' },
-  { name: '暗夜', body: '#141414', content: '#16213e', fontColor: '#c8c8c8', popup: '#141414' },
-]
-
-/* ─── Font presets ─── */
-export const fontPresets = [
-  { label: '系统', value: 'system', family: '' },
-  { label: '黑体', value: 'heiti', family: '"SimHei", "STHeiti", "Heiti SC", sans-serif' },
-  { label: '楷体', value: 'kaiti', family: '"KaiTi", "STKaiti", "BiauKai", serif' },
-  { label: '宋体', value: 'songti', family: '"SimSun", "STSong", "Songti SC", serif' },
-  { label: '仿宋', value: 'fangsong', family: '"FangSong", "STFangsong", serif' },
-]
-
-/* 已编辑章节集合的本地快照：离线打开书时 listChapterEdits 拉不到，
-   没有快照就会把编辑章当成普通章节，从浏览器缓存读到编辑前的旧正文。
-   只保留最近 20 本书；写满或数据损坏时静默放弃，在线打开会重新同步。 */
-const EDITED_CHAPTERS_CACHE_KEY = 'reader-edited-chapters'
-const EDITED_CHAPTERS_CACHE_MAX_BOOKS = 20
-
-interface EditedChaptersCacheEntry {
-  urls: string[]
-  savedAt: number
-}
-
-function readEditedChaptersCache(): Record<string, EditedChaptersCacheEntry> {
-  try {
-    const raw = localStorage.getItem(EDITED_CHAPTERS_CACHE_KEY)
-    if (!raw) return {}
-    const parsed = JSON.parse(raw) as Record<string, EditedChaptersCacheEntry>
-    return parsed && typeof parsed === 'object' ? parsed : {}
-  } catch {
-    return {}
-  }
-}
-
-function loadCachedEditedChapterKeys(bookId: string): string[] {
-  const entry = readEditedChaptersCache()[bookId]
-  return Array.isArray(entry?.urls)
-    ? entry.urls.filter((url): url is string => typeof url === 'string')
-    : []
-}
-
-function saveCachedEditedChapterKeys(bookId: string, urls: string[]) {
-  try {
-    const cache = readEditedChaptersCache()
-    cache[bookId] = { urls, savedAt: Date.now() }
-    const trimmed = Object.entries(cache)
-      .sort((a, b) => (b[1]?.savedAt || 0) - (a[1]?.savedAt || 0))
-      .slice(0, EDITED_CHAPTERS_CACHE_MAX_BOOKS)
-    safeLocalSet(EDITED_CHAPTERS_CACHE_KEY, JSON.stringify(Object.fromEntries(trimmed)))
-  } catch {
-    /* 快照只是离线兜底，写不进去不影响在线阅读 */
-  }
 }
 
 export const useReaderStore = defineStore('reader', () => {
@@ -356,42 +296,7 @@ export const useReaderStore = defineStore('reader', () => {
     saveConfig()
   }
 
-  // 两个方向各自按需加载（cn2t=简→繁、t2cn=繁→简，字典互不重叠），
-  // 不用 full 包就是为了避免把没在用的那份字典也拉下来
-  const s2tConverter = ref<((text: string) => string) | null>(null)
-  const t2sConverter = ref<((text: string) => string) | null>(null)
-  let s2tLoading: Promise<void> | null = null
-  let t2sLoading: Promise<void> | null = null
-
-  function ensureChineseConverterLoaded() {
-    if (config.chineseMode === 'traditional') {
-      if (s2tConverter.value || s2tLoading) return s2tLoading ?? Promise.resolve()
-      // 只引 cn2t 子路径（而非 full 包）：词级字典只带简→繁一份，按需动态加载
-      s2tLoading = import('opencc-js/cn2t')
-        .then((module) => {
-          s2tConverter.value = module.Converter({ from: 'cn', to: 'tw' })
-        })
-        .catch(() => {
-          s2tConverter.value = null
-        })
-        .finally(() => {
-          s2tLoading = null
-        })
-      return s2tLoading
-    }
-    if (t2sConverter.value || t2sLoading) return t2sLoading ?? Promise.resolve()
-    t2sLoading = import('opencc-js/t2cn')
-      .then((module) => {
-        t2sConverter.value = module.Converter({ from: 'tw', to: 'cn' })
-      })
-      .catch(() => {
-        t2sConverter.value = null
-      })
-      .finally(() => {
-        t2sLoading = null
-      })
-    return t2sLoading
-  }
+  // 简繁转换器字典的按需加载与缓存已下沉 utils/openccConvert（拆分专项）
 
   /* ─── Theme ─── */
   const themeIndex = ref(parseInt(localStorage.getItem('reader-themeIndex') || '0'))
@@ -421,57 +326,13 @@ export const useReaderStore = defineStore('reader', () => {
 
   /* ─── Chinese Conversion (OpenCC) ─── */
   /* ─── Content Filtering (Replace Rules) ─── */
+  /* scope 匹配与按序应用的纯逻辑在 utils/replaceRules（拆分专项） */
   function applyReplaceRules(text: string) {
-    if (!text) return ''
-    let result = text
-    const currentBook = book.value
-
-    function matchRuleScope(rule: ReplaceRule) {
-      const scope = (rule.scope || '').trim()
-      if (!scope || scope === '*') return true
-      if (!currentBook) return false
-
-      if (scope.startsWith('source:')) {
-        return scope.slice('source:'.length) === String(currentBook.bookSourceId ?? '')
-      }
-
-      if (scope.startsWith('book:')) {
-        return scope.slice('book:'.length) === (currentBook.bookId ?? '')
-      }
-
-      const scopeParts = scope.split(';')
-      if (scopeParts[0] !== '*' && scopeParts[0] !== currentBook.name) {
-        return false
-      }
-      return scopeParts.length === 1 || scopeParts[1] === (currentBook.bookId ?? '')
-    }
-
-    // Sort by order and apply enabled rules
-    const enabledRules = [...replaceRules.value]
-      .filter((r) => r.isEnabled && matchRuleScope(r))
-      .sort((a, b) => a.order - b.order)
-
-    for (const rule of enabledRules) {
-      try {
-        if (rule.isRegex) {
-          const re = new RegExp(rule.pattern, 'gm')
-          result = result.replace(re, rule.replacement)
-        } else {
-          result = result.replaceAll(rule.pattern, rule.replacement)
-        }
-      } catch (e) {
-        console.error(`Failed to apply rule: ${rule.name}`, e)
-      }
-    }
-    return result
+    return applyReplaceRulesToText(text, replaceRules.value, book.value)
   }
 
   function convertContent(text: string) {
-    if (!text) return text
-    // 按当前模式取对应方向的转换器；切换模式后转换器若还在加载，
-    // 先显示原文——converter 是 ref，加载完成时 displayContent 会自动重算
-    const converter = config.chineseMode === 'traditional' ? s2tConverter.value : t2sConverter.value
-    return converter ? converter(text) : text
+    return convertChineseText(text, config.chineseMode)
   }
 
   function processContentForDisplay(text: string) {
@@ -486,7 +347,7 @@ export const useReaderStore = defineStore('reader', () => {
     () => config.chineseMode,
     (mode) => {
       if (mode === 'traditional') {
-        void ensureChineseConverterLoaded()
+        void ensureChineseConverter('traditional')
       }
     },
     { immediate: true }
