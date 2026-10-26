@@ -4,6 +4,7 @@ pub mod bounded_map;
 pub mod client_ip;
 pub mod crypto;
 pub mod hash;
+pub mod keyed_mutex;
 pub mod safe_path;
 #[cfg(test)]
 pub mod test_temp;

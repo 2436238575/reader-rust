@@ -26,6 +26,7 @@ use crate::storage::db::repo::{BookRepo, RegisterBook, ShelfBookRepo, ShelfBookR
 use crate::util::atomic_write::write_atomic;
 use crate::util::bounded_map::BoundedMap;
 use crate::util::hash::md5_hex;
+use crate::util::keyed_mutex::KeyedMutex;
 use crate::util::text::{normalize_source_url, repair_encoded_url};
 use serde_json::{json, Value};
 use std::collections::{HashMap, HashSet};
@@ -76,9 +77,10 @@ pub struct BookService {
     toc_snapshots: Arc<Mutex<BoundedMap<TocSnapshotMemoEntry>>>,
     /// 正文回源 singleflight：`(user_ns, book_id, chapter_url)` -> 按键互斥锁。
     /// 并发未命中/并发到期回源的同一章只有一个真正打上游，其余等锁后
-    /// 二次检查缓存直接复用。BoundedMap 限条数：取消/panic 遗留的条目
-    /// 不会无界累积（正常路径会显式清理）。
-    refresh_locks: Arc<Mutex<BoundedMap<Arc<tokio::sync::Mutex<()>>>>>,
+    /// 二次检查缓存直接复用。KeyedMutex 限条数：取消/panic 遗留的条目
+    /// 在持有者 drop 后变为空闲可被逐出，在用锁不会被挤掉
+    /// （详见 `util::keyed_mutex`）。
+    refresh_locks: Arc<KeyedMutex>,
 }
 
 /// 内存里暂存的章节正文响应体。
@@ -384,7 +386,7 @@ impl BookService {
             pending_revalidations: Arc::new(Mutex::new(HashSet::new())),
             toc_append_lock: Arc::new(tokio::sync::Mutex::new(())),
             toc_snapshots: Arc::new(Mutex::new(BoundedMap::new(TOC_SNAPSHOT_MEMO_MAX_ENTRIES))),
-            refresh_locks: Arc::new(Mutex::new(BoundedMap::new(REFRESH_LOCK_MAX_ENTRIES))),
+            refresh_locks: Arc::new(KeyedMutex::new(REFRESH_LOCK_MAX_ENTRIES)),
         }
     }
 
@@ -1603,28 +1605,15 @@ impl BookService {
     }
 
     /// 登记并返回 key 的键锁：已存在则复用（后来的等待者跟在队尾），
-    /// 否则新建。纯同步短临界区，std Mutex 不跨 await。
+    /// 否则新建。
     fn acquire_refresh_lock(&self, key: &str) -> Arc<tokio::sync::Mutex<()>> {
-        let mut locks = self.refresh_locks.lock().unwrap();
-        if let Some(existing) = locks.get(key) {
-            return Arc::clone(existing);
-        }
-        let fresh = Arc::new(tokio::sync::Mutex::new(()));
-        locks.insert(key.to_string(), Arc::clone(&fresh));
-        fresh
+        self.refresh_locks.acquire(key)
     }
 
     /// 用完清理：表里还是这把锁、且没有别的等待者持有克隆时摘掉条目，
     /// 避免逐章回源把表撑满（表有上限，这里只是正常路径的精确回收）。
     fn release_refresh_lock(&self, key: &str, lock: &Arc<tokio::sync::Mutex<()>>) {
-        let mut locks = self.refresh_locks.lock().unwrap();
-        let unused = match locks.get(key) {
-            Some(current) => Arc::ptr_eq(current, lock) && Arc::strong_count(current) <= 2,
-            None => false,
-        };
-        if unused {
-            locks.remove(key);
-        }
+        self.refresh_locks.release(key, lock);
     }
 
     /// 真正抓一次上游并落库。空正文在已有上游内容时按失败处理，避免把

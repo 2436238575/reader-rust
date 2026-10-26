@@ -24,8 +24,8 @@ use crate::crawler::{
 use crate::error::error::AppError;
 use crate::storage::cache::file_cache::enforce_flat_dir_capacity;
 use crate::util::atomic_write::write_atomic;
-use crate::util::bounded_map::BoundedMap;
 use crate::util::hash::md5_hex;
+use crate::util::keyed_mutex::KeyedMutex;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::path::{Path, PathBuf};
@@ -97,8 +97,9 @@ pub struct ImageService {
     /// 图片缓存目录容量上限（0 = 不限），与封面缓存共用同一个配置。
     limit_bytes: u64,
     /// 取图单飞：`id -> 按键互斥锁`。并发首取同一张图只有一个真正抓上游
-    /// + HEIC 转码，其余等键锁后复用落盘结果。BoundedMap 限条数兜底。
-    load_locks: std::sync::Mutex<BoundedMap<Arc<tokio::sync::Mutex<()>>>>,
+    /// + HEIC 转码，其余等键锁后复用落盘结果。KeyedMutex 限条数兜底，
+    ///   满员逐出跳过在用锁（详见 `util::keyed_mutex` 模块文档）。
+    load_locks: KeyedMutex,
 }
 
 impl ImageService {
@@ -107,7 +108,7 @@ impl ImageService {
             http,
             storage_dir: storage_dir.into(),
             limit_bytes,
-            load_locks: std::sync::Mutex::new(BoundedMap::new(IMAGE_LOAD_LOCK_MAX_ENTRIES)),
+            load_locks: KeyedMutex::new(IMAGE_LOAD_LOCK_MAX_ENTRIES),
         }
     }
 
@@ -494,27 +495,13 @@ impl ImageService {
     }
 
     /// 登记并返回 id 的取图键锁：已存在则复用，否则新建。
-    /// 纯同步短临界区，std Mutex 不跨 await。
     fn acquire_load_lock(&self, id: &str) -> Arc<tokio::sync::Mutex<()>> {
-        let mut locks = self.load_locks.lock().unwrap();
-        if let Some(existing) = locks.get(id) {
-            return Arc::clone(existing);
-        }
-        let fresh = Arc::new(tokio::sync::Mutex::new(()));
-        locks.insert(id.to_string(), Arc::clone(&fresh));
-        fresh
+        self.load_locks.acquire(id)
     }
 
     /// 用完清理：表里还是这把锁、且没有别的等待者持有克隆时摘掉条目。
     fn release_load_lock(&self, id: &str, lock: &Arc<tokio::sync::Mutex<()>>) {
-        let mut locks = self.load_locks.lock().unwrap();
-        let unused = match locks.get(id) {
-            Some(current) => Arc::ptr_eq(current, lock) && Arc::strong_count(current) <= 2,
-            None => false,
-        };
-        if unused {
-            locks.remove(id);
-        }
+        self.load_locks.release(id, lock);
     }
 
     async fn fetch(&self, url: &str) -> Result<FetchedImage, AppError> {
