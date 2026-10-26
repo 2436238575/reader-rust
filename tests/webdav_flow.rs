@@ -738,7 +738,7 @@ async fn upload_file_to_webdav_streams_binary_and_overwrites() {
         .unwrap()
         .filter_map(|e| e.ok())
         .map(|e| e.file_name().to_string_lossy().to_string())
-        .filter(|name| name.contains(".upload-") || name.starts_with(".reader-upload-backup-"))
+        .filter(|name| name.contains(".upload-") || name.contains(".reader-upload-backup-"))
         .collect();
     assert!(
         leftovers.is_empty(),
@@ -760,11 +760,77 @@ async fn upload_file_to_webdav_streams_binary_and_overwrites() {
         .unwrap()
         .filter_map(|e| e.ok())
         .map(|e| e.file_name().to_string_lossy().to_string())
-        .filter(|name| name.contains(".upload-") || name.starts_with(".reader-upload-backup-"))
+        .filter(|name| name.contains(".upload-") || name.contains(".reader-upload-backup-"))
         .collect();
     assert!(
         leftovers.is_empty(),
         "覆盖上传后不应残留临时/备份文件: {leftovers:?}"
+    );
+}
+
+/// 把文件 mtime 拨到指定时长前（模拟崩溃/取消留下的遗留产物）。
+fn age_file(path: &std::path::Path, age: std::time::Duration) {
+    let file = std::fs::File::options().write(true).open(path).unwrap();
+    let modified = std::time::SystemTime::now() - age;
+    file.set_times(std::fs::FileTimes::new().set_modified(modified))
+        .unwrap();
+}
+
+/// 文件列表接口顺手清扫当前目录：超过 1 小时的临时文件删除、目标存在的
+/// 遗留备份删除、目标缺失的备份恢复成目标；新鲜临时文件保留。
+#[tokio::test]
+async fn file_list_sweeps_stale_upload_artifacts() {
+    let app = TestServer::start().await;
+    let token = app.login_token().await;
+    let home = app.home();
+    std::fs::create_dir_all(&home).unwrap();
+    let two_hours = std::time::Duration::from_secs(2 * 3600);
+
+    let stale_temp = home.join(format!("stale.txt.upload-{}.tmp", uuid::Uuid::new_v4()));
+    let fresh_temp = home.join(format!("fresh.txt.upload-{}.tmp", uuid::Uuid::new_v4()));
+    std::fs::write(&stale_temp, b"x").unwrap();
+    std::fs::write(&fresh_temp, b"x").unwrap();
+    age_file(&stale_temp, two_hours);
+
+    let target = home.join("backup.json");
+    std::fs::write(&target, b"new").unwrap();
+    let redundant = home.join(format!(
+        ".backup.json.reader-upload-backup-{}.tmp",
+        uuid::Uuid::new_v4()
+    ));
+    std::fs::write(&redundant, b"old").unwrap();
+    age_file(&redundant, two_hours);
+
+    let missing_target = home.join("lost.txt");
+    let restorable = home.join(format!(
+        ".lost.txt.reader-upload-backup-{}.tmp",
+        uuid::Uuid::new_v4()
+    ));
+    std::fs::write(&restorable, b"old").unwrap();
+    age_file(&restorable, two_hours);
+
+    let res = app
+        .client
+        .get(app.url("/reader3/getWebdavFileList"))
+        .query(&[("path", "/")])
+        .header("Cookie", format!("reader_access={token}"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+
+    assert!(
+        !stale_temp.exists(),
+        "超过 1 小时的临时文件应被列表接口清掉"
+    );
+    assert!(fresh_temp.exists(), "新鲜临时文件不得清理");
+    assert!(!redundant.exists(), "目标存在时遗留备份应删除");
+    assert_eq!(std::fs::read(&target).unwrap(), b"new", "目标内容不得改变");
+    assert!(!restorable.exists(), "目标缺失时备份应改名恢复");
+    assert_eq!(
+        std::fs::read(&missing_target).unwrap(),
+        b"old",
+        "恢复出来的目标应保留备份内容"
     );
 }
 

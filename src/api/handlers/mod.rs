@@ -47,6 +47,7 @@ pub use user::{
     login, logout, refresh_token, save_user_config, save_userdata, save_userdata_batch,
     upload_file,
 };
+pub(crate) use webdav::sweep_webdav_upload_artifacts;
 pub use webdav::{
     delete_webdav_file, delete_webdav_file_list, get_webdav_file, get_webdav_file_list,
     upload_file_to_webdav, webdav_handler,

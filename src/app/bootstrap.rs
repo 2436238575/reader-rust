@@ -60,6 +60,9 @@ pub async fn run() -> anyhow::Result<()> {
     }));
 
     let state = build_state(cfg.clone()).await?;
+    // WebDAV 上传临时文件与覆盖备份的清扫：启动一次 + 每 6 小时一次。
+    // 不阻塞启动，失败只记日志（清扫本身对单个文件也是 best-effort）
+    spawn_webdav_sweeper(&cfg.storage_dir);
     let app: Router = api::router::build_router(state);
 
     let addr = SocketAddr::new(cfg.server_host.parse()?, cfg.server_port);
@@ -114,6 +117,27 @@ pub async fn run() -> anyhow::Result<()> {
         }
     }
     Ok(())
+}
+
+/// WebDAV 残留物清扫周期：上传临时文件最长保留 1 小时，6 小时扫一次足够
+/// 及时收敛，又不会让大目录成为常驻负担。
+const WEBDAV_SWEEP_INTERVAL: std::time::Duration = std::time::Duration::from_secs(6 * 60 * 60);
+
+/// 启动一次性清扫并挂上周期任务；目录不存在时清扫函数直接返回。
+fn spawn_webdav_sweeper(storage_dir: &str) {
+    let root = std::path::Path::new(storage_dir).join("webdav");
+    tokio::spawn(async move {
+        crate::api::handlers::sweep_webdav_upload_artifacts(&root).await;
+        let mut ticker = tokio::time::interval(WEBDAV_SWEEP_INTERVAL);
+        // 错过整点（休眠/调度延迟）后按原节奏补齐，不在恢复瞬间连扫多次
+        ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        // interval 的第一次 tick 立即返回；启动清扫已在上面同步跑过，跳过它
+        ticker.tick().await;
+        loop {
+            ticker.tick().await;
+            crate::api::handlers::sweep_webdav_upload_artifacts(&root).await;
+        }
+    });
 }
 
 /// 组装全部服务与共享状态。

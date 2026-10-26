@@ -17,6 +17,7 @@ use serde::Deserialize;
 use serde_json::Value;
 use std::path::PathBuf;
 use std::sync::OnceLock;
+use std::time::Duration;
 use tokio::fs;
 use tokio::io::AsyncWriteExt;
 
@@ -52,6 +53,8 @@ pub async fn get_webdav_file_list(
     if !full.is_dir() {
         return Err(AppError::BadRequest("路径不是目录".to_string()));
     }
+    // 顺手清扫本次访问目录的上传残留（只扫本层，避免列目录变成全树扫描）
+    sweep_webdav_upload_artifacts_in_dir(&full).await;
     let mut list = Vec::new();
     let mut dir = fs::read_dir(full)
         .await
@@ -181,6 +184,9 @@ pub async fn upload_file_to_webdav(
         fs::create_dir_all(&dir)
             .await
             .map_err(|e| AppError::Internal(e.into()))?;
+        // 顺手清扫目标目录里的上传残留（只扫本层）：崩溃/取消留下的临时
+        // 文件不必等到 6 小时周期任务才消失
+        sweep_webdav_upload_artifacts_in_dir(&dir).await;
         let target = dir.join(&filename);
         stream_multipart_field_to_file(field, &target, MAX_WEBDAV_UPLOAD_BYTES).await?;
         let meta = fs::metadata(&target)
@@ -291,14 +297,16 @@ async fn overwrite_via_rename(from: &std::path::Path, to: &std::path::Path) -> s
 /// 2. 失败且错误类型为 AlreadyExists/PermissionDenied（Windows 上目标被
 ///    其他进程以不兼容共享模式打开，或 `from` 被杀毒/索引服务短时锁住）
 ///    时进入备份替换：把旧目标 rename 成同目录点前缀备份
-///    `.reader-upload-backup-<uuid>.tmp`；
+///    `.<目标名>.reader-upload-backup-<uuid>.tmp`（带目标名，清扫任务才能
+///    判断它是否还是唯一副本）；
 ///    - 备份 rename 返回 NotFound：目标已不存在（首次失败另有原因，如瞬时
 ///      共享冲突），直接重试一次覆盖，仍失败返回错误；
 ///    - 备份 rename 其他失败：返回错误，旧文件原样保留（temp 交由
 ///      [`TempUploadGuard`] 清理），**不删目标**；
-///    - 备份成功后重试覆盖：成功则 best-effort 删除备份；失败则把备份
-///      rename 回目标恢复旧文件——恢复成功返回原始错误；恢复失败时错误
-///      信息带上备份路径，备份绝不删除，留给人工恢复。
+///    - 备份成功后重试覆盖：成功则删除备份，删除失败只记 warn 并把路径
+///      留给定期清扫；失败则把备份 rename 回目标恢复旧文件——恢复成功返回
+///      原始错误；恢复失败时错误信息带上备份路径，备份绝不删除，留给人工
+///      恢复与清扫任务兜底。
 ///
 /// `rename_op` 注入 rename 动作（生产为 [`tokio::fs::rename`]），失败分支
 /// 因此可以确定性测试；不进备份分支的其他错误类型（NotFound 等）直接透传。
@@ -334,8 +342,9 @@ where
         }
         Err(_) => {}
     }
+    let target_name = to.file_name().and_then(|n| n.to_str()).unwrap_or("file");
     let backup = to.with_file_name(format!(
-        ".reader-upload-backup-{}.tmp",
+        ".{target_name}.reader-upload-backup-{}.tmp",
         uuid::Uuid::new_v4()
     ));
     if let Err(backup_err) = rename_op(to.to_path_buf(), backup.clone()).await {
@@ -348,8 +357,16 @@ where
     }
     match rename_op(from.to_path_buf(), to.to_path_buf()).await {
         Ok(()) => {
-            // 覆盖成功：备份只是旧版本副本，best-effort 清理
-            let _ = tokio::fs::remove_file(&backup).await;
+            // 覆盖成功：备份只是旧版本副本，best-effort 清理。删除失败不能
+            // 静默：残留的点前缀文件会出现在 WebDAV PROPFIND 里，交给清扫
+            // 任务（目标已存在 → 判为冗余备份删除）
+            if let Err(e) = tokio::fs::remove_file(&backup).await {
+                tracing::warn!(
+                    path = %backup.display(),
+                    error = %e,
+                    "覆盖成功后删除旧文件备份失败，留待定期清扫"
+                );
+            }
             Ok(())
         }
         Err(e) => match rename_op(backup.clone(), to.to_path_buf()).await {
@@ -400,6 +417,222 @@ impl Drop for TempUploadGuard {
                 tokio::time::sleep(std::time::Duration::from_secs(5)).await;
                 let _ = fs::remove_file(&path).await;
             });
+        }
+    }
+}
+
+/// 上传临时文件的最长保留时长：上传超时是 900 秒，1 小时足够避免误删在途上传。
+const WEBDAV_UPLOAD_TEMP_MAX_AGE: Duration = Duration::from_secs(60 * 60);
+/// 无法解析原目标名的旧格式备份（`.reader-upload-backup-<uuid>.tmp`）保留 7 天，
+/// 给人工恢复留时间。
+const WEBDAV_LEGACY_BACKUP_MAX_AGE: Duration = Duration::from_secs(7 * 24 * 60 * 60);
+/// 上传临时文件名里的标记：`<目标名>.upload-<uuid>.tmp`。
+const UPLOAD_TEMP_MARKER: &str = ".upload-";
+/// 备份文件名里的标记：`.<目标名>.reader-upload-backup-<uuid>.tmp`。
+const BACKUP_MARKER: &str = ".reader-upload-backup-";
+
+/// WebDAV 目录里由本模块产生的临时产物。
+#[derive(Debug, PartialEq, Eq)]
+enum WebdavArtifact<'a> {
+    /// `<目标名>.upload-<uuid>.tmp`：上传在途/中断留下的临时文件。
+    UploadTemp,
+    /// `.<目标名>.reader-upload-backup-<uuid>.tmp`：覆盖写时搬走的旧文件。
+    /// `target = None` 是无法解析原目标名的旧格式。
+    Backup { target: Option<&'a str> },
+}
+
+/// 从文件名识别上传临时文件与覆盖备份（不命中返回 None）。
+///
+/// 只认带合法 UUID 后缀的名字：用户自己的 `x.upload-report.tmp` 之类不会被
+/// 误判成清扫对象。
+fn classify_webdav_artifact(name: &str) -> Option<WebdavArtifact<'_>> {
+    let stem = name.strip_suffix(".tmp")?;
+    if let Some(idx) = stem.rfind(BACKUP_MARKER) {
+        let uuid_part = &stem[idx + BACKUP_MARKER.len()..];
+        if uuid::Uuid::parse_str(uuid_part).is_ok() {
+            if idx == 0 {
+                // 旧格式：`reader-upload-backup` 前的点就是标记自己的首字符
+                return Some(WebdavArtifact::Backup { target: None });
+            }
+            if stem.starts_with('.') {
+                // 从最后一个标记往前切，目标名本身含该标记也能正确还原
+                let target = &stem[1..idx];
+                if !target.is_empty() {
+                    return Some(WebdavArtifact::Backup {
+                        target: Some(target),
+                    });
+                }
+            }
+        }
+    }
+    if let Some(idx) = stem.rfind(UPLOAD_TEMP_MARKER) {
+        let uuid_part = &stem[idx + UPLOAD_TEMP_MARKER.len()..];
+        if !stem[..idx].is_empty() && uuid::Uuid::parse_str(uuid_part).is_ok() {
+            return Some(WebdavArtifact::UploadTemp);
+        }
+    }
+    None
+}
+
+/// 递归清扫一个 WebDAV 根目录：启动时与每 6 小时的周期任务使用。
+///
+/// 目录不存在时直接返回；单个文件失败只记日志，不影响其余条目。
+pub(crate) async fn sweep_webdav_upload_artifacts(root: &std::path::Path) {
+    sweep_webdav_artifacts(
+        root,
+        true,
+        WEBDAV_UPLOAD_TEMP_MAX_AGE,
+        WEBDAV_LEGACY_BACKUP_MAX_AGE,
+    )
+    .await;
+}
+
+/// 清扫单个目录（不递归）：上传/列表/协议端点访问当前目录时顺手调用，
+/// 让崩溃或取消留下的残留不必等到周期任务。
+pub(crate) async fn sweep_webdav_upload_artifacts_in_dir(dir: &std::path::Path) {
+    sweep_webdav_artifacts(
+        dir,
+        false,
+        WEBDAV_UPLOAD_TEMP_MAX_AGE,
+        WEBDAV_LEGACY_BACKUP_MAX_AGE,
+    )
+    .await;
+}
+
+async fn sweep_webdav_artifacts(
+    root: &std::path::Path,
+    recursive: bool,
+    upload_artifact_max_age: Duration,
+    legacy_backup_max_age: Duration,
+) {
+    let mut pending = vec![root.to_path_buf()];
+    while let Some(dir) = pending.pop() {
+        let mut entries = match fs::read_dir(&dir).await {
+            Ok(entries) => entries,
+            // 目录不存在（还没人用过 WebDAV）不是错误
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(e) => {
+                tracing::warn!(dir = %dir.display(), error = %e, "WebDAV 清扫：读取目录失败，跳过");
+                continue;
+            }
+        };
+        loop {
+            let entry = match entries.next_entry().await {
+                Ok(Some(entry)) => entry,
+                Ok(None) => break,
+                Err(e) => {
+                    tracing::warn!(dir = %dir.display(), error = %e, "WebDAV 清扫：读取目录条目失败，跳过剩余条目");
+                    break;
+                }
+            };
+            // file_type 不跟随符号链接：符号链接既不算目录（不递归进入）
+            // 也不算普通文件（不清扫），避免顺链删到 WebDAV 根之外
+            let file_type = match entry.file_type().await {
+                Ok(t) => t,
+                Err(e) => {
+                    tracing::warn!(path = %entry.path().display(), error = %e, "WebDAV 清扫：读取条目类型失败，跳过");
+                    continue;
+                }
+            };
+            if file_type.is_dir() {
+                if recursive {
+                    pending.push(entry.path());
+                }
+                continue;
+            }
+            if !file_type.is_file() {
+                continue;
+            }
+            let os_name = entry.file_name();
+            let Some(name) = os_name.to_str() else {
+                continue;
+            };
+            let Some(artifact) = classify_webdav_artifact(name) else {
+                continue;
+            };
+            let Some(age) = entry_age(&entry).await else {
+                continue;
+            };
+            let path = entry.path();
+            match artifact {
+                WebdavArtifact::UploadTemp => {
+                    if age > upload_artifact_max_age {
+                        remove_artifact(&path, "清理超时的 WebDAV 上传临时文件").await;
+                    }
+                }
+                WebdavArtifact::Backup {
+                    target: Some(target),
+                } => {
+                    if age <= upload_artifact_max_age {
+                        continue;
+                    }
+                    let target_path = path.with_file_name(target);
+                    match fs::symlink_metadata(&target_path).await {
+                        // 目标还在：备份只是旧版本副本，删除
+                        Ok(meta) if !meta.is_dir() => {
+                            remove_artifact(&path, "目标已存在，删除冗余的 WebDAV 上传备份").await;
+                        }
+                        // 同名目录占用了目标路径：不能把它 rename 掉，也不删
+                        // 备份（可能是旧文件的唯一副本），留待人工处理
+                        Ok(_) => tracing::warn!(
+                            path = %path.display(),
+                            target = %target_path.display(),
+                            "WebDAV 上传备份的目标路径被目录占用，保留备份待人工处理"
+                        ),
+                        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                            // 目标缺失：备份可能是旧文件的唯一副本，恢复而不是删除
+                            match fs::rename(&path, &target_path).await {
+                                Ok(()) => tracing::info!(
+                                    backup = %path.display(),
+                                    target = %target_path.display(),
+                                    "WebDAV 上传备份已恢复到缺失的目标"
+                                ),
+                                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+                                Err(e) => tracing::warn!(
+                                    backup = %path.display(),
+                                    target = %target_path.display(),
+                                    error = %e,
+                                    "恢复 WebDAV 上传备份失败，备份保留"
+                                ),
+                            }
+                        }
+                        Err(e) => tracing::warn!(
+                            path = %path.display(),
+                            target = %target_path.display(),
+                            error = %e,
+                            "检查 WebDAV 上传备份的目标失败，备份保留"
+                        ),
+                    }
+                }
+                WebdavArtifact::Backup { target: None } => {
+                    if age > legacy_backup_max_age {
+                        // 旧格式无法判断原目标，删前 warn 留下路径供人工恢复
+                        tracing::warn!(
+                            path = %path.display(),
+                            "删除超过 7 天的旧格式 WebDAV 上传备份（无法解析原目标名）"
+                        );
+                        remove_artifact(&path, "删除旧格式 WebDAV 上传备份").await;
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// 条目的 mtime 距今时长；取不到或 mtime 在未来时返回 None（按新鲜处理，不删）。
+async fn entry_age(entry: &tokio::fs::DirEntry) -> Option<Duration> {
+    let modified = entry.metadata().await.ok()?.modified().ok()?;
+    std::time::SystemTime::now().duration_since(modified).ok()
+}
+
+/// 删除单个残留文件；失败只记日志，不影响清扫其余文件。
+async fn remove_artifact(path: &std::path::Path, action: &str) {
+    match fs::remove_file(path).await {
+        Ok(()) => tracing::info!(path = %path.display(), action, "WebDAV 清扫删除文件"),
+        // 并发清扫（周期任务撞上 handler 顺手清理）时对方已删掉，不算失败
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+        Err(e) => {
+            tracing::warn!(path = %path.display(), action, error = %e, "WebDAV 清扫删除文件失败")
         }
     }
 }
@@ -484,9 +717,13 @@ pub async fn webdav_handler(
     // 盘符/设备名/ADS/结尾点空格，分发前按原有规则再拦一遍（Path 通配值已
     // percent-decode）。裸根路径 /reader3/webdav 无通配参数，path 为 None。
     let rel = format!("/{}", path.map(|p| p.0).unwrap_or_default());
-    if normalize_rel_path(&rel).is_err() {
+    let Ok(parts) = normalize_rel_path(&rel) else {
         return StatusCode::BAD_REQUEST.into_response();
-    }
+    };
+    // 顺手清扫本次请求路径所在目录的上传残留（只扫本层）：PUT 覆盖崩溃
+    // 留下的备份能从下一次任何 WebDAV 请求里自愈
+    let parent_parts = &parts[..parts.len().saturating_sub(1)];
+    sweep_webdav_upload_artifacts_in_dir(&join_parts(&home, parent_parts)).await;
 
     let dav = DavHandler::builder()
         .filesystem(LocalFs::new(&home, false, false, false))
@@ -683,13 +920,14 @@ mod tests {
         dir
     }
 
-    /// 目录里残留的备份文件名（应为空时断言用）。
+    /// 目录里残留的备份文件名（应为空时断言用）。新命名带目标名
+    /// （`.book.epub.reader-upload-backup-<uuid>.tmp`），按标记匹配。
     fn backup_residues(dir: &std::path::Path) -> Vec<String> {
         std::fs::read_dir(dir)
             .unwrap()
             .filter_map(|e| e.ok())
             .map(|e| e.file_name().to_string_lossy().to_string())
-            .filter(|name| name.starts_with(".reader-upload-backup-"))
+            .filter(|name| name.contains(".reader-upload-backup-"))
             .collect()
     }
 
@@ -953,6 +1191,10 @@ mod tests {
         assert_eq!(residues.len(), 1, "恢复失败时备份必须保留: {residues:?}");
         let backup_name = residues.into_iter().next().unwrap();
         assert!(
+            backup_name.contains("book.epub"),
+            "备份名应带目标文件名，清扫任务才能判断是否唯一副本: {backup_name}"
+        );
+        assert!(
             err.to_string().contains(&backup_name),
             "错误信息必须带备份路径: {}",
             err
@@ -990,5 +1232,188 @@ mod tests {
         assert!(backup_residues(&dir).is_empty());
         assert_eq!(std::fs::read(&temp).unwrap(), b"new");
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // ---- 上传临时文件与遗留备份的清扫 ----
+
+    const HOUR: Duration = Duration::from_secs(60 * 60);
+    const SEVEN_DAYS: Duration = Duration::from_secs(7 * 24 * 60 * 60);
+
+    /// 把文件 mtime 拨到指定时长前（模拟进程崩溃/取消留下的遗留产物）。
+    fn set_file_age(path: &std::path::Path, age: Duration) {
+        let file = std::fs::File::options().write(true).open(path).unwrap();
+        let modified = std::time::SystemTime::now() - age;
+        file.set_times(std::fs::FileTimes::new().set_modified(modified))
+            .unwrap();
+    }
+
+    fn upload_temp_name(target: &str) -> String {
+        format!("{target}.upload-{}.tmp", uuid::Uuid::new_v4())
+    }
+
+    fn backup_name(target: &str) -> String {
+        format!(
+            ".{target}.reader-upload-backup-{}.tmp",
+            uuid::Uuid::new_v4()
+        )
+    }
+
+    fn legacy_backup_name() -> String {
+        format!(".reader-upload-backup-{}.tmp", uuid::Uuid::new_v4())
+    }
+
+    #[tokio::test]
+    async fn sweep_removes_only_stale_upload_temps() {
+        let dir = sandbox("sweep-temp");
+        let fresh = dir.join(upload_temp_name("fresh.txt"));
+        let stale = dir.join(upload_temp_name("stale.txt"));
+        let nested_dir = dir.join("sub");
+        std::fs::create_dir_all(&nested_dir).unwrap();
+        let nested = nested_dir.join(upload_temp_name("nested.txt"));
+        for path in [&fresh, &stale, &nested] {
+            std::fs::write(path, b"partial").unwrap();
+        }
+        set_file_age(&stale, 2 * HOUR);
+        set_file_age(&nested, 2 * HOUR);
+
+        sweep_webdav_artifacts(&dir, true, HOUR, SEVEN_DAYS).await;
+
+        assert!(fresh.exists(), "1 小时内的临时文件不得删除");
+        assert!(!stale.exists(), "超过 1 小时的临时文件应删除");
+        assert!(!nested.exists(), "递归扫描应清掉子目录里的超时临时文件");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn sweep_in_single_dir_leaves_nested_artifacts() {
+        let dir = sandbox("sweep-flat");
+        let top = dir.join(upload_temp_name("top.txt"));
+        let sub = dir.join("sub");
+        std::fs::create_dir_all(&sub).unwrap();
+        let nested = sub.join(upload_temp_name("nested.txt"));
+        for path in [&top, &nested] {
+            std::fs::write(path, b"partial").unwrap();
+            set_file_age(path, 2 * HOUR);
+        }
+
+        sweep_webdav_artifacts(&dir, false, HOUR, SEVEN_DAYS).await;
+
+        assert!(!top.exists(), "当前目录的超时临时文件应删除");
+        assert!(nested.exists(), "非递归清扫不得进入子目录");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn sweep_deletes_redundant_backup_when_target_exists() {
+        let dir = sandbox("sweep-backup");
+        let target = dir.join("book.epub");
+        std::fs::write(&target, b"new").unwrap();
+        let stale = dir.join(backup_name("book.epub"));
+        std::fs::write(&stale, b"old").unwrap();
+        set_file_age(&stale, 2 * HOUR);
+        // 1 小时内的备份可能仍属于在途覆盖流程，保留
+        let fresh = dir.join(backup_name("book.epub"));
+        std::fs::write(&fresh, b"old").unwrap();
+
+        sweep_webdav_artifacts(&dir, true, HOUR, SEVEN_DAYS).await;
+
+        assert!(!stale.exists(), "目标已存在的超时备份应删除");
+        assert!(fresh.exists(), "1 小时内的备份不得删除");
+        assert_eq!(
+            std::fs::read(&target).unwrap(),
+            b"new",
+            "删除冗余备份不得动目标文件"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn sweep_restores_backup_when_target_missing() {
+        let dir = sandbox("sweep-restore");
+        let target = dir.join("book.epub");
+        let backup = dir.join(backup_name("book.epub"));
+        std::fs::write(&backup, b"old").unwrap();
+        set_file_age(&backup, 2 * HOUR);
+
+        sweep_webdav_artifacts(&dir, true, HOUR, SEVEN_DAYS).await;
+
+        assert!(!backup.exists(), "恢复后备份应改名到目标路径");
+        assert_eq!(
+            std::fs::read(&target).unwrap(),
+            b"old",
+            "目标缺失时应把备份内容恢复成目标文件，而不是删除唯一副本"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn sweep_deletes_legacy_backup_only_after_seven_days() {
+        let dir = sandbox("sweep-legacy");
+        let recent = dir.join(legacy_backup_name());
+        let old = dir.join(legacy_backup_name());
+        for path in [&recent, &old] {
+            std::fs::write(path, b"old").unwrap();
+        }
+        set_file_age(&recent, 2 * HOUR);
+        set_file_age(&old, 8 * 24 * HOUR);
+
+        sweep_webdav_artifacts(&dir, true, HOUR, SEVEN_DAYS).await;
+
+        assert!(recent.exists(), "旧格式备份 7 天内不得删除（留给人工恢复）");
+        assert!(!old.exists(), "超过 7 天的旧格式备份应删除");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn sweep_ignores_user_files_and_directories() {
+        let dir = sandbox("sweep-user");
+        let file = dir.join("notes.txt");
+        std::fs::write(&file, b"keep").unwrap();
+        set_file_age(&file, 30 * 24 * HOUR);
+        let sub = dir.join("sub");
+        std::fs::create_dir_all(&sub).unwrap();
+        let nested = sub.join("keep.txt");
+        std::fs::write(&nested, b"keep").unwrap();
+        set_file_age(&nested, 30 * 24 * HOUR);
+        // 名字像临时文件但 UUID 段非法：不是本模块产生的，不能误删
+        let lookalike = dir.join("report.upload-2024.tmp");
+        std::fs::write(&lookalike, b"keep").unwrap();
+        set_file_age(&lookalike, 30 * 24 * HOUR);
+
+        sweep_webdav_artifacts(&dir, true, HOUR, SEVEN_DAYS).await;
+
+        assert!(file.exists(), "普通用户文件不得清理");
+        assert!(nested.exists(), "普通子目录内容不得清理");
+        assert!(lookalike.exists(), "UUID 非法的相似文件名不得误删");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn sweep_does_not_follow_symlinked_directories() {
+        let dir = sandbox("sweep-symlink");
+        let outside = sandbox("sweep-symlink-outside");
+        let victim = outside.join(upload_temp_name("victim.txt"));
+        std::fs::write(&victim, b"partial").unwrap();
+        set_file_age(&victim, 2 * HOUR);
+        let link = dir.join("linked");
+        #[cfg(unix)]
+        let created = std::os::unix::fs::symlink(&outside, &link);
+        #[cfg(windows)]
+        let created = std::os::windows::fs::symlink_dir(&outside, &link);
+        if created.is_err() {
+            eprintln!("无法创建目录符号链接（Windows 需要开发者模式/权限），跳过");
+            let _ = std::fs::remove_dir_all(&dir);
+            let _ = std::fs::remove_dir_all(&outside);
+            return;
+        }
+
+        sweep_webdav_artifacts(&dir, true, HOUR, SEVEN_DAYS).await;
+
+        assert!(
+            victim.exists(),
+            "不得跟随符号链接递归到 WebDAV 根之外删文件"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+        let _ = std::fs::remove_dir_all(&outside);
     }
 }
