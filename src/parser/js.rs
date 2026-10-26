@@ -14,6 +14,7 @@ use rquickjs::{Context, Ctx, Object, Runtime, Value};
 use serde_json::Value as JsonValue;
 use std::cell::RefCell;
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 use uuid::Uuid;
@@ -57,6 +58,48 @@ const JS_EVAL_TIMEOUT: Duration = Duration::from_secs(5);
 const JS_PARSE_BUDGET: Duration = Duration::from_secs(30);
 /// 单次求值允许返回的最大字符串长度。
 const JS_MAX_RESULT_BYTES: usize = 32 * 1024 * 1024;
+/// 慢求值告警阈值：单次求值（含上下文搭建与 jsLib）超过此时长打 WARN。
+const JS_SLOW_EVAL_WARN: Duration = Duration::from_millis(1000);
+
+// ─── 进程级求值统计（诊断埋点）───
+//
+// 全部用 Relaxed 序：只服务可观测性，读取便宜优先于跨线程精确时序。
+// 计数器模块私有，对外只暴露 [`js_eval_stats`] 只读快照。
+/// 进入求值的总次数（含聚合预算耗尽被拒的调用）。
+static JS_EVAL_TOTAL: AtomicU64 = AtomicU64::new(0);
+/// 返回 Err 的次数（含预算耗尽与被中断的求值）。
+static JS_EVAL_FAILED: AtomicU64 = AtomicU64::new(0);
+/// 聚合解析预算耗尽、求值被直接拒绝的次数。
+static JS_EVAL_BUDGET_EXHAUSTED: AtomicU64 = AtomicU64::new(0);
+/// 被中断处理器打断的次数（单次 5s 超时或聚合预算收紧的 deadline 触发）。
+static JS_EVAL_INTERRUPTED: AtomicU64 = AtomicU64::new(0);
+/// 累计求值耗时（微秒），用于估算 JS 阶段对 worker 线程的占用。
+static JS_EVAL_TOTAL_MICROS: AtomicU64 = AtomicU64::new(0);
+
+/// JS 求值统计快照（进程级，自启动累计；各字段含义见对应计数器）。
+#[derive(Debug, Clone, Copy, Default)]
+// 消费方（诊断/统计接口）尚未接入，当前由单元测试覆盖；非 test 构建豁免 dead_code。
+#[cfg_attr(not(test), allow(dead_code))]
+pub(crate) struct JsEvalStats {
+    pub total: u64,
+    pub failed: u64,
+    pub budget_exhausted: u64,
+    pub interrupted: u64,
+    pub total_micros: u64,
+}
+
+/// 读取进程级 JS 求值统计快照。
+// 同上：消费方后续接入，先由测试驱动。
+#[cfg_attr(not(test), allow(dead_code))]
+pub(crate) fn js_eval_stats() -> JsEvalStats {
+    JsEvalStats {
+        total: JS_EVAL_TOTAL.load(Ordering::Relaxed),
+        failed: JS_EVAL_FAILED.load(Ordering::Relaxed),
+        budget_exhausted: JS_EVAL_BUDGET_EXHAUSTED.load(Ordering::Relaxed),
+        interrupted: JS_EVAL_INTERRUPTED.load(Ordering::Relaxed),
+        total_micros: JS_EVAL_TOTAL_MICROS.load(Ordering::Relaxed),
+    }
+}
 /// `java.ajax` 等内部请求的超时（秒）。默认与 `REQUEST_TIMEOUT_SECS` 的代码默认
 /// 一致；app 启动时按实际配置覆盖（见 `set_js_http_timeout`）。
 /// 注意：JS 求值的 5s 中断只约束纯 JS 执行，原生函数（如 java.ajax）不受其管——
@@ -191,6 +234,26 @@ pub fn with_book_source<T>(source: &BookSource, f: impl FnOnce() -> T) -> T {
 
 fn active_source_json() -> Option<String> {
     ACTIVE_SOURCE.with(|cell| cell.borrow().clone())
+}
+
+/// 从 `ACTIVE_SOURCE` 提取书源名/URL 用于日志上下文；读不到返回 `(None, None)`。
+///
+/// 仅在告警等冷路径调用（有一次 JSON 解析成本），不放求值热路径。
+fn active_source_identity() -> (Option<String>, Option<String>) {
+    let extract = || {
+        let json = ACTIVE_SOURCE.with(|cell| cell.borrow().clone())?;
+        let value = serde_json::from_str::<JsonValue>(&json).ok()?;
+        let name = value
+            .get("bookSourceName")
+            .and_then(|v| v.as_str())
+            .map(str::to_string);
+        let url = value
+            .get("bookSourceUrl")
+            .and_then(|v| v.as_str())
+            .map(str::to_string);
+        Some((name, url))
+    };
+    extract().unwrap_or((None, None))
 }
 
 /// 在指定用户命名空间下执行闭包。
@@ -375,17 +438,30 @@ fn eval_js_inner_with_source(
     bindings: Option<&HashMap<String, JsonValue>>,
     read_globals: Option<&[&str]>,
 ) -> anyhow::Result<(String, HashMap<String, JsonValue>)> {
+    let started = Instant::now();
+    JS_EVAL_TOTAL.fetch_add(1, Ordering::Relaxed);
     // 聚合预算：进入时已超时直接拒绝执行（恶意书源用大量近满额 eval 拖垮
     // 阻塞线程的场景在此截断）；未超时则把本次求值的中断 deadline 收紧到
     // min(单次 5s, 聚合截止)
     let parse_deadline = parse_budget_deadline();
     if parse_deadline.is_some_and(|deadline| Instant::now() >= deadline) {
-        anyhow::bail!(
+        JS_EVAL_BUDGET_EXHAUSTED.fetch_add(1, Ordering::Relaxed);
+        let (source_name, source_url) = active_source_identity();
+        tracing::warn!(
+            budget_secs = JS_PARSE_BUDGET.as_secs(),
+            script_len = script.len(),
+            source_name = ?source_name,
+            source_url = ?source_url,
+            "JS 聚合解析预算耗尽，拒绝求值"
+        );
+        let result = Err(anyhow::anyhow!(
             "解析预算耗尽：单次解析聚合 JS 执行超过 {} 秒",
             JS_PARSE_BUDGET.as_secs()
-        );
+        ));
+        record_eval_outcome(started, script.len(), bindings.is_some(), &result);
+        return result;
     }
-    JS_RUNTIME.with(|cell| {
+    let result = JS_RUNTIME.with(|cell| {
         {
             let mut slot = cell.borrow_mut();
             if slot.is_none() {
@@ -628,7 +704,62 @@ fn eval_js_inner_with_source(
 
             Ok((result, globals_out))
         })
-    })
+    });
+    record_eval_outcome(started, script.len(), bindings.is_some(), &result);
+    result
+}
+
+/// 求值出口的统一埋点：累计耗时、失败/中断计数、debug 耗时日志与慢求值告警。
+///
+/// 脚本内容一律不进日志（书源规则可能夹带站点 Cookie 等敏感片段），只记长度。
+fn record_eval_outcome(
+    started: Instant,
+    script_len: usize,
+    has_bindings: bool,
+    result: &anyhow::Result<(String, HashMap<String, JsonValue>)>,
+) {
+    let elapsed = started.elapsed();
+    JS_EVAL_TOTAL_MICROS.fetch_add(elapsed.as_micros() as u64, Ordering::Relaxed);
+    let success = result.is_ok();
+    let mut interrupted = false;
+    if let Err(err) = result {
+        JS_EVAL_FAILED.fetch_add(1, Ordering::Relaxed);
+        interrupted = is_interrupted_error(err);
+        if interrupted {
+            JS_EVAL_INTERRUPTED.fetch_add(1, Ordering::Relaxed);
+        }
+    }
+    // 结构化字段由 tracing 惰性求值：debug 未启用时下面的表达式不会执行。
+    tracing::debug!(
+        elapsed_ms = elapsed.as_millis() as u64,
+        script_len,
+        has_bindings,
+        success,
+        interrupted,
+        "JS 求值完成"
+    );
+    if elapsed >= JS_SLOW_EVAL_WARN {
+        // 书源上下文的 JSON 解析有成本，只放在告警（冷）路径上，不进热路径。
+        let (source_name, source_url) = active_source_identity();
+        tracing::warn!(
+            elapsed_ms = elapsed.as_millis() as u64,
+            script_len,
+            has_bindings,
+            success,
+            source_name = ?source_name,
+            source_url = ?source_url,
+            "JS 慢求值：单次耗时超过 {}ms",
+            JS_SLOW_EVAL_WARN.as_millis()
+        );
+    }
+}
+
+/// 识别「被中断处理器打断」的求值失败：QuickJS-NG 在中断 handler 返回 true 时
+/// 抛出消息为 "interrupted" 的 InternalError。脚本自行 throw 含同字样的错误会
+/// 被误计——诊断计数取近似即可，不影响求值行为。
+fn is_interrupted_error(err: &anyhow::Error) -> bool {
+    err.chain()
+        .any(|cause| cause.to_string().contains("interrupted"))
 }
 
 /// 把脚本执行后的 JS 全局变量读成 JSON 值；不支持的类型（对象/函数等）返回 `None`。
@@ -1229,5 +1360,67 @@ mod tests {
         }
         // 最外层 guard drop 后预算清空：同一线程上求值恢复
         assert_eq!(eval_js("1+1", "", "").unwrap(), "2");
+    }
+
+    // ─── 求值统计计数器 ───
+    //
+    // 计数器是进程级全局状态，而 cargo test 同进程多线程并行跑用例，
+    // 其他用例可能同时求值，因此一律用「前后差值 >= 1」的相对断言，
+    // 不能断言精确相等。
+
+    #[test]
+    fn eval_success_increments_total_counter() {
+        let before = js_eval_stats();
+        assert_eq!(eval_js("1+1", "", "").unwrap(), "2");
+        let after = js_eval_stats();
+        assert!(
+            after.total > before.total,
+            "成功求值应计入总次数: before={before:?} after={after:?}"
+        );
+        assert!(
+            after.total_micros >= before.total_micros,
+            "累计耗时只增不减: before={before:?} after={after:?}"
+        );
+    }
+
+    #[test]
+    fn eval_failure_increments_failed_counter() {
+        let before = js_eval_stats();
+        assert!(eval_js("return )", "", "").is_err());
+        let after = js_eval_stats();
+        assert!(
+            after.total > before.total,
+            "失败求值同样计入总次数: before={before:?} after={after:?}"
+        );
+        assert!(
+            after.failed > before.failed,
+            "失败求值应计入失败次数: before={before:?} after={after:?}"
+        );
+        // 语法错误不是中断：中断计数不应因它增长（其他并行用例可能正常触发中断，
+        // 故只能断言不小于）
+        assert!(
+            after.interrupted >= before.interrupted,
+            "中断计数只增不减: before={before:?} after={after:?}"
+        );
+    }
+
+    #[test]
+    fn exhausted_budget_increments_budget_counter() {
+        let before = js_eval_stats();
+        {
+            let _budget = begin_parse_budget();
+            set_parse_budget_for_test(Duration::from_millis(50));
+            std::thread::sleep(Duration::from_millis(60));
+            assert!(eval_js("1+1", "", "").is_err(), "预算耗尽应直接拒绝");
+        }
+        let after = js_eval_stats();
+        assert!(
+            after.budget_exhausted > before.budget_exhausted,
+            "预算耗尽应单独计数: before={before:?} after={after:?}"
+        );
+        assert!(
+            after.failed > before.failed,
+            "预算耗尽被拒同时计入失败次数: before={before:?} after={after:?}"
+        );
     }
 }
