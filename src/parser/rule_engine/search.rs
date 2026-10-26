@@ -8,7 +8,8 @@ use super::kernel::{
     eval_field_xpath, eval_kind_html_element, eval_kind_json, eval_kind_xpath, normalize_list_rule,
     regex_list_captures, resolve_url, xpath_select_nodes, BODY_CHILDREN_SELECTOR,
 };
-use super::{parse_js_output_items, ParseMode, RuleEngine};
+use super::toc::parse_js_output_items;
+use super::{ParseMode, RuleEngine};
 use crate::model::rule::SearchRule;
 use crate::model::{book::Book, book_source::BookSource, search::SearchBook};
 use crate::parser::{
