@@ -578,7 +578,7 @@ const introText = computed(() => {
   cursor: default;
 }
 
-@media (max-width: 520px) {
+@media (max-width: 640px) {
   .book-card {
     grid-template-columns: 76px minmax(0, 1fr);
     gap: 13px;

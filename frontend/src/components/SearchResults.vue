@@ -559,7 +559,7 @@ defineEmits<{
   font-size: var(--text-sm);
 }
 
-@media (max-width: 720px) {
+@media (max-width: 767px) {
   .search-results {
     padding: 0 var(--space-4);
   }

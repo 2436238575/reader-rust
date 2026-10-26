@@ -595,7 +595,7 @@ textarea.field-input {
   accent-color: var(--color-primary);
 }
 
-@media (max-width: 560px) {
+@media (max-width: 640px) {
   .field-row {
     align-items: flex-start;
     flex-direction: column;

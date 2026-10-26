@@ -326,7 +326,7 @@ const overview = computed(() => getBookSourceOverview(props.source))
   font-size: var(--text-sm);
 }
 
-@media (max-width: 560px) {
+@media (max-width: 640px) {
   .editor-head {
     flex-direction: column;
   }

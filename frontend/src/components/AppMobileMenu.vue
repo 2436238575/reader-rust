@@ -82,6 +82,7 @@ import { computed, onBeforeUnmount, onMounted, ref, toRef, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { useAppStore } from '../stores/app'
 import { useFocusTrap } from '../composables/useFocusTrap'
+import { DESKTOP_LAYOUT_QUERY } from '../utils/breakpoints'
 import ThemeSwitch from './ThemeSwitch.vue'
 
 type NavKey = 'home' | 'explore' | 'recent'
@@ -141,8 +142,9 @@ function handleKeydown(event: KeyboardEvent) {
   if (event.key === 'Escape') close()
 }
 
-// 桌面端宽度下不需要整屏菜单（顶栏已有 Tab）
-const desktopQuery = typeof window !== 'undefined' ? window.matchMedia('(min-width: 768px)') : null
+// 桌面端宽度下不需要整屏菜单（顶栏已有 Tab）；断点口径见 utils/breakpoints.ts
+const desktopQuery =
+  typeof window !== 'undefined' ? window.matchMedia(DESKTOP_LAYOUT_QUERY) : null
 function handleDesktopChange() {
   if (desktopQuery?.matches) close()
 }

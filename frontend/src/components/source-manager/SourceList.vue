@@ -279,7 +279,7 @@ defineEmits<{
   gap: 6px;
 }
 
-@media (max-width: 560px) {
+@media (max-width: 640px) {
   .source-item {
     grid-template-columns: auto minmax(0, 1fr);
   }

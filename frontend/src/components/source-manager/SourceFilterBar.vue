@@ -148,7 +148,7 @@ defineEmits<{
   color: var(--color-text-secondary);
 }
 
-@media (max-width: 760px) {
+@media (max-width: 767px) {
   .filter-bar {
     flex-direction: column;
     align-items: stretch;
