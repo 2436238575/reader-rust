@@ -120,6 +120,8 @@ describe('bookshelf addBook upsert', () => {
     expect(result).toEqual(saved)
     expect(store.books.map((book) => book.bookId)).toEqual(['book_new'])
     expect(store.books[0].browserCachedChapterCount).toBe(0)
+    // saveBook 响应不含缓存章数，新书不伪造该字段
+    expect(store.books[0].cachedChapterCount).toBeUndefined()
     // 单本 upsert 的意义就是不再触发整架 GET
     expect(getBookshelfWithCacheInfo).not.toHaveBeenCalled()
   })
@@ -153,6 +155,66 @@ describe('bookshelf addBook upsert', () => {
     // saveBook 响应不带前端注入的本地缓存章数，替换时要留下旧值
     expect(replaced?.browserCachedChapterCount).toBe(5)
     expect(getBookshelfWithCacheInfo).not.toHaveBeenCalled()
+  })
+
+  it('已在架的书替换时保留服务端注入的远程缓存章数', async () => {
+    vi.mocked(getBookshelfWithCacheInfo).mockResolvedValue([
+      {
+        bookId: 'book_a',
+        name: '甲',
+        author: '',
+        bookUrl: 'https://b.example/a',
+        origin: 'o',
+        cachedChapterCount: 7,
+      },
+    ] as never)
+    const store = useBookshelfStore()
+    await store.fetchBooks()
+    vi.mocked(getBookshelfWithCacheInfo).mockClear()
+
+    // saveBook 响应不含 getShelfBookWithCacheInfo 注入的 cachedChapterCount
+    const saved = {
+      bookId: 'book_a',
+      name: '甲（修订）',
+      author: '某人',
+      bookUrl: 'https://b.example/a',
+      origin: 'o',
+    }
+    vi.mocked(saveBook).mockResolvedValue(saved as never)
+    await store.addBook({ bookId: 'book_a' })
+
+    const replaced = store.books.find((book) => book.bookId === 'book_a')
+    expect(replaced?.name).toBe('甲（修订）')
+    // 远程缓存章数 chip 不能在替换后消失
+    expect(replaced?.cachedChapterCount).toBe(7)
+    expect(getBookshelfWithCacheInfo).not.toHaveBeenCalled()
+  })
+
+  it('saveBook 响应带上远程缓存章数时以新值为准', async () => {
+    vi.mocked(getBookshelfWithCacheInfo).mockResolvedValue([
+      {
+        bookId: 'book_a',
+        name: '甲',
+        author: '',
+        bookUrl: 'https://b.example/a',
+        origin: 'o',
+        cachedChapterCount: 7,
+      },
+    ] as never)
+    const store = useBookshelfStore()
+    await store.fetchBooks()
+
+    vi.mocked(saveBook).mockResolvedValue({
+      bookId: 'book_a',
+      name: '甲',
+      author: '',
+      bookUrl: 'https://b.example/a',
+      origin: 'o',
+      cachedChapterCount: 9,
+    } as never)
+    await store.addBook({ bookId: 'book_a' })
+
+    expect(store.books.find((book) => book.bookId === 'book_a')?.cachedChapterCount).toBe(9)
   })
 
   it('saveBook 失败原样抛错，书架保持不变', async () => {

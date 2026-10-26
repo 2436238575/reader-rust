@@ -183,12 +183,17 @@ export const useBookshelfStore = defineStore('bookshelf', () => {
     const bookId = saved.bookId
     if (bookId) {
       const index = books.value.findIndex((b) => b.bookId === bookId)
+      const existing = index >= 0 ? books.value[index] : undefined
       // saveBook 响应不含前端注入的本地缓存章数：替换时沿用旧值，新书为 0
       const browserCachedChapterCount =
-        !isLocalBook(saved) && index >= 0
-          ? (books.value[index].browserCachedChapterCount ?? 0)
-          : 0
-      const next: ShelfBook = { ...saved, browserCachedChapterCount }
+        !isLocalBook(saved) && existing ? (existing.browserCachedChapterCount ?? 0) : 0
+      const next: ShelfBook = {
+        ...saved,
+        // saveBook 响应也不含 getShelfBookWithCacheInfo 注入的远程缓存章数：
+        // 替换时保留旧值（否则缓存章数 chip 要等下次整架重拉才恢复）；新书不伪造
+        cachedChapterCount: saved.cachedChapterCount ?? existing?.cachedChapterCount,
+        browserCachedChapterCount,
+      }
       if (index >= 0) {
         books.value[index] = next
       } else {
