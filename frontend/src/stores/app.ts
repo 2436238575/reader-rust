@@ -31,8 +31,7 @@ import {
 export const useAppStore = defineStore('app', () => {
   // ─── Theme ───
   const savedTheme = localStorage.getItem('theme') as 'light' | 'dark' | null
-  const legacyReaderNight = localStorage.getItem('reader-isNight') === 'true'
-  const theme = ref<'light' | 'dark'>(savedTheme || (legacyReaderNight ? 'dark' : 'light'))
+  const theme = ref<'light' | 'dark'>(savedTheme || 'light')
 
   function setTheme(value: 'light' | 'dark') {
     theme.value = value

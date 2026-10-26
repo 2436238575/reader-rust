@@ -7,8 +7,6 @@
 // 已编辑章集合（editedChapterKeys）不在此：正文管线（fetchChapterContent 的缓存
 // 跳过判断）直接读它，留在 reader 核心；其 localStorage 快照纯函数在
 // utils/editedChaptersCache。
-// 旧版每书一个 key 的已读迁移（migrateLegacyReadHistoryKeys 与
-// READER_READ_HISTORY_PREFIX）按任务要求原样随迁，不在本次拆分里清理。
 
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
@@ -31,8 +29,6 @@ import {
   type KeywordHighlightRule,
 } from '../utils/keywordHighlights'
 
-const READER_READ_HISTORY_PREFIX = 'reader-read-history:'
-
 export const useReaderMarksStore = defineStore('readerMarks', () => {
   const readerStore = useReaderStore()
 
@@ -42,9 +38,7 @@ export const useReaderMarksStore = defineStore('readerMarks', () => {
      localStorage 是同步镜像；阅读器渲染管线消费它给正文上底色 */
   const keywordRules = ref<KeywordHighlightRule[]>(loadLocalKeywordRules())
 
-  // 已读标记本地存储：单 key 文档 { [bookId]: string[] }。
-  // 旧版是每书一个 key（前缀 + bookId），书多了污染 localStorage 键空间；
-  // 首次访问时把旧键一次性合并迁移进单文档
+  // 已读标记本地存储：单 key 文档 { [bookId]: string[] }
   const READER_READ_HISTORY_KEY = 'reader-read-history'
 
   function readReadHistoryDoc(): Record<string, string[]> {
@@ -55,36 +49,6 @@ export const useReaderMarksStore = defineStore('readerMarks', () => {
       return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {}
     } catch {
       return {}
-    }
-  }
-
-  function migrateLegacyReadHistoryKeys() {
-    const legacy: Record<string, string[]> = {}
-    const staleKeys: string[] = []
-    for (let index = 0; index < localStorage.length; index += 1) {
-      const key = localStorage.key(index)
-      if (!key || !key.startsWith(READER_READ_HISTORY_PREFIX)) continue
-      try {
-        const parsed = JSON.parse(localStorage.getItem(key) || '[]')
-        if (Array.isArray(parsed)) {
-          legacy[key.slice(READER_READ_HISTORY_PREFIX.length)] = parsed.filter(
-            (item): item is string => typeof item === 'string'
-          )
-        }
-      } catch {
-        // 坏数据按空处理，键照样清
-      }
-      staleKeys.push(key)
-    }
-    if (!staleKeys.length) return
-    const doc = readReadHistoryDoc()
-    for (const [bookId, keys] of Object.entries(legacy)) {
-      // 与已有分片做并集（新文档可能已被别的书写过）
-      doc[bookId] = Array.from(new Set([...(doc[bookId] || []), ...keys]))
-    }
-    safeLocalSet(READER_READ_HISTORY_KEY, JSON.stringify(doc))
-    for (const key of staleKeys) {
-      localStorage.removeItem(key)
     }
   }
 
@@ -107,7 +71,6 @@ export const useReaderMarksStore = defineStore('readerMarks', () => {
       readChapterKeys.value = new Set()
       return
     }
-    migrateLegacyReadHistoryKeys()
     const doc = readReadHistoryDoc()
     readChapterKeys.value = new Set(Array.isArray(doc[bookId]) ? doc[bookId] : [])
     // 已读标记存在 localStorage，天然单浏览器；与后端文档做并集合并实现跨浏览器同步。
