@@ -2,10 +2,11 @@ import type { Book, ShelfBook } from '../types'
 import { safeLocalSet } from './storage'
 import { getUserdata, saveUserdata } from '../api/userdata'
 import { queueUserdataSave } from './userdataQueue'
+import { RECENT_BOOKS } from './userdataDocs'
 
 const RECENT_BOOKS_KEY = 'reader-recent-books'
 // 后端 userdata 文档名（/reader3/getUserdata・saveUserdata），跨浏览器同步用
-const BACKEND_DOC_NAME = 'recent-books'
+const BACKEND_DOC_NAME = RECENT_BOOKS
 const MAX_RECENT_BOOKS = 100
 // 连续保存（快速开书/切章）合并为一次后端写入
 const PUSH_DEBOUNCE_MS = 2000

@@ -1,8 +1,9 @@
 import { getUserdata, saveUserdata } from '../api/userdata'
 import { queueUserdataSave } from './userdataQueue'
+import { READING_STATS } from './userdataDocs'
 
 // 后端 userdata 文档名（/reader3/getUserdata・saveUserdata），跨浏览器同步用
-export const READING_STATS_DOC_NAME = 'reading-stats'
+export const READING_STATS_DOC_NAME = READING_STATS
 // readChapters 的保留条数上限（只作累计计数用，超出裁掉最旧的）
 export const MAX_READ_CHAPTER_ENTRIES = 5000
 // 连续保存合并为一次后端写入

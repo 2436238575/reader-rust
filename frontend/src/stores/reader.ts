@@ -20,6 +20,7 @@ import {
 import { getChapterComments, getParaCommentIndex } from '../api/review'
 import { getUserdata } from '../api/userdata'
 import { queueUserdataSave } from '../utils/userdataQueue'
+import { READ_HISTORY } from '../utils/userdataDocs'
 import { getReplaceRules } from '../api/replaceRule'
 import type {
   Book,
@@ -616,7 +617,7 @@ export const useReaderStore = defineStore('reader', () => {
   }
 
   // ─── 已读标记的跨浏览器同步（userdata 单文档：{ [bookId]: string[] }） ───
-  const READ_HISTORY_DOC = 'readChapterHistory'
+  const READ_HISTORY_DOC = READ_HISTORY
 
   let readHistoryPushTimer: ReturnType<typeof setTimeout> | null = null
   function scheduleReadHistoryPush(currentBook?: Book | null) {

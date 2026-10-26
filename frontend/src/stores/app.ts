@@ -18,6 +18,8 @@ import {
   stopAuthLifecycle,
 } from '../utils/authSession'
 import { cancelUserdataQueue } from '../utils/userdataQueue'
+import { clearUserdataPrefetch, prefetchUserdata } from '../api/userdata'
+import { READ_HISTORY, READING_STATS, RECENT_BOOKS } from '../utils/userdataDocs'
 import {
   loadLocalReadingStats,
   persistLocalReadingStats,
@@ -75,6 +77,12 @@ export const useAppStore = defineStore('app', () => {
 
   // 每个会话只做一次后端合并；登出后复位
   let statsSynced = false
+
+  // 首屏三份 userdata 文档（阅读统计/最近阅读/已读标记）一次批量预读，
+  // 随后的单文档读取命中 30s 一次性缓存，省三次往返；失败静默由单文档 GET 兜底
+  function prefetchFirstScreenDocs() {
+    void prefetchUserdata([READING_STATS, RECENT_BOOKS, READ_HISTORY])
+  }
 
   /** 登录态就绪后从后端合并一次阅读统计（跨浏览器同步）；失败则继续用本地 */
   function syncStatsOnce() {
@@ -138,6 +146,7 @@ export const useAppStore = defineStore('app', () => {
     startAuthLifecycle()
     // 登录后不一定经过会调 fetchUserInfo 的页面，直接在登录点触发
     syncStatsOnce()
+    prefetchFirstScreenDocs()
   }
 
   /** 服务端确认的用户信息落地：hint 已存在时补齐用户名（迁移首刷时可能未知）。 */
@@ -193,6 +202,7 @@ export const useAppStore = defineStore('app', () => {
           markUserInfoFresh()
           startAuthLifecycle()
           syncStatsOnce()
+          prefetchFirstScreenDocs()
           return
         }
       } catch {
@@ -212,6 +222,7 @@ export const useAppStore = defineStore('app', () => {
           markUserInfoFresh()
           startAuthLifecycle()
           syncStatsOnce()
+          prefetchFirstScreenDocs()
         } else {
           // Cookie 刚换新仍取不到用户：会话确实没了
           clearAuthHint()
@@ -244,6 +255,8 @@ export const useAppStore = defineStore('app', () => {
     // 401 触发 need-login，把刚登出的用户强制弹去登录页；待写文档本地有镜像，
     // 下次登录的同步合并会推回，丢弃不丢数据
     cancelUserdataQueue()
+    // 预读缓存属于上一个会话，一并清掉
+    clearUserdataPrefetch()
   }
 
   function updateUserInfo(next: UserInfo | null) {

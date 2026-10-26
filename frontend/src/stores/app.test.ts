@@ -65,9 +65,23 @@ vi.mock('../utils/userdataQueue', () => ({
   cancelUserdataQueue: vi.fn(),
 }))
 
+// setUser/bootstrapAuth 登录后批量预读首屏 userdata、clearUser 清空预读缓存；
+// mock 掉避免真实发请求
+vi.mock('../api/userdata', () => ({
+  prefetchUserdata: vi.fn(() => Promise.resolve()),
+  clearUserdataPrefetch: vi.fn(),
+}))
+
+import { prefetchUserdata, clearUserdataPrefetch } from '../api/userdata'
+
 const getUserInfoMock = vi.mocked(getUserInfo)
 const refreshMock = vi.mocked(refreshAccessToken)
 const cancelUserdataQueueMock = vi.mocked(cancelUserdataQueue)
+const prefetchUserdataMock = vi.mocked(prefetchUserdata)
+const clearUserdataPrefetchMock = vi.mocked(clearUserdataPrefetch)
+
+// 三份首屏文档名是与后端约定的线缆契约，断言用字面量而不是常量，防止常量改错无人察觉
+const FIRST_SCREEN_DOCS = ['reading-stats', 'recent-books', 'readChapterHistory']
 
 function createUserInfo(username = 'admin'): UserInfo {
   return { username }
@@ -91,6 +105,8 @@ beforeEach(() => {
   getUserInfoMock.mockReset()
   refreshMock.mockReset()
   cancelUserdataQueueMock.mockReset()
+  prefetchUserdataMock.mockReset().mockResolvedValue(undefined)
+  clearUserdataPrefetchMock.mockReset()
 })
 
 describe('app store fetchUserInfo 合并与新鲜期', () => {
@@ -190,6 +206,24 @@ describe('app store fetchUserInfo 合并与新鲜期', () => {
     store.clearUser()
 
     expect(cancelUserdataQueueMock).toHaveBeenCalledTimes(1)
+  })
+
+  it('setUser 登录成功后批量预读三份首屏 userdata 文档', () => {
+    const store = useAppStore()
+
+    store.setUser(createUserInfo())
+
+    expect(prefetchUserdataMock).toHaveBeenCalledTimes(1)
+    expect(prefetchUserdataMock).toHaveBeenCalledWith(FIRST_SCREEN_DOCS)
+  })
+
+  it('clearUser 同时清空 userdata 预读缓存', () => {
+    const store = useAppStore()
+    store.setUser(createUserInfo())
+
+    store.clearUser()
+
+    expect(clearUserdataPrefetchMock).toHaveBeenCalledTimes(1)
   })
 
   it('bootstrapAuth 成功后记录新鲜期，随后的 fetchUserInfo 不再请求', async () => {
@@ -312,6 +346,41 @@ describe('app store 启动恢复（Cookie 会话）', () => {
     expect(getUserInfoMock).toHaveBeenCalledTimes(1)
     expect(refreshMock).not.toHaveBeenCalled()
     expect(store.isLoggedIn).toBe(true)
+  })
+
+  it('bootstrapAuth 确认已登录后批量预读三份首屏 userdata 文档', async () => {
+    seedHint()
+    getUserInfoMock.mockResolvedValue({ userInfo: createUserInfo() })
+    const store = useAppStore()
+
+    await store.bootstrapAuth()
+
+    expect(prefetchUserdataMock).toHaveBeenCalledTimes(1)
+    expect(prefetchUserdataMock).toHaveBeenCalledWith(FIRST_SCREEN_DOCS)
+  })
+
+  it('bootstrapAuth 刷新换新后确认登录的链路同样预读', async () => {
+    seedHint()
+    refreshMock.mockImplementation(async () => {
+      storeAuthHint({ username: 'admin', accessTokenExpiresAt: Date.now() + 6 * 3600 * 1000 })
+    })
+    getUserInfoMock
+      .mockResolvedValueOnce({ userInfo: null })
+      .mockResolvedValueOnce({ userInfo: createUserInfo() })
+    const store = useAppStore()
+
+    await store.bootstrapAuth()
+
+    expect(store.isLoggedIn).toBe(true)
+    expect(prefetchUserdataMock).toHaveBeenCalledWith(FIRST_SCREEN_DOCS)
+  })
+
+  it('未登录（无 hint）的 bootstrapAuth 不预读', async () => {
+    const store = useAppStore()
+
+    await store.bootstrapAuth()
+
+    expect(prefetchUserdataMock).not.toHaveBeenCalled()
   })
 
   it('getUserInfo 返回 null 且 hint 存在：刷新一次再取，取到即登录', async () => {
