@@ -1,7 +1,7 @@
 import { ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { useBookshelfStore } from '../stores/bookshelf'
-import { useReaderStore } from '../stores/reader'
+import { useReaderContentStore } from '../stores/readerContent'
 import type { Book, SearchBook } from '../types'
 
 /**
@@ -12,7 +12,7 @@ import type { Book, SearchBook } from '../types'
 export function useOpenBook() {
   const router = useRouter()
   const shelfStore = useBookshelfStore()
-  const readerStore = useReaderStore()
+  const contentStore = useReaderContentStore()
   // 防连点重入：同一本书的打开流程进行中忽略重复触发
   const openingBookId = ref('')
 
@@ -25,12 +25,12 @@ export function useOpenBook() {
     openingBookId.value = bookId
     try {
       await shelfStore.moveBookToFront(bookId).catch(() => undefined)
-      const loadBookTask = readerStore.loadBook(target)
+      const loadBookTask = contentStore.loadBook(target)
       await router.push('/reader')
       // loadBook 失败时已自行 toast 并写入 loadError（阅读页有重试入口），
       // 这里吞掉避免调用方链路上全是 unhandled rejection
       await loadBookTask.catch(() => undefined)
-      await readerStore.loadChapter(chapterIndex ?? target.durChapterIndex ?? 0)
+      await contentStore.loadChapter(chapterIndex ?? target.durChapterIndex ?? 0)
     } finally {
       openingBookId.value = ''
     }

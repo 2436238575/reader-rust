@@ -3,14 +3,7 @@ import { safeLocalSet } from '../utils/storage'
 import { ref, computed, reactive, watch } from 'vue'
 import { useAppStore } from './app'
 import { useBookshelfStore } from './bookshelf'
-import { useAiBookStore } from './aiBook'
-import {
-  getChapterList,
-  getBookContent,
-  getBookContents,
-  getChapterImages,
-  setBookSource as apiSetBookSource,
-} from '../api/bookshelf'
+import { getChapterImages } from '../api/bookshelf'
 import {
   getBookmarks,
   saveBookmark,
@@ -31,24 +24,12 @@ import type {
   ReplaceRule,
   ReviewPage,
 } from '../types'
-import {
-  deleteBrowserCachedChapter,
-  deleteBrowserCachedChapters,
-  getBrowserCachedChapter,
-  getBrowserCatalog,
-  setBrowserCachedChapter,
-  setBrowserCatalog,
-} from '../utils/browserCache'
+import { deleteBrowserCachedChapters } from '../utils/browserCache'
 import { isLocalBook } from '../utils/localBook'
-import { describeRequestFailure } from '../utils/requestFailure'
 import { saveRecentReadBook } from '../utils/recentBooks'
-import { listChapterEdits, selectChapterVersion } from '../api/chapterEdit'
-import type {
-  ChapterContentResponse,
-  ChapterVersionKind,
-  ContentVariant,
-} from '../api/bookshelf'
-import { hydrateDiffOps, type ParagraphDiffOp } from '../utils/chapterDiff'
+import { listChapterEdits } from '../api/chapterEdit'
+import type { ChapterVersionKind, ContentVariant } from '../api/bookshelf'
+import type { ParagraphDiffOp } from '../utils/chapterDiff'
 import {
   loadLocalKeywordRules,
   persistAndPushKeywordRules,
@@ -60,10 +41,7 @@ import { createReaderProgress } from './readerProgress'
 import { fontPresets, themePresets, type ThemePreset } from '../utils/readerTheme'
 import { convertChineseText, ensureChineseConverter } from '../utils/openccConvert'
 import { applyReplaceRulesToText } from '../utils/replaceRules'
-import {
-  loadCachedEditedChapterKeys,
-  saveCachedEditedChapterKeys,
-} from '../utils/editedChaptersCache'
+import { saveCachedEditedChapterKeys } from '../utils/editedChaptersCache'
 
 // 常量已下沉 utils/readerTheme（拆分专项）；这里再导出只是兼容旧 import 路径
 export { fontPresets, themePresets }
@@ -173,7 +151,6 @@ export const useReaderStore = defineStore('reader', () => {
     | null
   const appStore = useAppStore()
   const shelfStore = useBookshelfStore()
-  const aiBookStore = useAiBookStore()
   const book = ref<Book | null>(null)
   const chapters = ref<BookChapter[]>([])
   const currentIndex = ref(0)
@@ -353,48 +330,6 @@ export const useReaderStore = defineStore('reader', () => {
     { immediate: true }
   )
 
-  async function restorePersistedSession() {
-    const session = getPersistedReaderSession()
-    if (!session?.book) return false
-
-    book.value = session.book
-    chapters.value = session.chapters ?? []
-    // 瘦身会话（配额降级时落的盘）不带目录：恢复时重新拉一次
-    if (!chapters.value.length) {
-      const bookId = session.book.bookId
-      if (!bookId) return false
-      try {
-        const list = await getChapterList({ bookId })
-        chapters.value = list
-        void setBrowserCatalog(bookId, list)
-      } catch {
-        // 离线兜底：浏览器里缓存的目录
-        const cachedCatalog = await getBrowserCatalog<BookChapter>(bookId)
-        if (!cachedCatalog) return false
-        chapters.value = cachedCatalog
-      }
-    }
-    if (!chapters.value.length) return false
-    loadReadChapterHistory(session.book)
-
-    // 先拿到已编辑章清单再取正文：否则恢复会话时会走浏览器缓存，拿到的是
-    // 编辑前的上游正文（diff 标记也随之消失）
-    await refreshEditedChapterKeys()
-
-    const nextIndex = Math.max(0, Math.min(session.currentIndex || 0, chapters.value.length - 1))
-    try {
-      const chapterContent = await fetchChapterContent(nextIndex)
-      if (chapterContent == null) return false
-      setActiveChapterState(nextIndex, chapterContent, session.chapterScrollProgress || 0)
-      markChapterAsRead(nextIndex)
-      // 恢复会话不经过 loadChapter，评论要在这里单独补一次（配图由 setActive 触发）
-      void loadChapterReviews(nextIndex)
-      return true
-    } catch {
-      return false
-    }
-  }
-
   // 已读标记本地存储：单 key 文档 { [bookId]: string[] }。
   // 旧版是每书一个 key（前缀 + bookId），书多了污染 localStorage 键空间；
   // 首次访问时把旧键一次性合并迁移进单文档
@@ -559,82 +494,8 @@ export const useReaderStore = defineStore('reader', () => {
   const tts = useReaderTts(content)
 
   /* ─── Book / chapter ops ─── */
-  let bookLoadSeq = 0
-  // 打开这本书时服务端进度的真实保存时间。setActiveChapterState 会把
-  // book.durChapterTime 刷成 Date.now()（书架排序需要），本地/服务端进度
-  // 比新旧时若直接用被刷新的值，服务端会靠这个伪造的新鲜时间戳「永远获胜」，
-  // 离线读了几章没同步成功的本地进度就被误判为旧数据丢弃
-
-  async function loadBook(b: Book) {
-    // 连点两本书时目录响应可能乱序到达：只认最后一次打开的书。
-    // 同时作废在途的 loadChapter，免得旧书正文写到新书上。
-    const loadSeq = ++bookLoadSeq
-    chapterLoadSeq++
-    loading.value = true
-    loadError.value = ''
-    book.value = b
-    serverProgressTime.value = b.durChapterTime || 0
-    chapters.value = []
-    content.value = ''
-    resetReviews()
-    // 先用上次成功拉取时落盘的快照：离线开书时清单拉不到，没有快照就会
-    // 把编辑章当普通章节读浏览器缓存（编辑前的旧正文）。在线时下面的
-    // refreshEditedChapterKeys 会用服务端结果覆盖并更新快照
-    editedChapterKeys.value = new Set(b.bookId ? loadCachedEditedChapterKeys(b.bookId) : [])
-    // 书源级「不支持评论/配图」结论也按书失效：换书/换源后重新判断
-    paraReviewsDisabledBySource = false
-    chapterReviewsDisabledBySource = false
-    chapterImagesDisabledBySource = false
-    appStore.markBookOpened(b.bookId || b.bookUrl)
-    currentIndex.value = b.durChapterIndex || 0
-    chapterScrollProgress.value = 0
-    preloadedContent.value.clear()
-    chapterDiffs.clear()
-    loadReadChapterHistory(b)
-    progressDirty.value = false
-    lastServerProgressKey.value = ''
-    chaptersLoading.value = true
-    try {
-      if (!b.bookId) throw new Error('书籍缺少 bookId')
-      // 目录与编辑章清单并行；loadBook 返回前两者都要落定，否则开书后的
-      // 正文请求可能赶在集合就位前走浏览器缓存/写回旧缓存。
-      // refreshEditedChapterKeys 内部已吞异常，不会让 Promise.all reject
-      const [list] = await Promise.all([
-        getChapterList({ bookId: b.bookId }),
-        refreshEditedChapterKeys(),
-      ])
-      if (loadSeq !== bookLoadSeq) return
-      chapters.value = list
-      // 目录落浏览器缓存：离线时同一本书还能打开
-      void setBrowserCatalog(b.bookId, list)
-      saveReaderSession()
-    } catch (error) {
-      // 目录都拿不到时先试浏览器里的目录缓存（离线场景），
-      // 实在没有才等于这本书打不开。清掉半开状态并记下原因：否则阅读页
-      // 会一直停在「加载中...」的占位符上，用户完全看不出发生了什么。
-      const cachedCatalog = b.bookId ? await getBrowserCatalog<BookChapter>(b.bookId) : null
-      if (cachedCatalog && loadSeq === bookLoadSeq) {
-        chapters.value = cachedCatalog
-        chaptersLoading.value = false
-        // 原因要如实：后端在线但上游挂了（502）与浏览器离线是两回事
-        appStore.showToast(
-          `${describeRequestFailure(error, appStore.isOnline)}：目录来自浏览器缓存`,
-          'warning'
-        )
-        return
-      }
-      if (loadSeq === bookLoadSeq) {
-        loading.value = false
-        chapters.value = []
-        content.value = ''
-        loadError.value = describeRequestFailure(error, appStore.isOnline)
-        appStore.showToast(loadError.value, 'error')
-      }
-      throw error
-    } finally {
-      if (loadSeq === bookLoadSeq) chaptersLoading.value = false
-    }
-  }
+  // 开书/正文管线（loadBook/loadChapter/fetchChapterContent/预加载/换源/刷新…）
+  // 已拆到 stores/readerContent；核心只保留状态与本文件内的落账入口。
 
   function setActiveChapterState(index: number, chapterContent: string, progress = 0) {
     currentIndex.value = index
@@ -665,193 +526,6 @@ export const useReaderStore = defineStore('reader', () => {
     markProgressDirty()
   }
 
-  /**
-   * 正文落账：版本信息、diff 标记与浏览器缓存写入。单章 fetchChapterContent 与
-   * 批量预加载（preloadChaptersBatch）共用这一份，避免两条路径的版本记录与
-   * 缓存行为各自漂移。
-   */
-  async function recordChapterContent(
-    index: number,
-    chapter: BookChapter,
-    response: ChapterContentResponse,
-    context: { bookId: string; isLocal: boolean; variant: ContentVariant }
-  ) {
-    chapterVersions.set(index, {
-      versionId: response.versionId,
-      kind: response.versionKind,
-      baseVersionId: response.baseVersionId,
-      latestUserVersionId: response.latestUserVersionId,
-      latestUpstreamVersionId: response.latestUpstreamVersionId,
-      upstreamChanged: response.upstreamChanged,
-      selectionSource: response.selectionSource,
-      stale: response.stale,
-    })
-    if (response.edited) {
-      // 后端为省流量不给 equal 行带文本，这里用编辑版正文补齐
-      const ops = response.diff?.ops ? hydrateDiffOps(response.diff.ops, response.content) : null
-      chapterDiffs.set(index, {
-        edited: true,
-        ops,
-        error: response.diffError || '',
-        variant: response.variant,
-      })
-    } else {
-      chapterDiffs.delete(index)
-    }
-
-    // 上游预览不写浏览器缓存：缓存只存默认版本，否则离线时会读到另一版。
-    // 编辑章同样不写（isEditedChapter），它的最新内容只存在于服务端
-    const isEditedChapter = editedChapterKeys.value.has(chapter.url)
-    if (!context.isLocal && !isEditedChapter && context.variant !== 'upstream') {
-      await setBrowserCachedChapter({
-        bookId: context.bookId,
-        chapterUrl: chapter.url,
-        chapterTitle: chapter.title,
-        content: response.content,
-      }).catch((error) => {
-        // 写不进浏览器缓存（配额写满且无可淘汰）不该静默：阅读功能本身不受影响，
-        // 但「缓存永远 0 章」这种症状没有日志就完全无法定位
-        console.warn('[reader] 浏览器章节缓存写入失败', error)
-      })
-    }
-  }
-
-  async function fetchChapterContent(index: number, forceRefresh = false) {
-    if (!book.value?.bookId || !chapters.value[index]) return null
-
-    if (!forceRefresh && preloadedContent.value.has(index)) {
-      return preloadedContent.value.get(index) || null
-    }
-
-    const chapter = chapters.value[index]
-    const bookId = book.value.bookId
-
-    const isLocal = isLocalBook(book.value)
-    const variant: ContentVariant = config.contentVersion === 'upstream' ? 'upstream' : 'default'
-    // 在线时总是问后端：手动选择的版本记在服务端，浏览器缓存可能落后于另一台设备。
-    // 浏览器缓存只在离线时作为正文来源，以及请求失败时兜底。
-    // 编辑章例外：它的浏览器缓存是编辑前的上游正文，离线返回它等于回退到旧内容
-    const isEditedChapter = editedChapterKeys.value.has(chapter.url)
-    const browserCached =
-      !isLocal && !appStore.isOnline && !isEditedChapter
-        ? await getBrowserCachedChapter(bookId, chapter.url).catch(() => null)
-        : null
-
-    if (!appStore.isOnline && !isLocal) {
-      if (browserCached) {
-        chapterDiffs.delete(index)
-        chapterVersions.delete(index)
-        return browserCached
-      }
-      if (isEditedChapter) {
-        throw new Error('本章有编辑版，需要联网读取')
-      }
-      throw new Error('当前处于离线状态，且该章节未缓存到浏览器')
-    }
-
-    let chapterContent = ''
-    try {
-      const response = await getBookContent({
-        bookId,
-        chapterUrl: chapter.url,
-        index,
-        refresh: forceRefresh ? 1 : 0,
-        variant,
-      })
-      chapterContent = response.content
-      await recordChapterContent(index, chapter, response, { bookId, isLocal, variant })
-    } catch (error) {
-      // 在线失败的缓存兜底同样跳过编辑章：理由同上，它的缓存是编辑前的旧正文
-      const fallback =
-        browserCached ??
-        (isLocal || isEditedChapter
-          ? null
-          : await getBrowserCachedChapter(bookId, chapter.url).catch(() => null))
-      if (fallback) {
-        chapterDiffs.delete(index)
-        chapterVersions.delete(index)
-        appStore.showToast(
-          `${describeRequestFailure(error, appStore.isOnline)}，已切换到本地缓存章节`,
-          'warning'
-        )
-        return fallback
-      }
-      throw error
-    }
-
-    return chapterContent
-  }
-
-  let chapterLoadSeq = 0
-  // 加载失败的目标章：重试时要重拉的是它，而不是还停留在旧章的 currentIndex
-  const failedChapterIndex = ref<number | null>(null)
-
-  async function loadChapter(index: number, forceRefresh = false) {
-    if (!book.value || !chapters.value[index]) return
-
-    // 快速连点下一章时旧响应可能后到：只认最新一次请求的结果
-    const loadSeq = ++chapterLoadSeq
-    loading.value = true
-    loadError.value = ''
-    failedChapterIndex.value = null
-    try {
-      const chapterContent = await fetchChapterContent(index, forceRefresh)
-      if (chapterContent == null) return
-      if (loadSeq !== chapterLoadSeq) return
-
-      const previousSavedIndex = book.value.durChapterIndex ?? 0
-      const previousSavedProgress = decodeServerProgress(book.value.durChapterPos)
-      const isOpeningSavedChapter = !forceRefresh && index === previousSavedIndex
-      const initialProgress = isOpeningSavedChapter ? previousSavedProgress : 0
-
-      setActiveChapterState(index, chapterContent, initialProgress)
-      markChapterAsRead(index)
-      appStore.markChapterRead(
-        book.value.bookId || book.value.bookUrl,
-        index,
-        chapters.value.length
-      )
-
-      if (!isOpeningSavedChapter) {
-        await persistProgress(index, 0)
-      }
-
-      // 正文先渲染，评论随后补上（配图由 setActiveChapterState 统一触发）
-      void loadChapterReviews(index)
-
-      if (config.enablePreload) {
-        setTimeout(() => preloadAroundChapter(index), forceRefresh ? 1500 : 1000)
-      }
-    } catch (error) {
-      // 失败要留下可见的错误态（正文区展示 + 重试入口），只清 loading 会让用户
-      // 对着旧章或空白分不清「还在加载」还是「已经失败」。不再向外抛：所有
-      // 调用方（翻章/目录/开书）都不接异常，抛出去只会变成 unhandled rejection。
-      if (loadSeq === chapterLoadSeq) {
-        loadError.value = describeRequestFailure(error, appStore.isOnline)
-        failedChapterIndex.value = index
-        appStore.showToast(loadError.value, 'error')
-      }
-    } finally {
-      // 过期请求的 finally 不能灭掉新一轮加载的 loading
-      if (loadSeq === chapterLoadSeq) loading.value = false
-    }
-  }
-
-  /** 失败重试：目录都没拿到就整书重载，否则重拉失败时目标章（无记录退回当前章） */
-  async function retryLoad() {
-    if (!book.value) return
-    try {
-      if (!chapters.value.length) {
-        await loadBook(book.value)
-        await loadChapter(currentIndex.value)
-      } else {
-        await loadChapter(failedChapterIndex.value ?? currentIndex.value)
-      }
-    } catch {
-      // loadBook 失败时已自行 toast，这里不再重复提示
-    }
-  }
-
   /* ─── 评论（章评 / 段评） ─── */
 
   /* 书源级「不支持」结论：后端 enabled:false 只取决于书源声明没声明规则，
@@ -861,6 +535,18 @@ export const useReaderStore = defineStore('reader', () => {
   let paraReviewsDisabledBySource = false
   let chapterReviewsDisabledBySource = false
   let chapterImagesDisabledBySource = false
+
+  /* 拆分过渡：这两个重置入口本属开书/刷新流程内部，管线搬到 readerContent 后
+     由它跨 store 调用；评论/配图簇迁出（readerExtras）时一并搬走 */
+  function resetChapterSupportFlags() {
+    paraReviewsDisabledBySource = false
+    chapterReviewsDisabledBySource = false
+    chapterImagesDisabledBySource = false
+  }
+
+  function reprobeChapterImages() {
+    chapterImagesDisabledBySource = false
+  }
 
   /**
    * 拉取当前章节的段评概览与章评第一页。
@@ -994,305 +680,10 @@ export const useReaderStore = defineStore('reader', () => {
     return map
   })
 
-  async function preloadAroundChapter(index: number) {
-    if (!book.value || !config.enablePreload) return
-    const targets = [index + 1, index + 2, index - 1].filter(
-      (target, pos, list) =>
-        target >= 0 && target < chapters.value.length && list.indexOf(target) === pos
-    )
-    // 批量接口一次取回全部目标章（后端上限 10，这里最多 3 条）；整批失败
-    // （断网/401/400）时对全部目标章回退逐章预加载，行为与接入批量前一致；
-    // 批量成功时只有失败章（单章 error / 响应缺失）逐章兜底——走单章接口
-    // 重试并自带浏览器缓存兜底，成功章不重复请求
-    const pending = targets.filter((target) => !preloadedContent.value.has(target))
-    if (pending.length > 0) {
-      const batch = await preloadChaptersBatch(pending)
-      if (batch.ok) {
-        for (const target of batch.failed) {
-          await preloadNextChapter(target)
-        }
-        return
-      }
-    }
-    for (const target of targets) {
-      await preloadNextChapter(target)
-    }
-  }
-
-  /**
-   * 批量预加载：一次 getBookContents 请求取回多章正文写入 preloadedContent。
-   * 每章独立成败——`item.data` 为空或响应里缺失的章节记入 failed，由调用方
-   * 逐章兜底（单章接口重试 + 浏览器缓存）；ok=false 表示整批失败，由调用方
-   * 对全部目标章回退逐章 fetchChapterContent。
-   */
-  async function preloadChaptersBatch(
-    targets: number[]
-  ): Promise<{ ok: boolean; failed: number[] }> {
-    const currentBook = book.value
-    if (!currentBook?.bookId) return { ok: false, failed: [] }
-    const bookId = currentBook.bookId
-    const isLocal = isLocalBook(currentBook)
-    const variant: ContentVariant = config.contentVersion === 'upstream' ? 'upstream' : 'default'
-    // 发送时的 index → chapterUrl 快照：响应回来时按它核对章节列表是否已变化
-    const sentUrls = new Map<number, string>()
-    const chaptersPayload = targets.flatMap((chapterIndex) => {
-      const chapter = chapters.value[chapterIndex]
-      if (!chapter) return []
-      sentUrls.set(chapterIndex, chapter.url)
-      return [{ index: chapterIndex, chapterUrl: chapter.url }]
-    })
-    if (chaptersPayload.length === 0) return { ok: false, failed: [] }
-
-    let items
-    try {
-      items = await getBookContents({ bookId, chapters: chaptersPayload, variant })
-    } catch {
-      return { ok: false, failed: [] }
-    }
-    if (!Array.isArray(items)) return { ok: false, failed: [] }
-    // 响应期间换书/换源：旧请求的结果不能写进新书的预加载池（换书已清空
-    // preloadedContent，这里直接丢弃，不算失败、也不再回退逐章）
-    if (book.value?.bookId !== bookId) return { ok: true, failed: [] }
-
-    // 成功取回正文的请求章；其余（data 为空 / 响应缺失）都要逐章兜底
-    const answered = new Set<number>()
-    for (const item of items) {
-      const chapterIndex = item?.index
-      const sentUrl = typeof chapterIndex === 'number' ? sentUrls.get(chapterIndex) : undefined
-      if (sentUrl === undefined) continue
-      if (!item?.data) continue // 单章失败：原因在 error，记入 failed 走逐章兜底
-      answered.add(chapterIndex)
-      const chapter = chapters.value[chapterIndex]
-      if (!chapter || chapter.url !== sentUrl) continue
-      if (preloadedContent.value.has(chapterIndex)) continue
-      // 与 preloadNextChapter 同一套容量约束：超出即淘汰最旧的一条
-      if (preloadedContent.value.size > 3) {
-        const firstKey = preloadedContent.value.keys().next().value
-        if (firstKey !== undefined) preloadedContent.value.delete(firstKey)
-      }
-      preloadedContent.value.set(chapterIndex, item.data.content)
-      // 版本信息/diff/浏览器缓存与单章路径同口径落账
-      await recordChapterContent(chapterIndex, chapter, item.data, { bookId, isLocal, variant })
-    }
-    const failed = [...sentUrls.keys()].filter((chapterIndex) => !answered.has(chapterIndex))
-    return { ok: true, failed }
-  }
-
-  async function preloadNextChapter(index: number) {
-    if (
-      !book.value ||
-      !config.enablePreload ||
-      index >= chapters.value.length ||
-      preloadedContent.value.has(index)
-    )
-      return
-
-    // Keep max 3 preloaded chapters
-    if (preloadedContent.value.size > 3) {
-      const firstKey = preloadedContent.value.keys().next().value
-      if (firstKey !== undefined) preloadedContent.value.delete(firstKey)
-    }
-
-    try {
-      const res = await fetchChapterContent(index)
-      if (!res) return
-      preloadedContent.value.set(index, res)
-    } catch {
-      /* ignore */
-    }
-  }
-
-  function normalizeChapterTitle(title?: string) {
-    return (title || '')
-      .replace(/\s+/g, '')
-      .replace(/[^\p{L}\p{N}]/gu, '')
-      .toLowerCase()
-  }
-
-  function resolveChapterIndexByTitle(
-    list: BookChapter[],
-    targetTitle?: string,
-    fallbackIndex = 0
-  ) {
-    if (!list.length) return 0
-    const normalizedTarget = normalizeChapterTitle(targetTitle)
-    if (!normalizedTarget) {
-      return Math.max(0, Math.min(list.length - 1, fallbackIndex))
-    }
-
-    const exactIndex = list.findIndex(
-      (chapter) => normalizeChapterTitle(chapter.title) === normalizedTarget
-    )
-    if (exactIndex >= 0) return exactIndex
-
-    const partialIndex = list.findIndex((chapter) => {
-      const title = normalizeChapterTitle(chapter.title)
-      return title.includes(normalizedTarget) || normalizedTarget.includes(title)
-    })
-    if (partialIndex >= 0) return partialIndex
-
-    return Math.max(0, Math.min(list.length - 1, fallbackIndex))
-  }
-
-  /* ─── Switch Source ─── */
-  /** 换源：目标是候选搜索结果自己的 bookId；当前书的 bookId 不变 */
-  async function switchSource(targetBookId: string) {
-    if (!book.value?.bookId) return
-    const previousChapterTitle = currentChapter.value?.title || book.value.durChapterTitle
-    const previousIndex = currentIndex.value
-    const previousProgress = chapterScrollProgress.value
-    loading.value = true
-    try {
-      const updatedBook = await apiSetBookSource({
-        bookId: book.value.bookId,
-        targetBookId,
-      })
-      if (!updatedBook) return null
-
-      await loadBook(updatedBook)
-      const targetIndex = resolveChapterIndexByTitle(
-        chapters.value,
-        previousChapterTitle,
-        typeof updatedBook.durChapterIndex === 'number'
-          ? updatedBook.durChapterIndex
-          : previousIndex
-      )
-      await loadChapter(targetIndex)
-      setChapterScrollProgress(previousProgress)
-      await shelfStore.fetchBooks().catch(() => undefined)
-      return updatedBook
-    } finally {
-      loading.value = false
-    }
-  }
-
-  /** 批量导入后清掉全部章节的预加载与派生状态，后续翻章重新从后端取正文。
-   *  只清当前章会让预加载过的相邻章继续显示导入前的旧正文。 */
-  async function invalidateChapterContentCache() {
-    preloadedContent.value.clear()
-    chapterVersions.clear()
-    chapterDiffs.clear()
-    await refreshEditedChapterKeys()
-  }
-
-  /** 编辑版保存/删除后重载本章：清预载与浏览器缓存，重新走后端（编辑版优先），
-   *  与 refreshContent 同构但不强刷上游。 */
-  async function reloadChapterAfterEdit(index = currentIndex.value) {
-    const chapter = chapters.value[index]
-    if (!chapter || !book.value?.bookId) return
-    preloadedContent.value.delete(index)
-    await deleteBrowserCachedChapter(book.value.bookId, chapter.url).catch(() => undefined)
-    await refreshEditedChapterKeys()
-    const loadSeq = ++chapterLoadSeq
-    loading.value = true
-    try {
-      const chapterContent = await fetchChapterContent(index, false)
-      if (chapterContent == null) return
-      if (loadSeq !== chapterLoadSeq || index !== currentIndex.value) return
-      setActiveChapterState(index, chapterContent, chapterScrollProgress.value)
-      // 正文/版本变了，段评概览也要按当前版本重新取（服务端有缓存，代价很小）
-      void loadChapterReviews(index)
-    } finally {
-      loading.value = false
-    }
-  }
-
-  /** 切换当前章显示版本并保存到服务端（跨设备生效）；`null` 表示跟随最新。 */
-  async function setChapterVersion(index: number, versionId: number | null) {
-    const chapter = chapters.value[index]
-    const bookId = book.value?.bookId
-    if (!chapter || !bookId) return
-    await selectChapterVersion(bookId, chapter.url, versionId)
-    chapterVersions.delete(index)
-    preloadedContent.value.clear()
-    await refreshEditedChapterKeys()
-    if (config.contentVersion === 'upstream') {
-      // 在「上游原版」预览里选了版本：切回默认版本模式，ReaderView 的
-      // contentVersion watcher 会用新的服务端选择重载本章。
-      updateConfig('contentVersion', 'edited')
-    } else {
-      await reloadChapterAfterEdit(index)
-    }
-  }
-
-  async function refreshContent() {
-    if (!book.value || !chapters.value[currentIndex.value]) return
-    // 显式刷新绕过「书源不支持配图」的缓存结论重新判断：书源可能刚补了
-    // 规则。reset 在 setActiveChapterState 之前，随后触发的 loadChapterImages
-    // 就会真正发请求（评论走 loadChapterReviews(index, true)，自带重判）
-    chapterImagesDisabledBySource = false
-    // 快照当前章节：await 期间用户可能已翻章，旧正文不能盖到新章上。
-    // 与 loadChapter 共用序号，翻章后迟到的刷新结果直接作废。
-    const index = currentIndex.value
-    const loadSeq = ++chapterLoadSeq
-    loading.value = true
-    try {
-      const chapterContent = await fetchChapterContent(index, true)
-      if (chapterContent == null) return
-      if (loadSeq !== chapterLoadSeq || index !== currentIndex.value) return
-      setActiveChapterState(index, chapterContent, chapterScrollProgress.value)
-      // 正文基准刚被重抓，段评索引也要跟着刷新
-      void loadChapterReviews(index, true)
-      void preloadAroundChapter(index)
-    } catch (error) {
-      // 手动刷新失败不能静默：转圈停了用户会以为刷新成功
-      if (loadSeq === chapterLoadSeq) {
-        appStore.showToast((error as Error)?.message || '刷新章节失败', 'error')
-      }
-    } finally {
-      if (loadSeq === chapterLoadSeq) loading.value = false
-    }
-  }
-
-  async function refreshChapters() {
-    if (!book.value) return
-    chaptersLoading.value = true
-    try {
-      preloadedContent.value.clear()
-      // 用户要的是刷新目录列表，不是重读当前章：此前 loadChapter(target, true)
-      // 会把人踢回章首。现在只换列表，当前章正文与阅读位置不动
-      const currentUrl = chapters.value[currentIndex.value]?.url
-      if (!book.value.bookId) return
-      chapters.value = await getChapterList({
-        bookId: book.value.bookId,
-        refresh: 1,
-      })
-      // 上游增删章导致位置漂移时，按 URL 把索引对齐回去
-      if (currentUrl) {
-        const newIndex = chapters.value.findIndex((chapter) => chapter.url === currentUrl)
-        if (newIndex >= 0 && newIndex !== currentIndex.value) {
-          currentIndex.value = newIndex
-          book.value.durChapterIndex = newIndex
-        }
-      }
-      void setBrowserCatalog(book.value.bookId, chapters.value)
-    } finally {
-      chaptersLoading.value = false
-    }
-  }
-
   function setChapterScrollProgress(value: number) {
     chapterScrollProgress.value = Math.max(0, Math.min(1, value))
     markProgressDirty()
     scheduleReaderSessionSave()
-  }
-
-  async function nextChapter() {
-    if (hasNext.value) {
-      const completedBook = book.value ? { ...book.value } : null
-      const completedChapter = currentChapter.value ? { ...currentChapter.value } : null
-      await loadChapter(currentIndex.value + 1)
-      if (completedBook && completedChapter) {
-        // 自动更新在服务端跑：fire-and-forget，关页面/换书都不受影响
-        void aiBookStore.maybeAutoUpdate(completedBook, completedChapter.index)
-      }
-    }
-  }
-
-  async function prevChapter() {
-    if (hasPrev.value) {
-      await loadChapter(currentIndex.value - 1)
-    }
   }
 
   /* ─── Replace Rules ─── */
@@ -1380,18 +771,6 @@ export const useReaderStore = defineStore('reader', () => {
     await fetchBookmarks()
   }
 
-  function clear() {
-    book.value = null
-    chapters.value = []
-    content.value = ''
-    currentIndex.value = 0
-    chapterScrollProgress.value = 0
-    readChapterKeys.value = new Set()
-    serverProgressTime.value = 0
-    resetReviews()
-    stopAutoReading()
-  }
-
   /* ─── Panel visibility ─── */
   const activePanel = ref<ReaderPanel>(null)
   const panelParent = ref<ReaderPanel>(null)
@@ -1432,28 +811,22 @@ export const useReaderStore = defineStore('reader', () => {
     chaptersLoading,
     loadError,
     serverProgressTime,
+    progressDirty,
+    lastServerProgressKey,
     currentChapter,
     hasNext,
     hasPrev,
     readingProgress,
-    loadBook,
-    loadChapter,
-    retryLoad,
-    fetchChapterContent,
     setActiveChapterState,
-    refreshContent,
-    reloadChapterAfterEdit,
-    invalidateChapterContentCache,
-    setChapterVersion,
     chapterVersions,
-    nextChapter,
-    prevChapter,
-    clear,
     chapterScrollProgress,
     setChapterScrollProgress,
+    preloadedContent,
+    decodeServerProgress,
+    saveReaderSession,
+    loadReadChapterHistory,
     flushReaderSessionSave,
     getPersistedReaderSession,
-    restorePersistedSession,
     persistProgress,
     flushProgressToServer,
     flushProgressToServerKeepalive,
@@ -1487,13 +860,11 @@ export const useReaderStore = defineStore('reader', () => {
     keywordRules,
     editedChapterKeys,
     refreshEditedChapterKeys,
+    resetChapterSupportFlags,
+    reprobeChapterImages,
     chapterDiffs,
     saveKeywordRules,
     syncKeywordRules,
-    switchSource,
-    preloadNextChapter,
-    preloadAroundChapter,
-    refreshChapters,
     ...tts,
     displayContent,
     processContentForDisplay,

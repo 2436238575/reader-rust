@@ -1,8 +1,10 @@
 import { nextTick, ref } from 'vue'
 import type { ComputedRef, Ref } from 'vue'
 import type { useReaderStore } from '../stores/reader'
+import type { useReaderContentStore } from '../stores/readerContent'
 
 type ReaderStore = ReturnType<typeof useReaderStore>
+type ReaderContentStore = ReturnType<typeof useReaderContentStore>
 
 export interface ContinuousChapterItem {
   index: number
@@ -33,6 +35,7 @@ export function shouldPruneLower(
 
 export function useContinuousReading(
   store: ReaderStore,
+  contentStore: ReaderContentStore,
   renderChapterHtml: (rawText: string, chapterIndex?: number) => string,
   isContinuousMode: ComputedRef<boolean>,
   hideReadChaptersMode: ComputedRef<boolean>,
@@ -171,7 +174,7 @@ export function useContinuousReading(
     const chapter = store.chapters[index]
     if (!chapter) return null
     try {
-      const chapterContent = await store.fetchChapterContent(index, forceRefresh)
+      const chapterContent = await contentStore.fetchChapterContent(index, forceRefresh)
       if (chapterContent == null) return null
       notifiedLoadErrors.delete(loadErrorKey(index))
       return {

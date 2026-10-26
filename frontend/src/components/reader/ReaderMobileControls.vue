@@ -131,7 +131,7 @@
     <!-- Right Floating -->
     <Transition name="fade">
       <div v-show="show" class="m-float m-float-right">
-        <button class="m-btn" :class="{ spinning: store.loading }" @click="store.refreshContent()">
+        <button class="m-btn" :class="{ spinning: store.loading }" @click="contentStore.refreshContent()">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />
             <path d="M3 3v5h5" />
@@ -201,10 +201,12 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { useReaderStore } from '../../stores/reader'
+import { useReaderContentStore } from '../../stores/readerContent'
 import { useAppStore } from '../../stores/app'
 import { useSourceStore } from '../../stores/source'
 
 const store = useReaderStore()
+const contentStore = useReaderContentStore()
 const appStore = useAppStore()
 const sourceStore = useSourceStore()
 

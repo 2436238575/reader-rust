@@ -173,7 +173,7 @@
         >
           <div v-if="store.loadError" class="load-error">
             <p>{{ store.loadError }}</p>
-            <button class="retry-btn" @click="store.retryLoad()">重试</button>
+            <button class="retry-btn" @click="contentStore.retryLoad()">重试</button>
           </div>
           <section v-else class="horizontal-content-page">
             <div
@@ -205,7 +205,7 @@
         <div v-else>
           <div v-if="store.loadError" class="load-error">
             <p>{{ store.loadError }}</p>
-            <button class="retry-btn" @click="store.retryLoad()">重试</button>
+            <button class="retry-btn" @click="contentStore.retryLoad()">重试</button>
           </div>
           <template v-else>
             <div class="chapter-title">{{ store.currentChapter?.title || '加载中...' }}</div>
@@ -490,6 +490,7 @@
 import { ref, computed, watch, onMounted, onUnmounted, nextTick, defineAsyncComponent } from 'vue'
 import { onBeforeRouteLeave, useRouter } from 'vue-router'
 import { useReaderStore, fontPresets } from '../stores/reader'
+import { useReaderContentStore } from '../stores/readerContent'
 import { useAppStore } from '../stores/app'
 import { useSourceStore } from '../stores/source'
 import { applySystemTheme } from '../utils/systemUi'
@@ -571,6 +572,7 @@ const ChapterVersionPanel = defineAsyncComponent(
 
 const router = useRouter()
 const store = useReaderStore()
+const contentStore = useReaderContentStore()
 const appStore = useAppStore()
 const sourceStore = useSourceStore()
 const SERVER_PROGRESS_AUTOSAVE_MS = 10000
@@ -642,6 +644,7 @@ const {
 } = useCommentPanelGlue(store)
 const { showBookInfo, bookInfoBook, openInfo, handleBookSwitched } = useBookInfoModal(
   store,
+  contentStore,
   appStore,
   router
 )
@@ -664,7 +667,7 @@ const {
   jumpToSearchResult,
   handleContentUpdated,
   handlePresentationUpdated,
-} = useReaderSearch(store, { locateMatch: locateSearchMatch })
+} = useReaderSearch(store, contentStore, { locateMatch: locateSearchMatch })
 
 // 搜索命中定位：横翻模式容器 overflow hidden + transform 翻页，
 // scrollIntoView 无效，换算成页码跳过去（函数声明提升，useReaderSearch 可先引用）
@@ -836,7 +839,7 @@ function chapterDiffState(chapterIndex: number) {
 }
 
 async function handleRefreshContent() {
-  await store.refreshContent()
+  await contentStore.refreshContent()
 }
 
 /* ─── 章节正文编辑 ─── */
@@ -889,7 +892,7 @@ function openVersionPanel() {
 
 /** 编辑保存/恢复上游后：重载本章（响应里带最新正文与 diff） */
 async function handleChapterEditChanged() {
-  await store.reloadChapterAfterEdit(store.currentIndex)
+  await contentStore.reloadChapterAfterEdit(store.currentIndex)
 }
 
 function formatChapterHtml(rawText: string, withParaComments = false, chapterIndex?: number) {
@@ -1188,6 +1191,7 @@ const {
   disposeContinuousReading,
 } = useContinuousReading(
   store,
+  contentStore,
   renderChapterHtml,
   isContinuousMode,
   hideReadChaptersMode,
@@ -1232,7 +1236,7 @@ function syncHorizontalPageState() {
   store.setChapterScrollProgress(progress)
   updateHorizontalEndState()
   if (config.value.enablePreload && maxPage > 0 && horizontalPageIndex.value >= maxPage - 1) {
-    store.preloadAroundChapter(store.currentIndex)
+    contentStore.preloadAroundChapter(store.currentIndex)
   }
   scheduleSaveReadingPosition()
   serverProgressAutoSaveScheduler.schedule()
@@ -1325,7 +1329,7 @@ async function prevChapter(toChapterEnd = false) {
   if (targetIndex < 0) return
 
   if (!isContinuousMode.value) {
-    await store.prevChapter()
+    await contentStore.prevChapter()
     if (toChapterEnd) {
       // 「章头再翻上一页」是在往回读：落到上一章章末，而不是章头。
       // 走恢复通道（与书签跳转同路）——横翻落最后一页、竖滚滚到底
@@ -1349,7 +1353,7 @@ async function nextChapter() {
   if (targetIndex >= store.chapters.length) return
 
   if (!isContinuousMode.value) {
-    await store.nextChapter()
+    await contentStore.nextChapter()
     scrollToTop()
     return
   }
@@ -1361,7 +1365,7 @@ async function jumpFromCatalog(targetIndex: number) {
   if (targetIndex < 0 || targetIndex >= store.chapters.length) return
 
   if (!isContinuousMode.value) {
-    await store.loadChapter(targetIndex)
+    await contentStore.loadChapter(targetIndex)
     store.closePanel()
     scrollToTop()
     return
@@ -1379,7 +1383,7 @@ async function jumpToBookmark(bm: { chapterIndex?: number; chapterPos?: number }
   const progress = chapterPosToProgress(bm.chapterPos)
 
   if (!isContinuousMode.value) {
-    await store.loadChapter(targetIndex)
+    await contentStore.loadChapter(targetIndex)
     queueRestorePosition({
       chapterIndex: targetIndex,
       progress,
@@ -1739,7 +1743,7 @@ function handleScroll() {
       container.scrollHeight - (container.scrollTop + container.clientHeight) <
         container.clientHeight * 1.5
     ) {
-      store.preloadAroundChapter(store.currentIndex)
+      contentStore.preloadAroundChapter(store.currentIndex)
     }
   }
   if (showControls.value && !store.activePanel) {
@@ -1902,7 +1906,7 @@ onMounted(async () => {
   syncViewportSize()
   appStore.startReadingSession()
   if (!store.book) {
-    const restored = await store.restorePersistedSession()
+    const restored = await contentStore.restorePersistedSession()
     if (!restored) {
       router.replace('/')
       return
@@ -2088,7 +2092,7 @@ watch(
       pruneReadChapters(store.currentIndex)
     }
     if (!isContinuousMode.value && config.value.enablePreload) {
-      store.preloadAroundChapter(store.currentIndex)
+      contentStore.preloadAroundChapter(store.currentIndex)
     }
     if (isContinuousMode.value && !suppressContinuousSync.value) {
       await syncContinuousToStoreState()
@@ -2159,7 +2163,7 @@ watch(
   () => {
     loadSavedReadingPosition()
     scheduleRefreshOfflineCacheState()
-    // 编辑章清单的刷新由 store.loadBook 负责（与目录并行取，落定后才返回），
+    // 编辑章清单的刷新由 contentStore.loadBook 负责（与目录并行取，落定后才返回），
     // 这里不再重复触发，避免开书瞬间并发拿到上一本书的集合
   }
 )
@@ -2172,7 +2176,7 @@ watch(
       await rebuildContinuousAtChapter(store.currentIndex)
       void store.loadChapterReviews(store.currentIndex)
     } else {
-      await store.reloadChapterAfterEdit(store.currentIndex)
+      await contentStore.reloadChapterAfterEdit(store.currentIndex)
     }
   }
 )

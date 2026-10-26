@@ -40,10 +40,12 @@
 import { computed } from 'vue'
 import { useBookshelfStore } from '../../stores/bookshelf'
 import { useReaderStore } from '../../stores/reader'
+import { useReaderContentStore } from '../../stores/readerContent'
 import { getCoverUrl } from '../../api/bookshelf'
 import type { Book } from '../../types'
 const store = useBookshelfStore()
 const readerStore = useReaderStore()
+const contentStore = useReaderContentStore()
 const theme = computed(() => readerStore.currentTheme)
 
 // 列表小封面按 320 宽取派生图（只降不升），配合 webp 协商省流
@@ -55,9 +57,9 @@ if (!store.books.length) {
 
 async function openBook(book: Book) {
   if (book.bookId !== readerStore.book?.bookId) {
-    readerStore.clear()
-    await readerStore.loadBook(book)
-    await readerStore.loadChapter(book.durChapterIndex || 0)
+    contentStore.clear()
+    await contentStore.loadBook(book)
+    await contentStore.loadChapter(book.durChapterIndex || 0)
   }
   readerStore.closePanel()
 }

@@ -1,16 +1,23 @@
 import { ref } from 'vue'
 import type { Router } from 'vue-router'
 import type { useReaderStore } from '../stores/reader'
+import type { useReaderContentStore } from '../stores/readerContent'
 import type { useAppStore } from '../stores/app'
 import type { Book, SearchBook } from '../types'
 import { getBookInfo } from '../api/bookshelf'
 
 type ReaderStore = ReturnType<typeof useReaderStore>
+type ReaderContentStore = ReturnType<typeof useReaderContentStore>
 type AppStore = ReturnType<typeof useAppStore>
 
 /// 书籍详情弹窗粘合：打开时先铺当前会话的书（含实时进度），再异步拉最新详情；
 /// 弹窗内换源成功后要重开阅读会话，否则弹窗一关阅读区还握着旧源。
-export function useBookInfoModal(store: ReaderStore, appStore: AppStore, router: Router) {
+export function useBookInfoModal(
+  store: ReaderStore,
+  contentStore: ReaderContentStore,
+  appStore: AppStore,
+  router: Router
+) {
   const showBookInfo = ref(false)
   const bookInfoBook = ref<Book | null>(null)
 
@@ -42,8 +49,8 @@ export function useBookInfoModal(store: ReaderStore, appStore: AppStore, router:
   async function handleBookSwitched(updated: Book | SearchBook) {
     const b = updated as Book
     bookInfoBook.value = b
-    await store.loadBook(b).catch(() => undefined)
-    await store.loadChapter(b.durChapterIndex ?? 0)
+    await contentStore.loadBook(b).catch(() => undefined)
+    await contentStore.loadChapter(b.durChapterIndex ?? 0)
   }
 
   function openAiBook() {

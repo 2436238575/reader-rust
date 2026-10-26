@@ -1,8 +1,10 @@
 import { computed, nextTick, onScopeDispose, ref } from 'vue'
 import type { useReaderStore } from '../stores/reader'
+import type { useReaderContentStore } from '../stores/readerContent'
 import { searchCachedContent } from '../api/search'
 
 type ReaderStore = ReturnType<typeof useReaderStore>
+type ReaderContentStore = ReturnType<typeof useReaderContentStore>
 
 export interface SearchResultItem {
   chapterIndex: number
@@ -28,7 +30,11 @@ interface ReaderSearchOptions {
   locateMatch?: (el: HTMLElement) => void
 }
 
-export function useReaderSearch(store: ReaderStore, options: ReaderSearchOptions = {}) {
+export function useReaderSearch(
+  store: ReaderStore,
+  contentStore: ReaderContentStore,
+  options: ReaderSearchOptions = {}
+) {
   const showSearch = ref(false)
   const searchQuery = ref('')
   const searchResults = ref<SearchResultItem[]>([])
@@ -254,7 +260,7 @@ export function useReaderSearch(store: ReaderStore, options: ReaderSearchOptions
     searchIndex.value = idx
     pendingSearchResult.value = result
     if (result.chapterIndex !== store.currentIndex) {
-      await store.loadChapter(result.chapterIndex)
+      await contentStore.loadChapter(result.chapterIndex)
     }
     nextTick(() => {
       scrollToMatch()

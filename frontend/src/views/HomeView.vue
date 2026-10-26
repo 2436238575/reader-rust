@@ -192,7 +192,7 @@ import { ref, onMounted, onActivated } from 'vue'
 import { usePreserveScroll } from '../composables/usePreserveScroll'
 import { useRouter } from 'vue-router'
 import { useBookshelfStore } from '../stores/bookshelf'
-import { useReaderStore } from '../stores/reader'
+import { useReaderContentStore } from '../stores/readerContent'
 import { useAppStore } from '../stores/app'
 import { useOpenBook } from '../composables/useOpenBook'
 import { uploadEpubBook, uploadTxtBook } from '../api/bookshelf'
@@ -204,7 +204,7 @@ import type { Book, SearchBook } from '../types'
 
 const router = useRouter()
 const shelfStore = useBookshelfStore()
-const readerStore = useReaderStore()
+const contentStore = useReaderContentStore()
 const appStore = useAppStore()
 const { openBook } = useOpenBook()
 
@@ -222,7 +222,7 @@ usePreserveScroll(() => shelfScrollRef.value)
 onMounted(async () => {
   await appStore.fetchUserInfo()
   if (!appStore.isOnline) {
-    const restored = await readerStore.restorePersistedSession()
+    const restored = await contentStore.restorePersistedSession()
     if (restored) {
       appStore.showToast('已恢复上次阅读的书籍', 'success')
       router.replace('/reader')

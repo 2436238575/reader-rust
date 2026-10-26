@@ -155,6 +155,7 @@
 <script setup lang="ts">
 import { ref, computed, watch, onMounted } from 'vue'
 import { useReaderStore } from '../../stores/reader'
+import { useReaderContentStore } from '../../stores/readerContent'
 import { useAppStore } from '../../stores/app'
 import { getBookInfo, getCoverUrl } from '../../api/bookshelf'
 import {
@@ -165,6 +166,7 @@ import {
 import type { Book, SearchBook } from '../../types'
 
 const store = useReaderStore()
+const contentStore = useReaderContentStore()
 const appStore = useAppStore()
 const theme = computed(() => store.currentTheme)
 /// 封面要经后端取图接口并带上令牌（<img> 带不了请求头）；
@@ -223,7 +225,7 @@ async function selectCandidate(item: AvailableSourceCandidate) {
 async function handleSwitch(res: SearchBook) {
   if (store.loading || !res.bookId) return
   try {
-    const nextBook = await store.switchSource(res.bookId)
+    const nextBook = await contentStore.switchSource(res.bookId)
     store.closePanel()
     appStore.showToast(
       `已切换到 ${nextBook?.originName || res.origin}`,

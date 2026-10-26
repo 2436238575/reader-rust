@@ -176,6 +176,7 @@
 <script setup lang="ts">
 import { computed, ref, toRef, watch } from 'vue'
 import { useReaderStore } from '../../stores/reader'
+import { useReaderContentStore } from '../../stores/readerContent'
 import { useAppStore } from '../../stores/app'
 import { useEscClose } from '../../composables/useEscClose'
 import { useMobileLayout } from '../../composables/useMobileLayout'
@@ -210,6 +211,7 @@ const emit = defineEmits<{
 }>()
 
 const store = useReaderStore()
+const contentStore = useReaderContentStore()
 const appStore = useAppStore()
 const { isMobileLayout } = useMobileLayout()
 useEscClose(toRef(props, 'modelValue'), () => emit('update:modelValue', false))
@@ -330,7 +332,7 @@ function resetDiff() {
 async function makeCurrent() {
   if (!preview.value) return
   try {
-    await store.setChapterVersion(store.currentIndex, preview.value.versionId)
+    await contentStore.setChapterVersion(store.currentIndex, preview.value.versionId)
     appStore.showToast('已切换当前版本', 'success')
     await reload()
   } catch (e) {
@@ -340,7 +342,7 @@ async function makeCurrent() {
 
 async function followLatest() {
   try {
-    await store.setChapterVersion(store.currentIndex, null)
+    await contentStore.setChapterVersion(store.currentIndex, null)
     appStore.showToast('已跟随最新版本', 'success')
     await reload()
   } catch (e) {
@@ -400,8 +402,8 @@ async function handleResetBookToUpstream() {
       'success'
     )
     // 全书显示都变了：预加载过的章节缓存全部作废，重载当前章与本面板
-    await store.invalidateChapterContentCache()
-    await store.reloadChapterAfterEdit(store.currentIndex)
+    await contentStore.invalidateChapterContentCache()
+    await contentStore.reloadChapterAfterEdit(store.currentIndex)
     await reload()
   } catch (e) {
     appStore.showToast((e as Error).message || '操作失败', 'error')
@@ -452,10 +454,10 @@ async function onImported(payload: {
     appStore.showToast('没有导入任何章节', 'warning')
   }
   // 整本导入会一次改多章：预加载过的相邻章可能仍是旧正文，全部作废重取。
-  await store.invalidateChapterContentCache()
+  await contentStore.invalidateChapterContentCache()
   await reload()
   if (makeCurrent && includesCurrent) {
-    await store.reloadChapterAfterEdit(store.currentIndex)
+    await contentStore.reloadChapterAfterEdit(store.currentIndex)
   }
 }
 

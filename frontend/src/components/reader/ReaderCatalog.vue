@@ -282,6 +282,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, nextTick, watch } from 'vue'
 import { useReaderStore } from '../../stores/reader'
+import { useReaderContentStore } from '../../stores/readerContent'
 import { useAppStore } from '../../stores/app'
 import type { Bookmark } from '../../types'
 import { listBrowserCachedChapterUrls } from '../../utils/browserCache'
@@ -306,6 +307,7 @@ const emit = defineEmits<{
 type CatalogTab = 'chapters' | 'bookmarks' | 'underlines'
 
 const store = useReaderStore()
+const contentStore = useReaderContentStore()
 const appStore = useAppStore()
 const theme = computed(() => store.currentTheme)
 const activeTab = ref<CatalogTab>(props.initialTab)
@@ -448,7 +450,7 @@ async function goToChapter(index: number) {
 }
 
 async function refreshCatalog() {
-  await store.refreshChapters()
+  await contentStore.refreshChapters()
   await refreshCachedChapterState()
   scrollToCurrent()
 }

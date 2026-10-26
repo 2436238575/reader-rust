@@ -35,6 +35,8 @@ function makeContainer() {
 function makeReading(store: ReturnType<typeof makeStore>, hideRead = false) {
   return useContinuousReading(
     store as never,
+    // 正文管线（fetchChapterContent）在 readerContent store：mock 对象同形，直接复用
+    store as never,
     (raw: string) => `<p>${raw}</p>`,
     computed(() => true),
     computed(() => hideRead),

@@ -33,7 +33,7 @@ describe('useReaderSearch 全书搜索', () => {
       totalChapters: 120,
       truncated: false,
     } as never)
-    const search = useReaderSearch(makeStore())
+    const search = useReaderSearch(makeStore(), makeStore())
     search.setSearchScope('book')
     search.searchQuery.value = '锚'
     search.runSearch()
@@ -60,7 +60,7 @@ describe('useReaderSearch 全书搜索', () => {
       totalChapters: 0,
       truncated: false,
     } as never)
-    const search = useReaderSearch(makeStore())
+    const search = useReaderSearch(makeStore(), makeStore())
     search.setSearchScope('book')
     search.searchQuery.value = '词'
     search.runSearch()
@@ -69,7 +69,7 @@ describe('useReaderSearch 全书搜索', () => {
   })
 
   it('切范围清空结果；后端报错进状态文案', async () => {
-    const search = useReaderSearch(makeStore())
+    const search = useReaderSearch(makeStore(), makeStore())
     search.searchResults.value = [{ chapterIndex: 0, chapterTitle: 't', snippet: 's' }]
     search.setSearchScope('book')
     expect(search.searchResults.value).toEqual([])
@@ -82,7 +82,7 @@ describe('useReaderSearch 全书搜索', () => {
   })
 
   it('handleContentUpdated 只在当前章范围重跑', () => {
-    const search = useReaderSearch(makeStore())
+    const search = useReaderSearch(makeStore(), makeStore())
     search.showSearch.value = true
     search.searchQuery.value = '锚'
     search.setSearchScope('book')
