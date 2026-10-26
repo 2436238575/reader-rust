@@ -279,6 +279,13 @@ async fn overwrite_via_rename(from: &std::path::Path, to: &std::path::Path) -> s
 /// 覆盖写语义：把 `from` rename 到 `to`，保证任意失败路径下旧文件要么已被
 /// 新内容替换、要么原样保留，绝不出现「先删旧文件、重试又失败」的两头空。
 ///
+/// **目录目标先行拒绝**：文件不能覆盖同名目录。Linux 的 rename 本就报
+/// IsADirectory（不进备份分支）；Windows 上是 PermissionDenied，不拦的话会
+/// 误入备份分支——整个目录被搬进点前缀隐藏备份后重试成功、目录名被上传
+/// 文件顶替，而 best-effort 删备份对目录必然失败又被吞掉，目录就从 JSON
+/// 文件列表（点前缀过滤）里静默消失了。判定用 `symlink_metadata` 不跟随
+/// 末段符号链接，保持 POSIX 直接替换符号链接的原语义。
+///
 /// 流程：
 /// 1. 直接 rename（POSIX 原子覆盖，绝大多数调用到此为止）；
 /// 2. 失败且错误类型为 AlreadyExists/PermissionDenied（Windows 上目标被
@@ -304,6 +311,17 @@ where
     F: FnMut(PathBuf, PathBuf) -> Fut,
     Fut: std::future::Future<Output = std::io::Result<()>>,
 {
+    // 目标是目录时拒绝（见函数文档）；metadata 取不到时按非目录处理，
+    // 交由后续 rename 决定成败
+    if matches!(
+        tokio::fs::symlink_metadata(to).await,
+        Ok(m) if m.is_dir()
+    ) {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::IsADirectory,
+            "上传目标与现有目录同名，文件不能覆盖目录",
+        ));
+    }
     match rename_op(from.to_path_buf(), to.to_path_buf()).await {
         Ok(()) => return Ok(()),
         Err(e)
@@ -767,6 +785,45 @@ mod tests {
 
         assert_eq!(std::fs::read(&target).unwrap(), b"new");
         assert!(backup_residues(&dir).is_empty());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn overwrite_rejects_directory_target_and_preserves_it() {
+        // 目标是同名目录：文件不能覆盖目录。Windows 上 rename(file→目录)
+        // 返回 PermissionDenied，若不拦会误入备份分支——整个目录被搬进点前缀
+        // 隐藏备份后重试成功、目录名被上传文件顶替，旧目录就从 JSON 文件
+        // 列表（点前缀过滤）里静默消失且接口报成功（Linux 上 rename 返回
+        // IsADirectory 直接透传，无此问题）。
+        let dir = sandbox("dir-target");
+        let target = dir.join("notes");
+        std::fs::create_dir(&target).unwrap();
+        std::fs::write(target.join("old.txt"), b"inside").unwrap();
+        let temp = dir.join("notes.upload-x.tmp");
+        std::fs::write(&temp, b"new").unwrap();
+
+        let (op, calls) = real_rename();
+        let err = rename_overwrite_with_backup(&temp, &target, op)
+            .await
+            .unwrap_err();
+        assert_eq!(
+            err.kind(),
+            std::io::ErrorKind::IsADirectory,
+            "应返回 IsADirectory 而非其他错误: {err}"
+        );
+        assert_eq!(*calls.borrow(), 0, "目录目标应在任何 rename 之前被拒绝");
+        assert!(target.is_dir(), "同名目录必须原样保留");
+        assert_eq!(
+            std::fs::read(target.join("old.txt")).unwrap(),
+            b"inside",
+            "目录内容必须完好"
+        );
+        assert!(
+            backup_residues(&dir).is_empty(),
+            "不得把目录搬进隐藏备份: {:?}",
+            backup_residues(&dir)
+        );
+        assert_eq!(std::fs::read(&temp).unwrap(), b"new", "temp 应原样保留");
         let _ = std::fs::remove_dir_all(&dir);
     }
 
