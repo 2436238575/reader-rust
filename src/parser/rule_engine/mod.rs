@@ -1,13 +1,13 @@
 mod kernel;
 
+mod content;
 mod info;
 mod search;
 mod toc;
 use kernel::{
-    apply_legado_regex, eval_field_html_doc_with_ctx, eval_field_html_with_ctx,
-    eval_field_json_with_ctx, extract_js, interpolate_common_templates, interpolate_json_templates,
-    is_truthy, normalize_list_rule, pick_json_field, resolve_url, split_legado_regex,
-    strip_mode_prefix, DocView, INLINE_JS_RE,
+    eval_field_html_doc_with_ctx, eval_field_html_with_ctx, eval_field_json_with_ctx, extract_js,
+    interpolate_common_templates, interpolate_json_templates, is_truthy, normalize_list_rule,
+    pick_json_field, resolve_url, split_legado_regex, strip_mode_prefix, DocView,
 };
 
 use crate::model::book_source::BookSource;
@@ -88,137 +88,6 @@ impl RuleEngine {
     /// Strip mode prefix from rule
     fn strip_mode_prefix<'a>(&self, rule: &'a str) -> &'a str {
         strip_mode_prefix(rule)
-    }
-
-    pub fn content(&self, source: &BookSource, body: &str, base_url: &str) -> String {
-        let _budget = begin_parse_budget();
-        with_book_source(source, || {
-            let rule = source.rule_content.clone().unwrap_or_default();
-            let mut content_body = body.to_string();
-
-            if let Some(source_regex) = rule
-                .source_regex
-                .as_deref()
-                .filter(|s| !s.trim().is_empty())
-            {
-                content_body = apply_legado_regex(&content_body, source_regex);
-            }
-            if let Some(web_js) = rule.web_js.as_deref().filter(|s| !s.trim().is_empty()) {
-                if let Ok(processed) =
-                    eval_js(self.strip_mode_prefix(web_js), &content_body, base_url)
-                {
-                    if !processed.trim().is_empty() {
-                        content_body = processed;
-                    }
-                }
-            }
-
-            if let Some(content_rule) = rule.content.clone() {
-                if matches!(
-                    self.detect_mode(&content_rule, &content_body),
-                    ParseMode::Js
-                ) {
-                    let script = self.strip_mode_prefix(&content_rule);
-                    if let Ok(res) = eval_js(script, &content_body, base_url) {
-                        return res;
-                    }
-                }
-
-                let content_rule = self.process_inline_js(&content_rule, &content_body, base_url);
-
-                let mode = self.detect_mode(&content_rule, &content_body);
-                let mut content = match mode {
-                    ParseMode::JsonPath => {
-                        if let Ok(v) = serde_json::from_str::<Value>(&content_body) {
-                            jsonpath::jsonpath_first_string(
-                                &v,
-                                self.strip_mode_prefix(&content_rule),
-                            )
-                            .unwrap_or_default()
-                        } else {
-                            String::new()
-                        }
-                    }
-                    ParseMode::XPath => {
-                        html::select_xpath(&content_body, self.strip_mode_prefix(&content_rule))
-                            .first()
-                            .cloned()
-                            .unwrap_or_default()
-                    }
-                    _ => {
-                        let doc = html::parse_document(&content_body);
-                        let result =
-                            html::select_all_text(&doc, self.strip_mode_prefix(&content_rule));
-                        result.unwrap_or_default()
-                    }
-                };
-
-                if let Some(replace) = rule.replace_regex.as_deref() {
-                    content = apply_legado_regex(&content, replace);
-                }
-
-                return content;
-            }
-
-            String::new()
-        })
-    }
-
-    /// Process inline JavaScript {{...}} in rules
-    fn process_inline_js(&self, rule: &str, body: &str, base_url: &str) -> String {
-        let mut result = rule.to_string();
-
-        // Find all {{...}} blocks and evaluate them
-        let re = &*INLINE_JS_RE;
-        for cap in re.captures_iter(rule) {
-            if let Some(js_code) = cap.get(1) {
-                if let Ok(js_result) = eval_js(js_code.as_str(), body, base_url) {
-                    result = result.replace(cap.get(0).unwrap().as_str(), &js_result);
-                }
-            }
-        }
-
-        result
-    }
-
-    /// Get the next content page URL if pagination exists
-    pub fn next_content_url(
-        &self,
-        source: &BookSource,
-        body: &str,
-        base_url: &str,
-    ) -> Option<String> {
-        let _budget = begin_parse_budget();
-        let rule = source.rule_content.clone().unwrap_or_default();
-        let next_rule = rule.next_content_url.as_deref()?;
-        if next_rule.is_empty() {
-            return None;
-        }
-
-        let mode = self.detect_mode(next_rule, body);
-        let next_url = match mode {
-            ParseMode::JsonPath => {
-                if let Ok(v) = serde_json::from_str::<Value>(body) {
-                    jsonpath::jsonpath_first_string(&v, self.strip_mode_prefix(next_rule))
-                } else {
-                    None
-                }
-            }
-            ParseMode::XPath => html::select_xpath(body, self.strip_mode_prefix(next_rule))
-                .first()
-                .cloned(),
-            _ => {
-                let doc = html::parse_document(body);
-                html::select_text(&doc, self.strip_mode_prefix(next_rule))
-            }
-        };
-
-        if next_url.as_ref().map(|s| s.is_empty()).unwrap_or(true) {
-            return None;
-        }
-
-        let next_url = next_url?;
-        Some(resolve_url(base_url, &next_url))
     }
 
     // ── 评论（章评 / 段评） ─────────────────────────────────────────────
