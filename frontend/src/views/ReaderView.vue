@@ -139,8 +139,14 @@
       @touchend="handleTouchEnd"
       @click="handleGlobalClick"
     >
-      <div v-if="store.loading" class="content-loading">
-        <div class="loading-spinner"></div>
+      <div v-if="store.loading" class="content-loading" aria-busy="true" aria-label="正文加载中">
+        <div
+          class="content-skeleton"
+          :style="{ maxWidth: `min(${config.pageWidth}px, 100% - ${isMobile ? 0 : 176}px)` }"
+        >
+          <SkeletonBlock width="42%" height="24px" radius="6px" class="skeleton-title" />
+          <SkeletonBlock :lines="[100, 98, 100, 92, 100, 96, 100, 74]" height="16px" gap="16px" />
+        </div>
       </div>
 
       <div v-else-if="offlineBannerText" class="offline-banner">
@@ -207,7 +213,10 @@
             <button class="retry-btn" @click="contentStore.retryLoad()">重试</button>
           </div>
           <template v-else>
-            <div class="chapter-title">{{ store.currentChapter?.title || '加载中...' }}</div>
+            <div v-if="store.currentChapter?.title" class="chapter-title">
+              {{ store.currentChapter.title }}
+            </div>
+            <SkeletonBlock v-else width="38%" height="24px" radius="6px" class="chapter-title-skeleton" />
 
             <div
               ref="chapterTextRef"
@@ -528,6 +537,7 @@ import type { Book, SearchBook } from '../types'
 import ReaderSidebar from '../components/reader/ReaderSidebar.vue'
 import ReaderToolbar from '../components/reader/ReaderToolbar.vue'
 import ReaderMobileControls from '../components/reader/ReaderMobileControls.vue'
+import SkeletonBlock from '../components/common/SkeletonBlock.vue'
 import { useReaderSearch } from '../composables/useReaderSearch'
 import { useReaderSelection } from '../composables/useReaderSelection'
 import { useContinuousReading } from '../composables/useContinuousReading'
@@ -2371,10 +2381,24 @@ watch(
 }
 
 .content-loading {
-  display: flex;
-  align-items: center;
-  justify-content: center;
   height: 100%;
+  padding: 80px 24px;
+}
+
+/* 正文骨架：标题条居中 + 段落行，宽度跟随阅读版心 */
+.content-skeleton {
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+}
+
+.content-skeleton .skeleton-title {
+  align-self: center;
+  margin-bottom: 2em;
+}
+
+.chapter-title-skeleton {
+  margin: 0 auto 2em;
 }
 
 .offline-banner {
@@ -2391,21 +2415,6 @@ watch(
   line-height: 1.5;
   text-align: center;
   backdrop-filter: blur(6px);
-}
-
-.loading-spinner {
-  width: 32px;
-  height: 32px;
-  border: 3px solid rgba(0, 0, 0, 0.1);
-  border-top-color: var(--color-primary);
-  border-radius: 50%;
-  animation: spin 1s linear infinite;
-}
-
-@keyframes spin {
-  to {
-    transform: rotate(360deg);
-  }
 }
 
 .chapter-content {

@@ -1,8 +1,13 @@
 <template>
   <section class="source-list-wrapper">
-    <div v-if="loading" class="loading-state">
-      <div class="loading-spinner"></div>
-      <p>加载书源中...</p>
+    <div v-if="loading" class="loading-skeleton" aria-busy="true" aria-label="书源加载中">
+      <div v-for="i in 8" :key="i" class="skeleton-row">
+        <SkeletonBlock width="16px" height="16px" radius="4px" />
+        <div class="skeleton-row-lines">
+          <SkeletonBlock width="34%" height="14px" />
+          <SkeletonBlock width="58%" height="12px" />
+        </div>
+      </div>
     </div>
     <div v-else-if="!sources.length" class="empty-state">
       <strong>{{ emptyTitle }}</strong>
@@ -62,6 +67,7 @@
 
 <script setup lang="ts">
 import { VList } from 'virtua/vue'
+import SkeletonBlock from '../common/SkeletonBlock.vue'
 import type { BookSource } from '../../types'
 
 defineProps<{
@@ -240,7 +246,6 @@ defineEmits<{
   color: var(--color-danger);
 }
 
-.loading-state,
 .empty-state {
   flex: 1;
   min-height: 260px;
@@ -258,19 +263,20 @@ defineEmits<{
   color: var(--color-text-secondary);
 }
 
-.loading-spinner {
-  width: 28px;
-  height: 28px;
-  border: 3px solid var(--color-border);
-  border-top-color: var(--color-primary);
-  border-radius: 50%;
-  animation: spin 0.8s linear infinite;
+/* 骨架行贴近真实书源行形态：左勾选块 + 右两行（名称/URL） */
+.skeleton-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 12px;
+  padding: 13px 14px;
+  border-bottom: 1px solid var(--color-border-light);
 }
 
-@keyframes spin {
-  to {
-    transform: rotate(360deg);
-  }
+.skeleton-row-lines {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
 }
 
 @media (max-width: 560px) {

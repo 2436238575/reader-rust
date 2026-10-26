@@ -122,7 +122,17 @@
 
     <!-- Chapters List -->
     <div v-show="activeTab === 'chapters'" class="chapter-list-shell">
-      <div v-if="store.chaptersLoading" class="loading">加载目录中...</div>
+      <div
+        v-if="store.chaptersLoading"
+        class="catalog-skeleton"
+        aria-busy="true"
+        aria-label="目录加载中"
+      >
+        <div v-for="i in 12" :key="i" class="skeleton-catalog-row">
+          <SkeletonBlock width="24px" height="12px" />
+          <SkeletonBlock :width="i % 3 === 0 ? '52%' : '72%'" height="14px" />
+        </div>
+      </div>
       <div v-else-if="filteredChapters.length === 0" class="empty">未找到匹配的章节</div>
       <!-- 千章目录：VList 窗口化渲染，行高（卷头/章行/带 meta 章行）由 virtua 自动测量；
            key 用 catalogRows 的稳定行键（vol-/ch- 前缀 + 章 index） -->
@@ -288,6 +298,7 @@
 import { ref, computed, onMounted, nextTick, watch } from 'vue'
 import { VList } from 'virtua/vue'
 import type { VListHandle } from 'virtua/vue'
+import SkeletonBlock from '../common/SkeletonBlock.vue'
 import { useReaderStore } from '../../stores/reader'
 import { useReaderContentStore } from '../../stores/readerContent'
 import { useReaderMarksStore } from '../../stores/readerMarks'
@@ -822,12 +833,20 @@ const formatDate = formatMonthDayTime
   color: var(--color-danger);
 }
 
-.loading,
 .empty {
   padding: 40px;
   text-align: center;
   opacity: 0.5;
   font-size: var(--text-base);
+}
+
+/* 骨架行贴近真实章节行形态：左序号块 + 右标题行 */
+.skeleton-catalog-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 20px;
+  border-bottom: 1px solid rgba(0, 0, 0, 0.02);
 }
 
 .list-item {

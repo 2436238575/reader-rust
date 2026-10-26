@@ -61,9 +61,15 @@
       </svg>
       <p>{{ emptyText }}</p>
     </div>
-    <div v-if="loading" class="loading-state">
-      <div class="loading-spinner"></div>
-      <p>加载中...</p>
+    <div v-if="loading" class="loading-skeleton" aria-busy="true" aria-label="加载中">
+      <div v-for="i in 6" :key="i" class="skeleton-card">
+        <SkeletonBlock width="86px" height="118px" radius="6px" />
+        <div class="skeleton-card-lines">
+          <SkeletonBlock width="70%" height="16px" />
+          <SkeletonBlock width="45%" height="12px" />
+          <SkeletonBlock width="55%" height="12px" />
+        </div>
+      </div>
     </div>
   </div>
 </template>
@@ -71,6 +77,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, ref } from 'vue'
 import BookCard from './BookCard.vue'
+import SkeletonBlock from './common/SkeletonBlock.vue'
 import type { Book, SearchBook } from '../types'
 
 type DisplayItem = (Book | SearchBook) | { __placeholder: true }
@@ -578,29 +585,36 @@ const ghostStyle = computed(() => {
   font-size: var(--text-base);
 }
 
-.loading-state {
-  grid-column: 1 / -1;
+.loading-skeleton {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(320px, 420px));
+  justify-content: start;
+  gap: var(--space-4);
+  padding: var(--space-4) 0;
+}
+
+/* 骨架卡片贴近真实书卡形态：左封面块 + 右三行文字 */
+.skeleton-card {
+  display: grid;
+  grid-template-columns: 86px minmax(0, 1fr);
+  align-items: center;
+  gap: 15px;
+  min-height: 148px;
+  padding: 13px 14px;
+  border-radius: 8px;
+  border: 1px solid var(--color-border-light);
+  background: var(--color-bg-elevated);
+}
+
+.skeleton-card-lines {
   display: flex;
   flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  padding: var(--space-16) var(--space-6);
-  gap: var(--space-4);
-  color: var(--color-text-tertiary);
+  gap: 10px;
 }
 
-.loading-spinner {
-  width: 32px;
-  height: 32px;
-  border: 3px solid var(--color-border);
-  border-top-color: var(--color-primary);
-  border-radius: 50%;
-  animation: spin 0.8s linear infinite;
-}
-
-@keyframes spin {
-  to {
-    transform: rotate(360deg);
+@media (max-width: 640px) {
+  .loading-skeleton {
+    grid-template-columns: 1fr;
   }
 }
 
