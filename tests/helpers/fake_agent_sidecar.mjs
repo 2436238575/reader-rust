@@ -1,17 +1,19 @@
-// 集成测试用的假 sidecar：说 agent sidecar 的 stdio NDJSON 协议，
+// 集成测试用的假 sidecar：说 agent sidecar 的 stdio NDJSON 协议（v2），
 // 按章节标题/书作者分流行为，验证 Rust 侧的帧泵、工具应答、取消与看门狗。
 //
 // 行为约定（测试通过书名/章节标题控制）：
 // - 章节标题含「跳过」→ result {ok, skipped:true}
 // - 章节标题含「搜索」→ 先发 search_read_content 工具调用（toIndex=99），
 //   把服务端钳制后的 range 与命中数写进 summary
+// - 章节标题含「越权」→ 先发一个 jobId 不匹配的 tool_call（协议 v2 归属校验），
+//   把宿主应答的错误内容写进 summary，再走正常流程（验证任务不中断）
 // - 章节标题含「卡住」→ 不回帧（供看门狗超时 / 取消测试挂起）
 // - 章节标题含「闪退」→ 往 stderr 写一行后 process.exit(1)（供 EOF 错误路径测试）
 // - 其他章节 → 发 get_completed_chapter 工具调用，把正文长度累计进 summary
 // - 作者名含「地图失败」→ redraw_map 返回错误；否则返回 b64 地图
 import { createInterface } from 'node:readline'
 
-const PROTOCOL = 1
+const PROTOCOL = 2
 
 // 环境变量白名单回归哨兵：宿主 spawn 必须 env_clear + 白名单透传，
 // 子进程不应见到任何服务端凭据（Rust 侧测试设置哨兵后断言 false）
@@ -96,13 +98,23 @@ async function handleRun(job) {
         keyword: '暗号',
         fromIndex: 0,
         toIndex: 99,
-      })
+      }, job.jobId)
       summary += `;搜索范围:${content.range?.toIndex};命中:${(content.matches ?? []).length}`
       finishChapter(job, index, title)
       return
     }
 
-    const content = await callTool('get_completed_chapter', { index })
+    if (title.includes('越权')) {
+      // 协议 v2 归属校验：发一个 jobId 不匹配的 tool_call，宿主应回带错误
+      // 内容的 tool_result（content.ok=false）并记 warn，任务不中断——
+      // 本分支随后仍走正常的取文流程完成本章
+      const rogueId = `call-rogue-${Date.now()}`
+      send({ type: 'tool_call', id: rogueId, jobId: `bogus-${job.jobId}`, name: 'get_completed_chapter', args: { index } })
+      const rejected = await awaitToolResult(rogueId)
+      summary += `;越权拒绝:${rejected?.ok === false ? (rejected.error ?? 'ok=false') : '未被拒绝'}`
+    }
+
+    const content = await callTool('get_completed_chapter', { index }, job.jobId)
     summary += `;第${index}章正文${content.totalLength}字`
     finishChapter(job, index, title)
   } catch (error) {
@@ -137,11 +149,19 @@ function finishChapter(job, index, title) {
   })
 }
 
-function callTool(name, args) {
+function callTool(name, args, jobId) {
+  const id = `call-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`
+  console.error(`DBG fake sending tool_call ${name}`)
+  // 协议 v2：tool_call 帧携带当前 job 的 jobId 供宿主校验归属
+  send({ type: 'tool_call', id, jobId, name, args })
+  return awaitToolResult(id, jobId).then((content) => {
+    if (content?.ok) return content
+    throw new Error(content?.error ?? '工具执行失败')
+  })
+}
+
+function awaitToolResult(id, expectedJobId) {
   return new Promise((resolve, reject) => {
-    const id = `call-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`
-    console.error(`DBG fake sending tool_call ${name}`)
-    send({ type: 'tool_call', id, name, args })
     const timeout = setTimeout(() => reject(new Error('工具应答超时')), 30_000)
     const onLine = (line) => {
       let frame
@@ -153,8 +173,12 @@ function callTool(name, args) {
       if (frame.type === 'tool_result' && frame.id === id) {
         rl.off('line', onLine)
         clearTimeout(timeout)
-        if (frame.content?.ok) resolve(frame.content)
-        else reject(new Error(frame.content?.error ?? '工具执行失败'))
+        // 协议 v2：宿主的 tool_result 必须带回当前任务的 jobId
+        if (expectedJobId !== undefined && frame.jobId !== expectedJobId) {
+          reject(new Error(`tool_result jobId 不匹配：期望 ${expectedJobId}，收到 ${frame.jobId}`))
+          return
+        }
+        resolve(frame.content)
       }
     }
     rl.on('line', onLine)

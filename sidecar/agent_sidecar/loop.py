@@ -72,6 +72,7 @@ def _run_chapter_update(
         chapters=chapters,
         memory=job.memory,
         channel=channel,
+        job_id=job.jobId,
         debug_chapter_content=_debug_chapter_content(job),
     )
     book_dict = job.book.model_dump()

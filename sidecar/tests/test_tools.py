@@ -45,7 +45,7 @@ def test_search_content_reraises_host_gone():
 def test_ordinary_callback_errors_are_still_returned_as_tool_errors():
     # 对照组：普通回调失败仍是工具错误（回喂模型），不误伤既有语义
     class BrokenChannel(FakeChannel):
-        def call_host_tool(self, name, args):
+        def call_host_tool(self, name, args, job_id=None):
             raise RuntimeError("连接重置")
 
     ctx = ToolContext(

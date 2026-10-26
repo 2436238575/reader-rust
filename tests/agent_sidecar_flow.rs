@@ -385,6 +385,51 @@ async fn agent_task_ignores_stale_result_with_mismatched_job_id() {
 }
 
 #[tokio::test]
+async fn agent_task_rejects_tool_call_with_mismatched_job_id() {
+    if !node_available() {
+        eprintln!("skip: Node 不可用，无法运行假 sidecar");
+        return;
+    }
+    let server = TestServer::start(30).await;
+    let token = server.login().await;
+
+    // 「越权」章：假 sidecar 先发一个 jobId 不匹配的 tool_call（协议 v2 归属
+    // 校验）。宿主应回一个带错误内容的 tool_result 并记 warn，而不是把内容
+    // 应答给它或直接炸掉任务——本章随后仍以正常的取文回调完成。
+    let content = "\
+第一章 开始
+正文一。
+第二章 越权
+正文二。
+第三章 结尾
+正文三。";
+    let (book_id, _) = server.upload_txt(&token, "越权测试.txt", content).await;
+
+    let response = server
+        .start_task(&token, &book_id, "update_to_current", Some(2))
+        .await;
+    assert_eq!(response.status().as_u16(), 200);
+
+    let snapshot = server.wait_task_done(&token).await;
+    assert_eq!(
+        snapshot["lastError"],
+        Value::Null,
+        "jobId 不匹配的工具调用不应中断任务：{snapshot}"
+    );
+    let memory = server.get_memory(&token, &book_id).await;
+    assert_eq!(memory["processedChapterIndex"], json!(2));
+    let summary = memory["summary"].as_str().unwrap_or_default();
+    // 越权调用收到带错误内容的 tool_result（ok:false），错误文案指明归属不匹配
+    assert!(
+        summary.contains("越权拒绝:工具调用被拒绝：jobId 与当前任务不匹配"),
+        "越权调用应被拒绝：{summary}"
+    );
+    // 本章与后续章节照常走完正常工具回调
+    assert!(summary.contains("第1章正文"), "越权章应正常处理：{summary}");
+    assert!(summary.contains("第2章正文"), "后续章不受影响：{summary}");
+}
+
+#[tokio::test]
 async fn agent_task_aborts_when_sidecar_emits_oversized_line() {
     if !node_available() {
         eprintln!("skip: Node 不可用，无法运行假 sidecar");

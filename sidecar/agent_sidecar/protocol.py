@@ -7,7 +7,9 @@
   这是「Rust 崩溃不留孤儿进程」约定的一半（另一半是 Rust 侧 kill + watchdog）；
 - 输入逐块读取且单行有长度上限（MAX_LINE_BYTES）：对端失控时不能无界把
   整行读进内存（长篇书的 memory 行可达几十 MB）；
-- 工具回调是单飞配对：发出 tool_call 后阻塞等同 id 的 tool_result。
+- 工具回调是单飞配对：发出 tool_call 后阻塞等同 id 的 tool_result；
+- 协议 v2 起 tool_call/tool_result 帧带 jobId：宿主据此校验工具调用归属
+  当前任务（jobId 不匹配的调用收到带错误内容的 tool_result，任务不中断）。
 """
 
 from __future__ import annotations
@@ -117,9 +119,15 @@ class StdioChannel:
 
     # -- 工具回调 ------------------------------------------------------------
 
-    def call_host_tool(self, name: str, args: dict[str, Any]) -> dict[str, Any]:
+    def call_host_tool(
+        self, name: str, args: dict[str, Any], job_id: str | None = None
+    ) -> dict[str, Any]:
         call_id = f"call-{uuid.uuid4().hex[:12]}"
-        self.send({"type": "tool_call", "id": call_id, "name": name, "args": args})
+        frame: dict[str, Any] = {"type": "tool_call", "id": call_id, "name": name, "args": args}
+        # 协议 v2：归属校验依赖 jobId；调试模式（无 run 帧上下文）省略
+        if job_id:
+            frame["jobId"] = job_id
+        self.send(frame)
         frame = self.read_frame()
         if frame is None:
             raise HostGoneError("宿主在工具回调期间关闭了输入")

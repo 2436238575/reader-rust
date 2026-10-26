@@ -160,6 +160,9 @@ class ToolContext:
     chapters: list[dict[str, Any]]
     memory: dict[str, Any]
     channel: StdioChannel | None
+    # 当前 run 帧的 jobId：协议 v2 起回调工具发出 tool_call 时携带，
+    # 供宿主校验调用归属；调试模式（无 run 帧）为 None
+    job_id: str | None = field(default=None)
     debug_chapter_content: str | None = field(default=None)
 
 
@@ -311,7 +314,9 @@ def _fetch_chapter_content(ctx: ToolContext) -> str | ToolOutcome:
     if ctx.channel is not None:
         try:
             response = ctx.channel.call_host_tool(
-                TOOL_GET_CHAPTER, {"index": ctx.chapter.index if ctx.chapter else 0}
+                TOOL_GET_CHAPTER,
+                {"index": ctx.chapter.index if ctx.chapter else 0},
+                job_id=ctx.job_id,
             )
         except HostGoneError:
             # 宿主已死：必须原样上抛终止整个 run 循环——吞成工具错误会让
@@ -351,6 +356,7 @@ def _tool_search_content(args: dict[str, Any], ctx: ToolContext) -> ToolOutcome:
         response = ctx.channel.call_host_tool(
             TOOL_SEARCH_CONTENT,
             {"keyword": keyword, "fromIndex": from_index, "toIndex": to_index},
+            job_id=ctx.job_id,
         )
     except HostGoneError:
         # 宿主已死：同 _fetch_chapter_content，必须上抛而不是回喂模型

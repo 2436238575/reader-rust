@@ -205,6 +205,29 @@ def test_search_callback_is_clamped_to_processed_progress(base_memory):
     assert result["memory"]["summary"] == "查证完成。"
 
 
+def test_tool_calls_carry_job_id(base_memory):
+    # 协议 v2：回调工具发出的 tool_call 帧携带当前任务的 jobId，供宿主校验归属
+    memory = {**base_memory, "processedChapterIndex": 10}
+    client = ScriptedClient(
+        [
+            tool_call_response(
+                ("get_completed_chapter", {}),
+                ("search_read_content", {"keyword": "暗号", "toIndex": 99}),
+            ),
+            content_response({"memory": {"summary": "完成。"}, "shouldRegenerateMap": False}),
+        ]
+    )
+    channel = FakeChannel(
+        tool_results=[
+            _chapter_tool_result(),
+            {"type": "tool_result", "id": "ignored", "content": {"ok": True, "matches": []}},
+        ]
+    )
+    result = run_job(make_job(memory=memory, jobId="job-xyz"), channel, client)
+    assert result["memory"]["summary"] == "完成。"
+    assert channel.tool_call_job_ids == ["job-xyz", "job-xyz"]
+
+
 def test_merges_protocol_flows_through_save_patch(base_memory):
     save_patch = {
         "memory": {

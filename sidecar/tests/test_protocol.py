@@ -19,7 +19,7 @@ from agent_sidecar.protocol import (
 def test_hello_frame_shape():
     frame = hello()
     assert frame["type"] == "hello"
-    assert frame["protocol"] == 1
+    assert frame["protocol"] == 2
     assert "sidecar" in frame
 
 
@@ -109,23 +109,40 @@ def _patch_uuid(monkeypatch) -> None:
 def test_call_host_tool_pairs_request_and_response(monkeypatch):
     _patch_uuid(monkeypatch)
     out = io.StringIO()
-    responses = iter(['{"type":"tool_result","id":"call-abc123","content":{"ok":true,"content":"正文"}}\n'])
+    responses = iter(['{"type":"tool_result","id":"call-abc123","jobId":"job-9","content":{"ok":true,"content":"正文"}}\n'])
 
     class ScriptedStdin:
         def read(self, size: int = -1):
             return next(responses, "")
 
     channel = StdioChannel(stdin=ScriptedStdin(), stdout=out)
-    result = channel.call_host_tool("get_completed_chapter", {"index": 3})
+    result = channel.call_host_tool("get_completed_chapter", {"index": 3}, job_id="job-9")
     assert result == {"ok": True, "content": "正文"}
 
     sent = json.loads(out.getvalue().splitlines()[-1])
     assert sent == {
         "type": "tool_call",
         "id": "call-abc123",
+        "jobId": "job-9",
         "name": "get_completed_chapter",
         "args": {"index": 3},
     }
+
+
+def test_call_host_tool_omits_job_id_when_unknown(monkeypatch):
+    # 调试模式（无 run 帧上下文）没有 jobId：帧里省略该字段
+    _patch_uuid(monkeypatch)
+    out = io.StringIO()
+    responses = iter(['{"type":"tool_result","id":"call-abc123","content":{"ok":true}}\n'])
+
+    class ScriptedStdin:
+        def read(self, size: int = -1):
+            return next(responses, "")
+
+    channel = StdioChannel(stdin=ScriptedStdin(), stdout=out)
+    channel.call_host_tool("get_completed_chapter", {"index": 0})
+    sent = json.loads(out.getvalue().splitlines()[-1])
+    assert "jobId" not in sent
 
 
 def test_call_host_tool_rejects_mismatched_id(monkeypatch):

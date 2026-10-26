@@ -55,7 +55,9 @@ use crate::{
     util::{asset::write_asset_file, hash::md5_hex, text::repair_encoded_url, time::now_ts},
 };
 
-const PROTOCOL_VERSION: u32 = 1;
+/// 协议版本（与 sidecar/agent_sidecar/__init__.py 的 PROTOCOL_VERSION 一致，
+/// 握手处相等校验）：v2 起 tool_call/tool_result 帧携带 jobId 做归属校验
+const PROTOCOL_VERSION: u32 = 2;
 /// 与 config.rs 的默认值保持一致：仅当命令未被自定义时才应用 venv 优先逻辑
 const DEFAULT_SIDECAR_COMMAND: &str = "python -m agent_sidecar";
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
@@ -865,10 +867,29 @@ impl AgentSidecarService {
                         tracing::debug!(target: SIDECAR_LOG_TARGET, "round {step} toolCalls={tool_names}");
                     }
                     Some("tool_call") => {
-                        let content = self.answer_tool_call(ctx, &frame).await;
+                        // jobId 归属校验（协议 v2 起 tool_call 必带）：同一进程
+                        // 同一信道上可能混着迟到帧（典型是上一章 redraw 超时降级
+                        // 后迟到的工具调用）。不匹配的调用不能放行——回一个带
+                        // 错误内容的 tool_result 让 sidecar 感知，但任务不中断
+                        let frame_job_id = frame.get("jobId").and_then(Value::as_str);
+                        let content = if frame_job_id != Some(expected_job_id) {
+                            // 宏外求值：tracing 宏内 Value 会解析成 field::Value trait
+                            let tool_name = frame.get("name").and_then(Value::as_str).unwrap_or("?");
+                            tracing::warn!(
+                                target: SIDECAR_LOG_TARGET,
+                                "拒绝 jobId 不匹配的 tool_call：期望 {expected_job_id}，收到 {frame_job_id:?}（工具 {tool_name}）"
+                            );
+                            json!({
+                                "ok": false,
+                                "error": format!("工具调用被拒绝：jobId 与当前任务不匹配（期望 {expected_job_id}）"),
+                            })
+                        } else {
+                            self.answer_tool_call(ctx, &frame).await
+                        };
                         let response = json!({
                             "type": "tool_result",
                             "id": frame.get("id").cloned().unwrap_or(Value::Null),
+                            "jobId": expected_job_id,
                             "content": content,
                         });
                         let mut response_line =

@@ -89,6 +89,8 @@ class FakeChannel(StdioChannel):
         super().__init__(stdin=io.StringIO(""), stdout=io.StringIO())
         self.sent: list[dict] = []
         self.tool_calls: list[tuple[str, dict]] = []
+        # 每次回调携带的 jobId（协议 v2 归属字段），与 tool_calls 平行
+        self.tool_call_job_ids: list[str | None] = []
         self._tool_results = list(tool_results or [])
 
     def send(self, frame: dict) -> None:  # type: ignore[override]
@@ -101,8 +103,9 @@ class FakeChannel(StdioChannel):
             return self._tool_results.pop(0)
         return None
 
-    def call_host_tool(self, name: str, args: dict) -> dict:  # type: ignore[override]
+    def call_host_tool(self, name: str, args: dict, job_id: str | None = None) -> dict:  # type: ignore[override]
         self.tool_calls.append((name, args))
+        self.tool_call_job_ids.append(job_id)
         frame = self._tool_results.pop(0) if self._tool_results else None
         if frame is None:
             from agent_sidecar.protocol import HostGoneError
