@@ -121,8 +121,8 @@
       :chapter-url="store.currentChapter?.url || ''"
       :para-index="commentParaIndex"
       :para-text="commentParaText"
-      :initial-page="store.chapterComments"
-      :author-marks="store.reviewAuthorMarks"
+      :initial-page="extrasStore.chapterComments"
+      :author-marks="extrasStore.reviewAuthorMarks"
       :para-author-marked="commentParaAuthorMarked"
       @close="closeCommentPanel"
     />
@@ -221,13 +221,13 @@
             ></div>
 
             <button
-              v-if="store.reviewEnabled"
+              v-if="extrasStore.reviewEnabled"
               class="chapter-comments-bar"
               @click="openChapterComments"
             >
               <span class="chapter-comments-label">本章评论</span>
-              <span v-if="store.chapterCommentTotal > 0" class="chapter-comments-count">
-                · {{ store.chapterCommentTotal }}
+              <span v-if="extrasStore.chapterCommentTotal > 0" class="chapter-comments-count">
+                · {{ extrasStore.chapterCommentTotal }}
               </span>
               <svg
                 class="chapter-comments-arrow"
@@ -255,13 +255,13 @@
           class="horizontal-next-floating"
         >
           <button
-            v-if="store.reviewEnabled"
+            v-if="extrasStore.reviewEnabled"
             class="chapter-comments-bar horizontal-comments-entry"
             @click="openChapterComments"
           >
             <span class="chapter-comments-label">本章评论</span>
-            <span v-if="store.chapterCommentTotal > 0" class="chapter-comments-count">
-              · {{ store.chapterCommentTotal }}
+            <span v-if="extrasStore.chapterCommentTotal > 0" class="chapter-comments-count">
+              · {{ extrasStore.chapterCommentTotal }}
             </span>
           </button>
           <button class="next-btn" :disabled="!store.hasNext" @click="nextChapter">
@@ -491,6 +491,7 @@ import { ref, computed, watch, onMounted, onUnmounted, nextTick, defineAsyncComp
 import { onBeforeRouteLeave, useRouter } from 'vue-router'
 import { useReaderStore, fontPresets } from '../stores/reader'
 import { useReaderContentStore } from '../stores/readerContent'
+import { useReaderExtrasStore } from '../stores/readerExtras'
 import { useAppStore } from '../stores/app'
 import { useSourceStore } from '../stores/source'
 import { applySystemTheme } from '../utils/systemUi'
@@ -573,6 +574,7 @@ const ChapterVersionPanel = defineAsyncComponent(
 const router = useRouter()
 const store = useReaderStore()
 const contentStore = useReaderContentStore()
+const extrasStore = useReaderExtrasStore()
 const appStore = useAppStore()
 const sourceStore = useSourceStore()
 const SERVER_PROGRESS_AUTOSAVE_MS = 10000
@@ -641,7 +643,7 @@ const {
   openChapterComments,
   openParaComments,
   closeCommentPanel,
-} = useCommentPanelGlue(store)
+} = useCommentPanelGlue(extrasStore)
 const { showBookInfo, bookInfoBook, openInfo, handleBookSwitched } = useBookInfoModal(
   store,
   contentStore,
@@ -952,7 +954,7 @@ const rawLineByPosition = computed(() => {
 
 const paraBubbleMap = computed(() =>
   buildParaBubbleMap(
-    store.paraReviewEnabled ? store.paraReviewIndex : [],
+    extrasStore.paraReviewEnabled ? extrasStore.paraReviewIndex : [],
     splitParagraphLines(store.content),
     rawLineByPosition.value,
     // 只有显示编辑版时才需要按原文重定位；上游原版的段号本来就对得上
@@ -981,8 +983,8 @@ function positionForRawLine(rawLine: number) {
 /** 渲染段落位置（`-1` = 章末）→ 该处要显示的配图。 */
 const chapterImageMap = computed(() => {
   const map = new Map<number, ChapterImage[]>()
-  if (!store.chapterImagesEnabled || !config.value.showChapterImages) return map
-  for (const image of store.chapterImages) {
+  if (!extrasStore.chapterImagesEnabled || !config.value.showChapterImages) return map
+  for (const image of extrasStore.chapterImages) {
     const position = image.paraIndex == null ? -1 : positionForRawLine(image.paraIndex)
     const bucket = map.get(position)
     if (bucket) bucket.push(image)
@@ -2141,7 +2143,7 @@ watch(
 
 // 配图比正文晚到：连续滚动模式的 HTML 是预渲染的，得为当前章补一次
 watch(
-  () => store.chapterImages,
+  () => extrasStore.chapterImages,
   () => {
     if (!isContinuousMode.value) return
     const current = getContinuousChapter(store.currentIndex)
@@ -2174,7 +2176,7 @@ watch(
   async () => {
     if (isContinuousMode.value) {
       await rebuildContinuousAtChapter(store.currentIndex)
-      void store.loadChapterReviews(store.currentIndex)
+      void extrasStore.loadChapterReviews(store.currentIndex)
     } else {
       await contentStore.reloadChapterAfterEdit(store.currentIndex)
     }

@@ -7,11 +7,12 @@
 // 随后续拆分提交迁出后改接对应子 store。
 
 import { defineStore } from 'pinia'
-import { ref } from 'vue'
+import { ref, watch } from 'vue'
 import { useAppStore } from './app'
 import { useBookshelfStore } from './bookshelf'
 import { useAiBookStore } from './aiBook'
 import { useReaderStore } from './reader'
+import { useReaderExtrasStore } from './readerExtras'
 import {
   getChapterList,
   getBookContent,
@@ -35,9 +36,21 @@ import { loadCachedEditedChapterKeys } from '../utils/editedChaptersCache'
 
 export const useReaderContentStore = defineStore('readerContent', () => {
   const readerStore = useReaderStore()
+  const extrasStore = useReaderExtrasStore()
   const appStore = useAppStore()
   const shelfStore = useBookshelfStore()
   const aiBookStore = useAiBookStore()
+
+  // 配图跟着章节激活走：先清掉上一章的，再按新正文重新取。
+  // 监听激活信号而不是散在各调用方：换章、切正文版本、刷新、连续滚动激活
+  // 都会经过 setActiveChapterState，漏一处就会少一次配图请求
+  watch(
+    () => readerStore.chapterActivation,
+    () => {
+      extrasStore.resetChapterImages()
+      void extrasStore.loadChapterImages(readerStore.currentIndex)
+    }
+  )
 
   /* ─── Book / chapter ops ─── */
   let bookLoadSeq = 0
@@ -60,7 +73,7 @@ export const useReaderContentStore = defineStore('readerContent', () => {
     readerStore.serverProgressTime = b.durChapterTime || 0
     readerStore.chapters = []
     readerStore.content = ''
-    readerStore.resetReviews()
+    extrasStore.resetReviews()
     // 先用上次成功拉取时落盘的快照：离线开书时清单拉不到，没有快照就会
     // 把编辑章当普通章节读浏览器缓存（编辑前的旧正文）。在线时下面的
     // refreshEditedChapterKeys 会用服务端结果覆盖并更新快照
@@ -68,7 +81,7 @@ export const useReaderContentStore = defineStore('readerContent', () => {
       b.bookId ? loadCachedEditedChapterKeys(b.bookId) : []
     )
     // 书源级「不支持评论/配图」结论也按书失效：换书/换源后重新判断
-    readerStore.resetChapterSupportFlags()
+    extrasStore.resetChapterSupportFlags()
     appStore.markBookOpened(b.bookId || b.bookUrl)
     readerStore.currentIndex = b.durChapterIndex || 0
     readerStore.chapterScrollProgress = 0
@@ -162,7 +175,7 @@ export const useReaderContentStore = defineStore('readerContent', () => {
       )
       readerStore.markChapterAsRead(nextIndex)
       // 恢复会话不经过 loadChapter，评论要在这里单独补一次（配图由 setActive 触发）
-      void readerStore.loadChapterReviews(nextIndex)
+      void extrasStore.loadChapterReviews(nextIndex)
       return true
     } catch {
       return false
@@ -319,7 +332,7 @@ export const useReaderContentStore = defineStore('readerContent', () => {
       }
 
       // 正文先渲染，评论随后补上（配图由 setActiveChapterState 统一触发）
-      void readerStore.loadChapterReviews(index)
+      void extrasStore.loadChapterReviews(index)
 
       if (readerStore.config.enablePreload) {
         setTimeout(() => preloadAroundChapter(index), forceRefresh ? 1500 : 1000)
@@ -553,7 +566,7 @@ export const useReaderContentStore = defineStore('readerContent', () => {
       if (loadSeq !== chapterLoadSeq || index !== readerStore.currentIndex) return
       readerStore.setActiveChapterState(index, chapterContent, readerStore.chapterScrollProgress)
       // 正文/版本变了，段评概览也要按当前版本重新取（服务端有缓存，代价很小）
-      void readerStore.loadChapterReviews(index)
+      void extrasStore.loadChapterReviews(index)
     } finally {
       readerStore.loading = false
     }
@@ -582,7 +595,7 @@ export const useReaderContentStore = defineStore('readerContent', () => {
     // 显式刷新绕过「书源不支持配图」的缓存结论重新判断：书源可能刚补了
     // 规则。reset 在 setActiveChapterState 之前，随后触发的 loadChapterImages
     // 就会真正发请求（评论走 loadChapterReviews(index, true)，自带重判）
-    readerStore.reprobeChapterImages()
+    extrasStore.reprobeChapterImages()
     // 快照当前章节：await 期间用户可能已翻章，旧正文不能盖到新章上。
     // 与 loadChapter 共用序号，翻章后迟到的刷新结果直接作废。
     const index = readerStore.currentIndex
@@ -594,7 +607,7 @@ export const useReaderContentStore = defineStore('readerContent', () => {
       if (loadSeq !== chapterLoadSeq || index !== readerStore.currentIndex) return
       readerStore.setActiveChapterState(index, chapterContent, readerStore.chapterScrollProgress)
       // 正文基准刚被重抓，段评索引也要跟着刷新
-      void readerStore.loadChapterReviews(index, true)
+      void extrasStore.loadChapterReviews(index, true)
       void preloadAroundChapter(index)
     } catch (error) {
       // 手动刷新失败不能静默：转圈停了用户会以为刷新成功
@@ -659,7 +672,7 @@ export const useReaderContentStore = defineStore('readerContent', () => {
     readerStore.chapterScrollProgress = 0
     readerStore.readChapterKeys = new Set()
     readerStore.serverProgressTime = 0
-    readerStore.resetReviews()
+    extrasStore.resetReviews()
     readerStore.stopAutoReading()
   }
 
