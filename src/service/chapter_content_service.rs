@@ -45,6 +45,14 @@ pub struct UpstreamChapterMeta<'a> {
     pub fetch_url: &'a str,
 }
 
+/// 批量导入时一章的输入；公共参数（kind / note / make_current 等）在方法参数上。
+pub struct UserVersionImport<'a> {
+    pub chapter_url: &'a str,
+    pub content: &'a str,
+    pub chapter_index: i32,
+    pub chapter_title: &'a str,
+}
+
 #[derive(Clone)]
 pub struct ChapterContentService {
     repo: ChapterContentRepo,
@@ -219,6 +227,95 @@ impl ChapterContentService {
                 created_at,
             })
             .await
+    }
+
+    /// 批量追加用户版本（整本 TXT 导入）：repo 侧分块事务 + 章级保存点，
+    /// 单章失败（如超出单章上限）记入失败，不影响同块其他章节。
+    ///
+    /// 对外语义与逐章调 [`Self::save_user_version`] 一致；返回与 `chapters`
+    /// 等长、按顺序对齐的逐章结果。
+    #[allow(clippy::too_many_arguments)]
+    pub async fn save_user_versions_batch(
+        &self,
+        user_ns: &str,
+        book_id: &str,
+        kind: &str,
+        chapters: &[UserVersionImport<'_>],
+        book_url: &str,
+        note: &str,
+        make_current: bool,
+        created_at: Option<i64>,
+    ) -> Vec<Result<RecordOutcome, AppError>> {
+        if kind != "edited" && kind != "imported" {
+            return chapters
+                .iter()
+                .map(|_| Err(AppError::BadRequest(format!("未知的用户版本类型: {kind}"))))
+                .collect();
+        }
+        if note.len() > 2000 {
+            return chapters
+                .iter()
+                .map(|_| {
+                    Err(AppError::BadRequest(
+                        "版本备注过长（最多 2000 字节）".to_string(),
+                    ))
+                })
+                .collect();
+        }
+        // 先逐章编码：单章上限检查在这一步，编码失败的章节直接记失败、不进事务。
+        let mut results: Vec<Option<Result<RecordOutcome, AppError>>> = Vec::new();
+        results.resize_with(chapters.len(), || None);
+        let mut encoded: Vec<Option<EncodedContent>> = Vec::with_capacity(chapters.len());
+        for (index, chapter) in chapters.iter().enumerate() {
+            match encode_content(chapter.content) {
+                Ok(enc) => encoded.push(Some(enc)),
+                Err(error) => {
+                    encoded.push(None);
+                    results[index] = Some(Err(error));
+                }
+            }
+        }
+        let mut indexes: Vec<usize> = Vec::new();
+        let mut inputs: Vec<NewChapterVersion<'_>> = Vec::new();
+        for (index, (chapter, enc)) in chapters.iter().zip(encoded.iter()).enumerate() {
+            let Some(enc) = enc else { continue };
+            indexes.push(index);
+            inputs.push(NewChapterVersion {
+                user_ns,
+                book_id,
+                chapter_url: chapter.chapter_url,
+                kind,
+                content_hash: &enc.hash,
+                codec: enc.codec,
+                raw_size: enc.raw_size,
+                stored_size: enc.stored_size,
+                content: &enc.bytes,
+                book_source_id: None,
+                book_source_name: "",
+                base_version_id: None,
+                chapter_index: chapter.chapter_index,
+                chapter_title: chapter.chapter_title,
+                book_url,
+                fetch_url: "",
+                note,
+                make_current,
+                created_at,
+            });
+        }
+        let outcomes = self.repo.record_versions_batch(&inputs).await;
+        for (pos, outcome) in outcomes.into_iter().enumerate() {
+            results[indexes[pos]] = Some(outcome);
+        }
+        results
+            .into_iter()
+            .map(|slot| {
+                slot.unwrap_or_else(|| {
+                    Err(AppError::Internal(anyhow::anyhow!(
+                        "批量写入未返回该章结果"
+                    )))
+                })
+            })
+            .collect()
     }
 
     pub async fn clear_current_user_version(
@@ -742,6 +839,215 @@ mod tests {
 
         let disabled = ChapterContentService::from_pool(pool.clone(), 0);
         assert!(!disabled.needs_revalidate(&row), "0 表示关闭自动回源");
+
+        pool.close().await;
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    fn import_chapter<'a>(
+        chapter_url: &'a str,
+        content: &'a str,
+        chapter_index: i32,
+    ) -> UserVersionImport<'a> {
+        UserVersionImport {
+            chapter_url,
+            content,
+            chapter_index,
+            chapter_title: "",
+        }
+    }
+
+    /// 批量写入：一章超限记失败，同块其他章节照常落库；同内容再导计 Unchanged。
+    #[tokio::test]
+    async fn batch_save_isolates_failures_and_detects_unchanged() {
+        let (service, pool, dir) = test_service().await;
+        service
+            .save_upstream(meta("book_1", "https://up/ch/1"), "上游一")
+            .await
+            .unwrap();
+        service
+            .save_upstream(meta("book_1", "https://up/ch/2"), "上游二")
+            .await
+            .unwrap();
+
+        let oversized = "x".repeat(MAX_CHAPTER_CONTENT_BYTES + 1);
+        let chapters = [
+            import_chapter("https://up/ch/1", "批量正文一", 0),
+            import_chapter("https://up/ch/2", &oversized, 1),
+            import_chapter("https://up/ch/3", "批量正文三", 2),
+        ];
+        let outcomes = service
+            .save_user_versions_batch(
+                "user_1",
+                "book_1",
+                "edited",
+                &chapters,
+                "https://example.test/book",
+                "",
+                true,
+                None,
+            )
+            .await;
+        assert_eq!(outcomes.len(), 3);
+        assert!(matches!(
+            outcomes[0],
+            Ok(RecordOutcome::Appended {
+                became_current: true,
+                ..
+            })
+        ));
+        assert!(
+            matches!(&outcomes[1], Err(AppError::BadRequest(_))),
+            "超限章节记失败: {:?}",
+            outcomes[1]
+        );
+        assert!(matches!(outcomes[2], Ok(RecordOutcome::Appended { .. })));
+
+        // 同块其他章节真实落库并成为当前版本；失败章节仍显示上游
+        assert_eq!(
+            service
+                .resolve("user_1", "book_1", "https://up/ch/1", false)
+                .await
+                .unwrap()
+                .unwrap()
+                .content,
+            "批量正文一"
+        );
+        assert_eq!(
+            service
+                .resolve("user_1", "book_1", "https://up/ch/2", false)
+                .await
+                .unwrap()
+                .unwrap()
+                .content,
+            "上游二"
+        );
+        assert_eq!(
+            service
+                .resolve("user_1", "book_1", "https://up/ch/3", false)
+                .await
+                .unwrap()
+                .unwrap()
+                .content,
+            "批量正文三"
+        );
+
+        // 同一份内容再导一次：Unchanged，不追加时间线
+        let chapters = [import_chapter("https://up/ch/1", "批量正文一", 0)];
+        let outcomes = service
+            .save_user_versions_batch(
+                "user_1",
+                "book_1",
+                "edited",
+                &chapters,
+                "https://example.test/book",
+                "",
+                true,
+                None,
+            )
+            .await;
+        assert!(matches!(outcomes[0], Ok(RecordOutcome::Unchanged { .. })));
+        let (_, versions, _, _) = service.stats().await.unwrap();
+        assert_eq!(versions, 4, "两条上游 + 两条用户版本，unchanged 不追加");
+
+        pool.close().await;
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    /// repo 层：一章在事务内保存点之后失败（bookId 非法），ROLLBACK TO SAVEPOINT
+    /// 撤销它，同块其他章节正常提交。
+    #[tokio::test]
+    async fn batch_rolls_back_failed_chapter_and_commits_the_rest() {
+        let (service, pool, dir) = test_service().await;
+        let enc_a = encode_content("批量甲").unwrap();
+        let enc_b = encode_content("批量乙").unwrap();
+        fn repo_input<'a>(
+            book_id: &'a str,
+            chapter_url: &'a str,
+            enc: &'a EncodedContent,
+        ) -> NewChapterVersion<'a> {
+            NewChapterVersion {
+                user_ns: "user_1",
+                book_id,
+                chapter_url,
+                kind: "edited",
+                content_hash: &enc.hash,
+                codec: enc.codec,
+                raw_size: enc.raw_size,
+                stored_size: enc.stored_size,
+                content: &enc.bytes,
+                book_source_id: None,
+                book_source_name: "",
+                base_version_id: None,
+                chapter_index: 0,
+                chapter_title: "",
+                book_url: "https://example.test/book",
+                fetch_url: "",
+                note: "",
+                make_current: true,
+                created_at: None,
+            }
+        }
+        let inputs = [
+            repo_input("book_1", "https://up/ch/1", &enc_a),
+            // 非法 bookId：在保存点之后、写入之前失败，走 ROLLBACK TO SAVEPOINT
+            repo_input("不是书籍", "https://up/ch/2", &enc_b),
+            repo_input("book_1", "https://up/ch/3", &enc_b),
+        ];
+        let outcomes = service.repo.record_versions_batch(&inputs).await;
+        assert_eq!(outcomes.len(), 3);
+        assert!(matches!(outcomes[0], Ok(RecordOutcome::Appended { .. })));
+        assert!(matches!(&outcomes[1], Err(AppError::BadRequest(_))));
+        assert!(matches!(outcomes[2], Ok(RecordOutcome::Appended { .. })));
+        assert!(service
+            .has_content("book_1", "https://up/ch/1")
+            .await
+            .unwrap());
+        assert!(service
+            .has_content("book_1", "https://up/ch/3")
+            .await
+            .unwrap());
+        assert!(!service
+            .has_content("book_1", "https://up/ch/2")
+            .await
+            .unwrap());
+
+        pool.close().await;
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    /// 章节数跨块（> RECORD_VERSION_BATCH_SIZE）：分块提交，全部追加成功。
+    #[tokio::test]
+    async fn batch_spans_multiple_transaction_chunks() {
+        let (service, pool, dir) = test_service().await;
+        let total = crate::storage::db::content_repo::RECORD_VERSION_BATCH_SIZE + 5;
+        let urls: Vec<String> = (0..total).map(|i| format!("https://up/ch/{i}")).collect();
+        let contents: Vec<String> = (0..total).map(|i| format!("批量正文 {i}")).collect();
+        let chapters: Vec<UserVersionImport> = (0..total)
+            .map(|i| import_chapter(&urls[i], &contents[i], i as i32))
+            .collect();
+        let outcomes = service
+            .save_user_versions_batch(
+                "user_1",
+                "book_1",
+                "edited",
+                &chapters,
+                "https://example.test/book",
+                "",
+                true,
+                None,
+            )
+            .await;
+        assert_eq!(outcomes.len(), total);
+        assert!(
+            outcomes
+                .iter()
+                .all(|o| matches!(o, Ok(RecordOutcome::Appended { .. }))),
+            "跨块后每章都应追加成功"
+        );
+        let (_, versions, chapter_count, _) = service.stats().await.unwrap();
+        assert_eq!(versions as usize, total);
+        assert_eq!(chapter_count as usize, total);
 
         pool.close().await;
         let _ = std::fs::remove_dir_all(dir);

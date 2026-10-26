@@ -9,7 +9,7 @@ use crate::api::AppState;
 use crate::auth::CurrentUser;
 use crate::error::error::{ApiResponse, AppError};
 use crate::model::book_chapter::BookChapter;
-use crate::service::chapter_content_service::normalized_content_hash;
+use crate::service::chapter_content_service::{normalized_content_hash, UserVersionImport};
 use crate::service::chapter_text_import::{
     match_chapters, split_text, ImportMode, MatchedChapter, MAX_IMPORT_CHAPTERS,
 };
@@ -1018,12 +1018,12 @@ async fn handle_chapter_import(
         .selected_indexes
         .as_ref()
         .map(|indexes| indexes.iter().copied().collect());
+    // 先收齐待写章节，再走批量写入（分块事务 + 章级保存点）；
+    // 对外字段与计数口径和逐章写入完全一致。
     let mut selected_total = 0usize;
-    let mut imported = 0usize;
-    let mut unchanged = 0usize;
     let mut skipped = 0usize;
-    let mut failed = 0usize;
-    let mut errors = Vec::new();
+    let mut batch: Vec<UserVersionImport> = Vec::new();
+    let mut batch_titles: Vec<String> = Vec::new();
     for (item, content) in items.iter().zip(contents.iter()) {
         let picked = selected
             .as_ref()
@@ -1037,34 +1037,43 @@ async fn handle_chapter_import(
         };
         selected_total += 1;
         let title = item.chapter_title.as_deref().unwrap_or("");
-        match state
-            .chapter_content_service
-            .save_user_version(
-                &user.0.ns,
-                &req.book_id,
-                chapter_url,
-                &req.kind,
-                content,
-                None,
-                item.chapter_index.unwrap_or(0),
-                title,
-                &resolved.book_url,
-                &req.note,
-                req.make_current,
-                req.created_at,
-            )
-            .await
-        {
+        batch.push(UserVersionImport {
+            chapter_url,
+            content,
+            chapter_index: item.chapter_index.unwrap_or(0),
+            chapter_title: title,
+        });
+        batch_titles.push(if title.is_empty() {
+            item.title.clone()
+        } else {
+            title.to_string()
+        });
+    }
+    let outcomes = state
+        .chapter_content_service
+        .save_user_versions_batch(
+            &user.0.ns,
+            &req.book_id,
+            &req.kind,
+            &batch,
+            &resolved.book_url,
+            &req.note,
+            req.make_current,
+            req.created_at,
+        )
+        .await;
+    let mut imported = 0usize;
+    let mut unchanged = 0usize;
+    let mut failed = 0usize;
+    let mut errors = Vec::new();
+    for (title, outcome) in batch_titles.iter().zip(outcomes) {
+        match outcome {
             Ok(RecordOutcome::Appended { .. }) => imported += 1,
             Ok(RecordOutcome::Unchanged { .. }) => unchanged += 1,
             Err(error) => {
                 failed += 1;
                 if errors.len() < 10 {
-                    errors.push(format!(
-                        "{}：{}",
-                        if title.is_empty() { &item.title } else { title },
-                        readable_error(&error)
-                    ));
+                    errors.push(format!("{}：{}", title, readable_error(&error)));
                 }
             }
         }

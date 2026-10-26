@@ -245,80 +245,193 @@ impl ChapterContentRepo {
             )));
         };
         let mut tx = self.pool.begin_with("BEGIN IMMEDIATE").await?;
-        let latest = sqlx::query(
-            "SELECT latest_upstream_version_id, latest_user_version_id \
-             FROM chapter_latest WHERE book_id=?1 AND chapter_url=?2",
-        )
-        .bind(book_id)
-        .bind(input.chapter_url)
-        .fetch_optional(&mut *tx)
-        .await?;
-        let (latest_upstream, latest_user) = match &latest {
-            Some(row) => (
-                row.get::<Option<i64>, _>("latest_upstream_version_id"),
-                row.get::<Option<i64>, _>("latest_user_version_id"),
-            ),
-            None => (None, None),
-        };
+        let outcome = record_version_inner(&mut tx, book_id, &input).await?;
+        tx.commit().await?;
+        Ok(outcome)
+    }
 
-        let compare_id = if input.kind == "upstream" {
-            latest_upstream
-        } else {
-            latest_user
-        };
-        if let Some(existing) = compare_id {
-            let same: Option<i64> = sqlx::query_scalar(
-                "SELECT v.version_id FROM chapter_versions v \
-                 JOIN chapter_contents c ON c.content_id=v.content_id \
-                 WHERE v.version_id=?1 AND c.content_hash=?2",
-            )
-            .bind(existing)
-            .bind(input.content_hash)
-            .fetch_optional(&mut *tx)
-            .await?;
-            if same.is_some() {
-                let now = now_millis();
-                if input.kind == "upstream" {
-                    sqlx::query(
-                        "UPDATE chapter_latest SET last_attempt_at=?3, last_success_at=?3, last_error='' \
-                         WHERE book_id=?1 AND chapter_url=?2",
-                    )
-                    .bind(book_id)
-                    .bind(input.chapter_url)
-                    .bind(now)
-                    .execute(&mut *tx)
-                    .await?;
-                } else if input.make_current {
-                    sqlx::query(
-                        "UPDATE chapter_latest SET edited_at=?3 WHERE book_id=?1 AND chapter_url=?2",
-                    )
-                    .bind(book_id)
-                    .bind(input.chapter_url)
-                    .bind(now)
-                    .execute(&mut *tx)
-                    .await?;
-                    sqlx::query(
-                        "DELETE FROM chapter_view_state WHERE user_ns=?1 AND book_id=?2 AND chapter_url=?3",
-                    )
-                    .bind(input.user_ns)
-                    .bind(book_id)
-                    .bind(input.chapter_url)
-                    .execute(&mut *tx)
-                    .await?;
+    /// 批量追加版本：每 [`RECORD_VERSION_BATCH_SIZE`] 章一个 `BEGIN IMMEDIATE`
+    /// 事务，块内逐章 `SAVEPOINT`；单章失败 `ROLLBACK TO SAVEPOINT` 撤销本章的
+    /// 部分写入、记入失败并继续后续章节，块末统一 commit。
+    ///
+    /// 返回与 `inputs` 等长、按顺序对齐的逐章结果，调用方据此计数。
+    /// 整块失败（事务开不了 / 提交失败 / 保存点机制损坏）时，受影响章节
+    /// 全部记为失败，不影响其他块。
+    pub async fn record_versions_batch(
+        &self,
+        inputs: &[NewChapterVersion<'_>],
+    ) -> Vec<Result<RecordOutcome, AppError>> {
+        let mut results: Vec<Result<RecordOutcome, AppError>> = Vec::with_capacity(inputs.len());
+        for chunk in inputs.chunks(RECORD_VERSION_BATCH_SIZE) {
+            let chunk_start = results.len();
+            let mut tx = match self.pool.begin_with("BEGIN IMMEDIATE").await {
+                Ok(tx) => tx,
+                Err(error) => {
+                    let message = format!("批量写入事务开启失败: {error}");
+                    results.extend(
+                        chunk
+                            .iter()
+                            .map(|_| Err(AppError::Internal(anyhow::anyhow!(message.clone())))),
+                    );
+                    continue;
                 }
-                tx.commit().await?;
-                return Ok(RecordOutcome::Unchanged {
-                    version_id: existing,
-                });
+            };
+            // 保存点/回滚本身失败说明连接或事务已损坏：本章记失败，块内剩余
+            // 章节标记为未写入，事务随作用域丢弃即整体回滚，下一块换新事务。
+            let mut fatal = false;
+            for input in chunk {
+                if fatal {
+                    results.push(Err(AppError::Internal(anyhow::anyhow!(
+                        "所在批量写入块已中止，本章未写入"
+                    ))));
+                    continue;
+                }
+                if let Err(error) = sqlx::query("SAVEPOINT chapter_version")
+                    .execute(&mut *tx)
+                    .await
+                {
+                    results.push(Err(AppError::Db(error)));
+                    fatal = true;
+                    continue;
+                }
+                let outcome = match parse_book_id(input.book_id) {
+                    Some(book_id) => record_version_inner(&mut tx, book_id, input).await,
+                    None => Err(AppError::BadRequest(format!(
+                        "bookId 格式非法: {:?}",
+                        input.book_id
+                    ))),
+                };
+                match outcome {
+                    Ok(outcome) => match sqlx::query("RELEASE SAVEPOINT chapter_version")
+                        .execute(&mut *tx)
+                        .await
+                    {
+                        Ok(_) => results.push(Ok(outcome)),
+                        Err(error) => {
+                            results.push(Err(AppError::Db(error)));
+                            fatal = true;
+                        }
+                    },
+                    Err(error) => {
+                        let recovered = sqlx::query("ROLLBACK TO SAVEPOINT chapter_version")
+                            .execute(&mut *tx)
+                            .await
+                            .is_ok()
+                            // ROLLBACK TO 之后保存点仍在，释放掉下一章才能复用同名保存点
+                            && sqlx::query("RELEASE SAVEPOINT chapter_version")
+                                .execute(&mut *tx)
+                                .await
+                                .is_ok();
+                        results.push(Err(error));
+                        if !recovered {
+                            fatal = true;
+                        }
+                    }
+                }
+            }
+            if fatal {
+                continue;
+            }
+            if let Err(error) = tx.commit().await {
+                // 提交失败整块回滚：本块已报成功的章节改记失败
+                let message = format!("批量写入提交失败: {error}");
+                for result in results.iter_mut().skip(chunk_start) {
+                    if result.is_ok() {
+                        *result = Err(AppError::Internal(anyhow::anyhow!(message.clone())));
+                    }
+                }
             }
         }
+        results
+    }
+}
 
-        let content_id: i64 = match sqlx::query_scalar(
-            "SELECT content_id FROM chapter_contents WHERE content_hash=?1",
+/// 批量写入时每个事务块容纳的章节数：几百次插入对 SQLite 一个事务毫无压力，
+/// 块再大只是拉长单事务持锁时间，收益递减。
+pub const RECORD_VERSION_BATCH_SIZE: usize = 300;
+
+/// 单章写入的全部 SQL，在调用方的事务里执行。
+///
+/// 单章入口（[`ChapterContentRepo::record_version`]）包一层
+/// `BEGIN IMMEDIATE` + commit；批量入口（`record_versions_batch`）
+/// 逐章套 SAVEPOINT 复用本函数。
+async fn record_version_inner(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    book_id: i64,
+    input: &NewChapterVersion<'_>,
+) -> Result<RecordOutcome, AppError> {
+    let latest = sqlx::query(
+        "SELECT latest_upstream_version_id, latest_user_version_id \
+             FROM chapter_latest WHERE book_id=?1 AND chapter_url=?2",
+    )
+    .bind(book_id)
+    .bind(input.chapter_url)
+    .fetch_optional(&mut **tx)
+    .await?;
+    let (latest_upstream, latest_user) = match &latest {
+        Some(row) => (
+            row.get::<Option<i64>, _>("latest_upstream_version_id"),
+            row.get::<Option<i64>, _>("latest_user_version_id"),
+        ),
+        None => (None, None),
+    };
+
+    let compare_id = if input.kind == "upstream" {
+        latest_upstream
+    } else {
+        latest_user
+    };
+    if let Some(existing) = compare_id {
+        let same: Option<i64> = sqlx::query_scalar(
+            "SELECT v.version_id FROM chapter_versions v \
+                 JOIN chapter_contents c ON c.content_id=v.content_id \
+                 WHERE v.version_id=?1 AND c.content_hash=?2",
         )
+        .bind(existing)
         .bind(input.content_hash)
-        .fetch_optional(&mut *tx)
-        .await?
+        .fetch_optional(&mut **tx)
+        .await?;
+        if same.is_some() {
+            let now = now_millis();
+            if input.kind == "upstream" {
+                sqlx::query(
+                    "UPDATE chapter_latest SET last_attempt_at=?3, last_success_at=?3, last_error='' \
+                         WHERE book_id=?1 AND chapter_url=?2",
+                )
+                .bind(book_id)
+                .bind(input.chapter_url)
+                .bind(now)
+                .execute(&mut **tx)
+                .await?;
+            } else if input.make_current {
+                sqlx::query(
+                    "UPDATE chapter_latest SET edited_at=?3 WHERE book_id=?1 AND chapter_url=?2",
+                )
+                .bind(book_id)
+                .bind(input.chapter_url)
+                .bind(now)
+                .execute(&mut **tx)
+                .await?;
+                sqlx::query(
+                    "DELETE FROM chapter_view_state WHERE user_ns=?1 AND book_id=?2 AND chapter_url=?3",
+                )
+                .bind(input.user_ns)
+                .bind(book_id)
+                .bind(input.chapter_url)
+                .execute(&mut **tx)
+                .await?;
+            }
+            return Ok(RecordOutcome::Unchanged {
+                version_id: existing,
+            });
+        }
+    }
+
+    let content_id: i64 =
+        match sqlx::query_scalar("SELECT content_id FROM chapter_contents WHERE content_hash=?1")
+            .bind(input.content_hash)
+            .fetch_optional(&mut **tx)
+            .await?
         {
             Some(id) => id,
             None => {
@@ -333,40 +446,40 @@ impl ChapterContentRepo {
                 .bind(input.stored_size)
                 .bind(input.content)
                 .bind(now_millis())
-                .execute(&mut *tx)
+                .execute(&mut **tx)
                 .await?;
                 result.last_insert_rowid()
             }
         };
 
-        let now = now_millis();
-        let version_created_at = input.created_at.unwrap_or(now);
-        let result = sqlx::query(
-            "INSERT INTO chapter_versions \
+    let now = now_millis();
+    let version_created_at = input.created_at.unwrap_or(now);
+    let result = sqlx::query(
+        "INSERT INTO chapter_versions \
              (book_id, chapter_url, content_id, kind, book_source_id, book_source_name, \
               base_version_id, chapter_index, chapter_title, book_url, fetch_url, note, created_at) \
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
-        )
-        .bind(book_id)
-        .bind(input.chapter_url)
-        .bind(content_id)
-        .bind(input.kind)
-        .bind(input.book_source_id)
-        .bind(input.book_source_name)
-        .bind(input.base_version_id)
-        .bind(input.chapter_index)
-        .bind(input.chapter_title)
-        .bind(input.book_url)
-        .bind(input.fetch_url)
-        .bind(input.note)
-        .bind(version_created_at)
-        .execute(&mut *tx)
-        .await?;
-        let version_id = result.last_insert_rowid();
+    )
+    .bind(book_id)
+    .bind(input.chapter_url)
+    .bind(content_id)
+    .bind(input.kind)
+    .bind(input.book_source_id)
+    .bind(input.book_source_name)
+    .bind(input.base_version_id)
+    .bind(input.chapter_index)
+    .bind(input.chapter_title)
+    .bind(input.book_url)
+    .bind(input.fetch_url)
+    .bind(input.note)
+    .bind(version_created_at)
+    .execute(&mut **tx)
+    .await?;
+    let version_id = result.last_insert_rowid();
 
-        let became_current = input.kind == "upstream" || input.make_current;
-        sqlx::query(
-            "INSERT INTO chapter_latest \
+    let became_current = input.kind == "upstream" || input.make_current;
+    sqlx::query(
+        "INSERT INTO chapter_latest \
              (book_id, chapter_url, latest_upstream_version_id, latest_user_version_id, \
               last_attempt_at, last_success_at, upstream_changed_at, edited_at, last_error) \
              VALUES (?1, ?2, ?3, ?4, ?5, ?5, ?5, ?6, '') \
@@ -379,43 +492,51 @@ impl ChapterContentRepo {
                edited_at=COALESCE(excluded.edited_at, chapter_latest.edited_at), \
                last_error=CASE WHEN excluded.latest_upstream_version_id IS NOT NULL \
                                THEN '' ELSE chapter_latest.last_error END",
+    )
+    .bind(book_id)
+    .bind(input.chapter_url)
+    .bind(if input.kind == "upstream" {
+        Some(version_id)
+    } else {
+        None
+    })
+    .bind(if input.kind != "upstream" && input.make_current {
+        Some(version_id)
+    } else {
+        None
+    })
+    .bind(if input.kind == "upstream" {
+        Some(now)
+    } else {
+        None
+    })
+    .bind(if input.kind != "upstream" && input.make_current {
+        Some(now)
+    } else {
+        None
+    })
+    .execute(&mut **tx)
+    .await?;
+
+    // 保存新的用户版本时清掉手动选择，让新版本成为当前。
+    if input.kind != "upstream" && input.make_current {
+        sqlx::query(
+            "DELETE FROM chapter_view_state WHERE user_ns=?1 AND book_id=?2 AND chapter_url=?3",
         )
+        .bind(input.user_ns)
         .bind(book_id)
         .bind(input.chapter_url)
-        .bind(if input.kind == "upstream" { Some(version_id) } else { None })
-        .bind(if input.kind != "upstream" && input.make_current {
-            Some(version_id)
-        } else {
-            None
-        })
-        .bind(if input.kind == "upstream" { Some(now) } else { None })
-        .bind(if input.kind != "upstream" && input.make_current {
-            Some(now)
-        } else {
-            None
-        })
-        .execute(&mut *tx)
+        .execute(&mut **tx)
         .await?;
-
-        // 保存新的用户版本时清掉手动选择，让新版本成为当前。
-        if input.kind != "upstream" && input.make_current {
-            sqlx::query(
-                "DELETE FROM chapter_view_state WHERE user_ns=?1 AND book_id=?2 AND chapter_url=?3",
-            )
-            .bind(input.user_ns)
-            .bind(book_id)
-            .bind(input.chapter_url)
-            .execute(&mut *tx)
-            .await?;
-        }
-
-        tx.commit().await?;
-        Ok(RecordOutcome::Appended {
-            version_id,
-            became_current,
-        })
     }
 
+    Ok(RecordOutcome::Appended {
+        version_id,
+        became_current,
+    })
+}
+
+impl ChapterContentRepo {
     /// 回源失败：只更新尝试时间与错误，不动缓存与指针。
     pub async fn touch_upstream_failure(
         &self,
