@@ -6,10 +6,8 @@
 //! 强刷）。`test_book_source_availability` 与 `login_book_source` 供书源
 //! 调试端点使用。
 
-use super::{
-    book_id_path_segment, parse_blocking, request_spec_summary, BookService, BOOK_INFO_CACHE_DIR,
-    BOOK_INFO_CACHE_TTL,
-};
+use super::fetch::{parse_blocking, request_spec_summary};
+use super::{book_id_path_segment, BookService, BOOK_INFO_CACHE_DIR, BOOK_INFO_CACHE_TTL};
 use crate::error::error::AppError;
 use crate::model::book::Book;
 use crate::model::book_source::{BookSource, ExploreKind};
