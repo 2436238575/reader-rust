@@ -170,7 +170,7 @@ Access Token 只负责访问业务接口；登录 / 改密同时下发一枚一�
 
 取令牌顺序是请求头 → `reader_access` Cookie → 查询参数；非代理路径的查询串令牌一律忽略。Refresh Token 只随 `reader_refresh` Cookie 发给刷新接口（body 里的 `refreshToken` 字段不受理）。登录/刷新/改密的 JSON 仍返回 `accessToken` 供 API 客户端使用，但不再返回 `refreshToken`。
 
-前端不再从 localStorage 读写令牌，只保留非敏感 `reader-auth-hint`（用户名 + Access Token 过期时间）供路由守卫、离线 UI 与提前续期；旧 localStorage 令牌在启动时一次性迁移后删除。`utils/authSession.ts` 凭 Cookie 做单飞刷新与到期前 5 分钟主动续期，并用 Web Locks（可用时）避免多标签页同时刷新。
+前端不再从 localStorage 读写令牌，只保留非敏感 `reader-auth-hint`（用户名 + Access Token 过期时间）供路由守卫、离线 UI 与提前续期。`utils/authSession.ts` 凭 Cookie 做单飞刷新与到期前 5 分钟主动续期，并用 Web Locks（可用时）避免多标签页同时刷新。
 
 ### 路由分层
 
