@@ -4,10 +4,17 @@
       <div v-if="modelValue" class="drawer-overlay" @click="close"></div>
     </Transition>
     <Transition name="slide-right">
-      <aside v-if="modelValue" class="settings-drawer">
+      <aside
+        v-if="modelValue"
+        ref="drawerRef"
+        class="settings-drawer"
+        role="dialog"
+        aria-modal="true"
+        aria-label="设置"
+      >
         <div class="drawer-header">
           <h2>设置</h2>
-          <button class="close-btn" @click="close">
+          <button class="close-btn" aria-label="关闭" @click="close">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
               <path d="M18 6 6 18M6 6l12 12" />
             </svg>
@@ -255,6 +262,7 @@
 <script setup lang="ts">
 import { computed, nextTick, reactive, ref, toRef } from 'vue'
 import { useEscClose } from '../composables/useEscClose'
+import { useFocusTrap } from '../composables/useFocusTrap'
 import { useRouter } from 'vue-router'
 import { useAppStore } from '../stores/app'
 import { useBookshelfStore } from '../stores/bookshelf'
@@ -270,6 +278,8 @@ const emit = defineEmits<{
 }>()
 
 useEscClose(toRef(props, 'modelValue'), () => emit('update:modelValue', false))
+const drawerRef = ref<HTMLElement>()
+useFocusTrap(toRef(props, 'modelValue'), drawerRef)
 
 const appStore = useAppStore()
 const shelfStore = useBookshelfStore()

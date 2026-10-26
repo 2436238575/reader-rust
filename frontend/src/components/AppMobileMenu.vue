@@ -1,7 +1,14 @@
 <template>
   <Teleport to="body">
     <Transition name="mobile-menu">
-      <div v-if="open" class="mobile-menu" role="dialog" aria-modal="true" aria-label="主导航">
+      <div
+        v-if="open"
+        ref="menuRef"
+        class="mobile-menu"
+        role="dialog"
+        aria-modal="true"
+        aria-label="主导航"
+      >
         <header class="menu-header">
           <div class="menu-brand">
             <svg
@@ -71,9 +78,10 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, toRef, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { useAppStore } from '../stores/app'
+import { useFocusTrap } from '../composables/useFocusTrap'
 import ThemeSwitch from './ThemeSwitch.vue'
 
 type NavKey = 'home' | 'explore' | 'recent'
@@ -83,6 +91,8 @@ const emit = defineEmits<{ (e: 'close'): void }>()
 
 const route = useRoute()
 const appStore = useAppStore()
+const menuRef = ref<HTMLElement>()
+useFocusTrap(toRef(props, 'open'), menuRef)
 
 // 与底部胶囊、顶栏 Tab 用同一份分区定义与图标
 const items: Array<{ key: NavKey; label: string; path: string; paths: string[] }> = [

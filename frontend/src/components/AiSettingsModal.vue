@@ -5,7 +5,13 @@
     </Transition>
     <Transition :name="isMobileLayout ? 'slide-right' : 'scale'">
       <div v-if="modelValue" class="modal-container" @click.self="close">
-        <div class="ai-settings-modal">
+        <div
+          ref="modalRef"
+          class="ai-settings-modal"
+          role="dialog"
+          aria-modal="true"
+          aria-label="AI 设置"
+        >
           <div class="modal-head">
             <div>
               <h2>AI 设置</h2>
@@ -186,6 +192,7 @@ import { useAiBookStore } from '../stores/aiBook'
 import { useAppStore } from '../stores/app'
 import { useReaderStore } from '../stores/reader'
 import { useEscClose } from '../composables/useEscClose'
+import { useFocusTrap } from '../composables/useFocusTrap'
 import { useMobileLayout } from '../composables/useMobileLayout'
 
 const props = defineProps<{ modelValue: boolean }>()
@@ -204,6 +211,8 @@ function close() {
 }
 
 useEscClose(toRef(props, 'modelValue'), close)
+const modalRef = ref<HTMLElement>()
+useFocusTrap(toRef(props, 'modelValue'), modalRef)
 
 watch(
   () => props.modelValue,

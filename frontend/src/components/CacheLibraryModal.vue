@@ -5,7 +5,7 @@
     </Transition>
     <Transition :name="isMobileLayout ? 'slide-right' : 'scale'">
       <div v-if="modelValue" class="modal-container" @click.self="close">
-        <div class="cache-modal">
+        <div ref="modalRef" class="cache-modal" role="dialog" aria-modal="true" aria-label="缓存管理">
           <div class="modal-head">
             <div>
               <h2>缓存管理</h2>
@@ -26,7 +26,7 @@
                 </svg>
                 <span>刷新</span>
               </button>
-              <button class="close-btn" @click="close">
+              <button class="close-btn" aria-label="关闭" @click="close">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                   <path d="M18 6 6 18M6 6l12 12" />
                 </svg>
@@ -139,6 +139,7 @@
 import { consumeSSE } from '../utils/sse'
 import { computed, ref, watch, toRef } from 'vue'
 import { useEscClose } from '../composables/useEscClose'
+import { useFocusTrap } from '../composables/useFocusTrap'
 import { useBookshelfStore } from '../stores/bookshelf'
 import { useAppStore } from '../stores/app'
 import { getBookshelfWithCacheInfo, deleteBookCache } from '../api/bookshelf'
@@ -170,6 +171,8 @@ const emit = defineEmits<{
 }>()
 
 useEscClose(toRef(props, 'modelValue'), () => emit('update:modelValue', false))
+const modalRef = ref<HTMLElement>()
+useFocusTrap(toRef(props, 'modelValue'), modalRef)
 
 const shelfStore = useBookshelfStore()
 const appStore = useAppStore()
