@@ -11,10 +11,12 @@ use crate::api::AppState;
 use crate::auth::CurrentUser;
 use crate::error::error::AppError;
 
-/// 老接口 `/reader3/cover?path=<封面地址>` 的入参。
+/// `/reader3/cover?path=<封面地址>` 的入参。
 ///
-/// 仍然保留：书架上早已存下的是书源地址，前端第一次加载时会走这里。
-/// 内部转成「登记 → 取图」，与 `/reader3/image/<id>` 完全同一条管道。
+/// 自定义封面与兜底场景的图片管道入口：响应里的书源地址已被换成
+/// `/reader3/image/<id>`，走到这里的是用户自设的 `customCoverUrl`（任意
+/// http(s)/站内地址，前端 `getCoverUrl` 路由过来）与少数没被改写的兜底
+/// 地址。内部转成「登记 → 取图」，与 `/reader3/image/<id>` 完全同一条管道。
 #[derive(Debug, Deserialize)]
 pub struct CoverQuery {
     pub path: Option<String>,
@@ -86,7 +88,7 @@ pub async fn get_image(
     }
 }
 
-/// 封面（兼容入口）：把书源地址登记成 id 再取图。
+/// 封面（自定义封面/兜底入口）：把给定地址登记成 id 再取图。
 pub async fn get_book_cover(
     State(state): State<AppState>,
     user: CurrentUser,
@@ -108,7 +110,7 @@ pub async fn get_book_cover(
     {
         Ok((bytes, content_type)) => Ok(image_response(bytes, content_type)),
         Err(err) => {
-            // 兼容入口（customCoverUrl）没有书籍上下文，无法回源刷新
+            // 该入口（customCoverUrl 等任意地址）登记时没有书籍上下文，无法回源刷新
             let _ = heal_source_url(&state, &user_ns, &id, q.w, accept_webp).await;
             let _ = err;
             Ok(StatusCode::NOT_FOUND.into_response())
@@ -182,8 +184,9 @@ fn image_response(bytes: Vec<u8>, content_type: String) -> Response<Body> {
 
 /// 包一层响应，并把书籍封面换成本站取图地址。
 ///
-/// 前端因此不需要知道书源地址（更不需要知道它什么时候过期）；没有改写到的地方
-/// 仍然可以走兼容入口 `/reader3/cover?path=`，所以这里只做「能改就改」。
+/// 前端因此不需要知道书源地址（更不需要知道它什么时候过期）；没有改写
+/// 到的地方（如用户自设的 customCoverUrl）仍走 `/reader3/cover?path=`
+/// 入口，所以这里只做「能改就改」。
 pub(crate) async fn ok_with_cover_routes(
     state: &AppState,
     value: impl serde::Serialize,

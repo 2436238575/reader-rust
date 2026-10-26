@@ -87,9 +87,11 @@ pub struct SaveUserdataRequest {
     pub value: Option<Value>,
 }
 
-/// userdata 文档名的白名单：映射到 json_documents 的 name 键，并兼容旧的
-/// `data/<ns>/<name>` 文件路径回退，必须是单一路径分量且不能是 `.` / `..`。
-/// 首字符限定字母数字即可同时排除上述两种情况。
+/// userdata 文档名的白名单：映射到 json_documents 的 name 键。
+/// 文档名历史上曾直接拼进 `data/<ns>/<name>` 文件路径（legacy 读穿已随
+/// 破坏性升级移除，见 `JsonDocumentService` 注释），约束保留下来：首字符
+/// 限定字母数字，天然排除 `.` / `..` 与路径分隔符，让文档名保持
+/// URL/日志安全且与存量键形态一致。
 fn validate_userdata_name(name: &str) -> bool {
     let mut chars = name.chars();
     match chars.next() {
