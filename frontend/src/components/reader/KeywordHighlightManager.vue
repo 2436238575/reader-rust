@@ -13,13 +13,13 @@
     </div>
 
     <div class="rule-list">
-      <div v-if="!store.keywordRules.length" class="empty">
+      <div v-if="!marksStore.keywordRules.length" class="empty">
         暂无关键词
         <p>命中正文的词会以所选底色常驻标出</p>
       </div>
       <div
         v-else
-        v-for="rule in store.keywordRules"
+        v-for="rule in marksStore.keywordRules"
         :key="rule.id"
         class="rule-item"
         :class="{ disabled: !rule.enabled }"
@@ -101,6 +101,7 @@
 <script setup lang="ts">
 import { ref, computed } from 'vue'
 import { useReaderStore } from '../../stores/reader'
+import { useReaderMarksStore } from '../../stores/readerMarks'
 import { useAppStore } from '../../stores/app'
 import {
   DEFAULT_KEYWORD_COLOR,
@@ -110,6 +111,7 @@ import {
 } from '../../utils/keywordHighlights'
 
 const store = useReaderStore()
+const marksStore = useReaderMarksStore()
 const appStore = useAppStore()
 const theme = computed(() => store.currentTheme)
 
@@ -162,23 +164,23 @@ function handleSave() {
     appStore.showToast('当前没有打开的书籍，无法按书生效', 'warning')
     return
   }
-  const rules = store.keywordRules.filter((rule) => rule.id !== next.id)
+  const rules = marksStore.keywordRules.filter((rule) => rule.id !== next.id)
   rules.push(next)
-  store.saveKeywordRules(rules)
+  marksStore.saveKeywordRules(rules)
   editing.value = null
   appStore.showToast('已保存', 'success')
 }
 
 function toggleRule(rule: KeywordHighlightRule) {
-  const rules = store.keywordRules.map((item) =>
+  const rules = marksStore.keywordRules.map((item) =>
     item.id === rule.id ? { ...item, enabled: !item.enabled, updatedAt: Date.now() } : item
   )
-  store.saveKeywordRules(rules)
+  marksStore.saveKeywordRules(rules)
 }
 
 function handleDelete(rule: KeywordHighlightRule) {
   if (!confirm(`确定删除关键词 "${rule.keyword}" 吗？`)) return
-  store.saveKeywordRules(store.keywordRules.filter((item) => item.id !== rule.id))
+  marksStore.saveKeywordRules(marksStore.keywordRules.filter((item) => item.id !== rule.id))
 }
 </script>
 

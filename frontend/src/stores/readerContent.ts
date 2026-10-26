@@ -13,6 +13,7 @@ import { useBookshelfStore } from './bookshelf'
 import { useAiBookStore } from './aiBook'
 import { useReaderStore } from './reader'
 import { useReaderExtrasStore } from './readerExtras'
+import { useReaderMarksStore } from './readerMarks'
 import {
   getChapterList,
   getBookContent,
@@ -37,6 +38,7 @@ import { loadCachedEditedChapterKeys } from '../utils/editedChaptersCache'
 export const useReaderContentStore = defineStore('readerContent', () => {
   const readerStore = useReaderStore()
   const extrasStore = useReaderExtrasStore()
+  const marksStore = useReaderMarksStore()
   const appStore = useAppStore()
   const shelfStore = useBookshelfStore()
   const aiBookStore = useAiBookStore()
@@ -87,7 +89,7 @@ export const useReaderContentStore = defineStore('readerContent', () => {
     readerStore.chapterScrollProgress = 0
     readerStore.preloadedContent.clear()
     readerStore.chapterDiffs.clear()
-    readerStore.loadReadChapterHistory(b)
+    marksStore.loadReadChapterHistory(b)
     readerStore.progressDirty = false
     readerStore.lastServerProgressKey = ''
     readerStore.chaptersLoading = true
@@ -155,7 +157,7 @@ export const useReaderContentStore = defineStore('readerContent', () => {
       }
     }
     if (!readerStore.chapters.length) return false
-    readerStore.loadReadChapterHistory(session.book)
+    marksStore.loadReadChapterHistory(session.book)
 
     // 先拿到已编辑章清单再取正文：否则恢复会话时会走浏览器缓存，拿到的是
     // 编辑前的上游正文（diff 标记也随之消失）
@@ -173,7 +175,7 @@ export const useReaderContentStore = defineStore('readerContent', () => {
         chapterContent,
         session.chapterScrollProgress || 0
       )
-      readerStore.markChapterAsRead(nextIndex)
+      marksStore.markChapterAsRead(nextIndex)
       // 恢复会话不经过 loadChapter，评论要在这里单独补一次（配图由 setActive 触发）
       void extrasStore.loadChapterReviews(nextIndex)
       return true
@@ -320,7 +322,7 @@ export const useReaderContentStore = defineStore('readerContent', () => {
       const initialProgress = isOpeningSavedChapter ? previousSavedProgress : 0
 
       readerStore.setActiveChapterState(index, chapterContent, initialProgress)
-      readerStore.markChapterAsRead(index)
+      marksStore.markChapterAsRead(index)
       appStore.markChapterRead(
         currentBook.bookId || currentBook.bookUrl,
         index,
@@ -670,7 +672,7 @@ export const useReaderContentStore = defineStore('readerContent', () => {
     readerStore.content = ''
     readerStore.currentIndex = 0
     readerStore.chapterScrollProgress = 0
-    readerStore.readChapterKeys = new Set()
+    marksStore.readChapterKeys = new Set()
     readerStore.serverProgressTime = 0
     extrasStore.resetReviews()
     readerStore.stopAutoReading()

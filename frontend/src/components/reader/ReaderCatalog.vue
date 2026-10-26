@@ -132,7 +132,7 @@
             class="list-item"
             :class="{
               active: row.chapter.index === store.currentIndex,
-              read: store.isChapterRead(row.chapter.index),
+              read: marksStore.isChapterRead(row.chapter.index),
               'with-meta': !!row.meta,
             }"
             @click="goToChapter(row.chapter.index)"
@@ -283,6 +283,7 @@
 import { ref, computed, onMounted, nextTick, watch } from 'vue'
 import { useReaderStore } from '../../stores/reader'
 import { useReaderContentStore } from '../../stores/readerContent'
+import { useReaderMarksStore } from '../../stores/readerMarks'
 import { useAppStore } from '../../stores/app'
 import type { Bookmark } from '../../types'
 import { listBrowserCachedChapterUrls } from '../../utils/browserCache'
@@ -308,6 +309,7 @@ type CatalogTab = 'chapters' | 'bookmarks' | 'underlines'
 
 const store = useReaderStore()
 const contentStore = useReaderContentStore()
+const marksStore = useReaderMarksStore()
 const appStore = useAppStore()
 const theme = computed(() => store.currentTheme)
 const activeTab = ref<CatalogTab>(props.initialTab)
@@ -377,15 +379,15 @@ const catalogRows = computed<CatalogRow[]>(() => {
 onMounted(() => {
   activeTab.value = props.initialTab
   scrollToCurrent()
-  store.fetchBookmarks()
+  marksStore.fetchBookmarks()
   void refreshCachedChapterState()
 })
 
 /** 旧数据没有 kind 字段，按章书签归组 */
 const bookmarkKind = bookmarkKindOf
 
-const chapterBookmarks = computed(() => splitBookmarksByKind(store.bookmarks).bookmarks)
-const underlineBookmarks = computed(() => splitBookmarksByKind(store.bookmarks).underlines)
+const chapterBookmarks = computed(() => splitBookmarksByKind(marksStore.bookmarks).bookmarks)
+const underlineBookmarks = computed(() => splitBookmarksByKind(marksStore.bookmarks).underlines)
 
 function switchTab(tab: CatalogTab) {
   if (activeTab.value === tab) return
@@ -499,7 +501,7 @@ function toggleBookmarkSelection(bm: Bookmark) {
 
 async function addCurrentBookmark() {
   try {
-    await store.addBookmark()
+    await marksStore.addBookmark()
     appStore.showToast('已添加当前页书签', 'success')
   } catch (error) {
     appStore.showToast((error as Error).message || '添加书签失败', 'error')
@@ -511,7 +513,7 @@ async function handleDeleteBookmark(bm: Bookmark) {
   const label = bookmarkKind(bm) === 'underline' ? '划线' : '书签'
   if (!confirm(`确定删除这条${label}吗？`)) return
   try {
-    await store.removeBookmark(bm)
+    await marksStore.removeBookmark(bm)
     appStore.showToast(`已删除${label}`, 'success')
   } catch (error) {
     appStore.showToast((error as Error).message || `删除${label}失败`, 'error')
@@ -534,7 +536,7 @@ function cancelNoteEdit() {
 
 async function saveNoteEdit(bm: Bookmark) {
   try {
-    await store.updateBookmarkNote(bm, editingNoteText.value.trim())
+    await marksStore.updateBookmarkNote(bm, editingNoteText.value.trim())
     cancelNoteEdit()
     appStore.showToast('备注已保存', 'success')
   } catch (error) {
@@ -564,7 +566,7 @@ async function handleBatchAction() {
   const label = activeTab.value === 'underlines' ? '划线' : '书签'
   if (!confirm(`确定删除选中的 ${items.length} 条${label}吗？`)) return
   try {
-    await store.removeBookmarks(items)
+    await marksStore.removeBookmarks(items)
     selectedBookmarkKeys.value.clear()
     bookmarkEditMode.value = false
     appStore.showToast(`已删除 ${items.length} 条${label}`, 'success')

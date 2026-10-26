@@ -2,9 +2,11 @@ import { nextTick, ref } from 'vue'
 import type { ComputedRef, Ref } from 'vue'
 import type { useReaderStore } from '../stores/reader'
 import type { useReaderContentStore } from '../stores/readerContent'
+import type { useReaderMarksStore } from '../stores/readerMarks'
 
 type ReaderStore = ReturnType<typeof useReaderStore>
 type ReaderContentStore = ReturnType<typeof useReaderContentStore>
+type ReaderMarksStore = ReturnType<typeof useReaderMarksStore>
 
 export interface ContinuousChapterItem {
   index: number
@@ -36,6 +38,7 @@ export function shouldPruneLower(
 export function useContinuousReading(
   store: ReaderStore,
   contentStore: ReaderContentStore,
+  marksStore: ReaderMarksStore,
   renderChapterHtml: (rawText: string, chapterIndex?: number) => string,
   isContinuousMode: ComputedRef<boolean>,
   hideReadChaptersMode: ComputedRef<boolean>,
@@ -65,7 +68,7 @@ export function useContinuousReading(
   function shouldHideChapter(index: number, keepIndex?: number) {
     if (!hideReadChaptersMode.value) return false
     if (typeof keepIndex === 'number' && index === keepIndex) return false
-    return store.isChapterRead(index)
+    return marksStore.isChapterRead(index)
   }
 
   function findNextVisibleIndex(startIndex: number, keepIndex?: number) {
@@ -209,7 +212,7 @@ export function useContinuousReading(
   function setContinuousActiveChapter(index: number, chapterContent: string, progress: number) {
     suppressContinuousSync.value = true
     store.setActiveChapterState(index, chapterContent, progress)
-    store.markChapterAsRead(index)
+    marksStore.markChapterAsRead(index)
     void store.persistProgress(index)
     pruneUpperChapters(index)
     pruneLowerChapters(index)

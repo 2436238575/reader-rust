@@ -1,16 +1,19 @@
 import { ref } from 'vue'
 import type { ComputedRef, Ref } from 'vue'
 import type { useReaderStore } from '../stores/reader'
+import type { useReaderMarksStore } from '../stores/readerMarks'
 import type { useAppStore } from '../stores/app'
 import { saveReplaceRule } from '../api/replaceRule'
 import { progressToChapterPos } from '../utils/bookmarks'
 import { DEFAULT_KEYWORD_COLOR, newKeywordRuleId } from '../utils/keywordHighlights'
 
 type ReaderStore = ReturnType<typeof useReaderStore>
+type ReaderMarksStore = ReturnType<typeof useReaderMarksStore>
 type AppStore = ReturnType<typeof useAppStore>
 
 export function useReaderSelection(
   store: ReaderStore,
+  marksStore: ReaderMarksStore,
   appStore: AppStore,
   config: ComputedRef<{ selectAction: 'popup' | 'contextmenu' | 'ignore' }>,
   scrollContainerRef: Ref<HTMLElement | undefined>
@@ -209,7 +212,7 @@ export function useReaderSelection(
     if (!text) return
     try {
       const anchor = computeSelectionAnchor()
-      await store.addBookmark(anchor.chapterPos, text, 'underline', anchor.chapterIndex)
+      await marksStore.addBookmark(anchor.chapterPos, text, 'underline', anchor.chapterIndex)
       selection?.removeAllRanges()
       activeSelectionText.value = ''
       hideSelectionMenu()
@@ -252,7 +255,7 @@ export function useReaderSelection(
     const text = rawText.trim()
     if (!text || !store.book) return false
     const bookId = store.book.bookId
-    const exists = store.keywordRules.some(
+    const exists = marksStore.keywordRules.some(
       (rule) =>
         rule.keyword === text &&
         (rule.scope === 'global' || (rule.scope === 'book' && rule.bookId === bookId))
@@ -261,8 +264,8 @@ export function useReaderSelection(
       appStore.showToast('该词已在高亮列表中', 'warning')
       return false
     }
-    store.saveKeywordRules([
-      ...store.keywordRules,
+    marksStore.saveKeywordRules([
+      ...marksStore.keywordRules,
       {
         id: newKeywordRuleId(),
         keyword: text,
@@ -406,7 +409,7 @@ export function useReaderSelection(
   /** 划线菜单的删除：按 (chapterIndex, chapterPos, kind) 定位回书签条目 */
   async function deleteUnderlineFromMenu() {
     const { chapterIndex, chapterPos } = underlineMenu.value
-    const bm = store.bookmarks.find(
+    const bm = marksStore.bookmarks.find(
       (b) =>
         b.kind === 'underline' &&
         b.chapterIndex === chapterIndex &&
@@ -418,7 +421,7 @@ export function useReaderSelection(
     }
     if (!confirm('确定删除这条划线吗？')) return
     try {
-      await store.removeBookmark(bm)
+      await marksStore.removeBookmark(bm)
       closeUnderlineMenu()
       appStore.showToast('已删除划线', 'success')
     } catch (error) {

@@ -491,6 +491,7 @@ import { ref, computed, watch, onMounted, onUnmounted, nextTick, defineAsyncComp
 import { onBeforeRouteLeave, useRouter } from 'vue-router'
 import { useReaderStore, fontPresets } from '../stores/reader'
 import { useReaderContentStore } from '../stores/readerContent'
+import { useReaderMarksStore } from '../stores/readerMarks'
 import { useReaderExtrasStore } from '../stores/readerExtras'
 import { useAppStore } from '../stores/app'
 import { useSourceStore } from '../stores/source'
@@ -575,6 +576,7 @@ const router = useRouter()
 const store = useReaderStore()
 const contentStore = useReaderContentStore()
 const extrasStore = useReaderExtrasStore()
+const marksStore = useReaderMarksStore()
 const appStore = useAppStore()
 const sourceStore = useSourceStore()
 const SERVER_PROGRESS_AUTOSAVE_MS = 10000
@@ -709,6 +711,7 @@ const {
   disposeSelection,
 } = useReaderSelection(
   store,
+  marksStore,
   appStore,
   computed(() => ({ selectAction: config.value.selectAction })),
   scrollContainerRef
@@ -806,7 +809,7 @@ function decorateChapterHtml(baseHtml: string, withBubbles: boolean, chapterInde
 
 /** 某章的全部划线（回显用）：摘录文本 + 书签定位键 chapterPos。 */
 function underlineTextsForChapter(chapterIndex: number): UnderlineMarkSpec[] {
-  return store.bookmarks
+  return marksStore.bookmarks
     .filter((bm) => bm.kind === 'underline' && bm.chapterIndex === chapterIndex)
     .map((bm) => ({ text: bm.bookText || '', chapterPos: bm.chapterPos ?? 0 }))
     .filter((mark) => mark.text.trim().length >= 2)
@@ -816,7 +819,7 @@ function underlineTextsForChapter(chapterIndex: number): UnderlineMarkSpec[] {
  *  夜间模式底色转成同色相的暗色变体：色盘值是浅色主题下调的半透明浅色，
  *  直接盖在深底上和浅色正文对比度太低。 */
 const activeKeywordMarks = computed(() =>
-  store.keywordRules
+  marksStore.keywordRules
     .filter(
       (rule) =>
         rule.enabled &&
@@ -1194,6 +1197,7 @@ const {
 } = useContinuousReading(
   store,
   contentStore,
+  marksStore,
   renderChapterHtml,
   isContinuousMode,
   hideReadChaptersMode,
@@ -1934,9 +1938,9 @@ onMounted(async () => {
   if (typeof window !== 'undefined' && window.speechSynthesis) {
     window.speechSynthesis.onvoiceschanged = () => store.fetchVoices()
   }
-  await Promise.all([store.fetchBookmarks(), store.fetchReplaceRules()])
+  await Promise.all([marksStore.fetchBookmarks(), store.fetchReplaceRules()])
   // 关键词高亮配置：本地镜像已就绪（store 初始化即读），后端合并不挡渲染
-  void store.syncKeywordRules()
+  void marksStore.syncKeywordRules()
   // 已编辑章清单：目录徽章、预加载绕过与 diff 标记都靠它
   void store.refreshEditedChapterKeys()
   // 换源入口需要按启用书源数决定是否展示；会话内只拉一次（source store 缓存）
@@ -2191,9 +2195,9 @@ watch(
     () => config.value.chineseMode,
     () => store.replaceRules,
     // 常驻关键词高亮配置变化：重跑装饰层上色
-    () => store.keywordRules,
+    () => marksStore.keywordRules,
     // 划线增删：回显的摘录文本集合变了要重跑装饰层
-    () => store.bookmarks,
+    () => marksStore.bookmarks,
     // 夜间切换：关键词底色要换成暗色变体（连续模式章缓存要刷）
     () => store.isNight,
     // diff 标记开关：关掉时重跑装饰层摘掉标记
