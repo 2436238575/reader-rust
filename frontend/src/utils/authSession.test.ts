@@ -12,10 +12,8 @@ import {
 } from './authSession'
 import {
   AUTH_HINT_STORAGE_KEY,
-  LEGACY_REFRESH_TOKEN_STORAGE_KEY,
   hasAuthHint,
   readAuthHint,
-  readLegacyRefreshToken,
   storeAuthHint,
 } from './secureAccess'
 
@@ -65,16 +63,15 @@ describe('authSession Cookie 刷新', () => {
     expect(hint?.accessTokenExpiresAt).toBeGreaterThan(Date.now() + 5 * 3600 * 1000)
   })
 
-  it('旧版 localStorage Refresh Token 会放进 body 一次（迁移）', async () => {
+  it('旧版 localStorage Refresh Token 不再进 body（后端已删 body 回退，恒为空对象）', async () => {
     seedHint()
-    localStorage.setItem(LEGACY_REFRESH_TOKEN_STORAGE_KEY, 'rt_old')
+    // 旧版令牌键残留也不影响：前端不再读取，body 恒为空对象
+    localStorage.setItem('refreshToken', 'rt_old')
     const post = vi.spyOn(axios, 'post').mockResolvedValue(refreshResponse())
 
     await refreshAccessToken()
 
-    expect(post.mock.calls[0][1]).toEqual({ refreshToken: 'rt_old' })
-    // 旧键的删除由 bootstrapAuth 负责，这里只负责带上
-    expect(readLegacyRefreshToken()).toBe('rt_old')
+    expect(post.mock.calls[0][1]).toEqual({})
   })
 
   it('并发刷新合并为一次请求', async () => {

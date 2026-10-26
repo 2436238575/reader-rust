@@ -6,9 +6,6 @@ import { getUserInfo } from '../api/user'
 import { refreshAccessToken } from '../utils/authSession'
 import { cancelUserdataQueue } from '../utils/userdataQueue'
 import {
-  LEGACY_ACCESS_TOKEN_EXPIRES_AT_STORAGE_KEY,
-  LEGACY_ACCESS_TOKEN_STORAGE_KEY,
-  LEGACY_REFRESH_TOKEN_STORAGE_KEY,
   clearAuthHint,
   hasAuthHint,
   readAuthHint,
@@ -90,13 +87,6 @@ function createUserInfo(username = 'admin'): UserInfo {
 /** 模拟一次已登录的 Cookie 会话：本地有非敏感登录提示。 */
 function seedHint(username = 'admin') {
   storeAuthHint({ username, accessTokenExpiresAt: Date.now() + 6 * 3600 * 1000 })
-}
-
-/** 模拟旧版（localStorage 令牌时代）的存量会话。 */
-function seedLegacyTokens() {
-  localStorage.setItem(LEGACY_ACCESS_TOKEN_STORAGE_KEY, 'old-access')
-  localStorage.setItem(LEGACY_REFRESH_TOKEN_STORAGE_KEY, 'rt_old')
-  localStorage.setItem(LEGACY_ACCESS_TOKEN_EXPIRES_AT_STORAGE_KEY, String(Date.now() + 1000))
 }
 
 beforeEach(() => {
@@ -183,8 +173,9 @@ describe('app store fetchUserInfo 合并与新鲜期', () => {
     const hint = readAuthHint()
     expect(hint?.username).toBe('alice')
     expect(hint?.accessTokenExpiresAt).toBeGreaterThan(Date.now())
-    expect(localStorage.getItem(LEGACY_ACCESS_TOKEN_STORAGE_KEY)).toBeNull()
-    expect(localStorage.getItem(LEGACY_REFRESH_TOKEN_STORAGE_KEY)).toBeNull()
+    // localStorage 里不出现任何令牌键（旧版键名也不再使用）
+    expect(localStorage.getItem('accessToken')).toBeNull()
+    expect(localStorage.getItem('refreshToken')).toBeNull()
   })
 
   it('clearUser 清掉 hint 与登录态', () => {
@@ -425,39 +416,6 @@ describe('app store 启动恢复（Cookie 会话）', () => {
     expect(store.isLoggedIn).toBe(true)
     expect(hasAuthHint()).toBe(true)
     expect(readAuthHint()?.username).toBe('admin')
-  })
-
-  it('旧 localStorage 令牌迁移：先带旧 Refresh Token 刷新，成功后删除旧键', async () => {
-    seedLegacyTokens()
-    // 模拟真实刷新成功：换到 Cookie 会话并留下 hint
-    refreshMock.mockImplementation(async () => {
-      storeAuthHint({ username: '', accessTokenExpiresAt: Date.now() + 6 * 3600 * 1000 })
-    })
-    getUserInfoMock.mockResolvedValue({ userInfo: createUserInfo() })
-    const store = useAppStore()
-
-    await store.bootstrapAuth()
-
-    expect(refreshMock).toHaveBeenCalledTimes(1)
-    expect(localStorage.getItem(LEGACY_ACCESS_TOKEN_STORAGE_KEY)).toBeNull()
-    expect(localStorage.getItem(LEGACY_REFRESH_TOKEN_STORAGE_KEY)).toBeNull()
-    expect(localStorage.getItem(LEGACY_ACCESS_TOKEN_EXPIRES_AT_STORAGE_KEY)).toBeNull()
-    expect(store.isLoggedIn).toBe(true)
-    // hint 的用户名由随后的 getUserInfo 补齐
-    expect(readAuthHint()?.username).toBe('admin')
-  })
-
-  it('旧令牌迁移失败也删除旧键，且不残留登录态', async () => {
-    seedLegacyTokens()
-    const { SessionExpiredError } = await import('../utils/authSession')
-    refreshMock.mockRejectedValue(new SessionExpiredError())
-    const store = useAppStore()
-
-    await store.bootstrapAuth()
-
-    expect(localStorage.getItem(LEGACY_REFRESH_TOKEN_STORAGE_KEY)).toBeNull()
-    expect(store.isLoggedIn).toBe(false)
-    expect(hasAuthHint()).toBe(false)
   })
 })
 

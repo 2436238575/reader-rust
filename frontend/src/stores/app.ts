@@ -5,10 +5,8 @@ import type { UserInfo } from '../types'
 import { applySystemTheme } from '../utils/systemUi'
 import {
   clearAuthHint,
-  clearLegacyAuthTokens,
   hasAuthHint,
   readAuthHint,
-  readLegacyRefreshToken,
   storeAuthHint,
 } from '../utils/secureAccess'
 import {
@@ -149,7 +147,7 @@ export const useAppStore = defineStore('app', () => {
     prefetchFirstScreenDocs()
   }
 
-  /** 服务端确认的用户信息落地：hint 已存在时补齐用户名（迁移首刷时可能未知）。 */
+  /** 服务端确认的用户信息落地：hint 已存在时补齐用户名（首刷时可能未知）。 */
   function syncHintUsername(username: string) {
     const hint = readAuthHint()
     // 不新造 hint：会话刚失效（hint 已清）时不能把登录提示又造回来
@@ -160,29 +158,16 @@ export const useAppStore = defineStore('app', () => {
 
   /**
    * 启动时恢复会话。会话凭据在 HttpOnly Cookie 里，浏览器自动携带：
-   * 1. 旧版 localStorage 的 Refresh Token 先做一次性迁移（放进刷新 body
-   *    换 Cookie 会话），迁移完（无论成败）删除旧键；
-   * 2. 没有 hint 视为未登录（真正的会话有效性由 API 401 兜底）；
-   * 3. getUserInfo 是可选鉴权端点：Cookie 过期时它返回 200 + null，此时
+   * 1. 没有 hint 视为未登录（真正的会话有效性由 API 401 兜底）；
+   * 2. getUserInfo 是可选鉴权端点：Cookie 过期时它返回 200 + null，此时
    *    刷新一次再取；
-   * 4. 网络故障且 hint 存在时保持登录态（离线打开仍能进阅读器），等
+   * 3. 网络故障且 hint 存在时保持登录态（离线打开仍能进阅读器），等
    *    后续请求再试。
    */
   let bootstrapPromise: Promise<void> | null = null
   function bootstrapAuth(): Promise<void> {
     if (bootstrapPromise) return bootstrapPromise
     bootstrapPromise = (async () => {
-      // ── 旧令牌迁移 ──
-      if (readLegacyRefreshToken()) {
-        try {
-          await refreshAccessToken()
-        } catch {
-          // 400/401 会清 hint（会话确实没了）；网络失败保留已有的 hint。
-          // 无论成败旧键都删：失败重试救不回一次性轮换的旧令牌
-        }
-        clearLegacyAuthTokens()
-      }
-
       if (!hasAuthHint()) {
         isLoggedIn.value = false
         return

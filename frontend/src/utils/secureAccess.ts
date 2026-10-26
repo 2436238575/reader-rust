@@ -3,20 +3,9 @@
 // Access/Refresh Token 已全部改由 HttpOnly Cookie 承载，JS 读不到也存不了；
 // 这里只维护一份非敏感的登录提示（hint）：用户名 + Access Token 过期时间，
 // 供离线 UI、路由守卫与「到期前主动续期」使用，不含任何凭据。
-//
-// 旧版留在 localStorage 的三个令牌键只用于一次性迁移：把旧 Refresh Token
-// 放进 /refreshToken 的 body 换取 Cookie 会话，迁移后即删除（见
-// utils/authSession.ts 与 stores/app.ts 的 bootstrapAuth）。
 
 /** 登录提示键：`{username, accessTokenExpiresAt}`，不含令牌。 */
 export const AUTH_HINT_STORAGE_KEY = 'reader-auth-hint'
-
-/** 旧版 Access Token 键：只读不写，迁移后删除。 */
-export const LEGACY_ACCESS_TOKEN_STORAGE_KEY = 'accessToken'
-/** 旧版 Refresh Token 键：迁移时读一次放进刷新 body，之后删除。 */
-export const LEGACY_REFRESH_TOKEN_STORAGE_KEY = 'refreshToken'
-/** 旧版过期时间键：只用于迁移后清理。 */
-export const LEGACY_ACCESS_TOKEN_EXPIRES_AT_STORAGE_KEY = 'accessTokenExpiresAt'
 
 type StorageLike = Pick<Storage, 'getItem'>
 type WritableStorageLike = Pick<Storage, 'getItem' | 'setItem' | 'removeItem'>
@@ -80,16 +69,4 @@ export function readAccessTokenExpiresAt(
   storage: StorageLike = localStorage
 ): number | undefined {
   return readAuthHint(storage)?.accessTokenExpiresAt
-}
-
-/** 读取旧版 localStorage Refresh Token；仅在迁移（换 Cookie 会话）时使用。 */
-export function readLegacyRefreshToken(storage: StorageLike = localStorage): string | undefined {
-  return storage.getItem(LEGACY_REFRESH_TOKEN_STORAGE_KEY)?.trim() || undefined
-}
-
-/** 删除旧版 localStorage 的三个令牌键；迁移完成（无论成败）后调用。 */
-export function clearLegacyAuthTokens(storage: WritableStorageLike = localStorage) {
-  storage.removeItem(LEGACY_ACCESS_TOKEN_STORAGE_KEY)
-  storage.removeItem(LEGACY_REFRESH_TOKEN_STORAGE_KEY)
-  storage.removeItem(LEGACY_ACCESS_TOKEN_EXPIRES_AT_STORAGE_KEY)
 }

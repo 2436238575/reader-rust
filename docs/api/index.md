@@ -151,7 +151,6 @@ HttpOnly; SameSite=Strict; Path=/reader3; Max-Age=<对应 TTL>
 
 - 两枚都是 host-only，JS 读不到，代理页也拿不到；`Secure` 由 `COOKIE_SECURE` 控制（`auto` 默认按 Host 是否回环决定，`true` / `false` 强制）。
 - 浏览器请求、SSE（`EventSource`）与 `<img>` 都由浏览器自动携带 Cookie，URL 里不再需要 `accessToken`。
-- 旧版 localStorage 令牌由前端一次性迁移：启动时用旧 Refresh Token 调用一次刷新，成功后删除旧键；迁移失败也删除旧键并回到登录页。
 - 只有 `Authorization`、Cookie 与两个代理路径的查询参数会参与鉴权；其他路径的 `?accessToken=` 一律忽略。
 
 ### API 客户端

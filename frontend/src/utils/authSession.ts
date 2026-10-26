@@ -16,7 +16,6 @@ import {
   hasAuthHint,
   readAccessTokenExpiresAt,
   readAuthHint,
-  readLegacyRefreshToken,
   storeAuthHint,
 } from './secureAccess'
 
@@ -76,10 +75,7 @@ let lastRefreshAt = 0
 
 /**
  * 凭 Cookie 刷新会话：成功后服务端换发两枚 Cookie，这里只更新 hint 里的
- * 过期时间（用户名保留，迁移首刷时可能还没有用户名）。
- *
- * 旧版 localStorage 里若还有 Refresh Token（一次性迁移），会放进 body；
- * 旧键的清理由 stores/app.ts 的 bootstrapAuth 负责。
+ * 过期时间（用户名保留，首刷时可能还没有用户名）。
  */
 export function refreshAccessToken(): Promise<void> {
   if (inflight) return inflight
@@ -102,12 +98,10 @@ async function doRefresh(): Promise<void> {
   // 直接短路返回，避免把续期接口打成风暴
   if (Date.now() - lastRefreshAt < REFRESH_SUCCESS_DEDUPE_MS) return
 
-  const legacyRefreshToken = readLegacyRefreshToken()
-  const body = legacyRefreshToken ? { refreshToken: legacyRefreshToken } : {}
-
   let response
   try {
-    response = await axios.post(`${API_BASE}/refreshToken`, body, {
+    // 服务端只认 reader_refresh Cookie，body 恒为空对象
+    response = await axios.post(`${API_BASE}/refreshToken`, {}, {
       timeout: REFRESH_TIMEOUT_MS,
       // 刷新必须带上 reader_refresh Cookie；跨域 CORS 部署同样要发凭据
       withCredentials: true,

@@ -1,15 +1,10 @@
 import { describe, expect, it } from 'vitest'
 import {
   AUTH_HINT_STORAGE_KEY,
-  LEGACY_ACCESS_TOKEN_EXPIRES_AT_STORAGE_KEY,
-  LEGACY_ACCESS_TOKEN_STORAGE_KEY,
-  LEGACY_REFRESH_TOKEN_STORAGE_KEY,
   clearAuthHint,
-  clearLegacyAuthTokens,
   hasAuthHint,
   readAccessTokenExpiresAt,
   readAuthHint,
-  readLegacyRefreshToken,
   storeAuthHint,
 } from './secureAccess'
 
@@ -71,30 +66,5 @@ describe('secureAccess 登录提示', () => {
     expect(readAuthHint(storage)).toBeUndefined()
     expect(hasAuthHint(storage)).toBe(false)
     expect(readAccessTokenExpiresAt(storage)).toBeUndefined()
-    expect(readLegacyRefreshToken(storage)).toBeUndefined()
-  })
-})
-
-describe('secureAccess 旧版令牌迁移', () => {
-  it('readLegacyRefreshToken 读取旧键，空白视为不存在', () => {
-    expect(readLegacyRefreshToken(storageWith({ [LEGACY_REFRESH_TOKEN_STORAGE_KEY]: ' rt_old ' }))).toBe(
-      'rt_old'
-    )
-    expect(readLegacyRefreshToken(storageWith({ [LEGACY_REFRESH_TOKEN_STORAGE_KEY]: '   ' }))).toBeUndefined()
-  })
-
-  it('clearLegacyAuthTokens 删除三个旧键，不动 hint', () => {
-    const storage = writableStorage()
-    storage.setItem(LEGACY_ACCESS_TOKEN_STORAGE_KEY, 'old-access')
-    storage.setItem(LEGACY_REFRESH_TOKEN_STORAGE_KEY, 'rt_old')
-    storage.setItem(LEGACY_ACCESS_TOKEN_EXPIRES_AT_STORAGE_KEY, '123')
-    storeAuthHint({ username: 'alice' }, storage)
-
-    clearLegacyAuthTokens(storage)
-
-    expect(storage.getItem(LEGACY_ACCESS_TOKEN_STORAGE_KEY)).toBeNull()
-    expect(storage.getItem(LEGACY_REFRESH_TOKEN_STORAGE_KEY)).toBeNull()
-    expect(storage.getItem(LEGACY_ACCESS_TOKEN_EXPIRES_AT_STORAGE_KEY)).toBeNull()
-    expect(hasAuthHint(storage)).toBe(true)
   })
 })

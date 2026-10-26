@@ -594,7 +594,6 @@ async function importRemoteSource() {
   if (sourceIoBusy.value) return
   sourceIoBusy.value = true
   try {
-    // 后端直接返回书源数组（旧版是整个数组序列化成一条 JSON 字符串的双重编码）
     const parsed = await readRemoteSourceFile(remoteUrl.value)
     if (!parsed.length) {
       throw new Error('远程书源文件为空或格式错误')
