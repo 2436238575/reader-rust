@@ -49,12 +49,6 @@ pub struct AppConfig {
     /// 应改 HTTPS，或显式设 `false`（不推荐，Cookie 可被明文链路截获）。
     #[serde(deserialize_with = "deserialize_scalar_string")]
     pub cookie_secure: String,
-    /// 已废弃：旧版单令牌方案的有效期。
-    ///
-    /// 仅为兼容既有 `.env` 保留：`JWT_TTL_SECS` 有值时会作为
-    /// `ACCESS_TOKEN_TTL_SECS` 的别名生效并打警告；未显式设置新变量时
-    /// 使用该值。新部署请直接配置 `ACCESS_TOKEN_TTL_SECS`。
-    pub jwt_ttl_secs: u64,
     /// 唯一账号的用户名，首次启动建号时使用；建号后修改不会再改已有数据。
     pub admin_username: String,
     /// 唯一账号的密码。非空时**每次启动都会强制写入**（覆盖现有密码），
@@ -167,8 +161,6 @@ impl Default for AppConfig {
             access_token_ttl_secs: 6 * 3600,
             refresh_token_ttl_secs: 7 * 24 * 3600,
             cookie_secure: "auto".to_string(),
-            // 0 = 未配置；load() 里按兼容规则归一到 access_token_ttl_secs
-            jwt_ttl_secs: 0,
             admin_username: "admin".to_string(),
             admin_password: String::new(),
             user_book_limit: 2000,
@@ -234,7 +226,6 @@ pub fn load() -> anyhow::Result<AppConfig> {
             defaults.refresh_token_ttl_secs as i64,
         )?
         .set_default("cookie_secure", defaults.cookie_secure)?
-        .set_default("jwt_ttl_secs", defaults.jwt_ttl_secs as i64)?
         .set_default("admin_username", defaults.admin_username)?
         .set_default("admin_password", defaults.admin_password)?
         .set_default("user_book_limit", defaults.user_book_limit as i64)?
@@ -293,24 +284,11 @@ pub fn load() -> anyhow::Result<AppConfig> {
     Ok(cfg)
 }
 
-/// 归一两套令牌有效期配置。
+/// 归一令牌有效期配置。
 ///
-/// 旧部署只有 `JWT_TTL_SECS`：未显式设置 `ACCESS_TOKEN_TTL_SECS` 时沿用它
-/// 作为 Access Token 有效期，保证升级后行为可预期；两者都写时以新变量为准。
 /// TTL 为 0 会让令牌签发即过期，按配置笔误处理并回落到默认值。
 fn normalize_token_ttls(cfg: &mut AppConfig) {
     let defaults = AppConfig::default();
-    if cfg.jwt_ttl_secs > 0 {
-        if std::env::var_os("ACCESS_TOKEN_TTL_SECS").is_some() {
-            eprintln!("WARN JWT_TTL_SECS 已废弃，已被 ACCESS_TOKEN_TTL_SECS 覆盖");
-        } else {
-            eprintln!(
-                "WARN JWT_TTL_SECS 已废弃，按 ACCESS_TOKEN_TTL_SECS={} 秒生效；新部署请改用 ACCESS_TOKEN_TTL_SECS",
-                cfg.jwt_ttl_secs
-            );
-            cfg.access_token_ttl_secs = cfg.jwt_ttl_secs;
-        }
-    }
     if cfg.access_token_ttl_secs == 0 {
         eprintln!(
             "WARN ACCESS_TOKEN_TTL_SECS 不能为 0，回落到默认 {} 秒",
