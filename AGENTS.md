@@ -22,7 +22,7 @@ Reader-Rust 是 [阅读3.0](https://github.com/hectorqin/reader) 的 Rust 重写
 cargo run                      # 开发模式运行，默认监听 127.0.0.1:8080（Docker 镜像显式设 0.0.0.0）
 cargo build                    # 调试构建
 cargo build --release          # 发布构建
-cargo test                     # 全部测试（Rust 侧共 574 个，另有 2 个真实网络用例默认忽略）
+cargo test                     # 全部测试（Rust 侧共 597 个，另有 2 个真实网络用例默认忽略）
 cargo test <关键字>             # 按名称过滤测试
 cargo clippy --all-targets     # 静态检查
 cargo fmt                      # 格式化
@@ -150,13 +150,16 @@ cp .env.example .env
 ```
 src/
   main.rs / lib.rs        入口，各十余行
-  api/                    路由与 HTTP 处理（axum），19 文件约 7000 行
+  api/                    路由与 HTTP 处理（axum），31 文件约 11000 行
     router.rs             全部路由定义 + 鉴权分组（唯一真相来源）
-    handlers/             17 个领域模块：book、book_source、user、bookmark、
+    handlers/             领域模块：book/ 是目录（mod 共享层 resolve_book/ResolvedBook +
+                          search/explore/toc/content/shelf/local_upload/sse/available_source
+                          八个子模块）、book_source、user、bookmark、
                           book_group、ai_book、ai_model、ai_proxy、agent、replace_rule、
                           image、webdav、cache（缓存清理与统计）、chapter_image、
                           chapter_edit（用户版本、版本时间线、版本 diff 与选择、
-                          单章/整本 TXT 导入预览、导入详情差异与批量写入）、
+                          单章/整本 TXT 导入预览、导入详情差异与批量写入——批量走
+                          分块事务 + 章级保存点，导入可凭 previewId 复用预览缓存免二次上传）、
                           review（章评/段评）、search_cache（缓存内全文检索，只扫
                           已缓存章节、不触发上游请求）；另有共享的 multipart.rs（限量读取工具）。
                           webdav 的协议语义（PROPFIND/PUT/LOCK 等）由 dav-server
@@ -167,9 +170,13 @@ src/
     secret.rs             JWT_SECRET 解析与持久化
     extractor.rs          CurrentUser / MaybeUser 提取器
     middleware.rs         require_auth / optional_auth
-  service/                业务编排，14 文件约 12000 行
+  service/                业务编排，25 文件约 15200 行
+    book_service/         书籍服务主壳（目录：mod 结构体/构造/共享夹具 + fetch 抓取限速地基 +
+                          registry 登记与 Cookie + explore 搜索/发现/详情 + toc 目录抓取分页缓存 +
+                          content 正文回源 + review 评论/配图 + cache 清理统计 +
+                          shelf 书架读写 + cached_search 缓存内全文检索）
     chapter_content_service.rs 正文池与版本时间线：sha256 去重、zstd 压缩、版本追加、
-                          最新指针、每用户版本选择、24h 回源判定
+                          最新指针、每用户版本选择、24h 回源判定、批量分块事务写入
     image_service.rs       图片管道：id 映射 + HEIC→JPEG + 永久缓存 + 回源自愈
                           + ?w= 按宽度派生缓存 + Accept 协商有损 webp（load_variant）
     chapter_diff_service.rs 章节版本 diff：进程内 imara-diff（git 同款 Histogram 算法）
@@ -178,10 +185,11 @@ src/
                           重放吊销 family
     agent_sidecar_service.rs AI 资料编排：spawn Python sidecar、逐章 run/result 泵、
                           工具应答（统一内容链路）、单章看门狗、任务注册表与取消
-  parser/                 规则解析引擎，6 文件约 4300 行
-    rule_engine.rs        核心（3000 行）：六种用途的解析入口 + 评论解析
+  parser/                 规则解析引擎，13 文件约 8400 行
+    rule_engine/          核心（目录：kernel 字段求值内核与模板插值 + search/info/toc/
+                          content/review/image 六个用途子模块，测试随簇同迁）
     rule_analyzer.rs      组合规则拆分（正确处理引号与括号嵌套）
-    html.rs / jsonpath.rs / js.rs
+    html.rs / jsonpath.rs / js.rs（js.rs 含求值计数/耗时/预算耗尽的诊断埋点）
   crawler/                reqwest 抓取与 URL 处理，5 文件约 1370 行
     url_analyzer.rs       占位符替换、页面选择、内联 JS
     url_guard.rs          出站请求守卫（SSRF 防护）
@@ -195,7 +203,8 @@ src/
     cache/review_cache.rs 评论缓存；**有 TTL**（默认 7 天），按容量淘汰
   app/                    配置加载与启动引导
   error/                  错误类型
-  util/                   加密、哈希、文本、时间等工具
+  util/                   加密、哈希、文本、时间等工具；keyed_mutex.rs 分键互斥锁
+                          （图片加载与正文回源的单飞收口，满员逐出跳过在用锁）
 frontend/                 Vue 3 + TypeScript + Vite + Pinia 前端
 docs/                     VitePress 文档站，见文末「文档地图」
 sidecar/                  AI 资料编排 Python sidecar（stdio NDJSON；依赖由 uv 自动管理，见配置表 AGENT_SIDECAR_UV）
@@ -206,9 +215,10 @@ scripts/release.sh        发布脚本
 storage/                  运行期数据，gitignored，首次启动自动创建
 ```
 
-规模参照（便于判断改动影响面）：后端 `src/` 共 96 个 `.rs`、约 39700 行，其中最大的几个文件是
-`parser/rule_engine.rs`（约 5000 行）、`service/book_service.rs`（约 4600 行）、`api/handlers/book.rs`（约 3000 行）；
-前端 `src/` 下 195 个文件（142 个 `.ts`，其中 47 个是测试；49 个 `.vue`；2 个 CSS + SVG/PNG 各 1）。阅读器按职责拆成 composable（views/ReaderView.vue 只做模板与编排接线；横翻分页/连续滚动/位置恢复/搜索/选字/TTS/自动播放/手势各自成簇），纯计算下沉 `utils/`（chapterRender/horizontalPaging/readingPosition 等）。
+规模参照（便于判断改动影响面）：后端 `src/` 共 123 个 `.rs`、约 45000 行，其中最大的几个文件是
+`service/agent_sidecar_service.rs`（约 1900 行）、`storage/db/repo.rs`（约 1670 行）、
+`service/image_service.rs`（约 1470 行）；
+前端 `src/` 下 218 个文件（164 个 `.ts`，其中 58 个是测试；50 个 `.vue`；2 个 CSS + SVG/PNG 各 1）。阅读器按职责拆成 composable（views/ReaderView.vue 只做模板与编排接线；横翻分页/连续滚动/位置恢复/搜索/选字/TTS/自动播放/手势各自成簇），纯计算下沉 `utils/`（chapterRender/horizontalPaging/readingPosition 等）；store 层为核心 `stores/reader.ts`（约 270 行：当前书/目录/正文状态）+ 单向依赖的四个子 store（readerContent 正文管线 / readerExtras 评论配图 / readerMarks 已读书签高亮 / readerConfig 配置主题呈现）+ search，子 store 可读核心、核心不反向 import；目录与书源列表走 virtua（`virtua/vue`）虚拟滚动。
 
 ---
 
@@ -390,7 +400,7 @@ XPath 有资源上限（长度 8KB / 嵌套 64 层 / 总步数 100、`//` 50）�
 - 书源列表在前端有一份 localStorage 冷启动快照（`reader-source-snapshot-v1`，24h TTL、最多 1000 条）：只存名称/链接/分组/启用状态等非敏感字段，**不落 header/loginUrl/jsLib/任何规则字段**。`stores/source.ts` 首屏先用快照渲染（`partial` 标记）再后台拉全量替换；书源编辑/批量写前一律先 `ensureFullSources()` 拿到全量对象，避免用残缺快照对象保存把规则清空。批量导入（`saveSources`）落库成功后的整表重拉是 **best-effort**：重拉失败只置 `partial`（本地列表暂缺新导入项，由下一次 `ensureFullSources` 补全），不把已成功的导入报成失败。
 - 书源分组字段的拆分以后端 `split_source_groups`（`src/service/book_source_service.rs`）为唯一权威：分隔符仅半角逗号/分号、全角分号、顿号（全角逗号、竖线、斜杠都不是分隔符）；前端 `splitBookSourceGroups` 保持同口径、不得更宽，否则「删除失效书源」的本地移除会与后端实际删除范围不一致。
 - **正文版本表（整部署共享，不带 `user_ns`）**：`chapter_contents`（正文池，`content_hash` 唯一，只插入不更新；`codec=1` 为 zstd）、`chapter_versions`（版本时间线，`kind` 为 upstream/edited/imported，含 `base_version_id` 与书源/章节快照，只插入不更新）、`chapter_latest`（最新上游/用户版本指针与回源时间，唯一允许更新的正文表）、`chapter_view_state`（`(user_ns, book_id, chapter_url)` 主键，每用户选中的版本；删除行表示跟随最新）。阅读页的 diff **始终以最新上游正文为基准**（评论源只对最新上游取段号，diff 标记要和它对齐）；`base_version_id` 只记录编辑时基于哪一版，不参与阅读页 diff。
-- **身份模型**：请求的身份参数只认 `bookId`（书籍）与 `bookSourceId`（书源）；`bookUrl`/`bookSourceUrl`/`origin` 只是数据字段（爬虫取数、导入去重），不参与「同 id 同书」校验。书籍与书源 id 都是 AUTOINCREMENT、删除后不复用，正文历史不会串书。搜索/发现产出即登记（响应必带 bookId）；书籍级接口经 `resolve_book`（handlers/book.rs）由 bookId 解析出当前绑定的 bookUrl + 书源。升级存量部署（beta 之前）：删除 `storage/` 后重启重建。
+- **身份模型**：请求的身份参数只认 `bookId`（书籍）与 `bookSourceId`（书源）；`bookUrl`/`bookSourceUrl`/`origin` 只是数据字段（爬虫取数、导入去重），不参与「同 id 同书」校验。书籍与书源 id 都是 AUTOINCREMENT、删除后不复用，正文历史不会串书。搜索/发现产出即登记（响应必带 bookId）；书籍级接口经 `resolve_book`（handlers/book/mod.rs）由 bookId 解析出当前绑定的 bookUrl + 书源。升级存量部署（beta 之前）：删除 `storage/` 后重启重建。
 - **正文存储**：章节正文已从文件缓存迁到 SQLite 正文池；阅读默认版本按「用户选择 > 最近用户版本 > 最新上游」解析。读取时距上次回源尝试超过 `CONTENT_REVALIDATE_TTL_SECS` 会在后台回源，失败继续返回缓存并标记 `stale`。`refresh=1` 与历史面板的“检查更新”同步回源，失败也回退缓存。正文历史**严格保留，不自动淘汰，也不提供清理入口**。文本源返回空正文按失败处理，不写 0 字节上游版本；只有 `bookSourceType=2` 的图片源允许空正文，且只更新检查时间。存量空上游版本可用 `docs/maintainers/database.md` 的维护 SQL 手工清理。
 - 可再生缓存仍在 `cache/` 树下：目录缓存 `cache/<ns>/toc/<bookId>.json`（1h TTL；首屏先落盘并在旁路 `<bookId>.meta.json` 标记未完成，后台补全成功才置完成，未完成缓存只复用 60s；分页达到 `MAX_TOC_PAGES` 上限或整页重复熔断同样标未完成，60 秒后可重试）；书籍详情缓存 `cache/bookinfo/<ns>/<bookId>.json`（1h TTL，`refresh=1` 强刷）；换源候选 `cache/<ns>/source_candidates/<bookId>.json`（1h TTL）；评论缓存 `cache/reviews/...`；图片缓存 `cache/image/...`。`data/` 只剩用户资产：`local_books` 与 `userConfig.json`（用户配置备份快照）。
 - 可再生缓存**大多不按时间过期**，只在显式调用 `POST /reader3/purgeCache` 或超出容量上限时回收；占用可用 `GET /reader3/cacheStats` 查看。**正文历史不在清理范围内**（`purgeCache` 没有 content 类型）；`scope=book` 清目录/详情/换源候选/评论并连带该书的图片；`scope=user` 清该用户的全部可再生缓存，但不再删除书籍登记行。
@@ -417,9 +427,9 @@ XPath 有资源上限（长度 8KB / 嵌套 64 层 / 总步数 100、`//` 50）�
 
 ## 测试
 
-Rust 侧共 **574 个测试**（395 个内联单元测试 + 179 个集成用例，另有 2 个 `#[ignore]` 的真实网络用例）。`cargo test` 输出的合计就是实际用例数：`src/main.rs` 只是入口文件，不再重复声明模块，bin 目标没有单元测试，不存在重复计数。分布为：
+Rust 侧共 **597 个测试**（415 个内联单元测试 + 182 个集成用例，另有 2 个 `#[ignore]` 的真实网络用例）。`cargo test` 输出的合计就是实际用例数：`src/main.rs` 只是入口文件，不再重复声明模块，bin 目标没有单元测试，不存在重复计数。分布为：
 
-- `tests/` 下 27 个集成测试文件（179 个常规用例；`yckceo_live_sources.rs` 只装那 2 个默认忽略的真实网络用例），其中 `auth_flow.rs` 用例最多（24 个）；
+- `tests/` 下 27 个集成测试文件（182 个常规用例；`yckceo_live_sources.rs` 只装那 2 个默认忽略的真实网络用例），其中 `auth_flow.rs` 用例最多（24 个）；
   `auth_flow.rs`、`review_flow.rs`、`chapter_image_flow.rs`、`image_pipeline.rs` 与
   `webdav_flow.rs` 起真实监听端口，前者覆盖 401、静态回落、缓存清理与改密吊销令牌，
   中间三个各用一个假上游覆盖评论规则（7 天缓存、按类型清理）、章节配图（配图规则、
@@ -427,13 +437,13 @@ Rust 侧共 **574 个测试**（395 个内联单元测试 + 179 个集成用例�
   回源自愈、缓存命中不重抓、重抓清理旧派生图、`?w=` 缩放与 Accept webp 协商的 `Vary: Accept`），`webdav_flow.rs` 覆盖 WebDAV 协议端点（Basic 认证、
   CRUD、Depth、Destination、锁语义与 Windows 路径安全门）；
 - `agent_sidecar_flow.rs` 用 Node 假 sidecar（`tests/helpers/fake_agent_sidecar.mjs`）
-  走全流程：批量更新、章节跳过、工具回调（正文/搜索钳制）、地图落盘与降级、看门狗与取消
+  走全流程：批量更新、章节跳过、工具回调（正文/搜索钳制、jobId 归属校验）、地图落盘与降级、看门狗与取消
   （机器上需要有 Node）；
 - `batch_content_flow.rs` 用假上游覆盖批量正文接口 `getBookContents`：多章按请求顺序返回、
   单章失败不影响其他章节（整体 200）、空/超量/缺 `chapterUrl` 整批 400、与单章接口同构；
-- `src/` 内的内联单元测试模块（395 个）。
+- `src/` 内的内联单元测试模块（415 个）。
 
-sidecar 使用 pytest（116 个用例，
+sidecar 使用 pytest（128 个用例，
 见「常用命令」），含从旧前端实现 1:1 移植的领域规则用例与新增编排能力用例。
 
 需要注意：
