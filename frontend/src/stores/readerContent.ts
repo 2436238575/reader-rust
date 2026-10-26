@@ -14,6 +14,7 @@ import { useAiBookStore } from './aiBook'
 import { useReaderStore } from './reader'
 import { useReaderExtrasStore } from './readerExtras'
 import { useReaderMarksStore } from './readerMarks'
+import { useReaderConfigStore } from './readerConfig'
 import {
   getChapterList,
   getBookContent,
@@ -39,6 +40,7 @@ export const useReaderContentStore = defineStore('readerContent', () => {
   const readerStore = useReaderStore()
   const extrasStore = useReaderExtrasStore()
   const marksStore = useReaderMarksStore()
+  const configStore = useReaderConfigStore()
   const appStore = useAppStore()
   const shelfStore = useBookshelfStore()
   const aiBookStore = useAiBookStore()
@@ -247,7 +249,7 @@ export const useReaderContentStore = defineStore('readerContent', () => {
 
     const isLocal = isLocalBook(readerStore.book)
     const variant: ContentVariant =
-      readerStore.config.contentVersion === 'upstream' ? 'upstream' : 'default'
+      configStore.config.contentVersion === 'upstream' ? 'upstream' : 'default'
     // 在线时总是问后端：手动选择的版本记在服务端，浏览器缓存可能落后于另一台设备。
     // 浏览器缓存只在离线时作为正文来源，以及请求失败时兜底。
     // 编辑章例外：它的浏览器缓存是编辑前的上游正文，离线返回它等于回退到旧内容
@@ -336,7 +338,7 @@ export const useReaderContentStore = defineStore('readerContent', () => {
       // 正文先渲染，评论随后补上（配图由 setActiveChapterState 统一触发）
       void extrasStore.loadChapterReviews(index)
 
-      if (readerStore.config.enablePreload) {
+      if (configStore.config.enablePreload) {
         setTimeout(() => preloadAroundChapter(index), forceRefresh ? 1500 : 1000)
       }
     } catch (error) {
@@ -370,7 +372,7 @@ export const useReaderContentStore = defineStore('readerContent', () => {
   }
 
   async function preloadAroundChapter(index: number) {
-    if (!readerStore.book || !readerStore.config.enablePreload) return
+    if (!readerStore.book || !configStore.config.enablePreload) return
     const targets = [index + 1, index + 2, index - 1].filter(
       (target, pos, list) =>
         target >= 0 && target < readerStore.chapters.length && list.indexOf(target) === pos
@@ -408,7 +410,7 @@ export const useReaderContentStore = defineStore('readerContent', () => {
     const bookId = currentBook.bookId
     const isLocal = isLocalBook(currentBook)
     const variant: ContentVariant =
-      readerStore.config.contentVersion === 'upstream' ? 'upstream' : 'default'
+      configStore.config.contentVersion === 'upstream' ? 'upstream' : 'default'
     // 发送时的 index → chapterUrl 快照：响应回来时按它核对章节列表是否已变化
     const sentUrls = new Map<number, string>()
     const chaptersPayload = targets.flatMap((chapterIndex) => {
@@ -457,7 +459,7 @@ export const useReaderContentStore = defineStore('readerContent', () => {
   async function preloadNextChapter(index: number) {
     if (
       !readerStore.book ||
-      !readerStore.config.enablePreload ||
+      !configStore.config.enablePreload ||
       index >= readerStore.chapters.length ||
       readerStore.preloadedContent.has(index)
     )
@@ -583,10 +585,10 @@ export const useReaderContentStore = defineStore('readerContent', () => {
     readerStore.chapterVersions.delete(index)
     readerStore.preloadedContent.clear()
     await readerStore.refreshEditedChapterKeys()
-    if (readerStore.config.contentVersion === 'upstream') {
+    if (configStore.config.contentVersion === 'upstream') {
       // 在「上游原版」预览里选了版本：切回默认版本模式，ReaderView 的
       // contentVersion watcher 会用新的服务端选择重载本章。
-      readerStore.updateConfig('contentVersion', 'edited')
+      configStore.updateConfig('contentVersion', 'edited')
     } else {
       await reloadChapterAfterEdit(index)
     }

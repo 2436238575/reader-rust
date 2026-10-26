@@ -2,6 +2,7 @@ import { ref } from 'vue'
 import type { ComputedRef, Ref } from 'vue'
 import type { useReaderStore } from '../stores/reader'
 import type { useReaderMarksStore } from '../stores/readerMarks'
+import type { useReaderConfigStore } from '../stores/readerConfig'
 import type { useAppStore } from '../stores/app'
 import { saveReplaceRule } from '../api/replaceRule'
 import { progressToChapterPos } from '../utils/bookmarks'
@@ -9,11 +10,13 @@ import { DEFAULT_KEYWORD_COLOR, newKeywordRuleId } from '../utils/keywordHighlig
 
 type ReaderStore = ReturnType<typeof useReaderStore>
 type ReaderMarksStore = ReturnType<typeof useReaderMarksStore>
+type ReaderConfigStore = ReturnType<typeof useReaderConfigStore>
 type AppStore = ReturnType<typeof useAppStore>
 
 export function useReaderSelection(
   store: ReaderStore,
   marksStore: ReaderMarksStore,
+  configStore: ReaderConfigStore,
   appStore: AppStore,
   config: ComputedRef<{ selectAction: 'popup' | 'contextmenu' | 'ignore' }>,
   scrollContainerRef: Ref<HTMLElement | undefined>
@@ -232,15 +235,15 @@ export function useReaderSelection(
         mode === 'source' ? `source:${store.book.bookSourceId}` : `book:${store.book.bookId}`
       await saveReplaceRule({
         id: 0,
-        name: `${mode === 'source' ? '书源替换' : '本书替换'} ${store.replaceRules.length + 1}`,
+        name: `${mode === 'source' ? '书源替换' : '本书替换'} ${configStore.replaceRules.length + 1}`,
         pattern: text,
         replacement: '',
         scope,
         isEnabled: true,
         isRegex: false,
-        order: store.replaceRules.length + 1,
+        order: configStore.replaceRules.length + 1,
       })
-      await store.fetchReplaceRules()
+      await configStore.fetchReplaceRules()
       selection?.removeAllRanges()
       activeSelectionText.value = ''
       hideSelectionMenu()
@@ -286,15 +289,15 @@ export function useReaderSelection(
       mode === 'source' ? `source:${store.book.bookSourceId}` : `book:${store.book.bookId}`
     await saveReplaceRule({
       id: 0,
-      name: `${mode === 'source' ? '书源替换' : '本书替换'} ${store.replaceRules.length + 1}`,
+      name: `${mode === 'source' ? '书源替换' : '本书替换'} ${configStore.replaceRules.length + 1}`,
       pattern: text,
       replacement: '',
       scope,
       isEnabled: true,
       isRegex: false,
-      order: store.replaceRules.length + 1,
+      order: configStore.replaceRules.length + 1,
     })
-    await store.fetchReplaceRules()
+    await configStore.fetchReplaceRules()
   }
 
   /** 把选中文本加为常驻关键词高亮（默认当前书） */

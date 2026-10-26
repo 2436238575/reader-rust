@@ -489,7 +489,9 @@
 <script setup lang="ts">
 import { ref, computed, watch, onMounted, onUnmounted, nextTick, defineAsyncComponent } from 'vue'
 import { onBeforeRouteLeave, useRouter } from 'vue-router'
-import { useReaderStore, fontPresets } from '../stores/reader'
+import { useReaderStore } from '../stores/reader'
+import { useReaderConfigStore } from '../stores/readerConfig'
+import { fontPresets } from '../utils/readerTheme'
 import { useReaderContentStore } from '../stores/readerContent'
 import { useReaderMarksStore } from '../stores/readerMarks'
 import { useReaderExtrasStore } from '../stores/readerExtras'
@@ -577,21 +579,22 @@ const store = useReaderStore()
 const contentStore = useReaderContentStore()
 const extrasStore = useReaderExtrasStore()
 const marksStore = useReaderMarksStore()
+const configStore = useReaderConfigStore()
 const appStore = useAppStore()
 const sourceStore = useSourceStore()
 const SERVER_PROGRESS_AUTOSAVE_MS = 10000
 
-const config = computed(() => store.config)
-const theme = computed(() => store.currentTheme)
+const config = computed(() => configStore.config)
+const theme = computed(() => configStore.currentTheme)
 const chromeTheme = computed(() => {
-  if (store.isNight || appStore.theme === 'dark') {
+  if (configStore.isNight || appStore.theme === 'dark') {
     return {
-      ...store.currentTheme,
+      ...configStore.currentTheme,
       popup: 'var(--color-bg-elevated)',
       fontColor: 'var(--color-text)',
     }
   }
-  return store.currentTheme
+  return configStore.currentTheme
 })
 
 const scrollContainerRef = ref<HTMLElement>()
@@ -671,7 +674,7 @@ const {
   jumpToSearchResult,
   handleContentUpdated,
   handlePresentationUpdated,
-} = useReaderSearch(store, contentStore, { locateMatch: locateSearchMatch })
+} = useReaderSearch(store, contentStore, configStore, { locateMatch: locateSearchMatch })
 
 // 搜索命中定位：横翻模式容器 overflow hidden + transform 翻页，
 // scrollIntoView 无效，换算成页码跳过去（函数声明提升，useReaderSearch 可先引用）
@@ -712,6 +715,7 @@ const {
 } = useReaderSelection(
   store,
   marksStore,
+  configStore,
   appStore,
   computed(() => ({ selectAction: config.value.selectAction })),
   scrollContainerRef
@@ -766,7 +770,7 @@ const baseRenderOpts = computed<BaseRenderOptions>(() => ({
 
 // 基础渲染与装饰层实现已抽到 utils/chapterRender.ts（纯函数，无响应式状态）
 const baseChapterHtml = computed(() =>
-  buildBaseChapterHtml(store.displayContent || '', baseRenderOpts.value)
+  buildBaseChapterHtml(configStore.displayContent || '', baseRenderOpts.value)
 )
 
 // 装饰层：划线回显 + 章节配图 + 段评气泡 + 本地 EPUB 资源改写 + 常驻关键词高亮，
@@ -828,7 +832,7 @@ const activeKeywordMarks = computed(() =>
     )
     .map((rule) => ({
       keyword: rule.keyword,
-      color: store.isNight ? darkenKeywordColor(rule.color) : rule.color,
+      color: configStore.isNight ? darkenKeywordColor(rule.color) : rule.color,
     }))
 )
 
@@ -921,7 +925,7 @@ function formatChapterHtml(rawText: string, withParaComments = false, chapterInd
 const rawLineByPosition = computed(() => {
   const map = new Map<number, number>()
   const rawLines = splitParagraphLines(store.content)
-  const displayLines = splitParagraphLines(store.displayContent)
+  const displayLines = splitParagraphLines(configStore.displayContent)
   if (!displayLines.length) return map
 
   if (rawLines.length === displayLines.length) {
@@ -1126,7 +1130,7 @@ const previewImage = ref('')
  * 连续滚动模式下只有当前章该插配图，前后预加载的章节不插。
  */
 function renderChapterHtml(rawText: string, chapterIndex?: number) {
-  const html = formatChapterHtml(store.processContentForDisplay(rawText || ''), false, chapterIndex)
+  const html = formatChapterHtml(configStore.processContentForDisplay(rawText || ''), false, chapterIndex)
   if (chapterIndex === undefined) return html
   const images = chapterIndex === store.currentIndex ? chapterImageMap.value : null
   if (!images?.size) return html
@@ -1136,7 +1140,7 @@ function renderChapterHtml(rawText: string, chapterIndex?: number) {
   return wrapper.innerHTML
 }
 
-const formattedContent = computed(() => formatChapterHtml(store.displayContent || '', true))
+const formattedContent = computed(() => formatChapterHtml(configStore.displayContent || '', true))
 
 const {
   horizontalPageIndex,
@@ -1461,6 +1465,7 @@ const {
   disposeAutoPlayback,
 } = useReaderAutoPlayback(
   store,
+  configStore,
   computed(() => ({
     autoPageMode: config.value.autoPageMode,
     clickAction: config.value.clickAction,
@@ -1934,11 +1939,11 @@ onMounted(async () => {
   window.addEventListener('beforeunload', handleBeforeUnload)
   document.addEventListener('visibilitychange', handleVisibilityChange)
   store.fetchVoices()
-  applySystemTheme(store.isNight ? 'dark' : appStore.theme, store.currentTheme.body)
+  applySystemTheme(configStore.isNight ? 'dark' : appStore.theme, configStore.currentTheme.body)
   if (typeof window !== 'undefined' && window.speechSynthesis) {
     window.speechSynthesis.onvoiceschanged = () => store.fetchVoices()
   }
-  await Promise.all([marksStore.fetchBookmarks(), store.fetchReplaceRules()])
+  await Promise.all([marksStore.fetchBookmarks(), configStore.fetchReplaceRules()])
   // 关键词高亮配置：本地镜像已就绪（store 初始化即读），后端合并不挡渲染
   void marksStore.syncKeywordRules()
   // 已编辑章清单：目录徽章、预加载绕过与 diff 标记都靠它
@@ -2193,13 +2198,13 @@ watch(
     () => config.value.firstLineIndent,
     () => config.value.showChapterImages,
     () => config.value.chineseMode,
-    () => store.replaceRules,
+    () => configStore.replaceRules,
     // 常驻关键词高亮配置变化：重跑装饰层上色
     () => marksStore.keywordRules,
     // 划线增删：回显的摘录文本集合变了要重跑装饰层
     () => marksStore.bookmarks,
     // 夜间切换：关键词底色要换成暗色变体（连续模式章缓存要刷）
-    () => store.isNight,
+    () => configStore.isNight,
     // diff 标记开关：关掉时重跑装饰层摘掉标记
     () => config.value.showDiffMarks,
   ],
@@ -2306,7 +2311,7 @@ watch(
 )
 
 watch(
-  [() => store.isNight, () => store.currentTheme.body, () => appStore.theme],
+  [() => configStore.isNight, () => configStore.currentTheme.body, () => appStore.theme],
   ([isNight, body]) => {
     applySystemTheme(isNight ? 'dark' : appStore.theme, body)
   },

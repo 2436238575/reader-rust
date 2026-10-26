@@ -69,7 +69,7 @@
 <script setup lang="ts">
 import { ref, watch } from 'vue'
 import type { ReaderSearchScope, SearchResultItem } from '../../composables/useReaderSearch'
-import type { ThemePreset } from '../../stores/reader'
+import type { ThemePreset } from '../../utils/readerTheme'
 
 const props = defineProps<{
   show: boolean

@@ -121,6 +121,7 @@ import { consumeSSE } from '../../utils/sse'
 import type { SseConnection } from '../../utils/authedEventSource'
 import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useReaderStore } from '../../stores/reader'
+import { useReaderConfigStore } from '../../stores/readerConfig'
 import { useAppStore } from '../../stores/app'
 import { useBookshelfStore } from '../../stores/bookshelf'
 import { cacheBookSSE } from '../../api/cache'
@@ -130,9 +131,10 @@ import { cacheBookToBrowser, resolveBookChapters } from '../../utils/bookCache'
 import { isLocalBook } from '../../utils/localBook'
 
 const store = useReaderStore()
+const configStore = useReaderConfigStore()
 const appStore = useAppStore()
 const shelfStore = useBookshelfStore()
-const theme = computed(() => store.currentTheme)
+const theme = computed(() => configStore.currentTheme)
 
 const working = ref(false)
 const progress = ref(0)

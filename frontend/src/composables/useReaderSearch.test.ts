@@ -7,15 +7,21 @@ vi.mock('../api/search', () => ({
   searchCachedContent: vi.fn(),
 }))
 
-/** useReaderSearch 只读 store 的这几个字段/方法，给最小桩即可 */
+/** useReaderSearch 只读各 store 的这几个字段/方法，给最小桩即可 */
 function makeStore() {
   return {
-    displayContent: '第一章正文里有锚这个词。',
     currentIndex: 0,
     currentChapter: { title: '第一章' },
     book: { bookId: 'book_1' },
-    loadChapter: vi.fn(async () => undefined),
   } as never
+}
+
+function makeContentStore() {
+  return { loadChapter: vi.fn(async () => undefined) } as never
+}
+
+function makeConfigStore() {
+  return { displayContent: '第一章正文里有锚这个词。' } as never
 }
 
 describe('useReaderSearch 全书搜索', () => {
@@ -33,7 +39,7 @@ describe('useReaderSearch 全书搜索', () => {
       totalChapters: 120,
       truncated: false,
     } as never)
-    const search = useReaderSearch(makeStore(), makeStore())
+    const search = useReaderSearch(makeStore(), makeContentStore(), makeConfigStore())
     search.setSearchScope('book')
     search.searchQuery.value = '锚'
     search.runSearch()
@@ -60,7 +66,7 @@ describe('useReaderSearch 全书搜索', () => {
       totalChapters: 0,
       truncated: false,
     } as never)
-    const search = useReaderSearch(makeStore(), makeStore())
+    const search = useReaderSearch(makeStore(), makeContentStore(), makeConfigStore())
     search.setSearchScope('book')
     search.searchQuery.value = '词'
     search.runSearch()
@@ -69,7 +75,7 @@ describe('useReaderSearch 全书搜索', () => {
   })
 
   it('切范围清空结果；后端报错进状态文案', async () => {
-    const search = useReaderSearch(makeStore(), makeStore())
+    const search = useReaderSearch(makeStore(), makeContentStore(), makeConfigStore())
     search.searchResults.value = [{ chapterIndex: 0, chapterTitle: 't', snippet: 's' }]
     search.setSearchScope('book')
     expect(search.searchResults.value).toEqual([])
@@ -82,7 +88,7 @@ describe('useReaderSearch 全书搜索', () => {
   })
 
   it('handleContentUpdated 只在当前章范围重跑', () => {
-    const search = useReaderSearch(makeStore(), makeStore())
+    const search = useReaderSearch(makeStore(), makeContentStore(), makeConfigStore())
     search.showSearch.value = true
     search.searchQuery.value = '锚'
     search.setSearchScope('book')

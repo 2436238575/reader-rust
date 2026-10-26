@@ -1,10 +1,12 @@
 import { computed, nextTick, onScopeDispose, ref } from 'vue'
 import type { useReaderStore } from '../stores/reader'
 import type { useReaderContentStore } from '../stores/readerContent'
+import type { useReaderConfigStore } from '../stores/readerConfig'
 import { searchCachedContent } from '../api/search'
 
 type ReaderStore = ReturnType<typeof useReaderStore>
 type ReaderContentStore = ReturnType<typeof useReaderContentStore>
+type ReaderConfigStore = ReturnType<typeof useReaderConfigStore>
 
 export interface SearchResultItem {
   chapterIndex: number
@@ -33,6 +35,7 @@ interface ReaderSearchOptions {
 export function useReaderSearch(
   store: ReaderStore,
   contentStore: ReaderContentStore,
+  configStore: ReaderConfigStore,
   options: ReaderSearchOptions = {}
 ) {
   const showSearch = ref(false)
@@ -110,7 +113,7 @@ export function useReaderSearch(
       bookSearchStatus.value = ''
       return
     }
-    const plainText = (store.displayContent || '').replace(/<[^>]+>/g, '')
+    const plainText = (configStore.displayContent || '').replace(/<[^>]+>/g, '')
     searchResults.value = extractSearchResults(
       plainText,
       store.currentIndex,

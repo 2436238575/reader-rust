@@ -14,7 +14,7 @@
 
     <div class="rule-list">
       <div v-if="loading" class="loading">加载中...</div>
-      <div v-else-if="!store.replaceRules.length" class="empty">
+      <div v-else-if="!configStore.replaceRules.length" class="empty">
         暂无自定义规则
         <p>规则按“排序”从小到大依次执行</p>
       </div>
@@ -113,18 +113,20 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
 import { useReaderStore } from '../../stores/reader'
+import { useReaderConfigStore } from '../../stores/readerConfig'
 import { useAppStore } from '../../stores/app'
 import { saveReplaceRule, deleteReplaceRule } from '../../api/replaceRule'
 import type { ReplaceRule } from '../../types'
 
 const store = useReaderStore()
+const configStore = useReaderConfigStore()
 const appStore = useAppStore()
-const theme = computed(() => store.currentTheme)
+const theme = computed(() => configStore.currentTheme)
 const loading = ref(false)
 const editingRule = ref<ReplaceRule | null>(null)
 
 const sortedRules = computed(() => {
-  return [...store.replaceRules].sort((a, b) => a.order - b.order)
+  return [...configStore.replaceRules].sort((a, b) => a.order - b.order)
 })
 
 function describeScope(scope?: string) {
@@ -147,7 +149,7 @@ function getScopeMode(rule: ReplaceRule) {
 
 onMounted(async () => {
   loading.value = true
-  await store.fetchReplaceRules()
+  await configStore.fetchReplaceRules()
   loading.value = false
 })
 
@@ -163,7 +165,7 @@ function openEditModal(rule?: ReplaceRule) {
       scope: '*',
       isEnabled: true,
       isRegex: false,
-      order: store.replaceRules.length + 1,
+      order: configStore.replaceRules.length + 1,
     }
   }
 }
@@ -187,7 +189,7 @@ async function handleSave() {
   }
   try {
     await saveReplaceRule(editingRule.value)
-    await store.fetchReplaceRules()
+    await configStore.fetchReplaceRules()
     editingRule.value = null
   } catch (e: any) {
     appStore.showToast(e.message || '保存失败', 'error')
@@ -207,7 +209,7 @@ async function handleDelete(rule: ReplaceRule) {
   if (!confirm(`确定删除规则 "${rule.name}" 吗？`)) return
   try {
     await deleteReplaceRule(rule)
-    await store.fetchReplaceRules()
+    await configStore.fetchReplaceRules()
   } catch (e: any) {
     appStore.showToast(e.message || '删除失败', 'error')
   }

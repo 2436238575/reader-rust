@@ -1,8 +1,10 @@
 import { watch } from 'vue'
 import type { ComputedRef, Ref } from 'vue'
 import type { useReaderStore } from '../stores/reader'
+import type { useReaderConfigStore } from '../stores/readerConfig'
 
 type ReaderStore = ReturnType<typeof useReaderStore>
+type ReaderConfigStore = ReturnType<typeof useReaderConfigStore>
 const OPENAI_SPEECH_CHUNK_CHAR_LIMIT = 70
 const OPENAI_PRELOAD_CHUNK_LIMIT = 5
 const OPENAI_MERGED_SEGMENT_CHAR_LIMIT = 260
@@ -18,6 +20,7 @@ interface AutoPlaybackConfig {
 
 export function useReaderAutoPlayback(
   store: ReaderStore,
+  configStore: ReaderConfigStore,
   config: ComputedRef<AutoPlaybackConfig>,
   isContinuousMode: ComputedRef<boolean>,
   scrollContainerRef: Ref<HTMLElement | undefined>,
@@ -93,7 +96,7 @@ export function useReaderAutoPlayback(
     [
       () => store.currentIndex,
       () => store.content,
-      () => store.displayContent,
+      () => configStore.displayContent,
       () => config.value.fontSize,
       () => config.value.lineHeight,
       isContinuousMode,

@@ -203,7 +203,9 @@ import { computed, nextTick, ref, watch } from 'vue'
 import type { ReviewItem, ReviewPage, ReviewReply } from '../../types'
 import { withAuthQuery, withImageWidth } from '../../api/bookshelf'
 import ImageLightbox from './ImageLightbox.vue'
-import { useReaderStore, type ThemePreset } from '../../stores/reader'
+import { useReaderStore } from '../../stores/reader'
+import { useReaderConfigStore } from '../../stores/readerConfig'
+import type { ThemePreset } from '../../utils/readerTheme'
 import { getChapterComments, getParaComments, type ReviewSort } from '../../api/review'
 
 /** 浏览器能直接渲染的图片后缀；HEIC/HEIF 只有 Safari 认，排到最后。 */
@@ -238,8 +240,9 @@ const props = defineProps<{
 defineEmits<{ close: [] }>()
 
 const readerStore = useReaderStore()
+const configStore = useReaderConfigStore()
 // 楼中楼配图形态：缩略图 / 番茄式「查看图片」文字链（阅读器设置里切换）
-const replyImageStyle = computed(() => readerStore.config.replyImageStyle)
+const replyImageStyle = computed(() => configStore.config.replyImageStyle)
 
 const items = ref<ReviewItem[]>([])
 const total = ref(0)
@@ -401,7 +404,7 @@ async function fetchPage(target: number) {
           ? 'upstream'
           : readerStore.chapterVersions.get(readerStore.currentIndex)?.kind
             ? 'edited'
-            : readerStore.config.contentVersion,
+            : configStore.config.contentVersion,
     }
     const resp =
       props.mode === 'para'

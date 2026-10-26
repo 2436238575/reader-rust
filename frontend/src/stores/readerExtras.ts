@@ -10,6 +10,7 @@
 import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
 import { useReaderStore } from './reader'
+import { useReaderConfigStore } from './readerConfig'
 import { getChapterImages } from '../api/bookshelf'
 import { getChapterComments, getParaCommentIndex } from '../api/review'
 import type { ChapterImage, ParaReviewCount, ReviewPage } from '../types'
@@ -17,6 +18,7 @@ import { isLocalBook } from '../utils/localBook'
 
 export const useReaderExtrasStore = defineStore('readerExtras', () => {
   const readerStore = useReaderStore()
+  const configStore = useReaderConfigStore()
 
   /* 评论（章评 / 段评）：由书源规则决定是否可用 */
   const reviewEnabled = ref(false)
@@ -88,7 +90,7 @@ export const useReaderExtrasStore = defineStore('readerExtras', () => {
             ? ('upstream' as const)
             : effectiveKind
               ? ('edited' as const)
-              : readerStore.config.contentVersion,
+              : configStore.config.contentVersion,
       }
       // 段评与章评是两条独立规则：只禁用其一时，另一个仍然请求
       if (skipParaReviews) {

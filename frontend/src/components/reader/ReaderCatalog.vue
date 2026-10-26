@@ -284,6 +284,7 @@ import { ref, computed, onMounted, nextTick, watch } from 'vue'
 import { useReaderStore } from '../../stores/reader'
 import { useReaderContentStore } from '../../stores/readerContent'
 import { useReaderMarksStore } from '../../stores/readerMarks'
+import { useReaderConfigStore } from '../../stores/readerConfig'
 import { useAppStore } from '../../stores/app'
 import type { Bookmark } from '../../types'
 import { listBrowserCachedChapterUrls } from '../../utils/browserCache'
@@ -310,8 +311,9 @@ type CatalogTab = 'chapters' | 'bookmarks' | 'underlines'
 const store = useReaderStore()
 const contentStore = useReaderContentStore()
 const marksStore = useReaderMarksStore()
+const configStore = useReaderConfigStore()
 const appStore = useAppStore()
-const theme = computed(() => store.currentTheme)
+const theme = computed(() => configStore.currentTheme)
 const activeTab = ref<CatalogTab>(props.initialTab)
 const listRef = ref<HTMLElement>()
 const bookmarkEditMode = ref(false)

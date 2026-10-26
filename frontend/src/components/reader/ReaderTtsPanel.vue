@@ -91,7 +91,7 @@
 </template>
 
 <script setup lang="ts">
-import type { ThemePreset } from '../../stores/reader'
+import type { ThemePreset } from '../../utils/readerTheme'
 
 defineProps<{
   show: boolean

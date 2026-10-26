@@ -177,6 +177,7 @@
 import { computed, ref, toRef, watch } from 'vue'
 import { useReaderStore } from '../../stores/reader'
 import { useReaderContentStore } from '../../stores/readerContent'
+import { useReaderConfigStore } from '../../stores/readerConfig'
 import { useAppStore } from '../../stores/app'
 import { useEscClose } from '../../composables/useEscClose'
 import { useMobileLayout } from '../../composables/useMobileLayout'
@@ -212,6 +213,7 @@ const emit = defineEmits<{
 
 const store = useReaderStore()
 const contentStore = useReaderContentStore()
+const configStore = useReaderConfigStore()
 const appStore = useAppStore()
 const { isMobileLayout } = useMobileLayout()
 useEscClose(toRef(props, 'modelValue'), () => emit('update:modelValue', false))
@@ -235,7 +237,7 @@ const showImport = ref(false)
 const chapterTitle = computed(() => store.currentChapter?.title || '')
 const localBook = computed(() => isLocalBook(store.book))
 const canFollowLatest = computed(
-  () => Boolean(timeline.value?.selectedVersionId) || store.config.contentVersion === 'upstream'
+  () => Boolean(timeline.value?.selectedVersionId) || configStore.config.contentVersion === 'upstream'
 )
 const isPreviewCurrent = computed(
   () => preview.value != null && preview.value.versionId === timeline.value?.effectiveVersionId

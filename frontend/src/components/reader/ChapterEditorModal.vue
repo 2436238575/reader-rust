@@ -51,6 +51,7 @@
 <script setup lang="ts">
 import { computed, nextTick, ref, toRef, watch } from 'vue'
 import { useReaderStore } from '../../stores/reader'
+import { useReaderConfigStore } from '../../stores/readerConfig'
 import { useAppStore } from '../../stores/app'
 import { deleteChapterEdit, getChapterEdit, saveChapterEdit } from '../../api/chapterEdit'
 import { useEscClose } from '../../composables/useEscClose'
@@ -71,6 +72,7 @@ const emit = defineEmits<{
 }>()
 
 const store = useReaderStore()
+const configStore = useReaderConfigStore()
 const appStore = useAppStore()
 const { isMobileLayout } = useMobileLayout()
 useEscClose(toRef(props, 'modelValue'), () => emit('update:modelValue', false))
@@ -82,7 +84,7 @@ const editorRef = ref<HTMLTextAreaElement>()
 const baseVersionId = ref<number | undefined>()
 
 const chapterTitle = computed(() => store.currentChapter?.title || '')
-const isUpstreamView = computed(() => store.config.contentVersion === 'upstream')
+const isUpstreamView = computed(() => configStore.config.contentVersion === 'upstream')
 const hasEdit = computed(() => {
   const chapter = store.currentChapter
   return !!chapter && store.editedChapterKeys.has(chapter.url)
@@ -141,7 +143,7 @@ async function save() {
     // 版本切换的 watcher 会负责重载本章
     const switchedToEdited = isUpstreamView.value
     if (switchedToEdited) {
-      store.updateConfig('contentVersion', 'edited')
+      configStore.updateConfig('contentVersion', 'edited')
     }
     emit('update:modelValue', false)
     if (!switchedToEdited) {

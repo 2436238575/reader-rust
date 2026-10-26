@@ -102,6 +102,7 @@
 import { ref, computed } from 'vue'
 import { useReaderStore } from '../../stores/reader'
 import { useReaderMarksStore } from '../../stores/readerMarks'
+import { useReaderConfigStore } from '../../stores/readerConfig'
 import { useAppStore } from '../../stores/app'
 import {
   DEFAULT_KEYWORD_COLOR,
@@ -112,8 +113,9 @@ import {
 
 const store = useReaderStore()
 const marksStore = useReaderMarksStore()
+const configStore = useReaderConfigStore()
 const appStore = useAppStore()
-const theme = computed(() => store.currentTheme)
+const theme = computed(() => configStore.currentTheme)
 
 interface EditingRule {
   isNew: boolean

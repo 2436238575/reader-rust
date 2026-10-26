@@ -77,11 +77,11 @@
     </button>
     <button
       class="tb-btn"
-      @click="store.toggleNight()"
-      :title="store.isNight ? '日间模式' : '夜间模式'"
+      @click="configStore.toggleNight()"
+      :title="configStore.isNight ? '日间模式' : '夜间模式'"
     >
       <svg
-        v-if="!store.isNight"
+        v-if="!configStore.isNight"
         viewBox="0 0 24 24"
         fill="none"
         stroke="currentColor"
@@ -119,18 +119,20 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { useReaderStore } from '../../stores/reader'
+import { useReaderConfigStore } from '../../stores/readerConfig'
 import { useAppStore } from '../../stores/app'
 
 const store = useReaderStore()
+const configStore = useReaderConfigStore()
 const appStore = useAppStore()
 const theme = computed(() => {
-  if (store.isNight || appStore.theme === 'dark') {
+  if (configStore.isNight || appStore.theme === 'dark') {
     return {
-      ...store.currentTheme,
+      ...configStore.currentTheme,
       popup: 'var(--color-bg-elevated)',
     }
   }
-  return store.currentTheme
+  return configStore.currentTheme
 })
 
 defineProps<{

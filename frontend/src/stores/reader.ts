@@ -1,10 +1,8 @@
 import { defineStore } from 'pinia'
 import { safeLocalSet } from '../utils/storage'
-import { ref, computed, reactive, watch } from 'vue'
-import { useAppStore } from './app'
+import { ref, computed, reactive } from 'vue'
 import { useBookshelfStore } from './bookshelf'
-import { getReplaceRules } from '../api/replaceRule'
-import type { Book, BookChapter, ReplaceRule } from '../types'
+import type { Book, BookChapter } from '../types'
 import { deleteBrowserCachedChapters } from '../utils/browserCache'
 import { saveRecentReadBook } from '../utils/recentBooks'
 import { listChapterEdits } from '../api/chapterEdit'
@@ -12,45 +10,9 @@ import type { ChapterVersionKind, ContentVariant } from '../api/bookshelf'
 import type { ParagraphDiffOp } from '../utils/chapterDiff'
 import { useReaderTts } from '../composables/useReaderTts'
 import { createReaderProgress } from './readerProgress'
-import { fontPresets, themePresets, type ThemePreset } from '../utils/readerTheme'
-import { convertChineseText, ensureChineseConverter } from '../utils/openccConvert'
-import { applyReplaceRulesToText } from '../utils/replaceRules'
 import { saveCachedEditedChapterKeys } from '../utils/editedChaptersCache'
 
-// 常量已下沉 utils/readerTheme（拆分专项）；这里再导出只是兼容旧 import 路径
-export { fontPresets, themePresets }
-export type { ThemePreset }
-
-/* ─── Reading config type ─── */
-export interface ReadConfig {
-  fontSize: number
-  fontWeight: number
-  fontFamily: string
-  lineHeight: number
-  paragraphSpacing: number
-  firstLineIndent: boolean
-  fontColor: string
-  pageWidth: number
-  pageMode: 'auto' | 'mobile'
-  readMethod: '上下滑动' | '左右翻页' | '双页翻页' | '上下滚动' | '上下滚动2'
-  animateDuration: number
-  autoPageMode: 'pixel' | 'paragraph'
-  scrollPixel: number
-  pageSpeed: number
-  clickAction: 'next' | 'auto' | 'none'
-  selectAction: 'popup' | 'contextmenu' | 'ignore'
-  chineseMode: 'simplified' | 'traditional'
-  specialMode: 'normal' | 'simple'
-  enablePreload: boolean
-  /** 显示章节配图（书源配图规则取回的图，以及正文 HTML 里的 <img>） */
-  showChapterImages: boolean
-  /** 已编辑章节的正文 diff 标记（绿/蓝竖线、红箭头、段内虚线） */
-  showDiffMarks: boolean
-  /** 正文版本：编辑版优先，或只读上游原版（只对编辑过的章节有区别） */
-  contentVersion: 'edited' | 'upstream'
-  /** 评论里回复的配图形态：缩略图直接显示，或番茄式「查看图片」文字链 */
-  replyImageStyle: 'thumbnail' | 'link'
-}
+/* ReadConfig 类型与默认配置已随 readerConfig store 迁出（拆分专项） */
 
 /** 某一章的编辑版差异状态（由正文接口带回）。 */
 export interface ChapterDiffState {
@@ -74,42 +36,6 @@ export interface ChapterVersionState {
   stale: boolean
 }
 
-const defaultConfig: ReadConfig = {
-  fontSize: 18,
-  fontWeight: 400,
-  fontFamily: 'system',
-  lineHeight: 1.8,
-  paragraphSpacing: 0.2,
-  firstLineIndent: true,
-  fontColor: '',
-  pageWidth: 800,
-  pageMode: 'auto',
-  readMethod: '上下滑动',
-  animateDuration: 300,
-  autoPageMode: 'pixel',
-  scrollPixel: 1,
-  pageSpeed: 1000,
-  clickAction: 'auto',
-  selectAction: 'ignore',
-  chineseMode: 'simplified',
-  specialMode: 'normal',
-  enablePreload: true,
-  showChapterImages: true,
-  showDiffMarks: true,
-  contentVersion: 'edited',
-  replyImageStyle: 'thumbnail',
-}
-
-function loadConfig(): ReadConfig {
-  try {
-    const saved = localStorage.getItem('readConfig')
-    if (saved) return { ...defaultConfig, ...JSON.parse(saved) }
-  } catch {
-    /* ignore */
-  }
-  return { ...defaultConfig }
-}
-
 export const useReaderStore = defineStore('reader', () => {
   type ReaderPanel =
     | 'catalog'
@@ -121,7 +47,6 @@ export const useReaderStore = defineStore('reader', () => {
     | 'keyword'
     | 'cache'
     | null
-  const appStore = useAppStore()
   const shelfStore = useBookshelfStore()
   const book = ref<Book | null>(null)
   const chapters = ref<BookChapter[]>([])
@@ -131,7 +56,6 @@ export const useReaderStore = defineStore('reader', () => {
   const chaptersLoading = ref(false)
   /// 打开书籍失败的原因。有值时阅读页显示错误而不是「加载中...」占位符
   const loadError = ref('')
-  const replaceRules = ref<ReplaceRule[]>([])
   /* 评论（章评/段评）与章节配图在 stores/readerExtras；
      已读标记/书签/关键词高亮在 stores/readerMarks（拆分专项） */
   const preloadedContent = ref<Map<number, string>>(new Map()) // index -> content
@@ -207,86 +131,10 @@ export const useReaderStore = defineStore('reader', () => {
     return `${normalized < 10 ? normalized.toFixed(1) : Math.round(normalized)}%`
   })
 
-  /* ─── Reading config ─── */
-  const config = reactive<ReadConfig>(loadConfig())
-
-  function saveConfig() {
-    safeLocalSet('readConfig', JSON.stringify(config))
-  }
-
-  function updateConfig<K extends keyof ReadConfig>(key: K, value: ReadConfig[K]) {
-    config[key] = value
-    if (key === 'enablePreload' && !value) {
-      preloadedContent.value.clear()
-    }
-    // 预载内容是按旧版本抓的：切版本后作废，否则翻到邻章会拿到另一版正文
-    if (key === 'contentVersion') {
-      preloadedContent.value.clear()
-    }
-    saveConfig()
-  }
-
-  function resetConfig() {
-    Object.assign(config, defaultConfig)
-    saveConfig()
-  }
-
   // 简繁转换器字典的按需加载与缓存已下沉 utils/openccConvert（拆分专项）
 
-  /* ─── Theme ─── */
-  const themeIndex = ref(parseInt(localStorage.getItem('reader-themeIndex') || '0'))
-  const isNight = computed({
-    get: () => appStore.theme === 'dark',
-    set: (value: boolean) => {
-      appStore.setTheme(value ? 'dark' : 'light')
-      safeLocalSet('reader-isNight', String(value))
-    },
-  })
-
-  const currentTheme = computed(() => {
-    if (isNight.value) return themePresets[themePresets.length - 1]
-    return themePresets[themeIndex.value] || themePresets[0]
-  })
-
-  function setThemeIndex(idx: number) {
-    themeIndex.value = idx
-    isNight.value = false
-    safeLocalSet('reader-themeIndex', String(idx))
-    safeLocalSet('reader-isNight', 'false')
-  }
-
-  function toggleNight() {
-    isNight.value = !isNight.value
-  }
-
-  /* ─── Chinese Conversion (OpenCC) ─── */
-  /* ─── Content Filtering (Replace Rules) ─── */
-  /* scope 匹配与按序应用的纯逻辑在 utils/replaceRules（拆分专项） */
-  function applyReplaceRules(text: string) {
-    return applyReplaceRulesToText(text, replaceRules.value, book.value)
-  }
-
-  function convertContent(text: string) {
-    return convertChineseText(text, config.chineseMode)
-  }
-
-  function processContentForDisplay(text: string) {
-    return convertContent(applyReplaceRules(text))
-  }
-
-  const displayContent = computed(() => {
-    return processContentForDisplay(content.value)
-  })
-
-  watch(
-    () => config.chineseMode,
-    (mode) => {
-      if (mode === 'traditional') {
-        void ensureChineseConverter('traditional')
-      }
-    },
-    { immediate: true }
-  )
+  /* 正文呈现管线（替换规则/简繁转换/displayContent）与阅读配置、主题
+     已拆到 stores/readerConfig（拆分专项） */
 
   /* 已读标记（含旧键迁移）已拆到 stores/readerMarks（拆分专项） */
 
@@ -345,15 +193,6 @@ export const useReaderStore = defineStore('reader', () => {
     chapterScrollProgress.value = Math.max(0, Math.min(1, value))
     markProgressDirty()
     scheduleReaderSessionSave()
-  }
-
-  /* ─── Replace Rules ─── */
-  async function fetchReplaceRules() {
-    try {
-      replaceRules.value = await getReplaceRules()
-    } catch {
-      /* ignore */
-    }
   }
 
   /* 书签与常驻关键词高亮已拆到 stores/readerMarks（拆分专项） */
@@ -417,15 +256,6 @@ export const useReaderStore = defineStore('reader', () => {
     persistProgress,
     flushProgressToServer,
     flushProgressToServerKeepalive,
-    config,
-    updateConfig,
-    resetConfig,
-    saveConfig,
-    themeIndex,
-    isNight,
-    currentTheme,
-    setThemeIndex,
-    toggleNight,
     toggleAutoReading,
     stopAutoReading,
     activePanel,
@@ -433,14 +263,10 @@ export const useReaderStore = defineStore('reader', () => {
     togglePanel,
     backPanel,
     closePanel,
-    replaceRules,
-    fetchReplaceRules,
     editedChapterKeys,
     refreshEditedChapterKeys,
     chapterDiffs,
     ...tts,
-    displayContent,
-    processContentForDisplay,
     isAutoScrolling,
   }
 })

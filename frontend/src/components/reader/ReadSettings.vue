@@ -2,7 +2,7 @@
   <div class="read-settings" :style="{ background: theme.popup, color: theme.fontColor }">
     <div class="settings-header">
       <h3 class="settings-title">设置</h3>
-      <button class="reset-btn" @click="store.resetConfig()">重置为默认配置</button>
+      <button class="reset-btn" @click="configStore.resetConfig()">重置为默认配置</button>
     </div>
     <div class="settings-sep"></div>
 
@@ -15,12 +15,12 @@
             v-for="(t, i) in themePresets"
             :key="i"
             class="swatch"
-            :class="{ active: store.themeIndex === i && !store.isNight }"
+            :class="{ active: configStore.themeIndex === i && !configStore.isNight }"
             :style="{ background: t.body }"
-            @click="store.setThemeIndex(i)"
+            @click="configStore.setThemeIndex(i)"
           >
             <svg
-              v-if="store.themeIndex === i && !store.isNight"
+              v-if="configStore.themeIndex === i && !configStore.isNight"
               viewBox="0 0 24 24"
               fill="none"
               stroke="currentColor"
@@ -41,7 +41,7 @@
             :key="f.value"
             class="opt-btn"
             :class="{ active: config.fontFamily === f.value }"
-            @click="store.updateConfig('fontFamily', f.value)"
+            @click="configStore.updateConfig('fontFamily', f.value)"
           >
             {{ f.label }}
           </button>
@@ -55,14 +55,14 @@
           <button
             class="opt-btn"
             :class="{ active: config.chineseMode === 'simplified' }"
-            @click="store.updateConfig('chineseMode', 'simplified')"
+            @click="configStore.updateConfig('chineseMode', 'simplified')"
           >
             简体
           </button>
           <button
             class="opt-btn"
             :class="{ active: config.chineseMode === 'traditional' }"
-            @click="store.updateConfig('chineseMode', 'traditional')"
+            @click="configStore.updateConfig('chineseMode', 'traditional')"
           >
             繁体
           </button>
@@ -77,14 +77,14 @@
           <button
             class="opt-btn"
             :class="{ active: config.enablePreload }"
-            @click="store.updateConfig('enablePreload', true)"
+            @click="configStore.updateConfig('enablePreload', true)"
           >
             开启
           </button>
           <button
             class="opt-btn"
             :class="{ active: !config.enablePreload }"
-            @click="store.updateConfig('enablePreload', false)"
+            @click="configStore.updateConfig('enablePreload', false)"
           >
             关闭
           </button>
@@ -136,14 +136,14 @@
           <button
             class="opt-btn"
             :class="{ active: config.firstLineIndent }"
-            @click="store.updateConfig('firstLineIndent', true)"
+            @click="configStore.updateConfig('firstLineIndent', true)"
           >
             开启
           </button>
           <button
             class="opt-btn"
             :class="{ active: !config.firstLineIndent }"
-            @click="store.updateConfig('firstLineIndent', false)"
+            @click="configStore.updateConfig('firstLineIndent', false)"
           >
             关闭
           </button>
@@ -157,14 +157,14 @@
           <button
             class="opt-btn"
             :class="{ active: config.showChapterImages }"
-            @click="store.updateConfig('showChapterImages', true)"
+            @click="configStore.updateConfig('showChapterImages', true)"
           >
             显示
           </button>
           <button
             class="opt-btn"
             :class="{ active: !config.showChapterImages }"
-            @click="store.updateConfig('showChapterImages', false)"
+            @click="configStore.updateConfig('showChapterImages', false)"
           >
             隐藏
           </button>
@@ -178,14 +178,14 @@
           <button
             class="opt-btn"
             :class="{ active: config.showDiffMarks }"
-            @click="store.updateConfig('showDiffMarks', true)"
+            @click="configStore.updateConfig('showDiffMarks', true)"
           >
             显示
           </button>
           <button
             class="opt-btn"
             :class="{ active: !config.showDiffMarks }"
-            @click="store.updateConfig('showDiffMarks', false)"
+            @click="configStore.updateConfig('showDiffMarks', false)"
           >
             隐藏
           </button>
@@ -199,14 +199,14 @@
           <button
             class="opt-btn"
             :class="{ active: config.replyImageStyle === 'thumbnail' }"
-            @click="store.updateConfig('replyImageStyle', 'thumbnail')"
+            @click="configStore.updateConfig('replyImageStyle', 'thumbnail')"
           >
             缩略图
           </button>
           <button
             class="opt-btn"
             :class="{ active: config.replyImageStyle === 'link' }"
-            @click="store.updateConfig('replyImageStyle', 'link')"
+            @click="configStore.updateConfig('replyImageStyle', 'link')"
           >
             查看图片
           </button>
@@ -220,14 +220,14 @@
           <button
             class="opt-btn"
             :class="{ active: config.pageMode === 'auto' }"
-            @click="store.updateConfig('pageMode', 'auto')"
+            @click="configStore.updateConfig('pageMode', 'auto')"
           >
             自适应
           </button>
           <button
             class="opt-btn"
             :class="{ active: config.pageMode === 'mobile' }"
-            @click="store.updateConfig('pageMode', 'mobile')"
+            @click="configStore.updateConfig('pageMode', 'mobile')"
           >
             手机模式
           </button>
@@ -253,14 +253,14 @@
           <button
             class="opt-btn"
             :class="{ active: config.readMethod === '上下滑动' }"
-            @click="store.updateConfig('readMethod', '上下滑动')"
+            @click="configStore.updateConfig('readMethod', '上下滑动')"
           >
             上下滑动
           </button>
           <button
             class="opt-btn"
             :class="{ active: config.readMethod === '左右翻页' }"
-            @click="store.updateConfig('readMethod', '左右翻页')"
+            @click="configStore.updateConfig('readMethod', '左右翻页')"
           >
             左右翻页
           </button>
@@ -269,21 +269,21 @@
             :class="{ active: config.readMethod === '双页翻页' }"
             :disabled="!dualPageAvailable"
             :title="dualPageAvailable ? '' : '窗口宽度不足（需 ≥ 960px）'"
-            @click="store.updateConfig('readMethod', '双页翻页')"
+            @click="configStore.updateConfig('readMethod', '双页翻页')"
           >
             双页翻页
           </button>
           <button
             class="opt-btn"
             :class="{ active: config.readMethod === '上下滚动' }"
-            @click="store.updateConfig('readMethod', '上下滚动')"
+            @click="configStore.updateConfig('readMethod', '上下滚动')"
           >
             上下滚动
           </button>
           <button
             class="opt-btn"
             :class="{ active: config.readMethod === '上下滚动2' }"
-            @click="store.updateConfig('readMethod', '上下滚动2')"
+            @click="configStore.updateConfig('readMethod', '上下滚动2')"
           >
             上下滚动2
           </button>
@@ -319,14 +319,14 @@
           <button
             class="opt-btn"
             :class="{ active: config.autoPageMode === 'pixel' }"
-            @click="store.updateConfig('autoPageMode', 'pixel')"
+            @click="configStore.updateConfig('autoPageMode', 'pixel')"
           >
             像素滚动
           </button>
           <button
             class="opt-btn"
             :class="{ active: config.autoPageMode === 'paragraph' }"
-            @click="store.updateConfig('autoPageMode', 'paragraph')"
+            @click="configStore.updateConfig('autoPageMode', 'paragraph')"
           >
             段落滚动
           </button>
@@ -360,21 +360,21 @@
           <button
             class="opt-btn"
             :class="{ active: config.clickAction === 'auto' }"
-            @click="store.updateConfig('clickAction', 'auto')"
+            @click="configStore.updateConfig('clickAction', 'auto')"
           >
             自动翻页
           </button>
           <button
             class="opt-btn"
             :class="{ active: config.clickAction === 'next' }"
-            @click="store.updateConfig('clickAction', 'next')"
+            @click="configStore.updateConfig('clickAction', 'next')"
           >
             仅下滚
           </button>
           <button
             class="opt-btn"
             :class="{ active: config.clickAction === 'none' }"
-            @click="store.updateConfig('clickAction', 'none')"
+            @click="configStore.updateConfig('clickAction', 'none')"
           >
             禁用
           </button>
@@ -388,21 +388,21 @@
           <button
             class="opt-btn"
             :class="{ active: config.selectAction === 'popup' }"
-            @click="store.updateConfig('selectAction', 'popup')"
+            @click="configStore.updateConfig('selectAction', 'popup')"
           >
             操作弹窗
           </button>
           <button
             class="opt-btn"
             :class="{ active: config.selectAction === 'contextmenu' }"
-            @click="store.updateConfig('selectAction', 'contextmenu')"
+            @click="configStore.updateConfig('selectAction', 'contextmenu')"
           >
             右键菜单
           </button>
           <button
             class="opt-btn"
             :class="{ active: config.selectAction === 'ignore' }"
-            @click="store.updateConfig('selectAction', 'ignore')"
+            @click="configStore.updateConfig('selectAction', 'ignore')"
           >
             忽略
           </button>
@@ -567,14 +567,14 @@
           <button
             class="opt-btn"
             :class="{ active: config.contentVersion === 'edited' }"
-            @click="store.updateConfig('contentVersion', 'edited')"
+            @click="configStore.updateConfig('contentVersion', 'edited')"
           >
             默认版本
           </button>
           <button
             class="opt-btn"
             :class="{ active: config.contentVersion === 'upstream' }"
-            @click="store.updateConfig('contentVersion', 'upstream')"
+            @click="configStore.updateConfig('contentVersion', 'upstream')"
           >
             上游原版
           </button>
@@ -610,12 +610,15 @@
 
 <script setup lang="ts">
 import { computed, onMounted, onBeforeUnmount, ref } from 'vue'
-import { useReaderStore, themePresets, fontPresets } from '../../stores/reader'
+import { useReaderStore } from '../../stores/reader'
+import { useReaderConfigStore } from '../../stores/readerConfig'
+import { themePresets, fontPresets } from '../../utils/readerTheme'
 import { useAiBookStore } from '../../stores/aiBook'
 import { useAppStore } from '../../stores/app'
 import { DUAL_PAGE_MIN_WIDTH } from '../../composables/useHorizontalPaging'
 
 const store = useReaderStore()
+const configStore = useReaderConfigStore()
 const aiBookStore = useAiBookStore()
 const appStore = useAppStore()
 
@@ -629,8 +632,8 @@ const currentChapterEdited = computed(() => {
   const chapter = store.currentChapter
   return !!chapter && store.editedChapterKeys.has(chapter.url)
 })
-const config = computed(() => store.config)
-const theme = computed(() => store.currentTheme)
+const config = computed(() => configStore.config)
+const theme = computed(() => configStore.currentTheme)
 const serverModelLoaded = ref(false)
 const canUseServerSpeech = computed(() => Boolean(aiBookStore.serverModelStatus?.speechReady))
 
@@ -650,7 +653,7 @@ function step(
   max: number
 ) {
   const val = Math.max(min, Math.min(max, (config.value[key] as number) + delta))
-  store.updateConfig(key, val)
+  configStore.updateConfig(key, val)
 }
 
 function stepFloat(
@@ -663,7 +666,7 @@ function stepFloat(
     min,
     Math.min(max, parseFloat(((config.value[key] as number) + delta).toFixed(1)))
   )
-  store.updateConfig(key, val)
+  configStore.updateConfig(key, val)
 }
 
 function adjustSpeechRate(delta: number) {

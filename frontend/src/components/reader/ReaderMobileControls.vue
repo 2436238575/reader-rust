@@ -176,9 +176,9 @@
             <rect x="14" y="4" width="4" height="16" />
           </svg>
         </button>
-        <button class="m-btn" @click="store.toggleNight()">
+        <button class="m-btn" @click="configStore.toggleNight()">
           <svg
-            v-if="!store.isNight"
+            v-if="!configStore.isNight"
             viewBox="0 0 24 24"
             fill="none"
             stroke="currentColor"
@@ -202,11 +202,13 @@
 import { computed } from 'vue'
 import { useReaderStore } from '../../stores/reader'
 import { useReaderContentStore } from '../../stores/readerContent'
+import { useReaderConfigStore } from '../../stores/readerConfig'
 import { useAppStore } from '../../stores/app'
 import { useSourceStore } from '../../stores/source'
 
 const store = useReaderStore()
 const contentStore = useReaderContentStore()
+const configStore = useReaderConfigStore()
 const appStore = useAppStore()
 const sourceStore = useSourceStore()
 
@@ -215,14 +217,14 @@ const showSourceSwitch = computed(
   () => sourceStore.sources.filter((s) => s.enabled !== false).length > 1
 )
 const theme = computed(() => {
-  if (store.isNight || appStore.theme === 'dark') {
+  if (configStore.isNight || appStore.theme === 'dark') {
     return {
-      ...store.currentTheme,
+      ...configStore.currentTheme,
       popup: 'var(--color-bg-elevated)',
       fontColor: 'var(--color-text)',
     }
   }
-  return store.currentTheme
+  return configStore.currentTheme
 })
 
 defineProps<{

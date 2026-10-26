@@ -41,12 +41,14 @@ import { computed } from 'vue'
 import { useBookshelfStore } from '../../stores/bookshelf'
 import { useReaderStore } from '../../stores/reader'
 import { useReaderContentStore } from '../../stores/readerContent'
+import { useReaderConfigStore } from '../../stores/readerConfig'
 import { getCoverUrl } from '../../api/bookshelf'
 import type { Book } from '../../types'
 const store = useBookshelfStore()
 const readerStore = useReaderStore()
 const contentStore = useReaderContentStore()
-const theme = computed(() => readerStore.currentTheme)
+const configStore = useReaderConfigStore()
+const theme = computed(() => configStore.currentTheme)
 
 // 列表小封面按 320 宽取派生图（只降不升），配合 webp 协商省流
 const listCoverUrl = (url?: string) => getCoverUrl(url, 320)

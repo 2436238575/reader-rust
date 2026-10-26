@@ -156,6 +156,7 @@
 import { ref, computed, watch, onMounted } from 'vue'
 import { useReaderStore } from '../../stores/reader'
 import { useReaderContentStore } from '../../stores/readerContent'
+import { useReaderConfigStore } from '../../stores/readerConfig'
 import { useAppStore } from '../../stores/app'
 import { getBookInfo, getCoverUrl } from '../../api/bookshelf'
 import {
@@ -167,8 +168,9 @@ import type { Book, SearchBook } from '../../types'
 
 const store = useReaderStore()
 const contentStore = useReaderContentStore()
+const configStore = useReaderConfigStore()
 const appStore = useAppStore()
-const theme = computed(() => store.currentTheme)
+const theme = computed(() => configStore.currentTheme)
 /// 封面要经后端取图接口并带上令牌（<img> 带不了请求头）；
 /// 列表小图按 320 宽取派生图（只降不升），配合 webp 协商省流
 const coverSrc = computed(() => getCoverUrl(store.book?.coverUrl, 320))

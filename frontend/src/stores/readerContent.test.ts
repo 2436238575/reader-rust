@@ -6,6 +6,7 @@ import { createPinia, setActivePinia } from 'pinia'
 import { useAppStore } from './app'
 import { useReaderStore } from './reader'
 import { useReaderContentStore } from './readerContent'
+import { useReaderConfigStore } from './readerConfig'
 import { getBookContent, getBookContents } from '../api/bookshelf'
 import type { ChapterContentResponse } from '../api/bookshelf'
 import { listChapterEdits } from '../api/chapterEdit'
@@ -149,7 +150,8 @@ describe('readerContent local txt chapters', () => {
       bookSourceId: 1,
     }
     readerStore.chapters = [{ title: '第一章', url: 'https://example.org/1', index: 0 }]
-    readerStore.updateConfig('contentVersion', 'upstream')
+    // 阅读配置在 readerConfig store（拆分专项）
+    useReaderConfigStore().updateConfig('contentVersion', 'upstream')
 
     await expect(contentStore.fetchChapterContent(0)).resolves.toBe('上游正文')
 

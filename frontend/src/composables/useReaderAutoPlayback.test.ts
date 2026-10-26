@@ -25,6 +25,7 @@ describe('useReaderAutoPlayback', () => {
 
     const playback = useReaderAutoPlayback(
       store,
+      { displayContent: "" } as never,
       computed(() => ({
         autoPageMode: 'pixel',
         clickAction: 'none',
@@ -70,6 +71,7 @@ describe('useReaderAutoPlayback', () => {
 
     const playback = useReaderAutoPlayback(
       store,
+      { displayContent: "" } as never,
       computed(() => ({
         autoPageMode: 'pixel',
         clickAction: 'none',
@@ -158,6 +160,7 @@ describe('pixel auto-scroll', () => {
     })
     const playback = useReaderAutoPlayback(
       store,
+      { displayContent: "" } as never,
       computed(() => ({
         autoPageMode: 'pixel',
         clickAction: 'none',
@@ -201,6 +204,7 @@ describe('pixel auto-scroll', () => {
     })
     const playback = useReaderAutoPlayback(
       store,
+      { displayContent: "" } as never,
       // clickAction: 'none' 也要在章末续翻
       computed(() => ({
         autoPageMode: 'pixel',
@@ -238,6 +242,7 @@ describe('pixel auto-scroll', () => {
     })
     const playback = useReaderAutoPlayback(
       store,
+      { displayContent: "" } as never,
       computed(() => ({
         autoPageMode: 'pixel',
         clickAction: 'auto',
