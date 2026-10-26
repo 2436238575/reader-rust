@@ -160,6 +160,23 @@ impl TestServer {
         fields: &[(&str, &str)],
         file: Option<&str>,
     ) -> Value {
+        let (status, payload) = self.import_multipart_raw(path, fields, file).await;
+        assert_eq!(status, StatusCode::OK, "{path} 应返回 200: {payload}");
+        assert_eq!(
+            payload["isSuccess"],
+            json!(true),
+            "{path} 应成功: {payload}"
+        );
+        payload["data"].clone()
+    }
+
+    /// 与 `import_multipart` 相同，但不断言成功，返回状态码与完整响应体。
+    async fn import_multipart_raw(
+        &self,
+        path: &str,
+        fields: &[(&str, &str)],
+        file: Option<&str>,
+    ) -> (StatusCode, Value) {
         let boundary = "----chapter-import-test";
         let mut body = String::new();
         for (name, value) in fields {
@@ -185,13 +202,9 @@ impl TestServer {
             .send()
             .await
             .unwrap();
+        let status = resp.status();
         let payload: Value = resp.json().await.unwrap();
-        assert_eq!(
-            payload["isSuccess"],
-            json!(true),
-            "{path} 应成功: {payload}"
-        );
-        payload["data"].clone()
+        (status, payload)
     }
 
     async fn get_content(&self, book_id: &str, chapter_url: &str, extra: Value) -> Value {
@@ -1368,6 +1381,153 @@ async fn import_preview_marks_changed_chapters_and_serves_detail_diff() {
             .contains("第一次导入一"),
         "{diff}"
     );
+}
+
+/// 导入带 previewId 直接复用预览暂存，不再上传整本文本；暂存消费后保留，
+/// 同一份内容再次导入计为 unchanged。
+#[tokio::test]
+async fn import_with_preview_id_reuses_cached_preview() {
+    let server = boot().await;
+    let book = server
+        .upload_txt(
+            "预览复用测试",
+            "第一章 开始\n本地正文一。\n第二章 继续\n本地正文二。\n第三章 结束\n本地正文三。\n",
+        )
+        .await;
+    let book_id = book["bookId"].as_str().unwrap().to_string();
+    let chapters = server
+        .post("getChapterList", json!({ "bookId": book_id }))
+        .await;
+    let first_url = chapters[0]["url"].as_str().unwrap().to_string();
+    let second_url = chapters[1]["url"].as_str().unwrap().to_string();
+
+    let text = "第一章 开始\n导入正文一。\n第二章 继续\n导入正文二。\n";
+    let preview = server
+        .import_multipart(
+            "previewChapterImport",
+            &[("bookId", &book_id), ("mode", "book")],
+            Some(text),
+        )
+        .await;
+    assert_eq!(preview["matched"], json!(2));
+    let preview_id = preview["previewId"].as_str().unwrap().to_string();
+
+    // 导入只带 previewId，不再上传正文
+    let result = server
+        .import_multipart(
+            "importChapterText",
+            &[
+                ("bookId", &book_id),
+                ("mode", "book"),
+                ("makeCurrent", "true"),
+                ("previewId", &preview_id),
+            ],
+            None,
+        )
+        .await;
+    assert_eq!(result["mode"], json!("book"), "{result}");
+    assert_eq!(result["selected"], json!(2), "{result}");
+    assert_eq!(result["imported"], json!(2), "{result}");
+    assert_eq!(result["failed"], json!(0), "{result}");
+
+    let first = server.get_content(&book_id, &first_url, json!({})).await;
+    assert_eq!(first["content"], json!("导入正文一。"));
+    let second = server.get_content(&book_id, &second_url, json!({})).await;
+    assert_eq!(second["content"], json!("导入正文二。"));
+
+    // 暂存消费后保留到自然过期：同一个 previewId 可以再导入；
+    // 内容相同计为 unchanged，不追加时间线
+    let again = server
+        .import_multipart(
+            "importChapterText",
+            &[
+                ("bookId", &book_id),
+                ("mode", "book"),
+                ("makeCurrent", "true"),
+                ("previewId", &preview_id),
+            ],
+            None,
+        )
+        .await;
+    assert_eq!(again["imported"], json!(0), "{again}");
+    assert_eq!(again["unchanged"], json!(2), "{again}");
+    assert_eq!(again["failed"], json!(0), "{again}");
+    let timeline = server.timeline(&book_id, &first_url).await;
+    assert_eq!(
+        timeline["items"].as_array().unwrap().len(),
+        1,
+        "unchanged 不追加版本: {timeline}"
+    );
+}
+
+/// previewId 不存在/已过期或不属于当前书籍 → 400，前端兜底重新预览。
+#[tokio::test]
+async fn import_with_invalid_preview_id_returns_400() {
+    let server = boot().await;
+    let book_a = server
+        .upload_txt("预览归属甲", "第一章 开始\n甲正文一。\n")
+        .await;
+    let book_a_id = book_a["bookId"].as_str().unwrap().to_string();
+    let book_b = server
+        .upload_txt("预览归属乙", "第一章 开始\n乙正文一。\n")
+        .await;
+    let book_b_id = book_b["bookId"].as_str().unwrap().to_string();
+
+    // 不存在的 previewId（过期同一条路径：缓存里查不到）
+    let (status, payload) = server
+        .import_multipart_raw(
+            "importChapterText",
+            &[
+                ("bookId", &book_a_id),
+                ("mode", "book"),
+                ("previewId", "no-such-preview"),
+            ],
+            None,
+        )
+        .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{payload}");
+    assert_eq!(payload["isSuccess"], json!(false));
+    assert!(
+        payload["errorMsg"].as_str().unwrap().contains("请重新解析"),
+        "{payload}"
+    );
+
+    // 预览是甲书的，拿它导入乙书 → 400，乙书内容不变
+    let preview = server
+        .import_multipart(
+            "previewChapterImport",
+            &[("bookId", &book_a_id), ("mode", "book")],
+            Some("第一章 开始\n新正文一。\n"),
+        )
+        .await;
+    let preview_id = preview["previewId"].as_str().unwrap().to_string();
+    let (status, payload) = server
+        .import_multipart_raw(
+            "importChapterText",
+            &[
+                ("bookId", &book_b_id),
+                ("mode", "book"),
+                ("previewId", &preview_id),
+            ],
+            None,
+        )
+        .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{payload}");
+    assert!(
+        payload["errorMsg"].as_str().unwrap().contains("请重新解析"),
+        "{payload}"
+    );
+
+    let chapters_b = server
+        .post("getChapterList", json!({ "bookId": book_b_id }))
+        .await;
+    let url_b = chapters_b[0]["url"].as_str().unwrap().to_string();
+    let content_b = server.get_content(&book_b_id, &url_b, json!({})).await;
+    assert!(
+        content_b["content"].as_str().unwrap().contains("乙正文一"),
+        "跨书 400 不该写入任何内容: {content_b}"
+    );
+    assert_eq!(content_b["edited"], json!(false), "{content_b}");
 }
 
 /// 书签必须挂在已登记的书上：单条保存 404，批量恢复跳过无主的书签。

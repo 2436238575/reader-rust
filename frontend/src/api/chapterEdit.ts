@@ -184,7 +184,7 @@ export interface ChapterImportPreview {
   changed: number
   cached: number
   uncached: number
-  /** 详情对比用的短期令牌；正文过大时为空 */
+  /** 详情对比与导入复用的短期令牌；正文过大时为空（此时导入需重新上传正文） */
   previewId: string | null
   chapters: ChapterImportPreviewChapter[]
 }
@@ -222,6 +222,11 @@ export interface ChapterImportParams {
   file?: File | null
   /** 没有文件时使用粘贴的文本。 */
   text?: string
+  /**
+   * 导入时带上预览令牌（previewChapterImport 返回的 previewId）：后端直接复用
+   * 预览暂存的切章/匹配结果，不再上传 file/text；预览过期或跨书会 400，需重新预览。
+   */
+  previewId?: string | null
 }
 
 function buildChapterImportForm(
@@ -238,7 +243,10 @@ function buildChapterImportForm(
   if (params.note) form.append('note', params.note)
   if (params.makeCurrent != null) form.append('makeCurrent', String(params.makeCurrent))
   if (params.createdAt != null) form.append('createdAt', String(params.createdAt))
-  if (params.file) {
+  if (params.previewId) {
+    // 复用预览暂存：正文不再二次上传
+    form.append('previewId', params.previewId)
+  } else if (params.file) {
     form.append('file', params.file, params.file.name)
   } else if (params.text != null) {
     form.append('text', params.text)

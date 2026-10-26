@@ -174,7 +174,7 @@ POST /reader3/previewChapterImport  multipart: bookId, mode?, chapterUrl?, chapt
         → { mode, total, matched, unmatched, empty, changed, cached, uncached,
             previewId, chapters: [...] }
 POST /reader3/importChapterText     multipart: 同上 + kind?, note?, makeCurrent?,
-                                     createdAt?, selectedIndexes?
+                                     createdAt?, selectedIndexes?, previewId?
         → { mode, selected, imported, unchanged, skipped, failed, errors }
 POST /reader3/getChapterImportDiff { previewId, sourceIndex }
         → { changed, ops, diffError, currentExcerpt, currentChars, importChars }
@@ -206,12 +206,15 @@ POST /reader3/getChapterImportDiff { previewId, sourceIndex }
   `changed=false`，前端默认不勾选并提示先缓存全书。比对口径与 diff 面板一致：剥 HTML 标签、
   去掉空行和行首尾空白，所以只差 HTML 包裹或空行的同一份正文不算变化。
 - 前端默认只勾选 `matched && cached && changed` 的章节；「全选已匹配」可以在确认后覆盖所有章节。
-- `previewId` 是详情对比用的短期令牌（进程内缓存 30 分钟，最多 3 份、单份 24MB）。
-  `getChapterImportDiff` 按 `sourceIndex` 取回该章与当前正文的段落 diff；正文过大时 `previewId`
-  为 `null`，此时详情只展示正文片段。
+- `previewId` 是预览暂存的短期令牌（进程内缓存 30 分钟，最多 3 份、单份 24MB），
+  用于详情对比与导入复用。`getChapterImportDiff` 按 `sourceIndex` 取回该章与当前正文的段落 diff；
+  正文过大时 `previewId` 为 `null`，此时详情只展示正文片段。
 - `importChapterText` 的 `selectedIndexes` 是逗号分隔的 `sourceIndex`：不传表示导入全部已匹配章节，
   传空字符串表示一章都不导入。`kind` 为 `edited`（默认）或 `imported`；`makeCurrent` 默认 false。
-- 导入接口会重新解析、重新匹配一次，所以需要和预览时提交同一份正文与 `mode`。
+- 导入带上 `previewId` 时直接复用预览暂存的切章/匹配结果执行写入，**不用再传 `file`/`text`**
+  （同一份正文不二次上传）；暂存条目被导入消费后仍保留到过期，失败可拿同一个 `previewId` 重试。
+  `previewId` 未命中、已过期或不属于当前书籍时返回 400（提示重新解析）；不带 `previewId` 的旧调用
+  方式照旧：重新解析、重新匹配一次，需要和预览时提交同一份正文与 `mode`。
 - **空正文不写入时间线**：文本源（`bookSourceType` 不是 2）返回空正文按失败处理；图片源
   （`bookSourceType=2`）允许空正文，但只更新检查时间，不追加 0 字节的上游版本。存量部署里
   已有的空上游版本不会自动删除，需要在维护窗口按 `docs/maintainers/database.md` 的说明清理。

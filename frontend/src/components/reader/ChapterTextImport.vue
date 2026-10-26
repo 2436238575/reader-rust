@@ -611,10 +611,14 @@ async function doImport() {
   importing.value = true
   error.value = ''
   try {
-    const result = await importChapterText(
-      paramsFor(current.mode === 'auto' ? mode.value : current.mode),
-      [...selected.value]
-    )
+    const params = paramsFor(current.mode === 'auto' ? mode.value : current.mode)
+    if (current.previewId) {
+      // 复用预览暂存：导入只带 previewId，整本文本不再二次上传
+      params.previewId = current.previewId
+      params.file = null
+      params.text = undefined
+    }
+    const result = await importChapterText(params, [...selected.value])
     const includesCurrent = Boolean(
       props.chapterUrl &&
         current.chapters.some(
@@ -628,7 +632,13 @@ async function doImport() {
       includesCurrent,
     })
   } catch (e) {
-    error.value = (e as Error).message || '导入失败'
+    const message = (e as Error).message || '导入失败'
+    error.value = message
+    if (current.previewId && message.includes('请重新解析')) {
+      // 预览已过期或与当前书籍不一致：作废 previewId，勾选保留，
+      // 重试时回退到重新上传当前文件/文本（用户也可重新预览）。
+      preview.value = { ...current, previewId: null }
+    }
   } finally {
     importing.value = false
   }

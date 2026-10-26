@@ -498,6 +498,8 @@ struct ChapterImportRequest {
     created_at: Option<i64>,
     /// 为空表示「全选已匹配章节」；这个字段本身不出现时也是全选。
     selected_indexes: Option<Vec<i32>>,
+    /// 导入时带上预览令牌：直接复用预览暂存的切章/匹配结果，不再上传正文。
+    preview_id: String,
     text: String,
     file_bytes: Option<Vec<u8>>,
 }
@@ -522,16 +524,24 @@ struct ChapterImportPreviewItem {
     changed: bool,
 }
 
-/// 预览时把解析后的正文暂存在进程内，点开某章看 diff 时不必重传整本 TXT。
+/// 预览时把解析后的正文暂存在进程内：点开某章看 diff 不必重传整本 TXT，
+/// 确认导入时也凭 previewId 直接复用这份切章/匹配结果，免二次上传。
+#[derive(Clone)]
 struct CachedImportChapter {
     source_index: i32,
+    title: String,
     content: String,
+    chapter_index: Option<i32>,
     chapter_url: Option<String>,
+    chapter_title: Option<String>,
 }
 
+#[derive(Clone)]
 struct CachedImportPreview {
     user_ns: String,
     book_id: String,
+    /// 预览解析出的导入模式（single / book）；导入响应原样回带。
+    mode: ImportMode,
     created_at: Instant,
     chapters: Vec<CachedImportChapter>,
 }
@@ -547,6 +557,7 @@ static IMPORT_PREVIEWS: Lazy<Mutex<HashMap<String, CachedImportPreview>>> =
 fn store_import_preview(
     user_ns: &str,
     book_id: &str,
+    mode: ImportMode,
     items: &[ChapterImportPreviewItem],
     contents: Vec<String>,
 ) -> Option<String> {
@@ -577,19 +588,52 @@ fn store_import_preview(
         CachedImportPreview {
             user_ns: user_ns.to_string(),
             book_id: book_id.to_string(),
+            mode,
             created_at: now,
             chapters: items
                 .iter()
                 .zip(contents)
                 .map(|(item, content)| CachedImportChapter {
                     source_index: item.source_index,
+                    title: item.title.clone(),
                     content,
+                    chapter_index: item.chapter_index,
                     chapter_url: item.chapter_url.clone(),
+                    chapter_title: item.chapter_title.clone(),
                 })
                 .collect(),
         },
     );
     Some(preview_id)
+}
+
+/// 导入时按 previewId 取回预览暂存。
+///
+/// 条目被消费后**不删除**，保留到 TTL 自然过期（导入失败可拿同一个
+/// previewId 重试）。未命中、已过期或不属于当前用户/当前书籍都是 400，
+/// 前端兜底重新预览。
+fn load_import_preview(
+    preview_id: &str,
+    user_ns: &str,
+    book_id: &str,
+) -> Result<CachedImportPreview, AppError> {
+    let cache = IMPORT_PREVIEWS
+        .lock()
+        .unwrap_or_else(|poison| poison.into_inner());
+    let now = Instant::now();
+    let entry = cache
+        .get(preview_id.trim())
+        .filter(|entry| now.duration_since(entry.created_at) < IMPORT_PREVIEW_TTL)
+        .filter(|entry| entry.user_ns == user_ns)
+        .ok_or_else(|| {
+            AppError::BadRequest("预览已过期或不存在，请重新解析后再导入".to_string())
+        })?;
+    if entry.book_id != book_id {
+        return Err(AppError::BadRequest(
+            "预览与当前书籍不一致，请重新解析后再导入".to_string(),
+        ));
+    }
+    Ok(entry.clone())
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -647,6 +691,7 @@ async fn read_chapter_import_request(
                     );
                 }
             }
+            "previewId" => req.preview_id = value,
             "selectedIndexes" => {
                 let mut list = Vec::new();
                 if !value.is_empty() {
@@ -841,84 +886,133 @@ async fn handle_chapter_import(
         ));
     }
     let resolved = resolve_book_checked(&state, &user.0.ns, &req.book_id).await?;
-    let text = request_text(&req)?;
-    let parsed = split_text(&text, req.mode, &req.chapter_title);
-    if parsed.len() > MAX_IMPORT_CHAPTERS {
-        return Err(AppError::BadRequest(format!(
-            "一次最多导入 {MAX_IMPORT_CHAPTERS} 章，当前文本解析出 {} 章",
-            parsed.len()
-        )));
-    }
-    let mode = match req.mode {
-        ImportMode::Auto if parsed.len() > 1 => ImportMode::Book,
-        ImportMode::Auto => ImportMode::Single,
-        other => other,
-    };
 
-    // 预览才需要和当前版本比对；导入按前端勾选结果执行，不多查一遍。
-    let effective: HashMap<String, String> = if commit {
-        HashMap::new()
+    // 导入带 previewId 时直接复用预览暂存的切章/匹配结果（含正文），
+    // 不再要求 file/text；不带 previewId 的旧调用方式照旧重新解析文本。
+    let reused = if commit && !req.preview_id.trim().is_empty() {
+        Some(load_import_preview(
+            &req.preview_id,
+            &user.0.ns,
+            &req.book_id,
+        )?)
     } else {
-        state
-            .chapter_content_service
-            .effective_normalized_hashes(&user.0.ns, &req.book_id)
-            .await?
+        None
     };
 
-    let mut items: Vec<ChapterImportPreviewItem> = Vec::new();
-    let mut contents: Vec<String> = Vec::new();
-    if mode == ImportMode::Single {
-        if req.chapter_url.trim().is_empty() {
-            return Err(AppError::BadRequest("单章导入需要 chapterUrl".to_string()));
+    let (mode, items, contents) = match reused {
+        Some(preview) => {
+            let mut items: Vec<ChapterImportPreviewItem> =
+                Vec::with_capacity(preview.chapters.len());
+            let mut contents: Vec<String> = Vec::with_capacity(preview.chapters.len());
+            for chapter in preview.chapters {
+                // 只还原批量写入需要的字段；excerpt/cached/changed 是预览展示态，导入不用。
+                let status = if chapter.content.trim().is_empty() {
+                    "empty"
+                } else if chapter.chapter_url.is_some() {
+                    "matched"
+                } else {
+                    "unmatched"
+                };
+                contents.push(chapter.content);
+                items.push(ChapterImportPreviewItem {
+                    source_index: chapter.source_index,
+                    title: chapter.title,
+                    chars: contents.last().map_or(0, |c| c.chars().count()),
+                    excerpt: String::new(),
+                    status,
+                    match_kind: "none",
+                    chapter_index: chapter.chapter_index,
+                    chapter_url: chapter.chapter_url,
+                    chapter_title: chapter.chapter_title,
+                    cached: false,
+                    changed: false,
+                });
+            }
+            (preview.mode, items, contents)
         }
-        let Some(source) = parsed.into_iter().next() else {
-            return Err(AppError::BadRequest("TXT 内容不能为空".to_string()));
-        };
-        let title = if source.title.trim().is_empty() {
-            req.chapter_title.clone()
-        } else {
-            source.title.clone()
-        };
-        let current = effective.get(&req.chapter_url);
-        items.push(ChapterImportPreviewItem {
-            source_index: source.source_index,
-            title: title.clone(),
-            chars: source.content.chars().count(),
-            excerpt: excerpt_of(&source.content),
-            status: if source.content.trim().is_empty() {
-                "empty"
+        None => {
+            let text = request_text(&req)?;
+            let parsed = split_text(&text, req.mode, &req.chapter_title);
+            if parsed.len() > MAX_IMPORT_CHAPTERS {
+                return Err(AppError::BadRequest(format!(
+                    "一次最多导入 {MAX_IMPORT_CHAPTERS} 章，当前文本解析出 {} 章",
+                    parsed.len()
+                )));
+            }
+            let mode = match req.mode {
+                ImportMode::Auto if parsed.len() > 1 => ImportMode::Book,
+                ImportMode::Auto => ImportMode::Single,
+                other => other,
+            };
+
+            // 预览才需要和当前版本比对；导入按前端勾选结果执行，不多查一遍。
+            let effective: HashMap<String, String> = if commit {
+                HashMap::new()
             } else {
-                "matched"
-            },
-            match_kind: "single",
-            chapter_index: Some(req.chapter_index),
-            chapter_url: Some(req.chapter_url.clone()),
-            chapter_title: Some(title),
-            cached: current.is_some(),
-            changed: current
-                .map(|hash| *hash != normalized_content_hash(&source.content))
-                .unwrap_or(false),
-        });
-        contents.push(source.content);
-    } else {
-        let toc = load_book_chapters(&state, &user.0.ns, &req.book_id, &resolved).await?;
-        let matched = match_chapters(&parsed, &toc);
-        for item in &matched {
-            let current = item
-                .toc_pos
-                .map(|pos| &toc[pos])
-                .and_then(|chapter| effective.get(&chapter.url));
-            items.push(preview_from_match(item, &toc, current));
-        }
-        contents.extend(matched.into_iter().map(|item| item.source.content));
-    }
+                state
+                    .chapter_content_service
+                    .effective_normalized_hashes(&user.0.ns, &req.book_id)
+                    .await?
+            };
 
-    if !commit {
-        let preview_id = store_import_preview(&user.0.ns, &req.book_id, &items, contents);
-        return Ok(Json(ApiResponse::ok(preview_response(
-            mode, &items, preview_id,
-        ))));
-    }
+            let mut items: Vec<ChapterImportPreviewItem> = Vec::new();
+            let mut contents: Vec<String> = Vec::new();
+            if mode == ImportMode::Single {
+                if req.chapter_url.trim().is_empty() {
+                    return Err(AppError::BadRequest("单章导入需要 chapterUrl".to_string()));
+                }
+                let Some(source) = parsed.into_iter().next() else {
+                    return Err(AppError::BadRequest("TXT 内容不能为空".to_string()));
+                };
+                let title = if source.title.trim().is_empty() {
+                    req.chapter_title.clone()
+                } else {
+                    source.title.clone()
+                };
+                let current = effective.get(&req.chapter_url);
+                items.push(ChapterImportPreviewItem {
+                    source_index: source.source_index,
+                    title: title.clone(),
+                    chars: source.content.chars().count(),
+                    excerpt: excerpt_of(&source.content),
+                    status: if source.content.trim().is_empty() {
+                        "empty"
+                    } else {
+                        "matched"
+                    },
+                    match_kind: "single",
+                    chapter_index: Some(req.chapter_index),
+                    chapter_url: Some(req.chapter_url.clone()),
+                    chapter_title: Some(title),
+                    cached: current.is_some(),
+                    changed: current
+                        .map(|hash| *hash != normalized_content_hash(&source.content))
+                        .unwrap_or(false),
+                });
+                contents.push(source.content);
+            } else {
+                let toc = load_book_chapters(&state, &user.0.ns, &req.book_id, &resolved).await?;
+                let matched = match_chapters(&parsed, &toc);
+                for item in &matched {
+                    let current = item
+                        .toc_pos
+                        .map(|pos| &toc[pos])
+                        .and_then(|chapter| effective.get(&chapter.url));
+                    items.push(preview_from_match(item, &toc, current));
+                }
+                contents.extend(matched.into_iter().map(|item| item.source.content));
+            }
+
+            if !commit {
+                let preview_id =
+                    store_import_preview(&user.0.ns, &req.book_id, mode, &items, contents);
+                return Ok(Json(ApiResponse::ok(preview_response(
+                    mode, &items, preview_id,
+                ))));
+            }
+            (mode, items, contents)
+        }
+    };
 
     let selected: Option<HashSet<i32>> = req
         .selected_indexes
