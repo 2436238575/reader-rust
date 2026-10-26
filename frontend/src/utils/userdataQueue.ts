@@ -14,7 +14,7 @@
  * fetch + keepalive 补发最后一次批量写——axios 不支持 keepalive，卸载
  * 阶段普通请求会被浏览器取消。URL 经 API_BASE 拼接，跟随子路径部署。
  */
-import { saveUserdataBatch } from '../api/userdata'
+import { invalidateUserdataPrefetch, saveUserdataBatch } from '../api/userdata'
 import { API_BASE } from './appBase'
 
 const DEBOUNCE_MS = 200
@@ -156,6 +156,10 @@ function flushWithKeepalive() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ docs: docs.map(({ name, value }) => ({ name, value })) }),
     })
+    // 直发绕过了 saveUserdataBatch 的封装，写后失效要在这里补齐：按发送的
+    // 文档名同步失效 30s 预读缓存（只动本地缓存，不发额外请求），否则同会话
+    // 随后读这些文档会消费到预读缓存里的旧值
+    invalidateUserdataPrefetch(docs.map((doc) => doc.name))
     // fetch 成功发起才清已发送的版本（同步抛错如 fetch 不可用时保留待写）；
     // 读取后新写入的条目版本已变，不能一并清掉
     for (const doc of docs) {

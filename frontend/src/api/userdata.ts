@@ -37,6 +37,15 @@ export function clearUserdataPrefetch() {
 }
 
 /**
+ * 按文档名精确失效预读缓存（不清整表）：写成功后调用。
+ * 除 saveUserdataBatch 外，utils/userdataQueue 的 keepalive 直发路径也走这里——
+ * 它不经 saveUserdataBatch 封装，需要单独同步失效，且只动本地缓存、不发请求。
+ */
+export function invalidateUserdataPrefetch(names: string[]) {
+  for (const name of names) prefetchCache.delete(name)
+}
+
+/**
  * 批量读取当前用户的 JSON 文档（一次 ≤20 个），把首屏的 N 次读取合成一次
  * 往返；单文档读取传单元素数组即可。命中预读缓存且未过期的条目直接返回
  * （一次性消费，避免长期陈旧），只对 miss/过期的条目发请求。
@@ -75,6 +84,6 @@ export function getUserdataBatch<T = unknown>(names: string[]) {
 export function saveUserdataBatch(docs: { name: string; value: unknown }[]) {
   return http.post('/saveUserdataBatch', { docs }).then(() => {
     // 写成功后预读缓存已陈旧，删除之；写失败保留缓存（值仍有效）
-    for (const doc of docs) prefetchCache.delete(doc.name)
+    invalidateUserdataPrefetch(docs.map((doc) => doc.name))
   })
 }

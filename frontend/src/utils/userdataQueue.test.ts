@@ -1,11 +1,12 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-const { saveUserdataBatch } = vi.hoisted(() => ({
+const { saveUserdataBatch, invalidateUserdataPrefetch } = vi.hoisted(() => ({
   saveUserdataBatch: vi.fn(),
+  invalidateUserdataPrefetch: vi.fn(),
 }))
 
-vi.mock('../api/userdata', () => ({ saveUserdataBatch }))
+vi.mock('../api/userdata', () => ({ saveUserdataBatch, invalidateUserdataPrefetch }))
 
 // 被测模块在 import 时挂 window 事件监听并持有队列状态，每个用例都要全新模块
 async function loadQueue() {
@@ -26,6 +27,7 @@ beforeEach(() => {
   vi.resetModules()
   vi.useFakeTimers()
   saveUserdataBatch.mockReset().mockResolvedValue(undefined)
+  invalidateUserdataPrefetch.mockReset()
   // 上一个用例 import 的模块实例在 window 上留有事件监听，其队列里可能还有
   // 未发送成功的文档；先补发排空，避免它们跟着本用例的事件一起触发
   vi.stubGlobal('fetch', vi.fn().mockResolvedValue(undefined))
@@ -304,5 +306,37 @@ describe('页面卸载补发', () => {
     const [url, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit]
     expect(url).toBe('/reader3/saveUserdataBatch')
     expect(init.keepalive).toBe(true)
+  })
+
+  it('keepalive 成功发起后按发送的文档名失效预读缓存', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(undefined)
+    vi.stubGlobal('fetch', fetchMock)
+    const queue = await loadQueue()
+    queue.queueUserdataSave('reading-stats', { totalSeconds: 7 })
+    queue.queueUserdataSave('recent-books', [])
+
+    window.dispatchEvent(new Event('pagehide'))
+
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    // 直发绕过了 saveUserdataBatch 封装，写后失效要在 keepalive 路径补齐
+    expect(invalidateUserdataPrefetch).toHaveBeenCalledTimes(1)
+    expect(invalidateUserdataPrefetch).toHaveBeenCalledWith(['reading-stats', 'recent-books'])
+  })
+
+  it('fetch 同步抛错（未发出）时不失效预读缓存，待写文档保留', async () => {
+    const fetchMock = vi.fn().mockImplementation(() => {
+      throw new Error('fetch unavailable')
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    const queue = await loadQueue()
+    queue.queueUserdataSave('reading-stats', { totalSeconds: 7 })
+
+    window.dispatchEvent(new Event('pagehide'))
+
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    expect(invalidateUserdataPrefetch).not.toHaveBeenCalled()
+    // 未发出的文档保留在队列里（防抖定时器已清，等下一次写入或主动 flush 带走）
+    await queue.flushUserdataQueue()
+    expect(saveUserdataBatch).toHaveBeenCalledWith([{ name: 'reading-stats', value: { totalSeconds: 7 } }])
   })
 })

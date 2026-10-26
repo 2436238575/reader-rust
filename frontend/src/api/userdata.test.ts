@@ -14,6 +14,7 @@ vi.mock('./http', () => ({
 import {
   clearUserdataPrefetch,
   getUserdataBatch,
+  invalidateUserdataPrefetch,
   prefetchUserdata,
   saveUserdataBatch,
 } from './userdata'
@@ -163,6 +164,23 @@ describe('写后缓存失效', () => {
 
     httpGet.mockClear()
     await expect(getUserdataBatch(['reading-stats'])).resolves.toEqual({ 'reading-stats': 1 })
+    expect(httpGet).not.toHaveBeenCalled()
+  })
+})
+
+describe('invalidateUserdataPrefetch 按文档名失效', () => {
+  it('只失效指定文档，其他文档的预读缓存仍可消费', async () => {
+    mockBatchOnce({ 'reading-stats': 1, 'recent-books': [] })
+    await prefetchUserdata(['reading-stats', 'recent-books'])
+
+    invalidateUserdataPrefetch(['reading-stats'])
+
+    // 被失效的文档回落批量 GET；未失效的文档仍命中缓存，不发请求
+    mockBatchOnce({ 'reading-stats': 2 })
+    await expect(getUserdataBatch(['reading-stats'])).resolves.toEqual({ 'reading-stats': 2 })
+    expect(httpGet).toHaveBeenLastCalledWith('/getUserdataBatch?names=reading-stats')
+    httpGet.mockClear()
+    await expect(getUserdataBatch(['recent-books'])).resolves.toEqual({ 'recent-books': [] })
     expect(httpGet).not.toHaveBeenCalled()
   })
 })
