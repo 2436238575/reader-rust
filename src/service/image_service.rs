@@ -108,7 +108,7 @@ impl ImageService {
             http,
             storage_dir: storage_dir.into(),
             limit_bytes,
-            load_locks: KeyedMutex::new(IMAGE_LOAD_LOCK_MAX_ENTRIES),
+            load_locks: KeyedMutex::new("image_load", IMAGE_LOAD_LOCK_MAX_ENTRIES),
         }
     }
 

@@ -71,6 +71,16 @@ impl<V> BoundedMap<V> {
         self.map.get(key)
     }
 
+    /// 当前条数（单飞锁表的溢出告警与节流判定用）。
+    pub fn len(&self) -> usize {
+        self.map.len()
+    }
+
+    /// 是否为空表。
+    pub fn is_empty(&self) -> bool {
+        self.map.is_empty()
+    }
+
     /// 删除指定键（TTL 过期剔除用）。
     pub fn remove(&mut self, key: &str) -> Option<V> {
         self.order.retain(|k| k != key);

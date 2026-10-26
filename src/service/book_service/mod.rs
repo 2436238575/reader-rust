@@ -128,7 +128,7 @@ impl BookService {
             pending_revalidations: Arc::new(Mutex::new(HashSet::new())),
             toc_append_lock: Arc::new(tokio::sync::Mutex::new(())),
             toc_snapshots: Arc::new(Mutex::new(BoundedMap::new(TOC_SNAPSHOT_MEMO_MAX_ENTRIES))),
-            refresh_locks: Arc::new(KeyedMutex::new(REFRESH_LOCK_MAX_ENTRIES)),
+            refresh_locks: Arc::new(KeyedMutex::new("chapter_refresh", REFRESH_LOCK_MAX_ENTRIES)),
         }
     }
 
