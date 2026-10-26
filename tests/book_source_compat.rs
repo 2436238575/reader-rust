@@ -43,6 +43,16 @@ async fn test_book_service(storage_dir: &std::path::Path) -> (BookService, sqlx:
     (service, pool)
 }
 
+/// 读目录缓存的旁路 meta（service 的 meta 路径是私有方法，测试里按同一布局拼）。
+fn read_toc_meta(storage_dir: &std::path::Path, ns: &str, book_id: &str) -> serde_json::Value {
+    let path = storage_dir
+        .join("cache")
+        .join(ns)
+        .join("toc")
+        .join(format!("{}.meta.json", book_id));
+    serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap()
+}
+
 #[test]
 fn book_source_deserializes_stringified_rule_objects() {
     let source: BookSource = serde_json::from_value(json!({
@@ -519,13 +529,20 @@ async fn toc_pagination_stops_at_page_cap_for_endless_next_links() {
 
     server.abort();
     pool.close().await;
-    common::remove_dir_retried(&storage_dir);
 
     // 首页 + MAX_TOC_PAGES（500）页后停止：请求数与章节数都钉在上限上，
     // 不随「每页都有新 next」无限增长
     assert_eq!(hits.load(Ordering::SeqCst), 501);
     assert_eq!(chapters.len(), 501);
     assert_eq!(chapters[0].title, "第0章");
+    // 截断目录按未完成落盘：读侧只给 60s 短 TTL，60 秒后重抓即可补全，
+    // 而不是把残缺目录当完整目录缓存一小时
+    assert_eq!(
+        read_toc_meta(&storage_dir, "default", "book_1")["complete"],
+        serde_json::Value::Bool(false),
+        "达到 MAX_TOC_PAGES 截断应标未完成"
+    );
+    common::remove_dir_retried(&storage_dir);
 }
 
 async fn toc_first_page() -> Html<&'static str> {
@@ -578,12 +595,155 @@ async fn toc_pagination_normal_two_pages_unaffected_by_cap() {
 
     server.abort();
     pool.close().await;
-    common::remove_dir_retried(&storage_dir);
 
     assert_eq!(chapters.len(), 2);
     assert_eq!(chapters[0].title, "第一章");
     assert_eq!(chapters[1].title, "第二章");
     assert!(chapters[1].url.ends_with("/ch/2.html"));
+    // 单链自然结束：目录完整，缓存按完成落盘（正常路径不受截断改动影响）
+    assert_eq!(
+        read_toc_meta(&storage_dir, "default", "book_1")["complete"],
+        serde_json::Value::Bool(true),
+        "正常抓完应保持完整标志"
+    );
+    common::remove_dir_retried(&storage_dir);
+}
+
+async fn toc_dup_first_page() -> Html<&'static str> {
+    Html(
+        r#"<html><body><div class="toc"><a href="/ch/1.html">第一章</a></div><a class="next" href="/toc/dup">下一页</a></body></html>"#,
+    )
+}
+
+/// 与首页完全相同的章节列表：整页重复熔断应停（书源可能把多个分页都解析到了同一页）。
+async fn toc_dup_page() -> Html<&'static str> {
+    Html(
+        r#"<html><body><div class="toc"><a href="/ch/1.html">第一章</a></div><a class="next" href="/toc/dup2">下一页</a></body></html>"#,
+    )
+}
+
+#[tokio::test]
+async fn toc_duplicate_page_marks_cache_incomplete() {
+    allow_private_network();
+    let app = Router::new()
+        .route("/toc/1", get(toc_dup_first_page))
+        .route("/toc/dup", get(toc_dup_page));
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let server = tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+
+    common::clean_stale_temp_dirs();
+    let storage_dir = std::env::temp_dir().join(format!("reader-rust-toc-dup-{}", Uuid::new_v4()));
+    let (service, pool) = test_book_service(&storage_dir).await;
+    let source = BookSource {
+        book_source_name: "Duplicate TOC".to_string(),
+        book_source_url: format!("http://{}", addr),
+        rule_toc: Some(TocRule {
+            chapter_list: Some(".toc".to_string()),
+            chapter_name: Some("a@text".to_string()),
+            chapter_url: Some("a@href".to_string()),
+            next_toc_url: Some("a.next@href".to_string()),
+            ..Default::default()
+        }),
+        ..Default::default()
+    };
+
+    let chapters = service
+        .get_chapter_list(
+            "default",
+            "book_1",
+            &source,
+            &format!("http://{addr}/toc/1"),
+        )
+        .await
+        .unwrap();
+
+    server.abort();
+    pool.close().await;
+
+    // 整页重复熔断：第二页与首页完全重复，只有首页章节
+    assert_eq!(chapters.len(), 1);
+    assert_eq!(chapters[0].title, "第一章");
+    // 熔断视为截断：缓存按未完成落盘，60 秒后可重试
+    assert_eq!(
+        read_toc_meta(&storage_dir, "default", "book_1")["complete"],
+        serde_json::Value::Bool(false),
+        "整页重复熔断应标未完成"
+    );
+    common::remove_dir_retried(&storage_dir);
+}
+
+async fn toc_multi_first_page() -> Html<&'static str> {
+    Html(
+        r#"<html><body><div class="toc"><a href="/ch/1.html">第一章</a></div><a class="next" href="/toc/a">分支1</a><a class="next" href="/toc/b">分支2</a></body></html>"#,
+    )
+}
+
+async fn toc_multi_branch_dup() -> Html<&'static str> {
+    // 与首页重复的分支页：多分支路径的整页重复熔断（continue，不中断其余分支）
+    Html(r#"<html><body><div class="toc"><a href="/ch/1.html">第一章</a></div></body></html>"#)
+}
+
+async fn toc_multi_branch_new() -> Html<&'static str> {
+    Html(r#"<html><body><div class="toc"><a href="/ch/2.html">第二章</a></div></body></html>"#)
+}
+
+#[tokio::test]
+async fn toc_multi_branch_duplicate_page_marks_cache_incomplete() {
+    allow_private_network();
+    let app = Router::new()
+        .route("/toc/0", get(toc_multi_first_page))
+        .route("/toc/a", get(toc_multi_branch_dup))
+        .route("/toc/b", get(toc_multi_branch_new));
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let server = tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+
+    common::clean_stale_temp_dirs();
+    let storage_dir =
+        std::env::temp_dir().join(format!("reader-rust-toc-multi-{}", Uuid::new_v4()));
+    let (service, pool) = test_book_service(&storage_dir).await;
+    let source = BookSource {
+        book_source_name: "Multi branch TOC".to_string(),
+        book_source_url: format!("http://{}", addr),
+        rule_toc: Some(TocRule {
+            chapter_list: Some(".toc".to_string()),
+            chapter_name: Some("a@text".to_string()),
+            chapter_url: Some("a@href".to_string()),
+            next_toc_url: Some("a.next@href".to_string()),
+            ..Default::default()
+        }),
+        ..Default::default()
+    };
+
+    let chapters = service
+        .get_chapter_list(
+            "default",
+            "book_1",
+            &source,
+            &format!("http://{addr}/toc/0"),
+        )
+        .await
+        .unwrap();
+
+    server.abort();
+    pool.close().await;
+
+    // 多分支全部处理完（重复分支跳过、新分支照常并入），但重复分支已把
+    // complete 置 false：目录可能不齐，按未完成落盘
+    assert_eq!(chapters.len(), 2);
+    assert_eq!(chapters[0].title, "第一章");
+    assert_eq!(chapters[1].title, "第二章");
+    assert_eq!(
+        read_toc_meta(&storage_dir, "default", "book_1")["complete"],
+        serde_json::Value::Bool(false),
+        "多分支路径的整页重复也应标未完成"
+    );
+    common::remove_dir_retried(&storage_dir);
 }
 
 #[tokio::test]

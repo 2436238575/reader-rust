@@ -69,7 +69,7 @@ storage/
 
 ### 目录与书籍详情
 
-- 目录：`cache/<ns>/toc/book_<n>.json`，1 小时 TTL。分页目录首屏先落盘并在旁路 `book_<n>.meta.json` 标记 `complete=false`，后台补全成功（append）才置完成；未完成缓存只复用 60 秒，避免后台补全失败时残缺目录被当成完整目录服务一小时。meta 缺失（升级前的存量缓存）按已完成处理。
+- 目录：`cache/<ns>/toc/book_<n>.json`，1 小时 TTL。分页目录首屏先落盘并在旁路 `book_<n>.meta.json` 标记 `complete=false`，后台补全成功（append）才置完成；分页达到上限或整页重复熔断的截断补全同样标未完成。未完成缓存只复用 60 秒，避免后台补全失败或截断时残缺目录被当成完整目录服务一小时。meta 缺失（升级前的存量缓存）按已完成处理。
 - 书籍详情：`cache/bookinfo/<ns>/book_<n>.json`，1 小时 TTL。详情过期会在读取时删除；目录过期只在「直接返回响应」的路径按未命中处理，文件保留给内部只读路径，等重抓后覆盖。
 - 两者都归 `CacheKind::ChapterList` 清理（详情与目录同属书籍元数据）。
 

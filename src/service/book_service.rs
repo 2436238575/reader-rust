@@ -1046,12 +1046,14 @@ impl BookService {
                 }
             }
         }
-        let (chapters, _) = self
+        let (chapters, _, complete) = self
             .get_chapter_list_with_pagination(user_ns, source, toc_url)
             .await?;
-        // Save to cache
+        // 分页截断（MAX_TOC_PAGES 上限 / 整页重复熔断）与首屏分页一样按未完成
+        // 落盘：读侧只给 60s 短 TTL，过期后重抓即可补全，截断目录不当完整目录
+        // 缓存一小时。
         let _ = self
-            .save_chapter_list_cache(user_ns, book_id, &chapters)
+            .save_chapter_list_cache_with_state(user_ns, book_id, &chapters, complete)
             .await;
         Ok(chapters)
     }
@@ -1128,6 +1130,10 @@ impl BookService {
     /// 总页数受 `MAX_TOC_PAGES` 限制：单链分支是「跟着书源给的下一页走」的
     /// 循环，环检测只能挡住重复 URL，恶意/失控书源每次回一个新 URL 就会把
     /// 抓取变成无限请求。达到上限记 warn 并停止翻页，已抓到的章节照常返回。
+    ///
+    /// 返回的 `complete` 表示目录是否抓全：达到 `MAX_TOC_PAGES` 或整页重复
+    /// 熔断都算截断（false），单链自然结束、多分支全部处理完为 true。调用方
+    /// 据此把缓存落成完成/未完成（未完成只给短 TTL，60 秒后可重试）。
     async fn fetch_paginated_chapters(
         &self,
         user_ns: &str,
@@ -1136,8 +1142,9 @@ impl BookService {
         visited_page_urls: &mut std::collections::HashSet<String>,
         seen_chapter_urls: &mut std::collections::HashSet<String>,
         chapter_index: &mut i32,
-    ) -> Result<Vec<BookChapter>, AppError> {
+    ) -> Result<(Vec<BookChapter>, bool), AppError> {
         let mut all_chapters = Vec::new();
+        let mut complete = true;
         let pending_urls: Vec<String> = pending_urls
             .into_iter()
             .filter(|u| !visited_page_urls.contains(u))
@@ -1145,6 +1152,9 @@ impl BookService {
         let mut pages_fetched = 0usize;
 
         /// 页内公共动作：整页重复熔断 + 逐章去重追加。
+        /// 整页重复即熔断（可能意味着书源把多个分页解析到了同一页）：单链
+        /// 路径 `$on_dup` 是 break、多分支路径是 continue，两条路径都把
+        /// `complete` 置 false——目录可能只抓到了一部分。
         macro_rules! absorb_page {
             ($chapters:expr, $page_url:expr, $on_dup:expr) => {{
                 let all_seen = $chapters
@@ -1152,6 +1162,7 @@ impl BookService {
                     .all(|ch| seen_chapter_urls.contains(&ch.url));
                 if all_seen && !$chapters.is_empty() {
                     tracing::debug!("Skipping duplicate page: {}", $page_url);
+                    complete = false;
                     $on_dup
                 }
                 for ch in $chapters {
@@ -1176,6 +1187,7 @@ impl BookService {
                         "目录分页达到 {MAX_TOC_PAGES} 页上限，停止翻页（书源 {} 可能失控）",
                         source.book_source_url
                     );
+                    complete = false;
                     break;
                 }
                 if visited_page_urls.contains(&url) {
@@ -1204,6 +1216,7 @@ impl BookService {
                         "目录分页达到 {MAX_TOC_PAGES} 页上限，停止翻页（书源 {} 可能失控）",
                         source.book_source_url
                     );
+                    complete = false;
                     break;
                 }
                 if visited_page_urls.contains(&current_url) {
@@ -1235,14 +1248,17 @@ impl BookService {
             }
         }
 
-        Ok(all_chapters)
+        Ok((all_chapters, complete))
     }
 
     /// Continue fetching remaining chapters from pagination state
+    ///
+    /// 返回 `(章节, complete)`：`complete` 见 `fetch_paginated_chapters`，
+    /// 后台补全据此决定把缓存落成完成还是未完成。
     pub async fn fetch_remaining_chapters(
         &self,
         pagination: ChapterPagination,
-    ) -> Result<Vec<BookChapter>, AppError> {
+    ) -> Result<(Vec<BookChapter>, bool), AppError> {
         let mut visited_page_urls: std::collections::HashSet<String> =
             pagination.visited_urls.iter().cloned().collect();
         let mut seen_chapter_urls: std::collections::HashSet<String> =
@@ -1264,7 +1280,7 @@ impl BookService {
         user_ns: &str,
         source: &BookSource,
         toc_url: &str,
-    ) -> Result<(Vec<BookChapter>, Vec<String>), AppError> {
+    ) -> Result<(Vec<BookChapter>, Vec<String>, bool), AppError> {
         // Fetch first page
         let res = self
             .fetch_source_url(user_ns, source, toc_url, &source.book_source_url)
@@ -1296,7 +1312,7 @@ impl BookService {
             .into_iter()
             .filter(|u| !visited_page_urls.contains(u))
             .collect();
-        let mut rest = self
+        let (mut rest, complete) = self
             .fetch_paginated_chapters(
                 user_ns,
                 source,
@@ -1308,7 +1324,11 @@ impl BookService {
             .await?;
         all_chapters.append(&mut rest);
 
-        Ok((all_chapters, visited_page_urls.into_iter().collect()))
+        Ok((
+            all_chapters,
+            visited_page_urls.into_iter().collect(),
+            complete,
+        ))
     }
 
     /// 抓一章正文（含分页拼接），只抓取和解析，不落库。
@@ -3341,6 +3361,20 @@ impl BookService {
         book_id: &str,
         new_chapters: &Vec<BookChapter>,
     ) -> Result<Vec<BookChapter>, AppError> {
+        self.append_chapter_list_cache_with_complete(user_ns, book_id, new_chapters, true)
+            .await
+    }
+
+    /// 后台补全落盘，`complete` 由分页抓取给出：完整补全把 meta 置完成（读侧
+    /// 从短 TTL 回到正常 1 小时），截断补全（MAX_TOC_PAGES 上限 / 整页重复
+    /// 熔断）保持未完成——已抓到的章节照常并入，60 秒后可重试。
+    pub async fn append_chapter_list_cache_with_complete(
+        &self,
+        user_ns: &str,
+        book_id: &str,
+        new_chapters: &Vec<BookChapter>,
+        complete: bool,
+    ) -> Result<Vec<BookChapter>, AppError> {
         // 读-改-写整体持锁串行化：两个并发 append 无锁交错时后写者会基于旧快照
         // 落盘，先写者新增的章节被整体覆盖丢失。
         let _append_guard = self.toc_append_lock.lock().await;
@@ -3361,14 +3395,13 @@ impl BookService {
                 added = true;
             }
         }
-        // 补全任务成功走到这里意味着全部分页都已并入缓存（新增章节全部与
-        // 缓存重叠时内容同样完整）：无论是否重写目录本体，都要把 meta 置为
-        // 完成，让读侧从短 TTL 回到正常的 1 小时。
+        // 无论是否重写目录本体，都按调用方给的 complete 写 meta：新增章节全部
+        // 与缓存重叠时目录内容同样完整与否取决于补全抓取本身，不由 added 决定。
         if added {
-            self.save_chapter_list_cache(user_ns, book_id, &existing)
+            self.save_chapter_list_cache_with_state(user_ns, book_id, &existing, complete)
                 .await?;
         } else {
-            self.write_chapter_list_cache_meta(user_ns, book_id, true)
+            self.write_chapter_list_cache_meta(user_ns, book_id, complete)
                 .await;
         }
         Ok(existing)
@@ -4422,6 +4455,71 @@ mod tests {
             .unwrap();
         assert!(!toc_path.exists(), "delete 删除目录文件");
         assert!(!meta_path.exists(), "delete 连带删除 meta");
+
+        pool.close().await;
+        let _ = std::fs::remove_dir_all(&storage_dir);
+    }
+
+    #[tokio::test]
+    async fn append_chapter_list_cache_with_complete_controls_meta_flag() {
+        let storage_dir = std::env::temp_dir().join(format!(
+            "reader-rust-toc-append-complete-{}",
+            std::process::id()
+        ));
+        let (service, pool) = test_service(&storage_dir).await;
+        let ns = "test-append-complete";
+        let book_id = "book_1";
+
+        let mk = |index: i32, url: &str| BookChapter {
+            url: url.to_string(),
+            title: url.to_string(),
+            index,
+            ..Default::default()
+        };
+        let meta_path = service.chapter_list_cache_meta_path(ns, book_id);
+        let read_meta = || {
+            serde_json::from_str::<ChapterListCacheMeta>(
+                &std::fs::read_to_string(&meta_path).unwrap(),
+            )
+            .unwrap()
+        };
+
+        // 首屏 incomplete 落盘
+        service
+            .save_chapter_list_cache_incomplete(ns, book_id, &vec![mk(0, "a")])
+            .await
+            .unwrap();
+        assert!(!read_meta().complete);
+
+        // 截断补全（complete=false）：新章节照常并入，meta 保持未完成
+        let all = service
+            .append_chapter_list_cache_with_complete(ns, book_id, &vec![mk(1, "b")], false)
+            .await
+            .unwrap();
+        assert_eq!(all.len(), 2);
+        assert_eq!(all.last().unwrap().url, "b");
+        assert!(!read_meta().complete, "截断补全不把 meta 置完成");
+
+        // 完整补全（旧入口 append_chapter_list_cache，complete=true）置完成
+        service
+            .append_chapter_list_cache(ns, book_id, &vec![mk(2, "c")])
+            .await
+            .unwrap();
+        assert!(read_meta().complete, "完整 append 置完成");
+
+        // 无新增时也按传入的 complete 写 meta：截断补全（即使全部重叠）标未完成
+        service
+            .append_chapter_list_cache_with_complete(ns, book_id, &vec![mk(9, "c")], false)
+            .await
+            .unwrap();
+        assert!(!read_meta().complete, "无新增的截断补全同样标未完成");
+
+        // 无新增的完整补全恢复完成标志
+        service
+            .append_chapter_list_cache(ns, book_id, &vec![mk(9, "c")])
+            .await
+            .unwrap();
+        assert!(read_meta().complete, "无新增的完整补全恢复完成标志");
 
         pool.close().await;
         let _ = std::fs::remove_dir_all(&storage_dir);

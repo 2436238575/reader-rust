@@ -803,22 +803,29 @@ pub async fn get_chapter_list(
             // RAII：任务结束/panic 都自动释放补全标志位
             let _toc_guard = toc_guard;
             tracing::debug!("starting background chapter fetch");
+            // complete=false 表示分页被截断（MAX_TOC_PAGES 上限 / 整页重复熔断）：
+            // 已抓到的章节照常并入缓存，但 meta 保持未完成，读侧 60s 后可重试
             let remaining = match state_clone
                 .book_service
                 .fetch_remaining_chapters(pagination)
                 .await
             {
-                Ok(remaining) if !remaining.is_empty() => Some(remaining),
+                Ok((remaining, complete)) if !remaining.is_empty() => Some((remaining, complete)),
                 Ok(_) => None,
                 Err(e) => {
                     tracing::warn!("background chapter fetch failed: {:?}", e);
                     None
                 }
             };
-            if let Some(remaining) = remaining {
+            if let Some((remaining, complete)) = remaining {
                 match state_clone
                     .book_service
-                    .append_chapter_list_cache(&user_ns_clone, &book_id_clone, &remaining)
+                    .append_chapter_list_cache_with_complete(
+                        &user_ns_clone,
+                        &book_id_clone,
+                        &remaining,
+                        complete,
+                    )
                     .await
                 {
                     Ok(all_chapters) => {
