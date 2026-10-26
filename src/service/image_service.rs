@@ -50,6 +50,16 @@ const WEBP_QUALITY: f32 = 80.0;
 /// 让条漫长图走调用方的原图兜底，而不是 panic 穿透 `spawn_blocking` 变 500。
 const WEBP_MAX_DIMENSION: u32 = 16383;
 
+/// 派生图解码的单边尺寸上限（`decode_limits`）。
+///
+/// 压缩图的内存爆炸半径由上游说了算：几十 MB 的 PNG/BMP 可以展开成数 GB 的
+/// 像素缓冲，多个 `?w=` 请求叠加时每份解码还同时在 `spawn_blocking` 里活着。
+/// 单边 16384 已经远超阅读器渲染场景。
+const DECODE_MAX_DIMENSION: u32 = 16384;
+
+/// 派生图解码期间允许的总分配上限（`decode_limits`）。
+const DECODE_MAX_ALLOC_BYTES: u64 = 256 * 1024 * 1024;
+
 /// 派生图（`?w=` 缩放）请求宽度的上下限。
 const VARIANT_MIN_WIDTH: u32 = 64;
 const VARIANT_MAX_WIDTH: u32 = 2048;
@@ -618,6 +628,28 @@ fn read_width(bytes: &[u8]) -> Result<u32, String> {
     Ok(width)
 }
 
+/// 生产解码上限：单边 16384、解码期间总分配 256MiB。
+/// `Limits` 是 `#[non_exhaustive]`，只能从 `default()` 起步逐字段覆盖。
+fn decode_limits() -> image::Limits {
+    let mut limits = image::Limits::default();
+    limits.max_image_width = Some(DECODE_MAX_DIMENSION);
+    limits.max_image_height = Some(DECODE_MAX_DIMENSION);
+    limits.max_alloc = Some(DECODE_MAX_ALLOC_BYTES);
+    limits
+}
+
+/// 按内容猜格式并带 `Limits` 解码；超限与解码失败统一 `Err(String)`。
+///
+/// 与 `image::load_from_memory` 的差别只在上限：后者用 crate 默认值
+/// （总分配 512MiB、无单边尺寸限制），这里收紧为 [`decode_limits`] 一类的
+/// 显式 `Limits`，由调用方决定传生产常量还是测试用的更小值。
+fn decode_with_limits(bytes: &[u8], limits: image::Limits) -> Result<image::DynamicImage, String> {
+    let mut reader = image::ImageReader::new(std::io::Cursor::new(bytes));
+    reader.limits(limits);
+    let reader = reader.with_guessed_format().map_err(|e| e.to_string())?;
+    reader.decode().map_err(|e| e.to_string())
+}
+
 /// 派生图内容类型。
 fn variant_content_type(webp: bool) -> String {
     if webp {
@@ -630,13 +662,14 @@ fn variant_content_type(webp: bool) -> String {
 /// 解码原图 →（可选）Triangle 缩放 → RGBA → 有损 webp（质量 80）/ JPEG（质量 85）。
 ///
 /// 只处理 JPEG/PNG/BMP（调用方已按 content_type 过滤）；解码与编码都在
-/// `spawn_blocking` 里执行。
+/// `spawn_blocking` 里执行。解码带尺寸/内存上限（`decode_limits`）：超限、
+/// 坏数据与普通解码失败一样走 `Err`，调用方回退原图直出，不 500。
 fn encode_variant(
     original: &[u8],
     target_width: u32,
     accept_webp: bool,
 ) -> Result<(Vec<u8>, String), String> {
-    let img = image::load_from_memory(original).map_err(|e| e.to_string())?;
+    let img = decode_with_limits(original, decode_limits())?;
     let img = if target_width < img.width() {
         let ratio = target_width as f64 / img.width() as f64;
         let target_height = ((img.height() as f64 * ratio).round() as u32).max(1);
@@ -1399,5 +1432,52 @@ mod tests {
         assert_eq!(content_type, "image/png");
         assert!(derived_files(&dir).is_empty(), "编码失败不该落派生文件");
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // ---------- 解码上限：单边尺寸与总分配（decode_with_limits） ----------
+
+    /// 2x2 PNG 在生产上限（decode_limits）内正常解码。
+    #[test]
+    fn decode_with_limits_accepts_small_png() {
+        let png = make_png(2, 2);
+        let img = decode_with_limits(&png, decode_limits()).expect("2x2 PNG 应当正常解码");
+        assert_eq!((img.width(), img.height()), (2, 2));
+    }
+
+    /// 同一张 2x2 PNG，把单边上限压到 1：解码被拒（Err），不能 panic。
+    #[test]
+    fn decode_with_limits_rejects_oversize_dimension() {
+        let png = make_png(2, 2);
+        let mut limits = image::Limits::default();
+        limits.max_image_width = Some(1);
+        assert!(
+            decode_with_limits(&png, limits).is_err(),
+            "宽度超出 max_image_width 应当返回 Err"
+        );
+    }
+
+    /// max_alloc 覆盖解码期总分配：2x2 RGBA 需 16 字节，压到 8 就该被拒。
+    #[test]
+    fn decode_with_limits_rejects_oversize_alloc() {
+        let png = make_png(2, 2);
+        let mut limits = image::Limits::default();
+        limits.max_alloc = Some(8);
+        assert!(
+            decode_with_limits(&png, limits).is_err(),
+            "总分配超出 max_alloc 应当返回 Err"
+        );
+    }
+
+    /// 非图片与截断字节都返回 Err（不 panic）：前者格式猜不出，后者
+    /// 只剩 PNG 头 + IHDR、像素数据缺失。
+    #[test]
+    fn decode_with_limits_rejects_garbage_and_truncated_bytes() {
+        assert!(decode_with_limits(b"not an image at all", decode_limits()).is_err());
+        let full = make_png(8, 8);
+        let header_only = &full[..8 + 25]; // PNG 签名 + IHDR 块
+        assert!(
+            decode_with_limits(header_only, decode_limits()).is_err(),
+            "缺少 IDAT 的截断 PNG 应当返回 Err"
+        );
     }
 }

@@ -317,6 +317,7 @@ id = `md5(去掉查询串的地址)`；抓取失败时按登记时的书籍上�
 派生图随原图重抓（`fetch_and_store`）与按书删除（`remove_by_book_id`）一并清理，
 之后变体请求按需重建（命中逻辑不做 mtime 校验）；
 GIF/WebP/AVIF/SVG/ICO 原样透传（不破坏动画与矢量），不带 `w` 也不要 webp 时原图直出。
+派生图解码有 16384 单边/256MiB 上限（`decode_with_limits`），超限与解码失败一样回退原图，不 500。
 前端按渲染场景给取图地址带宽度档位（`api/bookshelf.ts` 的 `getCoverUrl(coverUrl, width)` 与
 `withImageWidth(url, width)`，后者同时认 `/reader3/image/` 与 `/reader3/cover?` 两种本站地址）：
 封面列表 320、书籍详情 640、章节配图 1200、评论配图 480；宽度只是提示，后端只降不升；
