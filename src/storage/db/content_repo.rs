@@ -330,19 +330,29 @@ impl ChapterContentRepo {
                 }
             }
             if fatal {
+                // 事务随 Drop 整体回滚：本块已报成功的章节实际未落库，
+                // 与提交失败一样改记失败
+                mark_chunk_aborted(&mut results[chunk_start..], "批量写入事务中止");
                 continue;
             }
             if let Err(error) = tx.commit().await {
                 // 提交失败整块回滚：本块已报成功的章节改记失败
                 let message = format!("批量写入提交失败: {error}");
-                for result in results.iter_mut().skip(chunk_start) {
-                    if result.is_ok() {
-                        *result = Err(AppError::Internal(anyhow::anyhow!(message.clone())));
-                    }
-                }
+                mark_chunk_aborted(&mut results[chunk_start..], &message);
             }
         }
         results
+    }
+}
+
+/// 块级事务失败（提交失败 / 保存点机制损坏导致事务随 Drop 回滚）时，
+/// 把本块已报成功的章节统一改记失败：这些章节的写入实际未落库。
+/// 已记失败的条目（单章校验失败、保存点报错、中止后未写入）保持原样。
+fn mark_chunk_aborted(results: &mut [Result<RecordOutcome, AppError>], message: &str) {
+    for result in results.iter_mut() {
+        if result.is_ok() {
+            *result = Err(AppError::Internal(anyhow::anyhow!(message.to_string())));
+        }
     }
 }
 
@@ -942,5 +952,44 @@ impl ChapterContentRepo {
             chapters as u64,
             bytes as u64,
         ))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 块中止/提交失败的修正循环：已报成功（Appended/Unchanged）的条目
+    /// 改记为 Internal 失败，此前已失败的条目保持原文案不变。
+    #[test]
+    fn mark_chunk_aborted_rewrites_ok_and_keeps_err() {
+        let mut results: Vec<Result<RecordOutcome, AppError>> = vec![
+            Ok(RecordOutcome::Appended {
+                version_id: 1,
+                became_current: true,
+            }),
+            Err(AppError::BadRequest("bookId 格式非法".to_string())),
+            Ok(RecordOutcome::Unchanged { version_id: 2 }),
+            Err(AppError::Internal(anyhow::anyhow!(
+                "所在批量写入块已中止，本章未写入"
+            ))),
+        ];
+        mark_chunk_aborted(&mut results, "批量写入事务中止");
+        assert!(
+            matches!(&results[0], Err(AppError::Internal(error)) if error.to_string() == "批量写入事务中止"),
+            "Appended 应改记为中止失败"
+        );
+        assert!(
+            matches!(&results[1], Err(AppError::BadRequest(_))),
+            "已有的 BadRequest 应保持原样"
+        );
+        assert!(
+            matches!(&results[2], Err(AppError::Internal(error)) if error.to_string() == "批量写入事务中止"),
+            "Unchanged 应改记为中止失败"
+        );
+        assert!(
+            matches!(&results[3], Err(AppError::Internal(error)) if error.to_string() == "所在批量写入块已中止，本章未写入"),
+            "已有的失败文案应保持原样"
+        );
     }
 }
