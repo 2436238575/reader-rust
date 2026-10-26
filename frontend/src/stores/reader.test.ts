@@ -552,24 +552,99 @@ describe('reader preloadAroundChapter 批量预加载', () => {
     expect(readerStore.chapterVersions.get(2)?.selectionSource).toBe('upstream')
   })
 
-  it('批量响应里单章 error 跳过，其余章节照常写入', async () => {
+  it('批量响应里单章 error：只为失败章逐章兜底，成功章不重复请求', async () => {
     vi.mocked(getBookContents).mockResolvedValue([
       { index: 2, data: makeContentResponse('正文二'), error: null },
       { index: 3, data: null, error: '上游 403' },
       { index: 0, data: makeContentResponse('正文零'), error: null },
     ])
+    vi.mocked(getBookContent).mockImplementation(async (params) =>
+      makeContentResponse(`正文${params.index}`)
+    )
     const readerStore = setupOnlineBook()
 
     await readerStore.preloadAroundChapter(1)
 
-    // 单章失败不触发整批回退
-    expect(getBookContent).not.toHaveBeenCalled()
-    await expect(readerStore.fetchChapterContent(2)).resolves.toBe('正文二')
-
-    // 失败的第 3 章不在预加载池：真正读到时走单章接口
-    vi.mocked(getBookContent).mockResolvedValue(makeContentResponse('正文三'))
-    await expect(readerStore.fetchChapterContent(3)).resolves.toBe('正文三')
+    expect(getBookContents).toHaveBeenCalledTimes(1)
+    // 只有失败的第 3 章走逐章路径；成功章（2/0）不重复请求
     expect(getBookContent).toHaveBeenCalledTimes(1)
+    expect(getBookContent).toHaveBeenCalledWith(
+      expect.objectContaining({ index: 3, chapterUrl: 'https://example.org/3' })
+    )
+    // 成功章与兜底章都已入预加载池：读到时命中，不再发单章请求
+    await expect(readerStore.fetchChapterContent(2)).resolves.toBe('正文二')
+    await expect(readerStore.fetchChapterContent(3)).resolves.toBe('正文3')
+    await expect(readerStore.fetchChapterContent(0)).resolves.toBe('正文零')
+    expect(getBookContent).toHaveBeenCalledTimes(1)
+  })
+
+  it('失败章的逐章兜底自带浏览器缓存兜底：单章重试也失败时用缓存正文', async () => {
+    vi.mocked(getBookContents).mockResolvedValue([
+      { index: 2, data: makeContentResponse('正文二'), error: null },
+      { index: 3, data: null, error: '上游 403' },
+      { index: 0, data: makeContentResponse('正文零'), error: null },
+    ])
+    vi.mocked(getBookContent).mockRejectedValue(new Error('网络错误'))
+    vi.mocked(getBrowserCachedChapter).mockImplementation(async (_bookId: string, url: string) =>
+      url === 'https://example.org/3' ? '缓存正文三' : null
+    )
+    const readerStore = setupOnlineBook()
+
+    await readerStore.preloadAroundChapter(1)
+
+    // 第 3 章单章重试失败 → 走 getBrowserCachedChapter 兜底
+    expect(getBookContent).toHaveBeenCalledTimes(1)
+    expect(getBrowserCachedChapter).toHaveBeenCalledWith('book_1', 'https://example.org/3')
+    await expect(readerStore.fetchChapterContent(3)).resolves.toBe('缓存正文三')
+    // 成功章不受影响、不被重复请求
+    await expect(readerStore.fetchChapterContent(2)).resolves.toBe('正文二')
+    expect(getBookContent).toHaveBeenCalledTimes(1)
+  })
+
+  it('请求里有但响应缺失的章节同样逐章兜底', async () => {
+    // 响应缺第 3 章（既无 data 也无 error 条目）
+    vi.mocked(getBookContents).mockResolvedValue([
+      { index: 2, data: makeContentResponse('正文二'), error: null },
+      { index: 0, data: makeContentResponse('正文零'), error: null },
+    ])
+    vi.mocked(getBookContent).mockImplementation(async (params) =>
+      makeContentResponse(`正文${params.index}`)
+    )
+    const readerStore = setupOnlineBook()
+
+    await readerStore.preloadAroundChapter(1)
+
+    expect(getBookContent).toHaveBeenCalledTimes(1)
+    expect(getBookContent).toHaveBeenCalledWith(
+      expect.objectContaining({ index: 3, chapterUrl: 'https://example.org/3' })
+    )
+    await expect(readerStore.fetchChapterContent(3)).resolves.toBe('正文3')
+    await expect(readerStore.fetchChapterContent(2)).resolves.toBe('正文二')
+    expect(getBookContent).toHaveBeenCalledTimes(1)
+  })
+
+  it('批量响应期间换书：旧结果丢弃且不回退逐章', async () => {
+    const readerStore = setupOnlineBook()
+    vi.mocked(getBookContents).mockImplementation(async () => {
+      // 模拟响应期间换书：旧请求的结果不能写进新书的预加载池
+      readerStore.book = {
+        name: '另一本书',
+        author: '',
+        origin: 'https://other.example',
+        bookId: 'book_2',
+        bookUrl: 'https://other.example/b',
+      }
+      return [
+        { index: 2, data: makeContentResponse('旧书正文'), error: null },
+        { index: 3, data: null, error: '上游 403' },
+      ]
+    })
+
+    await readerStore.preloadAroundChapter(1)
+
+    expect(getBookContents).toHaveBeenCalledTimes(1)
+    // 换书后既不算失败也不回退：不再发任何单章请求
+    expect(getBookContent).not.toHaveBeenCalled()
   })
 
   it('整批失败时回退逐章 fetchChapterContent，行为与接入批量前一致', async () => {

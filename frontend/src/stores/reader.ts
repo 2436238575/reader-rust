@@ -1139,9 +1139,19 @@ export const useReaderStore = defineStore('reader', () => {
         target >= 0 && target < chapters.value.length && list.indexOf(target) === pos
     )
     // 批量接口一次取回全部目标章（后端上限 10，这里最多 3 条）；整批失败
-    // （断网/401/400）时回退逐章预加载，行为与接入批量前一致
+    // （断网/401/400）时对全部目标章回退逐章预加载，行为与接入批量前一致；
+    // 批量成功时只有失败章（单章 error / 响应缺失）逐章兜底——走单章接口
+    // 重试并自带浏览器缓存兜底，成功章不重复请求
     const pending = targets.filter((target) => !preloadedContent.value.has(target))
-    if (pending.length > 0 && (await preloadChaptersBatch(pending))) return
+    if (pending.length > 0) {
+      const batch = await preloadChaptersBatch(pending)
+      if (batch.ok) {
+        for (const target of batch.failed) {
+          await preloadNextChapter(target)
+        }
+        return
+      }
+    }
     for (const target of targets) {
       await preloadNextChapter(target)
     }
@@ -1149,12 +1159,15 @@ export const useReaderStore = defineStore('reader', () => {
 
   /**
    * 批量预加载：一次 getBookContents 请求取回多章正文写入 preloadedContent。
-   * 每章独立成败——失败章节跳过（不打扰用户）；返回 false 表示整批失败，
-   * 由调用方回退到逐章 fetchChapterContent。
+   * 每章独立成败——`item.data` 为空或响应里缺失的章节记入 failed，由调用方
+   * 逐章兜底（单章接口重试 + 浏览器缓存）；ok=false 表示整批失败，由调用方
+   * 对全部目标章回退逐章 fetchChapterContent。
    */
-  async function preloadChaptersBatch(targets: number[]): Promise<boolean> {
+  async function preloadChaptersBatch(
+    targets: number[]
+  ): Promise<{ ok: boolean; failed: number[] }> {
     const currentBook = book.value
-    if (!currentBook?.bookId) return false
+    if (!currentBook?.bookId) return { ok: false, failed: [] }
     const bookId = currentBook.bookId
     const isLocal = isLocalBook(currentBook)
     const variant: ContentVariant = config.contentVersion === 'upstream' ? 'upstream' : 'default'
@@ -1166,24 +1179,27 @@ export const useReaderStore = defineStore('reader', () => {
       sentUrls.set(chapterIndex, chapter.url)
       return [{ index: chapterIndex, chapterUrl: chapter.url }]
     })
-    if (chaptersPayload.length === 0) return false
+    if (chaptersPayload.length === 0) return { ok: false, failed: [] }
 
     let items
     try {
       items = await getBookContents({ bookId, chapters: chaptersPayload, variant })
     } catch {
-      return false
+      return { ok: false, failed: [] }
     }
-    if (!Array.isArray(items)) return false
+    if (!Array.isArray(items)) return { ok: false, failed: [] }
     // 响应期间换书/换源：旧请求的结果不能写进新书的预加载池（换书已清空
     // preloadedContent，这里直接丢弃，不算失败、也不再回退逐章）
-    if (book.value?.bookId !== bookId) return true
+    if (book.value?.bookId !== bookId) return { ok: true, failed: [] }
 
+    // 成功取回正文的请求章；其余（data 为空 / 响应缺失）都要逐章兜底
+    const answered = new Set<number>()
     for (const item of items) {
-      if (!item?.data) continue // 单章失败：原因在 error，跳过即可
-      const chapterIndex = item.index
-      const sentUrl = sentUrls.get(chapterIndex)
+      const chapterIndex = item?.index
+      const sentUrl = typeof chapterIndex === 'number' ? sentUrls.get(chapterIndex) : undefined
       if (sentUrl === undefined) continue
+      if (!item?.data) continue // 单章失败：原因在 error，记入 failed 走逐章兜底
+      answered.add(chapterIndex)
       const chapter = chapters.value[chapterIndex]
       if (!chapter || chapter.url !== sentUrl) continue
       if (preloadedContent.value.has(chapterIndex)) continue
@@ -1196,7 +1212,8 @@ export const useReaderStore = defineStore('reader', () => {
       // 版本信息/diff/浏览器缓存与单章路径同口径落账
       await recordChapterContent(chapterIndex, chapter, item.data, { bookId, isLocal, variant })
     }
-    return true
+    const failed = [...sentUrls.keys()].filter((chapterIndex) => !answered.has(chapterIndex))
+    return { ok: true, failed }
   }
 
   async function preloadNextChapter(index: number) {
