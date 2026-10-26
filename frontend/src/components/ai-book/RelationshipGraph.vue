@@ -328,7 +328,7 @@ marker#graph-arrow path {
   transform: translateY(-1px);
   border-color: var(--color-primary);
   background: var(--color-primary);
-  color: #fff;
+  color: var(--color-text-inverse);
   box-shadow:
     0 14px 30px rgba(212, 129, 42, 0.24),
     0 0 0 5px rgba(212, 129, 42, 0.14);

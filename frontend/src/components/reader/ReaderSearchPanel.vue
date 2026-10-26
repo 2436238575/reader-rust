@@ -161,7 +161,7 @@ watch(
   border: none;
   border-radius: 12px;
   background: var(--color-primary);
-  color: #fff;
+  color: var(--color-text-inverse);
   font-size: var(--text-sm);
   padding: 11px 14px;
   cursor: pointer;
@@ -192,7 +192,7 @@ watch(
 
 .search-result-item.active {
   border-color: var(--color-primary);
-  background: rgba(201, 127, 58, 0.08);
+  background: color-mix(in srgb, var(--color-primary) 8%, transparent);
 }
 
 .search-result-title {
@@ -249,7 +249,7 @@ watch(
 .scope-btn.active {
   background: var(--color-primary);
   border-color: var(--color-primary);
-  color: #fff;
+  color: var(--color-text-inverse);
   opacity: 1;
 }
 

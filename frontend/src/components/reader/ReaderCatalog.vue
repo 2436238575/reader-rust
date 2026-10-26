@@ -629,8 +629,8 @@ const formatDate = formatMonthDayTime
 
 .tab.active {
   opacity: 1;
-  color: var(--color-primary, #c97f3a);
-  border-bottom-color: var(--color-primary, #c97f3a);
+  color: var(--color-primary);
+  border-bottom-color: var(--color-primary);
 }
 
 .icon-btn,
@@ -724,7 +724,7 @@ const formatDate = formatMonthDayTime
 }
 
 .search-input:focus {
-  border-color: var(--color-primary, #c97f3a);
+  border-color: var(--color-primary);
   background: rgba(0, 0, 0, 0.02);
 }
 
@@ -780,9 +780,9 @@ const formatDate = formatMonthDayTime
 
 .jump-btn:hover:not(:disabled) {
   opacity: 1;
-  border-color: rgba(201, 127, 58, 0.35);
-  background: rgba(201, 127, 58, 0.08);
-  color: var(--color-primary, #c97f3a);
+  border-color: color-mix(in srgb, var(--color-primary) 35%, transparent);
+  background: color-mix(in srgb, var(--color-primary) 8%, transparent);
+  color: var(--color-primary);
 }
 
 .jump-btn:disabled {
@@ -813,13 +813,13 @@ const formatDate = formatMonthDayTime
 }
 
 .bookmark-action.primary {
-  border-color: var(--color-primary, #c97f3a);
-  color: var(--color-primary, #c97f3a);
+  border-color: var(--color-primary);
+  color: var(--color-primary);
 }
 
 .bookmark-action.danger {
-  border-color: #ef4444;
-  color: #ef4444;
+  border-color: var(--color-danger);
+  color: var(--color-danger);
 }
 
 .loading,
@@ -854,8 +854,8 @@ const formatDate = formatMonthDayTime
 }
 
 .list-item.active {
-  color: var(--color-primary, #c97f3a);
-  background: rgba(201, 127, 58, 0.05);
+  color: var(--color-primary);
+  background: color-mix(in srgb, var(--color-primary) 5%, transparent);
 }
 
 .list-item.read:not(.active) .item-title {
@@ -915,9 +915,9 @@ const formatDate = formatMonthDayTime
 }
 
 .status-badge.current {
-  color: var(--color-primary, #c97f3a);
-  background: rgba(201, 127, 58, 0.12);
-  border-color: rgba(201, 127, 58, 0.2);
+  color: var(--color-primary);
+  background: color-mix(in srgb, var(--color-primary) 12%, transparent);
+  border-color: color-mix(in srgb, var(--color-primary) 20%, transparent);
 }
 
 .status-badge.cached {
@@ -938,7 +938,7 @@ const formatDate = formatMonthDayTime
 }
 
 .bookmark-item.selected {
-  background: rgba(201, 127, 58, 0.08);
+  background: color-mix(in srgb, var(--color-primary) 8%, transparent);
 }
 
 .bookmark-check {
@@ -955,9 +955,9 @@ const formatDate = formatMonthDayTime
 }
 
 .bookmark-check.checked {
-  background: var(--color-primary, #c97f3a);
-  border-color: var(--color-primary, #c97f3a);
-  color: #fff;
+  background: var(--color-primary);
+  border-color: var(--color-primary);
+  color: var(--color-text-inverse);
 }
 
 .bm-header {
@@ -1032,7 +1032,7 @@ const formatDate = formatMonthDayTime
 
 .bm-delete {
   background: rgba(255, 0, 0, 0.05);
-  color: #ef4444;
+  color: var(--color-danger);
 }
 
 .bm-edit svg,
@@ -1044,8 +1044,8 @@ const formatDate = formatMonthDayTime
 .bm-note {
   font-size: var(--text-xs);
   opacity: 0.75;
-  background: rgba(201, 127, 58, 0.08);
-  border-left: 2px solid var(--color-primary, #c97f3a);
+  background: color-mix(in srgb, var(--color-primary) 8%, transparent);
+  border-left: 2px solid var(--color-primary);
   padding: 4px 8px;
   border-radius: 4px;
   line-height: 1.5;
@@ -1085,8 +1085,8 @@ const formatDate = formatMonthDayTime
 }
 
 .note-btn.primary {
-  background: var(--color-primary, #c97f3a);
-  border-color: var(--color-primary, #c97f3a);
-  color: #fff;
+  background: var(--color-primary);
+  border-color: var(--color-primary);
+  color: var(--color-text-inverse);
 }
 </style>

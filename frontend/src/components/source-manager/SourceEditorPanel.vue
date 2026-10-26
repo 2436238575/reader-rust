@@ -208,7 +208,7 @@ const overview = computed(() => getBookSourceOverview(props.source))
 
 .tab-btn.active {
   background: var(--color-primary);
-  color: #fff;
+  color: var(--color-text-inverse);
 }
 
 .overview-pane,

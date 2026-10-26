@@ -301,7 +301,7 @@ defineEmits<{
 }
 .m-top-item.active {
   opacity: 1;
-  color: var(--color-primary, #c97f3a);
+  color: var(--color-primary);
 }
 
 .m-bottom-bar {
@@ -341,7 +341,7 @@ defineEmits<{
   left: 0;
   top: 0;
   bottom: 0;
-  background: var(--color-primary, #c97f3a);
+  background: var(--color-primary);
   border-radius: 2px;
 }
 
@@ -353,7 +353,7 @@ defineEmits<{
   height: 14px;
   border-radius: 50%;
   background: white;
-  border: 2px solid var(--color-primary, #c97f3a);
+  border: 2px solid var(--color-primary);
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
 }
 
@@ -428,7 +428,7 @@ defineEmits<{
   height: 18px;
 }
 .m-btn.active {
-  color: var(--color-primary, #c97f3a);
+  color: var(--color-primary);
   opacity: 1;
 }
 .m-btn.spinning svg {

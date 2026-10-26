@@ -305,8 +305,8 @@ async function handleSwitch(res: SearchBook) {
   margin: 8px 16px 14px;
   padding: 12px;
   border-radius: 14px;
-  background: rgba(201, 127, 58, 0.08);
-  border: 1px solid rgba(201, 127, 58, 0.14);
+  background: color-mix(in srgb, var(--color-primary) 8%, transparent);
+  border: 1px solid color-mix(in srgb, var(--color-primary) 14%, transparent);
 }
 
 .book-brief-cover {
@@ -387,12 +387,12 @@ async function handleSwitch(res: SearchBook) {
   background: rgba(0, 0, 0, 0.03);
 }
 .source-item.current {
-  background: rgba(201, 127, 58, 0.04);
+  background: color-mix(in srgb, var(--color-primary) 4%, transparent);
   cursor: default;
 }
 .source-item.selected {
-  background: rgba(201, 127, 58, 0.08);
-  box-shadow: inset 3px 0 0 var(--color-primary, #c97f3a);
+  background: color-mix(in srgb, var(--color-primary) 8%, transparent);
+  box-shadow: inset 3px 0 0 var(--color-primary);
 }
 
 .source-main {
@@ -444,7 +444,7 @@ async function handleSwitch(res: SearchBook) {
 .source-chapter {
   font-size: var(--text-xs);
   opacity: 0.7;
-  color: var(--color-primary, #c97f3a);
+  color: var(--color-primary);
 }
 .source-update {
   font-size: var(--text-xs);
@@ -464,7 +464,7 @@ async function handleSwitch(res: SearchBook) {
 }
 
 .compare-text.strong {
-  color: var(--color-primary, #c97f3a);
+  color: var(--color-primary);
   opacity: 0.92;
 }
 
@@ -496,9 +496,9 @@ async function handleSwitch(res: SearchBook) {
 }
 
 .source-item:hover .switch-btn {
-  background: var(--color-primary, #c97f3a);
+  background: var(--color-primary);
   color: white;
-  border-color: var(--color-primary, #c97f3a);
+  border-color: var(--color-primary);
   opacity: 1;
 }
 
@@ -506,8 +506,8 @@ async function handleSwitch(res: SearchBook) {
   margin: 8px 16px 18px;
   padding: 14px;
   border-radius: 16px;
-  background: rgba(201, 127, 58, 0.08);
-  border: 1px solid rgba(201, 127, 58, 0.14);
+  background: color-mix(in srgb, var(--color-primary) 8%, transparent);
+  border: 1px solid color-mix(in srgb, var(--color-primary) 14%, transparent);
 }
 
 .compare-header {
@@ -525,9 +525,9 @@ async function handleSwitch(res: SearchBook) {
 }
 
 .switch-btn.primary {
-  background: var(--color-primary, #c97f3a);
-  border-color: var(--color-primary, #c97f3a);
-  color: #fff;
+  background: var(--color-primary);
+  border-color: var(--color-primary);
+  color: var(--color-text-inverse);
   opacity: 1;
 }
 
@@ -550,8 +550,8 @@ async function handleSwitch(res: SearchBook) {
 }
 
 .compare-card.highlight {
-  border-color: rgba(201, 127, 58, 0.28);
-  background: rgba(201, 127, 58, 0.12);
+  border-color: color-mix(in srgb, var(--color-primary) 28%, transparent);
+  background: color-mix(in srgb, var(--color-primary) 12%, transparent);
 }
 
 .compare-title {
@@ -625,9 +625,9 @@ async function handleSwitch(res: SearchBook) {
 }
 
 .load-more-btn:hover:not(:disabled) {
-  background: rgba(201, 127, 58, 0.08);
-  border-color: var(--color-primary, #c97f3a);
-  color: var(--color-primary, #c97f3a);
+  background: color-mix(in srgb, var(--color-primary) 8%, transparent);
+  border-color: var(--color-primary);
+  color: var(--color-primary);
 }
 
 .load-more-btn:disabled {
@@ -639,7 +639,7 @@ async function handleSwitch(res: SearchBook) {
   width: 24px;
   height: 24px;
   border: 2px solid rgba(0, 0, 0, 0.1);
-  border-top-color: var(--color-primary, #c97f3a);
+  border-top-color: var(--color-primary);
   border-radius: 50%;
   animation: spin 1s linear infinite;
   margin: 0 auto 12px;

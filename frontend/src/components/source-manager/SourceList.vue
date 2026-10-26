@@ -110,11 +110,11 @@ defineEmits<{
 }
 
 .source-item.active {
-  background: rgba(201, 127, 58, 0.06);
+  background: color-mix(in srgb, var(--color-primary) 6%, transparent);
 }
 
 .source-item.selected {
-  background: rgba(201, 127, 58, 0.1);
+  background: color-mix(in srgb, var(--color-primary) 10%, transparent);
   box-shadow: inset 3px 0 0 var(--color-primary);
 }
 
@@ -201,7 +201,7 @@ defineEmits<{
   left: 2px;
   top: 2px;
   border-radius: 50%;
-  background: #fff;
+  background: var(--color-text-inverse);
   box-shadow: var(--shadow-xs);
   transition: transform var(--duration-fast);
 }
@@ -236,7 +236,7 @@ defineEmits<{
 }
 
 .icon-btn.danger:hover {
-  background: rgba(245, 34, 45, 0.08);
+  background: color-mix(in srgb, var(--color-danger) 8%, transparent);
   color: var(--color-danger);
 }
 

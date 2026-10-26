@@ -685,7 +685,7 @@ async function doImport() {
   border-radius: 8px;
   border: none;
   background: #2563eb;
-  color: #fff;
+  color: var(--color-text-inverse);
   font-size: var(--text-sm);
   cursor: pointer;
   white-space: nowrap;
@@ -837,7 +837,7 @@ async function doImport() {
 }
 
 .error-text {
-  color: #ef4444;
+  color: var(--color-danger);
   font-size: var(--text-sm);
   flex-shrink: 0;
 }
@@ -1119,7 +1119,7 @@ async function doImport() {
 }
 
 .detail-note.error {
-  color: #ef4444;
+  color: var(--color-danger);
   opacity: 0.9;
 }
 
@@ -1171,7 +1171,7 @@ async function doImport() {
 }
 
 .diff-line.del .diff-sign {
-  color: #ef4444;
+  color: var(--color-danger);
 }
 
 .diff-line.add .diff-sign {

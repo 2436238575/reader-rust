@@ -133,11 +133,11 @@ button {
 
 .btn-danger {
   color: var(--color-danger);
-  border-color: rgba(245, 34, 45, 0.26);
+  border-color: color-mix(in srgb, var(--color-danger) 26%, transparent);
 }
 
 .btn-danger:hover {
-  background: rgba(245, 34, 45, 0.06);
+  background: color-mix(in srgb, var(--color-danger) 6%, transparent);
   color: var(--color-danger);
 }
 

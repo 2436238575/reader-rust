@@ -687,7 +687,7 @@ function normalizeSearch(value: string) {
 .primary-btn {
   background: var(--color-primary);
   border-color: var(--color-primary);
-  color: #fff;
+  color: var(--color-text-inverse);
 }
 
 .ghost-danger-btn {
@@ -743,7 +743,7 @@ function normalizeSearch(value: string) {
   left: 2px;
   top: 2px;
   border-radius: 50%;
-  background: #fff;
+  background: var(--color-text-inverse);
   transition: transform var(--duration-fast);
 }
 
@@ -759,7 +759,7 @@ function normalizeSearch(value: string) {
   margin-top: 14px;
   padding: 10px 12px;
   border-radius: 8px;
-  background: rgba(201, 127, 58, 0.12);
+  background: color-mix(in srgb, var(--color-primary) 12%, transparent);
   color: var(--color-text-secondary);
   font-size: var(--text-sm);
   flex: 0 0 auto;

@@ -134,7 +134,7 @@ async function openBook(book: Book) {
 }
 
 .shelf-item.current {
-  background: rgba(201, 127, 58, 0.08); /* primary slight tint */
+  background: color-mix(in srgb, var(--color-primary) 8%, transparent); /* primary slight tint */
 }
 
 .book-cover {
@@ -183,6 +183,6 @@ async function openBook(book: Book) {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  color: var(--color-primary, #c97f3a);
+  color: var(--color-primary);
 }
 </style>

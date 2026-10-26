@@ -498,7 +498,7 @@ async function selectServerSpeech() {
 
 .switch-line input:checked + .switch-ui::after {
   left: 16px;
-  background: #fff;
+  background: var(--color-text-inverse);
 }
 
 .proxy-option {

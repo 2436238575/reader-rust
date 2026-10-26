@@ -141,7 +141,7 @@ function onKeydown(e: KeyboardEvent) {
 }
 
 .input-layer::selection {
-  background: rgba(201, 127, 58, 0.35);
+  background: color-mix(in srgb, var(--color-primary) 35%, transparent);
   color: transparent;
 }
 

@@ -232,8 +232,8 @@ const introText = computed(() => {
   position: absolute;
   inset: 0;
   background:
-    radial-gradient(circle at 0 0, rgba(201, 127, 58, 0.08), transparent 34%),
-    linear-gradient(90deg, rgba(201, 127, 58, 0.035), transparent 42%);
+    radial-gradient(circle at 0 0, color-mix(in srgb, var(--color-primary) 8%, transparent), transparent 34%),
+    linear-gradient(90deg, color-mix(in srgb, var(--color-primary) 3.5%, transparent), transparent 42%);
   opacity: 0;
   transition: opacity var(--duration-normal) var(--ease-out);
   pointer-events: none;
@@ -327,7 +327,7 @@ const introText = computed(() => {
   min-width: 18px;
   text-align: center;
   line-height: 15px;
-  box-shadow: 0 6px 14px rgba(201, 127, 58, 0.28);
+  box-shadow: 0 6px 14px color-mix(in srgb, var(--color-primary) 28%, transparent);
   z-index: 1;
 }
 
@@ -539,7 +539,7 @@ const introText = computed(() => {
 }
 
 .cache-chip.primary {
-  background: rgba(201, 127, 58, 0.13);
+  background: color-mix(in srgb, var(--color-primary) 13%, transparent);
   color: var(--color-primary);
 }
 

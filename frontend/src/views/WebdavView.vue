@@ -433,13 +433,13 @@ async function restoreBackup(entry: EntryRow) {
 }
 
 .notice.warning {
-  background: rgba(201, 127, 58, 0.12);
-  border: 1px solid rgba(201, 127, 58, 0.18);
+  background: color-mix(in srgb, var(--color-primary) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--color-primary) 18%, transparent);
 }
 
 .notice.error {
-  background: rgba(245, 34, 45, 0.08);
-  border: 1px solid rgba(245, 34, 45, 0.14);
+  background: color-mix(in srgb, var(--color-danger) 8%, transparent);
+  border: 1px solid color-mix(in srgb, var(--color-danger) 14%, transparent);
 }
 
 .file-list {

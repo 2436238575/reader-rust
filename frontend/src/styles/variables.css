@@ -25,7 +25,9 @@
   --color-accent: #4a90d9;
   --color-success: #52c41a;
   --color-warning: #faad14;
-  --color-danger: #f5222d;
+  /* 危险红全站唯一出口：历史上组件里硬编码 #ef4444（21 处）远多于 token 旧值
+     #f5222d 的使用（13 处），为让全站视觉变化最小，token 值向多数派看齐 */
+  --color-danger: #ef4444;
 
   /* Neutrals */
   --color-bg: #faf9f7;

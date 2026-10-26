@@ -314,12 +314,12 @@ async function restoreUpstream() {
 .primary-btn {
   background: var(--color-primary);
   border-color: var(--color-primary);
-  color: #fff;
+  color: var(--color-text-inverse);
 }
 
 .danger-btn {
   border-color: rgba(239, 68, 68, 0.4);
-  color: #ef4444;
+  color: var(--color-danger);
 }
 
 .ghost-btn:disabled,

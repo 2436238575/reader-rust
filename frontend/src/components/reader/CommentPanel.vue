@@ -804,7 +804,7 @@ function formatReviewTime(raw: string) {
   padding: 0 5px;
   border-radius: 4px;
   background: var(--color-primary);
-  color: var(--color-bg-elevated, #fff);
+  color: var(--color-bg-elevated);
   font-size: 10px;
   line-height: 1.6;
   font-weight: 500;
@@ -936,7 +936,7 @@ function formatReviewTime(raw: string) {
   margin-top: 2px;
   padding: 0;
   background: none;
-  color: var(--color-primary, #c97f3a);
+  color: var(--color-primary);
   font-size: 12px;
   cursor: pointer;
 }

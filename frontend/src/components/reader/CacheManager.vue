@@ -390,7 +390,7 @@ function stopWorking() {
 .summary-card {
   border-radius: 16px;
   padding: 16px;
-  background: rgba(201, 127, 58, 0.08);
+  background: color-mix(in srgb, var(--color-primary) 8%, transparent);
   display: flex;
   flex-direction: column;
   gap: 6px;
@@ -435,15 +435,15 @@ function stopWorking() {
 .link-btn {
   background: transparent;
   border: none;
-  color: var(--color-primary, #c97f3a);
+  color: var(--color-primary);
   cursor: pointer;
 }
 
 .info-card {
-  background: rgba(201, 127, 58, 0.08);
+  background: color-mix(in srgb, var(--color-primary) 8%, transparent);
   padding: 16px;
   border-radius: 12px;
-  border-left: 4px solid var(--color-primary, #c97f3a);
+  border-left: 4px solid var(--color-primary);
 }
 
 .info-card p {
@@ -474,13 +474,13 @@ function stopWorking() {
 }
 
 .cache-opt:hover {
-  border-color: var(--color-primary, #c97f3a);
-  background: rgba(201, 127, 58, 0.04);
+  border-color: var(--color-primary);
+  background: color-mix(in srgb, var(--color-primary) 4%, transparent);
 }
 
 .cache-opt.primary {
-  background: var(--color-primary, #c97f3a);
-  border-color: var(--color-primary, #c97f3a);
+  background: var(--color-primary);
+  border-color: var(--color-primary);
   color: white;
 }
 
@@ -527,7 +527,7 @@ function stopWorking() {
 }
 .circle {
   fill: none;
-  stroke: var(--color-primary, #c97f3a);
+  stroke: var(--color-primary);
   stroke-width: 2.8;
   stroke-linecap: round;
   transition: stroke-dasharray 0.3s;
@@ -561,7 +561,7 @@ function stopWorking() {
   padding: 8px 24px;
   border-radius: 20px;
   background: rgba(239, 68, 68, 0.1);
-  color: #ef4444;
+  color: var(--color-danger);
   border: 1px solid rgba(239, 68, 68, 0.2);
   cursor: pointer;
   font-size: var(--text-base);

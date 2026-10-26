@@ -254,7 +254,7 @@ defineEmits<{
   border: none;
   border-radius: 10px;
   background: var(--color-primary);
-  color: #fff;
+  color: var(--color-text-inverse);
   cursor: pointer;
 }
 
@@ -288,7 +288,7 @@ defineEmits<{
 .tts-timer-actions button.active {
   background: var(--color-primary);
   border-color: var(--color-primary);
-  color: #fff;
+  color: var(--color-text-inverse);
 }
 
 .tts-timer-text {

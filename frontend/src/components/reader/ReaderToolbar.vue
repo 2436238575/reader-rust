@@ -199,7 +199,7 @@ defineEmits<{
 
 .tb-btn.active {
   opacity: 1;
-  color: var(--color-primary, #c97f3a);
+  color: var(--color-primary);
 }
 
 .tb-btn.spinning svg {
@@ -244,7 +244,7 @@ defineEmits<{
 
 .progress-btn:hover {
   opacity: 0.9;
-  color: var(--color-primary, #c97f3a);
+  color: var(--color-primary);
 }
 
 @media (max-width: 767px) {

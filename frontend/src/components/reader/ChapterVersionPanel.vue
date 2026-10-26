@@ -770,7 +770,7 @@ watch(
 }
 
 .stat-del {
-  color: #ef4444;
+  color: var(--color-danger);
 }
 
 .stat-mod {
@@ -800,7 +800,7 @@ watch(
 }
 
 .diff-row.del .diff-gutter {
-  color: #ef4444;
+  color: var(--color-danger);
 }
 
 .diff-row.add {

@@ -235,7 +235,7 @@ async function discardEdit() {
 }
 
 .stat-del {
-  color: #ef4444;
+  color: var(--color-danger);
 }
 
 .stat-mod {
@@ -255,7 +255,7 @@ async function discardEdit() {
 
 .danger-btn {
   border-color: rgba(239, 68, 68, 0.4);
-  color: #ef4444;
+  color: var(--color-danger);
 }
 
 .close-btn {
@@ -328,7 +328,7 @@ async function discardEdit() {
 }
 
 .diff-row.del .diff-gutter {
-  color: #ef4444;
+  color: var(--color-danger);
 }
 
 .diff-row.add {

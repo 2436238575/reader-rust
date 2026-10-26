@@ -326,7 +326,7 @@ function handleDelete(rule: KeywordHighlightRule) {
 }
 
 .op-btn.delete {
-  color: #ef4444;
+  color: var(--color-danger);
   border-color: rgba(239, 68, 68, 0.2);
 }
 

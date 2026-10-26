@@ -477,8 +477,8 @@ function toggleSection(title: string) {
 .parse-error {
   padding: var(--space-4);
   border-radius: var(--radius-md);
-  background: rgba(201, 127, 58, 0.12);
-  border: 1px solid rgba(201, 127, 58, 0.18);
+  background: color-mix(in srgb, var(--color-primary) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--color-primary) 18%, transparent);
   color: var(--color-text-secondary);
   font-size: var(--text-sm);
 }

@@ -9,7 +9,6 @@
       background: theme.body,
       color: theme.fontColor,
       fontFamily: currentFontFamily,
-      '--color-primary': '#c97f3a',
     }"
     @click="handleBackgroundClick"
     @contextmenu.prevent="handleContextMenu"
@@ -2370,9 +2369,6 @@ watch(
   background: rgba(0, 0, 0, 0.1);
   border-radius: 4px;
 }
-.reader-view[style*='background: #1a1a2e'] .reader-scroll-container::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.1);
-}
 
 .content-loading {
   display: flex;
@@ -2388,9 +2384,9 @@ watch(
   margin: 0 auto;
   width: min(100%, 880px);
   padding: 10px 16px;
-  background: rgba(201, 127, 58, 0.12);
+  background: color-mix(in srgb, var(--color-primary) 12%, transparent);
   color: var(--color-primary);
-  border-bottom: 1px solid rgba(201, 127, 58, 0.18);
+  border-bottom: 1px solid color-mix(in srgb, var(--color-primary) 18%, transparent);
   font-size: var(--text-sm);
   line-height: 1.5;
   text-align: center;
@@ -2404,10 +2400,6 @@ watch(
   border-top-color: var(--color-primary);
   border-radius: 50%;
   animation: spin 1s linear infinite;
-}
-.reader-view[style*='background: #1a1a2e'] .loading-spinner {
-  border-color: rgba(255, 255, 255, 0.1);
-  border-top-color: var(--color-primary);
 }
 
 @keyframes spin {
@@ -2488,7 +2480,7 @@ watch(
 
 /* 上部裁剪的占位章：只留一个淡标题撑住高度，回到视口附近即回载真实内容 */
 .chapter-placeholder {
-  color: var(--color-text-secondary, #999);
+  color: var(--color-text-secondary);
   font-size: var(--text-sm);
   opacity: 0.5;
   user-select: none;
@@ -2581,8 +2573,8 @@ watch(
 
 /* 作者评论/点赞过：气泡染上主题色，羽毛笔标记不透明 */
 :deep(.para-comment-bubble.has-author) {
-  background: rgba(201, 127, 58, 0.16);
-  color: var(--color-primary, #c97f3a);
+  background: color-mix(in srgb, var(--color-primary) 16%, transparent);
+  color: var(--color-primary);
 }
 
 :deep(.para-comment-bubble.has-author:hover),
@@ -2665,9 +2657,9 @@ watch(
 }
 
 :deep(.chapter-text p.reading) {
-  background: rgba(201, 127, 58, 0.12);
+  background: color-mix(in srgb, var(--color-primary) 12%, transparent);
   border-radius: 10px;
-  box-shadow: inset 0 0 0 1px rgba(201, 127, 58, 0.18);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--color-primary) 18%, transparent);
 }
 
 :deep(.chapter-text p.reader-indent) {
@@ -2827,14 +2819,14 @@ watch(
   border-radius: 10px;
   padding: 10px 12px;
   background: var(--color-primary);
-  color: #fff;
+  color: var(--color-text-inverse);
   font-size: var(--text-sm);
   cursor: pointer;
 }
 
 /* 划线菜单里的删除动作：红色与全站 danger 一致 */
 .selection-menu-actions button.danger-action {
-  background: #ef4444;
+  background: var(--color-danger);
 }
 
 /* ─── diff 标记的就地预览卡 ─── */
@@ -2895,7 +2887,7 @@ watch(
 }
 
 .diff-preview-row.del {
-  color: #ef4444;
+  color: var(--color-danger);
 }
 
 .diff-preview-row.add {
@@ -2940,7 +2932,7 @@ watch(
   border-radius: 10px;
   padding: 8px 14px;
   background: var(--color-primary);
-  color: #fff;
+  color: var(--color-text-inverse);
   font-size: var(--text-sm);
   cursor: pointer;
 }
@@ -3006,7 +2998,7 @@ watch(
 
 /* 划线回显：主题色下划线，与关键词底色/搜索高亮可叠加；可点击打开操作菜单 */
 :deep(.reader-underline) {
-  border-bottom: 2px solid var(--color-primary, #c97f3a);
+  border-bottom: 2px solid var(--color-primary);
   padding-bottom: 1px;
   cursor: pointer;
 }
@@ -3056,7 +3048,7 @@ watch(
   display: inline-block;
   width: 0;
   height: 1em;
-  border-left: 2px solid #ef4444;
+  border-left: 2px solid var(--color-danger);
   margin-left: -2px;
   vertical-align: -0.15em;
 }
@@ -3071,7 +3063,7 @@ watch(
   position: absolute;
   left: -18px;
   top: 0.15em;
-  color: #ef4444;
+  color: var(--color-danger);
   font-size: 0.8em;
   line-height: 1;
   pointer-events: none;

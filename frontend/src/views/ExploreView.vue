@@ -1,5 +1,5 @@
 <template>
-  <div class="explore-view" :style="{ '--color-primary': '#c97f3a' }">
+  <div class="explore-view">
     <div class="explore-header">
       <h2>发现</h2>
       <!-- 顶部：书源切换（与标题同行，右对齐）；只有一个可用书源时没有切换意义 -->
@@ -351,7 +351,7 @@ async function handleRetry() {
 }
 
 .category-tag.active {
-  background: rgba(201, 127, 58, 0.1);
+  background: color-mix(in srgb, var(--color-primary) 10%, transparent);
   color: var(--color-primary);
   font-weight: 600;
 }
@@ -386,7 +386,7 @@ async function handleRetry() {
 }
 
 .error-state {
-  color: #ef4444;
+  color: var(--color-danger);
 }
 
 .error-state .retry-btn {
