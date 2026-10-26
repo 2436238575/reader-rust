@@ -121,38 +121,43 @@
     </div>
 
     <!-- Chapters List -->
-    <div v-show="activeTab === 'chapters'" class="list-container" ref="listRef">
+    <div v-show="activeTab === 'chapters'" class="chapter-list-shell">
       <div v-if="store.chaptersLoading" class="loading">加载目录中...</div>
       <div v-else-if="filteredChapters.length === 0" class="empty">未找到匹配的章节</div>
-      <template v-else>
-        <template v-for="row in catalogRows" :key="row.key">
-          <div v-if="row.kind === 'volume'" class="volume-header">{{ row.name }}</div>
-          <div
-            v-else
-            class="list-item"
-            :class="{
-              active: row.chapter.index === store.currentIndex,
-              read: marksStore.isChapterRead(row.chapter.index),
-              'with-meta': !!row.meta,
-            }"
-            @click="goToChapter(row.chapter.index)"
-          >
-            <span class="item-index">{{ row.chapter.index + 1 }}</span>
-            <div class="item-main">
-              <span class="item-title">{{ row.chapter.title }}</span>
-              <span v-if="row.meta" class="item-meta">{{ row.meta }}</span>
-            </div>
-            <div class="item-status">
-              <span v-if="row.chapter.index === store.currentIndex" class="status-badge current"
-                >当前</span
-              >
-              <span v-if="isChapterCached(row.chapter.url)" class="status-badge cached"
-                >已缓存</span
-              >
-            </div>
+      <!-- 千章目录：VList 窗口化渲染，行高（卷头/章行/带 meta 章行）由 virtua 自动测量；
+           key 用 catalogRows 的稳定行键（vol-/ch- 前缀 + 章 index） -->
+      <VList
+        v-else
+        ref="chapterListRef"
+        class="chapter-vlist"
+        :data="catalogRows"
+        #default="{ item: row }"
+      >
+        <div v-if="row.kind === 'volume'" :key="row.key" class="volume-header">{{ row.name }}</div>
+        <div
+          v-else
+          :key="row.key"
+          class="list-item"
+          :class="{
+            active: row.chapter.index === store.currentIndex,
+            read: marksStore.isChapterRead(row.chapter.index),
+            'with-meta': !!row.meta,
+          }"
+          @click="goToChapter(row.chapter.index)"
+        >
+          <span class="item-index">{{ row.chapter.index + 1 }}</span>
+          <div class="item-main">
+            <span class="item-title">{{ row.chapter.title }}</span>
+            <span v-if="row.meta" class="item-meta">{{ row.meta }}</span>
           </div>
-        </template>
-      </template>
+          <div class="item-status">
+            <span v-if="row.chapter.index === store.currentIndex" class="status-badge current"
+              >当前</span
+            >
+            <span v-if="isChapterCached(row.chapter.url)" class="status-badge cached">已缓存</span>
+          </div>
+        </div>
+      </VList>
     </div>
 
     <!-- Bookmarks List -->
@@ -281,6 +286,8 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted, nextTick, watch } from 'vue'
+import { VList } from 'virtua/vue'
+import type { VListHandle } from 'virtua/vue'
 import { useReaderStore } from '../../stores/reader'
 import { useReaderContentStore } from '../../stores/readerContent'
 import { useReaderMarksStore } from '../../stores/readerMarks'
@@ -315,7 +322,7 @@ const configStore = useReaderConfigStore()
 const appStore = useAppStore()
 const theme = computed(() => configStore.currentTheme)
 const activeTab = ref<CatalogTab>(props.initialTab)
-const listRef = ref<HTMLElement>()
+const chapterListRef = ref<VListHandle>()
 const bookmarkEditMode = ref(false)
 const selectedBookmarkKeys = ref<Set<string>>(new Set())
 const cachedChapterUrls = ref<Set<string>>(new Set())
@@ -426,26 +433,31 @@ watch(
 )
 
 function scrollToCurrent() {
-  // 长目录渲染需要时间（content-visibility 懒绘制）：一次 nextTick 可能还找不到
-  // 当前章，补一次 250ms 重试兜底
+  const scroll = () => {
+    const list = chapterListRef.value
+    if (!list) return false
+    // 虚拟滚动下当前章可能不在 DOM 里，按行号定位（当前章必为 chapter 行）
+    const rowIndex = catalogRows.value.findIndex(
+      (row) => row.kind === 'chapter' && row.chapter.index === store.currentIndex
+    )
+    if (rowIndex < 0) return false
+    list.scrollToIndex(rowIndex, { align: 'center' })
+    return true
+  }
+  // 目录加载中（VList 尚未挂载）时补一次 250ms 重试兜底，节奏沿用旧实现
   nextTick(() => {
-    const activeEl = listRef.value?.querySelector('.list-item.active')
-    if (activeEl) {
-      activeEl.scrollIntoView({ block: 'center' })
-      return
-    }
-    window.setTimeout(() => {
-      listRef.value?.querySelector('.list-item.active')?.scrollIntoView({ block: 'center' })
-    }, 250)
+    if (scroll()) return
+    window.setTimeout(scroll, 250)
   })
 }
 
 function scrollCatalogTo(position: 'top' | 'bottom') {
-  const el = listRef.value
-  if (!el) return
-  el.scrollTo({
-    top: position === 'top' ? 0 : el.scrollHeight,
-    behavior: 'smooth',
+  const list = chapterListRef.value
+  const rowCount = catalogRows.value.length
+  if (!list || !rowCount) return
+  list.scrollToIndex(position === 'top' ? 0 : rowCount - 1, {
+    align: position === 'top' ? 'start' : 'end',
+    smooth: true,
   })
 }
 
@@ -668,6 +680,22 @@ const formatDate = formatMonthDayTime
   overscroll-behavior: contain;
 }
 
+/* 章节目录的滚动容器是 VList：外壳只负责布局与边缘留白，不滚动 */
+.chapter-list-shell {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  padding: 4px 0 8px;
+}
+
+.chapter-vlist {
+  flex: 1;
+  min-height: 0;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
+}
+
 .chapter-toolbar {
   flex-shrink: 0;
   display: flex;
@@ -808,16 +836,8 @@ const formatDate = formatMonthDayTime
   gap: 12px;
   padding: 12px 20px;
   cursor: pointer;
-  /* 千章目录：视口外的行跳过布局与绘制 */
-  content-visibility: auto;
-  contain-intrinsic-size: auto 46px;
   transition: all 0.2s;
   border-bottom: 1px solid rgba(0, 0, 0, 0.02);
-}
-
-/* 带 meta 行（字数/时间）的章节更高，给 content-visibility 一个更准的预估 */
-.list-item.with-meta {
-  contain-intrinsic-size: auto 64px;
 }
 
 .volume-header {
@@ -827,8 +847,6 @@ const formatDate = formatMonthDayTime
   opacity: 0.65;
   line-height: 1.4;
   cursor: default;
-  content-visibility: auto;
-  contain-intrinsic-size: auto 34px;
 }
 
 .list-item:hover {
