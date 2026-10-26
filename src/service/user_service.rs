@@ -92,6 +92,24 @@ async fn equalize_login_timing(password: &str) {
     .await;
 }
 
+/// 登录/刷新/改密签发的会话：`data` 是面向客户端的 JSON（含 `accessToken`，
+/// 不含凭据），`refresh_token` 是明文 Refresh Token，只经 handler 写进
+/// `reader_refresh` HttpOnly Cookie 下发，从不进入 JSON 响应体。
+pub struct IssuedSession {
+    pub data: Value,
+    pub refresh_token: String,
+}
+
+// refresh_token 是凭据，不能进 Debug 输出（测试断言与日志都可能格式化它）
+impl std::fmt::Debug for IssuedSession {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("IssuedSession")
+            .field("data", &self.data)
+            .field("refresh_token", &"<redacted>")
+            .finish()
+    }
+}
+
 #[derive(Clone)]
 pub struct UserService {
     cfg: AppConfig,
@@ -288,7 +306,7 @@ impl UserService {
         }
     }
 
-    /// 登录，成功返回含 Access + Refresh 令牌的用户信息。
+    /// 登录，成功返回含 Access Token 的用户信息与新签发的 Refresh Token。
     ///
     /// `client_ip` 来自 `ConnectInfo`：IP 维度的登录封禁按它记账；集成测试等
     /// 拿不到对端地址的场景传 `None`，此时只走用户名维度的限速。
@@ -297,7 +315,7 @@ impl UserService {
         username: &str,
         password: &str,
         client_ip: Option<&str>,
-    ) -> Result<Value, AppError> {
+    ) -> Result<IssuedSession, AppError> {
         self.login_throttle_begin(username, client_ip)?;
         if let Some(mut user) = self.find_user(username).await? {
             if !verify_password_async(password, &user.password_hash).await? {
@@ -338,7 +356,7 @@ impl UserService {
         encode_token(&claims, &self.jwt_secret)
     }
 
-    async fn issue_login_response(&self, user: &mut User) -> Result<Value, AppError> {
+    async fn issue_login_response(&self, user: &mut User) -> Result<IssuedSession, AppError> {
         let now = now_ms();
         user.last_login_at = now;
         sqlx::query("UPDATE users SET last_login_at=?1 WHERE username=?2")
@@ -351,19 +369,25 @@ impl UserService {
             .refresh_store
             .issue(user.uid, user.token_version)
             .await?;
-        Ok(self.format_login(user, &access_token, &refresh_token))
+        Ok(IssuedSession {
+            data: self.format_login(user, &access_token),
+            refresh_token,
+        })
     }
 
     /// 用 Refresh Token 换一对新令牌（一次性轮换）。
     ///
     /// 所有失败（不存在/已过期/已吊销/版本不匹配/重放）统一 401，避免把
     /// 底层原因回给客户端；重放检测与家族吊销在 store 内完成。
-    pub async fn refresh_session(&self, refresh_token: &str) -> Result<Value, AppError> {
+    pub async fn refresh_session(&self, refresh_token: &str) -> Result<IssuedSession, AppError> {
         match self.refresh_store.rotate(refresh_token).await? {
             RotateOutcome::Rotated(session) => {
                 let access_token =
                     self.sign_access_token(session.uid, &session.username, session.token_version)?;
-                Ok(self.format_session(&access_token, &session.refresh_token))
+                Ok(IssuedSession {
+                    data: self.format_session(&access_token),
+                    refresh_token: session.refresh_token,
+                })
             }
             RotateOutcome::Invalid | RotateOutcome::ReuseDetected => {
                 Err(AppError::Unauthorized(NEED_LOGIN.to_string()))
@@ -419,7 +443,7 @@ impl UserService {
         Ok(v)
     }
 
-    /// 修改密码，返回换发的 Access + Refresh 令牌。
+    /// 修改密码，返回换发的 Access Token 与新会话家族的 Refresh Token。
     ///
     /// 版本号自增会让所有旧 Access Token 失效（等价于「改密码踢掉其他设备」），
     /// 同时吊销全部 Refresh Token；为当前设备新开一条会话家族，避免用户改完
@@ -429,7 +453,7 @@ impl UserService {
         username: &str,
         old_password: &str,
         new_password: &str,
-    ) -> Result<Value, AppError> {
+    ) -> Result<IssuedSession, AppError> {
         if new_password.len() < 8 {
             return Err(AppError::BadRequest("密码不能低于8位".to_string()));
         }
@@ -452,7 +476,10 @@ impl UserService {
             .refresh_store
             .issue(user.uid, user.token_version)
             .await?;
-        Ok(self.format_login(&user, &access_token, &refresh_token))
+        Ok(IssuedSession {
+            data: self.format_login(&user, &access_token),
+            refresh_token,
+        })
     }
 
     /// WebDAV 的 HTTP Basic 校验。返回 `None` 表示用户名或口令不正确。
@@ -549,12 +576,12 @@ impl UserService {
         })
     }
 
-    /// 登录/改密码响应：在用户信息基础上附带新签发的一对令牌。
-    fn format_login(&self, user: &User, access_token: &str, refresh_token: &str) -> Value {
+    /// 登录/改密码响应：在用户信息基础上附带新签发的 Access Token。
+    /// Refresh Token 不进 JSON，由 `IssuedSession.refresh_token` 单独带出。
+    fn format_login(&self, user: &User, access_token: &str) -> Value {
         let mut value = self.format_user(user);
         if let Some(obj) = value.as_object_mut() {
             obj.insert("accessToken".to_string(), Value::from(access_token));
-            obj.insert("refreshToken".to_string(), Value::from(refresh_token));
             obj.insert(
                 "accessTokenExpiresIn".to_string(),
                 Value::from(self.cfg.access_token_ttl_secs),
@@ -563,11 +590,10 @@ impl UserService {
         value
     }
 
-    /// 刷新响应只含令牌，用户信息由前端已有的会话状态提供。
-    fn format_session(&self, access_token: &str, refresh_token: &str) -> Value {
+    /// 刷新响应只含令牌有效期信息，用户信息由前端已有的会话状态提供。
+    fn format_session(&self, access_token: &str) -> Value {
         serde_json::json!({
             "accessToken": access_token,
-            "refreshToken": refresh_token,
             "accessTokenExpiresIn": self.cfg.access_token_ttl_secs,
         })
     }
@@ -746,7 +772,7 @@ mod tests {
         let (service, temp_dir) = create_user_service().await;
 
         let login = service.login("reader1", "password123", None).await.unwrap();
-        let claims = claims_of(&login);
+        let claims = claims_of(&login.data);
 
         assert_eq!(claims.sub, "reader1");
         assert_eq!(claims.uid, 1);
@@ -756,17 +782,16 @@ mod tests {
             claims.exp - claims.iat,
             service.cfg.access_token_ttl_secs as i64
         );
-        // 登录同时返回可轮换的 Refresh Token 与过期秒数
-        assert!(login["refreshToken"]
-            .as_str()
-            .is_some_and(|token| token.starts_with("rt_")));
+        // 登录同时签发可轮换的 Refresh Token 与过期秒数；Refresh Token 不进 JSON
+        assert!(login.refresh_token.starts_with("rt_"));
+        assert!(login.data.get("refreshToken").is_none());
         assert_eq!(
-            login["accessTokenExpiresIn"],
+            login.data["accessTokenExpiresIn"],
             serde_json::json!(service.cfg.access_token_ttl_secs)
         );
 
         // 对外响应不得回吐凭据
-        assert!(login.get("password").is_none());
+        assert!(login.data.get("password").is_none());
         let info = service.get_user_info(None).await.unwrap();
         assert!(info["userInfo"].is_null());
 
@@ -778,13 +803,13 @@ mod tests {
     async fn token_is_rejected_after_password_change_but_new_one_works() {
         let (service, temp_dir) = create_user_service().await;
         let login = service.login("reader1", "password123", None).await.unwrap();
-        let old_claims = claims_of(&login);
+        let old_claims = claims_of(&login.data);
 
         let changed = service
             .change_password("reader1", "password123", "newpassword123")
             .await
             .unwrap();
-        let new_claims = claims_of(&changed);
+        let new_claims = claims_of(&changed.data);
 
         // 版本号自增即撤销：旧令牌的 ver 不再匹配
         assert_eq!(new_claims.ver, old_claims.ver + 1);
@@ -800,29 +825,31 @@ mod tests {
     async fn refresh_rotates_tokens_and_password_change_revokes_them() {
         let (service, temp_dir) = create_user_service().await;
         let login = service.login("reader1", "password123", None).await.unwrap();
-        let first_refresh = login["refreshToken"].as_str().unwrap().to_string();
+        let first_refresh = login.refresh_token;
 
         let refreshed = service.refresh_session(&first_refresh).await.unwrap();
-        let second_refresh = refreshed["refreshToken"].as_str().unwrap().to_string();
+        let second_refresh = refreshed.refresh_token.clone();
         assert_ne!(second_refresh, first_refresh);
-        let claims = decode_token(refreshed["accessToken"].as_str().unwrap(), TEST_SECRET).unwrap();
+        let claims =
+            decode_token(refreshed.data["accessToken"].as_str().unwrap(), TEST_SECRET).unwrap();
         assert_eq!(claims.uid, 1);
         assert_eq!(claims.sub, "reader1");
+        assert!(refreshed.data.get("refreshToken").is_none());
         assert_eq!(
-            refreshed["accessTokenExpiresIn"],
+            refreshed.data["accessTokenExpiresIn"],
             serde_json::json!(service.cfg.access_token_ttl_secs)
         );
 
         // 宽限窗口内重放旧令牌仍可换（断网丢响应的重试路径）
         let grace = service.refresh_session(&first_refresh).await.unwrap();
-        let grace_refresh = grace["refreshToken"].as_str().unwrap().to_string();
+        let grace_refresh = grace.refresh_token.clone();
 
         // 改密码吊销全部会话；只有改密响应里新开的那条家族可用
         let changed = service
             .change_password("reader1", "password123", "newpassword123")
             .await
             .unwrap();
-        let changed_refresh = changed["refreshToken"].as_str().unwrap().to_string();
+        let changed_refresh = changed.refresh_token.clone();
         assert!(service.refresh_session(&second_refresh).await.is_err());
         assert!(service.refresh_session(&grace_refresh).await.is_err());
         service.refresh_session(&changed_refresh).await.unwrap();
@@ -835,7 +862,7 @@ mod tests {
     async fn logout_revokes_the_refresh_family_and_ignores_unknown_tokens() {
         let (service, temp_dir) = create_user_service().await;
         let login = service.login("reader1", "password123", None).await.unwrap();
-        let refresh = login["refreshToken"].as_str().unwrap().to_string();
+        let refresh = login.refresh_token;
 
         service.revoke_refresh_token(&refresh).await.unwrap();
         assert!(service.refresh_session(&refresh).await.is_err());

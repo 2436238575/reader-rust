@@ -416,22 +416,33 @@ async fn image_endpoint_accepts_the_session_cookie() {
     );
 }
 
-/// 刷新轮换与令牌不可互换（JSON body 回退路径——旧客户端/CLI 的迁移通道）。
+/// 刷新轮换与令牌不可互换。Refresh Token 只认 `reader_refresh` Cookie，
+/// body 提交的 `refreshToken` 一律忽略（旧客户端/CLI 回退已删除）。
 #[tokio::test]
-async fn refresh_rotates_tokens_via_body_fallback_and_types_stay_interchangeable() {
+async fn refresh_rotates_tokens_via_cookie_and_types_stay_interchangeable() {
     let server = TestServer::start().await;
     let (data, cookies) = server.login_with_cookies().await;
     let access = data["accessToken"].as_str().unwrap().to_string();
     let refresh = set_cookie_value(set_cookie_of(&cookies, "reader_refresh").unwrap()).to_string();
 
-    // Access Token 不能用来换新令牌
+    // body 里的 refreshToken 不再受理：没有 Cookie 即 401
     let response = server
         .post(
             "/reader3/refreshToken",
             None,
-            serde_json::json!({ "refreshToken": &access }),
+            serde_json::json!({ "refreshToken": &refresh }),
         )
         .await;
+    assert_eq!(response.status(), 401, "body 提交的 refreshToken 应被忽略");
+
+    // Access Token 不能用来换新令牌（放到 Cookie 位置同样查不到）
+    let response = server
+        .client
+        .post(server.url("/reader3/refreshToken"))
+        .header("Cookie", format!("reader_refresh={access}"))
+        .send()
+        .await
+        .unwrap();
     assert_eq!(response.status(), 401);
 
     // Refresh Token 不是 JWT，不能当访问凭据
@@ -443,14 +454,14 @@ async fn refresh_rotates_tokens_via_body_fallback_and_types_stay_interchangeable
         401
     );
 
-    // 旧客户端把 refresh 放进 body 仍可刷新（迁移通道）
+    // Cookie 里的 Refresh Token 正常换新
     let response = server
-        .post(
-            "/reader3/refreshToken",
-            None,
-            serde_json::json!({ "refreshToken": &refresh }),
-        )
-        .await;
+        .client
+        .post(server.url("/reader3/refreshToken"))
+        .header("Cookie", format!("reader_refresh={refresh}"))
+        .send()
+        .await
+        .unwrap();
     assert_eq!(response.status(), 200);
     let body: serde_json::Value = response.json().await.unwrap();
     let new_access = body["data"]["accessToken"].as_str().unwrap().to_string();
@@ -469,12 +480,12 @@ async fn refresh_rotates_tokens_via_body_fallback_and_types_stay_interchangeable
     // 已消费令牌在 30 秒宽限窗口内重放仍可换取（断网重试语义）
     assert_eq!(
         server
-            .post(
-                "/reader3/refreshToken",
-                None,
-                serde_json::json!({ "refreshToken": &refresh }),
-            )
+            .client
+            .post(server.url("/reader3/refreshToken"))
+            .header("Cookie", format!("reader_refresh={refresh}"))
+            .send()
             .await
+            .unwrap()
             .status(),
         200
     );
@@ -482,12 +493,12 @@ async fn refresh_rotates_tokens_via_body_fallback_and_types_stay_interchangeable
     // 伪造令牌一律 401
     assert_eq!(
         server
-            .post(
-                "/reader3/refreshToken",
-                None,
-                serde_json::json!({ "refreshToken": "rt_forged" }),
-            )
+            .client
+            .post(server.url("/reader3/refreshToken"))
+            .header("Cookie", "reader_refresh=rt_forged")
+            .send()
             .await
+            .unwrap()
             .status(),
         401
     );
@@ -637,24 +648,24 @@ async fn password_change_revokes_refresh_tokens_and_issues_a_new_pair() {
 
     assert_eq!(
         server
-            .post(
-                "/reader3/refreshToken",
-                None,
-                serde_json::json!({ "refreshToken": &old_refresh }),
-            )
+            .client
+            .post(server.url("/reader3/refreshToken"))
+            .header("Cookie", format!("reader_refresh={old_refresh}"))
+            .send()
             .await
+            .unwrap()
             .status(),
         401,
         "改密码后旧 Refresh Token 必须失效"
     );
     assert_eq!(
         server
-            .post(
-                "/reader3/refreshToken",
-                None,
-                serde_json::json!({ "refreshToken": &new_refresh }),
-            )
+            .client
+            .post(server.url("/reader3/refreshToken"))
+            .header("Cookie", format!("reader_refresh={new_refresh}"))
+            .send()
             .await
+            .unwrap()
             .status(),
         200
     );
@@ -690,19 +701,7 @@ async fn logout_revokes_the_refresh_family_clears_cookies_and_stays_idempotent()
         );
     }
 
-    // 该会话家族已吊销：旧 refresh 无论走 body 还是 Cookie 都换不到新令牌
-    assert_eq!(
-        server
-            .post(
-                "/reader3/refreshToken",
-                None,
-                serde_json::json!({ "refreshToken": &refresh }),
-            )
-            .await
-            .status(),
-        401,
-        "登出后该会话家族应被吊销"
-    );
+    // 该会话家族已吊销：旧 refresh 再换不到新令牌
     assert_eq!(
         server
             .client
@@ -713,7 +712,8 @@ async fn logout_revokes_the_refresh_family_clears_cookies_and_stays_idempotent()
             .await
             .unwrap()
             .status(),
-        401
+        401,
+        "登出后该会话家族应被吊销"
     );
 
     // 无 body 的登出仍然成功：客户端本地已无令牌时也走这条路（幂等）

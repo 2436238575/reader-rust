@@ -57,7 +57,7 @@ Reader-Rust 通过**环境变量**配置，支持从 `.env` 文件读取。代�
 - 浏览器：HttpOnly Cookie 自动携带；SSE 与 `<img>` 也靠 Cookie，URL 不再拼令牌。
 - API 客户端：`Authorization: Bearer <jwt>`。
 - 查询参数 `?accessToken=` 只接受书源登录代理的 30 分钟限定令牌（仅 `bookSourceProxy` / `bookSourceClientLog`）。
-- Refresh Token 只随 `reader_refresh` Cookie 发给 `/reader3/refreshToken`；旧客户端/CLI 可在 JSON body 里回退迁移。
+- Refresh Token 只随 `reader_refresh` Cookie 发给 `/reader3/refreshToken`。
 
 ::: tip 跨域部署与 Cookie
 Cookie 会话默认面向同源部署。前后端分离且跨域时，除了配置 `CORS_ALLOWED_ORIGINS`，浏览器还要求 `SameSite=None; Secure` 与 CORS 凭据（服务端已在显式来源白名单时开启 `allow_credentials`）；最省事的做法仍是把前端与后端放在同一个站点下。

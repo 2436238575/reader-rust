@@ -56,11 +56,7 @@ POST /reader3/login
 POST /reader3/refreshToken
 ```
 
-公开接口。浏览器只带 `reader_refresh` Cookie；旧客户端/CLI 可以在 body 里回退提交：
-
-```json
-{ "refreshToken": "rt_..." }
-```
+公开接口。只认 `reader_refresh` HttpOnly Cookie，请求体留空（body 里的 `refreshToken` 字段不受理）。
 
 响应 `data`：
 
@@ -88,9 +84,9 @@ POST /reader3/refreshToken
 POST /reader3/logout
 ```
 
-不需要请求体。服务端优先读 `reader_refresh` Cookie（旧客户端可在 body 里回退 `{ "refreshToken": "rt_..." }`），吊销其所属的登录会话家族并清除两枚 Cookie。
+不需要请求体。服务端只读 `reader_refresh` Cookie，吊销其所属的登录会话家族并清除两枚 Cookie。
 
-**总是返回成功**，不要求有效 Access Token，Cookie/body 缺失或格式损坏也不报错。登出不会立即作废已经签发的 Access Token——它最迟在 6 小时后自然过期；需要立刻踢掉所有设备请使用改密码。
+**总是返回成功**，不要求有效 Access Token，Cookie 缺失或令牌已损坏也不报错。登出不会立即作废已经签发的 Access Token——它最迟在 6 小时后自然过期；需要立刻踢掉所有设备请使用改密码。
 
 ## 获取用户信息
 

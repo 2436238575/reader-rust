@@ -129,7 +129,7 @@ http://localhost:8080/reader3
 | 令牌          | 形态                          | 有效期                         | 传递                                                                 |
 | ------------- | ----------------------------- | ------------------------------ | -------------------------------------------------------------------- |
 | Access Token  | HS256 JWT                     | 6 小时（`ACCESS_TOKEN_TTL_SECS`） | 浏览器走 HttpOnly Cookie `reader_access`；API 客户端可放 `Authorization` 头 |
-| Refresh Token | `rt_` + 随机串（一次性）      | 7 天滑动续期（`REFRESH_TOKEN_TTL_SECS`） | 只随 `reader_refresh` HttpOnly Cookie 发给 `/reader3/refreshToken`；body 回退仅用于旧客户端/CLI 迁移 |
+| Refresh Token | `rt_` + 随机串（一次性）      | 7 天滑动续期（`REFRESH_TOKEN_TTL_SECS`） | 只随 `reader_refresh` HttpOnly Cookie 发给 `/reader3/refreshToken` |
 
 Access Token 载荷：
 
@@ -160,13 +160,12 @@ HttpOnly; SameSite=Strict; Path=/reader3; Max-Age=<对应 TTL>
 | -------- | ----------------------------- | ------------------------------------- |
 | 请求头   | `Authorization: Bearer <jwt>` | 常规接口                              |
 | 查询参数 | `accessToken=<限定令牌>`      | 仅 `/reader3/bookSourceProxy` 与 `/reader3/bookSourceClientLog` |
-| JSON body | `{"refreshToken":"rt_..."}`  | 仅 `/reader3/refreshToken` 与 `/reader3/logout` 的迁移/CLI 回退 |
 
 取令牌顺序：`Authorization` 头 → `reader_access` Cookie → 查询参数（仅上面两个代理路径）。裸令牌（不带 `Bearer ` 前缀）也能识别，但推荐始终带上前缀。
 
 ### 刷新与轮换
 
-`POST /reader3/refreshToken` 是公开接口。浏览器只带 `reader_refresh` Cookie；旧客户端/CLI 可在 body 里提交 `{ "refreshToken": "rt_..." }`（Cookie 优先）。
+`POST /reader3/refreshToken` 是公开接口，只认 `reader_refresh` HttpOnly Cookie（body 里的 `refreshToken` 字段不受理）。
 
 成功时 `Set-Cookie` 换发两枚新 Cookie，JSON 只返回 `accessToken` 与 `accessTokenExpiresIn`，`refreshToken` 不再交给 JS。失败统一 **HTTP 401 + `需要登录`**，并清除两枚 Cookie。
 
