@@ -1,3 +1,14 @@
+//! 书籍服务：书源抓取、目录、正文、评论、书架与缓存的业务编排。
+//!
+//! 按功能簇拆分为同名目录下的子模块：`fetch` 是出站抓取地基（URL 分析、
+//! 限速、登录检查、阻塞线程池解析），`registry` 管书籍登记与书源 Cookie，
+//! `explore` 对应搜索/发现/详情，`toc` 管目录抓取与缓存，`content` 管正文
+//! 抓取与回源（singleflight），`review` 管章评/段评/章节配图，`shelf` 管
+//! 书架读写，`cache` 管可再生缓存的清理与统计，`cached_search` 管缓存内
+//! 全文检索。本文件保留 `BookService` 结构体定义、构造与访问器、跨簇共用
+//! 的常量与 `book_id_path_segment`，并对对外引用的类型做统一再导出，
+//! `crate::service::book_service::*` 的外部路径不因拆分而变化。
+
 use crate::crawler::http_client::HttpClient;
 use crate::parser::rule_engine::RuleEngine;
 use crate::service::chapter_content_service::ChapterContentService;
