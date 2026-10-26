@@ -40,15 +40,17 @@ describe('sourceSelection', () => {
     expect(getBookSourceGroups(grouped)).toEqual(['API', '小说', '精选'])
   })
 
-  it('splits groups on the full separator set consistently across pages', () => {
-    // 全角逗号、竖线、斜杠同样是分隔符——搜索页与管理页必须拆出同一组结果
-    expect(splitBookSourceGroups('小说，精选|完本/出版；API')).toEqual([
-      '小说',
-      '精选',
-      '完本',
-      '出版',
-      'API',
-    ])
+  it('splits groups with the same separator set as the backend', () => {
+    // 与后端 split_source_groups（src/service/book_source_service.rs）同口径：
+    // 只认半角逗号/分号、全角分号、顿号——搜索页与管理页必须拆出同一组结果，
+    // 「删除失效书源」的本地移除才与后端删除范围一致
+    expect(splitBookSourceGroups('默认;失效')).toEqual(['默认', '失效'])
+    expect(splitBookSourceGroups('默认；失效')).toEqual(['默认', '失效'])
+    expect(splitBookSourceGroups('默认、失效')).toEqual(['默认', '失效'])
+    // 全角逗号、竖线、斜杠都不是分隔符：后端不拆，前端也不得拆
+    expect(splitBookSourceGroups('默认，失效')).toEqual(['默认，失效'])
+    expect(splitBookSourceGroups('默认|失效')).toEqual(['默认|失效'])
+    expect(splitBookSourceGroups('完本/出版')).toEqual(['完本/出版'])
     expect(splitBookSourceGroups(undefined)).toEqual([])
     expect(splitBookSourceGroups('  ')).toEqual([])
   })

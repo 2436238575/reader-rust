@@ -15,10 +15,12 @@ export function toBookSourceDeletePayload(sources: Pick<BookSource, 'bookSourceI
     .map((bookSourceId) => ({ bookSourceId }))
 }
 
-// 书源分组字段的拆分是全站唯一约定：中英文逗号/分号、顿号、竖线、斜杠都视为分隔符。
+// 书源分组拆分以后端 split_source_groups（src/service/book_source_service.rs）为唯一权威：
+// 只认半角逗号/分号、全角分号、顿号。前端不得比后端更宽（全角逗号、竖线、斜杠都不是分隔符），
+// 否则「删除失效书源」等按分组判定的本地移除会与后端实际删除范围不一致。
 export function splitBookSourceGroups(group?: string | null): string[] {
   return (group || '')
-    .split(/[,;，；、|/]/)
+    .split(/[,;；、]/)
     .map((item) => item.trim())
     .filter(Boolean)
 }
