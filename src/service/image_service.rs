@@ -253,7 +253,7 @@ impl ImageService {
         }
     }
 
-    /// 按书删除其全部图片（记录 + 本体），返回删除的图片数。
+    /// 按书删除其全部图片（记录 + 本体 + 派生图），返回删除的图片数。
     ///
     /// 目录即映射表：逐条读记录比对 book_id。只在删书/按书清缓存时调用，
     /// 频率极低，全目录扫描可接受。book_id 先归一为 canonical（别名/非法
@@ -283,7 +283,46 @@ impl ImageService {
             }
             let _ = fs::remove_file(&path).await;
             let _ = fs::remove_file(self.body_path(&record.id)).await;
+            self.remove_variants(&record.id).await;
             removed += 1;
+        }
+        removed
+    }
+
+    /// 删除某个 id 的全部派生图（`<id>.w<宽>.<webp|jpg>`），返回删除的文件数。
+    ///
+    /// 派生图是「原图字节 + 宽度 + 格式」的纯函数，原图换了它们就全部过期；
+    /// 与其每次命中都校验 mtime/哈希（成本高），不如只在两个明确事件清理：
+    /// **原图重抓落盘**（[`Self::fetch_and_store`]）与**按书删除**
+    /// （[`Self::remove_by_book_id`]），之后变体请求按需重建。只认
+    /// `<id>.w` 前缀 + webp/jpg 扩展名：记录 `.json`、本体 `.bin`、
+    /// 别的 id 与原子写的 `.tmp` 孤儿都不碰。
+    async fn remove_variants(&self, id: &str) -> u64 {
+        let prefix = format!("{id}.w");
+        let Ok(mut entries) = fs::read_dir(self.dir()).await else {
+            return 0;
+        };
+        let mut removed = 0u64;
+        while let Ok(Some(entry)) = entries.next_entry().await {
+            let name = entry.file_name();
+            let Some(name) = name.to_str() else {
+                continue;
+            };
+            if !name.starts_with(&prefix) {
+                continue;
+            }
+            if !matches!(
+                entry.path().extension().and_then(|e| e.to_str()),
+                Some("webp") | Some("jpg")
+            ) {
+                continue;
+            }
+            if fs::remove_file(entry.path()).await.is_ok() {
+                removed += 1;
+            }
+        }
+        if removed > 0 {
+            tracing::debug!("已清理图片派生缓存 id={id} count={removed}");
         }
         removed
     }
@@ -431,6 +470,9 @@ impl ImageService {
         write_atomic(&path, &bytes)
             .await
             .map_err(|e| AppError::Internal(e.into()))?;
+        // 新原图已落盘：旧原图派生的变体全部过期，一并清掉（后续按需重建）。
+        // 必须在写成功之后——写失败时旧原图仍是当前内容，旧变体还有效。
+        self.remove_variants(id).await;
         enforce_flat_dir_capacity(&self.dir(), self.limit_bytes, bytes.len() as u64).await;
 
         record.content_type = content_type.clone();
@@ -1211,6 +1253,113 @@ mod tests {
         let (bytes, content_type) = service.load_variant(&id, Some(64), true).await.unwrap();
         assert_eq!(bytes, marker, "第二次应直接读派生文件");
         assert_eq!(content_type, "image/webp");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // ---------- 派生图失效：按书删除 / 原图重抓时清理 ----------
+
+    /// 建一个带空图片目录的临时 ImageService（不走网络）。
+    async fn service_with_empty_dir(name: &str) -> (ImageService, std::path::PathBuf) {
+        let dir = std::env::temp_dir().join(format!(
+            "reader-rust-img-{name}-{}-{}",
+            std::process::id(),
+            crate::util::crypto::random_string(6)
+        ));
+        std::fs::create_dir_all(dir.join(IMAGE_DIR)).unwrap();
+        let service = ImageService::new(
+            crate::crawler::http_client::HttpClient::new(5, None).unwrap(),
+            dir.to_str().unwrap(),
+            0,
+        );
+        (service, dir)
+    }
+
+    fn fake_record(id: &str, book_id: &str) -> ImageRecord {
+        ImageRecord {
+            id: id.to_string(),
+            kind: "cover".to_string(),
+            source_url: format!("https://img.example/{id}.jpg"),
+            book_id: Some(book_id.to_string()),
+            content_type: "image/jpeg".to_string(),
+            ext: "jpg".to_string(),
+            updated_at: 0,
+            failed_at: None,
+        }
+    }
+
+    fn image_dir(storage_dir: &Path) -> PathBuf {
+        storage_dir.join(IMAGE_DIR)
+    }
+
+    /// 按书删除：记录、本体、派生图三者一起消失；别家的图片原样保留。
+    #[tokio::test]
+    async fn remove_by_book_id_also_removes_variants() {
+        let (service, dir) = service_with_empty_dir("purge-book").await;
+        let id = "0123456789abcdef0123456789abcdef";
+        let other = "ffffffffffffffffffffffffffffffff";
+        service.save_record(&fake_record(id, "book_7")).await;
+        service.save_record(&fake_record(other, "book_8")).await;
+        std::fs::write(service.body_path(id), b"body").unwrap();
+        std::fs::write(image_dir(&dir).join(format!("{id}.w64.webp")), b"v").unwrap();
+        std::fs::write(image_dir(&dir).join(format!("{id}.w128.jpg")), b"v").unwrap();
+        std::fs::write(service.body_path(other), b"body").unwrap();
+        std::fs::write(image_dir(&dir).join(format!("{other}.w64.webp")), b"v").unwrap();
+
+        assert_eq!(service.remove_by_book_id("book_7").await, 1);
+
+        let names: Vec<String> = std::fs::read_dir(image_dir(&dir))
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .map(|e| e.file_name().to_string_lossy().to_string())
+            .collect();
+        assert!(names.contains(&format!("{other}.json")));
+        assert!(names.contains(&format!("{other}.bin")));
+        assert!(
+            names.contains(&format!("{other}.w64.webp")),
+            "别家的派生图不该被删"
+        );
+        assert_eq!(
+            names.len(),
+            3,
+            "被删书的记录/本体/派生图应全部消失: {names:?}"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// remove_variants 只删本 id 的 `.w*.webp/jpg`：记录、本体、别的 id、
+    /// 其他扩展名（含原子写留下的 .tmp 孤儿）都不碰。
+    #[tokio::test]
+    async fn remove_variants_only_deletes_own_webp_and_jpg() {
+        let (service, dir) = service_with_empty_dir("purge-variant").await;
+        let id = "0123456789abcdef0123456789abcdef";
+        let keep = [
+            format!("{id}.json"),
+            format!("{id}.bin"),
+            format!("{id}.w64.png"),          // 非 webp/jpg 扩展名不删
+            format!("{id}.w64.webp.1.2.tmp"), // 原子写的 tmp 孤儿不删
+            "ffffffffffffffffffffffffffffffff.w64.webp".to_string(), // 别的 id
+            "ffffffffffffffffffffffffffffffff.bin".to_string(),
+        ];
+        for name in &keep {
+            std::fs::write(image_dir(&dir).join(name), b"keep").unwrap();
+        }
+        let gone = [
+            format!("{id}.w64.webp"),
+            format!("{id}.w128.jpg"),
+            format!("{id}.w2048.webp"),
+        ];
+        for name in &gone {
+            std::fs::write(image_dir(&dir).join(name), b"gone").unwrap();
+        }
+
+        assert_eq!(service.remove_variants(id).await, 3);
+
+        for name in &keep {
+            assert!(image_dir(&dir).join(name).exists(), "{name} 不该被删");
+        }
+        for name in &gone {
+            assert!(!image_dir(&dir).join(name).exists(), "{name} 应被删");
+        }
         let _ = std::fs::remove_dir_all(&dir);
     }
 

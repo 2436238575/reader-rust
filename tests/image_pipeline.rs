@@ -651,3 +651,78 @@ async fn image_endpoint_negotiates_webp_and_scales() {
         .expect("应当是可解码的 webp");
     assert_eq!(decoded.width(), 64, "兼容入口也应按 w 缩放");
 }
+
+/// 派生图失效：原图重抓（本体丢失后 fetch_and_store 重新落盘）时，旧原图派生的
+/// 变体文件必须一并清掉——否则同 id 同宽命中旧派生图会一直返回过期字节；
+/// 清掉之后变体请求按新原图按需重建。
+#[tokio::test]
+async fn refetching_original_invalidates_stale_variant() {
+    let server = TestServer::start().await;
+    let png_url = format!("{}/pic.png", server.upstream_url);
+    let id = reader_rust::service::image_service::ImageService::image_key(&png_url);
+
+    // 登记 + 取原图（兼容入口，无 w 无 webp：原样 PNG）
+    let resp = server
+        .client
+        .get(format!("{}/reader3/cover", server.base_url))
+        .bearer_auth(&server.token)
+        .query(&[("path", png_url.as_str())])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    let image_dir = server.temp_dir.join("cache").join("image");
+    let body = image_dir.join(format!("{id}.bin"));
+    assert!(body.exists(), "原图应已落盘");
+
+    // 取一张派生图，然后把字节换成标记——模拟「旧原图派生的过期缓存」
+    let resp = server
+        .client
+        .get(format!("{}/reader3/image/{id}", server.base_url))
+        .query(&[("w", "64")])
+        .header("Cookie", format!("reader_access={}", server.token))
+        .header("Accept", "image/webp")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let variant = image_dir.join(format!("{id}.w64.webp"));
+    assert!(variant.exists(), "派生图应已落盘");
+    std::fs::write(&variant, b"stale-variant-bytes").unwrap();
+
+    // 删掉本体：下一次取图必然走 fetch_and_store 重抓（容量淘汰的等效场景）
+    std::fs::remove_file(&body).unwrap();
+
+    // 只取原图（不带 w、Accept 不含 webp）：触发重抓，旧派生图应被清掉
+    let resp = server
+        .client
+        .get(format!("{}/reader3/image/{id}", server.base_url))
+        .header("Cookie", format!("reader_access={}", server.token))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    assert!(
+        !variant.exists(),
+        "重抓原图后旧派生图应被清掉，而不是残留过期字节"
+    );
+
+    // 变体按需重建：返回的是新原图派生的 webp，而不是旧的标记字节
+    let resp = server
+        .client
+        .get(format!("{}/reader3/image/{id}", server.base_url))
+        .query(&[("w", "64")])
+        .header("Cookie", format!("reader_access={}", server.token))
+        .header("Accept", "image/webp")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let bytes = resp.bytes().await.unwrap();
+    assert_ne!(bytes.as_ref(), b"stale-variant-bytes", "不应命中旧派生字节");
+    let decoded = webp::Decoder::new(&bytes)
+        .decode()
+        .expect("应重建出可解码的 webp");
+    assert_eq!(decoded.width(), 64);
+}
