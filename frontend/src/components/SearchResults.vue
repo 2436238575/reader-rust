@@ -102,6 +102,7 @@
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { usePreserveScroll } from '../composables/usePreserveScroll'
 import { useBookshelfStore } from '../stores/bookshelf'
+import { useSearchStore } from '../stores/search'
 import { useAppStore } from '../stores/app'
 import { useSourceStore } from '../stores/source'
 import { searchBookMultiSSE } from '../api/search'
@@ -116,6 +117,7 @@ import type { Book, SearchBook, SearchBookDisplay } from '../types'
 import { storeToRefs } from 'pinia'
 
 const shelfStore = useBookshelfStore()
+const searchStore = useSearchStore()
 const appStore = useAppStore()
 const sourceStore = useSourceStore()
 const { openBook } = useOpenBook()
@@ -127,7 +129,7 @@ const {
   searchScope,
   searchGroup: selectedGroup,
   searchSourceId: selectedSourceId,
-} = storeToRefs(shelfStore)
+} = storeToRefs(searchStore)
 
 let eventSource: SseConnection | null = null
 // 跨 SSE 消息维护的去重集合；每次发起新搜索时重建
@@ -225,8 +227,8 @@ function doSearch(key: string, force = false) {
     closeEventSource()
     searchSeen = new Set()
     searchFailed.value = false
-    shelfStore.searchResults = []
-    shelfStore.isSearching = false
+    searchStore.searchResults = []
+    searchStore.isSearching = false
     return
   }
 
@@ -234,8 +236,8 @@ function doSearch(key: string, force = false) {
     closeEventSource()
     searchSeen = new Set()
     searchFailed.value = false
-    shelfStore.searchResults = []
-    shelfStore.isSearching = false
+    searchStore.searchResults = []
+    searchStore.isSearching = false
     return
   }
 
@@ -257,8 +259,8 @@ function doSearch(key: string, force = false) {
   searchSeen = new Set()
   searchFailed.value = false
 
-  shelfStore.searchResults = []
-  shelfStore.isSearching = true
+  searchStore.searchResults = []
+  searchStore.isSearching = true
 
   eventSource = searchBookMultiSSE({
     key,
@@ -296,7 +298,7 @@ function doSearch(key: string, force = false) {
           newBooks.push(annotate(b))
         }
         if (newBooks.length) {
-          shelfStore.searchResults = shelfStore.searchResults.concat(newBooks)
+          searchStore.searchResults = searchStore.searchResults.concat(newBooks)
         }
       }
     } catch {
@@ -309,17 +311,17 @@ function doSearch(key: string, force = false) {
   // 双注册干同一件事且都不读 event.data）
   consumeSSE(eventSource, {
     onEnd: () => {
-      shelfStore.isSearching = false
+      searchStore.isSearching = false
       closeEventSource()
     },
     onErrorMessage: (msg) => {
-      shelfStore.isSearching = false
+      searchStore.isSearching = false
       searchFailed.value = true
       appStore.showToast(msg, 'error')
       closeEventSource()
     },
     onTransportError: () => {
-      shelfStore.isSearching = false
+      searchStore.isSearching = false
       searchFailed.value = true
       closeEventSource()
     },
@@ -327,21 +329,21 @@ function doSearch(key: string, force = false) {
 }
 
 function retrySearch() {
-  if (!searchKey.value || shelfStore.isSearching) return
+  if (!searchKey.value || searchStore.isSearching) return
   // 用户主动重试：force 跳过签名去重，即使与上次同参数也重新发起
   doSearch(searchKey.value, true)
 }
 
 watch(
-  [() => shelfStore.searchKey, searchScope, selectedGroup, selectedSourceId],
+  [() => searchStore.searchKey, searchScope, selectedGroup, selectedSourceId],
   ([key]) => {
     ensureSearchSelection()
     if (key) {
       doSearch(key)
     } else {
       closeEventSource()
-      shelfStore.searchResults = []
-      shelfStore.isSearching = false
+      searchStore.searchResults = []
+      searchStore.isSearching = false
       // 清空搜索后重置签名：结果已清空，同一关键词再次输入时应重新搜索
       lastSearchSignature = null
     }

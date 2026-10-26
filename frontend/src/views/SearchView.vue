@@ -6,11 +6,11 @@
 import { onUnmounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import SearchResults from '../components/SearchResults.vue'
-import { useBookshelfStore } from '../stores/bookshelf'
+import { useSearchStore } from '../stores/search'
 
 const route = useRoute()
 const router = useRouter()
-const shelfStore = useBookshelfStore()
+const searchStore = useSearchStore()
 
 // 搜索页以 URL 为唯一事实来源（#/search?q=...）；
 // 范围筛选（全部/分组/单源）仍是会话内状态，不进 URL
@@ -25,7 +25,7 @@ function applyQuery() {
   const sourceParam = typeof route.query.source === 'string' ? route.query.source : ''
   if (sourceParam) {
     const sourceId = Number(sourceParam)
-    shelfStore.startSearch(q, {
+    searchStore.startSearch(q, {
       scope: 'source',
       sourceId: Number.isInteger(sourceId) ? sourceId : null,
     })
@@ -33,11 +33,11 @@ function applyQuery() {
   }
   // URL 不带 source：别用默认值冲掉搜索页已有的范围/书源选择——
   // 否则保活返回时会先清空再修复选择，白白重发两轮 SSE 搜索
-  if (shelfStore.searchKey !== q) {
-    shelfStore.startSearch(q, {
-      scope: shelfStore.searchScope,
-      group: shelfStore.searchGroup,
-      sourceId: shelfStore.searchSourceId,
+  if (searchStore.searchKey !== q) {
+    searchStore.startSearch(q, {
+      scope: searchStore.searchScope,
+      group: searchStore.searchGroup,
+      sourceId: searchStore.searchSourceId,
     })
   }
 }
@@ -56,6 +56,6 @@ watch(() => route.fullPath, applyQuery, { immediate: true })
 // 搜索页被 keep-alive 缓存：离开不再丢状态（结果、滚动位置都在），
 // 这里只在真正卸载（应用 teardown）时兜底清理
 onUnmounted(() => {
-  shelfStore.clearSearch()
+  searchStore.clearSearch()
 })
 </script>

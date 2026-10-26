@@ -29,22 +29,11 @@ vi.mock('../utils/recentBooks', () => ({
   syncRecentBooksFromBackend: vi.fn(async () => undefined),
 }))
 
-describe('bookshelf search state', () => {
+describe('bookshelf fetchBooks cache counts', () => {
   beforeEach(() => {
     setActivePinia(createPinia())
     vi.mocked(getBookshelfWithCacheInfo).mockResolvedValue([])
     vi.mocked(listBrowserCacheSummary).mockResolvedValue([])
-  })
-
-  it('starts searches in single-source scope by default', () => {
-    const store = useBookshelfStore()
-
-    store.startSearch('星门')
-
-    expect(store.searchKey).toBe('星门')
-    expect(store.searchScope).toBe('source')
-    expect(store.searchSourceId).toBeNull()
-    expect(store.searchGroup).toBe('')
   })
 
   it('does not display browser cache counts for uploaded local txt books', async () => {
@@ -79,16 +68,6 @@ describe('bookshelf search state', () => {
     expect(
       store.books.find((book) => book.bookId === 'book-remote')?.browserCachedChapterCount
     ).toBe(3)
-  })
-
-  it('can start a search with the active explore source selected', () => {
-    const store = useBookshelfStore()
-
-    store.startSearch('星门', { sourceId: 42 })
-
-    expect(store.searchKey).toBe('星门')
-    expect(store.searchScope).toBe('source')
-    expect(store.searchSourceId).toBe(42)
   })
 })
 

@@ -11,7 +11,7 @@ import {
   deleteBookGroup as apiDeleteBookGroup,
   saveBooks as apiSaveBooks,
 } from '../api/bookshelf'
-import type { Book, BookGroup, SearchBookDisplay, ShelfBook } from '../types'
+import type { Book, BookGroup, ShelfBook } from '../types'
 import { deleteBrowserBookCache, listBrowserCacheSummary } from '../utils/browserCache'
 import { isLocalBook } from '../utils/localBook'
 import { describeRequestFailure } from '../utils/requestFailure'
@@ -270,41 +270,7 @@ export const useBookshelfStore = defineStore('bookshelf', () => {
   }
 
   // ─── Search ───
-  const searchResults = ref<SearchBookDisplay[]>([])
-  const isSearching = ref(false)
-  const searchKey = ref('')
-  const searchScope = ref<'all' | 'group' | 'source'>('source')
-  const searchGroup = ref('')
-  const searchSourceId = ref<number | null>(null)
-
-  function startSearch(
-    key: string,
-    options: {
-      scope?: 'all' | 'group' | 'source'
-      group?: string
-      sourceId?: number | null
-    } = {}
-  ) {
-    const nextKey = key.trim()
-    if (!nextKey) {
-      clearSearch()
-      return
-    }
-
-    searchScope.value = options.scope || 'source'
-    searchGroup.value = options.group || ''
-    searchSourceId.value = options.sourceId ?? null
-    searchKey.value = nextKey
-  }
-
-  function clearSearch() {
-    searchResults.value = []
-    searchKey.value = ''
-    isSearching.value = false
-    searchScope.value = 'source'
-    searchGroup.value = ''
-    searchSourceId.value = null
-  }
+  // 搜索会话状态已拆到 stores/search（拆分专项收尾）；书架只管书籍与分组。
 
   // ─── Edit mode and Selection ───
   const editMode = ref(false)
@@ -419,14 +385,6 @@ export const useBookshelfStore = defineStore('bookshelf', () => {
     fetchGroups,
     saveGroup,
     removeGroup,
-    searchResults,
-    isSearching,
-    searchKey,
-    searchScope,
-    searchGroup,
-    searchSourceId,
-    startSearch,
-    clearSearch,
     editMode,
     selectedBookIds,
     toggleSelection,
