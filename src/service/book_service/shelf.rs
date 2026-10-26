@@ -6,7 +6,8 @@
 //! 限额（`USER_BOOK_LIMIT` / `USER_LOCAL_BOOK_LIMIT`）与写入收进同一事务，
 //! 消除 count 与 upsert 分离的并发超限窗口。
 
-use super::{is_local_book_url, BookService};
+use super::explore::is_local_book_url;
+use super::BookService;
 use crate::error::error::AppError;
 use crate::model::book::Book;
 use crate::model::book_source::BookSource;
