@@ -126,11 +126,21 @@ pub struct AppConfig {
     /// 单章处理超时（秒），默认 1800。
     ///
     /// 算式：sidecar 一章最多 5 轮 chat（sidecar loop.py 的 MAX_ROUNDS），
-    /// 模型客户端总预算 1500s（5 × 300s，重试与退避不越过 deadline）；
-    /// 预算耗尽后最坏还有一次在途尝试（connect 10s + write 30s + read 150s
-    /// = 190s）≈ 1690s，取 1800s 留余量——让 sidecar 以真实原因（模型
-    /// 401/超时/预算耗尽）收场，而不是被看门狗截成一句「章节处理超时」。
+    /// 模型客户端总预算默认 1500s（5 × 300s，重试与退避不越过 deadline；
+    /// 实际值以 `agent_sidecar_model_budget_secs` 为准）；预算耗尽后最坏还有
+    /// 一次在途尝试（connect 10s + write 30s + read 150s = 190s）≈ 1690s，
+    /// 取 1800s 留余量——让 sidecar 以真实原因（模型 401/超时/预算耗尽）
+    /// 收场，而不是被看门狗截成一句「章节处理超时」。调大模型预算时
+    /// 本项也应同步放大，否则看门狗会先于预算耗尽截断任务。
     pub agent_sidecar_chapter_timeout_secs: u64,
+    /// sidecar 内模型调用的总预算（秒），默认 1500（5 轮 × 300s）。
+    ///
+    /// 同一 run 帧内的所有 chat/images 调用共享这条预算（sidecar
+    /// model_client.py 的 TOTAL_BUDGET_SECS），重试与退避都不能越过；
+    /// 与单章看门狗 `agent_sidecar_chapter_timeout_secs` 对齐（后者留 300s
+    /// 余量）。spawn sidecar 时经 `AGENT_SIDECAR_MODEL_BUDGET_SECS` 环境变量
+    /// 下发。`0` 按配置笔误处理，回落默认值。
+    pub agent_sidecar_model_budget_secs: u64,
     /// uv 二进制的显式路径。
     ///
     /// 非空时用它管理 sidecar 依赖（`uv run --project sidecar ...` 自动建
@@ -175,6 +185,7 @@ impl Default for AppConfig {
             agent_sidecar_enabled: true,
             agent_sidecar_command: "python -m agent_sidecar".to_string(),
             agent_sidecar_chapter_timeout_secs: 1800,
+            agent_sidecar_model_budget_secs: 1500,
             agent_sidecar_uv: String::new(),
         }
     }
@@ -261,12 +272,17 @@ pub fn load() -> anyhow::Result<AppConfig> {
             "agent_sidecar_chapter_timeout_secs",
             defaults.agent_sidecar_chapter_timeout_secs as i64,
         )?
+        .set_default(
+            "agent_sidecar_model_budget_secs",
+            defaults.agent_sidecar_model_budget_secs as i64,
+        )?
         .set_default("agent_sidecar_uv", defaults.agent_sidecar_uv)?
         .add_source(config::Environment::default().try_parsing(true))
         .build()?;
     let mut cfg: AppConfig = cfg.try_deserialize()?;
     normalize_token_ttls(&mut cfg);
     normalize_inbound_timeouts(&mut cfg);
+    normalize_agent_sidecar_budget(&mut cfg);
     normalize_cookie_secure(&mut cfg)?;
     // TRUSTED_PROXIES 解析失败必须启动告警并按空列表生效（最保守：
     // 不信任任何代理头），不能静默吞掉——否则「配错了」与「没配」不可区分。
@@ -331,6 +347,23 @@ fn normalize_inbound_timeouts(cfg: &mut AppConfig) {
             defaults.inbound_upload_timeout_secs
         );
         cfg.inbound_upload_timeout_secs = defaults.inbound_upload_timeout_secs;
+    }
+}
+
+/// 归一 sidecar 模型总预算配置。
+///
+/// 预算为 0 会让 sidecar 首次模型调用即报「预算耗尽」，按配置笔误处理并
+/// 回落默认值（与 `normalize_inbound_timeouts` 对 0 超时的口径一致）；
+/// 非数字值经 `Environment::try_parsing` 反序列化失败、启动报错，与其他
+/// 数值型配置项的口径一致。
+fn normalize_agent_sidecar_budget(cfg: &mut AppConfig) {
+    let defaults = AppConfig::default();
+    if cfg.agent_sidecar_model_budget_secs == 0 {
+        eprintln!(
+            "WARN AGENT_SIDECAR_MODEL_BUDGET_SECS 不能为 0，回落到默认 {} 秒",
+            defaults.agent_sidecar_model_budget_secs
+        );
+        cfg.agent_sidecar_model_budget_secs = defaults.agent_sidecar_model_budget_secs;
     }
 }
 
@@ -406,6 +439,38 @@ mod tests {
             ..Default::default()
         };
         assert!(normalize_cookie_secure(&mut cfg).is_err());
+    }
+
+    #[test]
+    fn agent_sidecar_model_budget_defaults_match_documentation() {
+        // 默认值写进了 AGENTS.md 与 docs/guide/configuration.md，改动需同步文档
+        let cfg = AppConfig::default();
+        assert_eq!(cfg.agent_sidecar_model_budget_secs, 1500);
+        assert_eq!(cfg.agent_sidecar_chapter_timeout_secs, 1800);
+    }
+
+    #[test]
+    fn agent_sidecar_model_budget_zero_falls_back_to_default() {
+        // 0 预算 = sidecar 首次模型调用即「预算耗尽」，按笔误回落默认值
+        let mut cfg = AppConfig {
+            agent_sidecar_model_budget_secs: 0,
+            ..Default::default()
+        };
+        normalize_agent_sidecar_budget(&mut cfg);
+        assert_eq!(
+            cfg.agent_sidecar_model_budget_secs,
+            AppConfig::default().agent_sidecar_model_budget_secs
+        );
+    }
+
+    #[test]
+    fn agent_sidecar_model_budget_positive_value_is_kept() {
+        let mut cfg = AppConfig {
+            agent_sidecar_model_budget_secs: 2400,
+            ..Default::default()
+        };
+        normalize_agent_sidecar_budget(&mut cfg);
+        assert_eq!(cfg.agent_sidecar_model_budget_secs, 2400);
     }
 
     #[test]

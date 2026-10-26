@@ -265,6 +265,7 @@ pub async fn build_state(cfg: AppConfig) -> anyhow::Result<AppState> {
         &cfg.agent_sidecar_uv,
         cfg.agent_sidecar_enabled,
         cfg.agent_sidecar_chapter_timeout_secs,
+        cfg.agent_sidecar_model_budget_secs,
         &cfg.assets_dir,
     ));
     let probe_service = agent_sidecar_service.clone();

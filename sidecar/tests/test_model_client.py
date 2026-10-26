@@ -3,6 +3,7 @@
 import httpx
 import pytest
 
+from agent_sidecar import model_client
 from agent_sidecar.model_client import (
     CHAT_PATH,
     ModelClient,
@@ -45,6 +46,31 @@ class SteppedClock:
         value = self.now
         self.now += self.step
         return value
+
+
+def test_total_budget_env_override(monkeypatch):
+    # Rust 侧按 AGENT_SIDECAR_MODEL_BUDGET_SECS 下发（默认 1500）
+    monkeypatch.setenv("AGENT_SIDECAR_MODEL_BUDGET_SECS", "2400")
+    value = model_client._load_total_budget_secs()
+    assert value == 2400.0
+    assert isinstance(value, float)
+
+
+def test_total_budget_env_missing_uses_default(monkeypatch):
+    monkeypatch.delenv("AGENT_SIDECAR_MODEL_BUDGET_SECS", raising=False)
+    assert model_client._load_total_budget_secs() == 1500.0
+
+
+@pytest.mark.parametrize("bad", ["abc", "", "  ", "0", "-5", "nan", "inf"])
+def test_total_budget_env_invalid_falls_back(monkeypatch, bad):
+    # 非数字 / 非正数 / 非有限值一律回退默认，不让 sidecar 首轮即「预算耗尽」
+    monkeypatch.setenv("AGENT_SIDECAR_MODEL_BUDGET_SECS", bad)
+    assert model_client._load_total_budget_secs() == 1500.0
+
+
+def test_total_budget_is_float():
+    assert isinstance(model_client.TOTAL_BUDGET_SECS, float)
+    assert model_client.TOTAL_BUDGET_SECS > 0
 
 
 def test_normalize_base_url_strips_trailing_slashes():

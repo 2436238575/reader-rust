@@ -10,7 +10,8 @@
 //! - stdout 只读 NDJSON；非 JSON 行记 warn 跳过（不杀进程）；
 //! - stderr 持续排空进 tracing（不排空会因管道背压把 sidecar 卡死）；
 //! - 单章处理超时（`AGENT_SIDECAR_CHAPTER_TIMEOUT_SECS`，默认 1800s，与
-//!   sidecar 内 5×300s 的模型调用总预算对齐——算式见 config.rs）即杀进程
+//!   sidecar 内模型调用总预算对齐——预算默认 1500s=5×300s，经
+//!   `AGENT_SIDECAR_MODEL_BUDGET_SECS` 下发，算式见 config.rs）即杀进程
 //!   中止批量；
 //! - 取消 = kill 进程；sidecar 在 stdin EOF 时自行退出，不留孤儿。
 
@@ -275,6 +276,8 @@ pub struct AgentSidecarService {
     uv_path: String,
     enabled: bool,
     chapter_timeout: Duration,
+    /// sidecar 内模型调用总预算（秒）：spawn 时经 AGENT_SIDECAR_MODEL_BUDGET_SECS 下发
+    model_budget_secs: u64,
     sidecar_dir: PathBuf,
     assets_dir: String,
     registry: Arc<AsyncMutex<Option<AgentTaskSnapshot>>>,
@@ -297,6 +300,7 @@ impl AgentSidecarService {
         uv_path: &str,
         enabled: bool,
         chapter_timeout_secs: u64,
+        model_budget_secs: u64,
         assets_dir: &str,
     ) -> Self {
         Self {
@@ -310,6 +314,7 @@ impl AgentSidecarService {
             uv_path: uv_path.to_string(),
             enabled,
             chapter_timeout: Duration::from_secs(chapter_timeout_secs.max(1)),
+            model_budget_secs: model_budget_secs.max(1),
             sidecar_dir: resolve_sidecar_dir(),
             assets_dir: assets_dir.to_string(),
             registry: Arc::new(AsyncMutex::new(None)),
@@ -1231,6 +1236,12 @@ impl AgentSidecarService {
         for (key, value) in sidecar_env_allowlist() {
             cmd.env(key, value);
         }
+        // 模型总预算显式下发（白名单虽放行 AGENT_SIDECAR_ 前缀，但这里用
+        // 归一化后的配置值覆盖父进程原值；三条 spawn 路径共用这一段 env 设置）
+        cmd.env(
+            "AGENT_SIDECAR_MODEL_BUDGET_SECS",
+            self.model_budget_secs.to_string(),
+        );
         #[cfg(windows)]
         {
             const CREATE_NO_WINDOW: u32 = 0x0800_0000;

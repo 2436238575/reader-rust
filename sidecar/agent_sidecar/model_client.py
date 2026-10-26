@@ -11,15 +11,18 @@ Rust 拿到的就是解析后的 endpoint（baseUrl/apiKey/model/useFullUrl）�
 默认 1800s）对齐。单次 chat 最坏 3 次尝试 ×（connect 10s + write 30s +
 read 150s）+ 退避 ≈ 573s，而一章最多 loop.MAX_ROUNDS=5 轮 chat——只按
 单次调用限流挡不住（最坏 5×573≈2865s）。ModelClient 在首次调用时用
-time.monotonic 设定总预算 TOTAL_BUDGET_SECS=1500s（5 轮 × 300s），
-同一 run 帧内的所有 chat/images 共享，重试与退避都不能越过；最坏情形
-= 预算耗尽后已在途的一次尝试（190s）≈ 1690s < 1800s——Python 侧先以
-真实原因收场，而不是被看门狗截成一句「超时」。
+time.monotonic 设定总预算 TOTAL_BUDGET_SECS（默认 1500s=5×300s，可由
+宿主经 AGENT_SIDECAR_MODEL_BUDGET_SECS 环境变量覆盖），同一 run 帧内的
+所有 chat/images 共享，重试与退避都不能越过；最坏情形 = 预算耗尽后已在途
+的一次尝试（190s）≈ 1690s < 1800s——Python 侧先以真实原因收场，而不是
+被看门狗截成一句「超时」。
 """
 
 from __future__ import annotations
 
 import json
+import math
+import os
 import random
 import time
 from typing import Callable
@@ -32,9 +35,26 @@ from .types import ModelEndpoint
 # 3 次尝试 + 短退避（带 jitter）：预算对齐 Rust 章节看门狗（见模块 docstring）
 MAX_ATTEMPTS = 3
 RETRY_DELAYS = (1.0, 2.0)
+# 总预算默认值：loop.MAX_ROUNDS=5 轮 chat 共享（平均每轮 300s）
+_DEFAULT_TOTAL_BUDGET_SECS = 1500.0
+
+
+def _load_total_budget_secs() -> float:
+    """从 AGENT_SIDECAR_MODEL_BUDGET_SECS 读总预算；缺失/非法/非正数回退默认。"""
+    raw = os.environ.get("AGENT_SIDECAR_MODEL_BUDGET_SECS")
+    if raw is None:
+        return _DEFAULT_TOTAL_BUDGET_SECS
+    try:
+        value = float(raw.strip())
+    except (TypeError, ValueError):
+        return _DEFAULT_TOTAL_BUDGET_SECS
+    if not math.isfinite(value) or value <= 0:
+        return _DEFAULT_TOTAL_BUDGET_SECS
+    return value
+
+
 # 单 run 帧内所有模型调用的总预算（time.monotonic 秒）。
-# loop.MAX_ROUNDS=5 轮 chat 共享这一预算（平均每轮 300s）。
-TOTAL_BUDGET_SECS = 1500.0
+TOTAL_BUDGET_SECS = _load_total_budget_secs()
 # 模型响应体上限：正常补全响应在 KB 量级，8MB 已极端宽裕；
 # response.json() 会把整个 body 读进内存，失控上游必须有闸门
 MAX_RESPONSE_BYTES = 8 * 1024 * 1024

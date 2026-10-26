@@ -135,7 +135,8 @@ cp .env.example .env
 | `AGENT_SIDECAR_ENABLED`              | `true`                    | AI 资料编排 sidecar 开关；关闭后 AI 资料更新接口返回明确错误                                            |
 | `AGENT_SIDECAR_COMMAND`              | `python -m agent_sidecar` | sidecar 启动命令，进程 cwd 为 `sidecar/`；保持默认时若 `sidecar/.venv` 存在自动优先其 Python，自定义（含 Docker ENV）时不自动回退 |
 | `AGENT_SIDECAR_UV`                   | 空                        | uv 二进制路径；非空/PATH 可探测时由 uv 自动管理依赖（推荐），都没有时降级为 AGENT_SIDECAR_COMMAND      |
-| `AGENT_SIDECAR_CHAPTER_TIMEOUT_SECS` | `1800`                    | 单章处理超时；超时即终止 sidecar 进程并中止批量任务（sidecar 内的模型调用有 5×300 秒的总预算，与看门狗对齐；错误会带回真实原因，不会被截成超时）                                                     |
+| `AGENT_SIDECAR_CHAPTER_TIMEOUT_SECS` | `1800`                    | 单章处理超时；超时即终止 sidecar 进程并中止批量任务（sidecar 内的模型调用总预算默认 1500 秒即 5×300，与看门狗对齐；错误会带回真实原因，不会被截成超时）                                                     |
+| `AGENT_SIDECAR_MODEL_BUDGET_SECS`    | `1500`                    | sidecar 内模型调用的总预算（秒）：同一章的所有 chat/images 调用共享，重试与退避不越过；spawn 时经环境变量下发给 sidecar。`0` 视为笔误回落默认值；调大时 `AGENT_SIDECAR_CHAPTER_TIMEOUT_SECS` 应同步放大（预算 + 约 300 秒余量），否则看门狗先于预算耗尽截断任务 |
 
 以下几点需要注意：
 
