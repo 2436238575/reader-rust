@@ -6,6 +6,9 @@
  * /reader3/saveUserdataBatch，并保持单飞（同一时刻只有一个批量在途）。
  * 失败时未发送成功的文档留在队列里，按退避间隔自动重试（至多 3 次，
  * 不无限重试；下一次写入会重开一轮重试预算）。
+ * 成功清理按版本号判断是否被新写覆盖：每次入队分配递增版本，发送时
+ * 捕获版本，落地回调只删版本未变的条目——消费方（阅读统计）入队的是
+ * 同一个活对象并继续原地修改，按引用相等会把在途期间的新值误删。
  *
  * 页面卸载（pagehide）或切入后台（visibilitychange=hidden）时用裸
  * fetch + keepalive 补发最后一次批量写——axios 不支持 keepalive，卸载
@@ -18,7 +21,14 @@ const DEBOUNCE_MS = 200
 // 失败后的退避重试间隔；用完即放弃，等下一次写入再试
 const RETRY_DELAYS_MS = [1000, 2000, 4000]
 
-const pending = new Map<string, unknown>()
+interface PendingDoc {
+  value: unknown
+  /** 入队时分配的递增版本：成功清理据此判断发送后是否又被新写覆盖 */
+  version: number
+}
+
+const pending = new Map<string, PendingDoc>()
+let nextVersion = 0
 let debounceTimer: ReturnType<typeof setTimeout> | null = null
 let retryTimer: ReturnType<typeof setTimeout> | null = null
 let retryAttempts = 0
@@ -26,7 +36,8 @@ let inFlight: Promise<void> | null = null
 
 /** 把一个文档的整量新值排入写队列；同名文档后写覆盖前写。 */
 export function queueUserdataSave(name: string, value: unknown) {
-  pending.set(name, value)
+  nextVersion += 1
+  pending.set(name, { value, version: nextVersion })
   // 新写入重开一轮重试预算，并取代已排期的退避重试（200ms 防抖比退避更快）
   retryAttempts = 0
   if (retryTimer) {
@@ -59,12 +70,17 @@ export function flushUserdataQueue(): Promise<void> {
     return inFlight.then(() => flushUserdataQueue())
   }
   if (pending.size === 0) return Promise.resolve()
-  const docs = [...pending.entries()].map(([name, value]) => ({ name, value }))
-  inFlight = saveUserdataBatch(docs).then(
+  // 捕获每个文档发送时的版本；发给后端的载荷不带 version
+  const sent = [...pending.entries()].map(([name, entry]) => ({
+    name,
+    value: entry.value,
+    version: entry.version,
+  }))
+  inFlight = saveUserdataBatch(sent.map(({ name, value }) => ({ name, value }))).then(
     () => {
-      // 只清掉发送后没被新值覆盖的文档；在途期间的新写留下一轮补发
-      for (const doc of docs) {
-        if (pending.get(doc.name) === doc.value) pending.delete(doc.name)
+      // 只清掉发送后没被新写覆盖的文档（版本未变）；在途期间的新写留下一轮补发
+      for (const doc of sent) {
+        if (pending.get(doc.name)?.version === doc.version) pending.delete(doc.name)
       }
       retryAttempts = 0
       inFlight = null
@@ -97,7 +113,7 @@ function scheduleRetry() {
  * 会话 Cookie 随登出失效，任何残留发送都只会 401 并触发 need-login，
  * 把刚登出的用户强制弹去登录页。各文档本地都有镜像（localStorage），
  * 下次登录的同步合并会推回，丢弃不丢数据。
- * 在途批量无法中断，但其落地回调对空队列全部 no-op（成功时引用守卫
+ * 在途批量无法中断，但其落地回调对空队列全部 no-op（成功时版本守卫
  * 找不到条目、失败时 scheduleRetry 因 pending 为空直接返回）。
  */
 export function cancelUserdataQueue() {
@@ -119,7 +135,11 @@ export function cancelUserdataQueue() {
  */
 function flushWithKeepalive() {
   if (pending.size === 0) return
-  const docs = [...pending.entries()].map(([name, value]) => ({ name, value }))
+  const docs = [...pending.entries()].map(([name, entry]) => ({
+    name,
+    value: entry.value,
+    version: entry.version,
+  }))
   if (debounceTimer) {
     clearTimeout(debounceTimer)
     debounceTimer = null
@@ -134,10 +154,13 @@ function flushWithKeepalive() {
       keepalive: true,
       credentials: 'same-origin',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ docs }),
+      body: JSON.stringify({ docs: docs.map(({ name, value }) => ({ name, value })) }),
     })
-    // fetch 成功发起才清队列；同步抛错（如 fetch 不可用）时保留待写
-    pending.clear()
+    // fetch 成功发起才清已发送的版本（同步抛错如 fetch 不可用时保留待写）；
+    // 读取后新写入的条目版本已变，不能一并清掉
+    for (const doc of docs) {
+      if (pending.get(doc.name)?.version === doc.version) pending.delete(doc.name)
+    }
   } catch {
     // 卸载阶段无能为力
   }

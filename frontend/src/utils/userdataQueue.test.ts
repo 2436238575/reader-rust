@@ -112,6 +112,40 @@ describe('单飞', () => {
   })
 })
 
+describe('在途期间的新写覆盖', () => {
+  it('同一对象在途期间被原地改值并再次入队：首批成功后新值仍留下一轮补发', async () => {
+    const first = deferred()
+    saveUserdataBatch.mockReturnValueOnce(first.promise)
+    const queue = await loadQueue()
+    // reading-stats 的真实写法：同一个活对象入队后继续原地累加
+    const stats = { totalSeconds: 1 }
+    queue.queueUserdataSave('reading-stats', stats)
+    await vi.advanceTimersByTimeAsync(200)
+    expect(saveUserdataBatch).toHaveBeenCalledTimes(1)
+    // 注意：发送的是同一对象引用，断言必须赶在原地修改之前
+    expect(saveUserdataBatch).toHaveBeenLastCalledWith([
+      { name: 'reading-stats', value: { totalSeconds: 1 } },
+    ])
+
+    // 在途期间原地改值并再次入队：引用相同，但已是更新的一版
+    stats.totalSeconds = 2
+    queue.queueUserdataSave('reading-stats', stats)
+
+    // 首批成功：不能按引用相等把新值误删，防抖后补发新值
+    first.resolve(undefined)
+    await vi.advanceTimersByTimeAsync(0)
+    await vi.advanceTimersByTimeAsync(200)
+    expect(saveUserdataBatch).toHaveBeenCalledTimes(2)
+    expect(saveUserdataBatch).toHaveBeenLastCalledWith([
+      { name: 'reading-stats', value: { totalSeconds: 2 } },
+    ])
+
+    // 补发成功后队列清空，不再重复发送
+    await vi.advanceTimersByTimeAsync(10_000)
+    expect(saveUserdataBatch).toHaveBeenCalledTimes(2)
+  })
+})
+
 describe('失败重试', () => {
   it('按退避间隔重试，至多 3 次后放弃', async () => {
     saveUserdataBatch.mockRejectedValue(new Error('offline'))
@@ -227,6 +261,29 @@ describe('页面卸载补发', () => {
     // 补发后队列已清，防抖不再经 axios 重复发送
     await vi.advanceTimersByTimeAsync(10_000)
     expect(saveUserdataBatch).not.toHaveBeenCalled()
+  })
+
+  it('keepalive 按版本清理：读取后新写入的值不被清掉，防抖后走正常批量补发', async () => {
+    const queue = await loadQueue()
+    queue.queueUserdataSave('a', 1)
+    // fetch 发起的同步窗口内有新写入（同一文档更新的一版）：
+    // keepalive 只能清掉已发送的那一版，不能把新值一起清掉
+    const fetchMock = vi.fn().mockImplementation(() => {
+      queue.queueUserdataSave('a', 2)
+      return Promise.resolve(undefined)
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    window.dispatchEvent(new Event('pagehide'))
+
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    const [, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit]
+    expect(JSON.parse(init.body as string)).toEqual({ docs: [{ name: 'a', value: 1 }] })
+
+    // a=2 仍在队列，防抖后走正常批量路径补发
+    await vi.advanceTimersByTimeAsync(200)
+    expect(saveUserdataBatch).toHaveBeenCalledTimes(1)
+    expect(saveUserdataBatch).toHaveBeenCalledWith([{ name: 'a', value: 2 }])
   })
 
   it('visibilitychange 进入 hidden 时同样补发', async () => {
