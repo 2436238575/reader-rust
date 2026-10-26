@@ -303,6 +303,60 @@ describe('source store mutation', () => {
     expect(store.partial).toBe(false)
   })
 
+  it('saveSources 保存成功但整表重拉失败：整体仍 resolve，置 partial 待补全，本地列表保持', async () => {
+    getBookSourcesMock.mockResolvedValueOnce([fullSource({ bookSourceId: 1 })])
+    saveBookSourcesMock.mockResolvedValue({ saved: true, count: 1 })
+    const store = useSourceStore()
+    await store.fetchSources()
+    expect(store.partial).toBe(false)
+
+    // 导入已落库，但随后的强制重拉失败（断网等）
+    getBookSourcesMock.mockRejectedValueOnce(new Error('network down'))
+    const result = await store.saveSources([fullSource({ bookSourceName: '导入A' })])
+
+    // 不报假失败：按保存结果 resolve
+    expect(result).toEqual({ saved: true, count: 1 })
+    expect(saveBookSourcesMock).toHaveBeenCalledTimes(1)
+    expect(getBookSourcesMock).toHaveBeenCalledTimes(2)
+    // partial 标记让下一次 ensureFullSources 补全；本地列表暂缺新导入项但不被清空
+    expect(store.partial).toBe(true)
+    expect(store.sources.map((s) => s.bookSourceId)).toEqual([1])
+  })
+
+  it('saveSources 重拉失败后，下一次 ensureFullSources 能补全并清除 partial', async () => {
+    getBookSourcesMock.mockResolvedValueOnce([fullSource({ bookSourceId: 1 })])
+    saveBookSourcesMock.mockResolvedValue({ saved: true, count: 1 })
+    const store = useSourceStore()
+    await store.fetchSources()
+
+    getBookSourcesMock.mockRejectedValueOnce(new Error('network down'))
+    await store.saveSources([fullSource({ bookSourceName: '导入A' })])
+    expect(store.partial).toBe(true)
+
+    getBookSourcesMock.mockResolvedValueOnce([
+      fullSource({ bookSourceId: 1 }),
+      fullSource({ bookSourceId: 2, bookSourceName: '导入A' }),
+    ])
+    await store.ensureFullSources()
+
+    expect(store.partial).toBe(false)
+    expect(store.sources.map((s) => s.bookSourceId)).toEqual([1, 2])
+  })
+
+  it('saveSources 保存本身失败：reject 且不触发整表重拉', async () => {
+    getBookSourcesMock.mockResolvedValueOnce([fullSource({ bookSourceId: 1 })])
+    saveBookSourcesMock.mockRejectedValue(new Error('save failed'))
+    const store = useSourceStore()
+    await store.fetchSources()
+
+    await expect(
+      store.saveSources([fullSource({ bookSourceName: '导入A' })])
+    ).rejects.toThrow('save failed')
+
+    expect(getBookSourcesMock).toHaveBeenCalledTimes(1) // 仅首次加载，未重拉
+    expect(store.partial).toBe(false)
+  })
+
   it('deleteInvalidSources 按「失效」分组局部移除', async () => {
     getBookSourcesMock.mockResolvedValue([
       fullSource({ bookSourceId: 1, bookSourceGroup: '默认,失效' }),

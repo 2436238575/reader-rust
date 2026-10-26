@@ -203,11 +203,19 @@ export const useSourceStore = defineStore('source', () => {
     return result
   }
 
-  /** 批量导入：导入源由后端分配/归并 id，成功后强制整表重拉对齐 */
+  /**
+   * 批量导入：导入源由后端分配/归并 id，成功后强制整表重拉对齐。
+   * 重拉是 best-effort：失败时置 partial（本地列表暂缺新导入项），
+   * 由下一次 ensureFullSources 补全，不把已成功落库的导入报成失败。
+   */
   async function saveSources(list: BookSource[]) {
     await ensureFullSources()
     const result = await saveBookSources(list)
-    await fetchSources({ force: true })
+    try {
+      await fetchSources({ force: true })
+    } catch {
+      partial.value = true
+    }
     return result
   }
 
