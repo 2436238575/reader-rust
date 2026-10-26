@@ -5,23 +5,16 @@
 
 use crate::api::extract::QueryOrBody;
 use crate::api::handlers::image::ok_with_cover_routes;
-use crate::api::handlers::multipart::read_limited_multipart_field;
 use crate::api::AppState;
 use crate::auth::CurrentUser;
 use crate::error::error::{ApiResponse, AppError};
 use crate::model::{book::Book, book_source::BookSource, search::SearchBook};
-use crate::service::local_epub_book::{
-    is_local_epub_origin, is_local_epub_url, LOCAL_EPUB_ORIGIN, MAX_EPUB_UPLOAD_BYTES,
-};
-use crate::service::local_txt_book::{
-    is_local_txt_origin, is_local_txt_url, LOCAL_TXT_ORIGIN, MAX_TXT_UPLOAD_BYTES,
-};
-use axum::body::Body;
-use axum::http::header;
+use crate::service::local_epub_book::{is_local_epub_origin, is_local_epub_url, LOCAL_EPUB_ORIGIN};
+use crate::service::local_txt_book::{is_local_txt_origin, is_local_txt_url, LOCAL_TXT_ORIGIN};
 use axum::response::sse::{Event, KeepAlive};
-use axum::response::{Response, Sse};
+use axum::response::Sse;
 use axum::{
-    extract::{Multipart, Query, State},
+    extract::{Query, State},
     Json,
 };
 use futures::stream::FuturesUnordered;
@@ -35,31 +28,23 @@ use tokio_stream::wrappers::ReceiverStream;
 
 mod content;
 mod explore;
+mod local_upload;
 mod search;
 mod shelf;
 mod toc;
 
 pub use content::*;
 pub use explore::*;
+pub use local_upload::*;
 pub use search::*;
 pub use shelf::*;
 pub use toc::*;
-
-// 本地书上传（在 local_upload 子模块抽出前仍在 mod.rs）依赖书架的限额判定
-use self::shelf::ensure_user_local_book_limit;
 
 const DEFAULT_AVAILABLE_RESULT_LIMIT: usize = 20;
 const MAX_AVAILABLE_RESULT_LIMIT: usize = 100;
 const DEFAULT_AVAILABLE_CONCURRENT_COUNT: usize = 8;
 const MAX_AVAILABLE_CONCURRENT_COUNT: usize = 20;
 const AVAILABLE_SOURCE_SSE_RESULT_LIMIT: usize = 5;
-
-#[derive(Debug, Deserialize)]
-pub struct LocalEpubAssetQuery {
-    #[serde(rename = "bookId")]
-    book_id: String,
-    path: String,
-}
 
 #[derive(Debug, Deserialize)]
 pub struct CacheBookRequest {
@@ -128,136 +113,6 @@ pub struct AvailableBookSourceResponse {
     books: Vec<SearchBook>,
     last_index: i32,
     has_more: bool,
-}
-
-pub async fn upload_txt_book(
-    State(state): State<AppState>,
-    user: CurrentUser,
-    mut multipart: Multipart,
-) -> Result<Json<ApiResponse<Value>>, AppError> {
-    let user_ns = user.0.ns.clone();
-
-    let mut file_name = String::new();
-    let mut bytes: Option<Vec<u8>> = None;
-    let mut field_count = 0usize;
-    while let Some(field) =
-        crate::api::handlers::multipart::next_field_limited(&mut multipart, &mut field_count)
-            .await?
-    {
-        let field_name = field.name().unwrap_or_default().to_string();
-        if field_name != "file" {
-            continue;
-        }
-        file_name = field.file_name().unwrap_or("book.txt").to_string();
-        bytes = Some(
-            read_limited_multipart_field(field, MAX_TXT_UPLOAD_BYTES, "TXT 文件不能超过 50MB")
-                .await?,
-        );
-        break;
-    }
-
-    let bytes = bytes.ok_or_else(|| AppError::BadRequest("file required".to_string()))?;
-    let book = state
-        .local_txt_book_service
-        .import_txt_book(&user_ns, &file_name, &bytes)
-        .await?;
-    if let Err(err) = ensure_user_local_book_limit(&state, &user_ns, &book.book_url).await {
-        if let Err(cleanup_err) = state
-            .local_txt_book_service
-            .delete_book_files(&user_ns, &book.book_url)
-            .await
-        {
-            tracing::warn!(
-                "failed to clean up rejected local txt book {}: {:?}",
-                book.book_url,
-                cleanup_err
-            );
-        }
-        return Err(err);
-    }
-    let saved = state.book_service.save_book(&user_ns, book).await?;
-    Ok(Json(ApiResponse::ok(
-        serde_json::to_value(saved).unwrap_or_default(),
-    )))
-}
-
-pub async fn upload_epub_book(
-    State(state): State<AppState>,
-    user: CurrentUser,
-    mut multipart: Multipart,
-) -> Result<Json<ApiResponse<Value>>, AppError> {
-    let user_ns = user.0.ns.clone();
-
-    let mut file_name = String::new();
-    let mut bytes: Option<Vec<u8>> = None;
-    let mut field_count = 0usize;
-    while let Some(field) =
-        crate::api::handlers::multipart::next_field_limited(&mut multipart, &mut field_count)
-            .await?
-    {
-        let field_name = field.name().unwrap_or_default().to_string();
-        if field_name != "file" {
-            continue;
-        }
-        file_name = field.file_name().unwrap_or("book.epub").to_string();
-        bytes = Some(
-            read_limited_multipart_field(field, MAX_EPUB_UPLOAD_BYTES, "EPUB 文件不能超过 80MB")
-                .await?,
-        );
-        break;
-    }
-
-    let bytes = bytes.ok_or_else(|| AppError::BadRequest("file required".to_string()))?;
-    let book = state
-        .local_epub_book_service
-        .import_epub_book(&user_ns, &file_name, bytes)
-        .await?;
-    if let Err(err) = ensure_user_local_book_limit(&state, &user_ns, &book.book_url).await {
-        if let Err(cleanup_err) = state
-            .local_epub_book_service
-            .delete_book_files(&user_ns, &book.book_url)
-            .await
-        {
-            tracing::warn!(
-                "failed to clean up rejected local epub book {}: {:?}",
-                book.book_url,
-                cleanup_err
-            );
-        }
-        return Err(err);
-    }
-    let saved = state.book_service.save_book(&user_ns, book).await?;
-    Ok(Json(ApiResponse::ok(
-        serde_json::to_value(saved).unwrap_or_default(),
-    )))
-}
-
-pub async fn get_local_epub_asset(
-    State(state): State<AppState>,
-    user: CurrentUser,
-    Query(q): Query<LocalEpubAssetQuery>,
-) -> Result<Response, AppError> {
-    let user_ns = user.0.ns.clone();
-    let row = state
-        .book_service
-        .book_repo()
-        .get(&user_ns, &q.book_id)
-        .await?
-        .ok_or_else(|| AppError::NotFound("书籍不存在".to_string()))?;
-    let asset = state
-        .local_epub_book_service
-        .get_asset(&user_ns, &row.book_url, &q.path)
-        .await?;
-    let mut resp = Response::new(Body::from(asset.bytes));
-    let headers = resp.headers_mut();
-    headers.insert(
-        header::CACHE_CONTROL,
-        header::HeaderValue::from_static("private, max-age=3600"),
-    );
-    if let Ok(v) = header::HeaderValue::from_str(&asset.content_type) {
-        headers.insert(header::CONTENT_TYPE, v);
-    }
-    Ok(resp)
 }
 
 pub async fn get_invalid_book_sources(
