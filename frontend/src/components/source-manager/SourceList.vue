@@ -4,9 +4,14 @@
       <div class="loading-spinner"></div>
       <p>加载书源中...</p>
     </div>
-    <div v-else class="source-list">
+    <div v-else-if="!sources.length" class="empty-state">
+      <strong>{{ emptyTitle }}</strong>
+      <span>{{ emptyDescription }}</span>
+    </div>
+    <!-- 数千书源：VList 只渲染视口附近条目；行高不固定（可含分组胶囊/换行 URL），
+         交给 virtua 自动测量，key 用书源身份（id 优先，退化 URL）保持稳定 -->
+    <VList v-else class="source-list" :data="sources" #default="{ item: source }">
       <article
-        v-for="source in sources"
         :key="source.bookSourceId ?? source.bookSourceUrl"
         class="source-item"
         :class="{
@@ -51,15 +56,12 @@
           </button>
         </div>
       </article>
-      <div v-if="!sources.length" class="empty-state">
-        <strong>{{ emptyTitle }}</strong>
-        <span>{{ emptyDescription }}</span>
-      </div>
-    </div>
+    </VList>
   </section>
 </template>
 
 <script setup lang="ts">
+import { VList } from 'virtua/vue'
 import type { BookSource } from '../../types'
 
 defineProps<{
