@@ -22,7 +22,7 @@ Reader-Rust 是 [阅读3.0](https://github.com/hectorqin/reader) 的 Rust 重写
 cargo run                      # 开发模式运行，默认监听 127.0.0.1:8080（Docker 镜像显式设 0.0.0.0）
 cargo build                    # 调试构建
 cargo build --release          # 发布构建
-cargo test                     # 全部测试（Rust 侧共 597 个，另有 2 个真实网络用例默认忽略）
+cargo test                     # 全部测试（Rust 侧共 600 个，另有 2 个真实网络用例默认忽略）
 cargo test <关键字>             # 按名称过滤测试
 cargo clippy --all-targets     # 静态检查
 cargo fmt                      # 格式化
@@ -427,7 +427,7 @@ XPath 有资源上限（长度 8KB / 嵌套 64 层 / 总步数 100、`//` 50）�
 
 ## 测试
 
-Rust 侧共 **597 个测试**（415 个内联单元测试 + 182 个集成用例，另有 2 个 `#[ignore]` 的真实网络用例）。`cargo test` 输出的合计就是实际用例数：`src/main.rs` 只是入口文件，不再重复声明模块，bin 目标没有单元测试，不存在重复计数。分布为：
+Rust 侧共 **600 个测试**（418 个内联单元测试 + 182 个集成用例，另有 2 个 `#[ignore]` 的真实网络用例）。`cargo test` 输出的合计就是实际用例数：`src/main.rs` 只是入口文件，不再重复声明模块，bin 目标没有单元测试，不存在重复计数。分布为：
 
 - `tests/` 下 27 个集成测试文件（182 个常规用例；`yckceo_live_sources.rs` 只装那 2 个默认忽略的真实网络用例），其中 `auth_flow.rs` 用例最多（24 个）；
   `auth_flow.rs`、`review_flow.rs`、`chapter_image_flow.rs`、`image_pipeline.rs` 与
@@ -441,7 +441,7 @@ Rust 侧共 **597 个测试**（415 个内联单元测试 + 182 个集成用例�
   （机器上需要有 Node）；
 - `batch_content_flow.rs` 用假上游覆盖批量正文接口 `getBookContents`：多章按请求顺序返回、
   单章失败不影响其他章节（整体 200）、空/超量/缺 `chapterUrl` 整批 400、与单章接口同构；
-- `src/` 内的内联单元测试模块（415 个）。
+- `src/` 内的内联单元测试模块（418 个）。
 
 sidecar 使用 pytest（128 个用例，
 见「常用命令」），含从旧前端实现 1:1 移植的领域规则用例与新增编排能力用例。
