@@ -219,6 +219,8 @@ describe('readerContent local txt chapters', () => {
     ])
     const readerStore = useReaderStore()
     const contentStore = useReaderContentStore()
+    // 目录请求有离线前置（浏览器报离线时跳过网络）：显式置在线才走网络分支
+    useAppStore().setOnlineStatus(true)
     readerStore.editedChapterKeys = new Set(['https://previous.example/old'])
 
     await contentStore.loadBook({
@@ -245,7 +247,9 @@ describe('readerContent local txt chapters', () => {
     vi.mocked(getChapterList).mockResolvedValue([
       { title: '第一章', url: 'https://example.org/1', index: 0 },
     ])
-    // 离线：清单请求失败，内存集合只能来自上一次成功拉取时的落盘快照
+    // 模拟的是清单请求失败（目录仍成功）：在线状态下 listChapterEdits 拒绝。
+    // 浏览器报离线（navigator.onLine=false）的开书由下面的专项用例覆盖
+    useAppStore().setOnlineStatus(true)
     vi.mocked(listChapterEdits).mockRejectedValue(new Error('offline'))
     const readerStore = useReaderStore()
     const contentStore = useReaderContentStore()
@@ -268,6 +272,7 @@ describe('readerContent local txt chapters', () => {
       { title: '第一章', url: 'https://example.org/1', index: 0 },
     ])
     vi.mocked(listChapterEdits).mockResolvedValue(['https://example.org/1'])
+    useAppStore().setOnlineStatus(true)
     const contentStore = useReaderContentStore()
 
     await contentStore.loadBook({
@@ -282,6 +287,103 @@ describe('readerContent local txt chapters', () => {
     const raw = localStorage.getItem('reader-edited-chapters')
     expect(raw).not.toBeNull()
     expect(JSON.parse(raw || '{}').book_1?.urls).toEqual(['https://example.org/1'])
+  })
+
+  it('浏览器离线时开书跳过目录请求，直接用浏览器缓存目录并提示', async () => {
+    const { getChapterList } = await import('../api/bookshelf')
+    const { getBrowserCatalog } = await import('../utils/browserCache')
+    // 同文件前面的用例已调过 getChapterList：先清掉调用史再断言「没发请求」
+    vi.mocked(getChapterList).mockClear()
+    vi.mocked(getBrowserCatalog).mockResolvedValue([
+      { title: '第一章', url: 'https://example.org/1', index: 0 },
+    ])
+    const appStore = useAppStore()
+    appStore.setOnlineStatus(false)
+    const toastSpy = vi.spyOn(appStore, 'showToast')
+    const readerStore = useReaderStore()
+    const contentStore = useReaderContentStore()
+
+    await contentStore.loadBook({
+      name: '网络书',
+      author: '作者',
+      origin: 'https://example.org',
+      bookId: 'book_1',
+      bookUrl: 'https://example.org/book',
+      durChapterIndex: 0,
+    })
+
+    // 离线前置：不发必然失败的目录请求，直接落浏览器缓存兜底
+    expect(getChapterList).not.toHaveBeenCalled()
+    expect(readerStore.chapters).toEqual([{ title: '第一章', url: 'https://example.org/1', index: 0 }])
+    expect(toastSpy).toHaveBeenCalledWith('离线中：目录来自浏览器缓存', 'warning')
+    // 编辑章清单请求维持原行为（发出后失败被吞，集合保持落盘快照/空）
+    expect(listChapterEdits).toHaveBeenCalledWith('book_1')
+  })
+
+  it('离线恢复会话跳过目录请求，用浏览器缓存目录并提示', async () => {
+    const { getChapterList } = await import('../api/bookshelf')
+    const { getBrowserCatalog } = await import('../utils/browserCache')
+    vi.mocked(getChapterList).mockClear()
+    vi.mocked(getBrowserCatalog).mockResolvedValue([
+      { title: '第一章', url: 'https://example.org/1', index: 0 },
+    ])
+    vi.mocked(getBrowserCachedChapter).mockResolvedValue('缓存正文')
+    const appStore = useAppStore()
+    appStore.setOnlineStatus(false)
+    const toastSpy = vi.spyOn(appStore, 'showToast')
+    const readerStore = useReaderStore()
+    const contentStore = useReaderContentStore()
+    // 瘦身会话（配额降级时落的盘）不带目录：恢复时要重新拉目录
+    localStorage.setItem(
+      'reader-last-session',
+      JSON.stringify({
+        book: {
+          name: '网络书',
+          author: '作者',
+          origin: 'https://example.org',
+          bookId: 'book_1',
+          bookUrl: 'https://example.org/book',
+          bookSourceId: 1,
+        },
+        chapters: [],
+        currentIndex: 0,
+        chapterScrollProgress: 0,
+        updatedAt: 1,
+      })
+    )
+
+    await expect(contentStore.restorePersistedSession()).resolves.toBe(true)
+
+    expect(getChapterList).not.toHaveBeenCalled()
+    expect(readerStore.chapters).toEqual([{ title: '第一章', url: 'https://example.org/1', index: 0 }])
+    expect(toastSpy).toHaveBeenCalledWith('离线中：目录来自浏览器缓存', 'warning')
+  })
+
+  it('离线时手动刷新目录不发请求，如实提示且保留现有目录', async () => {
+    const { getChapterList } = await import('../api/bookshelf')
+    vi.mocked(getChapterList).mockClear()
+    const appStore = useAppStore()
+    appStore.setOnlineStatus(false)
+    const toastSpy = vi.spyOn(appStore, 'showToast')
+    const readerStore = useReaderStore()
+    const contentStore = useReaderContentStore()
+    readerStore.book = {
+      name: '网络书',
+      author: '作者',
+      origin: 'https://example.org',
+      bookId: 'book_1',
+      bookUrl: 'https://example.org/book',
+      bookSourceId: 1,
+    }
+    readerStore.chapters = [{ title: '第一章', url: 'https://example.org/1', index: 0 }]
+
+    await contentStore.refreshChapters()
+
+    // 不拿浏览器缓存冒充「刷新成功」：目录原样保留，只提示离线
+    expect(getChapterList).not.toHaveBeenCalled()
+    expect(toastSpy).toHaveBeenCalledWith('离线中，无法刷新目录', 'warning')
+    expect(readerStore.chapters).toEqual([{ title: '第一章', url: 'https://example.org/1', index: 0 }])
+    expect(readerStore.chaptersLoading).toBe(false)
   })
 })
 
@@ -304,6 +406,8 @@ describe('reader progress conflict timestamps', () => {
     ])
     // loadBook 会并行拉编辑章清单：给个确定值，避免依赖别的 describe 的 mock 残留
     vi.mocked(listChapterEdits).mockResolvedValue([])
+    // 目录请求有离线前置（浏览器报离线时跳过网络）：显式置在线才走网络分支
+    useAppStore().setOnlineStatus(true)
     const readerStore = useReaderStore()
     const contentStore = useReaderContentStore()
     const serverSavedAt = 1_700_000_000_000

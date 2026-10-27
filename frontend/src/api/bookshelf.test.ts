@@ -117,8 +117,11 @@ describe('getChapterList 会话内缓存', () => {
     await getChapterList({ bookId: 'get-book', refresh: 1 })
 
     expect(getMock).toHaveBeenCalledTimes(1)
+    // 目录单独收敛到 20s 超时（理由见 bookshelf.ts 的 CHAPTER_LIST_TIMEOUT_MS），
+    // 不沿用实例默认的 120s
     expect(getMock).toHaveBeenCalledWith('/getChapterList', {
       params: { bookId: 'get-book', refresh: 1 },
+      timeout: 20_000,
     })
     // POST 不再用于目录拉取（POST 不进 HTTP 缓存，享受不到 ETag 协商）
     expect(postMock).not.toHaveBeenCalled()
@@ -129,7 +132,10 @@ describe('getChapterList 会话内缓存', () => {
     const second = await getChapterList({ bookId: 'ttl-book' })
 
     expect(getMock).toHaveBeenCalledTimes(1)
-    expect(getMock).toHaveBeenCalledWith('/getChapterList', { params: { bookId: 'ttl-book' } })
+    expect(getMock).toHaveBeenCalledWith('/getChapterList', {
+      params: { bookId: 'ttl-book' },
+      timeout: 20_000,
+    })
     expect(second).toEqual(first)
   })
 

@@ -99,9 +99,14 @@ export const useReaderContentStore = defineStore('readerContent', () => {
       if (!b.bookId) throw new Error('书籍缺少 bookId')
       // 目录与编辑章清单并行；loadBook 返回前两者都要落定，否则开书后的
       // 正文请求可能赶在集合就位前走浏览器缓存/写回旧缓存。
-      // refreshEditedChapterKeys 内部已吞异常，不会让 Promise.all reject
+      // refreshEditedChapterKeys 内部已吞异常，不会让 Promise.all reject。
+      // 离线前置：浏览器已报离线时目录请求必然失败，最坏还要白等一个超时
+      // 周期才走兜底——直接拒绝进 catch 走浏览器缓存（catch 里
+      //  describeRequestFailure 对离线恒返回「离线中」，提示口径不变）
       const [list] = await Promise.all([
-        getChapterList({ bookId: b.bookId }),
+        appStore.isOnline
+          ? getChapterList({ bookId: b.bookId })
+          : Promise.reject(new Error('离线中')),
         readerStore.refreshEditedChapterKeys(),
       ])
       if (loadSeq !== bookLoadSeq) return
@@ -148,14 +153,24 @@ export const useReaderContentStore = defineStore('readerContent', () => {
       const bookId = session.book.bookId
       if (!bookId) return false
       try {
+        // 离线前置：目录请求必然失败且要等超时，直接进 catch 走浏览器缓存目录
+        if (!appStore.isOnline) throw new Error('离线中')
         const list = await getChapterList({ bookId })
         readerStore.chapters = list
         void setBrowserCatalog(bookId, list)
-      } catch {
+      } catch (error) {
         // 离线兜底：浏览器里缓存的目录
         const cachedCatalog = await getBrowserCatalog<BookChapter>(bookId)
         if (!cachedCatalog) return false
         readerStore.chapters = cachedCatalog
+        // 离线跳过网络时如实提示（与 loadBook 同一口径）；在线失败的静默兜底
+        // 维持原样——恢复成功的 toast 随后就到，不叠一条 warning
+        if (!appStore.isOnline) {
+          appStore.showToast(
+            `${describeRequestFailure(error, appStore.isOnline)}：目录来自浏览器缓存`,
+            'warning'
+          )
+        }
       }
     }
     if (!readerStore.chapters.length) return false
@@ -632,6 +647,15 @@ export const useReaderContentStore = defineStore('readerContent', () => {
       // 会把人踢回章首。现在只换列表，当前章正文与阅读位置不动
       const currentUrl = readerStore.chapters[readerStore.currentIndex]?.url
       if (!readerStore.book.bookId) return
+      // 离线前置：手动刷新是用户盯着转圈的操作，不发必然失败的请求空等；
+      // 也不拿浏览器缓存冒充「刷新成功」，如实提示离线
+      if (!appStore.isOnline) {
+        appStore.showToast(
+          `${describeRequestFailure(new Error('离线中'), appStore.isOnline)}，无法刷新目录`,
+          'warning'
+        )
+        return
+      }
       readerStore.chapters = await getChapterList({
         bookId: readerStore.book.bookId,
         refresh: 1,
@@ -645,6 +669,10 @@ export const useReaderContentStore = defineStore('readerContent', () => {
         }
       }
       void setBrowserCatalog(readerStore.book.bookId, readerStore.chapters)
+    } catch (error) {
+      // 刷新失败要如实提示：此前错误抛给点击 handler 变成 unhandled rejection，
+      // 转圈停了用户却不知道失败；目录收敛到 20s 超时后这条路径会更早走到
+      appStore.showToast(describeRequestFailure(error, appStore.isOnline), 'error')
     } finally {
       readerStore.chaptersLoading = false
     }

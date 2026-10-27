@@ -100,6 +100,13 @@ export interface ChapterContentResponse {
 // 换源与按书清缓存会主动失效对应条目，避免换源后 60 秒内还显示旧源目录。
 const CHAPTER_LIST_TTL_MS = 60_000
 const CHAPTER_LIST_CACHE_MAX = 20
+// 目录请求单独收敛超时（不沿用 http 实例的 120s 默认）：后端目录链路最坏是三跳
+// 串行（analyze → fetch 15s → loginCheck 后再 fetch 15s → 可能再 15s），上游挂掉时
+// 120s 等于开书干等两分钟才落到浏览器缓存兜底。健康上游各跳远小于 15s，双跳都吃满
+// 已等于实质死亡，20s 切断交给调用方走既有的缓存兜底与提示。
+// ETag 304 复用路径不受影响：条件请求命中时后端即时应答 304（不触发上游抓取），
+// 超时只在服务端完全不给响应字节时才生效。
+const CHAPTER_LIST_TIMEOUT_MS = 20_000
 const chapterListCache = new Map<string, { data: BookChapter[]; expiresAt: number }>()
 const chapterListInFlight = new Map<string, Promise<BookChapter[]>>()
 
@@ -125,7 +132,7 @@ export function getChapterList(params: { bookId: string; refresh?: number }) {
   // GET 而非 POST：响应带强 ETag 时浏览器会自动携 If-None-Match 重验证，
   // 命中 304 直接复用本地缓存；POST 不进 HTTP 缓存，享受不到这层协商
   const request = http
-    .get<BookChapter[]>('/getChapterList', { params })
+    .get<BookChapter[]>('/getChapterList', { params, timeout: CHAPTER_LIST_TIMEOUT_MS })
     .then((r) => {
       const data = r.data
       // 只有仍是该书最新一次请求时才写缓存：force 请求可能已抢先写入更新的
