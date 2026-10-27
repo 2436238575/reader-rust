@@ -93,4 +93,99 @@ describe('reader core edited chapter keys', () => {
     expect(readerStore.editedChapterKeys.has('https://example.org/1')).toBe(true)
     expect(deleteBrowserCachedChapters).toHaveBeenCalledWith('book_1', ['https://example.org/1'])
   })
+
+  it('同一本书并发双触发只发一次 listChapterEdits（在途单飞）', async () => {
+    let release!: (urls: string[]) => void
+    vi.mocked(listChapterEdits).mockImplementation(
+      () =>
+        new Promise<string[]>((resolve) => {
+          release = resolve
+        })
+    )
+    const readerStore = useReaderStore()
+    readerStore.book = {
+      name: '网络书',
+      author: '作者',
+      origin: 'https://example.org',
+      bookId: 'book_1',
+      bookUrl: 'https://example.org/book',
+      bookSourceId: 1,
+    }
+
+    // 模拟开书双触发：loadBook 的 Promise.all 与 ReaderView onMounted 同时在途
+    const first = readerStore.refreshEditedChapterKeys()
+    const second = readerStore.refreshEditedChapterKeys()
+    release(['https://example.org/1'])
+    await Promise.all([first, second])
+
+    expect(listChapterEdits).toHaveBeenCalledTimes(1)
+    expect(readerStore.editedChapterKeys.has('https://example.org/1')).toBe(true)
+  })
+
+  it('在途单飞只限在途期间：落定后再次调用真的重新拉取', async () => {
+    vi.mocked(listChapterEdits).mockResolvedValue(['https://example.org/1'])
+    const readerStore = useReaderStore()
+    readerStore.book = {
+      name: '网络书',
+      author: '作者',
+      origin: 'https://example.org',
+      bookId: 'book_1',
+      bookUrl: 'https://example.org/book',
+      bookSourceId: 1,
+    }
+
+    // 编辑保存/删除后的刷新依赖「落定后再调必重新拉」的语义
+    await readerStore.refreshEditedChapterKeys()
+    await readerStore.refreshEditedChapterKeys()
+
+    expect(listChapterEdits).toHaveBeenCalledTimes(2)
+  })
+
+  it('拉取失败同样释放在途标记，下一次调用立即重试', async () => {
+    vi.mocked(listChapterEdits).mockRejectedValueOnce(new Error('offline'))
+    const readerStore = useReaderStore()
+    readerStore.book = {
+      name: '网络书',
+      author: '作者',
+      origin: 'https://example.org',
+      bookId: 'book_1',
+      bookUrl: 'https://example.org/book',
+      bookSourceId: 1,
+    }
+
+    // 失败被函数内吞掉（保持现状语义），但在途标记必须释放
+    await readerStore.refreshEditedChapterKeys()
+    await readerStore.refreshEditedChapterKeys()
+
+    expect(listChapterEdits).toHaveBeenCalledTimes(2)
+  })
+
+  it('不同 bookId 的在途请求各自独立，互不合并', async () => {
+    vi.mocked(listChapterEdits).mockResolvedValue([])
+    const readerStore = useReaderStore()
+    readerStore.book = {
+      name: '网络书',
+      author: '作者',
+      origin: 'https://example.org',
+      bookId: 'book_1',
+      bookUrl: 'https://example.org/book',
+      bookSourceId: 1,
+    }
+    const first = readerStore.refreshEditedChapterKeys()
+    // 旧书请求在途期间换书：新书的刷新不能被合并到旧书的在途 Promise 上
+    readerStore.book = {
+      name: '另一本书',
+      author: '作者',
+      origin: 'https://other.example',
+      bookId: 'book_2',
+      bookUrl: 'https://other.example/b',
+      bookSourceId: 2,
+    }
+    const second = readerStore.refreshEditedChapterKeys()
+    await Promise.all([first, second])
+
+    expect(listChapterEdits).toHaveBeenCalledTimes(2)
+    expect(listChapterEdits).toHaveBeenCalledWith('book_1')
+    expect(listChapterEdits).toHaveBeenCalledWith('book_2')
+  })
 })

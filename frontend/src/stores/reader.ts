@@ -70,31 +70,49 @@ export const useReaderStore = defineStore('reader', () => {
   /// 各章当前版本的定位信息（版本 id、最新上游/用户版本、是否旧数据）。
   const chapterVersions = reactive(new Map<number, ChapterVersionState>())
 
-  async function refreshEditedChapterKeys() {
+  // 已编辑章清单按 bookId 在途单飞：开书（loadBook 的 Promise.all / 会话恢复）
+  // 与 ReaderView onMounted 会对同一本书并发双触发 listChapterEdits，同 bookId
+  // 在途期间复用同一个 Promise。复用只限在途期间——落定后再次调用必须真的重新拉
+  // （编辑保存/删除后的刷新语义不能变）；失败同样经 finally 释放，可立即重试。
+  const editedChapterKeysInFlight = new Map<string, Promise<void>>()
+
+  function refreshEditedChapterKeys(): Promise<void> {
     // bookId 进函数先快照：请求期间可能换书（loadBook 并行/onMounted 触发），
     // 迟到的旧书结果不能写回，否则会顶掉刚打开的新书集合
     const bookId = book.value?.bookId
     if (!bookId) {
       editedChapterKeys.value = new Set()
-      return
+      return Promise.resolve()
     }
-    try {
-      const urls = await listChapterEdits(bookId)
-      if (book.value?.bookId !== bookId) return
-      // 先把新集合写回内存再删缓存：集合生效后正文读写才会跳过编辑章；
-      // 反过来的话，并发的正文读取会在删完后又把旧上游正文写回 IndexedDB
-      editedChapterKeys.value = new Set(urls)
-      // 落盘一份供离线打开：离线时拉不到清单，没有快照会把编辑章当普通章节
-      saveCachedEditedChapterKeys(bookId, urls)
-      // 编辑章的浏览器缓存都是编辑前的上游正文：全部删掉（幂等，批量删除会
-      // 按实际存在的记录扣 summary）。带上旧快照里的章节，避免上次删除失败
-      // 或升级前留下的记录继续被离线兜底读到
-      if (urls.length) {
-        await deleteBrowserCachedChapters(bookId, urls).catch(() => undefined)
+    const inFlight = editedChapterKeysInFlight.get(bookId)
+    if (inFlight) return inFlight
+    const request = (async () => {
+      try {
+        const urls = await listChapterEdits(bookId)
+        if (book.value?.bookId !== bookId) return
+        // 先把新集合写回内存再删缓存：集合生效后正文读写才会跳过编辑章；
+        // 反过来的话，并发的正文读取会在删完后又把旧上游正文写回 IndexedDB
+        editedChapterKeys.value = new Set(urls)
+        // 落盘一份供离线打开：离线时拉不到清单，没有快照会把编辑章当普通章节
+        saveCachedEditedChapterKeys(bookId, urls)
+        // 编辑章的浏览器缓存都是编辑前的上游正文：全部删掉（幂等，批量删除会
+        // 按实际存在的记录扣 summary）。带上旧快照里的章节，避免上次删除失败
+        // 或升级前留下的记录继续被离线兜底读到
+        if (urls.length) {
+          await deleteBrowserCachedChapters(bookId, urls).catch(() => undefined)
+        }
+      } catch {
+        /* 离线/失败时保持现状 */
       }
-    } catch {
-      /* 离线/失败时保持现状 */
-    }
+    })().finally(() => {
+      // 只摘除自己：落地后若已有新一轮在途（理论上 await 方串行，不会出现），
+      // 不能误删别人的标记
+      if (editedChapterKeysInFlight.get(bookId) === request) {
+        editedChapterKeysInFlight.delete(bookId)
+      }
+    })
+    editedChapterKeysInFlight.set(bookId, request)
+    return request
   }
   const progress = createReaderProgress({
     book,
