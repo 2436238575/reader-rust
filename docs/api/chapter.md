@@ -160,6 +160,8 @@ GET/POST /reader3/getChapterVersion
                                         rawSize, chars, note, bookSourceName, content }
 GET/POST /reader3/getChapterVersionDiff
         ?bookId&chapterUrl&fromVersionId&toVersionId → { fromVersionId, toVersionId, ops }
+        （from 是 diff 基准：del 段的 baseText 来自 from，add 段的 editedText
+        来自 to。正文历史面板「与最新上游版本对比」即 from=上游、to=预览版本）
 POST /reader3/selectChapterVersion { bookId, chapterUrl, versionId? }
         （versionId 为空表示「跟随最新」，删除手动选择）
 POST /reader3/resetBookToUpstream { bookId } → { cleared }

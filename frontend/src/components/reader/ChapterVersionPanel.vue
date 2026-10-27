@@ -363,8 +363,10 @@ async function comparePreview() {
     const result = await getChapterVersionDiff({
       bookId,
       chapterUrl: chapter.url,
-      fromVersionId: preview.value.versionId,
-      toVersionId: target,
+      // diff 里 from 是基准、to 是新状态：基准是被对比的那份（最新上游或当前
+      // 显示版本），预览的版本站在新状态一侧；传反会让 + / - 正好标反。
+      fromVersionId: target,
+      toVersionId: preview.value.versionId,
     })
     diffOps.value = result.ops
   } catch (e) {

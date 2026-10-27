@@ -617,17 +617,26 @@ async fn network_book_versions_and_diff() {
         )
         .await;
     let ops = diff["ops"].as_array().unwrap();
-    let texts: Vec<&str> = ops
+    let base_texts: Vec<&str> = ops
         .iter()
-        .flat_map(|op| {
-            [
-                op["baseText"].as_str().unwrap_or_default(),
-                op["editedText"].as_str().unwrap_or_default(),
-            ]
-        })
+        .filter_map(|op| op["baseText"].as_str())
         .collect();
-    assert!(texts.iter().any(|text| text.contains("上游第一版正文")));
-    assert!(texts.iter().any(|text| text.contains("上游第二版正文")));
+    let edited_texts: Vec<&str> = ops
+        .iter()
+        .filter_map(|op| op["editedText"].as_str())
+        .collect();
+    assert!(
+        base_texts
+            .iter()
+            .any(|text| text.contains("上游第一版正文")),
+        "from 版本应作为 diff 基准（base 侧）: {diff}"
+    );
+    assert!(
+        edited_texts
+            .iter()
+            .any(|text| text.contains("上游第二版正文")),
+        "to 版本应作为 diff 新状态（edited 侧）: {diff}"
+    );
 
     // 跨请求的版本选择：选第一版后默认显示第一版，再恢复跟随最新
     server
