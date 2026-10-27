@@ -128,14 +128,14 @@ class StdioChannel:
         if job_id:
             frame["jobId"] = job_id
         self.send(frame)
-        frame = self.read_frame()
-        if frame is None:
+        response = self.read_frame()
+        if response is None:
             raise HostGoneError("宿主在工具回调期间关闭了输入")
-        if frame.get("type") != "tool_result":
-            raise ProtocolError(f"工具回调收到非 tool_result 帧：{frame.get('type')}")
-        if frame.get("id") != call_id:
+        if response.get("type") != "tool_result":
+            raise ProtocolError(f"工具回调收到非 tool_result 帧：{response.get('type')}")
+        if response.get("id") != call_id:
             raise ProtocolError("工具回调响应 id 不匹配")
-        content = frame.get("content")
+        content = response.get("content")
         return content if isinstance(content, dict) else {}
 
 

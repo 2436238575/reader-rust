@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import logging
 import time
-from typing import Any
+from typing import Any, TypeGuard
 
 from .chapter_filter import parse_chinese_number  # noqa: F401  (re-export 便于差分脚本)
 from .normalize import (
@@ -34,7 +34,7 @@ UNKNOWN = Any
 log = logging.getLogger(__name__)
 
 
-def is_record(value: object) -> bool:
+def is_record(value: object) -> TypeGuard[dict[str, Any]]:
     return isinstance(value, dict)
 
 
@@ -389,10 +389,10 @@ def apply_merges(
     result: list[dict] = []
     seen: set[str] = set()
     for key in order:
-        entry = by_key.get(key)
-        if entry is not None and key not in seen:
+        ordered_entry = by_key.get(key)
+        if ordered_entry is not None and key not in seen:
             seen.add(key)
-            result.append(entry)
+            result.append(ordered_entry)
     for key, entry in by_key.items():
         if key not in seen:
             result.append(entry)
@@ -411,7 +411,8 @@ def coerce_model_update(
     merges: object = None,
     now_ms: int | None = None,
 ) -> dict:
-    raw_memory = raw.get("memory") if is_record(raw.get("memory")) else raw
+    memory_candidate = raw.get("memory")
+    raw_memory = memory_candidate if is_record(memory_candidate) else raw
     # merges 正常由工具层从 args 提取后单独传入；直接嵌在 raw 里时兜底读取
     if merges is None:
         merges = raw.get("merges")

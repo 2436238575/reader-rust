@@ -78,7 +78,7 @@ def _run_chapter_update(
     book_dict = job.book.model_dump()
     chapter_dict = {"index": chapter.index, "title": chapter.title}
 
-    messages = build_prompt_messages(job.book.name, chapter.title, chapter.index)
+    messages: list[dict[str, Any]] = build_prompt_messages(job.book.name, chapter.title, chapter.index)
     input_chars = 0
     forced_injected = False
     json_nudges = 0
@@ -101,7 +101,8 @@ def _run_chapter_update(
 
         data = client.chat(job.model.text, payload)
         message = _first_message(data)
-        tool_calls = message.get("tool_calls") if isinstance(message.get("tool_calls"), list) else []
+        raw_tool_calls = message.get("tool_calls")
+        tool_calls: list[Any] = raw_tool_calls if isinstance(raw_tool_calls, list) else []
         if channel is not None:
             channel.send(
                 {
@@ -192,7 +193,8 @@ def _debug_chapter_content(job: JobRequest) -> str | None:
 
 def _run_redraw_map(job: JobRequest, client: ModelClient) -> dict[str, Any]:
     memory = job.memory
-    map_data = memory.get("map") if isinstance(memory.get("map"), dict) else {}
+    map_field = memory.get("map")
+    map_data: dict[str, Any] = map_field if isinstance(map_field, dict) else {}
     prompt = str(map_data.get("prompt") or "").strip() or build_fallback_map_prompt(memory, job.book.model_dump())
 
     image = request_map_image(client, job.model.image, prompt)

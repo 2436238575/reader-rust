@@ -252,6 +252,7 @@ def build_agent_memory_context(memory: dict, include: dict[str, Any] | None = No
 
 
 def _matches_query(kind: str, item: dict, query: str) -> bool:
+    fields: tuple[str, ...]
     if kind == "worldview":
         fields = ("title", "category", "content")
     elif kind == "characters":
