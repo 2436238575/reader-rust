@@ -5,6 +5,7 @@ import {
   diffStats,
   hydrateDiffOps,
   inlineDiff,
+  inlinePartsFor,
   splitToParagraphs,
   type ParagraphDiffOp,
 } from './chapterDiff'
@@ -96,6 +97,40 @@ describe('inlineDiff', () => {
     expect(d.suffix).toBe('')
     expect(d.removed).toBe('aaa')
     expect(d.added).toBe('bbb')
+  })
+})
+
+describe('inlinePartsFor', () => {
+  it('段内改动：删除侧强调 removed，新增侧强调 added', () => {
+    const op = { baseText: '他走进了那座古庙，灯还亮着。', editedText: '他走出了那座古庙，灯还亮着。' }
+    expect(inlinePartsFor('del', op)).toEqual([
+      { text: '他走', changed: false },
+      { text: '进', changed: true },
+      { text: '了那座古庙，灯还亮着。', changed: false },
+    ])
+    expect(inlinePartsFor('add', op)).toEqual([
+      { text: '他走', changed: false },
+      { text: '出', changed: true },
+      { text: '了那座古庙，灯还亮着。', changed: false },
+    ])
+  })
+
+  it('纯删除行没有配对段可参照，整段都是变动', () => {
+    expect(inlinePartsFor('del', { baseText: '整段被删掉的内容' })).toEqual([
+      { text: '整段被删掉的内容', changed: true },
+    ])
+  })
+
+  it('纯新增行整段都是变动', () => {
+    expect(inlinePartsFor('add', { editedText: '整段新加的内容' })).toEqual([
+      { text: '整段新加的内容', changed: true },
+    ])
+  })
+
+  it('两行完全相同时只有公共片段，没有变动', () => {
+    expect(inlinePartsFor('del', { baseText: '没变化', editedText: '没变化' })).toEqual([
+      { text: '没变化', changed: false },
+    ])
   })
 })
 

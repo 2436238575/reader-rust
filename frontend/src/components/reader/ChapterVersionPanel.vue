@@ -136,25 +136,57 @@
                       </div>
                       <div v-else-if="row.op.type === 'del'" class="diff-row del">
                         <span class="diff-gutter">-</span>
-                        <span class="diff-text">{{ row.op.baseText }}</span>
+                        <span class="diff-text">
+                          <template
+                            v-for="(part, partIndex) in inlinePartsFor('del', row.op)"
+                            :key="partIndex"
+                          >
+                            <span v-if="part.changed" class="diff-del-strong">{{
+                              part.text
+                            }}</span>
+                            <span v-else>{{ part.text }}</span>
+                          </template>
+                        </span>
                       </div>
                       <div v-else-if="row.op.type === 'add'" class="diff-row add">
                         <span class="diff-gutter">+</span>
-                        <span class="diff-text">{{ row.op.editedText }}</span>
+                        <span class="diff-text">
+                          <template
+                            v-for="(part, partIndex) in inlinePartsFor('add', row.op)"
+                            :key="partIndex"
+                          >
+                            <span v-if="part.changed" class="diff-ins-strong">{{
+                              part.text
+                            }}</span>
+                            <span v-else>{{ part.text }}</span>
+                          </template>
+                        </span>
                       </div>
                       <template v-else>
                         <div class="diff-row del">
                           <span class="diff-gutter">-</span>
-                          <span class="diff-text">{{ row.op.baseText }}</span>
+                          <span class="diff-text">
+                            <template
+                              v-for="(part, partIndex) in inlinePartsFor('del', row.op)"
+                              :key="partIndex"
+                            >
+                              <span v-if="part.changed" class="diff-del-strong">{{
+                                part.text
+                              }}</span>
+                              <span v-else>{{ part.text }}</span>
+                            </template>
+                          </span>
                         </div>
                         <div class="diff-row add">
                           <span class="diff-gutter">+</span>
                           <span class="diff-text">
                             <template
-                              v-for="(part, partIndex) in inlineParts(row.op)"
+                              v-for="(part, partIndex) in inlinePartsFor('add', row.op)"
                               :key="partIndex"
                             >
-                              <span v-if="part.added" class="diff-ins-strong">{{ part.text }}</span>
+                              <span v-if="part.changed" class="diff-ins-strong">{{
+                                part.text
+                              }}</span>
                               <span v-else>{{ part.text }}</span>
                             </template>
                           </span>
@@ -197,7 +229,7 @@ import { formatDateTime, formatShortDate } from '../../utils/format'
 import {
   buildDiffRows,
   diffStats,
-  inlineDiff,
+  inlinePartsFor,
   type ParagraphDiffOp,
 } from '../../utils/chapterDiff'
 
@@ -420,15 +452,6 @@ function expandCollapse(opsStart: number) {
   const next = new Map(expanded.value)
   next.set(opsStart, (next.get(opsStart) ?? 0) + 15)
   expanded.value = next
-}
-
-function inlineParts(op: ParagraphDiffOp) {
-  const diff = inlineDiff(op.baseText || '', op.editedText || '')
-  const parts: { text: string; added: boolean }[] = []
-  if (diff.prefix) parts.push({ text: diff.prefix, added: false })
-  if (diff.added) parts.push({ text: diff.added, added: true })
-  if (diff.suffix) parts.push({ text: diff.suffix, added: false })
-  return parts
 }
 
 function onOpenCache() {
@@ -815,6 +838,11 @@ watch(
 
 .diff-ins-strong {
   background: rgba(34, 197, 94, 0.28);
+  border-radius: 2px;
+}
+
+.diff-del-strong {
+  background: rgba(239, 68, 68, 0.28);
   border-radius: 2px;
 }
 

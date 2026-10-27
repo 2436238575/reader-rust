@@ -49,29 +49,56 @@
                 <span class="diff-text">{{ row.op.editedText }}</span>
               </div>
 
-              <!-- 删除段（基准里有、编辑版没有） -->
+              <!-- 删除段（基准里有、编辑版没有）：整段都是变动 -->
               <div v-else-if="row.op.type === 'del'" class="diff-row del">
                 <span class="diff-gutter">-</span>
-                <span class="diff-text">{{ row.op.baseText }}</span>
+                <span class="diff-text">
+                  <template
+                    v-for="(part, partIndex) in inlinePartsFor('del', row.op)"
+                    :key="partIndex"
+                  >
+                    <span v-if="part.changed" class="diff-del-strong">{{ part.text }}</span>
+                    <span v-else>{{ part.text }}</span>
+                  </template>
+                </span>
               </div>
 
-              <!-- 新增段 -->
+              <!-- 新增段：整段都是变动 -->
               <div v-else-if="row.op.type === 'add'" class="diff-row add">
                 <span class="diff-gutter">+</span>
-                <span class="diff-text">{{ row.op.editedText }}</span>
+                <span class="diff-text">
+                  <template
+                    v-for="(part, partIndex) in inlinePartsFor('add', row.op)"
+                    :key="partIndex"
+                  >
+                    <span v-if="part.changed" class="diff-ins-strong">{{ part.text }}</span>
+                    <span v-else>{{ part.text }}</span>
+                  </template>
+                </span>
               </div>
 
-              <!-- 段内改动：上行基准（红），下行编辑版（绿，新增部分加粗底色） -->
+              <!-- 段内改动：上行基准（红，删除部分加深），下行编辑版（绿，新增部分加深） -->
               <template v-else>
                 <div class="diff-row del">
                   <span class="diff-gutter">-</span>
-                  <span class="diff-text">{{ row.op.baseText }}</span>
+                  <span class="diff-text">
+                    <template
+                      v-for="(part, partIndex) in inlinePartsFor('del', row.op)"
+                      :key="partIndex"
+                    >
+                      <span v-if="part.changed" class="diff-del-strong">{{ part.text }}</span>
+                      <span v-else>{{ part.text }}</span>
+                    </template>
+                  </span>
                 </div>
                 <div class="diff-row add">
                   <span class="diff-gutter">+</span>
                   <span class="diff-text">
-                    <template v-for="(part, partIndex) in inlineParts(row.op)" :key="partIndex">
-                      <span v-if="part.added" class="diff-ins-strong">{{ part.text }}</span>
+                    <template
+                      v-for="(part, partIndex) in inlinePartsFor('add', row.op)"
+                      :key="partIndex"
+                    >
+                      <span v-if="part.changed" class="diff-ins-strong">{{ part.text }}</span>
                       <span v-else>{{ part.text }}</span>
                     </template>
                   </span>
@@ -92,7 +119,12 @@ import { useAppStore } from '../../stores/app'
 import { deleteChapterEdit } from '../../api/chapterEdit'
 import { useEscClose } from '../../composables/useEscClose'
 import { useMobileLayout } from '../../composables/useMobileLayout'
-import { buildDiffRows, diffStats, inlineDiff, type ParagraphDiffOp } from '../../utils/chapterDiff'
+import {
+  buildDiffRows,
+  diffStats,
+  inlinePartsFor,
+  type ParagraphDiffOp,
+} from '../../utils/chapterDiff'
 
 const props = defineProps<{
   modelValue: boolean
@@ -133,15 +165,6 @@ function expandCollapse(opsStart: number) {
   const next = new Map(expanded.value)
   next.set(opsStart, (next.get(opsStart) ?? 0) + 15)
   expanded.value = next
-}
-
-function inlineParts(op: ParagraphDiffOp) {
-  const diff = inlineDiff(op.baseText || '', op.editedText || '')
-  const parts: { text: string; added: boolean }[] = []
-  if (diff.prefix) parts.push({ text: diff.prefix, added: false })
-  if (diff.added) parts.push({ text: diff.added, added: true })
-  if (diff.suffix) parts.push({ text: diff.suffix, added: false })
-  return parts
 }
 
 function close() {
@@ -341,6 +364,11 @@ async function discardEdit() {
 
 .diff-ins-strong {
   background: rgba(34, 197, 94, 0.28);
+  border-radius: 2px;
+}
+
+.diff-del-strong {
+  background: rgba(239, 68, 68, 0.28);
   border-radius: 2px;
 }
 

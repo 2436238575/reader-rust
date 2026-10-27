@@ -70,6 +70,30 @@ export function inlineDiff(baseText: string, editedText: string): InlineDiff {
   }
 }
 
+export interface InlinePart {
+  text: string
+  /** 行内变动的核心片段（删除侧/新增侧），渲染时给它加强调色 */
+  changed: boolean
+}
+
+/**
+ * 把一行拆成「公共前缀 + 变动中段 + 公共后缀」的渲染片段，删除行和新增行
+ * 各自强调自己那一侧：del 行强调基准里被删掉的中段，add 行强调新增的中段。
+ * 纯删除/纯新增行没有配对段可参照，整段都算变动。
+ */
+export function inlinePartsFor(
+  side: 'del' | 'add',
+  op: Pick<ParagraphDiffOp, 'baseText' | 'editedText'>
+): InlinePart[] {
+  const diff = inlineDiff(op.baseText || '', op.editedText || '')
+  const changed = side === 'del' ? diff.removed : diff.added
+  return [
+    { text: diff.prefix, changed: false },
+    { text: changed, changed: true },
+    { text: diff.suffix, changed: false },
+  ].filter((part) => part.text.length > 0)
+}
+
 export function diffStats(ops: ParagraphDiffOp[]): {
   added: number
   removed: number
