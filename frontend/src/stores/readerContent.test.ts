@@ -9,7 +9,7 @@ import { useReaderContentStore } from './readerContent'
 import { useReaderConfigStore } from './readerConfig'
 import { getBookContent, getBookContents } from '../api/bookshelf'
 import type { ChapterContentResponse } from '../api/bookshelf'
-import { listChapterEdits } from '../api/chapterEdit'
+import { getChapterVersionMarks } from '../api/chapterEdit'
 import { getChapterComments, getParaCommentIndex } from '../api/review'
 import {
   getBrowserCachedChapter,
@@ -26,7 +26,7 @@ vi.mock('../api/bookshelf', () => ({
 }))
 
 vi.mock('../api/chapterEdit', () => ({
-  listChapterEdits: vi.fn(),
+  getChapterVersionMarks: vi.fn(),
   selectChapterVersion: vi.fn(),
 }))
 
@@ -68,6 +68,9 @@ vi.mock('../utils/openaiSpeech', () => ({
   requestOpenAISpeechAudio: vi.fn(),
 }))
 
+// 版本标记是编辑清单的超集：edited 类标记的 URL 集合即编辑章集合
+const EDITED_MARK = { kind: 'edited', note: '', createdAt: 0, isLatestUpstream: false } as const
+
 describe('readerContent local txt chapters', () => {
   beforeEach(() => {
     setActivePinia(createPinia())
@@ -83,7 +86,7 @@ describe('readerContent local txt chapters', () => {
     // mockReset 后返回 undefined（不是 Promise），生产代码带 .catch：默认给「无缓存」
     vi.mocked(getBrowserCachedChapter).mockReset().mockResolvedValue(null)
     vi.mocked(setBrowserCachedChapter).mockReset().mockResolvedValue(undefined)
-    vi.mocked(listChapterEdits).mockReset().mockResolvedValue([])
+    vi.mocked(getChapterVersionMarks).mockReset().mockResolvedValue({})
     vi.mocked(getChapterComments).mockReset()
     vi.mocked(getParaCommentIndex).mockReset()
   })
@@ -312,7 +315,7 @@ describe('readerContent local txt chapters', () => {
     })
 
     expect(readerStore.editedChapterKeys.size).toBe(0)
-    expect(listChapterEdits).toHaveBeenCalledWith('book_1')
+    expect(getChapterVersionMarks).toHaveBeenCalledWith('book_1')
   })
 
   it('离线开书时用上次落盘的编辑章集合，不把编辑章当普通章节', async () => {
@@ -329,7 +332,7 @@ describe('readerContent local txt chapters', () => {
     // 模拟的是清单请求失败（目录仍成功）：在线状态下 listChapterEdits 拒绝。
     // 浏览器报离线（navigator.onLine=false）的开书由下面的专项用例覆盖
     useAppStore().setOnlineStatus(true)
-    vi.mocked(listChapterEdits).mockRejectedValue(new Error('offline'))
+    vi.mocked(getChapterVersionMarks).mockRejectedValue(new Error('offline'))
     const readerStore = useReaderStore()
     const contentStore = useReaderContentStore()
 
@@ -350,7 +353,7 @@ describe('readerContent local txt chapters', () => {
     vi.mocked(getChapterList).mockResolvedValue([
       { title: '第一章', url: 'https://example.org/1', index: 0 },
     ])
-    vi.mocked(listChapterEdits).mockResolvedValue(['https://example.org/1'])
+    vi.mocked(getChapterVersionMarks).mockResolvedValue({ 'https://example.org/1': EDITED_MARK })
     useAppStore().setOnlineStatus(true)
     const contentStore = useReaderContentStore()
 
@@ -396,7 +399,7 @@ describe('readerContent local txt chapters', () => {
     expect(readerStore.chapters).toEqual([{ title: '第一章', url: 'https://example.org/1', index: 0 }])
     expect(toastSpy).toHaveBeenCalledWith('离线中：目录来自浏览器缓存', 'warning')
     // 编辑章清单请求维持原行为（发出后失败被吞，集合保持落盘快照/空）
-    expect(listChapterEdits).toHaveBeenCalledWith('book_1')
+    expect(getChapterVersionMarks).toHaveBeenCalledWith('book_1')
   })
 
   it('离线恢复会话跳过目录请求，用浏览器缓存目录并提示', async () => {
@@ -484,7 +487,7 @@ describe('reader progress conflict timestamps', () => {
       { title: '第一章', url: 'https://example.com/1', index: 0 },
     ])
     // loadBook 会并行拉编辑章清单：给个确定值，避免依赖别的 describe 的 mock 残留
-    vi.mocked(listChapterEdits).mockResolvedValue([])
+    vi.mocked(getChapterVersionMarks).mockResolvedValue({})
     // 目录请求有离线前置（浏览器报离线时跳过网络）：显式置在线才走网络分支
     useAppStore().setOnlineStatus(true)
     const readerStore = useReaderStore()

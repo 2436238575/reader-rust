@@ -7,7 +7,7 @@ import { useReaderStore } from './reader'
 import { useReaderContentStore } from './readerContent'
 import { useReaderExtrasStore } from './readerExtras'
 import { getChapterImages } from '../api/bookshelf'
-import { listChapterEdits } from '../api/chapterEdit'
+import { getChapterVersionMarks } from '../api/chapterEdit'
 import { getChapterComments, getParaCommentIndex } from '../api/review'
 
 vi.mock('../api/bookshelf', () => ({
@@ -20,7 +20,7 @@ vi.mock('../api/bookshelf', () => ({
 }))
 
 vi.mock('../api/chapterEdit', () => ({
-  listChapterEdits: vi.fn(),
+  getChapterVersionMarks: vi.fn(),
   selectChapterVersion: vi.fn(),
 }))
 
@@ -88,7 +88,7 @@ describe('readerExtras 评论与配图', () => {
       removeItem: vi.fn((key: string) => storage.delete(key)),
       clear: vi.fn(() => storage.clear()),
     })
-    vi.mocked(listChapterEdits).mockReset().mockResolvedValue([])
+    vi.mocked(getChapterVersionMarks).mockReset().mockResolvedValue({})
     vi.mocked(getChapterComments).mockReset()
     vi.mocked(getParaCommentIndex).mockReset()
     // mockReset 连调用计数一起清：断言「翻章不再请求」不能带上前序用例的调用

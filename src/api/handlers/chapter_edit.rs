@@ -255,6 +255,37 @@ pub async fn list_chapter_edits(
     Ok(Json(ApiResponse::ok(json!({ "urls": urls }))))
 }
 
+/// 每章当前显示版本的标记（阅读器目录标签用）：chapterUrl → { kind, note,
+/// createdAt, isLatestUpstream }。只包含有版本记录的章；没有的章前端按
+/// 「最新上游」处理。
+pub async fn get_chapter_version_marks(
+    State(state): State<AppState>,
+    user: CurrentUser,
+    QueryOrBody(req): QueryOrBody<ChapterEditQuery>,
+) -> Result<Json<ApiResponse<Value>>, AppError> {
+    if req.book_id.trim().is_empty() {
+        return Err(AppError::BadRequest("bookId required".to_string()));
+    }
+    resolve_book_checked(&state, &user.0.ns, &req.book_id).await?;
+    let rows = state
+        .chapter_content_service
+        .list_version_marks(&user.0.ns, &req.book_id)
+        .await?;
+    let mut marks = serde_json::Map::with_capacity(rows.len());
+    for row in rows {
+        marks.insert(
+            row.chapter_url,
+            json!({
+                "kind": row.kind,
+                "note": row.note,
+                "createdAt": row.created_at,
+                "isLatestUpstream": row.is_latest_upstream,
+            }),
+        );
+    }
+    Ok(Json(ApiResponse::ok(json!({ "marks": marks }))))
+}
+
 pub async fn delete_chapter_edit(
     State(state): State<AppState>,
     user: CurrentUser,

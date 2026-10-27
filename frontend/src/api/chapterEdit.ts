@@ -94,6 +94,26 @@ export function listChapterEdits(bookId: string) {
     .then((r) => r.data?.urls ?? [])
 }
 
+/** 一章当前显示版本的标记（目录版本标签用）。 */
+export interface ChapterVersionMark {
+  kind: ChapterVersionKind
+  note: string
+  createdAt: number
+  isLatestUpstream: boolean
+}
+
+/**
+ * 每章当前显示版本的标记：chapterUrl → mark。只含有版本记录的章；
+ * 没有的章调用方按「最新上游」处理。
+ */
+export function getChapterVersionMarks(bookId: string) {
+  return http
+    .get<{ marks: Record<string, ChapterVersionMark> }>('/chapterVersionMarks', {
+      params: { bookId },
+    })
+    .then((r) => r.data?.marks ?? {})
+}
+
 export function deleteChapterEdit(bookId: string, chapterUrl: string) {
   return http
     .post<{ edited: boolean }>('/deleteChapterEdit', { bookId, chapterUrl })

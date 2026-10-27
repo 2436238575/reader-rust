@@ -273,6 +273,13 @@ test.describe('Standard E2E: reader', () => {
     await expect(page.locator('.diff-modal')).toBeVisible()
     await page.keyboard.press('Escape')
 
+    // 目录里该章的版本标签显示 [编辑]（不再有「已编辑」徽章）
+    await page.locator('.sidebar-item', { hasText: '目录' }).first().click()
+    const chapterRow = page.locator('.list-item', { hasText: '第一章' }).first()
+    await expect(chapterRow.locator('.item-meta')).toContainText('[编辑]')
+    await expect(chapterRow.locator('.status-badge.edited')).toHaveCount(0)
+    await page.keyboard.press('Escape')
+
     // diff 面板：设置 → 查看与上游的差异
     await page.locator('.sidebar-item', { hasText: '设置' }).first().click()
     await page.getByRole('button', { name: '查看与上游的差异' }).click()

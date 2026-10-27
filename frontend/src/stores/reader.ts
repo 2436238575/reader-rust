@@ -4,7 +4,7 @@ import { ref, computed, reactive } from 'vue'
 import { useBookshelfStore } from './bookshelf'
 import type { Book, BookChapter } from '../types'
 import { saveRecentReadBook } from '../utils/recentBooks'
-import { listChapterEdits } from '../api/chapterEdit'
+import { getChapterVersionMarks, type ChapterVersionMark } from '../api/chapterEdit'
 import type { ChapterVersionKind, ContentVariant } from '../api/bookshelf'
 import type { ParagraphDiffOp } from '../utils/chapterDiff'
 import { useReaderTts } from '../composables/useReaderTts'
@@ -63,6 +63,9 @@ export const useReaderStore = defineStore('reader', () => {
   /// 已编辑章节的 chapterUrl 集：阅读链路对这些章跳过浏览器缓存直走后端
   /// （后端会优先返回编辑版），目录面板与正文 diff 标记也用它
   const editedChapterKeys = ref<Set<string>>(new Set())
+  /// 各章当前显示版本的标记（目录版本标签用）：手动选择 > 最近用户版本 > 最新上游。
+  /// 没有版本记录的章不在表里，目录按「最新上游」显示
+  const chapterVersionMarks = ref<Map<string, ChapterVersionMark>>(new Map())
   /// 各章编辑版差异（随 getBookContent 一起返回，不再单独请求）。
   /// 连续滚动模式下每章都从这里取自己的 ops。
   const chapterDiffs = reactive(new Map<number, ChapterDiffState>())
@@ -81,14 +84,19 @@ export const useReaderStore = defineStore('reader', () => {
     const bookId = book.value?.bookId
     if (!bookId) {
       editedChapterKeys.value = new Set()
+      chapterVersionMarks.value = new Map()
       return Promise.resolve()
     }
     const inFlight = editedChapterKeysInFlight.get(bookId)
     if (inFlight) return inFlight
     const request = (async () => {
       try {
-        const urls = await listChapterEdits(bookId)
+        // 版本标记是编辑清单的超集：一次请求同时供目录标签与已编辑集合
+        const marks = await getChapterVersionMarks(bookId)
         if (book.value?.bookId !== bookId) return
+        const map = new Map(Object.entries(marks))
+        chapterVersionMarks.value = map
+        const urls = [...map].filter(([, mark]) => mark.kind !== 'upstream').map(([url]) => url)
         editedChapterKeys.value = new Set(urls)
         // 落盘一份供离线打开：离线时拉不到清单，编辑按钮的状态靠快照维持。
         // 浏览器缓存不用跟着清：缓存记录带版本号，在线读取时比对不一致
@@ -275,6 +283,7 @@ export const useReaderStore = defineStore('reader', () => {
     backPanel,
     closePanel,
     editedChapterKeys,
+    chapterVersionMarks,
     refreshEditedChapterKeys,
     chapterDiffs,
     ...tts,

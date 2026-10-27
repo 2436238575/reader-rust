@@ -362,6 +362,15 @@ impl ChapterContentService {
         self.repo.reset_book_to_upstream(user_ns, book_id).await
     }
 
+    /// 每章当前显示版本的标记（阅读器目录标签用）。
+    pub async fn list_version_marks(
+        &self,
+        user_ns: &str,
+        book_id: &str,
+    ) -> Result<Vec<crate::storage::db::content_repo::ChapterVersionMarkRow>, AppError> {
+        self.repo.list_version_marks(user_ns, book_id).await
+    }
+
     /// 时间线元数据（不读正文），历史面板列表用。
     pub async fn timeline_meta(
         &self,

@@ -732,6 +732,107 @@ async fn network_book_versions_and_diff() {
     assert_eq!(history["content"], json!("我的编辑版"));
 }
 
+/// 目录版本标签：每章当前显示版本的标记跟随 手动选择 > 最近用户版本 > 最新上游。
+#[tokio::test]
+async fn chapter_version_marks_track_displayed_version() {
+    let version = Arc::new(Mutex::new("上游正文"));
+    let upstream = {
+        let version = version.clone();
+        let app =
+            Router::new().route(
+                "/content",
+                get(move || {
+                    let version = version.clone();
+                    async move {
+                        Json(json!({ "data": { "content": version.lock().unwrap().clone() } }))
+                    }
+                }),
+            );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            let _ = axum::serve(listener, app).await;
+        });
+        format!("http://{addr}")
+    };
+
+    let server = boot().await;
+    server
+        .post(
+            "saveBookSource",
+            json!({
+                "bookSourceName": "假源",
+                "bookSourceUrl": upstream,
+                "enabled": true,
+                "ruleContent": { "content": "$.data.content" }
+            }),
+        )
+        .await;
+    let sources = server.post("getBookSources", json!({})).await;
+    let source_id = sources[0]["bookSourceId"].as_i64().unwrap();
+    let book = server
+        .post(
+            "saveBook",
+            json!({
+                "name": "标记书",
+                "author": "作者",
+                "bookUrl": format!("{upstream}/info"),
+                "bookSourceId": source_id,
+            }),
+        )
+        .await;
+    let book_id = book["bookId"].as_str().unwrap().to_string();
+    let chapter_url = format!("{upstream}/content");
+
+    // 没有任何版本记录：没有标记（前端按「最新上游」显示）
+    let resp = server
+        .post("chapterVersionMarks", json!({ "bookId": book_id }))
+        .await;
+    assert_eq!(resp["marks"], json!({}));
+
+    // 首抓后：标记指向最新上游
+    server.get_content(&book_id, &chapter_url, json!({})).await;
+    let resp = server
+        .post("chapterVersionMarks", json!({ "bookId": book_id }))
+        .await;
+    let mark = &resp["marks"][chapter_url.as_str()];
+    assert_eq!(mark["kind"], json!("upstream"));
+    assert_eq!(mark["isLatestUpstream"], json!(true));
+
+    // 存编辑版（带备注）：标记指向编辑版
+    server
+        .post(
+            "saveChapterEdit",
+            json!({
+                "bookId": book_id, "chapterUrl": chapter_url, "chapterIndex": 0,
+                "chapterTitle": "第一章", "content": "我的编辑版", "note": "润色",
+            }),
+        )
+        .await;
+    let resp = server
+        .post("chapterVersionMarks", json!({ "bookId": book_id }))
+        .await;
+    let mark = &resp["marks"][chapter_url.as_str()];
+    assert_eq!(mark["kind"], json!("edited"));
+    assert_eq!(mark["note"], json!("润色"));
+    assert_eq!(mark["isLatestUpstream"], json!(false));
+    assert!(mark["createdAt"].as_i64().unwrap() > 0);
+
+    // 删掉编辑版：标记回到最新上游
+    server
+        .post(
+            "deleteChapterEdit",
+            json!({ "bookId": book_id, "chapterUrl": chapter_url }),
+        )
+        .await;
+    let resp = server
+        .post("chapterVersionMarks", json!({ "bookId": book_id }))
+        .await;
+    let mark = &resp["marks"][chapter_url.as_str()];
+    assert_eq!(mark["kind"], json!("upstream"));
+    assert_eq!(mark["isLatestUpstream"], json!(true));
+}
+
 /// 整书换回最新上游：摘掉用户版本指针与版本选择，正文回落上游；历史版本保留。
 #[tokio::test]
 async fn reset_book_to_upstream_restores_all_chapters() {

@@ -4,7 +4,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
 import { useReaderStore } from './reader'
-import { listChapterEdits } from '../api/chapterEdit'
+import { getChapterVersionMarks } from '../api/chapterEdit'
 
 vi.mock('../api/bookshelf', () => ({
   getChapterList: vi.fn(),
@@ -16,7 +16,7 @@ vi.mock('../api/bookshelf', () => ({
 }))
 
 vi.mock('../api/chapterEdit', () => ({
-  listChapterEdits: vi.fn(),
+  getChapterVersionMarks: vi.fn(),
   selectChapterVersion: vi.fn(),
 }))
 
@@ -59,6 +59,9 @@ vi.mock('../utils/openaiSpeech', () => ({
 }))
 
 describe('reader core edited chapter keys', () => {
+  // 版本标记是编辑清单的超集：edited 类标记的 URL 集合即编辑章集合
+  const EDITED_MARK = { kind: 'edited', note: '', createdAt: 0, isLatestUpstream: false } as const
+
   beforeEach(() => {
     setActivePinia(createPinia())
     const storage = new Map<string, string>()
@@ -68,12 +71,12 @@ describe('reader core edited chapter keys', () => {
       removeItem: vi.fn((key: string) => storage.delete(key)),
       clear: vi.fn(() => storage.clear()),
     })
-    vi.mocked(listChapterEdits).mockReset().mockResolvedValue([])
+    vi.mocked(getChapterVersionMarks).mockReset().mockResolvedValue({})
   })
 
   it('刷新编辑章清单只更新集合与快照，不再动浏览器缓存', async () => {
     // 缓存记录带版本号：是否串版本由在线读取时的比对兜底，清单刷新不承担清理
-    vi.mocked(listChapterEdits).mockResolvedValue(['https://example.org/1'])
+    vi.mocked(getChapterVersionMarks).mockResolvedValue({ 'https://example.org/1': EDITED_MARK })
     const readerStore = useReaderStore()
     readerStore.book = {
       name: '网络书',
@@ -93,11 +96,11 @@ describe('reader core edited chapter keys', () => {
     expect(JSON.parse(raw || '{}').book_1?.urls).toEqual(['https://example.org/1'])
   })
 
-  it('同一本书并发双触发只发一次 listChapterEdits（在途单飞）', async () => {
-    let release!: (urls: string[]) => void
-    vi.mocked(listChapterEdits).mockImplementation(
+  it('同一本书并发双触发只发一次版本标记请求（在途单飞）', async () => {
+    let release!: (marks: Record<string, typeof EDITED_MARK>) => void
+    vi.mocked(getChapterVersionMarks).mockImplementation(
       () =>
-        new Promise<string[]>((resolve) => {
+        new Promise<Record<string, typeof EDITED_MARK>>((resolve) => {
           release = resolve
         })
     )
@@ -114,15 +117,15 @@ describe('reader core edited chapter keys', () => {
     // 模拟开书双触发：loadBook 的 Promise.all 与 ReaderView onMounted 同时在途
     const first = readerStore.refreshEditedChapterKeys()
     const second = readerStore.refreshEditedChapterKeys()
-    release(['https://example.org/1'])
+    release({ 'https://example.org/1': EDITED_MARK })
     await Promise.all([first, second])
 
-    expect(listChapterEdits).toHaveBeenCalledTimes(1)
+    expect(getChapterVersionMarks).toHaveBeenCalledTimes(1)
     expect(readerStore.editedChapterKeys.has('https://example.org/1')).toBe(true)
   })
 
   it('在途单飞只限在途期间：落定后再次调用真的重新拉取', async () => {
-    vi.mocked(listChapterEdits).mockResolvedValue(['https://example.org/1'])
+    vi.mocked(getChapterVersionMarks).mockResolvedValue({ 'https://example.org/1': EDITED_MARK })
     const readerStore = useReaderStore()
     readerStore.book = {
       name: '网络书',
@@ -137,11 +140,11 @@ describe('reader core edited chapter keys', () => {
     await readerStore.refreshEditedChapterKeys()
     await readerStore.refreshEditedChapterKeys()
 
-    expect(listChapterEdits).toHaveBeenCalledTimes(2)
+    expect(getChapterVersionMarks).toHaveBeenCalledTimes(2)
   })
 
   it('拉取失败同样释放在途标记，下一次调用立即重试', async () => {
-    vi.mocked(listChapterEdits).mockRejectedValueOnce(new Error('offline'))
+    vi.mocked(getChapterVersionMarks).mockRejectedValueOnce(new Error('offline'))
     const readerStore = useReaderStore()
     readerStore.book = {
       name: '网络书',
@@ -156,11 +159,11 @@ describe('reader core edited chapter keys', () => {
     await readerStore.refreshEditedChapterKeys()
     await readerStore.refreshEditedChapterKeys()
 
-    expect(listChapterEdits).toHaveBeenCalledTimes(2)
+    expect(getChapterVersionMarks).toHaveBeenCalledTimes(2)
   })
 
   it('不同 bookId 的在途请求各自独立，互不合并', async () => {
-    vi.mocked(listChapterEdits).mockResolvedValue([])
+    vi.mocked(getChapterVersionMarks).mockResolvedValue({})
     const readerStore = useReaderStore()
     readerStore.book = {
       name: '网络书',
@@ -183,8 +186,8 @@ describe('reader core edited chapter keys', () => {
     const second = readerStore.refreshEditedChapterKeys()
     await Promise.all([first, second])
 
-    expect(listChapterEdits).toHaveBeenCalledTimes(2)
-    expect(listChapterEdits).toHaveBeenCalledWith('book_1')
-    expect(listChapterEdits).toHaveBeenCalledWith('book_2')
+    expect(getChapterVersionMarks).toHaveBeenCalledTimes(2)
+    expect(getChapterVersionMarks).toHaveBeenCalledWith('book_1')
+    expect(getChapterVersionMarks).toHaveBeenCalledWith('book_2')
   })
 })

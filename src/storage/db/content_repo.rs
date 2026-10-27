@@ -92,6 +92,16 @@ pub struct EffectiveContentBlob {
     pub content: Vec<u8>,
 }
 
+/// 一章的当前显示版本标记（阅读器目录标签用）。
+#[derive(Debug, Clone)]
+pub struct ChapterVersionMarkRow {
+    pub chapter_url: String,
+    pub kind: String,
+    pub note: String,
+    pub created_at: i64,
+    pub is_latest_upstream: bool,
+}
+
 #[derive(Clone)]
 pub struct ChapterContentRepo {
     pool: SqlitePool,
@@ -794,6 +804,44 @@ impl ChapterContentRepo {
         Ok(rows
             .iter()
             .map(|r| r.get::<String, _>("chapter_url"))
+            .collect())
+    }
+
+    /// 每章当前显示版本的标记（阅读器目录标签用）：
+    /// 有效版本 = 手动选择 > 最近用户版本 > 最新上游。只返回有版本记录的章；
+    /// 没有任何版本的章（从未读过）前端按「最新上游」处理。
+    pub async fn list_version_marks(
+        &self,
+        user_ns: &str,
+        book_id: &str,
+    ) -> Result<Vec<ChapterVersionMarkRow>, AppError> {
+        let Some(id) = parse_book_id(book_id) else {
+            return Ok(Vec::new());
+        };
+        let rows = sqlx::query(
+            "SELECT l.chapter_url, v.kind, v.note, v.created_at, \
+                    COALESCE(v.version_id = l.latest_upstream_version_id, 0) AS is_latest_upstream
+             FROM chapter_latest l
+             LEFT JOIN chapter_view_state s
+               ON s.user_ns=?1 AND s.book_id=l.book_id AND s.chapter_url=l.chapter_url
+             JOIN chapter_versions v
+               ON v.version_id = COALESCE(s.selected_version_id, l.latest_user_version_id, l.latest_upstream_version_id)
+               AND v.book_id=l.book_id AND v.chapter_url=l.chapter_url
+             WHERE l.book_id=?2",
+        )
+        .bind(user_ns)
+        .bind(id)
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows
+            .iter()
+            .map(|r| ChapterVersionMarkRow {
+                chapter_url: r.get::<String, _>("chapter_url"),
+                kind: r.get::<String, _>("kind"),
+                note: r.get::<String, _>("note"),
+                created_at: r.get::<i64, _>("created_at"),
+                is_latest_upstream: r.get::<i64, _>("is_latest_upstream") != 0,
+            })
             .collect())
     }
 

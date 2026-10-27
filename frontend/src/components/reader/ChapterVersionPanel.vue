@@ -61,10 +61,10 @@
                   <span class="chars">{{ item.chars }} 字</span>
                 </div>
                 <div class="row-sub">
-                  <span class="source-tag"
-                    >[{{ versionTagLabel(item) }}] {{ versionTagState(item) }}</span
-                  >
+                  <span v-if="item.bookSourceName" class="source">{{ item.bookSourceName }}</span>
+                  <span v-if="item.note" class="note">{{ item.note }}</span>
                   <span v-if="item.isCurrent" class="badge current">当前</span>
+                  <span v-if="item.isLatestUpstream" class="badge">最新上游</span>
                   <span v-if="item.isLatestUser" class="badge">最新编辑</span>
                   <span v-if="item.rawSize === 0" class="badge empty">空正文</span>
                 </div>
@@ -225,7 +225,7 @@ import {
 } from '../../api/chapterEdit'
 import ChapterTextImport from './ChapterTextImport.vue'
 import { isLocalBook } from '../../utils/localBook'
-import { formatDateTime, formatShortDate } from '../../utils/format'
+import { formatDateTime } from '../../utils/format'
 import {
   buildDiffRows,
   diffStats,
@@ -305,18 +305,6 @@ function kindLabel(kind: string) {
   if (kind === 'edited') return '编辑'
   if (kind === 'imported') return '导入'
   return '上游'
-}
-
-/** 版本小标签的来源名：上游用书源名（本地书用「本地」），用户版本用备注兜底类别名 */
-function versionTagLabel(item: ChapterTimelineItem) {
-  if (item.kind === 'upstream') return item.bookSourceName || '本地'
-  return item.note || (item.kind === 'imported' ? '历史' : '编辑')
-}
-
-/** 标签状态：最新上游标「最新」，其余标短日期 */
-function versionTagState(item: ChapterTimelineItem) {
-  if (item.kind === 'upstream' && item.isLatestUpstream) return '最新'
-  return formatShortDate(item.createdAt)
 }
 
 function close() {
@@ -708,7 +696,8 @@ watch(
   opacity: 0.7;
 }
 
-.source-tag {
+.source,
+.note {
   max-width: 100%;
   overflow: hidden;
   text-overflow: ellipsis;

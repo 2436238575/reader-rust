@@ -313,6 +313,7 @@ import type { Bookmark } from '../../types'
 import { listBrowserCachedChapterUrls } from '../../utils/browserCache'
 import { isLocalBook } from '../../utils/localBook'
 import { bookmarkKindOf, splitBookmarksByKind } from '../../utils/bookmarks'
+import { formatChapterVersionMark } from '../../utils/chapterVersionMark'
 import { formatMonthDayTime, formatChapterTag, formatChapterWordCount } from '../../utils/format'
 import type { BookChapter } from '../../types'
 
@@ -379,10 +380,16 @@ const currentChapterInList = computed(() =>
 )
 
 // 卷分组：书源目录规则的 volumeName 挂在每个章节上，卷名变化处插入卷标题行；
-// meta 行（字数/时间）在此预算好，避免模板里对千章列表重复跑格式化
+// meta 行（字数/日期/版本标签）在此预算好，避免模板里对千章列表重复跑格式化
 type CatalogRow =
   | { kind: 'volume'; key: string; name: string }
   | { kind: 'chapter'; key: string; chapter: BookChapter; meta: string }
+
+/** 版本标签的来源名：本地书是「本地」，网络书用当前绑定书源的显示名 */
+const versionSourceName = computed(() => {
+  if (isLocalBook(store.book)) return '本地'
+  return store.book?.originName || store.book?.origin || '书源'
+})
 
 const catalogRows = computed<CatalogRow[]>(() => {
   const rows: CatalogRow[] = []
@@ -393,7 +400,11 @@ const catalogRows = computed<CatalogRow[]>(() => {
       rows.push({ kind: 'volume', key: `vol-${chapter.index}`, name: volume })
     }
     lastVolume = volume
-    const meta = [formatChapterWordCount(chapter.wordCount), formatChapterTag(chapter.tag)]
+    const meta = [
+      formatChapterWordCount(chapter.wordCount),
+      formatChapterTag(chapter.tag),
+      formatChapterVersionMark(store.chapterVersionMarks.get(chapter.url), versionSourceName.value),
+    ]
       .filter(Boolean)
       .join(' · ')
     rows.push({ kind: 'chapter', key: `ch-${chapter.index}`, chapter, meta })
@@ -484,6 +495,7 @@ async function goToChapter(index: number) {
 async function refreshCatalog() {
   await contentStore.refreshChapters()
   await refreshCachedChapterState()
+  await store.refreshEditedChapterKeys()
   scrollToCurrent()
 }
 

@@ -156,6 +156,10 @@ POST /reader3/saveChapterEdit      { bookId, chapterUrl, chapterIndex, chapterTi
                                      baseVersionId?, note? }
 GET  /reader3/getChapterEdit       ?bookId&chapterUrl（当前用户版本；没有时 data 为 null）
 GET  /reader3/listChapterEdits     ?bookId → { urls: string[] }（当前显示用户版本的章节）
+GET/POST /reader3/chapterVersionMarks
+        ?bookId → { marks: { [chapterUrl]: { kind, note, createdAt, isLatestUpstream } } }
+        （每章当前显示版本的标记，阅读器目录的版本标签用；只含有版本记录的章，
+        没有的章按「最新上游」处理）
 POST /reader3/deleteChapterEdit    { bookId, chapterUrl }（清除当前用户版本，回落上游）
 GET/POST /reader3/getChapterTimeline
         ?bookId&chapterUrl&limit?&beforeVersionId? → { items, latestUpstreamVersionId,

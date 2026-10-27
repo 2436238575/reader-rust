@@ -332,6 +332,10 @@ pub fn build_router(state: AppState) -> Router {
             get(handlers::list_chapter_edits).post(handlers::list_chapter_edits),
         )
         .route(
+            "/reader3/chapterVersionMarks",
+            get(handlers::get_chapter_version_marks).post(handlers::get_chapter_version_marks),
+        )
+        .route(
             "/reader3/deleteChapterEdit",
             post(handlers::delete_chapter_edit),
         )
