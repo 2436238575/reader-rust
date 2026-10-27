@@ -517,6 +517,20 @@ pub fn guarded_client_builder(timeout: Duration, user_agent: &str) -> reqwest::C
         .dns_resolver(guarded_dns_resolver())
 }
 
+/// 改全局守卫状态的测试互斥：并行测试里 allow/whitelist 互相踩会偶发失败。
+/// 放在模块级（而不是 tests 子模块内）：其他模块的回归测试（如
+/// `service::agent_sidecar_service` 的地图下载守卫用例）同样要动这套全局
+/// 状态，必须与本模块自己的测试共用同一把锁串行。
+#[cfg(test)]
+pub(crate) static TEST_SERIALIZER: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+/// 回到开箱默认：拦截私网、白名单为空（一律拦截）。
+#[cfg(test)]
+pub(crate) fn restore_guard_defaults() {
+    set_allow_private_network(false);
+    set_private_network_whitelist(Vec::new());
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -647,15 +661,6 @@ mod tests {
         assert!(!is_obviously_internal_url(
             &Url::parse("https://example.com/x").unwrap()
         ));
-    }
-
-    /// 改全局守卫状态的测试互斥：并行测试里 allow/whitelist 互相踩会偶发失败。
-    static TEST_SERIALIZER: std::sync::Mutex<()> = std::sync::Mutex::new(());
-
-    /// 回到开箱默认：拦截私网、白名单为空（一律拦截）。
-    fn restore_guard_defaults() {
-        set_allow_private_network(false);
-        set_private_network_whitelist(Vec::new());
     }
 
     #[test]

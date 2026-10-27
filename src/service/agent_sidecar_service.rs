@@ -1720,6 +1720,10 @@ fn resolve_sidecar_dir() -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::crawler::url_guard::{
+        restore_guard_defaults, set_allow_private_network, TEST_SERIALIZER,
+    };
+    use tokio::io::AsyncReadExt;
 
     fn plan_command(plan: &SpawnPlan) -> (String, Vec<String>) {
         match plan {
@@ -1889,5 +1893,109 @@ mod tests {
         );
         assert_eq!(line.len(), 20 * 1024 + 1);
         assert_eq!(&line[..20 * 1024], &payload[..]);
+    }
+
+    // ---- download_map_image 出站守卫回归 ----
+    //
+    // 地图图片地址来自 sidecar（模型输出），属于「外部可控 URL → 服务端发起
+    // 请求」入口，必须走受守卫客户端：预检 + 逐跳重定向守卫 + 解析期守卫。
+    // 下面用例动 url_guard 的全局状态，一律持 TEST_SERIALIZER 串行（与
+    // url_guard 自己的测试同一把锁），并在收尾恢复默认姿态。
+
+    /// 默认（拦截私网）姿态下，环回地址必须在预检阶段被拦下。
+    // 持 std Mutex 守卫跨 await：#[tokio::test] 默认 current_thread 运行时，
+    // 本线程只有测试自身一个任务，锁竞争只发生在不同测试线程之间，无死锁面
+    #[allow(clippy::await_holding_lock)]
+    #[tokio::test]
+    async fn download_map_image_blocks_loopback_url_by_default() {
+        let _lock = TEST_SERIALIZER.lock().unwrap();
+        // 显式回到开箱默认（拦截私网、白名单为空），不依赖上一个持锁测试的收尾
+        restore_guard_defaults();
+
+        let err = download_map_image("http://127.0.0.1:1/x.png")
+            .await
+            .expect_err("默认姿态下环回地址必须被出站守卫拦截");
+        match err {
+            AppError::BadRequest(msg) => assert!(
+                msg.contains("禁止访问内网地址"),
+                "错误文案应带拦截原因：{msg}"
+            ),
+            other => panic!("应为 BadRequest，实际：{other:?}"),
+        }
+
+        restore_guard_defaults();
+    }
+
+    /// 默认（拦截私网）姿态下，私网 IP 字面量同样在预检阶段被拦下。
+    #[allow(clippy::await_holding_lock)] // 理由见 download_map_image_blocks_loopback_url_by_default
+    #[tokio::test]
+    async fn download_map_image_blocks_private_ip_literal_by_default() {
+        let _lock = TEST_SERIALIZER.lock().unwrap();
+        restore_guard_defaults();
+
+        for url in [
+            "http://192.168.1.1:1/x.png",
+            "http://169.254.169.254/latest/meta-data/",
+        ] {
+            let err = download_map_image(url)
+                .await
+                .expect_err("默认姿态下私网/链路本地地址必须被出站守卫拦截");
+            match err {
+                AppError::BadRequest(msg) => assert!(
+                    msg.contains("禁止访问内网地址"),
+                    "{url} 的错误文案应带拦截原因：{msg}"
+                ),
+                other => panic!("{url} 应为 BadRequest，实际：{other:?}"),
+            }
+        }
+
+        restore_guard_defaults();
+    }
+
+    /// 显式放行私网后，整条下载链路（预检 → 受守卫客户端 → 限量读取）走通：
+    /// 本机临时 HTTP 服务（端口 0 自动分配）返一张 1x1 PNG，字节应原样取回。
+    #[allow(clippy::await_holding_lock)] // 理由见 download_map_image_blocks_loopback_url_by_default
+    #[tokio::test]
+    async fn download_map_image_succeeds_when_private_network_allowed() {
+        let _lock = TEST_SERIALIZER.lock().unwrap();
+        restore_guard_defaults();
+        // 整体放行私网：预检、逐跳重定向守卫与解析期守卫同步放行（见 url_guard）
+        set_allow_private_network(true);
+
+        // 1x1 透明 PNG
+        const PNG: &[u8] = &[
+            0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00, 0x0D, 0x49, 0x48,
+            0x44, 0x52, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x06, 0x00, 0x00,
+            0x00, 0x1F, 0x15, 0xC4, 0x89, 0x0D, 0x00, 0x00, 0x00, 0x0A, 0x49, 0x44, 0x41, 0x54,
+            0x78, 0x9C, 0x63, 0x00, 0x01, 0x00, 0x00, 0x05, 0x00, 0x01, 0x0D, 0x0A, 0x2D, 0xB4,
+            0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4E, 0x44, 0xAE, 0x42, 0x60, 0x82,
+        ];
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let server = tokio::spawn(async move {
+            while let Ok((mut socket, _)) = listener.accept().await {
+                tokio::spawn(async move {
+                    // 读掉请求头再回包（内容不校验），Connection: close 收尾
+                    let mut buf = [0u8; 1024];
+                    let _ = socket.read(&mut buf).await;
+                    let mut response = format!(
+                        "HTTP/1.1 200 OK\r\nContent-Type: image/png\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                        PNG.len()
+                    )
+                    .into_bytes();
+                    response.extend_from_slice(PNG);
+                    let _ = socket.write_all(&response).await;
+                });
+            }
+        });
+
+        let url = format!("http://127.0.0.1:{port}/map.png");
+        let bytes = download_map_image(&url)
+            .await
+            .expect("放行私网后本机服务应下载成功");
+        assert_eq!(bytes.as_slice(), PNG);
+
+        server.abort();
+        restore_guard_defaults();
     }
 }
