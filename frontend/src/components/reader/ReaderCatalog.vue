@@ -160,11 +160,16 @@
             <span class="item-title">{{ row.chapter.title }}</span>
             <span v-if="row.meta" class="item-meta">{{ row.meta }}</span>
           </div>
+          <!-- 状态陈列优先级：当前 > 已缓存 > 已读。当前章只挂「当前」徽章
+               （在读章必然已缓存，再挂「已缓存」是冗余）；已读不进徽章槽，
+               只变淡文字（见 .list-item.read，徽章槽不受已读影响） -->
           <div class="item-status">
             <span v-if="row.chapter.index === store.currentIndex" class="status-badge current"
               >当前</span
             >
-            <span v-if="isChapterCached(row.chapter.url)" class="status-badge cached">已缓存</span>
+            <span v-else-if="isChapterCached(row.chapter.url)" class="status-badge cached"
+              >已缓存</span
+            >
           </div>
         </div>
       </VList>
@@ -877,8 +882,19 @@ const formatDate = formatMonthDayTime
   background: color-mix(in srgb, var(--color-primary) 5%, transparent);
 }
 
+/* 已读态是三级陈列里优先级最低的表达：标题/meta 内容块与序号各自单调变淡
+   （opacity 跟随阅读主题前景色，深浅色与彩色预设都自适应，不引新色值），
+   状态徽章槽不受影响——「已缓存」徽章在已读行上保持全强度 */
+.list-item.read:not(.active) .item-main {
+  opacity: 0.66;
+}
+
+.list-item.read:not(.active) .item-index {
+  opacity: 0.3;
+}
+
 .list-item.read:not(.active) .item-title {
-  opacity: 0.74;
+  font-weight: 400;
 }
 
 .item-index {
@@ -898,6 +914,9 @@ const formatDate = formatMonthDayTime
 
 .item-title {
   font-size: var(--text-base);
+  /* 未读章半档字重：已读章占目录多数，字重差让已读/未读不用逐行辨色就能扫读；
+     已读行由 .list-item.read 回落到 400 */
+  font-weight: 500;
   line-height: 1.4;
   overflow: hidden;
   text-overflow: ellipsis;
