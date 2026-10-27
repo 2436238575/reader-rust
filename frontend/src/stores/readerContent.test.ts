@@ -12,7 +12,6 @@ import type { ChapterContentResponse } from '../api/bookshelf'
 import { listChapterEdits } from '../api/chapterEdit'
 import { getChapterComments, getParaCommentIndex } from '../api/review'
 import {
-  deleteBrowserCachedChapters,
   getBrowserCachedChapter,
   setBrowserCachedChapter,
 } from '../utils/browserCache'
@@ -51,8 +50,6 @@ vi.mock('../api/replaceRule', () => ({
 vi.mock('../utils/browserCache', () => ({
   getBrowserCachedChapter: vi.fn(),
   setBrowserCachedChapter: vi.fn(),
-  deleteBrowserCachedChapter: vi.fn().mockResolvedValue(undefined),
-  deleteBrowserCachedChapters: vi.fn().mockResolvedValue(undefined),
   getBrowserCatalog: vi.fn().mockResolvedValue(null),
   setBrowserCatalog: vi.fn().mockResolvedValue(undefined),
 }))
@@ -83,10 +80,10 @@ describe('readerContent local txt chapters', () => {
     })
     vi.mocked(getBookContent).mockReset()
     vi.mocked(getBookContents).mockReset()
-    vi.mocked(getBrowserCachedChapter).mockReset()
-    vi.mocked(setBrowserCachedChapter).mockReset()
+    // mockReset 后返回 undefined（不是 Promise），生产代码带 .catch：默认给「无缓存」
+    vi.mocked(getBrowserCachedChapter).mockReset().mockResolvedValue(null)
+    vi.mocked(setBrowserCachedChapter).mockReset().mockResolvedValue(undefined)
     vi.mocked(listChapterEdits).mockReset().mockResolvedValue([])
-    vi.mocked(deleteBrowserCachedChapters).mockReset()
     vi.mocked(getChapterComments).mockReset()
     vi.mocked(getParaCommentIndex).mockReset()
   })
@@ -99,6 +96,7 @@ describe('readerContent local txt chapters', () => {
       upstreamChanged: false,
       selectionSource: 'upstream',
       stale: false,
+      unchanged: false,
     })
     vi.mocked(getBrowserCachedChapter).mockResolvedValue(null)
     const appStore = useAppStore()
@@ -126,7 +124,7 @@ describe('readerContent local txt chapters', () => {
     })
   })
 
-  it('upstream variant skips browser cache and stores the version on the diff state', async () => {
+  it('upstream variant reads cache for version compare but never writes it', async () => {
     vi.mocked(getBookContent).mockResolvedValue({
       content: '上游正文',
       edited: false,
@@ -135,6 +133,7 @@ describe('readerContent local txt chapters', () => {
       upstreamChanged: false,
       selectionSource: 'upstream_preview',
       stale: false,
+      unchanged: false,
     })
     vi.mocked(getBrowserCachedChapter).mockResolvedValue(null)
     const appStore = useAppStore()
@@ -155,15 +154,19 @@ describe('readerContent local txt chapters', () => {
 
     await expect(contentStore.fetchChapterContent(0)).resolves.toBe('上游正文')
 
-    expect(getBrowserCachedChapter).not.toHaveBeenCalled()
+    // 上游预览会读缓存拿版本号比对，但预览结果不写缓存（缓存只存默认版本）
     expect(getBookContent).toHaveBeenCalledWith(expect.objectContaining({ variant: 'upstream' }))
+    expect(setBrowserCachedChapter).not.toHaveBeenCalled()
     expect(readerStore.chapterVersions.get(0)?.kind).toBe('upstream')
     expect(readerStore.chapterDiffs.get(0)).toBeUndefined()
   })
 
-  it('离线时编辑章不回退浏览器缓存，明确报需要联网', async () => {
-    // 缓存里躺着编辑前的旧正文：一旦被读到就等于把另一台设备的编辑回退了
-    vi.mocked(getBrowserCachedChapter).mockResolvedValue('编辑前的旧正文')
+  it('离线时编辑章与普通章一样读浏览器缓存', async () => {
+    // 缓存记录带版本号：读到的就是缓存时点的版本，恢复在线后比对自动换新
+    vi.mocked(getBrowserCachedChapter).mockResolvedValue({
+      content: '缓存的编辑版正文',
+      versionId: 7,
+    })
     const appStore = useAppStore()
     const readerStore = useReaderStore()
     const contentStore = useReaderContentStore()
@@ -179,18 +182,19 @@ describe('readerContent local txt chapters', () => {
     readerStore.chapters = [{ title: '第一章', url: 'https://example.org/1', index: 0 }]
     readerStore.editedChapterKeys = new Set(['https://example.org/1'])
 
-    await expect(contentStore.fetchChapterContent(0)).rejects.toThrow('本章有编辑版，需要联网读取')
-    expect(getBrowserCachedChapter).not.toHaveBeenCalled()
+    await expect(contentStore.fetchChapterContent(0)).resolves.toBe('缓存的编辑版正文')
   })
 
-  it('在线读取编辑章时不写浏览器缓存', async () => {
+  it('在线读取编辑章时同样写浏览器缓存（带版本号）', async () => {
     vi.mocked(getBookContent).mockResolvedValue({
       content: '编辑版正文',
       edited: true,
       variant: 'default',
+      versionId: 12,
       upstreamChanged: false,
       selectionSource: 'edited',
       stale: false,
+      unchanged: false,
     })
     vi.mocked(getBrowserCachedChapter).mockResolvedValue(null)
     const appStore = useAppStore()
@@ -209,7 +213,82 @@ describe('readerContent local txt chapters', () => {
     readerStore.editedChapterKeys = new Set(['https://example.org/1'])
 
     await expect(contentStore.fetchChapterContent(0)).resolves.toBe('编辑版正文')
-    expect(setBrowserCachedChapter).not.toHaveBeenCalled()
+    expect(setBrowserCachedChapter).toHaveBeenCalledWith(
+      expect.objectContaining({ content: '编辑版正文', versionId: 12 })
+    )
+  })
+
+  it('缓存版本与后端一致时（unchanged）不传正文，直接用缓存内容', async () => {
+    vi.mocked(getBrowserCachedChapter).mockResolvedValue({
+      content: '缓存正文',
+      versionId: 7,
+    })
+    vi.mocked(getBookContent).mockResolvedValue({
+      content: '',
+      edited: false,
+      variant: 'default',
+      versionId: 7,
+      upstreamChanged: false,
+      selectionSource: 'upstream',
+      stale: false,
+      unchanged: true,
+    })
+    const appStore = useAppStore()
+    appStore.setOnlineStatus(true)
+    const readerStore = useReaderStore()
+    const contentStore = useReaderContentStore()
+    readerStore.book = {
+      name: '网络书',
+      author: '作者',
+      origin: 'https://example.org',
+      bookId: 'book_1',
+      bookUrl: 'https://example.org/book',
+      bookSourceId: 1,
+    }
+    readerStore.chapters = [{ title: '第一章', url: 'https://example.org/1', index: 0 }]
+
+    await expect(contentStore.fetchChapterContent(0)).resolves.toBe('缓存正文')
+
+    expect(getBookContent).toHaveBeenCalledWith(expect.objectContaining({ knownVersionId: 7 }))
+    // 版本信息照常落账
+    expect(readerStore.chapterVersions.get(0)?.versionId).toBe(7)
+  })
+
+  it('缓存版本落后时照常拉全量正文并更新缓存', async () => {
+    vi.mocked(getBrowserCachedChapter).mockResolvedValue({
+      content: '旧缓存正文',
+      versionId: 7,
+    })
+    vi.mocked(getBookContent).mockResolvedValue({
+      content: '新正文',
+      edited: false,
+      variant: 'default',
+      versionId: 9,
+      upstreamChanged: false,
+      selectionSource: 'upstream',
+      stale: false,
+      unchanged: false,
+    })
+    const appStore = useAppStore()
+    appStore.setOnlineStatus(true)
+    const readerStore = useReaderStore()
+    const contentStore = useReaderContentStore()
+    readerStore.book = {
+      name: '网络书',
+      author: '作者',
+      origin: 'https://example.org',
+      bookId: 'book_1',
+      bookUrl: 'https://example.org/book',
+      bookSourceId: 1,
+    }
+    readerStore.chapters = [{ title: '第一章', url: 'https://example.org/1', index: 0 }]
+
+    await expect(contentStore.fetchChapterContent(0)).resolves.toBe('新正文')
+
+    expect(getBookContent).toHaveBeenCalledWith(expect.objectContaining({ knownVersionId: 7 }))
+    expect(setBrowserCachedChapter).toHaveBeenCalledWith(
+      expect.objectContaining({ content: '新正文', versionId: 9 })
+    )
   })
 
   it('loadBook 返回前清掉上一本书的编辑章集合并拉取本书集合', async () => {
@@ -327,7 +406,7 @@ describe('readerContent local txt chapters', () => {
     vi.mocked(getBrowserCatalog).mockResolvedValue([
       { title: '第一章', url: 'https://example.org/1', index: 0 },
     ])
-    vi.mocked(getBrowserCachedChapter).mockResolvedValue('缓存正文')
+    vi.mocked(getBrowserCachedChapter).mockResolvedValue({ content: '缓存正文', versionId: 3 })
     const appStore = useAppStore()
     appStore.setOnlineStatus(false)
     const toastSpy = vi.spyOn(appStore, 'showToast')
@@ -443,6 +522,7 @@ describe('readerContent preloadAroundChapter 批量预加载', () => {
       upstreamChanged: false,
       selectionSource: 'upstream',
       stale: false,
+      unchanged: false,
     }
   }
 
@@ -477,7 +557,8 @@ describe('readerContent preloadAroundChapter 批量预加载', () => {
     })
     vi.mocked(getBookContent).mockReset()
     vi.mocked(getBookContents).mockReset()
-    vi.mocked(getBrowserCachedChapter).mockReset()
+    // mockReset 后返回 undefined（不是 Promise），生产代码带 .catch：默认给「无缓存」
+    vi.mocked(getBrowserCachedChapter).mockReset().mockResolvedValue(null)
     // recordChapterContent 会 await 浏览器缓存写入：必须给 Promise，否则 .catch 抛 TypeError
     vi.mocked(setBrowserCachedChapter).mockReset().mockResolvedValue(undefined)
   })
@@ -548,7 +629,7 @@ describe('readerContent preloadAroundChapter 批量预加载', () => {
     ])
     vi.mocked(getBookContent).mockRejectedValue(new Error('网络错误'))
     vi.mocked(getBrowserCachedChapter).mockImplementation(async (_bookId: string, url: string) =>
-      url === 'https://example.org/3' ? '缓存正文三' : null
+      url === 'https://example.org/3' ? { content: '缓存正文三', versionId: undefined } : null
     )
     const contentStore = setupOnlineBook()
 

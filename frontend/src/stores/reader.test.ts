@@ -5,7 +5,6 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
 import { useReaderStore } from './reader'
 import { listChapterEdits } from '../api/chapterEdit'
-import { deleteBrowserCachedChapters } from '../utils/browserCache'
 
 vi.mock('../api/bookshelf', () => ({
   getChapterList: vi.fn(),
@@ -41,8 +40,6 @@ vi.mock('../api/replaceRule', () => ({
 vi.mock('../utils/browserCache', () => ({
   getBrowserCachedChapter: vi.fn(),
   setBrowserCachedChapter: vi.fn(),
-  deleteBrowserCachedChapter: vi.fn().mockResolvedValue(undefined),
-  deleteBrowserCachedChapters: vi.fn().mockResolvedValue(undefined),
   getBrowserCatalog: vi.fn().mockResolvedValue(null),
   setBrowserCatalog: vi.fn().mockResolvedValue(undefined),
 }))
@@ -72,10 +69,10 @@ describe('reader core edited chapter keys', () => {
       clear: vi.fn(() => storage.clear()),
     })
     vi.mocked(listChapterEdits).mockReset().mockResolvedValue([])
-    vi.mocked(deleteBrowserCachedChapters).mockReset()
   })
 
-  it('刷新编辑章清单时删除新增编辑章的浏览器缓存', async () => {
+  it('刷新编辑章清单只更新集合与快照，不再动浏览器缓存', async () => {
+    // 缓存记录带版本号：是否串版本由在线读取时的比对兜底，清单刷新不承担清理
     vi.mocked(listChapterEdits).mockResolvedValue(['https://example.org/1'])
     const readerStore = useReaderStore()
     readerStore.book = {
@@ -91,7 +88,9 @@ describe('reader core edited chapter keys', () => {
     await readerStore.refreshEditedChapterKeys()
 
     expect(readerStore.editedChapterKeys.has('https://example.org/1')).toBe(true)
-    expect(deleteBrowserCachedChapters).toHaveBeenCalledWith('book_1', ['https://example.org/1'])
+    // 快照落盘：离线打开时编辑按钮的状态靠它维持
+    const raw = localStorage.getItem('reader-edited-chapters')
+    expect(JSON.parse(raw || '{}').book_1?.urls).toEqual(['https://example.org/1'])
   })
 
   it('同一本书并发双触发只发一次 listChapterEdits（在途单飞）', async () => {

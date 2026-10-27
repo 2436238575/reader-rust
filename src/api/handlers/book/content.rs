@@ -22,6 +22,10 @@ pub struct BookContentRequest {
     pub refresh: Option<i32>,
     /// `upstream` 返回上游原版（不读编辑版）；缺省/其它值返回编辑版优先。
     pub variant: Option<String>,
+    /// 浏览器缓存里的版本号：与当前解析版本一致时响应置 `unchanged`、
+    /// 不带正文（省流）；refresh=1 忽略它（强刷就是要新正文）。
+    #[serde(rename = "knownVersionId")]
+    pub known_version_id: Option<i64>,
 }
 
 /// 批量正文（预加载）单次章节数上限。
@@ -34,6 +38,9 @@ pub struct BatchContentChapter {
     pub index: Option<i32>,
     #[serde(rename = "chapterUrl")]
     pub chapter_url: Option<String>,
+    /// 与单章接口同义：浏览器缓存里的版本号，一致时该章 `unchanged` 不带正文。
+    #[serde(rename = "knownVersionId")]
+    pub known_version_id: Option<i64>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -55,8 +62,9 @@ pub struct BatchContentItem {
 }
 
 /// 正文版本：默认版本（用户选择 > 用户版本 > 最新上游），或只预览最新上游。
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum ContentVariant {
+    #[default]
     Default,
     Upstream,
 }
@@ -120,6 +128,9 @@ pub struct ChapterContentData {
     /// diff 算不出来的原因（正文仍然可用）。前端在 diff 面板里展示。
     #[serde(skip_serializing_if = "Option::is_none")]
     pub diff_error: Option<String>,
+    /// 浏览器缓存的版本仍是最新：正文未传（空串），前端用本地缓存的正文；
+    /// 版本信息/diff 等其余字段照常返回。
+    pub unchanged: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -208,6 +219,7 @@ async fn network_content_data(
         edited_at: read.edited_at,
         diff,
         diff_error,
+        unchanged: false,
     }
 }
 
@@ -272,6 +284,7 @@ async fn local_content_data(
         edited_at: None,
         diff,
         diff_error,
+        unchanged: false,
     }
 }
 
@@ -293,9 +306,12 @@ pub async fn get_book_content(
         &user_ns,
         req.book_id.as_deref(),
         req.chapter_url.as_deref(),
-        req.index,
-        variant,
-        req.refresh.unwrap_or(0) > 0,
+        ChapterReadOptions {
+            index: req.index,
+            variant,
+            do_refresh: req.refresh.unwrap_or(0) > 0,
+            known_version_id: req.known_version_id,
+        },
     )
     .await?;
     Ok(Json(ApiResponse::ok(
@@ -349,9 +365,12 @@ pub async fn get_book_contents(
                         &user_ns,
                         book_id.as_deref(),
                         chapter.chapter_url.as_deref(),
-                        chapter.index,
-                        variant,
-                        false,
+                        ChapterReadOptions {
+                            index: chapter.index,
+                            variant,
+                            do_refresh: false,
+                            known_version_id: chapter.known_version_id,
+                        },
                     )
                     .await;
                     let item = match outcome {
@@ -381,6 +400,17 @@ pub async fn get_book_contents(
         serde_json::to_value(chapters).unwrap_or_default(),
     )))
 }
+/// 单章/批量共用的正文读取选项（版本解析之外的可调输入）。
+#[derive(Debug, Clone, Copy, Default)]
+struct ChapterReadOptions {
+    index: Option<i32>,
+    variant: ContentVariant,
+    /// refresh=1 同步回源；强刷忽略 known_version_id（语义就是拿新正文）。
+    do_refresh: bool,
+    /// 调用方本地缓存的版本号：与当前解析版本一致时响应 unchanged 不传正文。
+    known_version_id: Option<i64>,
+}
+
 /// 单章正文的完整读取链路：本地 TXT/EPUB 分支 + 网络书分支
 /// （版本解析、强刷、超期后台回源）。
 ///
@@ -391,10 +421,14 @@ async fn read_chapter_content(
     user_ns: &str,
     book_id: Option<&str>,
     chapter_url: Option<&str>,
-    index: Option<i32>,
-    variant: ContentVariant,
-    do_refresh: bool,
+    options: ChapterReadOptions,
 ) -> Result<ChapterContentData, AppError> {
+    let ChapterReadOptions {
+        index,
+        variant,
+        do_refresh,
+        known_version_id,
+    } = options;
     let force_upstream = variant == ContentVariant::Upstream;
 
     if chapter_url.is_some_and(is_local_txt_url) {
@@ -498,7 +532,14 @@ async fn read_chapter_content(
                 .await;
         });
     }
-    Ok(network_content_data(state, book_id, &chapter_url, read, force_upstream).await)
+    let mut data = network_content_data(state, book_id, &chapter_url, read, force_upstream).await;
+    // 浏览器缓存里的版本仍是最新：不传正文（省流），版本信息/diff 照常返回，
+    // 前端拿缓存正文补上。强刷忽略它——refresh 的语义就是拿新正文。
+    if !do_refresh && known_version_id.is_some() && data.version_id == known_version_id {
+        data.content.clear();
+        data.unchanged = true;
+    }
+    Ok(data)
 }
 
 /// 本地书的正文读取。用户版本来自正文池，上游原文来自本地文件。

@@ -3,7 +3,6 @@ import { safeLocalSet } from '../utils/storage'
 import { ref, computed, reactive } from 'vue'
 import { useBookshelfStore } from './bookshelf'
 import type { Book, BookChapter } from '../types'
-import { deleteBrowserCachedChapters } from '../utils/browserCache'
 import { saveRecentReadBook } from '../utils/recentBooks'
 import { listChapterEdits } from '../api/chapterEdit'
 import type { ChapterVersionKind, ContentVariant } from '../api/bookshelf'
@@ -90,17 +89,11 @@ export const useReaderStore = defineStore('reader', () => {
       try {
         const urls = await listChapterEdits(bookId)
         if (book.value?.bookId !== bookId) return
-        // 先把新集合写回内存再删缓存：集合生效后正文读写才会跳过编辑章；
-        // 反过来的话，并发的正文读取会在删完后又把旧上游正文写回 IndexedDB
         editedChapterKeys.value = new Set(urls)
-        // 落盘一份供离线打开：离线时拉不到清单，没有快照会把编辑章当普通章节
+        // 落盘一份供离线打开：离线时拉不到清单，编辑按钮的状态靠快照维持。
+        // 浏览器缓存不用跟着清：缓存记录带版本号，在线读取时比对不一致
+        // 才拉新，旧记录不会再顶掉另一台设备的编辑内容
         saveCachedEditedChapterKeys(bookId, urls)
-        // 编辑章的浏览器缓存都是编辑前的上游正文：全部删掉（幂等，批量删除会
-        // 按实际存在的记录扣 summary）。带上旧快照里的章节，避免上次删除失败
-        // 或升级前留下的记录继续被离线兜底读到
-        if (urls.length) {
-          await deleteBrowserCachedChapters(bookId, urls).catch(() => undefined)
-        }
       } catch {
         /* 离线/失败时保持现状 */
       }

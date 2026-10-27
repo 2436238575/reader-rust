@@ -10,13 +10,14 @@ GET /reader3/getBookContent
 
 查询参数：
 
-| 参数         | 类型   | 必填 | 说明                                                                 |
-| ------------ | ------ | ---- | -------------------------------------------------------------------- |
-| `bookId`     | string | 是   | 书籍 ID（`book_<n>`）                                                |
-| `chapterUrl` | string | 是   | 章节 URL（章节身份，正文版本按它归档）                               |
-| `index`      | number | 否   | 章节下标                                                             |
-| `refresh`    | number | 否   | 非 0 时同步回源一次；失败回退已有缓存                               |
-| `variant`    | string | 否   | `upstream` 只预览最新上游；缺省/`default` 按服务端选择解析默认版本  |
+| 参数             | 类型   | 必填 | 说明                                                                 |
+| ---------------- | ------ | ---- | -------------------------------------------------------------------- |
+| `bookId`         | string | 是   | 书籍 ID（`book_<n>`）                                                |
+| `chapterUrl`     | string | 是   | 章节 URL（章节身份，正文版本按它归档）                               |
+| `index`          | number | 否   | 章节下标                                                             |
+| `refresh`        | number | 否   | 非 0 时同步回源一次；失败回退已有缓存                               |
+| `variant`        | string | 否   | `upstream` 只预览最新上游；缺省/`default` 按服务端选择解析默认版本  |
+| `knownVersionId` | number | 否   | 调用方本地缓存的版本号：与当前解析版本一致时返回 `unchanged: true` 且 `content` 为空（省流），其余字段照常；`refresh` 非 0 时忽略 |
 
 默认版本解析顺序：**当前用户手动选择的版本 > 最近一次用户版本（编辑/手动导入）>
 最新上游版本**。用户版本优先于上游；`variant=upstream` 只是本次预览，不改变选择。
@@ -69,6 +70,8 @@ GET /reader3/getBookContent
 - `diffError`：算不出差异时的原因。此时 `diff` 缺省，但正文照常可用。常见原因：
   最新上游版本不可读、章节过大。diff 由服务端进程内计算（imara-diff），
   不依赖任何外部工具。
+- `unchanged`：`true` 表示调用方 `knownVersionId` 与当前版本一致，`content`
+  为空串、用本地缓存的正文；版本信息与 `diff` 照常返回，前端落账不受影响。
 
 `diff` 始终是「最新上游 → 当前用户版本」，包含上游在编辑之后发生的变化。
 只看任意两个历史版本的差异，用
@@ -106,8 +109,11 @@ POST /reader3/getBookContents
 | 参数        | 类型   | 必填 | 说明                                                        |
 | ----------- | ------ | ---- | ----------------------------------------------------------- |
 | `bookId`    | string | 否   | 网络书必填；本地 TXT/EPUB（`chapterUrl` 自带 `local-` 前缀）可缺省 |
-| `chapters`  | array  | 是   | 1 到 10 条；每项 `{ "index": number, "chapterUrl": string }`，`chapterUrl` 必填 |
+| `chapters`  | array  | 是   | 1 到 10 条；每项 `{ "index": number, "chapterUrl": string, "knownVersionId": number? }`，`chapterUrl` 必填 |
 | `variant`   | string | 否   | 透传给每章，语义同单章接口                                   |
+
+每项的 `knownVersionId` 与单章接口同义：该章缓存版本仍是最新时，对应 `data`
+带 `unchanged: true` 且 `content` 为空串（预加载不再重复传没变的正文）。
 
 ```json
 {

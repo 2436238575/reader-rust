@@ -92,6 +92,9 @@ export interface ChapterContentResponse {
   diff?: { ops: ParagraphDiffOp[] } | null
   /** diff 算不出来的原因（正文仍然可用） */
   diffError?: string | null
+  /** 浏览器缓存的版本仍是最新：正文未传（content 为空串），前端用缓存正文；
+   *  版本信息/diff 等其余字段照常返回 */
+  unchanged: boolean
 }
 
 // ─── 目录列表会话内缓存 ─────────────────────────────────────────────────
@@ -163,6 +166,8 @@ export function getBookContent(params: {
   refresh?: number
   /** `upstream` 只预览最新上游；缺省/default 按服务端选择解析 */
   variant?: ContentVariant
+  /** 浏览器缓存里的版本号：与当前版本一致时响应 unchanged、不传正文（省流） */
+  knownVersionId?: number
 }) {
   return http.post<ChapterContentResponse>('/getBookContent', params).then((r) => r.data)
 }
@@ -180,7 +185,7 @@ export interface BatchChapterContentItem {
  */
 export function getBookContents(params: {
   bookId: string
-  chapters: { index?: number; chapterUrl: string }[]
+  chapters: { index?: number; chapterUrl: string; knownVersionId?: number }[]
   /** `upstream` 只预览最新上游；缺省/default 按服务端选择解析 */
   variant?: ContentVariant
 }) {

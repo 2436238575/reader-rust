@@ -14,6 +14,8 @@ export interface BrowserChapterCacheRecord {
   chapterUrl: string
   chapterTitle: string
   content: string
+  /** 写入时服务端返回的版本号：在线读章时回传给后端比对，一致则免传正文 */
+  versionId?: number
   size: number
   updatedAt: number
 }
@@ -166,60 +168,20 @@ async function writeSummary(summary: IDBObjectStore, bookId: string, mutate: Sum
   }
 }
 
-export async function getBrowserCachedChapter(bookId: string, chapterUrl: string) {
+export interface BrowserCachedChapter {
+  content: string
+  versionId?: number
+}
+
+export async function getBrowserCachedChapter(
+  bookId: string,
+  chapterUrl: string
+): Promise<BrowserCachedChapter | null> {
   return withStore('readonly', async (store) => {
     const result = await requestToPromise(store.get(cacheKey(bookId, chapterUrl)))
     const record = result as BrowserChapterCacheRecord | undefined
-    return record?.content || null
-  })
-}
-
-/** 删单章的浏览器缓存（编辑版保存/删除后调用，让下一次读取回源拿最新） */
-export async function deleteBrowserCachedChapter(bookId: string, chapterUrl: string) {
-  return withStores('readwrite', async ({ chapters, summary }) => {
-    const key = cacheKey(bookId, chapterUrl)
-    // 先读回记录拿 size：summary 只记增量，不读就不知道该扣多少字节
-    const existing = (await requestToPromise(chapters.get(key))) as
-      | BrowserChapterCacheRecord
-      | undefined
-    await requestToPromise(chapters.delete(key))
-    if (!existing) return
-    await writeSummary(summary, bookId, (current) => ({
-      ...current,
-      cachedChapterCount: Math.max(0, current.cachedChapterCount - 1),
-      bytes: Math.max(0, current.bytes - (existing.size || 0)),
-    }))
-  })
-}
-
-/** 批量删多章的浏览器缓存（开书时发现跨设备新增了编辑章，旧上游缓存作废）。
- *  一次 readwrite 事务删完，避免逐章各开一个事务；summary 的章数/字节同步扣减 */
-export async function deleteBrowserCachedChapters(bookId: string, chapterUrls: string[]) {
-  const urls = Array.from(new Set(chapterUrls))
-  if (!urls.length) return
-  await withStores('readwrite', async ({ chapters, summary }) => {
-    // 先读回记录拿 size：summary 只记增量，不读就不知道该扣多少字节
-    const records = await Promise.all(
-      urls.map(
-        (url) =>
-          requestToPromise(chapters.get(cacheKey(bookId, url))) as Promise<
-            BrowserChapterCacheRecord | undefined
-          >
-      )
-    )
-    const existing = records.filter(
-      (record): record is BrowserChapterCacheRecord => record != null
-    )
-    if (!existing.length) return
-    await Promise.all(existing.map((record) => requestToPromise(chapters.delete(record.key))))
-    await writeSummary(summary, bookId, (current) => ({
-      ...current,
-      cachedChapterCount: Math.max(0, current.cachedChapterCount - existing.length),
-      bytes: Math.max(
-        0,
-        current.bytes - existing.reduce((total, record) => total + (record.size || 0), 0)
-      ),
-    }))
+    if (!record) return null
+    return { content: record.content, versionId: record.versionId }
   })
 }
 
@@ -228,6 +190,7 @@ export async function setBrowserCachedChapter(params: {
   chapterUrl: string
   chapterTitle?: string
   content: string
+  versionId?: number
 }) {
   try {
     return await writeChapterRecord(params)
@@ -260,6 +223,7 @@ function writeChapterRecord(params: {
   chapterUrl: string
   chapterTitle?: string
   content: string
+  versionId?: number
 }) {
   return withStores('readwrite', async ({ chapters, summary }) => {
     const key = cacheKey(params.bookId, params.chapterUrl)
@@ -274,6 +238,9 @@ function writeChapterRecord(params: {
       chapterUrl: params.chapterUrl,
       chapterTitle: params.chapterTitle || '',
       content: params.content,
+      // 响应没带版本号时留住旧的：旧版本号最多让下次比对不命中多传一次，
+      // 清掉反而弄丢比对凭证
+      versionId: params.versionId ?? existing?.versionId,
       size,
       updatedAt,
     }

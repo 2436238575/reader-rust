@@ -552,6 +552,43 @@ async fn network_book_versions_and_diff() {
     assert_eq!(edited["edited"], json!(true));
     assert_eq!(edited["baseVersionId"], json!(first_upstream_id));
 
+    // 版本比对：浏览器缓存里的版本仍是最新时 unchanged 置真、不传正文，
+    // diff 等其余字段照常（编辑版的 diff 丢了会让二次阅读时标记消失）
+    let unchanged = server
+        .get_content(
+            &book_id,
+            &chapter_url,
+            json!({ "knownVersionId": edit_version_id }),
+        )
+        .await;
+    assert_eq!(unchanged["unchanged"], json!(true));
+    assert_eq!(unchanged["content"], json!(""));
+    assert_eq!(unchanged["versionId"], json!(edit_version_id));
+    assert!(
+        unchanged["diff"]["ops"].is_array(),
+        "unchanged 时 diff 应照常返回: {unchanged}"
+    );
+
+    // 缓存版本落后（拿着旧上游版来比对）或强刷：照常返回全量正文
+    let stale_known = server
+        .get_content(
+            &book_id,
+            &chapter_url,
+            json!({ "knownVersionId": first_upstream_id }),
+        )
+        .await;
+    assert_eq!(stale_known["unchanged"], json!(false));
+    assert_eq!(stale_known["content"], json!("我的编辑版"));
+    let force = server
+        .get_content(
+            &book_id,
+            &chapter_url,
+            json!({ "knownVersionId": edit_version_id, "refresh": 1 }),
+        )
+        .await;
+    assert_eq!(force["unchanged"], json!(false));
+    assert_eq!(force["content"], json!("我的编辑版"));
+
     // 上游出第二版 + refresh=1：baseVersionId 仍是第一版，但阅读页 diff
     // 始终以最新上游（第二版）为基准，方便和评论段号对齐
     *version.lock().unwrap() = "上游第二版正文";

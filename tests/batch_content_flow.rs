@@ -214,6 +214,44 @@ async fn two_chapters_return_two_data_items_in_request_order() {
 }
 
 #[tokio::test]
+async fn known_version_id_skips_body_per_chapter() {
+    let server = TestServer::start().await;
+    // 先拉一次拿到各章当前版本号（模拟浏览器缓存里记的版本）
+    let warm = server
+        .get_contents(&json!({
+            "bookId": server.book_id,
+            "chapters": [
+                { "index": 0, "chapterUrl": format!("{}/c1", server.upstream_url) },
+                { "index": 1, "chapterUrl": format!("{}/c2", server.upstream_url) },
+            ]
+        }))
+        .await
+        .1;
+    let chapters = warm["data"].as_array().unwrap();
+    let v1 = chapters[0]["data"]["versionId"].as_i64().unwrap();
+    let v2 = chapters[1]["data"]["versionId"].as_i64().unwrap();
+
+    // 第一章版本一致 → unchanged 不传正文；第二章版本号对不上 → 全量返回
+    let (status, payload) = server
+        .get_contents(&json!({
+            "bookId": server.book_id,
+            "chapters": [
+                { "index": 0, "chapterUrl": format!("{}/c1", server.upstream_url), "knownVersionId": v1 },
+                { "index": 1, "chapterUrl": format!("{}/c2", server.upstream_url), "knownVersionId": v2 + 1000 },
+            ]
+        }))
+        .await;
+
+    assert_eq!(status, StatusCode::OK);
+    let chapters = payload["data"].as_array().unwrap();
+    assert_eq!(chapters[0]["data"]["unchanged"], json!(true));
+    assert_eq!(chapters[0]["data"]["content"], json!(""));
+    assert_eq!(chapters[0]["data"]["versionId"], json!(v1));
+    assert_eq!(chapters[1]["data"]["unchanged"], json!(false));
+    assert_eq!(chapters[1]["data"]["content"], json!("第二章正文"));
+}
+
+#[tokio::test]
 async fn single_chapter_failure_does_not_affect_others() {
     let server = TestServer::start().await;
     let body = json!({
