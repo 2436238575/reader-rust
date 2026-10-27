@@ -98,9 +98,8 @@ jobs:
         working-directory: frontend
         run: npm audit --omit=dev --audit-level=high
 
-  # sidecar（Python）：pytest 与 ruff 是硬门禁；mypy 存量类型错误未清
-  # （19 个，集中在 merge/tools/loop 的 Optional 收窄），先 continue-on-error
-  # 只报告不阻断，清零后移除该标记恢复硬闸门
+  # sidecar（Python）：pytest、ruff、mypy 均为硬门禁；mypy 存量类型错误
+  # 已清零，类型检查失败直接阻断合并
   sidecar:
     runs-on: ubuntu-latest
     steps:
@@ -126,7 +125,6 @@ jobs:
       - name: Type check (mypy)
         working-directory: sidecar
         run: uv run mypy agent_sidecar
-        continue-on-error: true
 
   # e2e 全量回归成本高（构建后端 + 装 Chrome + 起临时实例），只在手动触发
   # 与每周定时跑；globalSetup 会自动用 target/debug 的构建产物起临时后端
