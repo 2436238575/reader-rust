@@ -519,6 +519,7 @@ import {
   applyUnderlineMarks,
   buildBaseChapterHtml,
   buildParaBubbleMap,
+  clearSearchHighlightMarks,
   highlightKeywords,
   highlightSearchText,
   insertChapterImages,
@@ -815,7 +816,8 @@ function decorateChapterHtml(baseHtml: string, withBubbles: boolean, chapterInde
   }
   appendLocalEpubAssetAuth(wrapper)
   // 常驻关键词高亮注入 mark.kw-highlight；搜索高亮已移到渲染后 DOM 级处理，
-  // 不再参与 HTML 字符串构建（applySearchHighlightToDom，见 watch 群）
+  // 不再参与 HTML 字符串构建（applySearchHighlightToDom，见 watch 群）。
+  // 两者重叠时搜索优先：搜索 mark 嵌套进关键词 mark，摘 mark 即恢复关键词底色
   highlightKeywords(wrapper, activeKeywordMarks.value)
   return wrapper.innerHTML
 }
@@ -2237,22 +2239,16 @@ function searchHighlightRoots(): HTMLElement[] {
   return Array.from(container.querySelectorAll('.chapter-text')) as HTMLElement[]
 }
 
-/** 只摘搜索高亮的 mark（mark.search-highlight）：划线 span、diff 标记、
- *  段评气泡与常驻关键词 mark.kw-highlight 都原样保留。unwrap 后 normalize
- *  合并相邻文本节点，恢复成单文本节点，下次高亮才能跨原标记边界匹配 */
-function clearSearchHighlightMarks() {
+/** 逐根摘掉搜索高亮 mark（mark.search-highlight 之外的装饰层都原样保留，
+ *  嵌套在关键词 mark 里的搜索 mark 摘掉后关键词底色随之恢复） */
+function clearSearchHighlightMarksInRoots() {
   for (const root of searchHighlightRoots()) {
-    root.querySelectorAll('mark.search-highlight').forEach((mark) => {
-      const parent = mark.parentNode
-      if (!parent) return
-      mark.replaceWith(...Array.from(mark.childNodes))
-      parent.normalize()
-    })
+    clearSearchHighlightMarks(root)
   }
 }
 
 function applySearchHighlightToDom() {
-  clearSearchHighlightMarks()
+  clearSearchHighlightMarksInRoots()
   const query = showSearch.value ? searchQuery.value : ''
   if (!query) return
   for (const root of searchHighlightRoots()) {

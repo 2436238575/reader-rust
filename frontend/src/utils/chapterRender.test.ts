@@ -5,6 +5,7 @@ import {
   applyUnderlineMarks,
   buildBaseChapterHtml,
   buildParaBubbleMap,
+  clearSearchHighlightMarks,
   highlightKeywords,
   highlightSearchText,
   isProbablyChapterHtml,
@@ -75,6 +76,98 @@ describe('highlightKeywords', () => {
     const marks = el.querySelectorAll('mark.kw-highlight')
     expect(marks).toHaveLength(1)
     expect(marks[0].textContent).toBe('(含税)')
+  })
+})
+
+describe('搜索高亮与关键词高亮重叠：搜索优先', () => {
+  it('应用内真实顺序（关键词先注入）：搜索进入 kw mark 嵌套，重叠区归搜索', () => {
+    const el = root('<p>笑傲江湖曲</p>')
+    highlightKeywords(el, [{ keyword: '笑傲江湖', color: '#ffd54a80' }])
+    highlightSearchText(el, '笑傲')
+    const kw = el.querySelector<HTMLElement>('mark.kw-highlight')
+    expect(kw).not.toBeNull()
+    // 重叠段在关键词 mark 内部包成搜索 mark；关键词 mark 文本保持完整
+    const search = kw!.querySelector('mark.search-highlight')
+    expect(search?.textContent).toBe('笑傲')
+    expect(kw!.textContent).toBe('笑傲江湖')
+    expect(kw!.style.backgroundColor).toBeTruthy()
+    expect(el.textContent).toBe('笑傲江湖曲')
+  })
+
+  it('部分重叠：关键词内的命中嵌套，关键词外的命中照常打搜索 mark', () => {
+    const el = root('<p>笑傲江湖，又一段江湖。</p>')
+    highlightKeywords(el, [{ keyword: '笑傲江湖', color: '#ffd54a80' }])
+    highlightSearchText(el, '江湖')
+    const kw = el.querySelector('mark.kw-highlight')!
+    // 关键词文本节点里的「江湖」嵌套进 kw mark；外面那处是普通搜索 mark
+    expect(kw.querySelector('mark.search-highlight')?.textContent).toBe('江湖')
+    expect(kw.textContent).toBe('笑傲江湖')
+    expect(el.querySelectorAll('mark.search-highlight')).toHaveLength(2)
+    expect(el.textContent).toBe('笑傲江湖，又一段江湖。')
+  })
+
+  it('搜索命中恰好覆盖整个关键词：kw mark 内只剩一个搜索 mark', () => {
+    const el = root('<p>他念着誓词下山去了。</p>')
+    highlightKeywords(el, [{ keyword: '誓词', color: '#ffd54a80' }])
+    highlightSearchText(el, '誓词')
+    const kw = el.querySelector('mark.kw-highlight')!
+    const nested = kw.querySelectorAll('mark.search-highlight')
+    expect(nested).toHaveLength(1)
+    expect(kw.textContent).toBe('誓词')
+  })
+
+  it('清除搜索 mark 后关键词 mark 原样恢复（单文本节点、底色保留）', () => {
+    const el = root('<p>笑傲江湖曲</p>')
+    highlightKeywords(el, [{ keyword: '笑傲江湖', color: '#ffd54a80' }])
+    highlightSearchText(el, '笑傲')
+    clearSearchHighlightMarks(el)
+    expect(el.querySelectorAll('mark.search-highlight')).toHaveLength(0)
+    const kw = el.querySelector<HTMLElement>('mark.kw-highlight')!
+    expect(kw.textContent).toBe('笑傲江湖')
+    // normalize 已把 unwrap 后的碎片合并回单文本节点
+    expect(kw.childNodes).toHaveLength(1)
+    expect(kw.childNodes[0].nodeType).toBe(Node.TEXT_NODE)
+    expect(kw.style.backgroundColor).toBeTruthy()
+    expect(el.textContent).toBe('笑傲江湖曲')
+  })
+
+  it('恢复后可原样重打：清除再注入结果一致，且不自嵌套', () => {
+    const el = root('<p>笑傲江湖曲</p>')
+    highlightKeywords(el, [{ keyword: '笑傲江湖', color: '#ffd54a80' }])
+    highlightSearchText(el, '笑傲')
+    clearSearchHighlightMarks(el)
+    highlightSearchText(el, '笑傲')
+    const kw = el.querySelector('mark.kw-highlight')!
+    expect(kw.querySelectorAll('mark.search-highlight')).toHaveLength(1)
+    expect(el.querySelectorAll('mark.search-highlight')).toHaveLength(1)
+    // 重入安全：不清除直接再跑一遍，已有搜索 mark 不被嵌套/重复标记
+    highlightSearchText(el, '笑傲')
+    expect(el.querySelectorAll('mark.search-highlight')).toHaveLength(1)
+    expect(el.querySelector('mark.search-highlight mark.search-highlight')).toBeNull()
+  })
+
+  it('不重叠时关键词 mark 完全不动；清除只摘搜索 mark', () => {
+    const el = root('<p>华山派在山上。</p>')
+    highlightKeywords(el, [{ keyword: '华山', color: '#ffd54a80' }])
+    highlightSearchText(el, '山上')
+    const kw = el.querySelector('mark.kw-highlight')!
+    expect(kw.querySelector('mark.search-highlight')).toBeNull()
+    expect(kw.textContent).toBe('华山')
+    clearSearchHighlightMarks(el)
+    expect(el.querySelectorAll('mark.search-highlight')).toHaveLength(0)
+    expect(el.querySelector('mark.kw-highlight')?.textContent).toBe('华山')
+  })
+
+  it('划线 span 与关键词 mark 同时存在时清除互不伤', () => {
+    const el = root('<p>他走进了那座古庙。</p>')
+    applyUnderlineMarks(el, [{ text: '那座古庙', chapterPos: 1000 }])
+    highlightKeywords(el, [{ keyword: '古庙', color: '#ffd54a80' }])
+    highlightSearchText(el, '古庙')
+    clearSearchHighlightMarks(el)
+    // 划线 span 与其内的关键词 mark 都原样保留
+    const span = el.querySelector('span.reader-underline')!
+    expect(span.querySelector('mark.kw-highlight')?.textContent).toBe('古庙')
+    expect(el.textContent).toBe('他走进了那座古庙。')
   })
 })
 

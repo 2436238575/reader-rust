@@ -453,14 +453,27 @@ export function appendLocalEpubAssetAuth(root: HTMLElement) {
   })
 }
 
-/** 搜索关键字高亮：空 query 直接跳过。已有 MARK（如常驻关键词）不进入，重叠处关键词优先。 */
+/**
+ * 搜索关键字高亮：命中处包 `<mark class="search-highlight">`，空 query 直接跳过。
+ *
+ * 与常驻关键词高亮（mark.kw-highlight）的重叠优先级：**搜索压过关键词**。
+ * 关键词 mark 允许进入，命中段在关键词 mark 内部嵌套搜索 mark——搜索底色
+ * （不透明黄/橙）盖在关键词半透明底色之上，重叠区间只呈现搜索高亮，
+ * 非重叠部分的关键词底色不受影响；退出搜索时 clearSearchHighlightMarks
+ * 摘 mark + normalize，关键词 mark 原样恢复（无需重建整章 DOM）。
+ * 搜索 mark 自身不进入（重入安全：重复调用不会自嵌套）。
+ */
 export function highlightSearchText(root: HTMLElement, query: string) {
   if (!query) return
   const regex = new RegExp(escapeRegExp(query), 'gi')
   const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
     acceptNode(node) {
       const parent = node.parentElement
-      if (!parent || ['MARK', 'SCRIPT', 'STYLE'].includes(parent.tagName)) {
+      if (!parent || ['SCRIPT', 'STYLE'].includes(parent.tagName)) {
+        return NodeFilter.FILTER_REJECT
+      }
+      // MARK 只挡搜索高亮自己；关键词 mark.kw-highlight 放行进（重叠归搜索）
+      if (parent.tagName === 'MARK' && !parent.classList.contains('kw-highlight')) {
         return NodeFilter.FILTER_REJECT
       }
       regex.lastIndex = 0
@@ -493,6 +506,23 @@ export function highlightSearchText(root: HTMLElement, query: string) {
       fragment.appendChild(document.createTextNode(value.slice(cursor)))
     }
     node.parentNode?.replaceChild(fragment, node)
+  })
+}
+
+/**
+ * 摘除 root 内的全部搜索高亮 mark（mark.search-highlight）。
+ *
+ * 划线 span、diff 标记、段评气泡与常驻关键词 mark.kw-highlight 都原样保留。
+ * unwrap 后对父节点 normalize 合并相邻文本节点——嵌套在关键词 mark 里的
+ * 搜索 mark 摘掉后，关键词 mark 恢复成单文本节点，下次高亮才能跨原标记
+ * 边界匹配，关键词底色也随之原样恢复。
+ */
+export function clearSearchHighlightMarks(root: HTMLElement) {
+  root.querySelectorAll('mark.search-highlight').forEach((mark) => {
+    const parent = mark.parentNode
+    if (!parent) return
+    mark.replaceWith(...Array.from(mark.childNodes))
+    parent.normalize()
   })
 }
 
@@ -585,10 +615,13 @@ export function applyUnderlineMarks(root: HTMLElement, marks: UnderlineMarkSpec[
 /**
  * 常驻关键词高亮：命中处包 `<mark class="kw-highlight">` 并上底色。
  *
- * 现在的注入顺序是关键词先于搜索高亮：关键词在 HTML 构建阶段包 mark，
- * 搜索高亮是渲染后的 DOM 后处理；搜索的 TreeWalker 不进已有 MARK 内部，
- * 重叠时关键词底色优先。多个关键词按数组顺序逐趟标记，先注入的关键词
- * 在重叠命中处赢。
+ * 注入顺序是关键词先于搜索高亮：关键词在 HTML 构建阶段包 mark，搜索高亮
+ * 是渲染后的 DOM 后处理；搜索的 TreeWalker 会进入关键词 mark 内部，重叠
+ * 区间嵌套搜索 mark——**搜索激活期间重叠归搜索**，退出搜索摘 mark 后
+ * 关键词底色原样恢复（见 highlightSearchText / clearSearchHighlightMarks）。
+ * 本函数的 walker 仍不进任何已有 MARK：反向顺序（搜索先注入）时关键词不
+ * 切开搜索 mark，两种注入顺序下都是搜索优先。多个关键词按数组顺序逐趟
+ * 标记，先注入的关键词在重叠命中处赢。
  *
  * 已知限制（与搜索高亮一致）：横翻分页器对含内联标签的段落走字符切分
  * 重建，跨页切段里 mark 会丢，整段放进一页时正常。

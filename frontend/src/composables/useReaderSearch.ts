@@ -232,7 +232,10 @@ export function useReaderSearch(
         // 章内搜索摘要用英文三点、后端全书摘要用中文省略号，都剥掉再取前缀匹配
         const snippet = pendingSearchResult.value.snippet.replace(/\.\.\.|…/g, '').trim()
         const foundIndex = Array.from(matches).findIndex((match) => {
-          const line = (match.parentElement?.innerText || '').replace(/\s+/g, ' ').trim()
+          // 命中可能嵌套在划线 span / 关键词 mark 里：取所在段落整段文本做摘要前缀匹配，
+          // 直接 parentElement 只会拿到 span/mark 内的截断文本，前缀匹配必失配
+          const host = match.closest('p') ?? match.parentElement
+          const line = (host?.innerText || '').replace(/\s+/g, ' ').trim()
           return !!snippet && line.includes(snippet.slice(0, Math.min(12, snippet.length)))
         })
         if (foundIndex >= 0) targetIndex = foundIndex
