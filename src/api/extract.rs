@@ -18,7 +18,6 @@ const MAX_MERGE_BODY_BYTES: usize = 2 * 1024 * 1024;
 
 pub struct QueryOrBody<T>(pub T);
 
-#[axum::async_trait]
 impl<S, T> FromRequest<S> for QueryOrBody<T>
 where
     S: Send + Sync,

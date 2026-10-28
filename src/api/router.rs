@@ -113,11 +113,12 @@ pub fn build_router(state: AppState) -> Router {
 
     // ── WebDAV 文件接口：自带 HTTP Basic 认证，不经 JWT ──
     let webdav = Router::new()
-        // 裸根与尾斜杠根都要显式注册：matchit 0.7 的 *path 通配不匹配空段，
-        // 缺了会落到静态文件兜底上（PROPFIND 变成 405）
+        // 裸根与尾斜杠根都要显式注册：matchit 的 {*path} 通配不匹配空段
+        //（0.7 的 *path 如此，0.8 实测不变），缺了会落到静态文件兜底上
+        //（PROPFIND 变成 405）
         .route("/reader3/webdav", any(handlers::webdav_handler))
         .route("/reader3/webdav/", any(handlers::webdav_handler))
-        .route("/reader3/webdav/*path", any(handlers::webdav_handler))
+        .route("/reader3/webdav/{*path}", any(handlers::webdav_handler))
         // .html/.xml/.svg 以可渲染类型同源直出，直接打开时补沙箱 CSP
         .layer(middleware::from_fn(sandbox_active_webdav_content))
         .with_state(state.clone());
@@ -412,7 +413,7 @@ pub fn build_router(state: AppState) -> Router {
         )
         .route("/reader3/cover", get(handlers::get_book_cover))
         // 图片管道：前端只拿 id，不接触书源地址（见 service/image_service.rs）
-        .route("/reader3/image/:id", get(handlers::get_image))
+        .route("/reader3/image/{id}", get(handlers::get_image))
         .route(
             "/reader3/localEpubAsset",
             get(handlers::get_local_epub_asset).layer(middleware::from_fn(sandbox_epub_svg_assets)),
@@ -540,7 +541,7 @@ pub fn build_router(state: AppState) -> Router {
         .merge(protected)
         .route("/reader3", any(handlers::api_not_found))
         .route("/reader3/", any(handlers::api_not_found))
-        .route("/reader3/*rest", any(handlers::api_not_found));
+        .route("/reader3/{*rest}", any(handlers::api_not_found));
 
     let web_root = state.config.web_root.clone();
     let assets_root = state.config.assets_dir.clone();
@@ -789,4 +790,46 @@ async fn sandbox_active_webdav_content(
         );
     }
     response
+}
+
+#[cfg(test)]
+mod tests {
+    use axum::body::Body;
+    use axum::http::{Request, StatusCode};
+    use tower::ServiceExt;
+
+    /// matchit 0.8 实测（axum 0.8 升级时验证）：`{*path}` 通配**不匹配空段**，
+    /// 与 0.7 行为一致——`/reader3/webdav` 与 `/reader3/webdav/` 都必须显式
+    /// 注册（见 build_router 的 webdav 分组），删掉任何一条，裸根的 PROPFIND
+    /// 会落到静态文件兜底上变成 405。这个测试钉住该行为，防止误删显式路由。
+    #[tokio::test]
+    async fn catch_all_does_not_match_empty_segment() {
+        use axum::routing::any;
+        let app = axum::Router::new().route("/reader3/webdav/{*path}", any(|| async { "wild" }));
+
+        for uri in [
+            "/reader3/webdav",  // 裸根：无尾斜杠，不匹配
+            "/reader3/webdav/", // 尾斜杠根：通配值为空段，同样不匹配
+        ] {
+            let res = app
+                .clone()
+                .oneshot(Request::builder().uri(uri).body(Body::empty()).unwrap())
+                .await
+                .unwrap();
+            assert_eq!(
+                res.status(),
+                StatusCode::NOT_FOUND,
+                "{uri} 不应被 {{*path}} 匹配"
+            );
+        }
+
+        for uri in ["/reader3/webdav/x", "/reader3/webdav/a/b"] {
+            let res = app
+                .clone()
+                .oneshot(Request::builder().uri(uri).body(Body::empty()).unwrap())
+                .await
+                .unwrap();
+            assert_eq!(res.status(), StatusCode::OK, "{uri} 应被 {{*path}} 匹配");
+        }
+    }
 }

@@ -25,7 +25,7 @@ async fn start_upstream() -> (String, CookieLog) {
     let addr = listener.local_addr().unwrap();
     let log_for_route = log.clone();
     let app = axum::Router::new().route(
-        "/*path",
+        "/{*path}",
         axum::routing::any(
             move |headers: axum::http::HeaderMap, _path: axum::extract::Path<String>| {
                 let log = log_for_route.clone();
@@ -52,7 +52,7 @@ async fn start_html_upstream() -> String {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
     let app = axum::Router::new().route(
-        "/*path",
+        "/{*path}",
         axum::routing::any(|| async {
             (
                 [(

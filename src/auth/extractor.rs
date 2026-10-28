@@ -26,7 +26,6 @@ pub struct AuthUser {
 #[derive(Debug, Clone)]
 pub struct CurrentUser(pub AuthUser);
 
-#[axum::async_trait]
 impl<S> FromRequestParts<S> for CurrentUser
 where
     S: Send + Sync,
@@ -49,7 +48,6 @@ where
 #[derive(Debug, Clone, Default)]
 pub struct MaybeUser(pub Option<AuthUser>);
 
-#[axum::async_trait]
 impl<S> FromRequestParts<S> for MaybeUser
 where
     S: Send + Sync,

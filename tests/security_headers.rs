@@ -138,7 +138,7 @@ async fn start_fake_image_upstream() -> String {
     let addr = listener.local_addr().unwrap();
     tokio::spawn(async move {
         let app = axum::Router::new().route(
-            "/:kind",
+            "/{kind}",
             axum::routing::get(
                 |axum::extract::Path(kind): axum::extract::Path<String>| async move {
                     match kind.as_str() {

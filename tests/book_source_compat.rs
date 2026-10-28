@@ -493,7 +493,7 @@ async fn toc_pagination_stops_at_page_cap_for_endless_next_links() {
     allow_private_network();
     let hits = Arc::new(AtomicUsize::new(0));
     let app = Router::new()
-        .route("/toc/:n", get(toc_endless_page))
+        .route("/toc/{n}", get(toc_endless_page))
         .with_state(hits.clone());
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
