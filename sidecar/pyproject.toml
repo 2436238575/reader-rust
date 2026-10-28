@@ -7,13 +7,13 @@ dependencies = [
     # 版本必须钉死：Docker（musl）镜像里现场 pip install，
     # 浮动版本可能解析到没有 musllinux wheel 的组合导致现场编译
     "httpx==0.28.1",
-    "pydantic==2.11.7",
+    "pydantic==2.14.1",
 ]
 
 [project.optional-dependencies]
 dev = [
-    "pytest==8.3.5",
-    "ruff==0.17.2",
+    "pytest==9.2.0",
+    "ruff==0.17.3",
     "mypy==2.4.0",
 ]
 
