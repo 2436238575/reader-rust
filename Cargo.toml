@@ -26,9 +26,9 @@ bytes = "1"
 cbc = "0.1"
 chrono = { version = "0.4", features = ["serde"] }
 encoding_rs = "0.8"
-md-5 = "0.10"
+md-5 = "0.11"
 # Refresh Token 只以 SHA-256 摘要落库，明文永不持久化
-sha2 = "0.10"
+sha2 = "0.11"
 hex = "0.4"
 # 正文池压缩：历史严格保留，压缩能明显减慢数据库增长
 # 下限 0.14.3：修复 RUSTSEC-2026-0391（复用流上下文串数据），同时把 zstd-safe
