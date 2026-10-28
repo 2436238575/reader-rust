@@ -4,10 +4,15 @@
 # 而不是往这里加条目。
 [advisories]
 ignore = [
-    # rsa 0.9.10（RUSTSEC-2023-0071，Marvin Attack）：只存在于 Cargo.lock 里
-    # sqlx-mysql 的残留分支，依赖树实际不可达（`cargo tree -i rsa` 无结果；
-    # lock 里仍挂着是因为 sqlx-macros-core 的依赖声明引用了 sqlx-mysql，
-    # 手工删 lock 条目会造成锁文件不一致）。依赖树一旦可达（例如启用
-    # sqlx 的 mysql feature）必须删掉本 ignore 并升级 rsa。
+    # rsa 0.9.10（RUSTSEC-2023-0071，Marvin Attack）：由 jsonwebtoken 11 的
+    # rust_crypto 后端引入（依赖树可达）。我们只用 HS256（HMAC-SHA256），
+    # RSA 加解密/验签代码路径从不执行，Marvin 攻击面（RSA PKCS#1 v1.5 解密
+    # 的填充预言）不可达。一旦启用非 HMAC 算法必须删掉本 ignore 并升级 rsa。
     "RUSTSEC-2023-0071",
+    # crypto-bigint 0.5.5（RUSTSEC-2026-0387，恒定时间操作存在计时差异）：
+    # 由 jsonwebtoken 11 rust_crypto 后端经 p256/p384 → ecdsa → elliptic-curve
+    # 链引入，修复版 0.7.6 需要上游 p256/p384 换代，当前不可升。漏洞影响
+    # ECC 私钥运算的恒定时间性；我们只用 HS256，ECC 代码从不执行，不可达。
+    # 一旦启用非 HMAC 算法必须删掉本 ignore。
+    "RUSTSEC-2026-0387",
 ]
