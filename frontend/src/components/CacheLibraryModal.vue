@@ -149,7 +149,7 @@ import {
   deleteBrowserBookCache,
   listBrowserCacheSummary,
 } from '../utils/browserCache'
-import { cacheBookToBrowser } from '../utils/bookCache'
+import { cacheBookToBrowser, cacheStopReasonText } from '../utils/bookCache'
 import {
   cacheBookSSE,
   getCacheStats,
@@ -335,7 +335,7 @@ function cacheServer(book: Book) {
   if (!bookId || cachingUrls.value.has(bookId)) return
   cachingUrls.value.add(bookId)
   const sse = cacheBookSSE({ bookId, count: cacheCount.value, concurrentCount: 8 })
-  const finish = async (message: string, kind: 'success' | 'error') => {
+  const finish = async (message: string, kind: 'success' | 'error' | 'warning') => {
     sse.close()
     cachingUrls.value.delete(book.bookId || '')
     appStore.showToast(message, kind)
@@ -343,8 +343,20 @@ function cacheServer(book: Book) {
     shelfStore.markShelfDirty()
     await refreshData()
   }
-  consumeSSE(sse, {
-    onEnd: () => finish(`"${book.name}" 已缓存到服务器`, 'success'),
+  // end 帧带 successCount/failedCount：部分失败（上游不可达等）要如实上报，不能只报「已缓存」
+  consumeSSE<unknown, { successCount?: number; failedCount?: number }>(sse, {
+    onEnd: (data) => {
+      const added = data?.successCount || 0
+      const failed = data?.failedCount || 0
+      if (failed > 0) {
+        finish(
+          `"${book.name}" 服务端缓存完成：新增 ${added} 章，失败 ${failed} 章`,
+          added > 0 ? 'warning' : 'error'
+        )
+      } else {
+        finish(`"${book.name}" 已缓存到服务器（新增 ${added} 章）`, 'success')
+      }
+    },
     // 后端 error 帧带用户可读 errorMsg；传输层失败才是「中断」
     onErrorMessage: (msg) => finish(`"${book.name}" 服务端缓存失败：${msg}`, 'error'),
     onTransportError: () => finish(`"${book.name}" 服务端缓存失败`, 'error'),
@@ -355,8 +367,20 @@ async function cacheBrowser(book: Book) {
   if (cachingUrls.value.has(book.bookUrl)) return
   cachingUrls.value.add(book.bookUrl)
   try {
-    await cacheBookToBrowser({ book, startIndex: 0, count: cacheCount.value || undefined })
-    appStore.showToast(`"${book.name}" 已缓存到浏览器`, 'success')
+    const result = await cacheBookToBrowser({
+      book,
+      startIndex: 0,
+      count: cacheCount.value || undefined,
+    })
+    const stopHint = cacheStopReasonText(result.stoppedEarly)
+    if (result.failed > 0 || result.stoppedEarly) {
+      appStore.showToast(
+        `"${book.name}" 浏览器缓存部分完成：成功 ${result.completed} / 失败 ${result.failed}${stopHint}`,
+        result.completed > 0 ? 'warning' : 'error'
+      )
+    } else {
+      appStore.showToast(`"${book.name}" 已缓存到浏览器（${result.completed} 章）`, 'success')
+    }
     await refreshData()
   } catch (error) {
     appStore.showToast((error as Error).message || '浏览器缓存失败', 'error')

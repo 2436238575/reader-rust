@@ -127,7 +127,7 @@ import { useBookshelfStore } from '../../stores/bookshelf'
 import { cacheBookSSE } from '../../api/cache'
 import { getBookshelfWithCacheInfo, deleteBookCache } from '../../api/bookshelf'
 import { countBrowserBookCache, deleteBrowserBookCache } from '../../utils/browserCache'
-import { cacheBookToBrowser, resolveBookChapters } from '../../utils/bookCache'
+import { cacheBookToBrowser, cacheStopReasonText, resolveBookChapters } from '../../utils/bookCache'
 import { isLocalBook } from '../../utils/localBook'
 
 const store = useReaderStore()
@@ -200,7 +200,11 @@ function startServerCaching(count: number) {
       if (total > 0) {
         progress.value = Math.min(100, Math.round((Math.max(0, completed) / total) * 100))
       }
-      currentStatus.value = `服务端缓存中 (${data.cachedCount || 0} 已缓存 / ${data.successCount || 0} 新增)`
+      const failed = data.failedCount || 0
+      currentStatus.value =
+        failed > 0
+          ? `服务端缓存中 (${data.cachedCount || 0} 已缓存 / ${data.successCount || 0} 新增 / ${failed} 失败)`
+          : `服务端缓存中 (${data.cachedCount || 0} 已缓存 / ${data.successCount || 0} 新增)`
     } catch {
       currentStatus.value = '服务端缓存处理中...'
     }
@@ -221,18 +225,34 @@ function startServerCaching(count: number) {
     )
   }
 
-  consumeSSE<unknown, { cachedCount?: number }>(sse, {
-    onEnd: async (data) => {
-      await finish(`服务端缓存完成，累计 ${data?.cachedCount || 0} 章`, true)
-    },
-    // 后端 error 帧带用户可读 errorMsg；传输层失败才是「中断」
-    onErrorMessage: async (msg) => {
-      await finish(`服务端缓存失败：${msg}`, false)
-    },
-    onTransportError: async () => {
-      await finish('服务端缓存已中断', false)
-    },
-  })
+  // end 帧带 successCount/failedCount：部分失败（上游不可达/响应异常）要如实上报，
+  // 不能只报「完成」；面板状态文字停留不到 1 秒，toast 才是可靠的完成提示
+  consumeSSE<unknown, { cachedCount?: number; successCount?: number; failedCount?: number }>(
+    sse,
+    {
+      onEnd: async (data) => {
+        const added = data?.successCount || 0
+        const failed = data?.failedCount || 0
+        if (failed > 0) {
+          appStore.showToast(
+            `服务端缓存完成：新增 ${added} 章，失败 ${failed} 章`,
+            added > 0 ? 'warning' : 'error'
+          )
+          await finish(`服务端缓存完成：新增 ${added} 章，${failed} 章失败`, false)
+        } else {
+          appStore.showToast(`服务端缓存完成，新增 ${added} 章`, 'success')
+          await finish(`服务端缓存完成，累计 ${data?.cachedCount || 0} 章`, true)
+        }
+      },
+      // 后端 error 帧带用户可读 errorMsg；传输层失败才是「中断」
+      onErrorMessage: async (msg) => {
+        await finish(`服务端缓存失败：${msg}`, false)
+      },
+      onTransportError: async () => {
+        await finish('服务端缓存已中断', false)
+      },
+    }
+  )
 }
 
 async function startBrowserCaching(count: number) {
@@ -246,26 +266,36 @@ async function startBrowserCaching(count: number) {
 
   try {
     const chapters = store.chapters.length ? store.chapters : await resolveBookChapters(store.book)
-    const total =
-      count === 0
-        ? Math.max(0, chapters.length - store.currentIndex)
-        : Math.min(count, Math.max(0, chapters.length - store.currentIndex))
-    await cacheBookToBrowser({
+    const result = await cacheBookToBrowser({
       book: store.book,
       chapters,
       startIndex: store.currentIndex,
       count: count || undefined,
       signal: browserSignal,
-      onProgress: ({ completed, total, chapterTitle }) => {
+      onProgress: ({ completed, failed, total, chapterTitle }) => {
         currentChapterName.value = chapterTitle
-        currentStatus.value = `浏览器缓存中 (${completed}/${total})`
-        progress.value = total > 0 ? Math.round((completed / total) * 100) : 100
+        const processed = completed + failed
+        currentStatus.value =
+          failed > 0
+            ? `浏览器缓存中 (${processed}/${total}，失败 ${failed})`
+            : `浏览器缓存中 (${processed}/${total})`
+        progress.value = total > 0 ? Math.round((processed / total) * 100) : 100
       },
     })
     if (!browserSignal.cancelled) {
-      currentStatus.value = `浏览器缓存完成，共 ${total} 章`
-      progress.value = 100
-      appStore.showToast('已缓存到浏览器', 'success')
+      const processed = result.completed + result.failed
+      const stopHint = cacheStopReasonText(result.stoppedEarly)
+      progress.value = result.total > 0 ? Math.min(100, Math.round((processed / result.total) * 100)) : 100
+      if (result.failed > 0 || result.stoppedEarly) {
+        currentStatus.value = `浏览器缓存部分完成：成功 ${result.completed} 章，失败 ${result.failed} 章${stopHint}`
+        appStore.showToast(
+          `浏览器缓存部分完成：成功 ${result.completed} / 失败 ${result.failed}${stopHint}`,
+          result.completed > 0 ? 'warning' : 'error'
+        )
+      } else {
+        currentStatus.value = `浏览器缓存完成，共 ${result.completed} 章`
+        appStore.showToast(`已缓存到浏览器，共 ${result.completed} 章`, 'success')
+      }
     }
   } catch (error) {
     currentStatus.value = '浏览器缓存失败'
