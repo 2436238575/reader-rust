@@ -95,32 +95,58 @@ where
         // 终态统一走 form 语义解析：标量字符串自动强转数字/布尔，
         // 数组展开成重复键（serde_html_form 原生支持，axum Form 同库）。
         // 嵌套对象/数组没有表单对应物，必须 400 而不是抹成空串静默丢参数。
-        let mut pairs: Vec<(String, String)> = Vec::with_capacity(merged.len());
-        for (k, v) in &merged {
-            match v {
-                Value::Array(items) => {
-                    for item in items {
-                        pairs.push((k.clone(), scalar_to_string(item)?));
-                    }
-                }
-                other => pairs.push((k.clone(), scalar_to_string(other)?)),
-            }
-        }
-        let encoded = pairs
-            .iter()
-            .map(|(k, v)| {
-                format!(
-                    "{}={}",
-                    url::form_urlencoded::byte_serialize(k.as_bytes()).collect::<String>(),
-                    url::form_urlencoded::byte_serialize(v.as_bytes()).collect::<String>()
-                )
-            })
-            .collect::<Vec<_>>()
-            .join("&");
+        let encoded = encode_merged(&merged)?;
         let value = serde_html_form::from_str::<T>(&encoded)
             .map_err(|e| AppError::BadRequest(format!("参数解析失败: {e}")))?;
         Ok(Self(value))
     }
+}
+
+/// 把合并后的参数表重新编码成 form-urlencoded 字符串。
+///
+/// **空值即缺省**：编码前丢弃所有空串值。serde_html_form 0.3 起空值语义反转
+/// （`?a=` 对 `Option<String>` 从 `None` 变成 `Some("")`），不丢空值会让
+/// 「显式传空串」被 handler 误判为「传了值」（典型：空 searchKey 触发空搜索，
+/// 此前 `?key=` 得到的是 `None` → 400 "key required"）。丢弃空值后：
+///
+/// - `Option<T>` 字段：空串 → 键不存在 → `None`（与 0.2 完全一致）；
+/// - 带 `#[serde(default)]` 的必填字段：空串 → 缺省 → 默认值（`""`/`0`），
+///   与 0.2 下 `key=` 解析出的值相同；
+/// - 无默认值的必填字段：空串 → 缺字段 400（0.2 下是空串放行、下游再报错，
+///   结果都是拒绝，此处错误信息更准确）；
+/// - JSON 数组里的 `null` 元素（`scalar_to_string` 映射为空串）一并跳过：
+///   `{"ids":[1,null,3]}` → `[1,3]`，与对象里 `null` 表示抹除的口径一致。
+fn encode_merged(merged: &Map<String, Value>) -> Result<String, AppError> {
+    let mut pairs: Vec<(String, String)> = Vec::with_capacity(merged.len());
+    for (k, v) in merged {
+        match v {
+            Value::Array(items) => {
+                for item in items {
+                    let s = scalar_to_string(item)?;
+                    if !s.is_empty() {
+                        pairs.push((k.clone(), s));
+                    }
+                }
+            }
+            other => {
+                let s = scalar_to_string(other)?;
+                if !s.is_empty() {
+                    pairs.push((k.clone(), s));
+                }
+            }
+        }
+    }
+    Ok(pairs
+        .iter()
+        .map(|(k, v)| {
+            format!(
+                "{}={}",
+                url::form_urlencoded::byte_serialize(k.as_bytes()).collect::<String>(),
+                url::form_urlencoded::byte_serialize(v.as_bytes()).collect::<String>()
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("&"))
 }
 
 fn scalar_to_string(v: &Value) -> Result<String, AppError> {
@@ -168,24 +194,8 @@ mod tests {
                 }
             }
         }
-        let encoded = merged
-            .iter()
-            .flat_map(|(k, v)| match v {
-                Value::Array(items) => items
-                    .iter()
-                    .map(|item| (k.clone(), scalar_to_string(item).expect("测试只喂扁平值")))
-                    .collect::<Vec<_>>(),
-                other => vec![(k.clone(), scalar_to_string(other).expect("测试只喂扁平值"))],
-            })
-            .map(|(k, v)| {
-                format!(
-                    "{}={}",
-                    url::form_urlencoded::byte_serialize(k.as_bytes()).collect::<String>(),
-                    url::form_urlencoded::byte_serialize(v.as_bytes()).collect::<String>()
-                )
-            })
-            .collect::<Vec<_>>()
-            .join("&");
+        // 与 from_request 共用同一编码器，空值归一逻辑不会两边漂移
+        let encoded = encode_merged(&merged).expect("测试只喂扁平值");
         serde_html_form::from_str(&encoded).unwrap()
     }
 
@@ -230,6 +240,56 @@ mod tests {
         assert_eq!(req.page, Some(7));
     }
 
+    // ─── 空值归一：serde_html_form 0.3 起 `?a=` 对 Option<String> 会变成
+    // Some("")，提取器在编码前丢弃空值，维持「空串即缺省」的 0.2 契约 ───
+
+    #[test]
+    fn empty_query_value_is_absent_for_option_string() {
+        // `?key=` 必须等价于「没传 key」：否则空 searchKey 会绕过
+        // handler 的 `ok_or("key required")` 触发一次空搜索
+        let req = parse("key=&page=1", None);
+        assert_eq!(req.key, None);
+        assert_eq!(req.page, Some(1));
+    }
+
+    #[test]
+    fn empty_json_string_is_absent_for_option_string() {
+        // JSON 与 query 同一套语义：{"key":""} 同样按缺省处理
+        let req = parse("page=2", Some(r#"{"key":""}"#));
+        assert_eq!(req.key, None);
+        assert_eq!(req.page, Some(2));
+    }
+
+    #[test]
+    fn empty_form_body_value_is_absent() {
+        let req = parse("", Some("key=&page=3"));
+        assert_eq!(req.key, None);
+        assert_eq!(req.page, Some(3));
+    }
+
+    #[test]
+    fn empty_value_is_absent_for_option_seq() {
+        // Option<Vec<T>>：0.3 起 `ids=` 会尝试把 "" 解析成 i64 而报错，
+        // 归一后按缺省处理
+        let req = parse("ids=&page=1", None);
+        assert_eq!(req.ids, None);
+        assert_eq!(req.page, Some(1));
+    }
+
+    #[test]
+    fn trailing_empty_duplicate_key_still_means_absent() {
+        // 重复键后者覆盖前者：key=x&key= 的终态是空串 → 缺省
+        let req = parse("key=x&key=", None);
+        assert_eq!(req.key, None);
+    }
+
+    #[test]
+    fn null_array_items_are_skipped() {
+        // 对象里的 null 表示抹除；数组里的 null 元素按同口径跳过
+        let req = parse("", Some(r#"{"ids":[1,null,3]}"#));
+        assert_eq!(req.ids, Some(vec![1, 3]));
+    }
+
     // ─── 请求级用例：走真实 FromRequest（body 识别/拒绝语义） ───
 
     fn build_request(query: &str, body: &str, content_type: Option<&str>) -> Request {
@@ -262,6 +322,16 @@ mod tests {
         let req = build_request("page=1", r#"{"page":5}"#, None);
         let parsed = QueryOrBody::<Req>::from_request(req, &()).await.unwrap();
         assert_eq!(parsed.0.page, Some(5));
+    }
+
+    #[tokio::test]
+    async fn empty_query_value_yields_none_for_option_string() {
+        // 请求级用例：走真实 FromRequest，空串参数按缺省处理（见
+        // encode_merged 的空值归一说明）
+        let req = build_request("key=&page=1", "", None);
+        let parsed = QueryOrBody::<Req>::from_request(req, &()).await.unwrap();
+        assert_eq!(parsed.0.key, None);
+        assert_eq!(parsed.0.page, Some(1));
     }
 
     #[tokio::test]
