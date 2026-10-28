@@ -125,7 +125,7 @@ import { useReaderConfigStore } from '../../stores/readerConfig'
 import { useAppStore } from '../../stores/app'
 import { useBookshelfStore } from '../../stores/bookshelf'
 import { cacheBookSSE } from '../../api/cache'
-import { getBookshelfWithCacheInfo, deleteBookCache } from '../../api/bookshelf'
+import { getShelfBook, deleteBookCache } from '../../api/bookshelf'
 import { countBrowserBookCache, deleteBrowserBookCache } from '../../utils/browserCache'
 import { cacheBookToBrowser, cacheStopReasonText, resolveBookChapters } from '../../utils/bookCache'
 import { isLocalBook } from '../../utils/localBook'
@@ -161,12 +161,13 @@ async function refreshStats() {
     browserCachedCount.value = 0
     return
   }
-  const [serverList, browserCount] = await Promise.all([
-    getBookshelfWithCacheInfo().catch(() => []),
+  // 单书查询：getShelfBook 响应带后端注入的 cachedChapterCount，
+  // 不必为此拉整架列表（此前每次打开面板/缓存操作后都拉一遍）
+  const [shelfBook, browserCount] = await Promise.all([
+    getShelfBook(store.book.bookId || '').catch(() => null),
     countBrowserBookCache(store.book.bookId || '').catch(() => 0),
   ])
-  const matched = serverList.find((book) => book.bookId === store.book?.bookId)
-  serverCachedCount.value = matched?.cachedChapterCount || 0
+  serverCachedCount.value = shelfBook?.cachedChapterCount || 0
   browserCachedCount.value = browserCount
 }
 

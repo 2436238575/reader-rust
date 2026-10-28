@@ -142,12 +142,11 @@ import { useEscClose } from '../composables/useEscClose'
 import { useFocusTrap } from '../composables/useFocusTrap'
 import { useBookshelfStore } from '../stores/bookshelf'
 import { useAppStore } from '../stores/app'
-import { getBookshelfWithCacheInfo, deleteBookCache } from '../api/bookshelf'
+import { deleteBookCache } from '../api/bookshelf'
 import type { Book } from '../types'
 import {
   clearAllBrowserCache,
   deleteBrowserBookCache,
-  listBrowserCacheSummary,
 } from '../utils/browserCache'
 import { cacheBookToBrowser, cacheStopReasonText } from '../utils/bookCache'
 import {
@@ -178,10 +177,8 @@ const shelfStore = useBookshelfStore()
 const appStore = useAppStore()
 const loading = ref(false)
 const cacheCount = ref(50)
-const serverBooks = ref<Book[]>([])
 // 缓存任务（SSE/浏览器写入）按书防重入：连点会并行起多条 SSE 连接
 const cachingUrls = ref(new Set<string>())
-const browserSummaries = ref<Array<{ bookId: string; cachedChapterCount: number }>>([])
 
 interface CacheLayer {
   kind: ServerCacheKind
@@ -204,8 +201,8 @@ const showCachePurge = ref(false)
 const { isMobileLayout } = useMobileLayout()
 
 const browserCacheUsageText = computed(() => {
-  const chapters = browserSummaries.value.reduce((sum, item) => sum + item.cachedChapterCount, 0)
-  const books = browserSummaries.value.filter((item) => item.cachedChapterCount > 0).length
+  const chapters = mergedBooks.value.reduce((sum, item) => sum + item.browserCachedCount, 0)
+  const books = mergedBooks.value.filter((item) => item.browserCachedCount > 0).length
   return chapters > 0 ? `${chapters} 章 · ${books} 本书` : '空'
 })
 
@@ -270,14 +267,9 @@ async function purgeAllLayers() {
   }
 }
 
+// 书架 store 的 ShelfBook 已带两个计数（服务端 cachedChapterCount +
+// 浏览器 browserCachedChapterCount）：弹窗不再独立拉书架列表
 const mergedBooks = computed(() => {
-  const serverMap = new Map(
-    serverBooks.value.map((book) => [book.bookId || '', book.cachedChapterCount || 0])
-  )
-  const browserMap = new Map(
-    browserSummaries.value.map((item) => [item.bookId, item.cachedChapterCount])
-  )
-
   return shelfStore.books
     .filter((book) => !isLocalBook(book))
     .map((book) => ({
@@ -285,8 +277,8 @@ const mergedBooks = computed(() => {
       bookId: book.bookId || '',
       name: book.name,
       author: book.author,
-      serverCachedCount: serverMap.get(book.bookId || '') || 0,
-      browserCachedCount: browserMap.get(book.bookId || '') || 0,
+      serverCachedCount: book.cachedChapterCount || 0,
+      browserCachedCount: book.browserCachedChapterCount || 0,
     }))
 })
 
@@ -310,21 +302,15 @@ function close() {
   emit('update:modelValue', false)
 }
 
-async function awaitSafeBrowserSummary() {
-  return listBrowserCacheSummary().catch(() => [])
-}
-
 async function refreshData() {
   loading.value = true
   try {
-    const [server, browser, stats] = await Promise.all([
-      getBookshelfWithCacheInfo().catch(() => []),
-      awaitSafeBrowserSummary(),
-      getCacheStats().catch(() => null),
-    ])
-    serverBooks.value = server
-    browserSummaries.value = browser
-    serverStats.value = stats
+    // 书架列表复用 shelfStore：脏标记未置位就不重拉全架（此前每次打开弹窗
+    // 都独立拉一遍整架 Book）。弹窗内的缓存操作已 markShelfDirty，必然重拉
+    if (shelfStore.shelfDirty) {
+      await shelfStore.fetchBooks()
+    }
+    serverStats.value = await getCacheStats().catch(() => null)
   } finally {
     loading.value = false
   }

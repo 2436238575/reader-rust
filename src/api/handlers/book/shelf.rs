@@ -540,7 +540,32 @@ pub async fn get_shelf_book(
         .get_shelf_book(&user_ns, &book_id)
         .await?
         .ok_or_else(|| AppError::BadRequest("书籍不存在".to_string()))?;
-    Ok(ok_with_cover_routes(&state, serde_json::to_value(book).unwrap_or_default()).await)
+    // 注入服务端缓存章数（与 getShelfBookWithCacheInfo 同口径）：单书场景
+    // （阅读页缓存面板）不必为此拉整架列表。目录缓存缺失时不做后台补全，
+    // 那是列表展示的兜底职责，这里如实返回 0
+    let cached_count = if is_local_book(&book) {
+        0
+    } else if state
+        .book_service
+        .chapter_list_cache_exists(&user_ns, &book_id)
+        .await
+    {
+        state
+            .book_service
+            .cached_chapter_count(&user_ns, &book_id)
+            .await
+            .unwrap_or(0)
+    } else {
+        0
+    };
+    let mut val = serde_json::to_value(book).unwrap_or_default();
+    if let Value::Object(ref mut map) = val {
+        map.insert(
+            "cachedChapterCount".to_string(),
+            serde_json::json!(cached_count),
+        );
+    }
+    Ok(ok_with_cover_routes(&state, val).await)
 }
 
 pub async fn get_shelf_book_with_cache_info(
