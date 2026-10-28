@@ -1,5 +1,5 @@
 use argon2::{
-    password_hash::{rand_core::OsRng, PasswordHash, PasswordHasher, PasswordVerifier, SaltString},
+    password_hash::{phc::PasswordHash, PasswordHasher, PasswordVerifier},
     Argon2,
 };
 use rand::{distributions::Alphanumeric, Rng};
@@ -17,9 +17,9 @@ pub fn random_string(len: usize) -> String {
 /// 此前是 md5(md5(pwd+salt)+salt) 双轮 MD5：无记忆硬度、可 GPU 高速爆破，
 /// 数据库泄露后口令可被离线枚举。
 pub fn hash_password(password: &str) -> Result<String, argon2::password_hash::Error> {
-    let salt = SaltString::generate(&mut OsRng);
+    // argon2 0.6 起盐由 hash_password 内部自动生成（需 getrandom 特性）
     Ok(Argon2::default()
-        .hash_password(password.as_bytes(), &salt)?
+        .hash_password(password.as_bytes())?
         .to_string())
 }
 
