@@ -56,7 +56,7 @@ uuid = { version = "1", features = ["v4"] }
 url = "2"
 sxd-xpath = "0.4"
 sxd-document = "0.3"
-quick-xml = "0.41"
+quick-xml = "0.42"
 zip = { version = "9", default-features = false, features = ["deflate"] }
 heic-rs = { version = "0.1", default-features = false, features = ["std"] }
 jpeg-encoder = "0.7"

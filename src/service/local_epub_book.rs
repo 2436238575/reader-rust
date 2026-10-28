@@ -479,7 +479,7 @@ fn parse_opf(xml: &str, opf_base: &str) -> Result<EpubPackage, AppError> {
             }
             Ok(Event::Text(e)) => {
                 if let Some(kind) = current_meta.as_deref() {
-                    let text = e.html_content().unwrap_or_default().trim().to_string();
+                    let text = e.html_content().trim().to_string();
                     if !text.is_empty() {
                         match kind {
                             "title" if package.title.is_none() => package.title = Some(text),
@@ -619,9 +619,7 @@ fn parse_ncx_titles(xml: &str, base: &str) -> HashMap<String, String> {
             }
             Ok(Event::Text(e)) if capture_text => {
                 if let Some(state) = stack.last_mut() {
-                    state
-                        .label
-                        .push_str(e.html_content().unwrap_or_default().as_ref());
+                    state.label.push_str(&e.html_content());
                 }
             }
             Ok(Event::End(e)) => match local_name(e.name().as_ref()).as_str() {
@@ -655,7 +653,7 @@ fn parse_nav_titles(xml: &str, base: &str) -> HashMap<String, String> {
                 current_text.clear();
             }
             Ok(Event::Text(e)) if current_href.is_some() => {
-                current_text.push_str(e.html_content().unwrap_or_default().as_ref());
+                current_text.push_str(&e.html_content());
             }
             Ok(Event::End(e)) if local_name(e.name().as_ref()) == "a" => {
                 if let Some(href) = current_href.take() {
@@ -694,7 +692,7 @@ fn extract_html_title(html: &str) -> Option<String> {
                 }
             }
             Ok(Event::Text(e)) if capture.is_some() => {
-                captured_text.push_str(e.html_content().unwrap_or_default().as_ref());
+                captured_text.push_str(&e.html_content());
             }
             Ok(Event::End(e)) => {
                 let tag = local_name(e.name().as_ref());
@@ -797,10 +795,10 @@ fn sanitize_chapter_html_inner(
                 }
             }
             Ok(Event::Text(e)) if in_body && skip_depth == 0 => {
-                out.push_str(&escape_html(e.html_content().unwrap_or_default().as_ref()));
+                out.push_str(&escape_html(&e.html_content()));
             }
             Ok(Event::CData(e)) if in_body && skip_depth == 0 => {
-                out.push_str(&escape_html(&decode_utf8_lossy(e.as_ref())));
+                out.push_str(&escape_html(&e));
             }
             Ok(Event::Eof) => break,
             Err(_) => {
@@ -826,9 +824,7 @@ fn push_safe_attrs(
         if key.starts_with("on") {
             continue;
         }
-        let Some(value) = attr_value(&attr) else {
-            continue;
-        };
+        let value = attr_value(&attr);
         let safe_value = match key.as_str() {
             "src" if tag == "img" => {
                 let Some(path) = join_zip_path(base, &value) else {
@@ -1071,12 +1067,10 @@ fn parent_zip_dir(path: &str) -> String {
         .unwrap_or_default()
 }
 
-fn local_name(name: &[u8]) -> String {
-    let value = std::str::from_utf8(name).unwrap_or_default();
-    value
-        .rsplit_once(':')
+fn local_name(name: &str) -> String {
+    name.rsplit_once(':')
         .map(|(_, local)| local)
-        .unwrap_or(value)
+        .unwrap_or(name)
         .to_string()
 }
 
@@ -1084,12 +1078,12 @@ fn attr_by_name(e: &BytesStart<'_>, name: &str) -> Option<String> {
     e.attributes()
         .flatten()
         .find(|attr| local_name(attr.key.as_ref()) == name)
-        .and_then(|attr| attr_value(&attr))
+        .map(|attr| attr_value(&attr))
 }
 
-fn attr_value(attr: &Attribute<'_>) -> Option<String> {
-    let value = std::str::from_utf8(attr.value.as_ref()).ok()?;
-    Some(unescape_xml_attr(value))
+fn attr_value(attr: &Attribute<'_>) -> String {
+    // quick-xml 0.42 起属性值是 Cow<str>（UTF-8 已在读取时校验）
+    unescape_xml_attr(&attr.value)
 }
 
 fn is_html_media_type(media_type: &str) -> bool {
