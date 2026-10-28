@@ -2,10 +2,10 @@ use argon2::{
     password_hash::{phc::PasswordHash, PasswordHasher, PasswordVerifier},
     Argon2,
 };
-use rand::{distributions::Alphanumeric, Rng};
+use rand::{distr::Alphanumeric, RngExt};
 
 pub fn random_string(len: usize) -> String {
-    rand::thread_rng()
+    rand::rng()
         .sample_iter(&Alphanumeric)
         .take(len)
         .map(char::from)

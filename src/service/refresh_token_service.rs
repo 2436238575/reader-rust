@@ -13,8 +13,8 @@
 
 use crate::error::error::AppError;
 use crate::util::time::now_ts;
-use rand::rngs::OsRng;
-use rand::RngCore;
+use rand::rngs::SysRng;
+use rand::TryRng;
 use sha2::{Digest, Sha256};
 use sqlx::{Row, SqlitePool};
 
@@ -308,7 +308,10 @@ fn is_well_formed(raw: &str) -> bool {
 
 fn generate_token() -> String {
     let mut bytes = [0u8; TOKEN_BYTES];
-    OsRng.fill_bytes(&mut bytes);
+    // rand 0.10 起系统 RNG 是 fallible 的 TryRng；失败语义与旧 OsRng 的 panic 一致
+    SysRng
+        .try_fill_bytes(&mut bytes)
+        .expect("OS RNG unavailable");
     format!("{TOKEN_PREFIX}{}", hex::encode(bytes))
 }
 
