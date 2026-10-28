@@ -4,7 +4,7 @@ use crate::util::hash::md5_hex;
 use crate::util::text::{apply_regex_replace, strip_whitespace};
 use aes::Aes128;
 use base64::Engine;
-use cbc::cipher::{block_padding::Pkcs7, BlockDecryptMut, KeyIvInit};
+use cbc::cipher::{block_padding::Pkcs7, BlockModeDecrypt, KeyIvInit};
 use chrono::{Local, TimeZone};
 use once_cell::sync::Lazy;
 use reqwest::blocking::Client;
@@ -793,7 +793,7 @@ fn java_aes_base64_decode_to_string(input: &str, key: &str, algorithm: &str, iv:
     };
 
     cipher
-        .decrypt_padded_mut::<Pkcs7>(&mut encrypted)
+        .decrypt_padded::<Pkcs7>(&mut encrypted)
         .ok()
         .and_then(|bytes| String::from_utf8(bytes.to_vec()).ok())
         .unwrap_or_default()
