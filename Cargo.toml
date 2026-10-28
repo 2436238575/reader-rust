@@ -10,7 +10,8 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 # GET+POST 参数合并提取器（api/extract.rs）的终态解析：标量强转 + 重复键数组
 serde_html_form = "0.2"
-sqlx = { version = "0.8", features = ["runtime-tokio-rustls", "sqlite", "macros", "migrate"] }
+# sqlx 0.9 删除了 runtime+TLS 组合特性；SQLite 不需要 TLS
+sqlx = { version = "0.9", features = ["runtime-tokio", "sqlite", "macros", "migrate"] }
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json", "gzip", "brotli", "deflate", "blocking", "cookies", "stream"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt", "json"] }

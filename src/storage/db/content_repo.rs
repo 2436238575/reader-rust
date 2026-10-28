@@ -197,7 +197,7 @@ impl ChapterContentRepo {
              JOIN chapter_contents c ON c.content_id = v.content_id
              WHERE l.book_id=?2 AND l.chapter_url=?3"
         );
-        let row = sqlx::query(&sql)
+        let row = sqlx::query(sqlx::AssertSqlSafe(sql))
             .bind(user_ns)
             .bind(id)
             .bind(chapter_url)
@@ -222,7 +222,7 @@ impl ChapterContentRepo {
              JOIN chapter_contents c ON c.content_id = v.content_id
              WHERE v.version_id=?1 AND v.book_id=?2 AND v.chapter_url=?3"
         );
-        let row = sqlx::query(&sql)
+        let row = sqlx::query(sqlx::AssertSqlSafe(sql))
             .bind(version_id)
             .bind(id)
             .bind(chapter_url)
@@ -766,7 +766,7 @@ impl ChapterContentRepo {
                     OR (v.created_at = ?3 AND v.version_id < ?4))
              ORDER BY v.created_at DESC, v.version_id DESC LIMIT ?5"
         );
-        let rows = sqlx::query(&sql)
+        let rows = sqlx::query(sqlx::AssertSqlSafe(sql))
             .bind(id)
             .bind(chapter_url)
             .bind(cursor_created_at)

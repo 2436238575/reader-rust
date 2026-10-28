@@ -81,7 +81,7 @@ impl JsonDocumentService {
         let sql = format!(
             "SELECT name, json FROM json_documents WHERE user_ns=?1 AND name IN ({placeholders})"
         );
-        let mut query = sqlx::query(&sql).bind(user_ns);
+        let mut query = sqlx::query(sqlx::AssertSqlSafe(sql)).bind(user_ns);
         for name in names {
             query = query.bind(name);
         }

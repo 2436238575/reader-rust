@@ -139,9 +139,9 @@ impl BookRepo {
         item: RegisterBook<'_>,
         desired_id: Option<&str>,
     ) -> Result<String, AppError> {
-        let row = sqlx::query(&format!(
+        let row = sqlx::query(sqlx::AssertSqlSafe(format!(
             "SELECT {BOOK_ROW_COLS} FROM books WHERE book_url=?1"
-        ))
+        )))
         .bind(item.book_url)
         .fetch_optional(&mut **tx)
         .await?;
@@ -153,9 +153,9 @@ impl BookRepo {
         if let Some(desired) = desired_id {
             let desired_num = parse_book_id(desired)
                 .ok_or_else(|| AppError::BadRequest(format!("bookId 格式非法: {desired:?}")))?;
-            let row = sqlx::query(&format!(
+            let row = sqlx::query(sqlx::AssertSqlSafe(format!(
                 "SELECT {BOOK_ROW_COLS} FROM books WHERE book_id=?1"
-            ))
+            )))
             .bind(desired_num)
             .fetch_optional(&mut **tx)
             .await?;
@@ -179,9 +179,9 @@ impl BookRepo {
         let Some(id) = parse_book_id(book_id) else {
             return Ok(None);
         };
-        let row = sqlx::query(&format!(
+        let row = sqlx::query(sqlx::AssertSqlSafe(format!(
             "SELECT {BOOK_ROW_COLS} FROM books WHERE book_id=?1"
-        ))
+        )))
         .bind(id)
         .fetch_optional(&self.pool)
         .await?;
@@ -193,9 +193,9 @@ impl BookRepo {
         _user_ns: &str,
         book_url: &str,
     ) -> Result<Option<BookRow>, AppError> {
-        let row = sqlx::query(&format!(
+        let row = sqlx::query(sqlx::AssertSqlSafe(format!(
             "SELECT {BOOK_ROW_COLS} FROM books WHERE book_url=?1"
-        ))
+        )))
         .bind(book_url)
         .fetch_optional(&self.pool)
         .await?;
@@ -279,10 +279,10 @@ const BOOK_INSERT_COLS: &str =
     "book_url, book_source_id, toc_url, name, author, created_at, updated_at";
 
 fn bind_book_fields<'q>(
-    query: sqlx::query::Query<'q, sqlx::Sqlite, sqlx::sqlite::SqliteArguments<'q>>,
+    query: sqlx::query::Query<'q, sqlx::Sqlite, sqlx::sqlite::SqliteArguments>,
     item: RegisterBook<'q>,
     now: i64,
-) -> sqlx::query::Query<'q, sqlx::Sqlite, sqlx::sqlite::SqliteArguments<'q>> {
+) -> sqlx::query::Query<'q, sqlx::Sqlite, sqlx::sqlite::SqliteArguments> {
     query
         .bind(item.book_url)
         .bind(item.book_source_id)
@@ -303,7 +303,7 @@ where
 {
     let now = now_ts();
     let sql = format!("INSERT INTO books ({BOOK_INSERT_COLS}) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?6)");
-    let result = bind_book_fields(sqlx::query(&sql), item, now)
+    let result = bind_book_fields(sqlx::query(sqlx::AssertSqlSafe(sql)), item, now)
         .execute(executor)
         .await?;
     let id = result.last_insert_rowid();
@@ -324,7 +324,7 @@ where
     let sql = format!(
         "INSERT INTO books (book_id, {BOOK_INSERT_COLS}) VALUES (?7, ?1, ?2, ?3, ?4, ?5, ?6, ?6)"
     );
-    bind_book_fields(sqlx::query(&sql), item, now)
+    bind_book_fields(sqlx::query(sqlx::AssertSqlSafe(sql)), item, now)
         .bind(id)
         .execute(executor)
         .await?;
@@ -653,12 +653,12 @@ impl ShelfBookRepo {
 
     /// 书架全量（窄列），按 position 排序。
     pub async fn list(&self, user_ns: &str) -> Result<Vec<ShelfEntry>, AppError> {
-        let rows = sqlx::query(&format!(
+        let rows = sqlx::query(sqlx::AssertSqlSafe(format!(
             "SELECT {SHELF_LIST_COLS}, {SHELF_JOIN_COLS} FROM shelf_books s \
              JOIN books b ON b.book_id = s.book_id \
              LEFT JOIN book_sources bs ON bs.book_source_id = b.book_source_id \
              WHERE s.user_ns = ?1 ORDER BY s.position"
-        ))
+        )))
         .bind(user_ns)
         .fetch_all(&self.pool)
         .await?;
@@ -669,12 +669,12 @@ impl ShelfBookRepo {
         let Some(id) = parse_book_id(book_id) else {
             return Ok(None);
         };
-        let row = sqlx::query(&format!(
+        let row = sqlx::query(sqlx::AssertSqlSafe(format!(
             "SELECT {SHELF_COLS}, {SHELF_JOIN_COLS} FROM shelf_books s \
              JOIN books b ON b.book_id = s.book_id \
              LEFT JOIN book_sources bs ON bs.book_source_id = b.book_source_id \
              WHERE s.user_ns = ?1 AND s.book_id = ?2"
-        ))
+        )))
         .bind(user_ns)
         .bind(id)
         .fetch_optional(&self.pool)
@@ -939,7 +939,7 @@ fn bookmark_upsert_query<'q>(
     user_ns: &'q str,
     b: &'q crate::model::bookmark::Bookmark,
     book_url: &'q str,
-) -> Result<sqlx::query::Query<'q, sqlx::Sqlite, sqlx::sqlite::SqliteArguments<'q>>, AppError> {
+) -> Result<sqlx::query::Query<'q, sqlx::Sqlite, sqlx::sqlite::SqliteArguments>, AppError> {
     let Some(book_id) = parse_book_id(&b.book_id) else {
         return Err(AppError::BadRequest(format!(
             "bookId 格式非法: {:?}",
@@ -995,9 +995,9 @@ impl BookmarkRepo {
         &self,
         user_ns: &str,
     ) -> Result<Vec<crate::model::bookmark::Bookmark>, AppError> {
-        let rows = sqlx::query(&format!(
+        let rows = sqlx::query(sqlx::AssertSqlSafe(format!(
             "SELECT {BOOKMARK_COLS} FROM bookmarks WHERE user_ns=?1 ORDER BY rowid"
-        ))
+        )))
         .bind(user_ns)
         .fetch_all(&self.pool)
         .await?;
@@ -1107,9 +1107,9 @@ impl ReplaceRuleRepo {
         &self,
         user_ns: &str,
     ) -> Result<Vec<crate::model::replace_rule::ReplaceRule>, AppError> {
-        let rows = sqlx::query(&format!(
+        let rows = sqlx::query(sqlx::AssertSqlSafe(format!(
             "SELECT {REPLACE_RULE_COLS} FROM replace_rules WHERE user_ns=?1 ORDER BY rule_order, rowid"
-        ))
+                )))
         .bind(user_ns)
         .fetch_all(&self.pool)
         .await?;
