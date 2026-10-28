@@ -344,6 +344,8 @@ fn js_http_client() -> Client {
         .redirect(crate::crawler::url_guard::guarded_redirect_policy())
         // 解析期守卫：堵住「预检解析一次、连接再解析一次」的 DNS rebinding 窗口
         .dns_resolver(crate::crawler::url_guard::guarded_dns_resolver())
+        // TLS 与全局一致：ring + webpki-roots（见 crawler::tls）
+        .tls_backend_preconfigured(crate::crawler::tls::shared_client_config())
         .build()
         .expect("failed to build JS HTTP client");
     let mut map = JS_HTTP_CLIENTS.lock().unwrap_or_else(|e| e.into_inner());

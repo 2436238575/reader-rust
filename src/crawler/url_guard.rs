@@ -509,12 +509,14 @@ pub fn guarded_dns_resolver() -> std::sync::Arc<GuardedResolver> {
 }
 
 /// 带守卫的基础 client builder：统一超时、UA、重定向策略与 DNS 解析期守卫。
+/// TLS 固定 ring + webpki-roots 的预配置（见 [`crate::crawler::tls`]）。
 pub fn guarded_client_builder(timeout: Duration, user_agent: &str) -> reqwest::ClientBuilder {
     reqwest::Client::builder()
         .timeout(timeout)
         .user_agent(user_agent.to_string())
         .redirect(guarded_redirect_policy())
         .dns_resolver(guarded_dns_resolver())
+        .tls_backend_preconfigured(crate::crawler::tls::shared_client_config())
 }
 
 /// 改全局守卫状态的测试互斥：并行测试里 allow/whitelist 互相踩会偶发失败。

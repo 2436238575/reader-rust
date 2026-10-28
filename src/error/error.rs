@@ -246,6 +246,8 @@ mod tests {
         // 抓取链路（anyhow）里的网络错误归 Upstream；reqwest 的 Display
         // 会带完整 URL（可能含敏感参数），对外只给泛化文案。
         // reqwest::Error 没有公开构造器，用无效 URL 的 build 失败制造一个。
+        // rustls-no-provider 下 Client::new() 需要进程默认 provider，先装兜底
+        crate::crawler::tls::ensure_default_crypto_provider();
         let err = reqwest::Client::new()
             .get("ht tp://invalid url")
             .build()
@@ -258,6 +260,8 @@ mod tests {
     async fn http_error_log_summary_redacts_url_query() {
         // 连接一个必然失败的本地端口制造带 URL 的 reqwest 错误：
         // 日志摘要只保留类别与去查询串的地址，签名参数不落日志
+        // rustls-no-provider 下 Client::new() 需要进程默认 provider，先装兜底
+        crate::crawler::tls::ensure_default_crypto_provider();
         let err = reqwest::Client::new()
             .get("http://127.0.0.1:1/pic?x-signature=secret&x-expires=9")
             .send()

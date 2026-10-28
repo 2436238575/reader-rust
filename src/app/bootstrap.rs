@@ -145,6 +145,12 @@ fn spawn_webdav_sweeper(storage_dir: &str) {
 /// 与 `run()` 拆开是为了让集成测试能直接起一套真实的路由，而不必复制一份
 /// 装配逻辑——复制出来的那份迟早会和这里漂移。
 pub async fn build_state(cfg: AppConfig) -> anyhow::Result<AppState> {
+    // TLS 进程级兜底：reqwest 0.13 的 rustls-no-provider 下，未预配置的
+    // Client::new()/builder().build() 找不到进程默认 provider 会直接 panic。
+    // 正式出站 client 都在 builder 上预配置（crawler::tls），这里装 ring 为
+    // 进程默认，兜住任何遗漏路径与直接使用 reqwest::Client::new() 的代码。
+    crate::crawler::tls::ensure_default_crypto_provider();
+
     // 出站守卫策略：默认拦截私网（安全优先）。自托管单用户、书源/模型服务在
     // 局域网的场景可显式设 ALLOW_PRIVATE_NETWORK=true 整体放行，或用
     // PRIVATE_NETWORK_WHITELIST 精确放行（名单为空时一律拦截，见 url_guard 文档）。

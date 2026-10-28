@@ -286,6 +286,8 @@ static AI_PROXY_CLIENT: once_cell::sync::Lazy<reqwest::Client> = once_cell::sync
         .timeout(ai_proxy_timeout())
         .redirect(crate::crawler::url_guard::guarded_redirect_policy())
         .dns_resolver(crate::crawler::url_guard::guarded_dns_resolver())
+        // TLS 与全局一致：ring + webpki-roots（见 crawler::tls）
+        .tls_backend_preconfigured(crate::crawler::tls::shared_client_config())
         .build()
         .expect("AI 代理 reqwest 客户端构建失败")
 });
