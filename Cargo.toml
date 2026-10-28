@@ -34,7 +34,7 @@ hex = "0.4"
 # 下限 0.14.3：修复 RUSTSEC-2026-0391（复用流上下文串数据），同时把 zstd-safe
 # 抬到 8.2.0 修复 RUSTSEC-2026-0398 / RUSTSEC-2026-0403
 zstd = "0.14.3"
-scraper = "0.20"
+scraper = "0.29"
 # RFC 9535 完整实现（维护活跃）；旧的 jsonpath_lib 0.3 多年未维护且解析器可 panic。
 # 方言差异：不支持 `=~` 正则过滤，改用 match()/search() 函数（见 docs/reference/book-source-rules.md §9.1）
 jsonpath-rfc9535 = "0.1.2"
