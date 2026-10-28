@@ -533,7 +533,6 @@ import {
   createReaderProgressAutoSaveScheduler,
   createReaderProgressExitSaver,
 } from '../utils/readerProgressAutoSave'
-import type { Book, SearchBook } from '../types'
 
 import ReaderSidebar from '../components/reader/ReaderSidebar.vue'
 import ReaderToolbar from '../components/reader/ReaderToolbar.vue'
