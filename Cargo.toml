@@ -45,7 +45,7 @@ rquickjs = { version = "0.14", features = ["futures", "classes", "properties"] }
 # 入站防护（api/inbound_guard.rs）：并发上限用 tower::limit。
 # util 的 ServiceExt::oneshot 只在测试里驱动测试路由，放 dev-dependencies。
 tower = { version = "0.5", features = ["limit"] }
-tower-http = { version = "0.5", features = ["trace", "cors", "request-id", "fs", "set-header", "compression-gzip"] }
+tower-http = { version = "0.7", features = ["trace", "cors", "request-id", "fs", "set-header", "compression-gzip"] }
 http = "1"
 urlencoding = "2"
 futures = "0.3"
