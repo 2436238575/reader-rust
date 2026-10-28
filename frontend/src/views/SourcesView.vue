@@ -44,6 +44,8 @@
     <div class="content-grid">
       <SourceList
         class="source-list-slot"
+        v-model:page="sourcePage"
+        v-model:page-size="sourcePageSize"
         :sources="filteredSources"
         :loading="loading"
         :selected-ids="selectedSourceIds"
@@ -72,10 +74,6 @@
         @import-local="triggerFileImport"
       />
     </div>
-
-    <footer class="page-footer">
-      <span class="count-info">显示 {{ filteredSources.length }} / {{ sources.length }}</span>
-    </footer>
 
     <SourceSubscriptionPanel
       v-model:remote-url="remoteUrl"
@@ -180,6 +178,9 @@ const { isMobileLayout } = useMobileLayout()
 const testingSources = ref(false)
 const filterText = ref('')
 const filterGroup = ref('')
+// 书源列表分页：当前页码与每页数量（筛选或换每页数量时归回第 1 页）
+const sourcePage = ref(1)
+const sourcePageSize = ref(50)
 const fileInputRef = ref<HTMLInputElement | null>(null)
 // 书源身份是后端分配的 bookSourceId（number）；bookSourceUrl 只是展示数据
 const selectedSourceIds = ref(new Set<number>())
@@ -211,6 +212,11 @@ const groupList = computed(() => getBookSourceGroups(sources.value))
 const filteredSources = computed(() =>
   filterBookSources(sources.value, filterText.value, filterGroup.value)
 )
+
+// 换筛选或每页数量后回到第 1 页；书源增删改只动内容不重置页码（越界页码由列表内部收敛）
+watch([filterText, filterGroup, sourcePageSize], () => {
+  sourcePage.value = 1
+})
 
 const sourceStats = computed(() => getBookSourceStats(sources.value, filteredSources.value))
 
@@ -710,28 +716,13 @@ onUnmounted(() => {
   gap: 14px;
   min-height: 0;
   flex: 1;
-  padding: 14px 0 0;
+  padding: 14px 0 calc(14px + var(--safe-area-bottom));
   overflow: hidden;
 }
 
 .source-list-slot,
 .editor-slot {
   min-height: 0;
-}
-
-.page-footer {
-  min-height: 44px;
-  display: flex;
-  align-items: center;
-  justify-content: flex-start;
-  gap: 12px;
-  padding: 8px 0 calc(14px + var(--safe-area-bottom));
-  flex-shrink: 0;
-}
-
-.count-info {
-  font-size: var(--text-xs);
-  color: var(--color-text-tertiary);
 }
 
 .icon-btn {
@@ -850,10 +841,6 @@ onUnmounted(() => {
 
   .source-list-slot {
     max-height: min(46vh, 460px);
-  }
-
-  .page-footer {
-    padding-bottom: calc(14px + var(--safe-area-bottom));
   }
 }
 </style>

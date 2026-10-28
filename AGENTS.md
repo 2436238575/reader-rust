@@ -218,7 +218,7 @@ storage/                  运行期数据，gitignored，首次启动自动创�
 规模参照（便于判断改动影响面）：后端 `src/` 共 123 个 `.rs`、约 45000 行，其中最大的几个文件是
 `service/agent_sidecar_service.rs`（约 1900 行）、`storage/db/repo.rs`（约 1670 行）、
 `service/image_service.rs`（约 1470 行）；
-前端 `src/` 下 218 个文件（164 个 `.ts`，其中 58 个是测试；50 个 `.vue`；2 个 CSS + SVG/PNG 各 1）。阅读器按职责拆成 composable（views/ReaderView.vue 只做模板与编排接线；横翻分页/连续滚动/位置恢复/搜索/选字/TTS/自动播放/手势各自成簇），纯计算下沉 `utils/`（chapterRender/horizontalPaging/readingPosition 等）；store 层为核心 `stores/reader.ts`（约 270 行：当前书/目录/正文状态）+ 单向依赖的四个子 store（readerContent 正文管线 / readerExtras 评论配图 / readerMarks 已读书签高亮 / readerConfig 配置主题呈现）+ search，子 store 可读核心、核心不反向 import；目录与书源列表走 virtua（`virtua/vue`）虚拟滚动。
+前端 `src/` 下 224 个文件（169 个 `.ts`，其中 60 个是测试；51 个 `.vue`；2 个 CSS + SVG/PNG 各 1）。阅读器按职责拆成 composable（views/ReaderView.vue 只做模板与编排接线；横翻分页/连续滚动/位置恢复/搜索/选字/TTS/自动播放/手势各自成簇），纯计算下沉 `utils/`（chapterRender/horizontalPaging/readingPosition/listPager 等）；store 层为核心 `stores/reader.ts`（约 270 行：当前书/目录/正文状态）+ 单向依赖的四个子 store（readerContent 正文管线 / readerExtras 评论配图 / readerMarks 已读书签高亮 / readerConfig 配置主题呈现）+ search，子 store 可读核心、核心不反向 import；阅读器目录走 virtua（`virtua/vue`）虚拟滚动，书源管理列表与缓存管理书籍列表按页渲染（分页控件 `components/common/ListPager.vue`，页码计算在 `utils/listPager.ts`）。
 
 ---
 

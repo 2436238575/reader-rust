@@ -13,78 +13,132 @@
       <strong>{{ emptyTitle }}</strong>
       <span>{{ emptyDescription }}</span>
     </div>
-    <!-- 数千书源：VList 只渲染视口附近条目；行高不固定（可含分组胶囊/换行 URL），
-         交给 virtua 自动测量，key 用书源身份（id 优先，退化 URL）保持稳定 -->
-    <VList v-else class="source-list" :data="sources" #default="{ item: source }">
-      <article
-        :key="source.bookSourceId ?? source.bookSourceUrl"
-        class="source-item"
-        :class="{
-          active: activeId === source.bookSourceId,
-          selected: source.bookSourceId != null && selectedIds.has(source.bookSourceId),
-        }"
-      >
-        <label class="row-check" @click.stop>
-          <input
-            type="checkbox"
-            :checked="source.bookSourceId != null && selectedIds.has(source.bookSourceId)"
-            @change="$emit('toggle-selection', source)"
-          />
-        </label>
-        <button class="source-info" type="button" @click="$emit('edit', source)">
-          <span class="source-name">{{ source.bookSourceName }}</span>
-          <span class="source-url">{{ source.bookSourceUrl }}</span>
-          <span v-if="source.bookSourceGroup" class="source-group">{{
-            source.bookSourceGroup
-          }}</span>
-        </button>
-        <div class="source-actions">
-          <label class="toggle" title="启用状态">
+    <template v-else>
+      <!-- 数千书源按页渲染（每页数量见下方分页条），行数少不再需要虚拟滚动 -->
+      <div ref="listEl" class="source-list">
+        <article
+          v-for="source in pageSources"
+          :key="source.bookSourceId ?? source.bookSourceUrl"
+          class="source-item"
+          :class="{
+            active: activeId === source.bookSourceId,
+            selected: source.bookSourceId != null && selectedIds.has(source.bookSourceId),
+          }"
+        >
+          <label class="row-check" @click.stop>
             <input
               type="checkbox"
-              :checked="source.enabled !== false"
-              @change="$emit('toggle-enabled', source)"
+              :checked="source.bookSourceId != null && selectedIds.has(source.bookSourceId)"
+              @change="$emit('toggle-selection', source)"
             />
-            <span class="toggle-slider"></span>
           </label>
-          <button
-            class="icon-btn small danger"
-            type="button"
-            title="删除"
-            @click="$emit('delete', source)"
-          >
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <path
-                d="M3 6h18M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"
-              />
-            </svg>
+          <button class="source-info" type="button" @click="$emit('edit', source)">
+            <span class="source-name">{{ source.bookSourceName }}</span>
+            <span class="source-url">{{ source.bookSourceUrl }}</span>
+            <span v-if="source.bookSourceGroup" class="source-group">{{
+              source.bookSourceGroup
+            }}</span>
           </button>
-        </div>
-      </article>
-    </VList>
+          <div class="source-actions">
+            <label class="toggle" title="启用状态">
+              <input
+                type="checkbox"
+                :checked="source.enabled !== false"
+                @change="$emit('toggle-enabled', source)"
+              />
+              <span class="toggle-slider"></span>
+            </label>
+            <button
+              class="icon-btn small danger"
+              type="button"
+              title="删除"
+              @click="$emit('delete', source)"
+            >
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path
+                  d="M3 6h18M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"
+                />
+              </svg>
+            </button>
+          </div>
+        </article>
+      </div>
+      <ListPager
+        v-model:page="pageModel"
+        v-model:page-size="pageSizeModel"
+        :total="sources.length"
+        :page-sizes="[20, 50, 100]"
+      />
+    </template>
   </section>
 </template>
 
 <script setup lang="ts">
-import { VList } from 'virtua/vue'
+import { computed, ref, watch } from 'vue'
 import SkeletonBlock from '../common/SkeletonBlock.vue'
+import ListPager from '../common/ListPager.vue'
 import type { BookSource } from '../../types'
 
-defineProps<{
+const props = defineProps<{
   sources: BookSource[]
   loading: boolean
   selectedIds: ReadonlySet<number>
   activeId?: number
   emptyTitle: string
   emptyDescription: string
+  page: number
+  pageSize: number
 }>()
 
-defineEmits<{
+const emit = defineEmits<{
   edit: [source: BookSource]
   'toggle-enabled': [source: BookSource]
   'toggle-selection': [source: BookSource]
   delete: [source: BookSource]
+  'update:page': [page: number]
+  'update:pageSize': [size: number]
 }>()
+
+const listEl = ref<HTMLElement | null>(null)
+
+// 页码与每页数量由父组件持有（筛选/换每页数量后的归位也由父组件处理）；
+// 这里只负责在列表变短后把越界页码收回来
+const pageModel = computed({
+  get: () => props.page,
+  set: (value: number) => emit('update:page', value),
+})
+
+const pageSizeModel = computed({
+  get: () => props.pageSize,
+  set: (value: number) => emit('update:pageSize', value),
+})
+
+const pageSources = computed(() => {
+  const start = (props.page - 1) * props.pageSize
+  return props.sources.slice(start, start + props.pageSize)
+})
+
+watch(
+  [() => props.sources.length, () => props.pageSize],
+  ([length, size], [, previousSize]) => {
+    // 换每页数量的归位走父组件（重置到第 1 页），跳过避免两个方向互相覆盖
+    if (size !== previousSize) return
+    const pages = Math.max(1, Math.ceil(length / size))
+    if (props.page > pages) {
+      pageModel.value = pages
+    }
+  }
+)
+
+// 翻页后从新页的开头看起，不带着上一页的滚动位置
+watch(
+  () => props.page,
+  () => {
+    if (listEl.value) {
+      listEl.value.scrollTop = 0
+    }
+  }
+)
 </script>
 
 <style scoped>

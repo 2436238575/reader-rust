@@ -55,7 +55,7 @@
               </div>
             </div>
 
-            <div v-for="item in mergedBooks" :key="item.bookId" class="cache-item">
+            <div v-for="item in pagedBooks" :key="item.bookId" class="cache-item">
               <div class="cache-main">
                 <h3>{{ item.name }}</h3>
                 <p>{{ item.author || '未知作者' }}</p>
@@ -71,6 +71,8 @@
                 <button @click="clearBrowser(item.book)">清浏览器</button>
               </div>
             </div>
+
+            <ListPager v-model:page="bookPage" :total="mergedBooks.length" :page-size="BOOK_PAGE_SIZE" />
 
             <div class="cache-layers">
               <button class="layers-toggle" type="button" @click="showCachePurge = !showCachePurge">
@@ -137,7 +139,9 @@
 
 <script setup lang="ts">
 import { consumeSSE } from '../utils/sse'
-import { computed, ref, watch, toRef } from 'vue'
+import { computed, nextTick, ref, watch, toRef } from 'vue'
+import ListPager from './common/ListPager.vue'
+import { pageCountOf } from '../utils/listPager'
 import { useEscClose } from '../composables/useEscClose'
 import { useFocusTrap } from '../composables/useFocusTrap'
 import { useBookshelfStore } from '../stores/bookshelf'
@@ -179,6 +183,10 @@ const loading = ref(false)
 const cacheCount = ref(50)
 // 缓存任务（SSE/浏览器写入）按书防重入：连点会并行起多条 SSE 连接
 const cachingUrls = ref(new Set<string>())
+
+// 书籍列表分页（每页 10 本），打开弹窗时回到第 1 页
+const BOOK_PAGE_SIZE = 10
+const bookPage = ref(1)
 
 interface CacheLayer {
   kind: ServerCacheKind
@@ -289,10 +297,32 @@ const totalBrowserCachedCount = computed(() =>
   mergedBooks.value.reduce((sum, item) => sum + item.browserCachedCount, 0)
 )
 
+const totalBookPages = computed(() => pageCountOf(mergedBooks.value.length, BOOK_PAGE_SIZE))
+const pagedBooks = computed(() => {
+  const start = (bookPage.value - 1) * BOOK_PAGE_SIZE
+  return mergedBooks.value.slice(start, start + BOOK_PAGE_SIZE)
+})
+
+// 书架变化（移除书籍等）让总页数缩水后，当前页可能越界：收敛到最后一页
+watch(totalBookPages, (pages) => {
+  if (bookPage.value > pages) {
+    bookPage.value = Math.max(1, pages)
+  }
+})
+
+// 翻页后回到弹窗顶部，从新页的第一本看起
+watch(bookPage, async () => {
+  await nextTick()
+  if (modalRef.value) {
+    modalRef.value.scrollTop = 0
+  }
+})
+
 watch(
   () => props.modelValue,
   (visible) => {
     if (visible) {
+      bookPage.value = 1
       refreshData()
     }
   }
