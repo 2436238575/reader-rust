@@ -20,7 +20,9 @@ dotenvy = "0.15"
 thiserror = "2"
 anyhow = "1"
 argon2 = "0.6"
-jsonwebtoken = "9"
+# v10 起加密后端需显式二选一；rust_crypto 是纯 Rust 实现（RustCrypto 家族），
+# 避免 aws-lc-rs 引入 C 构建链
+jsonwebtoken = { version = "11", features = ["rust_crypto"] }
 aes = "0.9"
 bytes = "1"
 cbc = "0.2"
