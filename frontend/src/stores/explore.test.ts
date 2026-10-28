@@ -3,12 +3,13 @@ import { nextTick, watch } from 'vue'
 import { createPinia, setActivePinia } from 'pinia'
 import { useExploreStore } from './explore'
 import { useSourceStore } from './source'
-import { getBookSources } from '../api/source'
+import { getBookSourceList } from '../api/source'
 import { exploreBook } from '../api/explore'
 import type { BookSource, SearchBook } from '../types'
 
 vi.mock('../api/source', () => ({
   getBookSources: vi.fn(),
+  getBookSourceList: vi.fn(),
   saveBookSource: vi.fn(),
   saveBookSources: vi.fn(),
   deleteBookSource: vi.fn(),
@@ -20,13 +21,13 @@ vi.mock('../api/explore', () => ({
   exploreBook: vi.fn(),
 }))
 
-const getBookSourcesMock = vi.mocked(getBookSources)
+const getBookSourceListMock = vi.mocked(getBookSourceList)
 const exploreBookMock = vi.mocked(exploreBook)
 
 describe('explore store source sync', () => {
   beforeEach(() => {
     setActivePinia(createPinia())
-    getBookSourcesMock.mockReset()
+    getBookSourceListMock.mockReset()
     exploreBookMock.mockReset()
     exploreBookMock.mockResolvedValue([])
   })
@@ -104,25 +105,25 @@ describe('explore store source sync', () => {
   })
 
   it('init 拉取书源失败时写入 error 而不是抛出', async () => {
-    getBookSourcesMock.mockRejectedValueOnce(new Error('服务器开小差'))
+    getBookSourceListMock.mockRejectedValueOnce(new Error('服务器开小差'))
     const store = useExploreStore()
     await store.init()
     expect(store.error).toBe('服务器开小差')
   })
 
-  it('书源处于快照占位（partial）时，init 等全量就位再选源', async () => {
+  it('书源处于快照占位（partial）时，init 等摘要就位再选源', async () => {
     const sourceStore = useSourceStore()
     // 快照里的书源没有 exploreUrl：直接据此选源会得出「无带有发现规则的书源」
     sourceStore.sources = [
       { bookSourceId: 1, bookSourceName: '快照源', bookSourceUrl: 'https://example.test' },
     ]
     sourceStore.partial = true
-    getBookSourcesMock.mockResolvedValueOnce([sourceWithExplore()])
+    getBookSourceListMock.mockResolvedValueOnce([sourceWithExplore()])
     const store = useExploreStore()
 
     await store.init()
 
-    expect(getBookSourcesMock).toHaveBeenCalledTimes(1)
+    expect(getBookSourceListMock).toHaveBeenCalledTimes(1)
     expect(store.error).toBeNull()
     expect(store.activeSourceId).toBe(1)
     expect(store.activeCategoryUrl).toBe('/book/category/catalog.html')

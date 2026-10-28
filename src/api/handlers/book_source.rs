@@ -144,6 +144,19 @@ pub async fn get_book_sources(
     )))
 }
 
+/// 书源摘要列表：只回展示字段 + exploreUrl，规则 JSON（可达 MB 级/源）不下发。
+/// 单条全量走 getBookSource，编辑按需取；getBookSources（全量）保留给导出/备份。
+pub async fn get_book_source_list(
+    State(state): State<AppState>,
+    user: CurrentUser,
+) -> Result<Json<ApiResponse<serde_json::Value>>, AppError> {
+    let user_ns = user.0.ns.clone();
+    let list = state.book_source_service.list_summary(&user_ns).await?;
+    Ok(Json(ApiResponse::ok(
+        serde_json::to_value(list).unwrap_or_default(),
+    )))
+}
+
 pub async fn login_book_source(
     State(state): State<AppState>,
     user: CurrentUser,

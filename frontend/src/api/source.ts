@@ -1,9 +1,22 @@
 import http from './http'
-import type { BookSource, BookSourceTestResponse } from '../types'
+import type { BookSource, BookSourceSummary, BookSourceTestResponse } from '../types'
 import { MAX_SOURCE_TEST_BATCH_SIZE } from '../utils/sourceTesting'
 
+/** 全量列表（含规则 JSON，可达 MB 级）：只给导出/WebDAV 备份等真正需要全量的低频场景 */
 export function getBookSources() {
   return http.get<BookSource[]>('/getBookSources').then((r) => r.data)
+}
+
+/** 摘要列表：展示字段 + exploreUrl，无规则 JSON；书源管理页的日常加载走这条 */
+export function getBookSourceList() {
+  return http.get<BookSourceSummary[]>('/getBookSourceList').then((r) => r.data)
+}
+
+/** 单条全量：编辑器/启停翻转等「按整条 upsert 保存」的场景按需取 */
+export function getBookSource(bookSourceId: number) {
+  return http
+    .get<BookSource>('/getBookSource', { params: { bookSourceId } })
+    .then((r) => r.data)
 }
 
 export function loginBookSource(bookSourceId: number) {

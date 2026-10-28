@@ -113,6 +113,71 @@ pub struct BookSource {
     export_to = "../frontend/src/types/generated/",
     rename_all = "camelCase"
 )]
+pub struct BookSourceSummary {
+    pub book_source_name: String,
+    pub book_source_url: String,
+    /// 后端分配的稳定自增 id，书源的身份键（表列携带，装载时注入）。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    #[ts(type = "number")]
+    pub book_source_id: Option<i64>,
+    #[ts(optional)]
+    pub book_source_group: Option<String>,
+    #[ts(optional)]
+    #[ts(type = "number")]
+    pub book_source_type: Option<i32>,
+    #[ts(optional)]
+    pub enabled: Option<bool>,
+    #[ts(optional)]
+    pub enabled_explore: Option<bool>,
+    #[ts(optional)]
+    pub enabled_cookie_jar: Option<bool>,
+    #[serde(deserialize_with = "deserialize_i64_option")]
+    #[ts(optional)]
+    #[ts(type = "number")]
+    pub last_update_time: Option<i64>,
+    #[ts(optional)]
+    #[ts(type = "number")]
+    pub respond_time: Option<i64>,
+    #[ts(optional)]
+    #[ts(type = "number")]
+    pub custom_order: Option<i32>,
+    #[ts(optional)]
+    #[ts(type = "number")]
+    pub weight: Option<i32>,
+    /// 发现页解析分类必需；规则 JSON（rule 系列、searchUrl、header 等）不下发，
+    /// 单条全量走 getBookSource
+    #[ts(optional)]
+    pub explore_url: Option<String>,
+}
+
+impl BookSourceSummary {
+    pub fn from_source(book_source_id: i64, source: &BookSource) -> Self {
+        Self {
+            book_source_id: Some(book_source_id),
+            book_source_name: source.book_source_name.clone(),
+            book_source_url: source.book_source_url.clone(),
+            book_source_group: source.book_source_group.clone(),
+            book_source_type: source.book_source_type,
+            enabled: source.enabled,
+            enabled_explore: source.enabled_explore,
+            enabled_cookie_jar: source.enabled_cookie_jar,
+            last_update_time: source.last_update_time,
+            respond_time: source.respond_time,
+            custom_order: source.custom_order,
+            weight: source.weight,
+            explore_url: source.explore_url.clone(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default, ts_rs::TS)]
+#[serde(default, rename_all = "camelCase")]
+#[ts(
+    export,
+    export_to = "../frontend/src/types/generated/",
+    rename_all = "camelCase"
+)]
 pub struct ExploreKind {
     pub title: String,
     #[ts(optional)]

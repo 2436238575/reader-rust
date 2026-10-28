@@ -1,5 +1,5 @@
 use crate::error::error::AppError;
-use crate::model::book_source::{book_source_from_value, BookSource};
+use crate::model::book_source::{book_source_from_value, BookSource, BookSourceSummary};
 use crate::storage::db::repo::BookSourceRepo;
 
 pub const INVALID_BOOK_SOURCE_GROUP: &str = "失效";
@@ -56,6 +56,22 @@ impl BookSourceService {
                 if let Ok(mut s) = book_source_from_value(value) {
                     s.book_source_id = Some(id);
                     out.push(s);
+                }
+            }
+        }
+        Ok(out)
+    }
+
+    /// 摘要列表：列表场景只回展示字段 + exploreUrl，不下发 MB 级规则 JSON。
+    /// 每行 blob 仍在服务端解析（复用旧版迁移逻辑），用 CPU 换下行流量；
+    /// 单条全量走 get_by_id，编辑/翻转开关按需取。
+    pub async fn list_summary(&self, user_ns: &str) -> Result<Vec<BookSourceSummary>, AppError> {
+        let rows = self.repo.list(user_ns).await?;
+        let mut out = Vec::with_capacity(rows.len());
+        for (id, j) in rows {
+            if let Ok(value) = serde_json::from_str::<serde_json::Value>(&j) {
+                if let Ok(s) = book_source_from_value(value) {
+                    out.push(BookSourceSummary::from_source(id, &s));
                 }
             }
         }

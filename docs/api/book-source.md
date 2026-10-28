@@ -34,6 +34,16 @@ GET /reader3/getBookSources
 }
 ```
 
+> **注意**：全量列表会把每个源的完整规则 JSON（`rule*`/`searchUrl`/`header` 等，单源可达 MB 级）一并下发。日常列表展示请优先使用下面的摘要接口，全量接口保留给书源导出与 WebDAV 备份。
+
+## 获取书源摘要列表
+
+```text
+GET /reader3/getBookSourceList
+```
+
+无请求参数。响应结构同上，但每个源只含展示字段与发现所需的 `exploreUrl`：`bookSourceId`、`bookSourceName`、`bookSourceUrl`、`bookSourceGroup`、`bookSourceType`、`enabled`、`enabledExplore`、`enabledCookieJar`、`lastUpdateTime`、`respondTime`、`customOrder`、`weight`、`exploreUrl`。**不下发任何规则 JSON**，单源体积从 MB 级降到百字节级；需要完整规则时按 `bookSourceId` 调 `getBookSource` 单条获取。
+
 ## 获取单个书源
 
 ```text

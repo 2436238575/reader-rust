@@ -202,6 +202,10 @@ pub fn build_router(state: AppState) -> Router {
             get(handlers::get_book_sources).post(handlers::get_book_sources),
         )
         .route(
+            "/reader3/getBookSourceList",
+            get(handlers::get_book_source_list),
+        )
+        .route(
             "/reader3/loginBookSource",
             post(handlers::login_book_source),
         )

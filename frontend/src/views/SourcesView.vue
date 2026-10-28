@@ -137,6 +137,8 @@ import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 import { onBeforeRouteLeave, useRouter } from 'vue-router'
 import { API_BASE } from '../utils/appBase'
 import {
+  getBookSource,
+  getBookSources,
   loginBookSource,
   mintBookSourceProxyToken,
   testBookSources,
@@ -277,11 +279,9 @@ async function refreshSources() {
 async function toggleSource(source: BookSource) {
   if (source.bookSourceId == null) return
   try {
-    // 列表可能只是快照（无规则字段）：先等全量就位，再以全量对象为基准翻转开关，
-    // 否则用残缺对象保存会把规则清空
-    await sourceStore.ensureFullSources()
-    const full = sourceStore.sources.find((item) => item.bookSourceId === source.bookSourceId)
-    if (!full) throw new Error('书源已不存在')
+    // 保存按整条 upsert：先拉单条全量再翻转开关，本地列表只是摘要，
+    // 直接拿摘要对象保存会把规则清空
+    const full = await getBookSource(source.bookSourceId)
     await sourceStore.saveSource({ ...full, enabled: full.enabled === false ? true : false })
     appStore.showToast('书源状态已更新', 'success')
   } catch (e: unknown) {
@@ -342,8 +342,7 @@ async function testSources() {
 
   testingSources.value = true
   try {
-    // 测试会按结果改写分组（标记失效）：先确保本地是全量，再按 id 送测
-    await sourceStore.ensureFullSources()
+    // 送测只需要 id（本地摘要已带），结果会改写服务端分组，测完重拉摘要对齐
     const ids = targets
       .map((source) => source.bookSourceId)
       .filter((id): id is number => id != null)
@@ -453,20 +452,18 @@ function openInEditor(source: BookSource) {
 }
 
 async function editSource(source: BookSource) {
+  if (source.bookSourceId == null) {
+    // 未落库的源（理论上只出现在新建流程外）：直接进编辑器
+    openInEditor(source)
+    return
+  }
   try {
-    // 快照对象没有规则字段：等全量就位后再按 id 取全量对象进编辑器，
-    // 否则保存会把 rule*/searchUrl 等字段清空
-    await sourceStore.ensureFullSources()
+    // 本地列表只是摘要：编辑器必须拿单条全量，否则保存会把规则清空
+    const full = await getBookSource(source.bookSourceId)
+    openInEditor(full)
   } catch (e: unknown) {
-    appStore.showToast((e as Error).message, 'error')
-    return
+    appStore.showToast((e as Error).message || '书源详情加载失败', 'error')
   }
-  const full = sourceStore.sources.find((item) => item.bookSourceId === source.bookSourceId)
-  if (!full) {
-    appStore.showToast('书源已不存在', 'warning')
-    return
-  }
-  openInEditor(full)
 }
 
 function formatEditor() {
@@ -491,13 +488,9 @@ async function saveEditor() {
     }
     const saved = await sourceStore.saveSource(parsed)
     appStore.showToast('保存书源成功', 'success')
-    // 新建书源保存后才有身份：store 局部 upsert 已带返回的 bookSourceId，直接回填
-    const latest = sourceStore.sources.find((item) => item.bookSourceId === saved.bookSourceId)
-    if (latest) {
-      openInEditor(latest)
-    } else {
-      lastSavedEditorText.value = editorText.value
-    }
+    // 新建书源保存后才有身份：编辑器内容本就是全量对象，回填 id 直接续用；
+    // 不回 store 重取（本地列表只存摘要，取出来会丢规则）
+    openInEditor({ ...parsed, bookSourceId: saved.bookSourceId })
   } catch (e: unknown) {
     appStore.showToast((e as Error).message || '保存失败', 'error')
   } finally {
@@ -521,10 +514,7 @@ async function handleSourceLogin() {
     if (!editingSource.value || editingSource.value.bookSourceUrl !== parsed.bookSourceUrl) {
       const saved = await sourceStore.saveSource(parsed)
       sourceId = saved.bookSourceId
-      const latest = sourceStore.sources.find((item) => item.bookSourceId === saved.bookSourceId)
-      if (latest) {
-        openInEditor(latest)
-      }
+      openInEditor({ ...parsed, bookSourceId: saved.bookSourceId })
     }
     if (sourceId == null) {
       throw new Error('书源尚未保存，无法登录')
@@ -642,21 +632,21 @@ function touchSubscription(url: string) {
 
 async function exportSources() {
   try {
-    // 快照对象缺规则字段，导出前必须等全量，否则导出文件是残缺的
-    await sourceStore.ensureFullSources()
+    // 导出必须带全量规则：单独走全量接口（低频操作），
+    // 本地列表只是摘要，导出摘要文件等于导出残源
+    const all = await getBookSources()
+    const blob = new Blob([JSON.stringify(all, null, 2)], {
+      type: 'application/json;charset=utf-8',
+    })
+    const url = URL.createObjectURL(blob)
+    const anchor = document.createElement('a')
+    anchor.href = url
+    anchor.download = `reader-book-sources-${formatDateForFile()}.json`
+    anchor.click()
+    URL.revokeObjectURL(url)
   } catch (e: unknown) {
-    appStore.showToast((e as Error).message, 'error')
-    return
+    appStore.showToast((e as Error).message || '导出书源失败', 'error')
   }
-  const blob = new Blob([JSON.stringify(sourceStore.sources, null, 2)], {
-    type: 'application/json;charset=utf-8',
-  })
-  const url = URL.createObjectURL(blob)
-  const anchor = document.createElement('a')
-  anchor.href = url
-  anchor.download = `reader-book-sources-${formatDateForFile()}.json`
-  anchor.click()
-  URL.revokeObjectURL(url)
 }
 
 function formatDateForFile() {

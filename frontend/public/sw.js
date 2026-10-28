@@ -30,6 +30,7 @@ const API_CACHE_PATHS = [
   // 单文档 getUserdata 已无调用方；批量读走 getUserdataBatch?names=a,b，
   // 上方按 pathname 精确匹配，查询串随 request.url 进缓存键、按文档名组合分条目
   'getUserdataBatch',
+  'getBookSourceList',
   'getBookSources',
 ].map((name) => `${BASE}reader3/${name}`)
 

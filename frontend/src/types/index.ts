@@ -173,6 +173,7 @@ export type { ReviewRule } from './generated/ReviewRule'
 export type { ParaReviewRule } from './generated/ParaReviewRule'
 export type { ContentImageRule } from './generated/ContentImageRule'
 export type { BookSource } from './generated/BookSource'
+export type { BookSourceSummary } from './generated/BookSourceSummary'
 
 import type { BookSource as BookSourceType } from './generated/BookSource'
 import type { SearchRule as SearchRuleType } from './generated/SearchRule'
