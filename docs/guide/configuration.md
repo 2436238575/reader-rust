@@ -44,13 +44,14 @@ Reader-Rust 通过**环境变量**配置，支持从 `.env` 文件读取。代�
 | `ACCESS_TOKEN_TTL_SECS`     | `21600`（6 小时） | Access Token（HS256 JWT）有效期。过期后前端用 Refresh Token 静默换新，用户不会感知到固定时长的重新登录                                                                                                                                                                                                                                                                      |
 | `REFRESH_TOKEN_TTL_SECS`    | `604800`（7 天）  | Refresh Token 有效期，**滑动续期**：每次换取都签发新令牌并重新计时，闲置超过该时长才失效。客户端超过 30 秒宽限窗口后重放已消费令牌会吊销整条会话                                                                                                                                                                                                                              |
 | `COOKIE_SECURE`             | `auto`            | 会话 Cookie 的 `Secure` 属性。`auto`（默认）在请求 Host 为 `localhost` / `127.0.0.1` / `[::1]` 时不加 `Secure`（本地 HTTP 开发），其余一律加；`true` / `false` 强制。HTTP + 非回环主机的部署应改用 HTTPS，或显式设 `false`（Cookie 会走明文链路，不推荐）                                                                                                                     |
+| `COOKIE_PATH`               | `/reader3`        | 会话 Cookie 的 `Path` 属性。必须匹配浏览器实际访问 API 的路径前缀：根路径部署保持默认值；前端以 `VITE_BASE_PATH=/read/` 构建、反代又剥掉 `/read/` 前缀时，必须设为 `/read/reader3`，否则浏览器不会回传 Cookie（登录 200、后续接口全 401）。末尾斜杠会被忽略；必须是绝对路径，非法值启动报错                                                                                     |
 | `RATE_LIMIT_DISABLED`       | `false`          | 豁免登录失败限速（开发与测试环境用）。默认规则：IP 登录失败 5 次封该 IP 登录 6h；用户名登录失败 10 次封该用户名登录 6h。限速为进程内状态，多实例部署各自计数                                                                                                                                                                                                               |
 | `TRUSTED_PROXIES`           | 空               | 登录限速的受信代理列表（逗号分隔，IP 或 CIDR，如 `"172.17.0.1, 172.17.0.0/16"`）。生产部署挂在 nginx/Caddy/Docker NAT 后面时，所有请求的对端地址都是代理 IP；攻击者连续输错 5 次密码，会使全体访问者被封禁 6 小时。配置后，只有对端地址命中受信列表时才解析 `X-Forwarded-For` 还原真实客户端地址（从右往左找第一个不在受信列表里的地址；格式非法或全部受信时回退到直连地址）。**留空（默认）不信任任何代理头**，一律按直连地址记账。值含逗号时必须用双引号包裹 |
 | `ALLOW_PRIVATE_NETWORK`     | `false`          | 是否允许服务端出站请求访问私网/环回/链路本地地址（`10.x`、`192.168.x`、`127.0.0.1`、`169.254.169.254` 等）。默认 `false`（安全优先）：公网暴露的部署开箱即不会被打成内网探测代理。书源/模型服务在局域网时（如 `http://192.168.x.x:9999`），显式设为 `true` 整体放行，或保持 `false` 用 `PRIVATE_NETWORK_WHITELIST` 精确放行 |
 | `PRIVATE_NETWORK_WHITELIST` | 空               | 私网白名单（逗号分隔），仅在 `ALLOW_PRIVATE_NETWORK=false` 时生效。条目支持 IP（`192.168.100.99`）、网段（`192.168.100.0/24`）、域名（`nas.lan`），均可带端口（`192.168.100.99:9999`，带端口时目标端口也须一致）。**名单为空时一律拦截**（不等同 `ALLOW_PRIVATE_NETWORK=true`）；名单非空时只有命中的目标可以出站，其余私网/环回地址一律拦截 |
 | `CORS_ALLOWED_ORIGINS`      | 空               | 允许跨域访问的来源白名单（逗号分隔）。留空表示**仅同源**——不发送任何 CORS 响应头；仅在前后端分离且前端独立域名部署时配置                                                                                                                                                                                                                                                   |
 
-鉴权使用 **Access Token + Refresh Token**：Access Token 是 6 小时的 HS256 JWT，Refresh Token 是 7 天的一次性随机串（数据库只存摘要）。浏览器会话由两枚 HttpOnly Cookie 承载（`reader_access` / `reader_refresh`，`HttpOnly; SameSite=Strict; Path=/reader3`），JS 读不到。**没有「安全模式」开关**：除 `/health`、`/reader3/login`、`/reader3/refreshToken`、`/reader3/getUserInfo`、`/reader3/logout` 与 WebDAV 的 Basic 认证入口外，所有 `/reader3/*` 接口都要求有效令牌，否则返回 401。
+鉴权使用 **Access Token + Refresh Token**：Access Token 是 6 小时的 HS256 JWT，Refresh Token 是 7 天的一次性随机串（数据库只存摘要）。浏览器会话由两枚 HttpOnly Cookie 承载（`reader_access` / `reader_refresh`，`HttpOnly; SameSite=Strict; Path` 由 `COOKIE_PATH` 配置，默认 `/reader3`），JS 读不到。**没有「安全模式」开关**：除 `/health`、`/reader3/login`、`/reader3/refreshToken`、`/reader3/getUserInfo`、`/reader3/logout` 与 WebDAV 的 Basic 认证入口外，所有 `/reader3/*` 接口都要求有效令牌，否则返回 401。
 
 令牌传法（详见 [API 概述 · 认证](../api/index#认证)）：
 
@@ -180,6 +181,8 @@ LOG_LEVEL=info
 ACCESS_TOKEN_TTL_SECS=21600
 REFRESH_TOKEN_TTL_SECS=604800
 COOKIE_SECURE=auto
+# 子路径部署时改成浏览器实际访问的前缀，如 COOKIE_PATH=/read/reader3
+COOKIE_PATH=/reader3
 ```
 
 `.env` 已被 gitignore，不会被提交。后端即使没有 `.env` 文件也能用代码默认值正常启动。

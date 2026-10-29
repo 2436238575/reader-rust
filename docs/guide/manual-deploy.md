@@ -146,7 +146,7 @@ server {
 
 ### 部署到子路径
 
-想把整个服务挂在 `https://example.org/read/` 这样的子路径下，分两步：
+想把整个服务挂在 `https://example.org/read/` 这样的子路径下，分三步：
 
 **1. 带前缀构建前端**（不加前缀时产物里的资源与接口地址都指向 `/`）：
 
@@ -171,11 +171,23 @@ location /read/ {
 }
 ```
 
+**3. 让后端把会话 Cookie 指到带前缀的路径**：
+
+```bash
+# .env 或容器环境变量
+COOKIE_PATH=/read/reader3
+```
+
+反代剥掉前缀后，后端看到的请求仍是 `/reader3/*`，默认会把 Cookie 的
+`Path` 写成 `/reader3`；而浏览器实际地址是 `/read/reader3/*`，路径不匹配
+就不会回传 Cookie，表现为「登录成功但所有接口 401」。
+
 要点：
 
 - 前端是 hash 路由（`https://example.org/read/#/reader`），不需要服务端 SPA 回落。
 - 服务端返回的图片路径（`/reader3/image/<id>`）由前端统一套上部署前缀，
-  不需要后端感知子路径。
+  后端不需要感知静态资源与图片路径；但**会话 Cookie 的 `Path` 必须显式配置**
+  （见上面第 3 步）。
 - PWA 的 Service Worker 与 manifest 都按自身位置推导作用域，
   子路径下装到桌面也不会互相干扰。
 - 本地想先试：`VITE_BASE_PATH=/read/ npm run build && VITE_BASE_PATH=/read/ npm run preview`

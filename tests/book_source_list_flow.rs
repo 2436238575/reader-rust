@@ -141,7 +141,10 @@ async fn source_list_returns_summary_without_rule_payload() {
         .iter()
         .find(|s| s["bookSourceUrl"] == "https://summary-a.example")
         .unwrap();
-    assert!(a["bookSourceId"].is_i64(), "摘要必须携带身份键 bookSourceId");
+    assert!(
+        a["bookSourceId"].is_i64(),
+        "摘要必须携带身份键 bookSourceId"
+    );
     assert_eq!(a["bookSourceName"], "规则源");
     assert_eq!(a["bookSourceGroup"], "小说");
     assert_eq!(a["enabled"], true);

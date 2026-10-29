@@ -283,7 +283,13 @@ fn session_response(
     let mut cookies = HeaderMap::new();
     cookies.append(
         header::SET_COOKIE,
-        build_cookie(ACCESS_COOKIE, &access, config.access_token_ttl_secs, secure),
+        build_cookie(
+            ACCESS_COOKIE,
+            &access,
+            config.access_token_ttl_secs,
+            &config.cookie_path,
+            secure,
+        ),
     );
     cookies.append(
         header::SET_COOKIE,
@@ -291,6 +297,7 @@ fn session_response(
             REFRESH_COOKIE,
             refresh_token,
             config.refresh_token_ttl_secs,
+            &config.cookie_path,
             secure,
         ),
     );
@@ -302,8 +309,14 @@ fn session_response(
 fn session_cleared_response(config: &AppConfig, headers: &HeaderMap, data: Value) -> Response {
     let secure = session_cookie_secure(config, headers);
     let mut cookies = HeaderMap::new();
-    cookies.append(header::SET_COOKIE, clear_cookie(ACCESS_COOKIE, secure));
-    cookies.append(header::SET_COOKIE, clear_cookie(REFRESH_COOKIE, secure));
+    cookies.append(
+        header::SET_COOKIE,
+        clear_cookie(ACCESS_COOKIE, &config.cookie_path, secure),
+    );
+    cookies.append(
+        header::SET_COOKIE,
+        clear_cookie(REFRESH_COOKIE, &config.cookie_path, secure),
+    );
     (cookies, Json(ApiResponse::ok(data))).into_response()
 }
 
@@ -314,12 +327,14 @@ fn session_cleared_response(config: &AppConfig, headers: &HeaderMap, data: Value
 fn unauthorized_with_cleared_cookies(config: &AppConfig, headers: &HeaderMap) -> Response {
     let secure = session_cookie_secure(config, headers);
     let mut response = AppError::Unauthorized(NEED_LOGIN.to_string()).into_response();
-    response
-        .headers_mut()
-        .append(header::SET_COOKIE, clear_cookie(ACCESS_COOKIE, secure));
-    response
-        .headers_mut()
-        .append(header::SET_COOKIE, clear_cookie(REFRESH_COOKIE, secure));
+    response.headers_mut().append(
+        header::SET_COOKIE,
+        clear_cookie(ACCESS_COOKIE, &config.cookie_path, secure),
+    );
+    response.headers_mut().append(
+        header::SET_COOKIE,
+        clear_cookie(REFRESH_COOKIE, &config.cookie_path, secure),
+    );
     response
 }
 

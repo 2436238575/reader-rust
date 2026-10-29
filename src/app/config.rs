@@ -49,6 +49,14 @@ pub struct AppConfig {
     /// 应改 HTTPS，或显式设 `false`（不推荐，Cookie 可被明文链路截获）。
     #[serde(deserialize_with = "deserialize_scalar_string")]
     pub cookie_secure: String,
+    /// 会话 Cookie 的 `Path` 属性，默认 `/reader3`。
+    ///
+    /// 必须匹配**浏览器实际访问 API 的路径前缀**。根路径部署保持默认值；
+    /// 前端以 `VITE_BASE_PATH=/read/` 构建、反向代理又剥掉 `/read/` 前缀时，
+    /// 浏览器会请求 `/read/reader3/...`，这里必须同步设为 `/read/reader3`，
+    /// 否则浏览器不会回传会话 Cookie，表现为「登录成功但接口全 401」。
+    /// 末尾斜杠会被忽略（`/read/reader3/` 等价于 `/read/reader3`）。
+    pub cookie_path: String,
     /// 唯一账号的用户名，首次启动建号时使用；建号后修改不会再改已有数据。
     pub admin_username: String,
     /// 唯一账号的密码。非空时**每次启动都会强制写入**（覆盖现有密码），
@@ -161,6 +169,7 @@ impl Default for AppConfig {
             access_token_ttl_secs: 6 * 3600,
             refresh_token_ttl_secs: 7 * 24 * 3600,
             cookie_secure: "auto".to_string(),
+            cookie_path: "/reader3".to_string(),
             admin_username: "admin".to_string(),
             admin_password: String::new(),
             user_book_limit: 2000,
@@ -226,6 +235,7 @@ pub fn load() -> anyhow::Result<AppConfig> {
             defaults.refresh_token_ttl_secs as i64,
         )?
         .set_default("cookie_secure", defaults.cookie_secure)?
+        .set_default("cookie_path", defaults.cookie_path)?
         .set_default("admin_username", defaults.admin_username)?
         .set_default("admin_password", defaults.admin_password)?
         .set_default("user_book_limit", defaults.user_book_limit as i64)?
@@ -275,6 +285,7 @@ pub fn load() -> anyhow::Result<AppConfig> {
     normalize_inbound_timeouts(&mut cfg);
     normalize_agent_sidecar_budget(&mut cfg);
     normalize_cookie_secure(&mut cfg)?;
+    normalize_cookie_path(&mut cfg)?;
     // TRUSTED_PROXIES 解析失败必须启动告警并按空列表生效（最保守：
     // 不信任任何代理头），不能静默吞掉——否则「配错了」与「没配」不可区分。
     if let Err(error) = crate::util::client_ip::parse_trusted_proxies(&cfg.trusted_proxies) {
@@ -361,6 +372,35 @@ fn normalize_cookie_secure(cfg: &mut AppConfig) -> anyhow::Result<()> {
     }
 }
 
+/// 归一 `COOKIE_PATH`：必须是绝对路径，去掉末尾斜杠；非法值让启动失败。
+///
+/// Cookie 的 `Path` 与实际 API 前缀不匹配时，浏览器不会回传会话 Cookie
+/// （登录接口 200、后续接口全 401），静默回退比启动报错更难排查，因此
+/// 与 `COOKIE_SECURE` 一样直接失败。
+fn normalize_cookie_path(cfg: &mut AppConfig) -> anyhow::Result<()> {
+    let trimmed = cfg.cookie_path.trim();
+    if trimmed.is_empty() {
+        anyhow::bail!("COOKIE_PATH 不能为空；根路径部署用 /reader3，子路径部署用 /<前缀>/reader3");
+    }
+    if !trimmed.starts_with('/') {
+        anyhow::bail!("COOKIE_PATH 必须以 / 开头，当前值: {trimmed}");
+    }
+    // `;` 会截断 Set-Cookie 属性；`,` `"` `\` 与空白/控制字符属于非法或易被
+    // 改写的字符；`?`/`#` 不可能出现在请求路径里（写了也永远匹配不上）。
+    if trimmed.chars().any(|c| {
+        c.is_control() || c.is_whitespace() || matches!(c, ';' | ',' | '"' | '\\' | '?' | '#')
+    }) {
+        anyhow::bail!("COOKIE_PATH 含非法字符，当前值: {trimmed}");
+    }
+    // 末尾斜杠不影响匹配（`/reader3/` 与 `/reader3` 等价），统一去掉；根路径保留 `/`
+    cfg.cookie_path = if trimmed == "/" {
+        "/".to_string()
+    } else {
+        trimmed.trim_end_matches('/').to_string()
+    };
+    Ok(())
+}
+
 /// 标量读取时容忍布尔/数字（统一转字符串）。
 ///
 /// `config` 的 `try_parsing` 会把 `COOKIE_SECURE=true` 解析成布尔、
@@ -417,6 +457,48 @@ mod tests {
             ..Default::default()
         };
         assert!(normalize_cookie_secure(&mut cfg).is_err());
+    }
+
+    #[test]
+    fn cookie_path_defaults_to_reader3() {
+        // 默认值写进了 AGENTS.md 与 docs/guide/configuration.md，改动需同步文档
+        assert_eq!(AppConfig::default().cookie_path, "/reader3");
+    }
+
+    #[test]
+    fn cookie_path_normalizes_whitespace_and_trailing_slash() {
+        for (raw, expected) in [
+            ("/reader3", "/reader3"),
+            (" /read/reader3/ ", "/read/reader3"),
+            ("/", "/"),
+        ] {
+            let mut cfg = AppConfig {
+                cookie_path: raw.to_string(),
+                ..Default::default()
+            };
+            normalize_cookie_path(&mut cfg).unwrap();
+            assert_eq!(cfg.cookie_path, expected, "{raw:?} 应归一为 {expected}");
+        }
+    }
+
+    #[test]
+    fn cookie_path_rejects_invalid_values() {
+        // 路径错了会话 Cookie 就永远不回传，必须启动失败而不是静默回退
+        for raw in [
+            "",
+            "   ",
+            "reader3",
+            "/read/reader3; Path=/",
+            "/read reader3",
+            "/read/reader3,foo",
+            "/read/reader3?x=1",
+        ] {
+            let mut cfg = AppConfig {
+                cookie_path: raw.to_string(),
+                ..Default::default()
+            };
+            assert!(normalize_cookie_path(&mut cfg).is_err(), "{raw:?} 应被拒绝");
+        }
     }
 
     #[test]

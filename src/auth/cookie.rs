@@ -2,7 +2,8 @@
 //!
 //! Access / Refresh 令牌从 JSON 响应迁移到 HttpOnly Cookie：JS 读不到，
 //! XSS 也偷不走。两枚 Cookie 都是 host-only（不设 `Domain`）、
-//! `Path=/reader3`、`SameSite=Strict`；`Secure` 由 `COOKIE_SECURE`
+//! `SameSite=Strict`；`Path` 由 `COOKIE_PATH` 配置（默认 `/reader3`，
+//! 子路径部署需同步改为 `/<前缀>/reader3`）；`Secure` 由 `COOKIE_SECURE`
 //! 三态控制，默认 `auto` 按请求 Host 判定（回环主机不加，其余一律加）。
 
 use axum::http::{header, HeaderMap, HeaderValue};
@@ -11,9 +12,6 @@ use axum::http::{header, HeaderMap, HeaderValue};
 pub const ACCESS_COOKIE: &str = "reader_access";
 /// Refresh Token 的 Cookie 名。
 pub const REFRESH_COOKIE: &str = "reader_refresh";
-
-/// Cookie 只随 `/reader3` 前缀的 API 请求发送，静态资源不带。
-const COOKIE_PATH: &str = "/reader3";
 
 /// 从请求头解析指定名称的 Cookie 值。
 ///
@@ -37,13 +35,21 @@ pub fn cookie_value(headers: &HeaderMap, name: &str) -> Option<String> {
 /// 生成下发会话 Cookie 的 `Set-Cookie` 值。
 ///
 /// `max_age` 单位秒：Access / Refresh 分别取各自 TTL，刷新时重新计时。
-pub fn build_cookie(name: &str, value: &str, max_age: u64, secure: bool) -> HeaderValue {
+/// `path` 来自 `COOKIE_PATH` 配置，必须是浏览器访问 API 的实际前缀
+/// （根路径部署 `/reader3`，子路径部署 `/read/reader3`）。
+pub fn build_cookie(
+    name: &str,
+    value: &str,
+    max_age: u64,
+    path: &str,
+    secure: bool,
+) -> HeaderValue {
     let mut cookie =
-        format!("{name}={value}; Max-Age={max_age}; Path={COOKIE_PATH}; HttpOnly; SameSite=Strict");
+        format!("{name}={value}; Max-Age={max_age}; Path={path}; HttpOnly; SameSite=Strict");
     if secure {
         cookie.push_str("; Secure");
     }
-    // 名称固定、值是 base64url/JWT 字符集，均在 HeaderValue 合法范围内
+    // 名称固定、值是 base64url/JWT 字符集，路径已在配置层校验，均在 HeaderValue 合法范围内
     HeaderValue::from_str(&cookie).expect("会话 Cookie 值应在 HeaderValue 合法范围内")
 }
 
@@ -51,8 +57,8 @@ pub fn build_cookie(name: &str, value: &str, max_age: u64, secure: bool) -> Head
 ///
 /// `Max-Age=0` 且其余属性与下发时一致（Path/HttpOnly/SameSite/Secure），
 /// 浏览器按同名同路径覆盖删除；属性不一致会留下孤儿 Cookie。
-pub fn clear_cookie(name: &str, secure: bool) -> HeaderValue {
-    build_cookie(name, "", 0, secure)
+pub fn clear_cookie(name: &str, path: &str, secure: bool) -> HeaderValue {
+    build_cookie(name, "", 0, path, secure)
 }
 
 /// `COOKIE_SECURE` 三态开关：
@@ -150,7 +156,7 @@ mod tests {
 
     #[test]
     fn build_cookie_carries_session_attributes() {
-        let header = build_cookie(ACCESS_COOKIE, "tok", 21600, false);
+        let header = build_cookie(ACCESS_COOKIE, "tok", 21600, "/reader3", false);
         let cookie = header.to_str().unwrap();
         assert!(cookie.starts_with("reader_access=tok;"));
         assert!(cookie.contains("Max-Age=21600"));
@@ -166,14 +172,23 @@ mod tests {
 
     #[test]
     fn build_cookie_appends_secure_when_requested() {
-        let header = build_cookie(REFRESH_COOKIE, "rt_x", 604800, true);
+        let header = build_cookie(REFRESH_COOKIE, "rt_x", 604800, "/reader3", true);
         let cookie = header.to_str().unwrap();
         assert!(cookie.ends_with("; Secure"));
     }
 
     #[test]
+    fn build_cookie_uses_the_configured_path() {
+        // 子路径部署：Path 必须覆盖浏览器实际访问的 /read/reader3 前缀
+        let header = build_cookie(ACCESS_COOKIE, "tok", 60, "/read/reader3", false);
+        let cookie = header.to_str().unwrap();
+        assert!(cookie.contains("Path=/read/reader3;"), "{cookie}");
+        assert!(!cookie.contains("Path=/reader3;"), "{cookie}");
+    }
+
+    #[test]
     fn clear_cookie_expires_with_same_attributes() {
-        let header = clear_cookie(ACCESS_COOKIE, true);
+        let header = clear_cookie(ACCESS_COOKIE, "/reader3", true);
         let cookie = header.to_str().unwrap();
         assert!(cookie.starts_with("reader_access=;"));
         assert!(cookie.contains("Max-Age=0"));

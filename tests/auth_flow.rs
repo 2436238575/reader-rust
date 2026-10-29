@@ -22,6 +22,15 @@ struct TestServer {
 
 impl TestServer {
     async fn start() -> Self {
+        Self::start_with(|_| {}).await
+    }
+
+    /// 用自定义 `COOKIE_PATH` 起服务，覆盖子路径部署场景。
+    async fn start_with_cookie_path(path: &str) -> Self {
+        Self::start_with(|cfg| cfg.cookie_path = path.to_string()).await
+    }
+
+    async fn start_with(configure: impl FnOnce(&mut AppConfig)) -> Self {
         common::clean_stale_temp_dirs();
         let temp_dir =
             std::env::temp_dir().join(format!("reader-rust-auth-{}", uuid::Uuid::new_v4()));
@@ -36,7 +45,7 @@ impl TestServer {
         .unwrap();
         std::fs::write(web_root.join("sw.js"), "// service worker").unwrap();
 
-        let cfg = AppConfig {
+        let mut cfg = AppConfig {
             server_host: "127.0.0.1".to_string(),
             server_port: 0,
             database_url: format!("sqlite:{}?mode=rwc", temp_dir.join("reader.db").display()),
@@ -51,6 +60,7 @@ impl TestServer {
             rate_limit_disabled: true,
             ..AppConfig::default()
         };
+        configure(&mut cfg);
 
         let state = build_state(cfg).await.unwrap();
         let app = build_router(state);
@@ -376,6 +386,25 @@ async fn session_cookies_carry_the_contracted_attributes() {
         );
     }
     assert!(!refresh.contains("Domain="));
+}
+
+/// 子路径部署：`COOKIE_PATH` 必须原样进 Set-Cookie。
+///
+/// 反代剥掉 `/read/` 前缀后后端看到的仍是 `/reader3/*`，若 Cookie 沿用默认
+/// `Path=/reader3`，浏览器不会把它回传到 `/read/reader3/*`，表现为登录成功
+/// 但所有接口 401。
+#[tokio::test]
+async fn session_cookies_follow_the_configured_path() {
+    let server = TestServer::start_with_cookie_path("/read/reader3").await;
+    let (_, cookies) = server.login_with_cookies().await;
+
+    for name in ["reader_access", "reader_refresh"] {
+        let cookie = set_cookie_of(&cookies, name).expect("登录应下发会话 Cookie");
+        assert!(
+            cookie.contains("Path=/read/reader3"),
+            "{name} 应使用配置的 Path: {cookie}"
+        );
+    }
 }
 
 /// 受保护接口只带 Cookie（无 Bearer）也能通过；不带任何凭据仍 401。
