@@ -614,6 +614,7 @@ function handleApplyUpdate() {
 }
 
 .status-card.accent {
+  margin-top: var(--space-3);
   background: color-mix(in srgb, var(--color-primary) 12%, transparent);
   border: 1px solid color-mix(in srgb, var(--color-primary) 18%, transparent);
 }
