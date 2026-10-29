@@ -432,16 +432,24 @@
           <template v-if="diffPreview.model.kind === 'modify'">
             <div class="diff-preview-row del">
               <span class="diff-preview-gutter">-</span>
-              <span>{{ diffPreview.model.baseText }}</span>
+              <span>
+                <template
+                  v-for="(part, partIndex) in inlinePartsFor('del', diffPreview.model)"
+                  :key="partIndex"
+                >
+                  <span v-if="part.changed" class="diff-preview-del-strong">{{ part.text }}</span>
+                  <template v-else>{{ part.text }}</template>
+                </template>
+              </span>
             </div>
             <div class="diff-preview-row add">
               <span class="diff-preview-gutter">+</span>
               <span>
                 <template
-                  v-for="(part, partIndex) in diffPreviewParts(diffPreview.model)"
+                  v-for="(part, partIndex) in inlinePartsFor('add', diffPreview.model)"
                   :key="partIndex"
                 >
-                  <span v-if="part.added" class="diff-preview-ins">{{ part.text }}</span>
+                  <span v-if="part.changed" class="diff-preview-ins-strong">{{ part.text }}</span>
                   <template v-else>{{ part.text }}</template>
                 </template>
               </span>
@@ -449,20 +457,21 @@
           </template>
           <div v-else-if="diffPreview.model.kind === 'add'" class="diff-preview-row add">
             <span class="diff-preview-gutter">+</span>
-            <span>{{ diffPreview.model.editedText }}</span>
+            <span>
+              <span class="diff-preview-ins-strong">{{ diffPreview.model.editedText }}</span>
+            </span>
           </div>
           <template v-if="diffPreview.model.deletedTotal">
             <div class="diff-preview-label">删除 {{ diffPreview.model.deletedTotal }} 段</div>
             <div
-              v-for="(text, delIndex) in diffPreview.model.deleted.slice(0, 3)"
+              v-for="(text, delIndex) in diffPreview.model.deleted"
               :key="delIndex"
               class="diff-preview-row del"
             >
               <span class="diff-preview-gutter">-</span>
-              <span>{{ text }}</span>
-            </div>
-            <div v-if="diffPreview.model.deletedTotal > 3" class="diff-preview-more">
-              还有 {{ diffPreview.model.deletedTotal - 3 }} 段，打开完整面板查看
+              <span>
+                <span class="diff-preview-del-strong">{{ text }}</span>
+              </span>
             </div>
           </template>
         </div>
@@ -511,7 +520,11 @@ import { APP_VIEWPORT_CHANGE_EVENT, syncViewportSize } from '../utils/viewport'
 import { isReaderInteractiveClickTarget, resolveReaderTapZone } from '../utils/readerClick'
 import { chapterPosToProgress } from '../utils/bookmarks'
 import { darkenKeywordColor } from '../utils/keywordHighlights'
-import { buildDiffPreview, inlineDiff, type DiffPreviewModel } from '../utils/chapterDiff'
+import {
+  buildDiffPreview,
+  inlinePartsFor as chapterInlineParts,
+  type DiffPreviewModel,
+} from '../utils/chapterDiff'
 import { DUAL_PAGE_MIN_WIDTH, useHorizontalPaging } from '../composables/useHorizontalPaging'
 import {
   appendLocalEpubAssetAuth,
@@ -1076,15 +1089,8 @@ function openDiffPreview(target: HTMLElement | null) {
   return true
 }
 
-/** 段内对照：编辑版里新增的部分加底色（与 diff 面板同口径）。 */
-function diffPreviewParts(model: DiffPreviewModel) {
-  const diff = inlineDiff(model.baseText || '', model.editedText || '')
-  const parts: { text: string; added: boolean }[] = []
-  if (diff.prefix) parts.push({ text: diff.prefix, added: false })
-  if (diff.added) parts.push({ text: diff.added, added: true })
-  if (diff.suffix) parts.push({ text: diff.suffix, added: false })
-  return parts
-}
+/** 段内对照：删除/新增两侧各自强调变动中段（与 diff 面板同口径）。 */
+const inlinePartsFor = chapterInlineParts
 
 function openDiffPanelFromPreview() {
   closeDiffPreview()
@@ -2877,37 +2883,55 @@ watch(
 .diff-preview-body {
   max-height: 40vh;
   overflow-y: auto;
-  padding: 2px 14px 10px;
+  padding: 2px 8px 10px;
   font-size: var(--text-sm);
-  line-height: 1.6;
+  line-height: 1.8;
 }
 
 .diff-preview-row {
   display: flex;
-  gap: 8px;
-  padding: 3px 0;
+  gap: 10px;
+  padding: 2px 8px;
+  margin: 2px 0;
+  border-radius: 4px;
   white-space: pre-wrap;
   word-break: break-word;
 }
 
 .diff-preview-row.del {
+  background: rgba(239, 68, 68, 0.1);
+}
+
+.diff-preview-row.del .diff-preview-gutter {
   color: var(--color-danger);
+  opacity: 1;
 }
 
 .diff-preview-row.add {
-  color: #16a34a;
+  background: rgba(34, 197, 94, 0.1);
+}
+
+.diff-preview-row.add .diff-preview-gutter {
+  color: #22c55e;
+  opacity: 1;
 }
 
 .diff-preview-gutter {
   flex: none;
-  width: 10px;
+  width: 12px;
+  text-align: center;
   opacity: 0.8;
   user-select: none;
   -webkit-user-select: none;
 }
 
-.diff-preview-ins {
-  background: rgba(34, 197, 94, 0.22);
+.diff-preview-ins-strong {
+  background: rgba(34, 197, 94, 0.28);
+  border-radius: 2px;
+}
+
+.diff-preview-del-strong {
+  background: rgba(239, 68, 68, 0.28);
   border-radius: 2px;
 }
 
@@ -2917,12 +2941,6 @@ watch(
   border-top: 1px dashed rgba(128, 128, 128, 0.3);
   font-size: var(--text-xs);
   opacity: 0.65;
-}
-
-.diff-preview-more {
-  padding-top: 2px;
-  font-size: var(--text-xs);
-  opacity: 0.6;
 }
 
 .diff-preview-actions {
