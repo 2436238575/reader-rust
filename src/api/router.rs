@@ -335,6 +335,14 @@ pub fn build_router(state: AppState) -> Router {
             post(handlers::save_chapter_edit),
         )
         .route(
+            "/reader3/renameChapter",
+            post(handlers::rename_chapter),
+        )
+        .route(
+            "/reader3/getChapterTitleOverride",
+            get(handlers::get_chapter_title_override).post(handlers::get_chapter_title_override),
+        )
+        .route(
             "/reader3/getChapterEdit",
             get(handlers::get_chapter_edit).post(handlers::get_chapter_edit),
         )

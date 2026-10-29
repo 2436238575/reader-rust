@@ -16,7 +16,9 @@ use crate::service::chapter_text_import::{
 use crate::service::local_epub_book::is_local_epub_url;
 use crate::service::local_txt_book::{decode_txt_bytes, is_local_txt_url, MAX_TXT_UPLOAD_BYTES};
 use crate::storage::db::content_repo::RecordOutcome;
+use crate::storage::db::repo::parse_book_id;
 use crate::util::text::repair_encoded_url;
+use crate::util::time::now_ts;
 use axum::{
     extract::{Multipart, State},
     Json,
@@ -214,6 +216,143 @@ pub async fn save_chapter_edit(
     Ok(Json(ApiResponse::ok(json!({
         "edited": true,
         "versionId": outcome_version_id(outcome),
+    }))))
+}
+
+/// 章节标题长度上限：目录标题的现实量级，表级防线在请求侧兜住。
+const CHAPTER_TITLE_MAX_LEN: usize = 100;
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct RenameChapterRequest {
+    pub book_id: String,
+    pub chapter_url: String,
+    /// None / 空串 = 删除覆盖（恢复原名）。
+    pub title: Option<String>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct ChapterTitleOverrideQuery {
+    pub book_id: String,
+    pub chapter_url: String,
+}
+
+/// 目录原标题（不套覆盖；目录未缓存时为空串）。注意不走上层
+/// get_chapter_list：改名查询不应触发网络抓取。本地书没有目录缓存文件，
+/// 直接读本地章节表（纯本地数据，无网络请求）。
+async fn original_toc_title(
+    state: &AppState,
+    user_ns: &str,
+    resolved: &super::book::ResolvedBook,
+    book_id: &str,
+    chapter_url: &str,
+) -> String {
+    if is_local_txt_url(&resolved.book_url) {
+        return state
+            .local_txt_book_service
+            .get_chapter_list(user_ns, &resolved.book_url)
+            .await
+            .unwrap_or_default()
+            .into_iter()
+            .find(|chapter| chapter.url == chapter_url)
+            .map(|chapter| chapter.title)
+            .unwrap_or_default();
+    }
+    if is_local_epub_url(&resolved.book_url) {
+        return state
+            .local_epub_book_service
+            .get_chapter_list(user_ns, &resolved.book_url)
+            .await
+            .unwrap_or_default()
+            .into_iter()
+            .find(|chapter| chapter.url == chapter_url)
+            .map(|chapter| chapter.title)
+            .unwrap_or_default();
+    }
+    state
+        .book_service
+        .load_chapter_list_cache(user_ns, book_id)
+        .await
+        .ok()
+        .flatten()
+        .and_then(|chapters| {
+            chapters
+                .into_iter()
+                .find(|chapter| chapter.url == chapter_url)
+                .map(|chapter| chapter.title)
+        })
+        .unwrap_or_default()
+}
+
+/// POST /reader3/renameChapter：改当前章节名。
+///
+/// 标题是「显示偏好」，走持久覆盖层（chapter_title_overrides），读取时叠加
+/// 在目录缓存之上——不写 chapter_versions（时间线保留各版本抓取时的标题
+/// 快照），也不动目录缓存文件（refresh=1 重抓后覆盖仍在）。title 为空/null
+/// 表示恢复原名；改名结果与目录原标题相同时按恢复原名处理（不留冗余行）。
+pub async fn rename_chapter(
+    State(state): State<AppState>,
+    user: CurrentUser,
+    QueryOrBody(req): QueryOrBody<RenameChapterRequest>,
+) -> Result<Json<ApiResponse<Value>>, AppError> {
+    require_ids(&req.book_id, &req.chapter_url)?;
+    let resolved = resolve_book_checked(&state, &user.0.ns, &req.book_id).await?;
+    let Some(book_id) = parse_book_id(&req.book_id) else {
+        return Err(AppError::BadRequest("bookId 格式非法".to_string()));
+    };
+    let original_title =
+        original_toc_title(&state, &user.0.ns, &resolved, &req.book_id, &req.chapter_url).await;
+    let trimmed = req.title.as_deref().map(str::trim).unwrap_or("");
+    if trimmed.is_empty() || (!original_title.is_empty() && trimmed == original_title) {
+        state
+            .chapter_title_override_repo
+            .delete(book_id, &req.chapter_url)
+            .await?;
+        return Ok(Json(ApiResponse::ok(json!({
+            "renamed": false,
+            "title": original_title,
+            "originalTitle": original_title,
+            "hasOverride": false,
+        }))));
+    }
+    if trimmed.chars().count() > CHAPTER_TITLE_MAX_LEN {
+        return Err(AppError::BadRequest(format!(
+            "章节标题过长（上限 {CHAPTER_TITLE_MAX_LEN} 字符）"
+        )));
+    }
+    state
+        .chapter_title_override_repo
+        .upsert(book_id, &req.chapter_url, trimmed, now_ts())
+        .await?;
+    Ok(Json(ApiResponse::ok(json!({
+        "renamed": true,
+        "title": trimmed,
+        "originalTitle": original_title,
+        "hasOverride": true,
+    }))))
+}
+
+/// GET /reader3/getChapterTitleOverride：当前章的覆盖状态（改名输入框初始态）。
+/// 无覆盖时 title 即目录原标题，前端据此判断「恢复原名」入口是否显示。
+pub async fn get_chapter_title_override(
+    State(state): State<AppState>,
+    user: CurrentUser,
+    QueryOrBody(req): QueryOrBody<ChapterTitleOverrideQuery>,
+) -> Result<Json<ApiResponse<Value>>, AppError> {
+    require_ids(&req.book_id, &req.chapter_url)?;
+    let resolved = resolve_book_checked(&state, &user.0.ns, &req.book_id).await?;
+    let Some(book_id) = parse_book_id(&req.book_id) else {
+        return Err(AppError::BadRequest("bookId 格式非法".to_string()));
+    };
+    let original_title =
+        original_toc_title(&state, &user.0.ns, &resolved, &req.book_id, &req.chapter_url).await;
+    let map = state.chapter_title_override_repo.get_map(book_id).await?;
+    let override_title = map.get(&req.chapter_url);
+    Ok(Json(ApiResponse::ok(json!({
+        "title": override_title.cloned().unwrap_or_else(|| original_title.clone()),
+        "originalTitle": original_title,
+        "hasOverride": override_title.is_some(),
     }))))
 }
 
@@ -529,6 +668,8 @@ struct ChapterImportRequest {
     created_at: Option<i64>,
     /// 为空表示「全选已匹配章节」；这个字段本身不出现时也是全选。
     selected_indexes: Option<Vec<i32>>,
+    /// 导入后是否把 TXT 解析出的章节名写进标题覆盖层（默认 true）。
+    apply_titles: Option<bool>,
     /// 导入时带上预览令牌：直接复用预览暂存的切章/匹配结果，不再上传正文。
     preview_id: String,
     /// 自适应分片上传的令牌：服务端已把分片拼成完整文件，直接按文件读取。
@@ -557,6 +698,10 @@ struct ChapterImportPreviewItem {
     chapter_index: Option<i32>,
     chapter_url: Option<String>,
     chapter_title: Option<String>,
+    /// 目录当前生效标题（含已有覆盖）：matched 章才有意义。
+    current_title: Option<String>,
+    /// TXT 解析标题与生效标题是否不同（导入时将改名的章）。
+    title_changed: bool,
     /// 当前是否有缓存正文可用来对比。
     cached: bool,
     /// 导入正文与当前缓存正文是否不同；没有缓存时为 false。
@@ -738,6 +883,7 @@ async fn read_chapter_import_request(
             }
             "previewId" => req.preview_id = value,
             "uploadId" => req.upload_id = value,
+            "applyTitles" => req.apply_titles = Some(parse_bool(&value)),
             "fileSize" => {
                 if !value.is_empty() {
                     req.file_size = Some(
@@ -871,6 +1017,7 @@ fn preview_from_match(
     matched: &MatchedChapter,
     toc: &[BookChapter],
     current_hash: Option<&String>,
+    title_overrides: &HashMap<String, String>,
 ) -> ChapterImportPreviewItem {
     let target = matched.toc_pos.map(|pos| &toc[pos]);
     let status = if matched.source.content.trim().is_empty() {
@@ -884,6 +1031,19 @@ fn preview_from_match(
     let changed = current_hash
         .map(|hash| *hash != normalized_content_hash(&matched.source.content))
         .unwrap_or(false);
+    // 目录当前生效标题 = 覆盖层优先；与 TXT 解析标题比对得出「将改名」
+    let current_title = target.map(|chapter| {
+        title_overrides
+            .get(&chapter.url)
+            .cloned()
+            .unwrap_or_else(|| chapter.title.clone())
+    });
+    let txt_title = matched.source.title.trim();
+    let title_changed = !txt_title.is_empty()
+        && current_title
+            .as_deref()
+            .map(|current| current.trim() != txt_title)
+            .unwrap_or(false);
     ChapterImportPreviewItem {
         source_index: matched.source.source_index,
         title: matched.source.title.clone(),
@@ -894,6 +1054,8 @@ fn preview_from_match(
         chapter_index: target.map(|chapter| chapter.index),
         chapter_url: target.map(|chapter| chapter.url.clone()),
         chapter_title: target.map(|chapter| chapter.title.clone()),
+        current_title,
+        title_changed,
         cached,
         changed,
     }
@@ -976,6 +1138,16 @@ async fn handle_chapter_import(
         None
     };
 
+    // 章节标题覆盖层：预览算 currentTitle/titleChanged，导入写覆盖
+    let title_overrides: HashMap<String, String> = match parse_book_id(&req.book_id) {
+        Some(id) => state
+            .chapter_title_override_repo
+            .get_map(id)
+            .await
+            .unwrap_or_default(),
+        None => HashMap::new(),
+    };
+
     let (mode, items, contents) = match reused {
         Some(preview) => {
             let mut items: Vec<ChapterImportPreviewItem> =
@@ -983,6 +1155,8 @@ async fn handle_chapter_import(
             let mut contents: Vec<String> = Vec::with_capacity(preview.chapters.len());
             for chapter in preview.chapters {
                 // 只还原批量写入需要的字段；excerpt/cached/changed 是预览展示态，导入不用。
+                // currentTitle/titleChanged 按当前覆盖层重算（预览后可能有过改名），
+                // 不信任暂存值。
                 let status = if chapter.content.trim().is_empty() {
                     "empty"
                 } else if chapter.chapter_url.is_some() {
@@ -990,6 +1164,22 @@ async fn handle_chapter_import(
                 } else {
                     "unmatched"
                 };
+                let current_title = chapter
+                    .chapter_url
+                    .as_deref()
+                    .and_then(|url| {
+                        title_overrides
+                            .get(url)
+                            .cloned()
+                            .or_else(|| chapter.chapter_title.clone())
+                    });
+                let txt_title = chapter.title.trim();
+                let title_changed = status == "matched"
+                    && !txt_title.is_empty()
+                    && current_title
+                        .as_deref()
+                        .map(|current| current.trim() != txt_title)
+                        .unwrap_or(false);
                 contents.push(chapter.content);
                 items.push(ChapterImportPreviewItem {
                     source_index: chapter.source_index,
@@ -1001,6 +1191,8 @@ async fn handle_chapter_import(
                     chapter_index: chapter.chapter_index,
                     chapter_url: chapter.chapter_url,
                     chapter_title: chapter.chapter_title,
+                    current_title,
+                    title_changed,
                     cached: false,
                     changed: false,
                 });
@@ -1062,6 +1254,16 @@ async fn handle_chapter_import(
                     source.title.clone()
                 };
                 let current = effective.get(&req.chapter_url);
+                // 单章导入没有目录上下文：生效标题取覆盖层，缺省为本次导入标题
+                let current_title = title_overrides
+                    .get(req.chapter_url.trim())
+                    .cloned()
+                    .or_else(|| Some(title.clone()));
+                let title_changed = !title.trim().is_empty()
+                    && current_title
+                        .as_deref()
+                        .map(|current| current.trim() != title.trim())
+                        .unwrap_or(false);
                 items.push(ChapterImportPreviewItem {
                     source_index: source.source_index,
                     title: title.clone(),
@@ -1076,6 +1278,8 @@ async fn handle_chapter_import(
                     chapter_index: Some(req.chapter_index),
                     chapter_url: Some(req.chapter_url.clone()),
                     chapter_title: Some(title),
+                    current_title,
+                    title_changed,
                     cached: current.is_some(),
                     changed: current
                         .map(|hash| *hash != normalized_content_hash(&source.content))
@@ -1090,7 +1294,7 @@ async fn handle_chapter_import(
                         .toc_pos
                         .map(|pos| &toc[pos])
                         .and_then(|chapter| effective.get(&chapter.url));
-                    items.push(preview_from_match(item, &toc, current));
+                    items.push(preview_from_match(item, &toc, current, &title_overrides));
                 }
                 contents.extend(matched.into_iter().map(|item| item.source.content));
             }
@@ -1110,12 +1314,16 @@ async fn handle_chapter_import(
         .selected_indexes
         .as_ref()
         .map(|indexes| indexes.iter().copied().collect());
+    // 标题覆盖写入开关：默认 true（导入整本 TXT 通常就是为了把标题一并修正）
+    let apply_titles = req.apply_titles.unwrap_or(true);
     // 先收齐待写章节，再走批量写入（分块事务 + 章级保存点）；
     // 对外字段与计数口径和逐章写入完全一致。
     let mut selected_total = 0usize;
     let mut skipped = 0usize;
+    let mut titled = 0usize;
     let mut batch: Vec<UserVersionImport> = Vec::new();
     let mut batch_titles: Vec<String> = Vec::new();
+    let book_id_num = parse_book_id(&req.book_id);
     for (item, content) in items.iter().zip(contents.iter()) {
         let picked = selected
             .as_ref()
@@ -1140,6 +1348,30 @@ async fn handle_chapter_import(
         } else {
             title.to_string()
         });
+        // 标题联动：TXT 解析标题（非空）与目录生效标题不同时写覆盖层。
+        // 内容未变的章也修标题——修标题常常正是导入的目的。写失败不连坐正文。
+        if apply_titles {
+            if let Some(book_id) = book_id_num {
+                let txt_title = item.title.trim();
+                let effective = title_overrides
+                    .get(chapter_url)
+                    .map(String::as_str)
+                    .or(item.chapter_title.as_deref())
+                    .unwrap_or("")
+                    .trim();
+                if !txt_title.is_empty() && txt_title != effective {
+                    if let Err(e) = state
+                        .chapter_title_override_repo
+                        .upsert(book_id, chapter_url, txt_title, now_ts())
+                        .await
+                    {
+                        tracing::warn!("导入应用章节标题失败: {e}");
+                    } else {
+                        titled += 1;
+                    }
+                }
+            }
+        }
     }
     let outcomes = state
         .chapter_content_service
@@ -1176,6 +1408,7 @@ async fn handle_chapter_import(
         "imported": imported,
         "unchanged": unchanged,
         "skipped": skipped,
+        "titled": titled,
         "failed": failed,
         "errors": errors,
     }))))

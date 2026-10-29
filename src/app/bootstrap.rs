@@ -296,6 +296,7 @@ pub async fn build_state(cfg: AppConfig) -> anyhow::Result<AppState> {
         json_document_service,
         bookmark_repo: db::repo::BookmarkRepo::new(pool.clone()),
         replace_rule_repo: db::repo::ReplaceRuleRepo::new(pool.clone()),
+        chapter_title_override_repo: db::repo::ChapterTitleOverrideRepo::new(pool.clone()),
         ai_book_service,
         ai_model_service,
         agent_sidecar_service,

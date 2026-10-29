@@ -33,6 +33,8 @@ pub struct AppState {
     pub json_document_service: Arc<JsonDocumentService>,
     pub bookmark_repo: crate::storage::db::repo::BookmarkRepo,
     pub replace_rule_repo: crate::storage::db::repo::ReplaceRuleRepo,
+    /// 章节标题持久覆盖层（用户改名，读取时叠加在目录缓存之上）
+    pub chapter_title_override_repo: crate::storage::db::repo::ChapterTitleOverrideRepo,
     pub image_service: Arc<ImageService>,
     pub ai_book_service: Arc<AiBookService>,
     pub ai_model_service: Arc<AiModelService>,

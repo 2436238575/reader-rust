@@ -9,7 +9,7 @@ import { useReaderContentStore } from './readerContent'
 import { useReaderConfigStore } from './readerConfig'
 import { getBookContent, getBookContents } from '../api/bookshelf'
 import type { ChapterContentResponse } from '../api/bookshelf'
-import { getChapterVersionMarks } from '../api/chapterEdit'
+import { getChapterVersionMarks, renameChapter } from '../api/chapterEdit'
 import { getChapterComments, getParaCommentIndex } from '../api/review'
 import {
   getBrowserCachedChapter,
@@ -23,11 +23,13 @@ vi.mock('../api/bookshelf', () => ({
   getChapterImages: vi.fn(),
   saveBookProgress: vi.fn(),
   setBookSource: vi.fn(),
+  invalidateChapterList: vi.fn(),
 }))
 
 vi.mock('../api/chapterEdit', () => ({
   getChapterVersionMarks: vi.fn(),
   selectChapterVersion: vi.fn(),
+  renameChapter: vi.fn(),
 }))
 
 vi.mock('../api/review', () => ({
@@ -709,5 +711,97 @@ describe('readerContent preloadAroundChapter 批量预加载', () => {
     await expect(contentStore.fetchChapterContent(2)).resolves.toBe('正文2')
     await expect(contentStore.fetchChapterContent(0)).resolves.toBe('正文0')
     expect(getBookContent).toHaveBeenCalledTimes(3)
+  })
+})
+
+describe('readerContent renameChapter（章节名覆盖层）', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
+    const storage = new Map<string, string>()
+    vi.stubGlobal('localStorage', {
+      getItem: vi.fn((key: string) => storage.get(key) ?? null),
+      setItem: vi.fn((key: string, value: string) => storage.set(key, value)),
+      removeItem: vi.fn((key: string) => storage.delete(key)),
+      clear: vi.fn(() => storage.clear()),
+    })
+    vi.mocked(renameChapter).mockReset()
+  })
+
+  function setupBook() {
+    const readerStore = useReaderStore()
+    readerStore.book = {
+      name: '书',
+      author: '作者',
+      origin: 'local-txt',
+      bookId: 'book_1',
+      bookUrl: 'local-txt:abc123',
+    }
+    readerStore.chapters = [
+      { title: '第一章 原名', url: 'u1', index: 0 },
+      { title: '第二章', url: 'u2', index: 1 },
+    ]
+    return { readerStore, contentStore: useReaderContentStore() }
+  }
+
+  it('改名乐观更新标题并请求后端，失败回滚', async () => {
+    const { readerStore, contentStore } = setupBook()
+    vi.mocked(renameChapter).mockResolvedValue({
+      renamed: true,
+      title: '第一章 新名',
+      originalTitle: '第一章 原名',
+      hasOverride: true,
+    })
+
+    await contentStore.renameChapter(0, '第一章 新名')
+
+    expect(renameChapter).toHaveBeenCalledWith({
+      bookId: 'book_1',
+      chapterUrl: 'u1',
+      title: '第一章 新名',
+    })
+    expect(readerStore.chapters[0].title).toBe('第一章 新名')
+
+    // 失败回滚到改名前的标题
+    vi.mocked(renameChapter).mockRejectedValueOnce(new Error('网络错误'))
+    await expect(contentStore.renameChapter(0, '第一章 再改')).rejects.toThrow('网络错误')
+    expect(readerStore.chapters[0].title).toBe('第一章 新名')
+  })
+
+  it('恢复原名（null）用响应里的目录原标题回填', async () => {
+    const { readerStore, contentStore } = setupBook()
+    readerStore.chapters[0].title = '第一章 改过的'
+    vi.mocked(renameChapter).mockResolvedValue({
+      renamed: false,
+      title: '第一章 原名',
+      originalTitle: '第一章 原名',
+      hasOverride: false,
+    })
+
+    await contentStore.renameChapter(0, null)
+
+    expect(renameChapter).toHaveBeenCalledWith({
+      bookId: 'book_1',
+      chapterUrl: 'u1',
+      title: null,
+    })
+    expect(readerStore.chapters[0].title).toBe('第一章 原名')
+  })
+
+  it('标题空白时按恢复原名处理（title 传 null）', async () => {
+    const { contentStore } = setupBook()
+    vi.mocked(renameChapter).mockResolvedValue({
+      renamed: false,
+      title: '第一章 原名',
+      originalTitle: '第一章 原名',
+      hasOverride: false,
+    })
+
+    await contentStore.renameChapter(0, '   ')
+
+    expect(renameChapter).toHaveBeenCalledWith({
+      bookId: 'book_1',
+      chapterUrl: 'u1',
+      title: null,
+    })
   })
 })

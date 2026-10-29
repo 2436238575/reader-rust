@@ -64,9 +64,14 @@ pub async fn search_cached_content(
     } else {
         req.max_results.min(MAX_RESULTS)
     };
+    // 章节标题覆盖层（用户改名）：命中条目的标题与目录显示保持一致
+    let title_overrides = match crate::storage::db::repo::parse_book_id(&req.book_id) {
+        Some(id) => state.chapter_title_override_repo.get_map(id).await?,
+        None => Default::default(),
+    };
     let outcome = state
         .book_service
-        .search_cached_content(&ns, &req.book_id, query, max_results)
+        .search_cached_content(&ns, &req.book_id, query, max_results, &title_overrides)
         .await?;
     Ok(Json(ApiResponse::ok(
         serde_json::to_value(outcome).unwrap_or_default(),

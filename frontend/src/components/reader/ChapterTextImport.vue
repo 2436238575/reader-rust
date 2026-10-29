@@ -63,6 +63,10 @@
         <input v-model="makeCurrent" type="checkbox" />
         导入后设为当前版本
       </label>
+      <label v-if="mode === 'book'" class="check">
+        <input v-model="applyTitles" type="checkbox" />
+        同时更新章节名
+      </label>
       <label v-if="kind === 'imported'" class="option">
         <span>版本时间</span>
         <input v-model="importAt" type="datetime-local" />
@@ -96,6 +100,9 @@
         <span class="summary-changed">有差异 {{ preview.changed }}</span>
         <span>一致 {{ preview.cached - preview.changed }}</span>
         <span v-if="preview.uncached" class="summary-uncached">未缓存 {{ preview.uncached }}</span>
+        <span v-if="titleChangedCount" class="summary-titled">
+          更新章节名 {{ titleChangedCount }}
+        </span>
         <span class="summary-selected">已选 {{ selectedCount }}</span>
       </div>
 
@@ -151,7 +158,14 @@
               <span class="chapter-title">{{ item.title || '（无标题）' }}</span>
               <span class="chapter-sub">
                 <span class="match-badge" :class="item.matchKind">{{ matchLabel(item) }}</span>
-                <template v-if="item.chapterTitle && item.chapterTitle !== item.title">
+                <span
+                  v-if="item.titleChanged && applyTitles"
+                  class="title-rename"
+                  :title="`章节名「${item.currentTitle}」将更新为「${item.title}」`"
+                >
+                  改名：{{ item.currentTitle }} → {{ item.title }}
+                </span>
+                <template v-else-if="item.chapterTitle && item.chapterTitle !== item.title">
                   → {{ item.chapterTitle }}
                 </template>
               </span>
@@ -290,6 +304,8 @@ const emit = defineEmits<{
 const mode = ref<'book' | 'single'>('book')
 const kind = ref<'edited' | 'imported'>('edited')
 const makeCurrent = ref(true)
+/** 整本导入时把 TXT 解析标题写进章节名覆盖层（预览里逐章标出将改名的章） */
+const applyTitles = ref(true)
 const note = ref('')
 const importAt = ref('')
 const file = ref<File | null>(null)
@@ -348,6 +364,12 @@ const selectedCount = computed(() => {
   const set = selected.value
   return (preview.value?.chapters ?? []).filter((item) => set.has(item.sourceIndex)).length
 })
+/** 将被改名的章节数（matched 且 TXT 标题与生效标题不同） */
+const titleChangedCount = computed(() =>
+  (preview.value?.chapters ?? []).filter(
+    (item) => item.status === 'matched' && item.titleChanged
+  ).length
+)
 
 const activeDiff = computed(() => {
   const item = active.value
@@ -578,6 +600,7 @@ function paramsFor(nextMode: ChapterImportMode): ChapterImportParams {
     kind: kind.value,
     note: note.value,
     makeCurrent: makeCurrent.value,
+    applyTitles: mode.value === 'book' ? applyTitles.value : false,
     createdAt: Number.isFinite(createdAt) ? createdAt : undefined,
     file: file.value,
     fileSize: file.value?.size,
@@ -910,6 +933,16 @@ async function doImport() {
 .summary-selected {
   color: #2563eb;
   opacity: 1;
+}
+
+.summary-titled {
+  color: #2563eb;
+  opacity: 1;
+}
+
+.title-rename {
+  color: #2563eb;
+  opacity: 0.95;
 }
 
 .summary-changed {

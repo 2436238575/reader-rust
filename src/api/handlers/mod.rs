@@ -31,9 +31,10 @@ pub use bookmark::{
 pub use cache::{cache_stats, purge_cache};
 pub use chapter_edit::{
     delete_chapter_edit, get_chapter_edit, get_chapter_import_diff, get_chapter_timeline,
-    get_chapter_version, get_chapter_version_diff, get_chapter_version_marks, import_chapter_text,
-    import_chapter_version, list_chapter_edits, preview_chapter_import, reset_book_to_upstream,
-    save_chapter_edit, select_chapter_version,
+    get_chapter_title_override, get_chapter_version, get_chapter_version_diff,
+    get_chapter_version_marks, import_chapter_text, import_chapter_version, list_chapter_edits,
+    preview_chapter_import, rename_chapter, reset_book_to_upstream, save_chapter_edit,
+    select_chapter_version,
 };
 pub use chapter_image::get_chapter_images;
 pub use chapter_import_upload::upload_chapter_import_chunk;

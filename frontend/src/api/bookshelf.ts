@@ -115,7 +115,8 @@ const CHAPTER_LIST_TIMEOUT_MS = 20_000
 const chapterListCache = new Map<string, { data: BookChapter[]; expiresAt: number }>()
 const chapterListInFlight = new Map<string, Promise<BookChapter[]>>()
 
-function invalidateChapterList(bookId: string | undefined) {
+/** 失效目录会话缓存（改名等标题变化后调用，让下一次拉取绕过 60 秒新鲜期）。 */
+export function invalidateChapterList(bookId: string | undefined) {
   if (!bookId) return
   chapterListCache.delete(bookId)
   // 在途请求也要摘掉：换源/清缓存后紧接着的 getChapterList 不能复用旧源

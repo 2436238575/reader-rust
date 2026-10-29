@@ -1,6 +1,6 @@
 //! 书架端点：书架查询、保存/删除书籍、换源、阅读进度与本地书限额。
 
-use super::{is_local_book, local_book_limit_exceeded};
+use super::{apply_title_overrides, is_local_book, local_book_limit_exceeded};
 use crate::api::extract::QueryOrBody;
 use crate::api::handlers::image::ok_with_cover_routes;
 use crate::api::AppState;
@@ -453,12 +453,15 @@ pub async fn save_book_progress(
     let mut total_chapter_num: Option<i32> = None;
     let mut latest_chapter_title: Option<String> = None;
     if index_changed {
+        // 三个分支取到的目录先套标题覆盖层（用户改名），书架进度标题
+        // （dur_chapter_title/latest_chapter_title）与目录显示保持一致
         if is_local_txt_url(&shelf_book.book_url) {
-            if let Ok(chapters) = state
+            if let Ok(mut chapters) = state
                 .local_txt_book_service
                 .get_chapter_list(&user_ns, &shelf_book.book_url)
                 .await
             {
+                apply_title_overrides(&state, &book_id, &mut chapters).await;
                 if index >= 0 && (index as usize) < chapters.len() {
                     chapter_title = Some(chapters[index as usize].title.clone());
                 }
@@ -466,11 +469,12 @@ pub async fn save_book_progress(
                 latest_chapter_title = chapters.last().map(|c| c.title.clone());
             }
         } else if is_local_epub_url(&shelf_book.book_url) {
-            if let Ok(chapters) = state
+            if let Ok(mut chapters) = state
                 .local_epub_book_service
                 .get_chapter_list(&user_ns, &shelf_book.book_url)
                 .await
             {
+                apply_title_overrides(&state, &book_id, &mut chapters).await;
                 if index >= 0 && (index as usize) < chapters.len() {
                     chapter_title = Some(chapters[index as usize].title.clone());
                 }
@@ -487,11 +491,12 @@ pub async fn save_book_progress(
                     .toc_url
                     .clone()
                     .unwrap_or_else(|| shelf_book.book_url.clone());
-                if let Ok(chapters) = state
+                if let Ok(mut chapters) = state
                     .book_service
                     .get_chapter_list(&user_ns, &book_id, &source, &toc_url)
                     .await
                 {
+                    apply_title_overrides(&state, &book_id, &mut chapters).await;
                     if index >= 0 && (index as usize) < chapters.len() {
                         chapter_title = Some(chapters[index as usize].title.clone());
                     }

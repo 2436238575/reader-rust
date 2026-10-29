@@ -15,8 +15,32 @@
                   · {{ timeline.items.length }} 个版本
                 </template>
               </p>
+              <div v-if="renaming" class="rename-row">
+                <input
+                  v-model="renameDraft"
+                  class="rename-input"
+                  maxlength="100"
+                  placeholder="新的章节名"
+                  @keydown.enter.prevent="confirmRename"
+                  @keydown.esc="cancelRename"
+                />
+                <button class="ghost-btn" :disabled="renameSaving" @click="confirmRename">
+                  保存
+                </button>
+                <button
+                  v-if="overrideState?.hasOverride"
+                  class="ghost-btn"
+                  :disabled="renameSaving"
+                  title="删掉改名记录，回到目录原标题"
+                  @click="restoreName"
+                >
+                  恢复原名
+                </button>
+                <button class="ghost-btn" @click="cancelRename">取消</button>
+              </div>
             </div>
             <div class="head-actions">
+              <button v-if="!showImport" class="ghost-btn" @click="startRename">改名</button>
               <button v-if="!showImport" class="ghost-btn" @click="editCurrent">
                 编辑当前
               </button>
@@ -215,6 +239,7 @@ import { useEscClose } from '../../composables/useEscClose'
 import { useMobileLayout } from '../../composables/useMobileLayout'
 import {
   getChapterTimeline,
+  getChapterTitleOverride,
   getChapterVersion,
   getChapterVersionDiff,
   resetBookToUpstream,
@@ -269,6 +294,75 @@ const diffRows = computed(() =>
 )
 
 const showImport = ref(false)
+
+// ── 章节改名 ─────────────────────────────────────────────────────────
+// 标题走服务端持久覆盖层（重抓/刷新目录不丢）；历史版本保留各自的标题快照
+const renaming = ref(false)
+const renameDraft = ref('')
+const renameSaving = ref(false)
+const overrideState = ref<{
+  title: string
+  originalTitle: string
+  hasOverride: boolean
+} | null>(null)
+
+async function loadOverrideState() {
+  const bookId = store.book?.bookId
+  const chapter = store.currentChapter
+  if (!bookId || !chapter) return
+  try {
+    overrideState.value = await getChapterTitleOverride(bookId, chapter.url)
+  } catch {
+    // 拿不到覆盖状态时只是少一个「恢复原名」入口，不阻塞面板
+    overrideState.value = null
+  }
+}
+
+function startRename() {
+  renameDraft.value = store.currentChapter?.title ?? ''
+  renaming.value = true
+}
+
+function cancelRename() {
+  renaming.value = false
+}
+
+async function confirmRename() {
+  const draft = renameDraft.value.trim()
+  if (!draft) {
+    appStore.showToast('章节名不能为空', 'warning')
+    return
+  }
+  if (draft === (store.currentChapter?.title ?? '')) {
+    renaming.value = false
+    return
+  }
+  renameSaving.value = true
+  try {
+    await contentStore.renameChapter(store.currentIndex, draft)
+    renaming.value = false
+    appStore.showToast('章节名已更新', 'success')
+    void loadOverrideState()
+  } catch (e) {
+    appStore.showToast((e as Error).message || '改名失败', 'error')
+  } finally {
+    renameSaving.value = false
+  }
+}
+
+async function restoreName() {
+  renameSaving.value = true
+  try {
+    await contentStore.renameChapter(store.currentIndex, null)
+    renaming.value = false
+    appStore.showToast('已恢复原名', 'success')
+    void loadOverrideState()
+  } catch (e) {
+    appStore.showToast((e as Error).message || '恢复失败', 'error')
+  } finally {
+    renameSaving.value = false
+  }
+}
 
 const chapterTitle = computed(() => store.currentChapter?.title || '')
 const localBook = computed(() => isLocalBook(store.book))
@@ -329,6 +423,7 @@ async function reload() {
       )
       if (!stillThere) preview.value = null
     }
+    void loadOverrideState()
   } catch (e) {
     error.value = (e as Error).message || '加载正文历史失败'
   } finally {
@@ -469,11 +564,17 @@ async function onImported(payload: {
     appStore.showToast(`已导入 ${result.imported} 章${unchanged}`, 'success')
   } else if (result.unchanged > 0) {
     appStore.showToast('内容和现有版本相同，没有新增版本', 'success')
+  } else if (result.titled > 0) {
+    appStore.showToast(`内容未变，已更新 ${result.titled} 章章节名`, 'success')
   } else {
     appStore.showToast('没有导入任何章节', 'warning')
   }
   // 整本导入会一次改多章：预加载过的相邻章可能仍是旧正文，全部作废重取。
   await contentStore.invalidateChapterContentCache()
+  if (result.titled > 0) {
+    // 章节名有变化：把本地目录标题同步成覆盖后的生效值（含当前章）
+    await contentStore.syncChapterTitles()
+  }
   await reload()
   if (makeCurrent && includesCurrent) {
     await contentStore.reloadChapterAfterEdit(store.currentIndex)
@@ -552,6 +653,30 @@ watch(
   margin: 4px 0 0;
   font-size: var(--text-sm);
   opacity: 0.6;
+}
+
+.rename-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.rename-input {
+  flex: 1;
+  min-width: 0;
+  max-width: 320px;
+  padding: 4px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-input, transparent);
+  color: inherit;
+  font-size: var(--text-sm);
+}
+
+.rename-input:focus {
+  outline: none;
+  border-color: var(--primary, currentColor);
 }
 
 .head-actions {

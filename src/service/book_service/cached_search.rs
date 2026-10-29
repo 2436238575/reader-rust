@@ -152,6 +152,7 @@ impl BookService {
         book_id: &str,
         query: &str,
         max_results: usize,
+        title_overrides: &HashMap<String, String>,
     ) -> Result<CachedSearchOutcome, AppError> {
         const MAX_SCAN_CHAPTERS: usize = 5000;
         const MAX_SCAN_BYTES: u64 = 50 * 1024 * 1024;
@@ -191,10 +192,17 @@ impl BookService {
             regex::Regex::new(&format!("(?i){}", regex::escape(query)))
                 .map_err(|e| AppError::BadRequest(format!("搜索词不可用: {e}")))?,
         );
-        // 目录元数据改 owned：blocking 任务闭包要求 'static
+        // 目录元数据改 owned：blocking 任务闭包要求 'static。
+        // 标题覆盖层（用户改名）在这里叠加：命中条目显示与目录一致的标题。
         let chapter_meta: HashMap<String, (i32, String)> = chapters
             .iter()
-            .map(|chapter| (chapter.url.clone(), (chapter.index, chapter.title.clone())))
+            .map(|chapter| {
+                let title = title_overrides
+                    .get(&chapter.url)
+                    .cloned()
+                    .unwrap_or_else(|| chapter.title.clone());
+                (chapter.url.clone(), (chapter.index, title))
+            })
             .collect();
         let chapter_meta = Arc::new(chapter_meta);
 

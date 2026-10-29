@@ -177,6 +177,39 @@ export function importChapterVersion(params: ImportChapterVersionParams) {
     .then((r) => r.data)
 }
 
+export interface RenameChapterResult {
+  /** false 表示本次实际是「恢复原名」（title 为空或与目录原标题相同） */
+  renamed: boolean
+  /** 当前生效标题 */
+  title: string
+  /** 目录原标题（目录未缓存时为空串） */
+  originalTitle: string
+  hasOverride: boolean
+}
+
+/**
+ * 改当前章节名：走持久覆盖层（读取时叠加在目录缓存之上，重抓不丢）。
+ * `title` 传 null/空串 = 恢复原名（删覆盖行）。不写正文版本，时间线保留
+ * 各版本抓取时的标题快照。
+ */
+export function renameChapter(params: {
+  bookId: string
+  chapterUrl: string
+  title: string | null
+}) {
+  return http.post<RenameChapterResult>('/renameChapter', params).then((r) => r.data)
+}
+
+/** 当前章的标题覆盖状态（改名输入框初始态）。 */
+export function getChapterTitleOverride(bookId: string, chapterUrl: string) {
+  return http
+    .get<{ title: string; originalTitle: string; hasOverride: boolean }>(
+      '/getChapterTitleOverride',
+      { params: { bookId, chapterUrl } }
+    )
+    .then((r) => r.data)
+}
+
 export type ChapterImportMode = 'auto' | 'single' | 'book'
 
 export interface ChapterImportPreviewChapter {
@@ -189,6 +222,10 @@ export interface ChapterImportPreviewChapter {
   chapterIndex: number | null
   chapterUrl: string | null
   chapterTitle: string | null
+  /** 目录当前生效标题（含已有覆盖）；matched 章才有意义 */
+  currentTitle: string | null
+  /** TXT 解析标题与生效标题是否不同（导入时将改名的章） */
+  titleChanged: boolean
   /** 是否有当前缓存正文可用来对比 */
   cached: boolean
   /** 是否与当前缓存正文不同；没有缓存时为 false */
@@ -224,6 +261,8 @@ export interface ChapterImportResult {
   imported: number
   unchanged: number
   skipped: number
+  /** 应用到标题覆盖层的章节数（applyTitles 开启且标题有变化时写入） */
+  titled: number
   failed: number
   errors: string[]
 }
@@ -257,6 +296,8 @@ export interface ChapterImportParams {
    * 预览暂存的切章/匹配结果，不再上传 file/text；预览过期或跨书会 400，需重新预览。
    */
   previewId?: string | null
+  /** 导入后把 TXT 解析标题写进章节名覆盖层（默认 true） */
+  applyTitles?: boolean
 }
 
 function buildChapterImportForm(
@@ -273,6 +314,7 @@ function buildChapterImportForm(
   if (params.note) form.append('note', params.note)
   if (params.makeCurrent != null) form.append('makeCurrent', String(params.makeCurrent))
   if (params.createdAt != null) form.append('createdAt', String(params.createdAt))
+  if (params.applyTitles != null) form.append('applyTitles', String(params.applyTitles))
   if (params.previewId) {
     // 复用预览暂存：正文不再二次上传
     form.append('previewId', params.previewId)

@@ -181,6 +181,16 @@ POST /reader3/resetBookToUpstream { bookId } → { cleared }
 POST /reader3/importChapterVersion { bookId, chapterUrl, content, chapterIndex?,
                                      chapterTitle?, baseVersionId?, note?,
                                      makeCurrent?, createdAt? }
+POST /reader3/renameChapter { bookId, chapterUrl, title? }
+        → { renamed, title, originalTitle, hasOverride }
+        （改章节名：走持久覆盖层（chapter_title_overrides，整部署共享），
+        getChapterList 读取时叠加在目录缓存之上，重抓 / refresh=1 后仍在。
+        title 为空 / null 表示恢复原名（删覆盖行）；与目录原标题相同也按
+        恢复原名处理。不写正文版本——时间线各版本保留抓取时的标题快照。
+        目录、全文检索命中标题、书架进度标题同步生效；章节 URL 不变，
+        版本标记 / view_state / 段评不受影响）
+GET  /reader3/getChapterTitleOverride ?bookId&chapterUrl
+        → { title, originalTitle, hasOverride }（无覆盖时 title 即目录原标题）
 POST /reader3/uploadChapterImportChunk multipart: offset, fileSize, uploadId?, chunk
         → { uploadId, received, complete }
         （首片不带 uploadId；后续片带首片返回的 uploadId）
@@ -189,8 +199,11 @@ POST /reader3/previewChapterImport  multipart: bookId, mode?, chapterUrl?, chapt
         → { mode, total, matched, unmatched, empty, changed, cached, uncached,
             previewId, chapters: [...] }
 POST /reader3/importChapterText     multipart: 同上 + kind?, note?, makeCurrent?,
-                                     createdAt?, selectedIndexes?, previewId?
-        → { mode, selected, imported, unchanged, skipped, failed, errors }
+                                     createdAt?, selectedIndexes?, previewId?,
+                                     applyTitles?
+        → { mode, selected, imported, unchanged, skipped, titled, failed, errors }
+        （applyTitles 默认 true：导入成功后把 TXT 解析标题写进章节名覆盖层，
+        内容未变的章也修标题；titled 为实际应用改名的章数）
 POST /reader3/getChapterImportDiff { previewId, sourceIndex }
         → { changed, ops, diffError, currentExcerpt, currentChars, importChars }
 ```
@@ -236,7 +249,9 @@ POST /reader3/getChapterImportDiff { previewId, sourceIndex }
 - 目录里的卷名条目（`isVolume`）不参与匹配。空章节和未匹配章节不会写入。
 - 预览返回的 `chapters[]` 每项包含 `sourceIndex`、`title`、`chars`、`excerpt`、`status`
   （`matched` / `empty` / `unmatched`）、`matchKind`（`title` / `number` / `order` / `single` / `none`），
-  以及匹配到的 `chapterIndex`、`chapterUrl`、`chapterTitle`。
+  以及匹配到的 `chapterIndex`、`chapterUrl`、`chapterTitle`；matched 章还带
+  `currentTitle`（目录当前生效标题，含已有改名覆盖）与 `titleChanged`（TXT 标题
+  与生效标题不同，导入时将改名）。
 - 预览会拿每章和**当前显示的正文**比对：`cached` 表示有正文可比，`changed` 表示内容不同。
   当前返回的是用户版本时比用户版本，没有用户版本时比最新上游；没有缓存的章节 `cached=false`、
   `changed=false`，前端默认不勾选并提示先缓存全书。比对口径与 diff 面板一致：剥 HTML 标签、

@@ -2,8 +2,10 @@
 import { beforeEach, describe, expect, it, vi, type Mock } from 'vitest'
 import http from './http'
 import {
+  getChapterTitleOverride,
   importChapterText,
   previewChapterImport,
+  renameChapter,
   uploadChapterImportFile,
 } from './chapterEdit'
 
@@ -16,6 +18,7 @@ vi.mock('./http', () => ({
 }))
 
 const postMock = http.post as unknown as Mock
+const getMock = http.get as unknown as Mock
 
 function lastCall(): { url: string; form: FormData; config: { headers: Record<string, string> } } {
   const [url, form, config] = postMock.mock.calls[0]
@@ -24,6 +27,7 @@ function lastCall(): { url: string; form: FormData; config: { headers: Record<st
 
 beforeEach(() => {
   postMock.mockReset().mockResolvedValue({ data: undefined })
+  getMock.mockReset().mockResolvedValue({ data: undefined })
 })
 
 describe('chapterEdit 导入表单（预览复用）', () => {
@@ -95,6 +99,60 @@ describe('chapterEdit 导入表单（预览复用）', () => {
     expect(url).toBe('/previewChapterImport')
     expect(form.get('previewId')).toBeNull()
     expect((form.get('file') as File | null)?.name).toBe('a.txt')
+  })
+})
+
+describe('章节改名 API', () => {
+  beforeEach(() => {
+    getMock.mockReset().mockResolvedValue({ data: undefined })
+  })
+
+  it('renameChapter POST 新标题到 /renameChapter', async () => {
+    await renameChapter({ bookId: 'book_1', chapterUrl: 'u1', title: '新章节名' })
+    expect(postMock).toHaveBeenCalledTimes(1)
+    const [url, body] = postMock.mock.calls[0]
+    expect(url).toBe('/renameChapter')
+    expect(body).toEqual({ bookId: 'book_1', chapterUrl: 'u1', title: '新章节名' })
+  })
+
+  it('恢复原名传 null', async () => {
+    await renameChapter({ bookId: 'book_1', chapterUrl: 'u1', title: null })
+    const [url, body] = postMock.mock.calls[0]
+    expect(url).toBe('/renameChapter')
+    expect(body.title).toBeNull()
+  })
+
+  it('getChapterTitleOverride GET 带 bookId/chapterUrl 查询参数', async () => {
+    await getChapterTitleOverride('book_1', 'u1')
+    expect(getMock).toHaveBeenCalledTimes(1)
+    const [url, config] = getMock.mock.calls[0]
+    expect(url).toBe('/getChapterTitleOverride')
+    expect(config.params).toEqual({ bookId: 'book_1', chapterUrl: 'u1' })
+  })
+})
+
+describe('导入表单的标题联动字段', () => {
+  const base = {
+    bookId: 'book_1',
+    mode: 'book' as const,
+  }
+
+  it('applyTitles=true 时写入表单', async () => {
+    await importChapterText({ ...base, applyTitles: true, text: '第一章 a\n正文' })
+    const { form } = lastCall()
+    expect(form.get('applyTitles')).toBe('true')
+  })
+
+  it('applyTitles=false 时写入表单', async () => {
+    await importChapterText({ ...base, applyTitles: false, text: '第一章 a\n正文' })
+    const { form } = lastCall()
+    expect(form.get('applyTitles')).toBe('false')
+  })
+
+  it('不传 applyTitles 时不写字段（后端默认开启）', async () => {
+    await importChapterText({ ...base, text: '第一章 a\n正文' })
+    const { form } = lastCall()
+    expect(form.get('applyTitles')).toBeNull()
   })
 })
 

@@ -1,6 +1,6 @@
 //! 章节列表端点与目录响应的 ETag / `If-None-Match`（304）处理。
 
-use super::resolve_book;
+use super::{apply_title_overrides, resolve_book};
 use crate::api::extract::QueryOrBody;
 use crate::api::AppState;
 use crate::auth::CurrentUser;
@@ -91,20 +91,22 @@ pub async fn get_chapter_list(
     let resolved = resolve_book(&state, &user_ns, &book_id).await?;
 
     if is_local_txt_url(&resolved.book_url) {
-        let chapters = state
+        let mut chapters = state
             .local_txt_book_service
             .get_chapter_list(&user_ns, &resolved.book_url)
             .await?;
+        apply_title_overrides(&state, &book_id, &mut chapters).await;
         return Ok(chapter_list_response(
             &headers,
             serde_json::to_value(chapters).unwrap_or_default(),
         ));
     }
     if is_local_epub_url(&resolved.book_url) {
-        let chapters = state
+        let mut chapters = state
             .local_epub_book_service
             .get_chapter_list(&user_ns, &resolved.book_url)
             .await?;
+        apply_title_overrides(&state, &book_id, &mut chapters).await;
         return Ok(chapter_list_response(
             &headers,
             serde_json::to_value(chapters).unwrap_or_default(),
@@ -140,6 +142,8 @@ pub async fn get_chapter_list(
         .await
     {
         if !cached.is_empty() {
+            let mut cached = cached;
+            apply_title_overrides(&state, &book_id, &mut cached).await;
             return Ok(chapter_list_response(
                 &headers,
                 serde_json::to_value(cached).unwrap_or_default(),
@@ -224,6 +228,8 @@ pub async fn get_chapter_list(
         });
     }
 
+    let mut chapters = chapters;
+    apply_title_overrides(&state, &book_id, &mut chapters).await;
     Ok(chapter_list_response(
         &headers,
         serde_json::to_value(chapters).unwrap_or_default(),

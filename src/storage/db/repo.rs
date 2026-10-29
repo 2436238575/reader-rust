@@ -1270,6 +1270,81 @@ impl BookGroupRepo {
     }
 }
 
+/// 章节标题持久覆盖层（0006 迁移）：用户手动改的章节名，读取时叠加在目录
+/// 缓存之上。整部署共享（与正文池三表同口径，不带 user_ns）；key 是
+/// chapter_url，换源后旧行自然成为孤儿（查不到即忽略）。
+#[derive(Clone)]
+pub struct ChapterTitleOverrideRepo {
+    pool: SqlitePool,
+}
+
+impl ChapterTitleOverrideRepo {
+    pub fn new(pool: SqlitePool) -> Self {
+        Self { pool }
+    }
+
+    /// upsert 单条覆盖：同 (book_id, chapter_url) 覆盖标题与时间。
+    pub async fn upsert(
+        &self,
+        book_id: i64,
+        chapter_url: &str,
+        title: &str,
+        updated_at: i64,
+    ) -> Result<(), AppError> {
+        sqlx::query(
+            "INSERT INTO chapter_title_overrides (book_id, chapter_url, title, updated_at) \
+             VALUES (?1, ?2, ?3, ?4) \
+             ON CONFLICT(book_id, chapter_url) DO UPDATE SET \
+             title=excluded.title, updated_at=excluded.updated_at",
+        )
+        .bind(book_id)
+        .bind(chapter_url)
+        .bind(title)
+        .bind(updated_at)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    /// 整本书的覆盖 map：chapter_url → 覆盖标题。读取侧的主要形态。
+    pub async fn get_map(
+        &self,
+        book_id: i64,
+    ) -> Result<std::collections::HashMap<String, String>, AppError> {
+        let rows = sqlx::query(
+            "SELECT chapter_url, title FROM chapter_title_overrides WHERE book_id=?1",
+        )
+        .bind(book_id)
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows
+            .into_iter()
+            .map(|row| (row.get::<String, _>("chapter_url"), row.get::<String, _>("title")))
+            .collect())
+    }
+
+    /// 删除单条覆盖（恢复原名）。返回是否确有行被删。
+    pub async fn delete(&self, book_id: i64, chapter_url: &str) -> Result<bool, AppError> {
+        let result =
+            sqlx::query("DELETE FROM chapter_title_overrides WHERE book_id=?1 AND chapter_url=?2")
+                .bind(book_id)
+                .bind(chapter_url)
+                .execute(&self.pool)
+                .await?;
+        Ok(result.rows_affected() > 0)
+    }
+
+    /// 删书级联清理。
+    pub async fn delete_for_book(&self, book_id: i64) -> Result<u64, AppError> {
+        let result =
+            sqlx::query("DELETE FROM chapter_title_overrides WHERE book_id=?1")
+                .bind(book_id)
+                .execute(&self.pool)
+                .await?;
+        Ok(result.rows_affected())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

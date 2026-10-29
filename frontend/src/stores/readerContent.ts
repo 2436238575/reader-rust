@@ -20,9 +20,10 @@ import {
   getBookContent,
   getBookContents,
   setBookSource as apiSetBookSource,
+  invalidateChapterList,
 } from '../api/bookshelf'
 import type { ChapterContentResponse, ContentVariant } from '../api/bookshelf'
-import { selectChapterVersion } from '../api/chapterEdit'
+import { renameChapter as apiRenameChapter, selectChapterVersion } from '../api/chapterEdit'
 import type { Book, BookChapter } from '../types'
 import {
   getBrowserCachedChapter,
@@ -638,6 +639,54 @@ export const useReaderContentStore = defineStore('readerContent', () => {
     }
   }
 
+  /** 改当前章的章节名（`null` = 恢复原名）：服务端持久覆盖层保证重抓/
+   *  刷新目录后仍在。正文版本与版本标记（key 是 chapterUrl）不受影响。
+   *  新名字先乐观更新（currentChapter 是 chapters 的 computed，阅读页/
+   *  编辑器/正文历史头部的标题显示自动跟随）；恢复原名没有本地可乐观的
+   *  标题，等响应回填目录原标题。 */
+  async function renameChapter(index: number, title: string | null) {
+    const chapter = readerStore.chapters[index]
+    const bookId = readerStore.book?.bookId
+    if (!chapter || !bookId) return
+    const previousTitle = chapter.title
+    const trimmed = title?.trim() ?? ''
+    if (trimmed) chapter.title = trimmed
+    try {
+      const result = await apiRenameChapter({
+        bookId,
+        chapterUrl: chapter.url,
+        title: trimmed || null,
+      })
+      // 响应带当前生效标题（恢复原名 = 目录原标题；空串兜底保持乐观值）
+      if (result.title) chapter.title = result.title
+      invalidateChapterList(bookId)
+      void setBrowserCatalog(bookId, readerStore.chapters)
+      // 目录版本标签 / 编辑章清单以 chapterUrl 为 key，标题变化不影响
+    } catch (error) {
+      chapter.title = previousTitle
+      throw error
+    }
+  }
+
+  /** 标题覆盖层批量变化后（整本 TXT 导入改名多章）把本地目录标题同步成
+   *  最新生效值：只合并标题，不重建 chapters 数组（索引/滚动位置不动）。 */
+  async function syncChapterTitles() {
+    const bookId = readerStore.book?.bookId
+    if (!bookId) return
+    invalidateChapterList(bookId)
+    try {
+      const chapters = await getChapterList({ bookId })
+      const byUrl = new Map(chapters.map((chapter) => [chapter.url, chapter.title]))
+      readerStore.chapters.forEach((chapter) => {
+        const next = byUrl.get(chapter.url)
+        if (next) chapter.title = next
+      })
+      void setBrowserCatalog(bookId, readerStore.chapters)
+    } catch {
+      // 拉取失败保持现状：标题已持久化在服务端，下次开书自然拿到
+    }
+  }
+
   async function refreshContent() {
     if (!readerStore.book || !readerStore.chapters[readerStore.currentIndex]) return
     // 显式刷新绕过「书源不支持配图」的缓存结论重新判断：书源可能刚补了
@@ -750,6 +799,8 @@ export const useReaderContentStore = defineStore('readerContent', () => {
     invalidateChapterContentCache,
     reloadChapterAfterEdit,
     setChapterVersion,
+    renameChapter,
+    syncChapterTitles,
     refreshContent,
     refreshChapters,
     nextChapter,

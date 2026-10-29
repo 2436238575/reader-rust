@@ -27,6 +27,30 @@ pub use shelf::*;
 pub use sse::*;
 pub use toc::*;
 
+/// 套用章节标题覆盖层（用户改名，`chapter_title_overrides`）：只在响应/
+/// 展示出口叠加，不写目录缓存文件——重抓/refresh=1 重写缓存后覆盖按 url
+/// 重新套用。ETag 基于最终序列化字节，覆盖变化自然改变 ETag。
+pub(crate) async fn apply_title_overrides(
+    state: &AppState,
+    book_id: &str,
+    chapters: &mut [crate::model::book_chapter::BookChapter],
+) {
+    let Some(id) = crate::storage::db::repo::parse_book_id(book_id) else {
+        return;
+    };
+    let Ok(map) = state.chapter_title_override_repo.get_map(id).await else {
+        return;
+    };
+    if map.is_empty() {
+        return;
+    }
+    for chapter in chapters.iter_mut() {
+        if let Some(title) = map.get(&chapter.url) {
+            chapter.title = title.clone();
+        }
+    }
+}
+
 /// 书源级接口（搜索/发现/调试）的入口：bookSourceId 直查。
 pub(crate) async fn resolve_source(
     state: &AppState,
