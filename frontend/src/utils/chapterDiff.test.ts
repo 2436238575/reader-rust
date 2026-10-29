@@ -3,7 +3,7 @@ import {
   buildDiffPreview,
   buildDiffRows,
   diffStats,
-  expandCollapseEdge,
+  expandCollapseRow,
   hydrateDiffOps,
   inlineDiff,
   inlinePartsFor,
@@ -174,46 +174,42 @@ describe('buildDiffRows', () => {
     expect(collapses[1]).toMatchObject({ opsCount: 17 })
   })
 
-  it('块顶展开 3 段：块起点 key 不位移，折叠区间从上方收缩', () => {
+  it('折叠块一次展开 15 段，剩余继续折叠', () => {
     const ops = opsOf(['modify', ...Array.from({ length: 40 }, () => 'equal'), 'modify'])
-    // 40 段 run：头 3 + 折叠 34 + 尾 3；块顶展开 3 后剩余 31
-    const expanded = expandCollapseEdge(new Map(), { kind: 'collapse', blockStart: 1, opsStart: 4, opsCount: 34 }, 'head')
-    const rows = buildDiffRows(ops, { expanded })
+    // 40 段 run：头 3 + 折叠 34（blockStart=1）+ 尾 3；展开 15 后剩余 19
+    const rows = buildDiffRows(ops, { expanded: new Map([[1, 15]]) })
     const collapse = rows.find((r) => r.kind === 'collapse')
-    expect(collapse).toMatchObject({ blockStart: 1, opsStart: 7, opsCount: 31 })
+    expect(collapse).toMatchObject({ blockStart: 1, opsStart: 19, opsCount: 19 })
+    // 展开的 15 段平铺成行：2 变更 + 头 3 + 15 + 尾 3
     const opRows = rows.filter((r) => r.kind === 'op')
-    expect(opRows).toHaveLength(2 + 3 + 3 + 3)
+    expect(opRows).toHaveLength(2 + 3 + 15 + 3)
   })
 
-  it('块底展开 3 段：折叠区间从下方收缩', () => {
+  it('连续点击继续展开：按块的原始起点累计，不因折叠行位移失效', () => {
     const ops = opsOf(['modify', ...Array.from({ length: 40 }, () => 'equal'), 'modify'])
-    const expanded = expandCollapseEdge(new Map(), { kind: 'collapse', blockStart: 1, opsStart: 4, opsCount: 34 }, 'tail')
+    let expanded = new Map<number, number>()
+    // 第一次点击：拿到首条折叠行
+    let collapse = buildDiffRows(ops, { expanded }).find((r) => r.kind === 'collapse')!
+    if (collapse.kind !== 'collapse') throw new Error('应有折叠行')
+    expanded = expandCollapseRow(expanded, collapse)
+    // 第二次点击：用位移后的新折叠行（opsStart 已经变了）
+    collapse = buildDiffRows(ops, { expanded }).find((r) => r.kind === 'collapse')!
+    if (collapse.kind !== 'collapse') throw new Error('应有折叠行')
+    expanded = expandCollapseRow(expanded, collapse)
     const rows = buildDiffRows(ops, { expanded })
-    const collapse = rows.find((r) => r.kind === 'collapse')
-    expect(collapse).toMatchObject({ blockStart: 1, opsStart: 4, opsCount: 31 })
-    // 尾部上下文变成 3 + 3 段（收尾的 modify 行不算）
-    const opRows = rows.filter((r) => r.kind === 'op')
-    expect(opRows[opRows.length - 1].op.type).toBe('modify')
-    expect(opRows.slice(-7, -1).every((r) => r.op.type === 'equal')).toBe(true)
-  })
-
-  it('同一块多次展开累计进度；两侧展开总量超过块长时整体铺开', () => {
-    const ops = opsOf(['modify', ...Array.from({ length: 10 }, () => 'equal'), 'modify'])
-    // 10 段 run：头 3 + 折叠 4 + 尾 3
-    const row = { kind: 'collapse' as const, blockStart: 1, opsStart: 4, opsCount: 4 }
-    let expanded = expandCollapseEdge(new Map(), row, 'head')
-    expanded = expandCollapseEdge(expanded, { ...row, opsStart: 7, opsCount: 1 }, 'head')
-    // 第二次点击的折叠行 opsStart 已位移，但进度仍记在 blockStart 上
-    expanded = expandCollapseEdge(expanded, row, 'tail')
-    const rows = buildDiffRows(ops, { expanded })
-    expect(rows.every((r) => r.kind === 'op')).toBe(true)
-    expect(rows).toHaveLength(12)
+    const remaining = rows.find((r) => r.kind === 'collapse')
+    expect(remaining).toMatchObject({ blockStart: 1, opsStart: 34, opsCount: 4 })
+    // 第三次点击：最后 4 段全部展开
+    if (remaining?.kind !== 'collapse') throw new Error('应有折叠行')
+    expanded = expandCollapseRow(expanded, remaining)
+    expect(buildDiffRows(ops, { expanded }).every((r) => r.kind === 'op')).toBe(true)
   })
 
   it('展开进度超过块长时收敛到全展开', () => {
     const ops = opsOf(['modify', ...Array.from({ length: 10 }, () => 'equal'), 'modify'])
-    const expanded = new Map([[1, { head: 99, tail: 0 }]])
-    const rows = buildDiffRows(ops, { expanded })
+    // 10 段 run：头 3 + 折叠 4（blockStart=1）+ 尾 3；展开 99 段即全展开
+    const rows = buildDiffRows(ops, { expanded: new Map([[1, 99]]) })
     expect(rows.every((r) => r.kind === 'op')).toBe(true)
+    expect(rows).toHaveLength(12)
   })
 })

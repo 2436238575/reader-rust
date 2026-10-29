@@ -34,30 +34,14 @@
           <div v-else-if="!ops?.length" class="diff-loading">本章没有差异</div>
           <div v-else class="diff-body">
             <template v-for="(row, rowIndex) in rows" :key="rowIndex">
-              <!-- 折叠的未变更区域：两端箭头逐次展开 3 段（VSCode 式） -->
-              <div v-if="row.kind === 'collapse'" class="diff-collapse">
-                <button
-                  class="diff-collapse-edge"
-                  type="button"
-                  aria-label="展开上方 3 段"
-                  @click="expandRow(row, 'head')"
-                >
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                    <path d="m18 15-6-6-6 6" />
-                  </svg>
-                </button>
-                <span class="diff-collapse-label">⋯ 还有 {{ row.opsCount }} 段未显示 ⋯</span>
-                <button
-                  class="diff-collapse-edge"
-                  type="button"
-                  aria-label="展开下方 3 段"
-                  @click="expandRow(row, 'tail')"
-                >
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                    <path d="m6 9 6 6 6-6" />
-                  </svg>
-                </button>
-              </div>
+              <!-- 折叠的未变更区域：点击展开 15 段 -->
+              <button
+                v-if="row.kind === 'collapse'"
+                class="diff-collapse"
+                @click="expandCollapse(row)"
+              >
+                ⋯ 展开 15 段（还有 {{ row.opsCount }} 段未显示）
+              </button>
 
               <!-- 未变段 -->
               <div v-else-if="row.op.type === 'equal'" class="diff-row equal">
@@ -138,9 +122,8 @@ import { useMobileLayout } from '../../composables/useMobileLayout'
 import {
   buildDiffRows,
   diffStats,
-  expandCollapseEdge,
+  expandCollapseRow,
   inlinePartsFor,
-  type CollapseExpansion,
   type DiffRow,
   type ParagraphDiffOp,
 } from '../../utils/chapterDiff'
@@ -168,8 +151,8 @@ useEscClose(toRef(props, 'modelValue'), () => emit('update:modelValue', false))
 const chapterTitle = computed(() => store.currentChapter?.title || '')
 const stats = computed(() => (props.ops?.length ? diffStats(props.ops) : null))
 
-// 折叠块展开进度：key = 折叠块原始起点（不随展开位移），value = 块顶/块底已多显示的段数
-const expanded = ref(new Map<number, CollapseExpansion>())
+// 折叠块展开进度：key = 折叠块原始起点（不随展开位移），value = 已展开段数
+const expanded = ref(new Map<number, number>())
 
 watch(
   () => props.modelValue,
@@ -180,9 +163,9 @@ watch(
 
 const rows = computed(() => buildDiffRows(props.ops ?? [], { expanded: expanded.value }))
 
-/** VSCode 式逐次展开：每次从块顶或块底多显示 3 段，剩余保持折叠 */
-function expandRow(row: Extract<DiffRow, { kind: 'collapse' }>, edge: 'head' | 'tail') {
-  expanded.value = expandCollapseEdge(expanded.value, row, edge)
+/** 再展开 15 段：进度按块起点累计，多次点击都能继续展开 */
+function expandCollapse(row: Extract<DiffRow, { kind: 'collapse' }>) {
+  expanded.value = expandCollapseRow(expanded.value, row)
 }
 
 function close() {
@@ -390,50 +373,24 @@ async function discardEdit() {
   border-radius: 2px;
 }
 
-/* 折叠条：两端是逐次展开 3 段的上下箭头（VSCode 式），中间提示剩余段数 */
 .diff-collapse {
-  display: flex;
-  align-items: center;
-  gap: 8px;
+  display: block;
   width: calc(100% - 16px);
   margin: 4px 8px;
-  padding: 2px 6px;
+  padding: 6px 0;
   border: 1px dashed rgba(128, 128, 128, 0.35);
   border-radius: 8px;
-  opacity: 0.8;
+  background: transparent;
+  color: inherit;
+  opacity: 0.65;
   font-size: var(--text-xs);
+  cursor: pointer;
+  text-align: center;
 }
 
 .diff-collapse:hover {
   opacity: 1;
-}
-
-.diff-collapse-label {
-  flex: 1;
-  text-align: center;
-  opacity: 0.75;
-}
-
-.diff-collapse-edge {
-  width: 28px;
-  height: 26px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: 6px;
-  color: inherit;
-  opacity: 0.65;
-  flex-shrink: 0;
-}
-
-.diff-collapse-edge:hover {
   background: var(--color-bg-hover);
-  opacity: 1;
-}
-
-.diff-collapse-edge svg {
-  width: 14px;
-  height: 14px;
 }
 
 @media (max-width: 767px) {
