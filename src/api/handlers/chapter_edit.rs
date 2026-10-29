@@ -531,7 +531,15 @@ struct ChapterImportRequest {
     selected_indexes: Option<Vec<i32>>,
     /// 导入时带上预览令牌：直接复用预览暂存的切章/匹配结果，不再上传正文。
     preview_id: String,
+    /// 自适应分片上传的令牌：服务端已把分片拼成完整文件，直接按文件读取。
+    upload_id: String,
     text: String,
+    /// 前端声明的文件字节数（原始文件大小）。
+    ///
+    /// 反向代理把 multipart 重新拼装后，截断的正文仍然是「合法」的请求，
+    /// 单看字段内容无法发现；用这个值核对实际收到的字节数，避免静默导入
+    /// 半本书。
+    file_size: Option<u64>,
     file_bytes: Option<Vec<u8>>,
 }
 
@@ -674,6 +682,11 @@ pub struct ChapterImportDiffQuery {
     pub source_index: i32,
 }
 
+/// `selectedIndexes` 字段上限：整本 2 万章全选约 140KB，给到 1MB 留余量。
+///
+/// 它只是索引列表，不是正文，不能套用小参数（8KB）或 TXT 的 50MB 上限。
+const MAX_SELECTED_INDEXES_BYTES: usize = 1024 * 1024;
+
 async fn read_chapter_import_request(
     mut multipart: Multipart,
 ) -> Result<ChapterImportRequest, AppError> {
@@ -691,11 +704,12 @@ async fn read_chapter_import_request(
             );
             continue;
         }
-        // 粘贴的整本正文也允许到 50MB，其余字段只放小参数。
-        let limit = if name == "text" {
-            MAX_TXT_UPLOAD_BYTES
-        } else {
-            8 * 1024
+        // 粘贴的整本正文也允许到 50MB；整本全选时 selectedIndexes 可达
+        // 上万项（每项约 5-6 字节），不能套用小参数上限；其余字段只放小参数。
+        let limit = match name.as_str() {
+            "text" => MAX_TXT_UPLOAD_BYTES,
+            "selectedIndexes" => MAX_SELECTED_INDEXES_BYTES,
+            _ => 8 * 1024,
         };
         let bytes = read_limited_multipart_field(field, limit, "导入参数过长").await?;
         let value = String::from_utf8_lossy(&bytes).trim().to_string();
@@ -723,6 +737,16 @@ async fn read_chapter_import_request(
                 }
             }
             "previewId" => req.preview_id = value,
+            "uploadId" => req.upload_id = value,
+            "fileSize" => {
+                if !value.is_empty() {
+                    req.file_size = Some(
+                        value
+                            .parse()
+                            .map_err(|_| AppError::BadRequest("fileSize 无效".to_string()))?,
+                    );
+                }
+            }
             "selectedIndexes" => {
                 let mut list = Vec::new();
                 if !value.is_empty() {
@@ -735,6 +759,28 @@ async fn read_chapter_import_request(
                 req.selected_indexes = Some(list);
             }
             _ => {}
+        }
+    }
+    // 声明大小与实际收到的字节数不一致 = 上传被中途截断。反向代理重新拼装
+    // multipart 后请求仍然合法，单看字段内容发现不了，只能靠前端声明的原始
+    // 文件大小兜底，避免静默导入半本书。
+    if let Some(expected) = req.file_size {
+        if expected > MAX_TXT_UPLOAD_BYTES as u64 {
+            return Err(AppError::BadRequest("TXT 文件不能超过 50MB".to_string()));
+        }
+        if let Some(bytes) = req.file_bytes.as_ref() {
+            if bytes.len() as u64 != expected {
+                tracing::warn!(
+                    expected,
+                    received = bytes.len(),
+                    "TXT 上传字节数与声明不一致，请求可能被反向代理截断"
+                );
+                return Err(AppError::BadRequest(format!(
+                    "TXT 上传不完整：收到 {} 字节，文件应有 {} 字节。请求可能被反向代理截断，请检查 nginx/OpenResty 的 client_max_body_size 与上游 WAF 的上传上限",
+                    bytes.len(),
+                    expected
+                )));
+            }
         }
     }
     Ok(req)
@@ -902,7 +948,7 @@ async fn handle_chapter_import(
     multipart: Multipart,
     commit: bool,
 ) -> Result<Json<ApiResponse<Value>>, AppError> {
-    let req = read_chapter_import_request(multipart).await?;
+    let mut req = read_chapter_import_request(multipart).await?;
     if req.book_id.trim().is_empty() {
         return Err(AppError::BadRequest("bookId required".to_string()));
     }
@@ -962,6 +1008,21 @@ async fn handle_chapter_import(
             (preview.mode, items, contents)
         }
         None => {
+            // 自适应分片上传：把拼好的文件读进内存，后续与 file 字段完全同构。
+            if !req.upload_id.trim().is_empty() {
+                if req.file_bytes.is_some() {
+                    return Err(AppError::BadRequest(
+                        "uploadId 与 file 不能同时提供".to_string(),
+                    ));
+                }
+                let bytes = super::chapter_import_upload::load_import_upload(
+                    &state,
+                    &user.0.ns,
+                    req.upload_id.trim(),
+                )
+                .await?;
+                req.file_bytes = Some(bytes);
+            }
             let text = request_text(&req)?;
             let parsed = split_text(&text, req.mode, &req.chapter_title);
             if parsed.len() > MAX_IMPORT_CHAPTERS {

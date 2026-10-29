@@ -142,6 +142,12 @@ pub fn build_router(state: AppState) -> Router {
             "/reader3/previewChapterImport",
             post(handlers::preview_chapter_import),
         )
+        // 整本 TXT 的自适应分片上传：每片几 MB 以内，绕开反代/WAF 的
+        // 单请求体积上限；预览与导入凭 uploadId 复用拼好的文件
+        .route(
+            "/reader3/uploadChapterImportChunk",
+            post(handlers::upload_chapter_import_chunk),
+        )
         // JSON body 携带整章正文，与 TXT 导入同属大文本入口
         .route(
             "/reader3/importChapterVersion",

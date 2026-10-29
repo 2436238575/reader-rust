@@ -162,7 +162,8 @@ src/
                           image、webdav、cache（缓存清理与统计）、chapter_image、
                           chapter_edit（用户版本、版本时间线、版本 diff 与选择、
                           单章/整本 TXT 导入预览、导入详情差异与批量写入——批量走
-                          分块事务 + 章级保存点，导入可凭 previewId 复用预览缓存免二次上传）、
+                          分块事务 + 章级保存点，导入可凭 previewId 复用预览缓存免二次上传；
+                          大文件走 chapter_import_upload 的自适应分片，预览/导入凭 uploadId 复用）、
                           review（章评/段评）、search_cache（缓存内全文检索，只扫
                           已缓存章节、不触发上游请求）；另有共享的 multipart.rs（限量读取工具）。
                           webdav 的协议语义（PROPFIND/PUT/LOCK 等）由 dav-server

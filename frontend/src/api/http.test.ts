@@ -32,6 +32,22 @@ function unauthorized(config: InternalAxiosRequestConfig): Promise<never> {
   })
 }
 
+function payloadTooLarge(config: InternalAxiosRequestConfig): Promise<never> {
+  return Promise.reject({
+    message: 'Request failed with status code 413',
+    isAxiosError: true,
+    config,
+    response: {
+      status: 413,
+      statusText: 'Payload Too Large',
+      headers: {},
+      config,
+      // 反代的 413 通常是 HTML，不是统一 JSON 包装
+      data: '<html><body>413 Request Entity Too Large</body></html>',
+    },
+  })
+}
+
 function ok(config: InternalAxiosRequestConfig): AxiosResponse {
   return {
     data: { isSuccess: true, errorMsg: '', data: { ok: true } },
@@ -107,6 +123,14 @@ describe('http auth interceptor', () => {
 
     await expect(http.get('/getBookshelf')).rejects.toThrow('需要登录')
     expect(calls).toBe(1)
+  })
+
+  it('explains reverse-proxy upload limits on 413', async () => {
+    http.defaults.adapter = async (config) => payloadTooLarge(config)
+
+    await expect(http.post('/importChapterText', new FormData())).rejects.toThrow(
+      'client_max_body_size'
+    )
   })
 
   it('keeps the network error message when the refresh cannot reach the server', async () => {

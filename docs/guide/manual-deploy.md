@@ -166,6 +166,11 @@ location /read/ {
     proxy_set_header X-Real-IP $remote_addr;
     proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
     proxy_set_header X-Forwarded-Proto $scheme;
+
+    # 大文件上传（本地书籍、整本 TXT 导入、备份导入）；
+    # nginx 默认只有 1m，整本 TXT 会被 413 或截断
+    client_max_body_size 100m;
+
     proxy_buffering off;
     proxy_read_timeout 300s;
 }
@@ -192,6 +197,20 @@ COOKIE_PATH=/read/reader3
   子路径下装到桌面也不会互相干扰。
 - 本地想先试：`VITE_BASE_PATH=/read/ npm run build && VITE_BASE_PATH=/read/ npm run preview`
   （`vite preview` 的代理同样会剥掉前缀，等价于上面的 nginx）。
+
+::: warning 上传体积上限
+整本 TXT 导入、本地书籍上传与备份导入的请求体可达几十 MB。除了 nginx /
+OpenResty 的 `client_max_body_size`，链路上每一层都要放行：
+
+- Cloudflare 免费/Pro 计划的请求体上限是 **100MB**，Enterprise 可调大；
+- 雷池 SafeLine 等 WAF 如果配置了上传大小限制，也会在到达后端前截断或拒绝；
+- 后端自身的大上传路由上限是 100MB，整本 TXT 另有 50MB 上限。
+
+正文历史的整本 TXT 导入在文件超过 512KB 时会自动分片（每片从 512KB 起步、
+失败减半），单个请求很小，不再受这里的上限影响；本地书籍上传与备份导入仍是
+单请求，仍要放行上面的体积。后端会核对每份文件的实际字节数，不完整时返回明确的
+「TXT 上传不完整」，不会把半本书静默写入正文历史。
+:::
 
 ## 7. 升级
 

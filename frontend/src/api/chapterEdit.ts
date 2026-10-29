@@ -1,4 +1,4 @@
-import http from './http'
+import http, { UPLOAD_TIMEOUT_MS } from './http'
 import type { ChapterVersionKind } from './bookshelf'
 import type { ParagraphDiffOp } from '../utils/chapterDiff'
 
@@ -240,8 +240,18 @@ export interface ChapterImportParams {
   createdAt?: number
   /** 上传文件时优先使用文件，后端负责识别 UTF-8 / GB18030 / UTF-16。 */
   file?: File | null
+  /**
+   * 上传文件的原始字节数。后端用它核对实际收到的字节数——反向代理截断
+   * multipart 后请求仍可能是合法的，只能用这个值发现「只收到半本书」。
+   */
+  fileSize?: number
   /** 没有文件时使用粘贴的文本。 */
   text?: string
+  /**
+   * 自适应分片上传返回的令牌：正文已经全部到达服务端，预览/导入不再上传
+   * file/text。与 previewId 同时存在时优先用 previewId。
+   */
+  uploadId?: string | null
   /**
    * 导入时带上预览令牌（previewChapterImport 返回的 previewId）：后端直接复用
    * 预览暂存的切章/匹配结果，不再上传 file/text；预览过期或跨书会 400，需重新预览。
@@ -266,7 +276,13 @@ function buildChapterImportForm(
   if (params.previewId) {
     // 复用预览暂存：正文不再二次上传
     form.append('previewId', params.previewId)
+  } else if (params.uploadId) {
+    // 分片已经全部上传：预览/导入只带令牌
+    form.append('uploadId', params.uploadId)
   } else if (params.file) {
+    // fileSize 必须排在 file 前面：代理截断正文时，小字段先到，后端才有
+    // 依据发现文件不完整。
+    form.append('fileSize', String(params.fileSize ?? params.file.size))
     form.append('file', params.file, params.file.name)
   } else if (params.text != null) {
     form.append('text', params.text)
@@ -275,10 +291,106 @@ function buildChapterImportForm(
   return form
 }
 
+export interface ChunkUploadResult {
+  uploadId: string
+  /** 服务端当前已收到的字节数（重发同一片时可能大于本次分片末尾）。 */
+  received: number
+  complete: boolean
+}
+
+const CHUNK_INITIAL_BYTES = 512 * 1024
+const CHUNK_MIN_BYTES = 128 * 1024
+const CHUNK_MAX_BYTES = 8 * 1024 * 1024
+const CHUNK_RETRY_LIMIT = 4
+
+/** 超过该大小走自适应分片；小文件仍一次直传。 */
+export const CHAPTER_IMPORT_CHUNK_THRESHOLD = CHUNK_INITIAL_BYTES
+
+function uploadChapterImportChunk(params: {
+  uploadId: string | null
+  offset: number
+  fileSize: number
+  chunk: Blob
+}): Promise<ChunkUploadResult> {
+  const form = new FormData()
+  if (params.uploadId) form.append('uploadId', params.uploadId)
+  form.append('offset', String(params.offset))
+  form.append('fileSize', String(params.fileSize))
+  form.append('chunk', params.chunk, 'chunk.bin')
+  return http
+    .post<ChunkUploadResult>('/uploadChapterImportChunk', form, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+      timeout: UPLOAD_TIMEOUT_MS,
+    })
+    .then((r) => r.data)
+}
+
+/**
+ * 自适应分片上传整本 TXT，返回预览/导入用的 `uploadId`。
+ *
+ * 反代/WAF 的单请求体积上限各不相同（nginx 默认 1m），这里不写死分片大小：
+ * 从 512KB 起步，成功就温和放大，遇到 413/断连/5xx 就减半并把上限钉住，
+ * 后续分片不再涨回去。这样既能绕开小的限制，又不会在宽松链路上拆得太碎。
+ */
+export async function uploadChapterImportFile(
+  file: File,
+  onProgress?: (uploaded: number, total: number) => void
+): Promise<string> {
+  let uploadId: string | null = null
+  let offset = 0
+  let chunkSize = CHUNK_INITIAL_BYTES
+  // 失败过的档位是硬上限：成功后再放大也不能超过它
+  let ceiling = CHUNK_MAX_BYTES
+
+  while (offset < file.size) {
+    let attempt = 0
+    for (;;) {
+      // 每次重试都按当前 chunkSize 重新切片：失败减半后必须真的变小
+      const end = Math.min(offset + chunkSize, file.size)
+      const chunk = file.slice(offset, end)
+      try {
+        const result = await uploadChapterImportChunk({
+          uploadId,
+          offset,
+          fileSize: file.size,
+          chunk,
+        })
+        uploadId = result.uploadId
+        if (result.received <= offset) {
+          throw new Error('上传进度异常，请重试')
+        }
+        offset = result.received
+        chunkSize = Math.min(
+          ceiling,
+          Math.max(CHUNK_MIN_BYTES, Math.floor(chunkSize * 1.5))
+        )
+        onProgress?.(offset, file.size)
+        break
+      } catch (error) {
+        attempt += 1
+        const status = (error as { status?: number }).status
+        // 413 是明确的体积上限；无状态码是断连/超时；5xx 也值得缩片重试。
+        // 其他 4xx（uploadId 过期、参数错误）缩片没有意义，直接抛出。
+        const retriable =
+          status == null || status === 413 || status === 408 || status >= 500
+        if (!retriable || attempt >= CHUNK_RETRY_LIMIT || chunkSize <= CHUNK_MIN_BYTES) {
+          throw error
+        }
+        chunkSize = Math.max(CHUNK_MIN_BYTES, Math.floor(chunkSize / 2))
+        ceiling = chunkSize
+        await new Promise((resolve) => setTimeout(resolve, 200 * attempt))
+      }
+    }
+  }
+  if (!uploadId) throw new Error('上传失败')
+  return uploadId
+}
+
 export function previewChapterImport(params: ChapterImportParams) {
   return http
     .post<ChapterImportPreview>('/previewChapterImport', buildChapterImportForm(params), {
       headers: { 'Content-Type': 'multipart/form-data' },
+      timeout: UPLOAD_TIMEOUT_MS,
     })
     .then((r) => r.data)
 }
@@ -288,6 +400,7 @@ export function importChapterText(params: ChapterImportParams, selectedIndexes?:
   return http
     .post<ChapterImportResult>('/importChapterText', buildChapterImportForm(params, selectedIndexes), {
       headers: { 'Content-Type': 'multipart/form-data' },
+      timeout: UPLOAD_TIMEOUT_MS,
     })
     .then((r) => r.data)
 }

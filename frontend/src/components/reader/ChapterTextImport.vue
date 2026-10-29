@@ -75,7 +75,13 @@
         支持 UTF-8 / GB18030 / UTF-16 编码；整本导入只写入勾选的已匹配章节。
       </span>
       <button class="primary-btn" :disabled="previewing || importing || !canPreview" @click="runPreview">
-        {{ previewing ? '解析中…' : '解析并预览' }}
+        {{
+          previewing
+            ? uploadPercent == null
+              ? '解析中…'
+              : `上传中 ${uploadPercent}%`
+            : '解析并预览'
+        }}
       </button>
     </div>
 
@@ -247,9 +253,11 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import {
+  CHAPTER_IMPORT_CHUNK_THRESHOLD,
   getChapterImportDiff,
   importChapterText,
   previewChapterImport,
+  uploadChapterImportFile,
   type ChapterImportDiff,
   type ChapterImportMode,
   type ChapterImportPreview,
@@ -297,6 +305,10 @@ const displayLimit = ref(500)
 const previewing = ref(false)
 const importing = ref(false)
 const error = ref('')
+/** 分片上传返回的令牌；小文件直传时为空。 */
+const uploadId = ref<string | null>(null)
+/** 上传进度（0-100）；非上传阶段为 null。 */
+const uploadPercent = ref<number | null>(null)
 
 interface DiffState {
   loading: boolean
@@ -440,6 +452,8 @@ function clearPreview() {
   displayLimit.value = 500
   diffStates.value = new Map()
   expandedDiff.value = new Map()
+  uploadId.value = null
+  uploadPercent.value = null
 }
 
 function switchMode(next: 'book' | 'single') {
@@ -566,6 +580,7 @@ function paramsFor(nextMode: ChapterImportMode): ChapterImportParams {
     makeCurrent: makeCurrent.value,
     createdAt: Number.isFinite(createdAt) ? createdAt : undefined,
     file: file.value,
+    fileSize: file.value?.size,
     text: file.value ? undefined : pastedText.value,
   }
 }
@@ -578,8 +593,24 @@ async function runPreview() {
   }
   previewing.value = true
   error.value = ''
+  uploadPercent.value = null
   try {
-    const result = await previewChapterImport(paramsFor(mode.value))
+    const params = paramsFor(mode.value)
+    // 大文件先自适应分片上传：反代/WAF 的单请求体积上限各不相同，
+    // 一次 4-5MB 的 multipart 会被直接重置（浏览器侧连状态码都没有）。
+    if (params.file && params.file.size > CHAPTER_IMPORT_CHUNK_THRESHOLD) {
+      uploadPercent.value = 0
+      uploadId.value = null
+      const id = await uploadChapterImportFile(params.file, (uploaded, total) => {
+        uploadPercent.value =
+          total > 0 ? Math.min(100, Math.floor((uploaded / total) * 100)) : null
+      })
+      uploadId.value = id
+      params.file = null
+      params.fileSize = undefined
+      params.uploadId = id
+    }
+    const result = await previewChapterImport(params)
     preview.value = result
     selected.value = new Set(
       result.chapters
@@ -601,6 +632,7 @@ async function runPreview() {
     error.value = (e as Error).message || '解析 TXT 失败'
   } finally {
     previewing.value = false
+    uploadPercent.value = null
   }
 }
 
@@ -614,6 +646,11 @@ async function doImport() {
     if (current.previewId) {
       // 复用预览暂存：导入只带 previewId，整本文本不再二次上传
       params.previewId = current.previewId
+      params.file = null
+      params.text = undefined
+    } else if (uploadId.value) {
+      // 分片已全部上传：导入只带 uploadId，正文不再二次上传
+      params.uploadId = uploadId.value
       params.file = null
       params.text = undefined
     }

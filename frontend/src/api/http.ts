@@ -11,6 +11,14 @@ import {
 
 type RetriableConfig = InternalAxiosRequestConfig & { _authRetried?: boolean }
 
+/**
+ * 大文件上传的超时，与后端 `INBOUND_UPLOAD_TIMEOUT_SECS`（默认 900 秒）对齐。
+ *
+ * 默认的 120 秒对几十 MB 的整本 TXT 不够：慢链路或经反向代理时请求会被
+ * 前端主动掐断，看起来就像上传到一半被截断。
+ */
+export const UPLOAD_TIMEOUT_MS = 900_000
+
 const http = axios.create({
   baseURL: API_BASE,
   timeout: 120000,
@@ -46,6 +54,19 @@ http.interceptors.response.use(
     const data = error.response?.data as Partial<ApiResponse> | undefined
     const status = error.response?.status
     const config = error.config as RetriableConfig | undefined
+
+    // 413 可能来自反向代理（nginx 默认 client_max_body_size 只有 1m），
+    // 此时响应体是 HTML，没有 errorMsg；给一句能直接照着改配置的提示。
+    if (status === 413) {
+      return Promise.reject(
+        withStatus(
+          new Error(
+            '上传内容过大（HTTP 413）：请检查 nginx/OpenResty 的 client_max_body_size（建议 ≥100m）与上游 WAF 的上传上限'
+          ),
+          status
+        )
+      )
+    }
 
     // 未登录/会话失效统一为 HTTP 401。本地有登录提示时先静默刷新（凭
     // Cookie 换新）并重放一次；换不到才拉起登录框。并发 401 由

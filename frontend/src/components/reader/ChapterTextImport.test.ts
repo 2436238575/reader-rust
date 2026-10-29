@@ -3,17 +3,28 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createApp, nextTick, type App } from 'vue'
 import type { ChapterImportPreview, ChapterImportResult } from '../../api/chapterEdit'
 
-const { previewChapterImport, importChapterText, getChapterImportDiff } = vi.hoisted(() => ({
+const {
+  previewChapterImport,
+  importChapterText,
+  getChapterImportDiff,
+  uploadChapterImportFile,
+  CHAPTER_IMPORT_CHUNK_THRESHOLD,
+} = vi.hoisted(() => ({
   previewChapterImport: vi.fn(),
   importChapterText: vi.fn(),
   getChapterImportDiff: vi.fn(),
+  uploadChapterImportFile: vi.fn(),
+  CHAPTER_IMPORT_CHUNK_THRESHOLD: 512 * 1024,
 }))
 
-// 组件只用到这三个运行时导出；类型导入在编译期擦除，不需要出现在 mock 里
+// 类型导入在编译期擦除；运行时用到的导出都要在 mock 里出现，漏一个
+// 会让大文件分支在读取常量时直接抛错
 vi.mock('../../api/chapterEdit', () => ({
   previewChapterImport,
   importChapterText,
   getChapterImportDiff,
+  uploadChapterImportFile,
+  CHAPTER_IMPORT_CHUNK_THRESHOLD,
 }))
 
 import ChapterTextImport from './ChapterTextImport.vue'
@@ -119,6 +130,7 @@ beforeEach(() => {
   previewChapterImport.mockReset().mockResolvedValue(makePreview())
   importChapterText.mockReset().mockResolvedValue(importResult)
   getChapterImportDiff.mockReset().mockResolvedValue(diffResult)
+  uploadChapterImportFile.mockReset()
 })
 
 afterEach(() => {
@@ -181,6 +193,27 @@ describe('ChapterTextImport 预览复用', () => {
     await flush()
     expect(importChapterText).toHaveBeenCalledTimes(1)
     expect(importChapterText.mock.calls[0][0].previewId).toBe('pv-2')
+  })
+
+  it('大文件先分片上传，预览只带 uploadId', async () => {
+    uploadChapterImportFile.mockResolvedValue('u-1')
+    const el = mountComponent()
+    const fileInput = el.querySelector('input.file-input') as HTMLInputElement
+    const big = new File([new Uint8Array(1024 * 1024)], 'big.txt')
+    Object.defineProperty(fileInput, 'files', { value: [big], configurable: true })
+    fileInput.dispatchEvent(new Event('change'))
+    await flush()
+
+    findButton(el, '解析并预览').click()
+    await flush()
+
+    expect(uploadChapterImportFile).toHaveBeenCalledTimes(1)
+    expect(uploadChapterImportFile.mock.calls[0][0]).toBe(big)
+    const params = previewChapterImport.mock.calls[0][0]
+    expect(params.uploadId).toBe('u-1')
+    expect(params.file).toBeNull()
+    expect(params.fileSize).toBeUndefined()
+    expect(el.querySelector('.preview-area')).toBeTruthy()
   })
 
   it('切换匹配模式丢弃当前预览', async () => {

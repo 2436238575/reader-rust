@@ -207,6 +207,46 @@ impl TestServer {
         (status, payload)
     }
 
+    /// 分片上传一片，返回（状态码，完整响应体）。
+    async fn upload_chunk(&self, fields: &[(&str, &str)], chunk: &[u8]) -> (StatusCode, Value) {
+        let boundary = "----chapter-chunk-test";
+        let mut body = Vec::new();
+        for (name, value) in fields {
+            body.extend_from_slice(
+                format!(
+                    "--{boundary}\r\nContent-Disposition: form-data; name=\"{name}\"\r\n\r\n{value}\r\n"
+                )
+                .as_bytes(),
+            );
+        }
+        body.extend_from_slice(
+            format!(
+                "--{boundary}\r\nContent-Disposition: form-data; name=\"chunk\"; filename=\"chunk.bin\"\r\nContent-Type: application/octet-stream\r\n\r\n"
+            )
+            .as_bytes(),
+        );
+        body.extend_from_slice(chunk);
+        body.extend_from_slice(format!("\r\n--{boundary}--\r\n").as_bytes());
+        let resp = self
+            .client
+            .post(format!(
+                "{}/reader3/uploadChapterImportChunk",
+                self.base_url
+            ))
+            .bearer_auth(&self.token)
+            .header(
+                "Content-Type",
+                format!("multipart/form-data; boundary={boundary}"),
+            )
+            .body(body)
+            .send()
+            .await
+            .unwrap();
+        let status = resp.status();
+        let payload: Value = resp.json().await.unwrap();
+        (status, payload)
+    }
+
     async fn get_content(&self, book_id: &str, chapter_url: &str, extra: Value) -> Value {
         let mut body = json!({ "bookId": book_id, "chapterUrl": chapter_url, "index": 0 });
         body.as_object_mut()
@@ -1357,6 +1397,205 @@ async fn whole_book_text_preview_and_batch_import() {
     let third = server.get_content(&book_id, &third_url, json!({})).await;
     assert_eq!(third["edited"], json!(false));
     assert!(third["content"].as_str().unwrap().contains("本地正文三"));
+}
+
+/// 反代把 multipart 重新拼成合法请求但正文被截断时，必须明确 400，
+/// 不能把「半本书」当成完整上传静默导入。
+#[tokio::test]
+async fn truncated_import_upload_is_rejected() {
+    let server = boot().await;
+    let book = server
+        .upload_txt(
+            "截断导入测试",
+            "第一章 开始\n本地正文一。\n第二章 继续\n本地正文二。\n",
+        )
+        .await;
+    let book_id = book["bookId"].as_str().unwrap().to_string();
+    let full = "第一章 开始\n导入正文一。\n第二章 继续\n导入正文二。\n";
+    let truncated = full
+        .strip_suffix("第二章 继续\n导入正文二。\n")
+        .expect("测试文本应包含尾部章节");
+    let declared = full.len().to_string();
+
+    let (status, payload) = server
+        .import_multipart_raw(
+            "previewChapterImport",
+            &[
+                ("bookId", &book_id),
+                ("mode", "book"),
+                ("fileSize", declared.as_str()),
+            ],
+            Some(truncated),
+        )
+        .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{payload}");
+    assert!(
+        payload["errorMsg"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("上传不完整"),
+        "应指出上传不完整: {payload}"
+    );
+}
+
+/// 整本全选时 selectedIndexes 会超过小参数字段的 8KB，不能因此拒绝导入。
+#[tokio::test]
+async fn large_selected_indexes_field_is_accepted() {
+    let server = boot().await;
+    let book = server
+        .upload_txt(
+            "大选择列表测试",
+            "第一章 开始\n本地正文一。\n第二章 继续\n本地正文二。\n",
+        )
+        .await;
+    let book_id = book["bookId"].as_str().unwrap().to_string();
+    let indexes = (0..3000)
+        .map(|index| index.to_string())
+        .collect::<Vec<_>>()
+        .join(",");
+    assert!(indexes.len() > 8 * 1024, "用例要覆盖 8KB 以上");
+
+    let preview = server
+        .import_multipart(
+            "previewChapterImport",
+            &[
+                ("bookId", &book_id),
+                ("mode", "book"),
+                ("selectedIndexes", indexes.as_str()),
+            ],
+            Some("第一章 开始\n导入正文一。\n第二章 继续\n导入正文二。\n"),
+        )
+        .await;
+    assert_eq!(preview["total"], json!(2), "{preview}");
+}
+
+/// 自适应分片上传：两片拼成完整文件后，预览和导入都凭 uploadId 复用。
+#[tokio::test]
+async fn chunked_import_upload_reassembles_and_imports() {
+    let server = boot().await;
+    let book = server
+        .upload_txt(
+            "分片导入测试",
+            "第一章 开始\n本地正文一。\n第二章 继续\n本地正文二。\n",
+        )
+        .await;
+    let book_id = book["bookId"].as_str().unwrap().to_string();
+    let text = "第一章 开始\n导入正文一。\n第二章 继续\n导入正文二。\n";
+    let split = text.find("第二章").expect("测试文本应包含第二章");
+    let first = &text.as_bytes()[..split];
+    let second = &text.as_bytes()[split..];
+    let total = text.len().to_string();
+    let second_offset = first.len().to_string();
+
+    let (status, created) = server
+        .upload_chunk(&[("offset", "0"), ("fileSize", total.as_str())], first)
+        .await;
+    assert_eq!(status, StatusCode::OK, "{created}");
+    let upload_id = created["data"]["uploadId"]
+        .as_str()
+        .expect("首片应返回 uploadId")
+        .to_string();
+    assert_eq!(created["data"]["received"], json!(first.len()));
+    assert_eq!(created["data"]["complete"], json!(false));
+
+    let (status, finished) = server
+        .upload_chunk(
+            &[
+                ("uploadId", upload_id.as_str()),
+                ("offset", second_offset.as_str()),
+                ("fileSize", total.as_str()),
+            ],
+            second,
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{finished}");
+    assert_eq!(finished["data"]["received"], json!(text.len()));
+    assert_eq!(finished["data"]["complete"], json!(true));
+
+    // 响应丢失后的重发：同一片再传一次应幂等成功，不把文件写重
+    let (status, retried) = server
+        .upload_chunk(
+            &[
+                ("uploadId", upload_id.as_str()),
+                ("offset", second_offset.as_str()),
+                ("fileSize", total.as_str()),
+            ],
+            second,
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{retried}");
+    assert_eq!(retried["data"]["received"], json!(text.len()));
+
+    let preview = server
+        .import_multipart(
+            "previewChapterImport",
+            &[
+                ("bookId", &book_id),
+                ("mode", "book"),
+                ("uploadId", upload_id.as_str()),
+            ],
+            None,
+        )
+        .await;
+    assert_eq!(preview["total"], json!(2), "{preview}");
+    assert_eq!(preview["matched"], json!(2), "{preview}");
+
+    let result = server
+        .import_multipart(
+            "importChapterText",
+            &[
+                ("bookId", &book_id),
+                ("mode", "book"),
+                ("kind", "imported"),
+                ("uploadId", upload_id.as_str()),
+            ],
+            None,
+        )
+        .await;
+    assert_eq!(result["imported"], json!(2), "{result}");
+    assert_eq!(result["failed"], json!(0), "{result}");
+}
+
+/// 只传了前几片就预览：必须按「上传不完整」拒绝，不能把半本书当完整文件。
+#[tokio::test]
+async fn chunked_import_upload_rejects_incomplete_file() {
+    let server = boot().await;
+    let book = server
+        .upload_txt(
+            "分片不完整测试",
+            "第一章 开始\n本地正文一。\n第二章 继续\n本地正文二。\n",
+        )
+        .await;
+    let book_id = book["bookId"].as_str().unwrap().to_string();
+    let text = "第一章 开始\n导入正文一。\n第二章 继续\n导入正文二。\n";
+    let total = text.len().to_string();
+    let first = &text.as_bytes()[..text.find("第二章").unwrap()];
+
+    let (status, created) = server
+        .upload_chunk(&[("offset", "0"), ("fileSize", total.as_str())], first)
+        .await;
+    assert_eq!(status, StatusCode::OK, "{created}");
+    let upload_id = created["data"]["uploadId"].as_str().unwrap().to_string();
+
+    let (status, payload) = server
+        .import_multipart_raw(
+            "previewChapterImport",
+            &[
+                ("bookId", &book_id),
+                ("mode", "book"),
+                ("uploadId", upload_id.as_str()),
+            ],
+            None,
+        )
+        .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{payload}");
+    assert!(
+        payload["errorMsg"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("上传不完整"),
+        "应指出上传不完整: {payload}"
+    );
 }
 
 /// 单章 TXT：粘贴带标题的正文，导入时去掉标题行，只写当前章节。

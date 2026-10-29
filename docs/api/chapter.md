@@ -181,8 +181,11 @@ POST /reader3/resetBookToUpstream { bookId } → { cleared }
 POST /reader3/importChapterVersion { bookId, chapterUrl, content, chapterIndex?,
                                      chapterTitle?, baseVersionId?, note?,
                                      makeCurrent?, createdAt? }
+POST /reader3/uploadChapterImportChunk multipart: offset, fileSize, uploadId?, chunk
+        → { uploadId, received, complete }
+        （首片不带 uploadId；后续片带首片返回的 uploadId）
 POST /reader3/previewChapterImport  multipart: bookId, mode?, chapterUrl?, chapterIndex?,
-                                     chapterTitle?, file? | text?
+                                     chapterTitle?, file? | text? | uploadId?
         → { mode, total, matched, unmatched, empty, changed, cached, uncached,
             previewId, chapters: [...] }
 POST /reader3/importChapterText     multipart: 同上 + kind?, note?, makeCurrent?,
@@ -204,6 +207,27 @@ POST /reader3/getChapterImportDiff { previewId, sourceIndex }
 两个接口都收 `multipart/form-data`，正文可以放在 `file` 文件字段，也可以放在 `text` 文本字段。
 文件支持 UTF-8、GB18030 与 UTF-16（含 BOM），上限 50MB。
 
+带 `file` 时建议同时传 `fileSize`（原始文件字节数）：后端会核对实际收到的字节数，
+不一致时返回 400「TXT 上传不完整」。反向代理重新拼装 multipart 后，被截断的请求
+仍然是合法表单，只有这个声明值能发现「只收到半本书」。`fileSize` 应排在 `file`
+字段之前，代理截断正文时小字段才能先到。
+
+大文件与反代体积限制走分片上传，预览/导入把 `file` 换成 `uploadId`：
+
+`POST /reader3/uploadChapterImportChunk`（`multipart/form-data`，需登录）
+
+- 首片：`offset=0`、`fileSize`（文件总字节数），不带 `uploadId`；响应
+  `{ uploadId, received, complete }`。
+- 后续片：`uploadId`、`offset`（当前已上传字节数）、`fileSize` 与 `chunk` 文件字段。
+- 单片正文上限 8MB，文件总大小仍受 50MB 限制；`uploadId` 绑定当前用户，
+  暂存 1 小时，每个用户最多保留 3 份，过期在下次新上传时清理。
+- 同一片可以重发（响应丢失后的幂等重试）：偏移小于已收到长度时先比对重叠区，
+  内容一致就当作成功。
+- 预览与导入都接受 `uploadId`（与 `file`/`text` 互斥；与 `previewId` 同时存在时
+  优先用 `previewId`）。只传了部分分片时返回 400「TXT 上传不完整」。
+- 前端在文件超过 512KB 时自动分片：从 512KB 起步，成功就放大 1.5 倍，遇到
+  413 / 断连 / 5xx 就减半并把上限钉住；小文件仍一次直传。
+
 - `mode`：`book` 按章节标题拆分（标题形如「第 12 章」「第一百零二回」），`single` 把整段文本
   作为 `chapterUrl` 对应的当前章节，`auto` 为默认值——能拆出多章按整本处理，否则按单章处理。
 - 单章模式的正文如果第一行是章节标题，会去掉标题行后入库。
@@ -222,7 +246,8 @@ POST /reader3/getChapterImportDiff { previewId, sourceIndex }
   用于详情对比与导入复用。`getChapterImportDiff` 按 `sourceIndex` 取回该章与当前正文的段落 diff；
   正文过大时 `previewId` 为 `null`，此时详情只展示正文片段。
 - `importChapterText` 的 `selectedIndexes` 是逗号分隔的 `sourceIndex`：不传表示导入全部已匹配章节，
-  传空字符串表示一章都不导入。`kind` 为 `edited`（默认）或 `imported`；`makeCurrent` 默认 false。
+  传空字符串表示一章都不导入。整本全选时列表可达上万项（约一百多 KB），字段上限 1MB。
+  `kind` 为 `edited`（默认）或 `imported`；`makeCurrent` 默认 false。
 - 导入带上 `previewId` 时直接复用预览暂存的切章/匹配结果执行写入，**不用再传 `file`/`text`**
   （同一份正文不二次上传）；暂存条目被导入消费后仍保留到过期，失败可拿同一个 `previewId` 重试。
   `previewId` 未命中、已过期或不属于当前书籍时返回 400（提示重新解析）；不带 `previewId` 的旧调用

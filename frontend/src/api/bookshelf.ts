@@ -1,4 +1,4 @@
-import http from './http'
+import http, { UPLOAD_TIMEOUT_MS } from './http'
 import type { Book, BookChapter, BookGroup, ChapterImages } from '../types'
 import { withAppBase } from '../utils/appBase'
 
@@ -33,6 +33,7 @@ export function uploadTxtBook(file: File) {
   return http
     .post<Book>('/uploadTxtBook', formData, {
       headers: { 'Content-Type': 'multipart/form-data' },
+      timeout: UPLOAD_TIMEOUT_MS,
     })
     .then((r) => r.data)
 }
@@ -43,6 +44,7 @@ export function uploadEpubBook(file: File) {
   return http
     .post<Book>('/uploadEpubBook', formData, {
       headers: { 'Content-Type': 'multipart/form-data' },
+      timeout: UPLOAD_TIMEOUT_MS,
     })
     .then((r) => r.data)
 }

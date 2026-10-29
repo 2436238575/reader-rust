@@ -9,6 +9,7 @@ mod bookmark;
 mod cache;
 mod chapter_edit;
 mod chapter_image;
+mod chapter_import_upload;
 mod image;
 mod multipart;
 mod replace_rule;
@@ -35,6 +36,7 @@ pub use chapter_edit::{
     save_chapter_edit, select_chapter_version,
 };
 pub use chapter_image::get_chapter_images;
+pub use chapter_import_upload::upload_chapter_import_chunk;
 pub use image::{get_book_cover, get_image};
 pub use replace_rule::{
     delete_replace_rule, delete_replace_rules, get_replace_rules, save_replace_rule,

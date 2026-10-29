@@ -14,6 +14,7 @@ vi.mock('./http', () => ({
     get: vi.fn(),
     post: vi.fn(),
   },
+  UPLOAD_TIMEOUT_MS: 900_000,
 }))
 
 const getMock = http.get as unknown as Mock

@@ -35,10 +35,14 @@ storage/
 │     └─ local_books/<hash>/                         本地 TXT / EPUB
 ├─ assets/                        上传资源（ASSETS_DIR）
 │  └─ <ns>/<类型>/<文件名>
-└─ webdav/<ns>/                   WebDAV 文件
+├─ webdav/<ns>/                   WebDAV 文件
+└─ tmp/chapter_import/<ns>/        整本 TXT 分片上传暂存（可随时删）
+   └─ <uploadId>.bin / <uploadId>.json
 ```
 
 `<ns>` 是用户命名空间，恒为 `user_<uid>`；`<n>` 是书籍登记表的自增 id。单用户部署下只有一个命名空间，目录层级仍然保留。
+
+`tmp/` 只放可丢弃的中间状态：整本 TXT 分片上传把分片按偏移拼进 `<uploadId>.bin`，旁路 `<uploadId>.json` 记录用户、文件总大小与创建时间；预览/导入凭 `uploadId` 读取，同一份文件只接受声明大小一致的内容。暂存 1 小时、每个用户最多 3 份，过期条目在下一次新上传时顺带清理。
 
 ## 命名约定
 
