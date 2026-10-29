@@ -195,8 +195,8 @@ export function expandCollapseRow(
 
 /**
  * 把操作序列摊成渲染行：连续未变段超过 上下context×2+1 时中间折叠成
- * collapse 行；`expanded` 记录某个折叠块已展开的数量（面板按「一次展开
- * 15 段」递增它，展开后剩余部分生成新的折叠行）。
+ * collapse 行；`expanded` 记录某个折叠块已展开的数量（面板按各自步长递增
+ * 它，逐步展开或一次性全展开，展开后剩余部分生成新的折叠行）。
  */
 export function buildDiffRows(
   ops: ParagraphDiffOp[],

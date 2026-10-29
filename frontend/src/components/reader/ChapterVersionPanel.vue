@@ -128,7 +128,7 @@
                         class="diff-collapse"
                         @click="expandCollapse(row)"
                       >
-                        ⋯ 展开 15 段（还有 {{ row.opsCount }} 段未显示）
+                        ⋯ 展开 {{ row.opsCount }} 段
                       </button>
                       <div v-else-if="row.op.type === 'equal'" class="diff-row equal">
                         <span class="diff-gutter"></span>
@@ -441,9 +441,9 @@ async function handleResetBookToUpstream() {
   }
 }
 
-/** 再展开 15 段：进度按块起点累计，多次点击都能继续展开 */
+/** 点击展开该处折叠的全部剩余段落：步长即剩余段数，一次展开后折叠行消失 */
 function expandCollapse(row: Extract<DiffRow, { kind: 'collapse' }>) {
-  expanded.value = expandCollapseRow(expanded.value, row)
+  expanded.value = expandCollapseRow(expanded.value, row, row.opsCount)
 }
 
 function onOpenCache() {
