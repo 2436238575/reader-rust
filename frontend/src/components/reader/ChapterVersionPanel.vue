@@ -123,13 +123,29 @@
                   </div>
                   <div class="diff-body">
                     <template v-for="(row, rowIndex) in diffRows" :key="rowIndex">
-                      <button
-                        v-if="row.kind === 'collapse'"
-                        class="diff-collapse"
-                        @click="expandCollapse(row.opsStart)"
-                      >
-                        ⋯ 展开 15 段（还有 {{ row.opsCount }} 段未显示）
-                      </button>
+                      <div v-if="row.kind === 'collapse'" class="diff-collapse">
+                        <button
+                          class="diff-collapse-edge"
+                          type="button"
+                          aria-label="展开上方 3 段"
+                          @click="expandRow(row, 'head')"
+                        >
+                          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="m18 15-6-6-6 6" />
+                          </svg>
+                        </button>
+                        <span class="diff-collapse-label">⋯ 还有 {{ row.opsCount }} 段未显示 ⋯</span>
+                        <button
+                          class="diff-collapse-edge"
+                          type="button"
+                          aria-label="展开下方 3 段"
+                          @click="expandRow(row, 'tail')"
+                        >
+                          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="m6 9 6 6 6-6" />
+                          </svg>
+                        </button>
+                      </div>
                       <div v-else-if="row.op.type === 'equal'" class="diff-row equal">
                         <span class="diff-gutter"></span>
                         <span class="diff-text">{{ row.op.editedText }}</span>
@@ -229,7 +245,11 @@ import { formatDateTime } from '../../utils/format'
 import {
   buildDiffRows,
   diffStats,
+  expandCollapseEdge,
+  hydrateDiffOps,
   inlinePartsFor,
+  type CollapseExpansion,
+  type DiffRow,
   type ParagraphDiffOp,
 } from '../../utils/chapterDiff'
 
@@ -259,7 +279,8 @@ const diffOps = ref<ParagraphDiffOp[] | null>(null)
 const diffError = ref('')
 const diffLoading = ref(false)
 const diffStatsData = computed(() => (diffOps.value?.length ? diffStats(diffOps.value) : null))
-const expanded = ref(new Map<number, number>())
+// 折叠块展开进度：key = 折叠块原始起点（不随展开位移），value = 块顶/块底已多显示的段数
+const expanded = ref(new Map<number, CollapseExpansion>())
 const diffRows = computed(() =>
   buildDiffRows(diffOps.value ?? [], { expanded: expanded.value })
 )
@@ -388,7 +409,8 @@ async function comparePreview() {
       fromVersionId: target,
       toVersionId: preview.value.versionId,
     })
-    diffOps.value = result.ops
+    // 后端为省流量不给 equal 段带文本：用预览版本正文补回，上下文行才显示得出来
+    diffOps.value = hydrateDiffOps(result.ops, preview.value.content)
   } catch (e) {
     diffError.value = (e as Error).message || '对比失败'
   } finally {
@@ -436,10 +458,9 @@ async function handleResetBookToUpstream() {
   }
 }
 
-function expandCollapse(opsStart: number) {
-  const next = new Map(expanded.value)
-  next.set(opsStart, (next.get(opsStart) ?? 0) + 15)
-  expanded.value = next
+/** VSCode 式逐次展开：每次从块顶或块底多显示 3 段，剩余保持折叠 */
+function expandRow(row: Extract<DiffRow, { kind: 'collapse' }>, edge: 'head' | 'tail') {
+  expanded.value = expandCollapseEdge(expanded.value, row, edge)
 }
 
 function onOpenCache() {
@@ -835,19 +856,45 @@ watch(
   border-radius: 2px;
 }
 
+/* 折叠条：两端是逐次展开 3 段的上下箭头（VSCode 式），中间提示剩余段数 */
 .diff-collapse {
-  display: block;
-  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 8px;
   margin: 4px 0;
-  padding: 6px 0;
+  padding: 2px 6px;
   border: 1px dashed rgba(128, 128, 128, 0.35);
   border-radius: 8px;
-  background: transparent;
+  opacity: 0.8;
+  font-size: var(--text-xs);
+}
+
+.diff-collapse-label {
+  flex: 1;
+  text-align: center;
+  opacity: 0.75;
+}
+
+.diff-collapse-edge {
+  width: 28px;
+  height: 26px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 6px;
   color: inherit;
   opacity: 0.65;
-  font-size: var(--text-xs);
-  cursor: pointer;
-  text-align: center;
+  flex-shrink: 0;
+}
+
+.diff-collapse-edge:hover {
+  background: var(--color-bg-hover);
+  opacity: 1;
+}
+
+.diff-collapse-edge svg {
+  width: 14px;
+  height: 14px;
 }
 
 .empty {

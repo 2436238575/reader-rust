@@ -1212,7 +1212,9 @@ pub async fn get_chapter_import_diff(
     }
     let (ops, diff_error) = match state
         .chapter_diff_service
-        .diff_texts(&current.content, &incoming)
+        // 导入对比的响应里不带完整正文：equal 段文本由后端直接回填，
+        // 前端折叠条展开后的上下文行才有内容
+        .diff_texts_with_equal_texts(&current.content, &incoming)
     {
         Ok(ops) => (Some(ops), String::new()),
         Err(reason) => (None, reason.to_string()),

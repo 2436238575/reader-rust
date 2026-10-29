@@ -187,13 +187,29 @@
             <div v-if="diffLoading" class="empty small">正在对比…</div>
             <div v-else-if="diffOps?.length" class="detail-diff">
               <template v-for="(row, rowIndex) in activeDiffRows" :key="rowIndex">
-                <button
-                  v-if="row.kind === 'collapse'"
-                  class="diff-collapse"
-                  @click="expandDiff(row.opsStart)"
-                >
-                  ⋯ 展开 {{ row.opsCount }} 段
-                </button>
+                <div v-if="row.kind === 'collapse'" class="diff-collapse">
+                  <button
+                    class="diff-collapse-edge"
+                    type="button"
+                    aria-label="展开上方 3 段"
+                    @click="expandDiff(row, 'head')"
+                  >
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                      <path d="m18 15-6-6-6 6" />
+                    </svg>
+                  </button>
+                  <span class="diff-collapse-label">⋯ 还有 {{ row.opsCount }} 段未显示 ⋯</span>
+                  <button
+                    class="diff-collapse-edge"
+                    type="button"
+                    aria-label="展开下方 3 段"
+                    @click="expandDiff(row, 'tail')"
+                  >
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                      <path d="m6 9 6 6 6-6" />
+                    </svg>
+                  </button>
+                </div>
                 <div v-else-if="row.op.type === 'equal'" class="diff-line equal">
                   {{ row.op.editedText }}
                 </div>
@@ -257,7 +273,12 @@ import {
   type ChapterImportParams,
   type ChapterImportResult,
 } from '../../api/chapterEdit'
-import { buildDiffRows } from '../../utils/chapterDiff'
+import {
+  buildDiffRows,
+  expandCollapseEdge,
+  type CollapseExpansion,
+  type DiffRow,
+} from '../../utils/chapterDiff'
 
 const props = defineProps<{
   bookId?: string
@@ -305,7 +326,7 @@ interface DiffState {
 }
 
 const diffStates = ref(new Map<number, DiffState>())
-const expandedDiff = ref(new Map<number, number>())
+const expandedDiff = ref(new Map<number, CollapseExpansion>())
 
 const canPreview = computed(() => {
   if (!props.bookId) return false
@@ -511,10 +532,9 @@ function setActive(item: ChapterImportPreviewChapter) {
   void ensureDiff(item)
 }
 
-function expandDiff(opsStart: number) {
-  const next = new Map(expandedDiff.value)
-  next.set(opsStart, (next.get(opsStart) ?? 0) + 10)
-  expandedDiff.value = next
+/** VSCode 式逐次展开：每次从块顶或块底多显示 3 段，剩余保持折叠 */
+function expandDiff(row: Extract<DiffRow, { kind: 'collapse' }>, edge: 'head' | 'tail') {
+  expandedDiff.value = expandCollapseEdge(expandedDiff.value, row, edge)
 }
 
 function applySelection(mutator: (set: Set<number>) => void) {
@@ -1188,18 +1208,46 @@ async function doImport() {
   color: #22c55e;
 }
 
+/* 折叠条：两端是逐次展开 3 段的上下箭头（VSCode 式），中间提示剩余段数 */
 .diff-collapse {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   width: 100%;
   margin: 2px 0;
-  padding: 4px 0;
+  padding: 2px 6px;
   border: 1px dashed rgba(128, 128, 128, 0.35);
   border-radius: 8px;
-  background: transparent;
-  color: inherit;
-  opacity: 0.6;
+  opacity: 0.8;
   font-size: var(--text-xs);
-  cursor: pointer;
+}
+
+.diff-collapse-label {
+  flex: 1;
   text-align: center;
+  opacity: 0.75;
+}
+
+.diff-collapse-edge {
+  width: 28px;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 6px;
+  color: inherit;
+  opacity: 0.65;
+  flex-shrink: 0;
+}
+
+.diff-collapse-edge:hover {
+  background: var(--color-bg-hover);
+  opacity: 1;
+}
+
+.diff-collapse-edge svg {
+  width: 14px;
+  height: 14px;
 }
 
 .empty {

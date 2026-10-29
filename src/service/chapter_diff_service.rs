@@ -122,6 +122,27 @@ impl ChapterDiffService {
         self.diff_paragraphs(&base, &edited)
     }
 
+    /// 与 diff_texts 相同，但 equal 段回填编辑版文本。
+    ///
+    /// 供响应里不带完整正文的端点（导入对比）使用；正文接口的 diff 仍由
+    /// 前端拿响应里的正文自行补齐，省流量。
+    pub fn diff_texts_with_equal_texts(
+        &self,
+        base: &str,
+        edited: &str,
+    ) -> Result<Vec<DiffOp>, DiffUnavailable> {
+        let mut ops = self.diff_texts(base, edited)?;
+        let edited_paragraphs = split_to_paragraphs(edited);
+        for op in &mut ops {
+            if op.kind == "equal" {
+                if let Some(index) = op.edited_index {
+                    op.edited_text = edited_paragraphs.get(index).cloned();
+                }
+            }
+        }
+        Ok(ops)
+    }
+
     fn diff_paragraphs(
         &self,
         base: &[String],
@@ -647,5 +668,32 @@ mod tests {
         assert!(ops[2].base_text.is_some());
         assert!(ops[2].edited_text.is_none());
         assert!(ops[3].base_text.is_some() && ops[3].edited_text.is_some());
+    }
+
+    #[test]
+    fn diff_with_equal_texts_fills_context_for_contentless_endpoints() {
+        let service = ChapterDiffService::new();
+        let base = "第一段\n改掉的旧句\n第三段\n第四段";
+        let edited = "第一段\n改掉的新句\n第三段\n第四段";
+        let ops = service
+            .diff_texts_with_equal_texts(base, edited)
+            .expect("小输入应可计算");
+        let equal_texts: Vec<Option<&str>> = ops
+            .iter()
+            .filter(|op| op.kind == "equal")
+            .map(|op| op.edited_text.as_deref())
+            .collect();
+        // equal 段带上了编辑版文本，前端不再需要正文来补
+        assert_eq!(
+            equal_texts,
+            vec![Some("第一段"), Some("第三段"), Some("第四段")]
+        );
+        // modify 两段照常都带
+        let modified = ops
+            .iter()
+            .find(|op| op.kind == "modify")
+            .expect("应有 modify");
+        assert_eq!(modified.base_text.as_deref(), Some("改掉的旧句"));
+        assert_eq!(modified.edited_text.as_deref(), Some("改掉的新句"));
     }
 }

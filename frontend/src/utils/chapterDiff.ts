@@ -167,21 +167,56 @@ export function buildDiffPreview(
 
 /* ─── diff 面板的折叠行序列 ─── */
 
+/** 折叠块的展开进度：从块顶/块底各自额外显示了多少段（每次 3 段，VSCode 式） */
+export interface CollapseExpansion {
+  head: number
+  tail: number
+}
+
 export type DiffRow =
   | { kind: 'op'; op: ParagraphDiffOp }
-  | { kind: 'collapse'; /** 被折叠的 op 起始下标与数量 */ opsStart: number; opsCount: number }
+  | {
+      kind: 'collapse'
+      /** 折叠块在 op 序列里的原始起点：展开进度的 key，不随展开位移 */
+      blockStart: number
+      /** 当前折叠行覆盖的区间起点（随展开向两侧收缩） */
+      opsStart: number
+      opsCount: number
+    }
 
 /**
- * 把操作序列摊成渲染行：连续未变段超过 上下context×2+1 时中间折叠成
- * collapse 行；`expanded` 记录某个折叠块已展开的数量（面板按「一次展开
- * 15 段」递增它，展开后剩余部分生成新的折叠行）。
+ * 折叠行上的「展开上方/下方 3 段」：返回新的展开进度表。
+ * 整表替换式更新，调用方直接赋回响应式状态即可触发重算。
+ */
+export function expandCollapseEdge(
+  expanded: ReadonlyMap<number, CollapseExpansion>,
+  row: Extract<DiffRow, { kind: 'collapse' }>,
+  edge: 'head' | 'tail',
+  step = 3
+): Map<number, CollapseExpansion> {
+  const next = new Map(expanded)
+  const current = next.get(row.blockStart) ?? { head: 0, tail: 0 }
+  next.set(
+    row.blockStart,
+    edge === 'head'
+      ? { head: current.head + step, tail: current.tail }
+      : { head: current.head, tail: current.tail + step }
+  )
+  return next
+}
+
+/**
+ * 把操作序列摊成渲染行：连续未变段超过 上下context×2+1 时中间折叠。
+ * 折叠块可从顶部或底部逐次展开 3 段，剩余部分保持折叠。展开进度必须以
+ * 块的原始起点为 key——旧实现把 key 记在「当前折叠行的起点」上，展开一次
+ * 后折叠行起点位移，后续点击全部写进读不到的键里（展开只生效一次）。
  */
 export function buildDiffRows(
   ops: ParagraphDiffOp[],
-  options: { context?: number; expanded?: ReadonlyMap<number, number> } = {}
+  options: { context?: number; expanded?: ReadonlyMap<number, CollapseExpansion> } = {}
 ): DiffRow[] {
   const context = options.context ?? 3
-  const expanded = options.expanded ?? new Map<number, number>()
+  const expanded = options.expanded ?? new Map<number, CollapseExpansion>()
   const rows: DiffRow[] = []
 
   let i = 0
@@ -203,22 +238,25 @@ export function buildDiffRows(
     if (runLength <= keepHead + keepTail + 1) {
       for (let k = i; k < j; k++) rows.push({ kind: 'op', op: ops[k] })
     } else {
-      for (let k = i; k < i + keepHead; k++) rows.push({ kind: 'op', op: ops[k] })
-      const collapseStart = i + keepHead
       const collapseCount = runLength - keepHead - keepTail
-      const shown = Math.min(expanded.get(collapseStart) ?? 0, collapseCount)
-      for (let k = collapseStart; k < collapseStart + shown; k++) {
+      const progress = expanded.get(i) ?? { head: 0, tail: 0 }
+      const headShown = Math.min(Math.max(progress.head, 0), collapseCount)
+      const tailShown = Math.min(Math.max(progress.tail, 0), collapseCount - headShown)
+      for (let k = i; k < i + keepHead + headShown; k++) {
         rows.push({ kind: 'op', op: ops[k] })
       }
-      const remaining = collapseCount - shown
+      const remaining = collapseCount - headShown - tailShown
       if (remaining > 0) {
         rows.push({
           kind: 'collapse',
-          opsStart: collapseStart + shown,
+          blockStart: i,
+          opsStart: i + keepHead + headShown,
           opsCount: remaining,
         })
       }
-      for (let k = j - keepTail; k < j; k++) rows.push({ kind: 'op', op: ops[k] })
+      for (let k = j - keepTail - tailShown; k < j; k++) {
+        rows.push({ kind: 'op', op: ops[k] })
+      }
     }
     i = j
   }
