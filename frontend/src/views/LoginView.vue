@@ -3,17 +3,7 @@
     <div class="login-card">
       <div class="login-header">
         <div class="login-logo">
-          <svg
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            stroke-width="2"
-            width="32"
-            height="32"
-          >
-            <path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z" />
-            <path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z" />
-          </svg>
+          <img :src="appIcon" alt="阅读" width="40" height="40" />
         </div>
         <h2>登录</h2>
         <p class="login-desc">登录以同步你的阅读数据</p>
@@ -57,6 +47,7 @@
 import { reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { login } from '../api/user'
+import appIcon from '../assets/app-icon.png'
 import { useAppStore } from '../stores/app'
 import { useBookshelfStore } from '../stores/bookshelf'
 
