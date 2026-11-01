@@ -87,10 +87,22 @@ AI资料/AI 地图/听书 TTS 可以使用「后端」模型：请求经 `/reade
 | ------------ | ------------------------ | ------------------------------------------------------------------------------------------------------------- |
 | `AI_TEXT_`   | 文本模型（AI资料生成）   | `ENABLED`、`BASE_URL`、`API_KEY`、`MODEL`、`USE_FULL_URL`                                                     |
 | `AI_IMAGE_`  | 图片模型（AI 地图）      | `ENABLED`、`BASE_URL`、`API_KEY`、`MODEL`（默认 `gpt-image-1`）、`SIZE`（默认 `1024x1024`）、`USE_FULL_URL`   |
-| `AI_SPEECH_` | 语音模型（听书 TTS）     | `ENABLED`、`BASE_URL`、`API_KEY`、`MODEL`（默认 `gpt-4o-mini-tts`）、`VOICE`（默认 `alloy`）、`FORMAT`（默认 `mp3`）、`USE_FULL_URL` |
+| `AI_SPEECH_` | 语音模型（听书 TTS）     | `ENABLED`、`BASE_URL`、`API_KEY`、`MODEL`（默认 `gpt-4o-mini-tts`）、`VOICE`（默认 `alloy`）、`FORMAT`（默认 `mp3`）、`USE_FULL_URL`、`PROTOCOL`（默认 `openai`） |
 
 示例：`AI_SPEECH_ENABLED=true` + `AI_SPEECH_BASE_URL=http://localhost:8825` + `AI_SPEECH_API_KEY=...`
 即可让前端「听书 · 模型来源 = 后端」可用。
+
+`AI_SPEECH_PROTOCOL` 选择语音合成的上游协议：
+
+- `openai`（默认）：走 OpenAI `/v1/audio/speech`，上游返回的音频字节流原样透传。
+- `mimo_chat`：适配小米 mimo（`mimo-v2.5-tts`）的 chat 协议——它的 TTS 没有
+  `/v1/audio/speech`，服务端把请求重构造为 `POST /v1/chat/completions`
+  （assistant 角色的 content 即待合成文本，voice/speed 等参数上游未证实支持、
+  不带），并从响应的 `choices[0].message.audio.data` 取出 base64 WAV 解码后
+  以 `audio/wav` 返回；响应解析不出音频时回 502 并带上游响应片段。
+
+未知值启动时告警并回落 `openai`；该协议只作用于服务端配置的 speech 请求，
+客户端自带端点时按其所选路径原样转发。
 
 ### AI 资料编排（Python sidecar）
 

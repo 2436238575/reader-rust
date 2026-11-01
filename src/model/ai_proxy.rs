@@ -77,6 +77,18 @@ pub fn format_ai_proxy_upstream_error(status: u16, body: &str) -> String {
     format!("模型服务返回 {} {}：{}", status, reason, detail)
 }
 
+/// mimo chat 协议下，上游 200 却解析不出音频数据时的用户可读文案。
+///
+/// 与 `format_ai_proxy_upstream_error` 同风格：统一前缀 + 上游响应片段
+/// （截断到 240 字符），用于排查是 JSON 损坏还是 audio.data 缺失/损坏。
+pub fn format_ai_proxy_speech_decode_error(body: &str) -> String {
+    let detail = extract_error_detail(body);
+    if detail.is_empty() {
+        return "模型服务返回的语音响应无法解析".to_string();
+    }
+    format!("模型服务返回的语音响应无法解析：{detail}")
+}
+
 fn parse_http_url(raw: &str) -> Result<Url, String> {
     let url = Url::parse(raw.trim()).map_err(|e| e.to_string())?;
     match url.scheme() {
@@ -156,5 +168,19 @@ mod tests {
             "https://proxy.example/openai/v1/chat/completions"
         );
         assert!(build_ai_proxy_url("http://localhost:8825", "/v1/models", false).is_err());
+    }
+
+    #[test]
+    fn speech_decode_error_carries_upstream_detail() {
+        // mimo 错误/无音频字段的 JSON：取 error.message 或响应片段
+        let message = format_ai_proxy_speech_decode_error(
+            r#"{"error":{"code":"400","message":"Param Incorrect"}}"#,
+        );
+        assert_eq!(message, "模型服务返回的语音响应无法解析：Param Incorrect");
+        // 空响应只给统一前缀
+        assert_eq!(
+            format_ai_proxy_speech_decode_error(""),
+            "模型服务返回的语音响应无法解析"
+        );
     }
 }

@@ -34,6 +34,12 @@ impl Default for AiImageModelConfig {
     }
 }
 
+/// `AI_SPEECH_PROTOCOL`：OpenAI `/v1/audio/speech`（默认，音频字节流透传）。
+pub const AI_SPEECH_PROTOCOL_OPENAI: &str = "openai";
+/// `AI_SPEECH_PROTOCOL`：小米 mimo 的 TTS 借用 chat 协议
+/// （音频在 `choices[0].message.audio.data` 的 base64 WAV 里）。
+pub const AI_SPEECH_PROTOCOL_MIMO_CHAT: &str = "mimo_chat";
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct AiSpeechModelConfig {
@@ -44,6 +50,8 @@ pub struct AiSpeechModelConfig {
     pub use_full_url: bool,
     pub voice: String,
     pub response_format: String,
+    /// 语音合成的上游协议：`openai`（默认）/ `mimo_chat`。
+    pub protocol: String,
 }
 
 impl Default for AiSpeechModelConfig {
@@ -56,6 +64,7 @@ impl Default for AiSpeechModelConfig {
             use_full_url: false,
             voice: "alloy".to_string(),
             response_format: "mp3".to_string(),
+            protocol: AI_SPEECH_PROTOCOL_OPENAI.to_string(),
         }
     }
 }
@@ -86,6 +95,8 @@ pub struct ResolvedAiModelEndpoint {
     pub image_size: Option<String>,
     pub voice: Option<String>,
     pub response_format: Option<String>,
+    /// speech 端点的上游协议（`openai` / `mimo_chat`）；非 speech 恒 `None`。
+    pub speech_protocol: Option<String>,
 }
 
 impl AiModelConfig {
@@ -130,6 +141,7 @@ impl AiModelConfig {
                 use_full_url: flag("AI_SPEECH_USE_FULL_URL"),
                 voice: text("AI_SPEECH_VOICE"),
                 response_format: text("AI_SPEECH_FORMAT"),
+                protocol: text("AI_SPEECH_PROTOCOL"),
             },
         }
         .sanitized()
@@ -152,6 +164,7 @@ impl AiModelConfig {
         self.speech.model = default_if_empty(self.speech.model, "gpt-4o-mini-tts");
         self.speech.voice = default_if_empty(self.speech.voice, "alloy");
         self.speech.response_format = default_if_empty(self.speech.response_format, "mp3");
+        self.speech.protocol = normalize_speech_protocol(&self.speech.protocol);
         self
     }
 
@@ -166,6 +179,7 @@ impl AiModelConfig {
                 image_size: None,
                 voice: None,
                 response_format: None,
+                speech_protocol: None,
             },
             AiModelKind::Image => ResolvedAiModelEndpoint {
                 enabled: self.image.enabled,
@@ -176,6 +190,7 @@ impl AiModelConfig {
                 image_size: Some(self.image.image_size.clone()),
                 voice: None,
                 response_format: None,
+                speech_protocol: None,
             },
             AiModelKind::Speech => ResolvedAiModelEndpoint {
                 enabled: self.speech.enabled,
@@ -186,6 +201,7 @@ impl AiModelConfig {
                 image_size: None,
                 voice: Some(self.speech.voice.clone()),
                 response_format: Some(self.speech.response_format.clone()),
+                speech_protocol: Some(self.speech.protocol.clone()),
             },
         }
     }
@@ -193,6 +209,25 @@ impl AiModelConfig {
 
 fn normalize_url(value: String) -> String {
     value.trim().trim_end_matches('/').to_string()
+}
+
+/// 归一 `AI_SPEECH_PROTOCOL`：大小写宽容；未知值告警并回落 `openai`。
+///
+/// AI 配置来自启动环境变量且没有错误通道（`from_lookup` 直接返回 Self），
+/// 与 `TRUSTED_PROXIES` 同口径：告警 + 保守回落，不让笔误静默生效——
+/// 配成 mimo 却回落 openai 时，TTS 请求会在上游路径上失败，可从告警定位。
+fn normalize_speech_protocol(value: &str) -> String {
+    let trimmed = value.trim().to_ascii_lowercase();
+    match trimmed.as_str() {
+        "" => AI_SPEECH_PROTOCOL_OPENAI.to_string(),
+        AI_SPEECH_PROTOCOL_OPENAI | AI_SPEECH_PROTOCOL_MIMO_CHAT => trimmed,
+        other => {
+            eprintln!(
+                "WARN AI_SPEECH_PROTOCOL 只接受 openai/mimo_chat，当前值: {other}，已回落 openai"
+            );
+            AI_SPEECH_PROTOCOL_OPENAI.to_string()
+        }
+    }
 }
 
 fn default_if_empty(value: String, default_value: &str) -> String {
@@ -237,5 +272,46 @@ mod tests {
     fn from_lookup_defaults_to_disabled() {
         let config = AiModelConfig::from_lookup(|_| String::new());
         assert!(!config.text.enabled && !config.image.enabled && !config.speech.enabled);
+    }
+
+    #[test]
+    fn speech_protocol_normalizes_case_and_defaults() {
+        for (raw, expected) in [
+            ("", AI_SPEECH_PROTOCOL_OPENAI),
+            ("  ", AI_SPEECH_PROTOCOL_OPENAI),
+            ("openai", AI_SPEECH_PROTOCOL_OPENAI),
+            (" OpenAI ", AI_SPEECH_PROTOCOL_OPENAI),
+            ("mimo_chat", AI_SPEECH_PROTOCOL_MIMO_CHAT),
+            ("MIMO_CHAT", AI_SPEECH_PROTOCOL_MIMO_CHAT),
+        ] {
+            assert_eq!(
+                normalize_speech_protocol(raw),
+                expected,
+                "{raw:?} 应归一为 {expected}"
+            );
+        }
+    }
+
+    #[test]
+    fn speech_protocol_unknown_value_falls_back_to_openai() {
+        // AI 配置没有错误通道：未知值告警（eprintln 在测试里不可见）后
+        // 保守回落 openai，与 TRUSTED_PROXIES 的处理口径一致
+        assert_eq!(normalize_speech_protocol("grpc"), AI_SPEECH_PROTOCOL_OPENAI);
+    }
+
+    #[test]
+    fn speech_protocol_resolves_into_endpoint() {
+        let config = AiModelConfig::from_lookup(|key| match key {
+            "AI_SPEECH_ENABLED" => "true".to_string(),
+            "AI_SPEECH_PROTOCOL" => "mimo_chat".to_string(),
+            _ => String::new(),
+        });
+        let speech = config.resolve(AiModelKind::Speech);
+        assert_eq!(
+            speech.speech_protocol.as_deref(),
+            Some(AI_SPEECH_PROTOCOL_MIMO_CHAT)
+        );
+        // 非 speech 端点不携带协议，客户端自带端点也永远走 OpenAI 路径语义
+        assert!(config.resolve(AiModelKind::Text).speech_protocol.is_none());
     }
 }

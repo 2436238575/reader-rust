@@ -9,10 +9,11 @@ use serde_json::Value;
 use crate::api::AppState;
 use crate::auth::CurrentUser;
 use crate::error::error::{ApiResponse, AppError};
-use crate::model::ai_model::{AiModelKind, ResolvedAiModelEndpoint};
+use crate::model::ai_model::{AiModelKind, ResolvedAiModelEndpoint, AI_SPEECH_PROTOCOL_MIMO_CHAT};
 use crate::model::ai_proxy::{
-    ai_proxy_timeout, build_ai_proxy_url, format_ai_proxy_upstream_error,
-    validate_ai_proxy_image_url, AiProxyImageRequest, AiProxyRequest,
+    ai_proxy_timeout, build_ai_proxy_url, format_ai_proxy_speech_decode_error,
+    format_ai_proxy_upstream_error, validate_ai_proxy_image_url, AiProxyImageRequest,
+    AiProxyRequest,
 };
 
 const MAX_PROXY_IMAGE_BYTES: u64 = 20 * 1024 * 1024;
@@ -27,6 +28,13 @@ pub async fn ai_proxy(
     let (endpoint, kind, path, mut body) = resolve_ai_proxy_target(&state, &user, req).await?;
     if let Some(kind) = kind {
         apply_server_model_body_defaults(&endpoint, kind, &mut body);
+    }
+    // 小米 mimo 的 TTS 不提供 OpenAI /v1/audio/speech，借用 chat 协议单独分派
+    // （只作用于服务端配置的 speech 端点；客户端自带端点按其所选路径原样转发）
+    if kind == Some(AiModelKind::Speech)
+        && endpoint.speech_protocol.as_deref() == Some(AI_SPEECH_PROTOCOL_MIMO_CHAT)
+    {
+        return ai_proxy_mimo_speech(endpoint, body).await;
     }
     let target = build_ai_proxy_url(&endpoint.base_url, &path, endpoint.use_full_url)
         .map_err(AppError::BadRequest)?;
@@ -86,6 +94,8 @@ async fn resolve_ai_proxy_target(
             image_size: None,
             voice: None,
             response_format: None,
+            // 协议是服务端配置的属性：客户端自带端点永远按 OpenAI 路径语义转发
+            speech_protocol: None,
         },
         None,
         req.path,
@@ -142,6 +152,107 @@ fn apply_server_model_body_defaults(
             obj.insert("response_format".to_string(), Value::String(format.clone()));
         }
     }
+}
+
+/// mimo chat 协议的 speech 代理。
+///
+/// 小米 mimo（`mimo-v2.5-tts`）不提供 OpenAI 的 `/v1/audio/speech`，而是
+/// 借用 `/v1/chat/completions`：assistant 角色的 content 就是要朗读的文本，
+/// 音频以 base64 WAV 藏在 `choices[0].message.audio.data`。voice/speed/
+/// response_format 上游未证实支持，重建请求体时不带（实测不带即 200，
+/// 用默认音色）。
+async fn ai_proxy_mimo_speech(
+    endpoint: ResolvedAiModelEndpoint,
+    body: Value,
+) -> Result<Response, AppError> {
+    let payload =
+        build_mimo_speech_request(&endpoint.model, &body).map_err(AppError::BadRequest)?;
+    let target = build_ai_proxy_url(
+        &endpoint.base_url,
+        "/v1/chat/completions",
+        endpoint.use_full_url,
+    )
+    .map_err(AppError::BadRequest)?;
+    // 出站守卫：与通用分支同口径
+    crate::crawler::url_guard::ensure_outbound_url_allowed(&target)
+        .await
+        .map_err(AppError::BadRequest)?;
+    let client = ai_proxy_client();
+    let mut builder = client
+        .post(target)
+        .header(reqwest::header::ACCEPT, "application/json")
+        .json(&payload);
+    if let Some(api_key) = Some(str::trim(endpoint.api_key.as_str())).filter(|v| !v.is_empty()) {
+        builder = builder.bearer_auth(api_key);
+    }
+    let upstream = builder.send().await.map_err(map_ai_proxy_http_error)?;
+    mimo_speech_response(upstream).await
+}
+
+/// 构造 mimo chat 协议请求体。
+///
+/// 客户端发来的是 OpenAI speech 形态，服务端整体重构造为 chat 形态，
+/// 只取 `input` 作为待合成文本；缺失、为空或非字符串视为参数错误
+/// （上层转 400）。
+fn build_mimo_speech_request(model: &str, client_body: &Value) -> Result<Value, String> {
+    let input = client_body
+        .get("input")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .unwrap_or_default();
+    if input.is_empty() {
+        return Err("缺少待合成文本（body.input）".to_string());
+    }
+    Ok(serde_json::json!({
+        "model": model,
+        "messages": [{ "role": "assistant", "content": input }],
+    }))
+}
+
+/// mimo chat 协议的响应处理：整包读 JSON 后解出 WAV 字节。
+async fn mimo_speech_response(upstream: reqwest::Response) -> Result<Response, AppError> {
+    let status = upstream.status();
+    // 音频 base64 藏在 JSON 里，必须整包读完才能解码；限量与通用分支一致
+    let body = crate::crawler::fetcher::read_body_limited(upstream, MAX_PROXY_RESPONSE_BYTES)
+        .await
+        .map_err(|e| AppError::BadRequest(e.to_string()))?;
+    if !status.is_success() {
+        return Ok(build_upstream_error_response(status, &body));
+    }
+    match decode_mimo_speech_audio(&body) {
+        Some(wav) => Ok(build_response(
+            status,
+            Some(HeaderValue::from_static("audio/wav")),
+            wav,
+        )),
+        // 上游 200 但拿不到音频：按网关错误回 502，文案带上游响应片段
+        None => Ok(build_mimo_speech_decode_error(&body)),
+    }
+}
+
+/// 从 mimo chat 协议响应里解出音频字节。
+///
+/// 音频在 `choices[0].message.audio.data`，是 base64 编码的 WAV；
+/// JSON 损坏、字段缺失或 base64 损坏都返回 None（上层转 502）。
+fn decode_mimo_speech_audio(body: &[u8]) -> Option<bytes::Bytes> {
+    use base64::Engine;
+    let value = serde_json::from_slice::<Value>(body).ok()?;
+    let data = value
+        .pointer("/choices/0/message/audio/data")
+        .and_then(Value::as_str)?;
+    let wav = base64::engine::general_purpose::STANDARD
+        .decode(data)
+        .ok()?;
+    Some(bytes::Bytes::from(wav))
+}
+
+/// 上游 200 但解析不出音频时的 502 响应（文案风格与通用上游错误一致）。
+fn build_mimo_speech_decode_error(body: &bytes::Bytes) -> Response {
+    let body_text = std::str::from_utf8(body).unwrap_or("");
+    let message = format_ai_proxy_speech_decode_error(body_text);
+    let mut response = Json(ApiResponse::<Value>::err(message)).into_response();
+    *response.status_mut() = StatusCode::BAD_GATEWAY;
+    response
 }
 
 pub async fn ai_proxy_image(Json(req): Json<AiProxyImageRequest>) -> Result<Response, AppError> {
@@ -305,7 +416,9 @@ fn map_ai_proxy_http_error(error: reqwest::Error) -> AppError {
 
 #[cfg(test)]
 mod tests {
-    use super::is_allowed_proxy_image_content_type;
+    use super::{
+        build_mimo_speech_request, decode_mimo_speech_audio, is_allowed_proxy_image_content_type,
+    };
 
     #[test]
     fn proxy_image_content_type_allows_bitmaps_only() {
@@ -332,5 +445,79 @@ mod tests {
         ] {
             assert!(!is_allowed_proxy_image_content_type(ct), "{ct} 应拒绝");
         }
+    }
+
+    #[test]
+    fn mimo_speech_request_rebuilds_chat_body_from_input() {
+        // 客户端发 OpenAI speech 形态，服务端整体重构造：只留 model +
+        // assistant content，voice/response_format 等字段一律丢弃
+        let client_body = serde_json::json!({
+            "model": "gpt-4o-mini-tts",
+            "input": "第一段 正文",
+            "voice": "alloy",
+            "response_format": "mp3",
+        });
+        let payload = build_mimo_speech_request("mimo-v2.5-tts", &client_body).unwrap();
+        assert_eq!(
+            payload,
+            serde_json::json!({
+                "model": "mimo-v2.5-tts",
+                "messages": [{ "role": "assistant", "content": "第一段 正文" }],
+            })
+        );
+    }
+
+    #[test]
+    fn mimo_speech_request_rejects_missing_or_empty_input() {
+        for body in [
+            serde_json::json!({}),
+            serde_json::json!({ "input": "" }),
+            serde_json::json!({ "input": "   " }),
+            // OpenAI 的 input 允许数组，mimo 只收纯文本：非字符串按缺失处理
+            serde_json::json!({ "input": ["文本"] }),
+        ] {
+            assert!(
+                build_mimo_speech_request("m", &body).is_err(),
+                "{body} 应拒绝"
+            );
+        }
+    }
+
+    #[test]
+    fn mimo_speech_audio_decodes_base64_wav() {
+        // 最小 44 字节 WAV 头（RIFF/WAVE/fmt/data），base64 以 UklGRi 开头
+        let payload = serde_json::json!({
+            "choices": [{
+                "message": {
+                    "content": null,
+                    "audio": {
+                        "data": "UklGRiQAAABXQVZFZm10IBAAAAABAAEAIlYAACJWAAABAAgAZGF0YQAAAAA="
+                    },
+                },
+            }],
+        })
+        .to_string();
+        let wav = decode_mimo_speech_audio(payload.as_bytes()).unwrap();
+        assert_eq!(&wav[..4], b"RIFF");
+        assert_eq!(wav.len(), 44);
+    }
+
+    #[test]
+    fn mimo_speech_audio_returns_none_on_bad_payloads() {
+        // audio.data 缺失（纯文本 chat 响应）
+        let missing = serde_json::json!({
+            "choices": [{ "message": { "content": "普通文本回复" } }],
+        })
+        .to_string();
+        assert!(decode_mimo_speech_audio(missing.as_bytes()).is_none());
+        // base64 损坏
+        let broken_b64 = serde_json::json!({
+            "choices": [{ "message": { "audio": { "data": "不是base64!!" } } }],
+        })
+        .to_string();
+        assert!(decode_mimo_speech_audio(broken_b64.as_bytes()).is_none());
+        // JSON 损坏 / 空响应
+        assert!(decode_mimo_speech_audio(b"not json").is_none());
+        assert!(decode_mimo_speech_audio(b"").is_none());
     }
 }
