@@ -1,6 +1,8 @@
 # AGENTS.md
 
-本文件是本仓库**工程事实的唯一权威**，面向 AI 编码代理与贡献者。任何与本文件冲突的说明（包括历史文档、`CLAUDE.md`、代码注释）以代码为准；发现不一致时，请修正文档而不是照抄文档。
+本文件记录仓库的工程约定，面向 AI 编码代理与贡献者。文档与代码冲突时以代码为准，发现不一致时修正文档。
+
+本文件只写稳定的约定。默认值、文件清单、测试数量、路由全量列表这类容易变化的事实直接看源码，不在这里重复；需要数字时用对应命令现查。
 
 ---
 
@@ -22,7 +24,7 @@ Reader-Rust 是 [阅读3.0](https://github.com/hectorqin/reader) 的 Rust 重写
 cargo run                      # 开发模式运行，默认监听 127.0.0.1:8080（Docker 镜像显式设 0.0.0.0）
 cargo build                    # 调试构建
 cargo build --release          # 发布构建
-cargo test                     # 全部测试（Rust 侧共 615 个，另有 2 个真实网络用例默认忽略）
+cargo test                     # 全部测试（真实网络用例默认忽略）
 cargo test <关键字>             # 按名称过滤测试
 cargo clippy --all-targets     # 静态检查
 cargo fmt                      # 格式化
@@ -95,57 +97,20 @@ npm run test:e2e:ui            # UI 模式
 ## 配置
 
 配置来源优先级：**环境变量 > `.env` 文件 > `src/app/config.rs` 中的代码默认值**。
+`src/app/config.rs` 是变量名、默认值与解析规则的唯一来源，`.env.example` 是可直接复制的样例，完整说明见 [配置文档](./docs/guide/configuration.md)。本节只记录不看代码就容易踩的规则。
 
 ```bash
 cp .env.example .env
 ```
 
-`.env` 已被 gitignore；后端即使没有 `.env` 也能用默认值启动。
-
-| 变量                            | 代码默认值                          | 说明                                                                                                                                                                                                                                        |
-| ------------------------------- | ----------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `SERVER_HOST`                   | `127.0.0.1`                         | 监听地址；对外提供服务时显式设 `0.0.0.0`（Docker 镜像已通过 ENV 设好）                                                                                                                                                                      |
-| `SERVER_PORT`                   | `8080`                              | 监听端口                                                                                                                                                                                                                                    |
-| `DATABASE_URL`                  | `sqlite:storage/reader.db?mode=rwc` | SQLite 连接串，`mode=rwc` 表示不存在则创建                                                                                                                                                                                                  |
-| `STORAGE_DIR`                   | `storage`                           | 运行期数据根目录                                                                                                                                                                                                                            |
-| `ASSETS_DIR`                    | `storage/assets`                    | 上传资源目录                                                                                                                                                                                                                                |
-| `WEB_ROOT`                      | `frontend/dist`                     | 前端静态文件目录                                                                                                                                                                                                                            |
-| `LOG_LEVEL`                     | `info`                              | `trace` / `debug` / `info` / `warn` / `error`                                                                                                                                                                                               |
-| `REQUEST_TIMEOUT_SECS`          | `15`                                | 抓取上游站点的超时时间                                                                                                                                                                                                                      |
-| `INBOUND_REQUEST_TIMEOUT_SECS`  | `120`                               | 入站请求处理超时（秒），覆盖公开/可选/需登录三组 `/reader3` 接口与 `/health`，超时返回 HTTP 408 与统一 JSON 错误体。SSE 在 handler 返回流式响应后即脱离超时约束；WebDAV 协议端点、大上传路由与 AI 代理路由豁免（后两者用 `INBOUND_UPLOAD_TIMEOUT_SECS`）。`0` 视为笔误回落默认值 |
-| `INBOUND_UPLOAD_TIMEOUT_SECS`   | `900`                               | 大上传路由（TXT/EPUB 导入、章节导入、资源上传、`saveBookSources` 等）与 AI 代理路由（`aiProxy`/`aiProxyImage`：非流式生成要等上游出结果才回响应头，其上游调用自身另有 300s 客户端预算兜底）的入站处理超时（秒）：100MB 级请求体在慢速链路上光接收就可能远超 120s。`0` 视为笔误回落默认值                                                                            |
-| `INBOUND_MAX_CONCURRENCY`       | `256`                               | 需登录接口的并发处理上限：全部需登录路由**共享同一份**并发许可（`GlobalConcurrencyLimitLayer` 共享信号量），超出并发的请求排队等待且排队时间计入超时（最终以 408 收场）。`0` 表示不限制；公开/大上传/WebDAV 路由不受此限                                                                   |
-| `JWT_SECRET`                    | 空                                  | JWT 签名密钥；留空时自动生成并持久化到 `<STORAGE_DIR>/jwt_secret`                                                                                                                                                                           |
-| `ACCESS_TOKEN_TTL_SECS`         | `21600`（6 小时）                   | Access Token（HS256 JWT）有效期；过期后前端用 Refresh Token 静默换新                                                                                                                                                                        |
-| `REFRESH_TOKEN_TTL_SECS`        | `604800`（7 天）                    | Refresh Token 有效期，滑动续期：每次换取重新计时。一次性轮换；已消费令牌 30 秒宽限窗口外重放会吊销整条会话                                                                                                                                  |
-| `COOKIE_SECURE`                 | `auto`                              | 会话 Cookie 的 `Secure` 属性。`auto` 在 Host 为 `localhost`/`127.0.0.1`/`[::1]` 时不加，其余加；`true`/`false` 强制。HTTP + 非回环主机应改 HTTPS，或显式设 `false`（不推荐）                                                                  |
-| `COOKIE_PATH`                   | `/reader3`                          | 会话 Cookie 的 `Path` 属性。必须匹配浏览器实际访问 API 的路径前缀：根路径部署保持默认；`VITE_BASE_PATH=/read/` 构建且反代剥掉 `/read/` 前缀时须设为 `/read/reader3`，否则浏览器不回传 Cookie（登录 200、后续接口全 401）。末尾斜杠忽略，非法值启动失败 |
-| `ADMIN_USERNAME`                | `admin`                             | 唯一账号的用户名，首次启动建号时使用；只允许小写字母/数字/下划线                                                                                                                                                                            |
-| `ADMIN_PASSWORD`                | 空                                  | 唯一账号的密码；非空时每次启动强制覆盖（兼作忘记密码的找回通道），相同则 no-op；留空时首启随机生成并打印到启动 stderr（不写入滚动日志文件）。封禁期内正确密码也会被拒，设置该变量后重启可强制重置并解锁 |
-| `USER_BOOK_LIMIT`               | `2000`                              | 书架上限，`0` 表示不限制                                                                                                                                                                                                                    |
-| `USER_LOCAL_BOOK_LIMIT`         | `0`                                 | 本地上传上限，`0` 表示不限制                                                                                                                                                                                                                |
-| `CONTENT_REVALIDATE_TTL_SECS`   | `86400`（24 小时）                  | 正文回源间隔：读取某章时距上次回源尝试超过该时长就后台回源，失败继续返回缓存。`0` 表示只在显式强刷时回源；正文历史严格保留、不按容量淘汰                                                                                                      |
-| `CACHE_COVER_LIMIT_BYTES`       | `268435456`                         | 图片缓存目录（封面、章节配图、评论配图共用）上限；`0` 表示不限制                                                                                                                                                                             |
-| `REVIEW_CACHE_TTL_SECS`         | `604800`（7 天）                    | 章评/段评缓存有效期；`0` 表示不过期                                                                                                                                                                                                         |
-| `REVIEW_CACHE_USER_LIMIT_BYTES` | `67108864`                          | 评论缓存上限；`0` 表示不限制                                                                                                                                                                                                                |
-| `ALLOW_PRIVATE_NETWORK`         | `false`                             | 出站请求是否允许访问私网/内网地址。默认拦截（安全优先，公网部署开箱即安全）；书源/模型服务在局域网时显式设 `true` 整体放行，或保持 `false` 用白名单精确放行                                                                                 |
-| `PRIVATE_NETWORK_WHITELIST`     | 空                                  | 私网白名单（逗号分隔），仅 `ALLOW_PRIVATE_NETWORK=false` 时生效。条目支持 IP / CIDR 网段 / 域名，均可带端口（如 `192.168.100.99:9999, 192.168.100.0/24, nas.lan`）。**名单为空时一律拦截**（不等同 `true`）；名单非空时只有命中的目标可以出站 |
-| `CORS_ALLOWED_ORIGINS`          | 空                                  | 跨域来源白名单；留空仅同源                                                                                                                                                                                                                  |
-| `RATE_LIMIT_DISABLED`           | `false`                             | 豁免登录限速（开发/测试用）。默认：IP 登录败 5 次封该 IP 登录 6h、用户名败 10 次封 6h。e2e 跑测试时建议后端开此项                                                                                                                           |
-| `TRUSTED_PROXIES`               | 空                                  | 登录限速的受信代理列表（逗号分隔，IP / CIDR）。服务挂在 nginx/Caddy/Docker NAT 后面时，所有请求的对端地址都是代理 IP；攻击者连续输错 5 次密码，会使全体访问者被封禁 6 小时。配置后，只有对端地址命中受信列表时才解析 `X-Forwarded-For` 取真实客户端 IP（从右往左找第一个不在受信列表里的地址；格式非法或全部受信时回退到 socket IP）。**留空不信任任何代理头**，一律按 socket 地址记账 |
-| `AI_TEXT_*` / `AI_IMAGE_*` / `AI_SPEECH_*` | 空                         | 后端 AI 模型配置（`ENABLED`/`BASE_URL`/`API_KEY`/`MODEL`/`USE_FULL_URL`，图片另有 `SIZE`，语音另有 `VOICE`/`FORMAT`）。**只在服务端维护，从不下发到浏览器**；`getAiModelConfig` 只返回各类型「是否可用」的布尔值                           |
-| `AI_SPEECH_PROTOCOL`            | `openai`                            | 语音合成的上游协议。`openai`（默认）：OpenAI `/v1/audio/speech`，上游音频字节流透传；`mimo_chat`：小米 mimo 的 TTS 借用 chat 协议——服务端把请求重构造为 `POST /v1/chat/completions`（assistant 角色 content 即待合成文本，voice/speed 等参数上游未证实支持、不带），并从响应 `choices[0].message.audio.data` 取 base64 WAV 解码后以 `audio/wav` 返回；JSON 解析失败/字段缺失回 502 带上游响应片段。未知值启动告警并回落 `openai`；仅作用于服务端配置的 speech 请求（客户端自带端点按其所选路径转发） |
-| `AGENT_SIDECAR_ENABLED`              | `true`                    | AI 资料编排 sidecar 开关；关闭后 AI 资料更新接口返回明确错误                                            |
-| `AGENT_SIDECAR_COMMAND`              | `python -m agent_sidecar` | sidecar 启动命令，进程 cwd 为 `sidecar/`；保持默认时若 `sidecar/.venv` 存在自动优先其 Python，自定义（含 Docker ENV）时不自动回退 |
-| `AGENT_SIDECAR_UV`                   | 空                        | uv 二进制路径；非空/PATH 可探测时由 uv 自动管理依赖（推荐），都没有时降级为 AGENT_SIDECAR_COMMAND      |
-| `AGENT_SIDECAR_CHAPTER_TIMEOUT_SECS` | `1800`                    | 单章处理超时；超时即终止 sidecar 进程并中止批量任务（sidecar 内的模型调用总预算默认 1500 秒即 5×300，与看门狗对齐；错误会带回真实原因，不会被截成超时）                                                     |
-| `AGENT_SIDECAR_MODEL_BUDGET_SECS`    | `1500`                    | sidecar 内模型调用的总预算（秒）：同一章的所有 chat/images 调用共享，重试与退避不越过；spawn 时经环境变量下发给 sidecar。`0` 视为笔误回落默认值；调大时 `AGENT_SIDECAR_CHAPTER_TIMEOUT_SECS` 应同步放大（预算 + 约 300 秒余量），否则看门狗先于预算耗尽截断任务 |
-
-以下几点需要注意：
-
-- **配置结构是扁平的**，没有嵌套层级，因此不存在「用 `__` 表示层级」这种用法。
-- **`.env` 值含逗号/空格必须用双引号包裹**：dotenvy 在解析不了的行会中断加载，该行之后的所有变量静默失效（启动日志会对加载失败打 WARN）。典型受害者：`PRIVATE_NETWORK_WHITELIST`、`CORS_ALLOWED_ORIGINS`。
-- `JWT_SECRET` 留空时后端会在启动阶段生成随机密钥写入 `storage/jwt_secret`，开发开箱即用；**多实例部署必须显式配置同一个值**，否则各实例签发的令牌互不认可。
+- 配置结构是扁平的，没有嵌套层级，不存在用 `__` 表示层级的写法。
+- `.env` 值含逗号或空格时必须用双引号包裹。dotenvy 遇到无法解析的行会中断加载，该行之后的变量全部静默失效，启动日志会对加载失败打 WARN。典型变量：`PRIVATE_NETWORK_WHITELIST`、`CORS_ALLOWED_ORIGINS`。
+- `JWT_SECRET` 留空时会在启动阶段生成随机密钥并写入 `storage/jwt_secret`，开发环境可以直接用。多实例部署必须显式配置同一个值，否则各实例签发的令牌互不认可。
+- 子路径部署时 `COOKIE_PATH` 必须与浏览器实际访问 API 的前缀一致。默认是 `/reader3`；nginx 剥掉 `/read/` 前缀时设为 `/read/reader3`，否则登录成功后所有接口仍返回 401。
+- 出站请求默认拦截私网地址。书源或模型服务在局域网时，显式设 `ALLOW_PRIVATE_NETWORK=true` 整体放行，或用 `PRIVATE_NETWORK_WHITELIST` 精确放行。白名单为空时仍然拦截。
+- 入站请求有处理超时，大上传与 AI 代理路由使用更长的独立超时。具体秒数、豁免范围与 `0` 值的处理都在 `src/app/config.rs`，调整时以代码为准。
+- 登录限速默认按 IP 与用户名分别计数。服务挂在反向代理或 Docker NAT 后面时配置 `TRUSTED_PROXIES`，否则所有请求共用代理地址的失败次数，可能误封全体访问者。
+- AI 与 sidecar 相关变量只在服务端维护，模型密钥从不下发到浏览器；`getAiModelConfig` 只返回各类型是否可用。sidecar 的启动方式、uv 依赖管理与模型调用预算见 `src/app/config.rs` 的字段说明与 [配置文档](./docs/guide/configuration.md)。
 
 ---
 
@@ -153,8 +118,8 @@ cp .env.example .env
 
 ```
 src/
-  main.rs / lib.rs        入口，各十余行
-  api/                    路由与 HTTP 处理（axum），31 文件约 11000 行
+  main.rs / lib.rs        入口
+  api/                    路由与 HTTP 处理（axum）
     router.rs             全部路由定义 + 鉴权分组（唯一真相来源）
     handlers/             领域模块：book/ 是目录（mod 共享层 resolve_book/ResolvedBook +
                           search/explore/toc/content/shelf/local_upload/sse/available_source
@@ -170,12 +135,12 @@ src/
                           webdav 的协议语义（PROPFIND/PUT/LOCK 等）由 dav-server
                           crate 实现，本模块只做 Basic 认证、按用户隔离目录与
                           Windows 路径加固
-  auth/                   JWT 鉴权，4 文件
+  auth/                   JWT 鉴权
     jwt.rs                Claims 定义与 HS256 编解码
     secret.rs             JWT_SECRET 解析与持久化
     extractor.rs          CurrentUser / MaybeUser 提取器
     middleware.rs         require_auth / optional_auth
-  service/                业务编排，25 文件约 15200 行
+  service/                业务编排
     book_service/         书籍服务主壳（目录：mod 结构体/构造/共享夹具 + fetch 抓取限速地基 +
                           registry 登记与 Cookie + explore 搜索/发现/详情 + toc 目录抓取分页缓存 +
                           content 正文回源 + review 评论/配图 + cache 清理统计 +
@@ -190,15 +155,15 @@ src/
                           重放吊销 family
     agent_sidecar_service.rs AI 资料编排：spawn Python sidecar、逐章 run/result 泵、
                           工具应答（统一内容链路）、单章看门狗、任务注册表与取消
-  parser/                 规则解析引擎，13 文件约 8400 行
+  parser/                 规则解析引擎
     rule_engine/          核心（目录：kernel 字段求值内核与模板插值 + search/info/toc/
                           content/review/image 六个用途子模块，测试随簇同迁）
     rule_analyzer.rs      组合规则拆分（正确处理引号与括号嵌套）
     html.rs / jsonpath.rs / js.rs（js.rs 含求值计数/耗时/预算耗尽的诊断埋点）
-  crawler/                reqwest 抓取与 URL 处理，5 文件约 1370 行
+  crawler/                reqwest 抓取与 URL 处理
     url_analyzer.rs       占位符替换、页面选择、内联 JS
     url_guard.rs          出站请求守卫（SSRF 防护）
-  model/                  BookSource 等数据结构，15 文件约 1000 行
+  model/                  BookSource 等数据结构
   storage/               SQLite（sqlx）+ 文件缓存
     db/migrations/        0001_init.sql（基础表结构、书籍/书源登记表、正文池与版本时间线）
                           + 0002（书签/替换规则实体表）+ 0004（book_groups 分组实体表）
@@ -212,18 +177,15 @@ src/
                           （图片加载与正文回源的单飞收口，满员逐出跳过在用锁）
 frontend/                 Vue 3 + TypeScript + Vite + Pinia 前端
 docs/                     VitePress 文档站，见文末「文档地图」
-sidecar/                  AI 资料编排 Python sidecar（stdio NDJSON；依赖由 uv 自动管理，见配置表 AGENT_SIDECAR_UV）
+sidecar/                  AI 资料编排 Python sidecar（stdio NDJSON；依赖由 uv 自动管理，见配置文档）
   agent_sidecar/          agent 循环、提示词、patch 归一化合并、模型客户端
   tests/                  pytest，与前端展示层共用口径的领域规则在此逐字移植
-tests/                    Rust 集成测试（27 文件）+ Playwright e2e（4 个 spec）
+tests/                    Rust 集成测试 + Playwright e2e
 scripts/release.sh        发布脚本
 storage/                  运行期数据，gitignored，首次启动自动创建
 ```
 
-规模参照（便于判断改动影响面）：后端 `src/` 共 123 个 `.rs`、约 45000 行，其中最大的几个文件是
-`service/agent_sidecar_service.rs`（约 1900 行）、`storage/db/repo.rs`（约 1670 行）、
-`service/image_service.rs`（约 1470 行）；
-前端 `src/` 下 224 个文件（169 个 `.ts`，其中 60 个是测试；51 个 `.vue`；2 个 CSS + SVG/PNG 各 1）。阅读器按职责拆成 composable（views/ReaderView.vue 只做模板与编排接线；横翻分页/连续滚动/位置恢复/搜索/选字/TTS/自动播放/手势各自成簇），纯计算下沉 `utils/`（chapterRender/horizontalPaging/readingPosition/listPager 等）；store 层为核心 `stores/reader.ts`（约 270 行：当前书/目录/正文状态）+ 单向依赖的四个子 store（readerContent 正文管线 / readerExtras 评论配图 / readerMarks 已读书签高亮 / readerConfig 配置主题呈现）+ search，子 store 可读核心、核心不反向 import；阅读器目录走 virtua（`virtua/vue`）虚拟滚动，书源管理列表与缓存管理书籍列表按页渲染（分页控件 `components/common/ListPager.vue`，页码计算在 `utils/listPager.ts`）。
+前端按职责拆分：`views/ReaderView.vue` 只做模板与编排接线，横翻分页、连续滚动、位置恢复、搜索、选字、TTS、自动播放、手势各自成 composable；纯计算放在 `utils/`。store 层以 `stores/reader.ts` 为核心（当前书、目录、正文状态），另有单向依赖的 readerContent、readerExtras、readerMarks、readerConfig 四个子 store 与 search；子 store 可以读核心，核心不反向 import。阅读器目录使用 virtua 虚拟滚动，书源管理与缓存管理列表按页渲染（`components/common/ListPager.vue` 与 `utils/listPager.ts`）。
 
 ---
 
@@ -437,29 +399,14 @@ XPath 有资源上限（长度 8KB / 嵌套 64 层 / 总步数 100、`//` 50）�
 
 ## 测试
 
-Rust 侧共 **615 个测试**（429 个内联单元测试 + 186 个集成用例，另有 2 个 `#[ignore]` 的真实网络用例）。`cargo test` 输出的合计就是实际用例数：`src/main.rs` 只是入口文件，不再重复声明模块，bin 目标没有单元测试，不存在重复计数。分布为：
+`cargo test` 跑 Rust 单元测试与集成测试，当前用例数看输出即可，不在文档里维护。
 
-- `tests/` 下 27 个集成测试文件（186 个常规用例；`yckceo_live_sources.rs` 只装那 2 个默认忽略的真实网络用例），其中 `auth_flow.rs` 用例最多（24 个）；
-  `auth_flow.rs`、`review_flow.rs`、`chapter_image_flow.rs`、`image_pipeline.rs` 与
-  `webdav_flow.rs` 起真实监听端口，前者覆盖 401、静态回落、缓存清理与改密吊销令牌，
-  中间三个各用一个假上游覆盖评论规则（7 天缓存、按类型清理）、章节配图（配图规则、
-  无图不报错、正文 HTML 内嵌图片透传）与图片管道（封面地址改写、HEIC→JPEG、过期签名
-  回源自愈、缓存命中不重抓、重抓清理旧派生图、`?w=` 缩放与 Accept webp 协商的 `Vary: Accept`），`webdav_flow.rs` 覆盖 WebDAV 协议端点（Basic 认证、
-  CRUD、Depth、Destination、锁语义与 Windows 路径安全门）；
-- `agent_sidecar_flow.rs` 用 Node 假 sidecar（`tests/helpers/fake_agent_sidecar.mjs`）
-  走全流程：批量更新、章节跳过、工具回调（正文/搜索钳制、jobId 归属校验）、地图落盘与降级、看门狗与取消
-  （机器上需要有 Node）；
-- `batch_content_flow.rs` 用假上游覆盖批量正文接口 `getBookContents`：多章按请求顺序返回、
-  单章失败不影响其他章节（整体 200）、空/超量/缺 `chapterUrl` 整批 400、与单章接口同构；
-- `src/` 内的内联单元测试模块（429 个）。
-
-sidecar 使用 pytest（128 个用例，
-见「常用命令」），含从旧前端实现 1:1 移植的领域规则用例与新增编排能力用例。
-
-需要注意：
-
-- `tests/yckceo_live_sources.rs` 会**访问真实网络**抓取在线书源，在无网或受限环境中失败属预期行为。
+- 纯逻辑的单元测试就近放在 `src` 的内联 `#[cfg(test)]` 模块里。
+- 跨层行为放 `tests/`，用假上游覆盖 HTTP、存储、缓存与导入链路。鉴权、评论、章节配图、图片管道、WebDAV、批量正文与 AI sidecar 都有对应的集成测试。
+- `agent_sidecar_flow` 使用 Node 假 sidecar，机器上需要有 Node。
+- 默认忽略的用例会访问真实网络（在线书源），无网或受限环境中失败属预期行为。
 - `tests/e2e/` 的 Playwright 用例零配置可跑（globalSetup 自起临时后端，见「常用命令」）。
+- sidecar 使用 pytest，含从旧前端实现移植的领域规则用例与编排用例。
 
 新增功能时请补充测试：集成测试放 `tests/`，纯逻辑单元测试就近放在 `src` 的内联模块里。
 
@@ -467,18 +414,19 @@ sidecar 使用 pytest（128 个用例，
 
 ## 开发约定
 
-1. **改动要同步文档。** 新增或修改 `/reader3/*` 接口时，同时更新 `docs/api/` 下对应页面；改动配置项时更新本文件与 `docs/guide/configuration.md`。
-2. **文档是开发目标的一部分。** 若某功能只在文档中描述、代码尚未实现，**不要删除文档条目**，按统一格式标注保留：
+1. **文档只写稳定的行为。** 用户可见的接口语义、配置语义或操作流程变了，才更新 `docs/api/`、`docs/guide/` 的对应页面。重命名、拆文件、内部实现调整不需要改文档。
+2. **别把易变的事实写进本文件。** 默认值、文件清单、测试数量、路由全量列表这类内容以源码为准；本文件保留入口和容易踩的规则即可，避免一次改动要同步多处。
+3. **文档是开发目标的一部分。** 若某功能只在文档中描述、代码尚未实现，**不要删除文档条目**，按统一格式标注保留：
 
    ```
    > **未实现**：<说明>（依据：<代码位置>）
    ```
 
-3. **不要提交** `storage/`、`.env`、构建产物（`target/`、`frontend/dist/`）。
-4. **发布只走 `scripts/release.sh`**。脚本会自动同步 `Cargo.toml`、根 `package.json`、`frontend/package.json` 的版本号，并要求工作区干净（**包括没有未跟踪文件**）。
-5. 修改前端后至少跑一次 `npm run build`，确保类型检查通过。
-6. `AGENTS.md` 与 `CLAUDE.md` 保持单一来源：`CLAUDE.md` 只是导入入口，内容不要在这里重复维护。
-7. 合并前在本地跑 `cargo fmt --check`、`cargo clippy --all-targets -- -D warnings` 与 `cargo test`；格式化问题不要留到推送后再补。
+4. **不要提交** `storage/`、`.env`、构建产物（`target/`、`frontend/dist/`）。
+5. **发布只走 `scripts/release.sh`**。脚本会自动同步 `Cargo.toml`、根 `package.json`、`frontend/package.json` 的版本号，并要求工作区干净（**包括没有未跟踪文件**）。
+6. 修改前端后至少跑一次 `npm run build`，确保类型检查通过。
+7. `AGENTS.md` 与 `CLAUDE.md` 保持单一来源：`CLAUDE.md` 只是导入入口，内容不要在这里重复维护。
+8. 合并前在本地跑 `cargo fmt --check`、`cargo clippy --all-targets -- -D warnings` 与 `cargo test`；格式化问题不要留到推送后再补。
 
 ## 前端 UI 约定
 
@@ -503,7 +451,7 @@ sidecar 使用 pytest（128 个用例，
 | 文档                                  | 读者                 | 内容                                   |
 | ------------------------------------- | -------------------- | -------------------------------------- |
 | `README.md`                           | 访客 / 使用者        | 项目简介、特性、最快上手路径           |
-| `AGENTS.md`（本文件）                 | AI 编码代理 / 贡献者 | 工程事实权威：命令、配置、结构、约定   |
+| `AGENTS.md`（本文件）                 | AI 编码代理 / 贡献者 | 工程约定：命令、配置要点、结构、开发约定 |
 | `docs/guide/`                         | 部署者 / 最终用户    | 安装部署、配置、功能说明、用户手册     |
 | `docs/api/`                           | 接口集成方           | `/reader3/*` 接口参考                  |
 | `docs/book-source/`                   | 书源作者             | 书源规则编写教程                       |
