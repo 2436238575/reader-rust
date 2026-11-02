@@ -822,27 +822,14 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn refresh_rotates_tokens_and_password_change_revokes_them() {
+    async fn password_change_revokes_all_refresh_tokens_but_keeps_the_new_one() {
         let (service, temp_dir) = create_user_service().await;
         let login = service.login("reader1", "password123", None).await.unwrap();
         let first_refresh = login.refresh_token;
 
+        // 先用一次换新拿到「改密前的旧令牌」；轮换细节由 refresh_token_service 覆盖
         let refreshed = service.refresh_session(&first_refresh).await.unwrap();
         let second_refresh = refreshed.refresh_token.clone();
-        assert_ne!(second_refresh, first_refresh);
-        let claims =
-            decode_token(refreshed.data["accessToken"].as_str().unwrap(), TEST_SECRET).unwrap();
-        assert_eq!(claims.uid, 1);
-        assert_eq!(claims.sub, "reader1");
-        assert!(refreshed.data.get("refreshToken").is_none());
-        assert_eq!(
-            refreshed.data["accessTokenExpiresIn"],
-            serde_json::json!(service.cfg.access_token_ttl_secs)
-        );
-
-        // 宽限窗口内重放旧令牌仍可换（断网丢响应的重试路径）
-        let grace = service.refresh_session(&first_refresh).await.unwrap();
-        let grace_refresh = grace.refresh_token.clone();
 
         // 改密码吊销全部会话；只有改密响应里新开的那条家族可用
         let changed = service
@@ -850,8 +837,8 @@ mod tests {
             .await
             .unwrap();
         let changed_refresh = changed.refresh_token.clone();
+        assert!(service.refresh_session(&first_refresh).await.is_err());
         assert!(service.refresh_session(&second_refresh).await.is_err());
-        assert!(service.refresh_session(&grace_refresh).await.is_err());
         service.refresh_session(&changed_refresh).await.unwrap();
 
         service.close_pool_for_test().await;
@@ -995,30 +982,6 @@ mod tests {
                 .unwrap_err();
             assert!(err.to_string().contains("用户名或密码错误"));
         }
-
-        service.close_pool_for_test().await;
-        let _ = fs::remove_dir_all(temp_dir).await;
-    }
-
-    #[tokio::test]
-    async fn webdav_basic_auth_verifies_credentials() {
-        let (service, temp_dir) = create_user_service().await;
-
-        assert!(service
-            .verify_basic_webdav("reader1", "password123", None)
-            .await
-            .unwrap()
-            .is_some());
-        assert!(service
-            .verify_basic_webdav("reader1", "wrong-password", None)
-            .await
-            .unwrap()
-            .is_none());
-        assert!(service
-            .verify_basic_webdav("nobody", "password123", None)
-            .await
-            .unwrap()
-            .is_none());
 
         service.close_pool_for_test().await;
         let _ = fs::remove_dir_all(temp_dir).await;

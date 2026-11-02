@@ -676,4 +676,30 @@ mod tests {
         assert_eq!(chapters[0].url, "https://books.example/1");
         assert_eq!(chapters[1].url, "https://books.example/2");
     }
+
+    #[test]
+    fn css_mode_prefix_is_stripped_from_chapter_list_rules() {
+        let engine = RuleEngine::new().unwrap();
+        let source = BookSource {
+            book_source_name: "TOC".to_string(),
+            book_source_url: "https://toc.example".to_string(),
+            rule_toc: Some(TocRule {
+                chapter_list: Some("@css:.dirList li a".to_string()),
+                chapter_name: Some("text".to_string()),
+                chapter_url: Some("href".to_string()),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+
+        let (chapters, _) = engine.chapter_list(
+            &source,
+            r#"<ul class="dirList"><li><a href="/c1.html">第一章</a></li></ul>"#,
+            "https://toc.example/book/",
+        );
+
+        assert_eq!(chapters.len(), 1);
+        assert_eq!(chapters[0].title, "第一章");
+        assert_eq!(chapters[0].url, "https://toc.example/c1.html");
+    }
 }

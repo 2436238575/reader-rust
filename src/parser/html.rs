@@ -1287,4 +1287,14 @@ mod tests {
             "//a[contains(@href,'http://example.com//x')]/@href"
         ));
     }
+
+    #[test]
+    fn combined_rule_keeps_delimiters_inside_attribute_selectors() {
+        let doc = parse_document(r#"<div data-x="a&&b">Bad</div><span>Good</span>"#);
+
+        assert_eq!(
+            select_text_list(&doc, r#"div[data-x="a&&b"]@text||span@text"#),
+            vec!["Bad".to_string()]
+        );
+    }
 }

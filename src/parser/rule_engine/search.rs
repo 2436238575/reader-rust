@@ -836,4 +836,58 @@ mod tests {
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].name, "Alpha-lib");
     }
+
+    #[test]
+    fn regex_list_keeps_group_zero_literal() {
+        let source = BookSource {
+            book_source_name: "Regex".to_string(),
+            book_source_url: "https://regex.example".to_string(),
+            rule_search: Some(SearchRule {
+                book_list: Some(r#":<a href="([^"]+)">([^<]+)</a>"#.to_string()),
+                name: Some("$0".to_string()),
+                book_url: Some("$1".to_string()),
+                author: Some("$2".to_string()),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+
+        let results = RuleEngine::new().unwrap().search_books(
+            &source,
+            r#"<li><a href="/1">第一章</a></li>"#,
+            "https://regex.example",
+        );
+
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].name, "$0");
+        assert_eq!(results[0].book_url, "https://regex.example/1");
+        assert_eq!(results[0].author, "第一章");
+    }
+
+    #[test]
+    fn empty_explore_rule_falls_back_to_search_rule() {
+        let source = BookSource {
+            book_source_name: "Explore fallback".to_string(),
+            book_source_url: "https://fallback.example".to_string(),
+            rule_explore: Some(Default::default()),
+            rule_search: Some(SearchRule {
+                book_list: Some("$.data[*]".to_string()),
+                name: Some("$.novelName".to_string()),
+                author: Some("$.authorName".to_string()),
+                book_url: Some("/novel/{{$.novelId}}".to_string()),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+
+        let books = RuleEngine::new().unwrap().explore_books(
+            &source,
+            r#"{"data":[{"novelName":"书海结果","authorName":"作者","novelId":"abc"}]}"#,
+            "https://fallback.example",
+        );
+
+        assert_eq!(books.len(), 1);
+        assert_eq!(books[0].name, "书海结果");
+        assert_eq!(books[0].book_url, "https://fallback.example/novel/abc");
+    }
 }

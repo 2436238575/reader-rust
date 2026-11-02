@@ -711,4 +711,127 @@ mod tests {
         let out = absolute_url("https://a.com/", "斗破苍穹武动乾坤");
         assert!(!out.is_empty());
     }
+
+    #[test]
+    fn url_options_support_inline_js_page_choices_headers_and_type() {
+        use crate::crawler::fetcher::HttpMethod;
+        use crate::model::book_source::BookSource;
+
+        let source = BookSource {
+            book_source_name: "URL compat".to_string(),
+            book_source_url: "https://a.test/root/".to_string(),
+            header: Some("@js:JSON.stringify({'X-Token':'ok'})".to_string()),
+            ..Default::default()
+        };
+
+        let spec = analyze_url(
+            "/search?q={{key}}&page=<1,2,3>,{\"headers\":{\"Referer\":\"https://a.test\"},\"retry\":3,\"type\":\"hex\"}",
+            "斗破",
+            2,
+            &source.book_source_url,
+            &source,
+        )
+        .unwrap();
+
+        assert_eq!(spec.method, HttpMethod::GET);
+        assert_eq!(
+            spec.url,
+            "https://a.test/search?q=%E6%96%97%E7%A0%B4&page=2"
+        );
+        assert_eq!(spec.retry, 3);
+        assert_eq!(spec.response_type.as_deref(), Some("hex"));
+        assert!(spec
+            .headers
+            .iter()
+            .any(|(name, value)| name == "X-Token" && value == "ok"));
+        assert!(spec
+            .headers
+            .iter()
+            .any(|(name, value)| name == "Referer" && value == "https://a.test"));
+        assert!(spec
+            .headers
+            .iter()
+            .any(|(name, _)| name.eq_ignore_ascii_case("user-agent")));
+    }
+
+    #[test]
+    fn get_query_uses_the_declared_charset() {
+        use crate::model::book_source::BookSource;
+
+        let source = BookSource {
+            book_source_name: "GBK query".to_string(),
+            book_source_url: "https://b.faloo.com".to_string(),
+            ..Default::default()
+        };
+
+        let spec = analyze_url(
+            "/l/0/1.html?t=1&k={{key}},{\"charset\":\"gbk\"}",
+            "斗破",
+            1,
+            &source.book_source_url,
+            &source,
+        )
+        .unwrap();
+
+        assert_eq!(spec.charset.as_deref(), Some("gbk"));
+        assert!(
+            spec.url.ends_with("/l/0/1.html?t=1&k=%B6%B7%C6%C6"),
+            "{}",
+            spec.url
+        );
+    }
+
+    #[test]
+    fn option_strings_accept_raw_newlines() {
+        use crate::crawler::fetcher::HttpMethod;
+        use crate::model::book_source::BookSource;
+
+        let source = BookSource {
+            book_source_name: "Relaxed options".to_string(),
+            book_source_url: "https://options.example".to_string(),
+            ..Default::default()
+        };
+
+        let spec = analyze_url(
+            r#"https://options.example/post,{
+  "method": "POST",
+  "headers": {"Content-Type": "text/plain"},
+  "body": "line1
+line2"
+}"#,
+            "",
+            1,
+            &source.book_source_url,
+            &source,
+        )
+        .unwrap();
+
+        assert_eq!(spec.method, HttpMethod::POST);
+        assert_eq!(spec.body.as_deref(), Some("line1\nline2"));
+    }
+
+    #[test]
+    fn single_brace_placeholders_still_expand() {
+        use crate::model::book_source::BookSource;
+
+        let source = BookSource {
+            book_source_name: "Legacy placeholders".to_string(),
+            book_source_url: "https://m.cuoceng.com".to_string(),
+            ..Default::default()
+        };
+
+        let spec = analyze_url(
+            "/book/so/{key}/{page}.html",
+            "星门",
+            3,
+            &source.book_source_url,
+            &source,
+        )
+        .unwrap();
+
+        assert_eq!(
+            spec.url,
+            "https://m.cuoceng.com/book/so/%E6%98%9F%E9%97%A8/3.html"
+        );
+    }
 }

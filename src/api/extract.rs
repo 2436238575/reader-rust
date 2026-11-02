@@ -243,41 +243,29 @@ mod tests {
     // Some("")，提取器在编码前丢弃空值，维持「空串即缺省」的 0.2 契约 ───
 
     #[test]
-    fn empty_query_value_is_absent_for_option_string() {
-        // `?key=` 必须等价于「没传 key」：否则空 searchKey 会绕过
+    fn empty_values_are_normalized_to_absent() {
+        // 空 query 参数：`?key=` 等价于「没传 key」，否则空 searchKey 会绕过
         // handler 的 `ok_or("key required")` 触发一次空搜索
         let req = parse("key=&page=1", None);
         assert_eq!(req.key, None);
         assert_eq!(req.page, Some(1));
-    }
 
-    #[test]
-    fn empty_json_string_is_absent_for_option_string() {
         // JSON 与 query 同一套语义：{"key":""} 同样按缺省处理
         let req = parse("page=2", Some(r#"{"key":""}"#));
         assert_eq!(req.key, None);
         assert_eq!(req.page, Some(2));
-    }
 
-    #[test]
-    fn empty_form_body_value_is_absent() {
+        // 表单 body 里的空值同样按缺省处理
         let req = parse("", Some("key=&page=3"));
         assert_eq!(req.key, None);
         assert_eq!(req.page, Some(3));
-    }
 
-    #[test]
-    fn empty_value_is_absent_for_option_seq() {
-        // Option<Vec<T>>：0.3 起 `ids=` 会尝试把 "" 解析成 i64 而报错，
-        // 归一后按缺省处理
+        // Option<Vec<T>>：`ids=` 不能尝试把 "" 解析成 i64 而报错
         let req = parse("ids=&page=1", None);
         assert_eq!(req.ids, None);
         assert_eq!(req.page, Some(1));
-    }
 
-    #[test]
-    fn trailing_empty_duplicate_key_still_means_absent() {
-        // 重复键后者覆盖前者：key=x&key= 的终态是空串 → 缺省
+        // 重复键后者覆盖前者：key=x&key= 的终态是空字符串 → 缺省
         let req = parse("key=x&key=", None);
         assert_eq!(req.key, None);
     }

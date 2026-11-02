@@ -473,3 +473,92 @@ fn convert_legacy_page_braces(input: &str) -> String {
         .replace_all(input, "<$1>")
         .into_owned()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn stringified_rule_objects_deserialize_into_rules() {
+        let source: BookSource = serde_json::from_value(json!({
+            "bookSourceName": "String rules",
+            "bookSourceUrl": "https://example.test",
+            "ruleSearch": "{\"bookList\":\".item\",\"name\":\".title@text\"}"
+        }))
+        .unwrap();
+
+        let rule = source.rule_search.unwrap();
+        assert_eq!(rule.book_list.as_deref(), Some(".item"));
+        assert_eq!(rule.name.as_deref(), Some(".title@text"));
+    }
+
+    #[test]
+    fn legacy_fields_are_migrated_to_the_current_shape() {
+        let source = book_source_from_value(json!({
+            "bookSourceName": "Legacy",
+            "bookSourceUrl": "https://legacy.example",
+            "httpUserAgent": "LegacyUA",
+            "ruleSearchUrl": "/search?keyword=searchKey&page=searchPage@Header:{\"X-Legacy\":\"1\"}",
+            "ruleSearchList": ".item",
+            "ruleSearchName": ".name@text",
+            "ruleSearchAuthor": ".author@text",
+            "ruleBookName": "h1@text",
+            "ruleChapterList": "a",
+            "ruleChapterName": "a@text",
+            "ruleContentUrl": "a@href",
+            "ruleBookContent": "#content@text"
+        }))
+        .unwrap();
+
+        assert_eq!(
+            source.header.as_deref(),
+            Some("{\"User-Agent\":\"LegacyUA\"}")
+        );
+        assert_eq!(
+            source.search_url.as_deref(),
+            Some("/search?keyword={{key}}&page={{page}},{\"headers\":{\"X-Legacy\":\"1\"}}")
+        );
+        assert_eq!(
+            source
+                .rule_search
+                .as_ref()
+                .and_then(|rule| rule.book_list.as_deref()),
+            Some(".item")
+        );
+        assert_eq!(
+            source
+                .rule_book_info
+                .as_ref()
+                .and_then(|rule| rule.name.as_deref()),
+            Some("h1@text")
+        );
+        assert_eq!(
+            source
+                .rule_toc
+                .as_ref()
+                .and_then(|rule| rule.chapter_url.as_deref()),
+            Some("a@href")
+        );
+        assert_eq!(
+            source
+                .rule_content
+                .as_ref()
+                .and_then(|rule| rule.content.as_deref()),
+            Some("#content@text")
+        );
+    }
+
+    #[test]
+    fn numeric_metadata_accepts_string_values() {
+        let source = book_source_from_value(json!({
+            "bookSourceName": "String metadata",
+            "bookSourceUrl": "https://metadata.example",
+            "lastUpdateTime": "1778603539900",
+            "respondTime": "180000"
+        }))
+        .unwrap();
+
+        assert_eq!(source.last_update_time, Some(1_778_603_539_900));
+        assert_eq!(source.respond_time, Some(180_000));
+    }
+}

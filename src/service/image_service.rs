@@ -1165,9 +1165,10 @@ mod tests {
             .collect()
     }
 
-    /// w=64 + Accept webp：输出可解码的有损 webp、宽 64，派生文件按实际宽度落盘。
+    /// 缩放路径：webp / JPEG 两种编码、宽度下限与不放大都在这里覆盖。
     #[tokio::test]
-    async fn load_variant_scales_and_encodes_webp() {
+    async fn load_variant_scales_to_requested_width() {
+        // webp：宽 64，派生文件按实际宽度落盘
         let (service, id, dir) = service_with_stored_image("image/png", make_png(128, 128)).await;
         let (bytes, content_type) = service.load_variant(&id, Some(64), true).await.unwrap();
         assert_eq!(content_type, "image/webp");
@@ -1175,33 +1176,19 @@ mod tests {
             .decode()
             .expect("应当是可解码的 webp");
         assert_eq!((decoded.width(), decoded.height()), (64, 64));
-        assert_eq!(
-            derived_files(&dir),
-            vec![format!("{id}.w64.webp")],
-            "派生文件应按实际宽度落盘"
-        );
+        assert_eq!(derived_files(&dir), vec![format!("{id}.w64.webp")]);
         let _ = std::fs::remove_dir_all(&dir);
-    }
 
-    /// w=64 不要 webp：转成 JPEG（质量 85），宽 64。
-    #[tokio::test]
-    async fn load_variant_scales_and_encodes_jpeg_without_webp() {
+        // 不要 webp：转成 JPEG，宽 64
         let (service, id, dir) = service_with_stored_image("image/png", make_png(128, 128)).await;
         let (bytes, content_type) = service.load_variant(&id, Some(64), false).await.unwrap();
         assert_eq!(content_type, "image/jpeg");
         let decoded = image::load_from_memory(&bytes).expect("应当是可解码的 JPEG");
         assert_eq!(decoded.width(), 64);
-        assert_eq!(
-            derived_files(&dir),
-            vec![format!("{id}.w64.jpg")],
-            "不要 webp 时派生 JPEG"
-        );
+        assert_eq!(derived_files(&dir), vec![format!("{id}.w64.jpg")]);
         let _ = std::fs::remove_dir_all(&dir);
-    }
 
-    /// 请求宽度 >= 原图宽度：不放大，原图直出，也不产生派生缓存。
-    #[tokio::test]
-    async fn load_variant_never_upscales() {
+        // 请求宽度不小于原图：不放大，原图直出
         let original = make_png(128, 128);
         let (service, id, dir) = service_with_stored_image("image/png", original.clone()).await;
         let (bytes, content_type) = service.load_variant(&id, Some(512), false).await.unwrap();
@@ -1209,11 +1196,20 @@ mod tests {
         assert_eq!(bytes, original, "字节应与原图一致");
         assert!(derived_files(&dir).is_empty(), "不该产生派生缓存");
         let _ = std::fs::remove_dir_all(&dir);
+
+        // 过小的请求宽度抬到下限 64
+        let (service, id, dir) = service_with_stored_image("image/png", make_png(128, 128)).await;
+        let (bytes, content_type) = service.load_variant(&id, Some(1), false).await.unwrap();
+        assert_eq!(content_type, "image/jpeg");
+        let decoded = image::load_from_memory(&bytes).unwrap();
+        assert_eq!(decoded.width(), 64, "过小的宽度应被 clamp 到 64");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
-    /// 无 width 且不要 webp：原图直出的快路径，不解析尺寸、不落派生文件。
+    /// 直通路径：不带宽度且不要 webp、只要 webp 但不缩放、GIF 动画都原样返回。
     #[tokio::test]
-    async fn load_variant_without_width_or_webp_returns_original() {
+    async fn load_variant_passes_through_without_scaling() {
+        // 无 width 且不要 webp：原图直出，不解析尺寸、不落派生文件
         let original = make_png(128, 128);
         let (service, id, dir) = service_with_stored_image("image/png", original.clone()).await;
         let (bytes, content_type) = service.load_variant(&id, None, false).await.unwrap();
@@ -1221,11 +1217,8 @@ mod tests {
         assert_eq!(content_type, "image/png");
         assert!(derived_files(&dir).is_empty());
         let _ = std::fs::remove_dir_all(&dir);
-    }
 
-    /// 无 width 但要 webp：保持原始宽高转 webp（不缩放）。
-    #[tokio::test]
-    async fn load_variant_webp_full_size_without_width() {
+        // 无 width 但要 webp：保持原始宽高转 webp
         let (service, id, dir) = service_with_stored_image("image/png", make_png(96, 48)).await;
         let (bytes, content_type) = service.load_variant(&id, None, true).await.unwrap();
         assert_eq!(content_type, "image/webp");
@@ -1236,11 +1229,8 @@ mod tests {
             "不缩放，保持原始宽高"
         );
         let _ = std::fs::remove_dir_all(&dir);
-    }
 
-    /// GIF（动画）原样透传：不缩放、不转码，避免破坏动画。
-    #[tokio::test]
-    async fn load_variant_passes_gif_through() {
+        // GIF（动画）原样透传，避免破坏动画
         let gif: Vec<u8> = b"GIF89a\x01\x00\x01\x00\x80\x00\x00\x00\x00\x00\xff\xff\xff,\
              !\xf9\x04\x01\x00\x00\x00\x00,\x00\x00\x00\x00\x01\x00\x01\x00\x00\x02\x02D\x01\x00;"
             .to_vec();
@@ -1249,17 +1239,6 @@ mod tests {
         assert_eq!(content_type, "image/gif");
         assert_eq!(bytes, gif);
         assert!(derived_files(&dir).is_empty(), "透传不该产生派生缓存");
-        let _ = std::fs::remove_dir_all(&dir);
-    }
-
-    /// 宽度 clamp：过小的请求宽度（w=1）抬到下限 64。
-    #[tokio::test]
-    async fn load_variant_clamps_width_floor() {
-        let (service, id, dir) = service_with_stored_image("image/png", make_png(128, 128)).await;
-        let (bytes, content_type) = service.load_variant(&id, Some(1), false).await.unwrap();
-        assert_eq!(content_type, "image/jpeg");
-        let decoded = image::load_from_memory(&bytes).unwrap();
-        assert_eq!(decoded.width(), 64, "过小的宽度应被 clamp 到 64");
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -1311,9 +1290,11 @@ mod tests {
         storage_dir.join(IMAGE_DIR)
     }
 
-    /// 按书删除：记录、本体、派生图三者一起消失；别家的图片原样保留。
+    /// 派生图清理：按书删除连带记录/本体/派生图；remove_variants 只删本 id
+    /// 的 `.w*.webp/jpg`，记录、本体、别的 id 与其他扩展名都不碰。
     #[tokio::test]
-    async fn remove_by_book_id_also_removes_variants() {
+    async fn removal_cleans_only_the_target_images() {
+        // 按书删除：记录、本体、派生图三者一起消失；别家的图片原样保留
         let (service, dir) = service_with_empty_dir("purge-book").await;
         let id = "0123456789abcdef0123456789abcdef";
         let other = "ffffffffffffffffffffffffffffffff";
@@ -1344,12 +1325,8 @@ mod tests {
             "被删书的记录/本体/派生图应全部消失: {names:?}"
         );
         let _ = std::fs::remove_dir_all(&dir);
-    }
 
-    /// remove_variants 只删本 id 的 `.w*.webp/jpg`：记录、本体、别的 id、
-    /// 其他扩展名（含原子写留下的 .tmp 孤儿）都不碰。
-    #[tokio::test]
-    async fn remove_variants_only_deletes_own_webp_and_jpg() {
+        // remove_variants 精确匹配：非 webp/jpg 扩展名与原子写孤儿都不删
         let (service, dir) = service_with_empty_dir("purge-variant").await;
         let id = "0123456789abcdef0123456789abcdef";
         let keep = [
@@ -1421,44 +1398,29 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
-    // ---------- 解码上限：单边尺寸与总分配（decode_with_limits） ----------
-
-    /// 2x2 PNG 在生产上限（decode_limits）内正常解码。
+    /// 解码上限：小图正常解码；单边超限、总分配超限、非图片与截断字节
+    /// 都返回 Err（不 panic）。
     #[test]
-    fn decode_with_limits_accepts_small_png() {
+    fn decode_with_limits_accepts_small_and_rejects_unsafe_inputs() {
         let png = make_png(2, 2);
         let img = decode_with_limits(&png, decode_limits()).expect("2x2 PNG 应当正常解码");
         assert_eq!((img.width(), img.height()), (2, 2));
-    }
 
-    /// 同一张 2x2 PNG，把单边上限压到 1：解码被拒（Err），不能 panic。
-    #[test]
-    fn decode_with_limits_rejects_oversize_dimension() {
-        let png = make_png(2, 2);
-        let mut limits = image::Limits::default();
-        limits.max_image_width = Some(1);
+        let mut width_limited = image::Limits::default();
+        width_limited.max_image_width = Some(1);
         assert!(
-            decode_with_limits(&png, limits).is_err(),
+            decode_with_limits(&png, width_limited).is_err(),
             "宽度超出 max_image_width 应当返回 Err"
         );
-    }
 
-    /// max_alloc 覆盖解码期总分配：2x2 RGBA 需 16 字节，压到 8 就该被拒。
-    #[test]
-    fn decode_with_limits_rejects_oversize_alloc() {
-        let png = make_png(2, 2);
-        let mut limits = image::Limits::default();
-        limits.max_alloc = Some(8);
+        // 2x2 RGBA 需 16 字节，max_alloc 压到 8 就该被拒
+        let mut alloc_limited = image::Limits::default();
+        alloc_limited.max_alloc = Some(8);
         assert!(
-            decode_with_limits(&png, limits).is_err(),
+            decode_with_limits(&png, alloc_limited).is_err(),
             "总分配超出 max_alloc 应当返回 Err"
         );
-    }
 
-    /// 非图片与截断字节都返回 Err（不 panic）：前者格式猜不出，后者
-    /// 只剩 PNG 头 + IHDR、像素数据缺失。
-    #[test]
-    fn decode_with_limits_rejects_garbage_and_truncated_bytes() {
         assert!(decode_with_limits(b"not an image at all", decode_limits()).is_err());
         let full = make_png(8, 8);
         let header_only = &full[..8 + 25]; // PNG 签名 + IHDR 块

@@ -985,7 +985,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn overwrite_replaces_target_and_leaves_no_backup() {
+    async fn overwrite_replaces_or_creates_target() {
+        // 已有目标：一次 rename 覆盖，不残留备份
         let dir = sandbox("success");
         let target = dir.join("book.epub");
         std::fs::write(&target, b"old").unwrap();
@@ -997,7 +998,6 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(*calls.borrow(), 1, "成功路径只应调用一次 rename");
-
         assert_eq!(std::fs::read(&target).unwrap(), b"new", "目标应是新内容");
         assert!(!temp.exists(), "temp 应已改名到目标");
         assert!(
@@ -1006,10 +1006,8 @@ mod tests {
             backup_residues(&dir)
         );
         let _ = std::fs::remove_dir_all(&dir);
-    }
 
-    #[tokio::test]
-    async fn overwrite_creates_target_when_absent() {
+        // 目标不存在：同样一次 rename，直接创建
         let dir = sandbox("absent");
         let target = dir.join("book.epub");
         let temp = dir.join("book.epub.upload-x.tmp");
@@ -1020,14 +1018,13 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(*calls.borrow(), 1);
-
         assert_eq!(std::fs::read(&target).unwrap(), b"new");
         assert!(backup_residues(&dir).is_empty());
         let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[tokio::test]
-    async fn overwrite_rejects_directory_target_and_preserves_it() {
+    async fn overwrite_rejects_directory_target_and_passes_through_other_errors() {
         // 目标是同名目录：文件不能覆盖目录。Windows 上 rename(file→目录)
         // 返回 PermissionDenied，若不拦会误入备份分支——整个目录被搬进点前缀
         // 隐藏备份后重试成功、目录名被上传文件顶替，旧目录就从 JSON 文件
@@ -1063,15 +1060,11 @@ mod tests {
         );
         assert_eq!(std::fs::read(&temp).unwrap(), b"new", "temp 应原样保留");
         let _ = std::fs::remove_dir_all(&dir);
-    }
 
-    #[tokio::test]
-    async fn overwrite_passes_through_non_retryable_errors() {
         // NotFound 等其他错误类型不进备份分支，直接透传
         let dir = sandbox("passthrough");
         let target = dir.join("book.epub");
         let missing_temp = dir.join("no-such.upload-x.tmp");
-
         let (op, calls) = real_rename();
         let err = rename_overwrite_with_backup(&missing_temp, &target, op)
             .await
@@ -1105,10 +1098,7 @@ mod tests {
         assert_eq!(std::fs::read(&target).unwrap(), b"new");
         assert!(backup_residues(&dir).is_empty());
         let _ = std::fs::remove_dir_all(&dir);
-    }
 
-    #[tokio::test]
-    async fn overwrite_returns_error_when_retry_after_vanish_fails() {
         // NotFound 重试仍失败就返回错误，不引入备份也不删 temp
         let dir = sandbox("vanish-fail");
         let target = dir.join("book.epub");
@@ -1129,7 +1119,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn overwrite_restores_backup_when_second_rename_fails() {
+    async fn overwrite_preserves_old_content_on_failure() {
         // 第二次覆盖 rename 失败（如 temp 被杀毒/索引服务锁住）：
         // 旧文件必须从备份恢复，绝不两头空
         let dir = sandbox("restore");
@@ -1170,10 +1160,7 @@ mod tests {
             "temp 由 TempUploadGuard 清理，核心不动它"
         );
         let _ = std::fs::remove_dir_all(&dir);
-    }
 
-    #[tokio::test]
-    async fn overwrite_keeps_backup_when_restore_also_fails() {
         // 恢复也失败：错误信息带备份路径，备份保留待人工恢复，绝不删除
         let dir = sandbox("restore-fail");
         let target = dir.join("book.epub");
@@ -1206,10 +1193,7 @@ mod tests {
         );
         assert!(!target.exists(), "恢复失败时目标不应出现半成品");
         let _ = std::fs::remove_dir_all(&dir);
-    }
 
-    #[tokio::test]
-    async fn overwrite_keeps_target_when_backup_rename_fails() {
         // 备份 rename 失败（目标被占用）：直接返回错误，旧文件原样保留
         let dir = sandbox("backup-fail");
         let target = dir.join("book.epub");
