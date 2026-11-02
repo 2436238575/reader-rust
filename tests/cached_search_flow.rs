@@ -5,7 +5,6 @@ mod common;
 use axum::http::StatusCode;
 use reader_rust::api::router::build_router;
 use reader_rust::app::bootstrap::build_state;
-use reader_rust::app::config::AppConfig;
 use reader_rust::service::chapter_content_service::{ChapterContentService, UpstreamChapterMeta};
 use serde_json::{json, Value};
 use std::path::PathBuf;
@@ -26,44 +25,14 @@ impl TestServer {
             std::env::temp_dir().join(format!("reader-rust-search-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&temp_dir).unwrap();
 
-        let cfg = AppConfig {
-            server_host: "127.0.0.1".to_string(),
-            server_port: 0,
-            database_url: format!("sqlite:{}?mode=rwc", temp_dir.join("reader.db").display()),
-            storage_dir: temp_dir.to_string_lossy().to_string(),
-            web_root: temp_dir.to_string_lossy().to_string(),
-            assets_dir: temp_dir.join("assets").to_string_lossy().to_string(),
-            jwt_secret: "search-test-secret".to_string(),
-            request_timeout_secs: 10,
-            admin_username: "reader1".to_string(),
-            admin_password: "password123".to_string(),
-            rate_limit_disabled: true,
-            ..AppConfig::default()
-        };
-
+        let cfg = common::base_config(&temp_dir, "search-test-secret");
         let state = build_state(cfg).await.unwrap();
         let content = state.chapter_content_service.clone();
         let app = build_router(state);
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let addr = listener.local_addr().unwrap();
-        tokio::spawn(async move {
-            let _ = axum::serve(
-                listener,
-                app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
-            )
-            .await;
-        });
+        let (base_url, _server) = common::spawn_app(app).await;
 
         let client = reqwest::Client::new();
-        let base_url = format!("http://{addr}");
-        let resp = client
-            .post(format!("{base_url}/reader3/login"))
-            .json(&json!({ "username": "reader1", "password": "password123" }))
-            .send()
-            .await
-            .unwrap();
-        let payload: Value = resp.json().await.unwrap();
-        let token = payload["data"]["accessToken"].as_str().unwrap().to_string();
+        let token = common::login(&client, &base_url).await;
         Self {
             base_url,
             temp_dir,

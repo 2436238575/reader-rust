@@ -193,38 +193,17 @@ impl TestServer {
         std::fs::create_dir_all(&temp_dir).unwrap();
 
         let cfg = AppConfig {
-            server_host: "127.0.0.1".to_string(),
-            server_port: 0,
-            database_url: format!("sqlite:{}?mode=rwc", temp_dir.join("reader.db").display()),
-            storage_dir: temp_dir.to_string_lossy().to_string(),
-            web_root: temp_dir.to_string_lossy().to_string(),
-            assets_dir: temp_dir.join("assets").to_string_lossy().to_string(),
-            jwt_secret: "image-test-secret".to_string(),
-            request_timeout_secs: 10,
-            // bootstrap 用预设凭据建号，测试直接登录
-            admin_username: "reader1".to_string(),
-            admin_password: "password123".to_string(),
-            rate_limit_disabled: true,
             // 假上游监听 127.0.0.1：显式放行私网出站（默认拦截）
             allow_private_network: true,
-            ..AppConfig::default()
+            ..common::base_config(&temp_dir, "image-test-secret")
         };
 
         let state = build_state(cfg).await.unwrap();
         let app = build_router(state);
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let addr = listener.local_addr().unwrap();
-        tokio::spawn(async move {
-            let _ = axum::serve(
-                listener,
-                app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
-            )
-            .await;
-        });
+        let (base_url, _server) = common::spawn_app(app).await;
 
         let client = reqwest::Client::new();
-        let base_url = format!("http://{addr}");
-        let token = register(&client, &base_url, "reader1").await;
+        let token = common::login(&client, &base_url).await;
         let mut server = Self {
             base_url,
             upstream_url,
@@ -316,18 +295,6 @@ impl Drop for TestServer {
     fn drop(&mut self) {
         common::remove_dir_retried(&self.temp_dir);
     }
-}
-
-async fn register(client: &reqwest::Client, base_url: &str, username: &str) -> String {
-    let resp = client
-        .post(format!("{base_url}/reader3/login"))
-        .json(&json!({ "username": username, "password": "password123" }))
-        .send()
-        .await
-        .unwrap();
-    let payload: Value = resp.json().await.unwrap();
-    assert_eq!(payload["isSuccess"], json!(true), "登录应成功: {payload}");
-    payload["data"]["accessToken"].as_str().unwrap().to_string()
 }
 
 #[tokio::test]

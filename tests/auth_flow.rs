@@ -569,20 +569,8 @@ async fn refresh_via_cookie_rotates_the_cookie_pair() {
         set_cookie_of(&new_cookies, "reader_access").is_some(),
         "刷新应同时换发 reader_access"
     );
-    // 新 Cookie 属性与登录时一致
-    for attr in [
-        "HttpOnly",
-        "SameSite=Strict",
-        "Path=/reader3",
-        "Max-Age=604800",
-    ] {
-        assert!(
-            new_refresh.contains(attr),
-            "新 reader_refresh 缺属性 {attr}: {new_refresh}"
-        );
-    }
 
-    // 新 Cookie 立即可用
+    // 新 Cookie 立即可用（属性已在 session_cookies_carry_the_contracted_attributes 覆盖）
     let response = server
         .get_with_cookie(
             "/reader3/getBookshelf",
@@ -757,6 +745,12 @@ async fn logout_revokes_the_refresh_family_clears_cookies_and_stays_idempotent()
         response.headers().get_all("set-cookie").iter().count() == 2,
         "幂等登出同样要清 Cookie"
     );
+
+    // 携带过期/无效令牌时同样成功：Refresh Token 查不到就静默跳过
+    let response = server
+        .post("/reader3/logout", Some("expired"), serde_json::json!({}))
+        .await;
+    assert_eq!(response.status(), 200);
 }
 
 #[tokio::test]
@@ -974,18 +968,6 @@ async fn save_books_masks_group_bits_to_existing_groups() {
         serde_json::json!(1),
         "悬空位应被剥掉，只剩组 1 的位"
     );
-}
-
-#[tokio::test]
-async fn logout_always_succeeds_even_with_an_invalid_token() {
-    let server = TestServer::start().await;
-
-    // 令牌已过期/无效时登出也应返回成功：Refresh Token 查不到就静默跳过，
-    // 这里只是给客户端一个「可以清本地令牌」的确认
-    let response = server
-        .post("/reader3/logout", Some("expired"), serde_json::json!({}))
-        .await;
-    assert_eq!(response.status(), 200);
 }
 
 #[tokio::test]

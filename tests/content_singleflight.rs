@@ -57,12 +57,8 @@ async fn start_upstream(hits: HitCounter) -> String {
         },
     ));
 
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let addr = listener.local_addr().unwrap();
-    tokio::spawn(async move {
-        let _ = axum::serve(listener, app).await;
-    });
-    format!("http://{addr}")
+    let (base_url, _server) = common::spawn_router(app).await;
+    base_url
 }
 
 struct TestServer {
@@ -86,48 +82,19 @@ impl TestServer {
         let upstream_url = start_upstream(hits.clone()).await;
 
         let cfg = AppConfig {
-            server_host: "127.0.0.1".to_string(),
-            server_port: 0,
-            database_url: format!("sqlite:{}?mode=rwc", temp_dir.join("reader.db").display()),
-            storage_dir: temp_dir.to_string_lossy().to_string(),
-            web_root: temp_dir.to_string_lossy().to_string(),
-            assets_dir: temp_dir.join("assets").to_string_lossy().to_string(),
-            jwt_secret: "flight-test-secret".to_string(),
-            request_timeout_secs: 10,
-            admin_username: "reader1".to_string(),
-            admin_password: "password123".to_string(),
-            rate_limit_disabled: true,
             // 假上游监听 127.0.0.1：显式放行私网出站（默认拦截）
             allow_private_network: true,
             content_revalidate_ttl_secs: revalidate_ttl_secs,
-            ..AppConfig::default()
+            ..common::base_config(&temp_dir, "flight-test-secret")
         };
 
         let state = build_state(cfg).await.unwrap();
         let service = state.book_service.clone();
         let app = build_router(state);
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let addr = listener.local_addr().unwrap();
-        tokio::spawn(async move {
-            let _ = axum::serve(
-                listener,
-                app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
-            )
-            .await;
-        });
+        let (base_url, _server) = common::spawn_app(app).await;
 
         let client = reqwest::Client::new();
-        let base_url = format!("http://{addr}");
-        let resp = client
-            .post(format!("{base_url}/reader3/login"))
-            .json(&json!({ "username": "reader1", "password": "password123" }))
-            .send()
-            .await
-            .unwrap();
-        let token = resp.json::<Value>().await.unwrap()["data"]["accessToken"]
-            .as_str()
-            .unwrap()
-            .to_string();
+        let token = common::login(&client, &base_url).await;
         Self {
             base_url,
             upstream_url,
