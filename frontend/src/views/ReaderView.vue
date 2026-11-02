@@ -505,7 +505,7 @@
 
 <script setup lang="ts">
 import { ref, computed, watch, onMounted, onUnmounted, nextTick, defineAsyncComponent } from 'vue'
-import { onBeforeRouteLeave, useRouter } from 'vue-router'
+import { onBeforeRouteLeave, useRoute, useRouter, type LocationQuery } from 'vue-router'
 import { useReaderStore } from '../stores/reader'
 import { useReaderConfigStore } from '../stores/readerConfig'
 import { fontPresets } from '../utils/readerTheme'
@@ -514,6 +514,8 @@ import { useReaderMarksStore } from '../stores/readerMarks'
 import { useReaderExtrasStore } from '../stores/readerExtras'
 import { useAppStore } from '../stores/app'
 import { useSourceStore } from '../stores/source'
+import { getShelfBook } from '../api/bookshelf'
+import { describeRequestFailure } from '../utils/requestFailure'
 import { applySystemTheme } from '../utils/systemUi'
 import { isIosWebkit } from '../utils/platform'
 import { APP_VIEWPORT_CHANGE_EVENT, syncViewportSize } from '../utils/viewport'
@@ -597,6 +599,7 @@ const ChapterVersionPanel = defineAsyncComponent(
 )
 
 const router = useRouter()
+const route = useRoute()
 const store = useReaderStore()
 const contentStore = useReaderContentStore()
 const extrasStore = useReaderExtrasStore()
@@ -1929,16 +1932,54 @@ onBeforeRouteLeave(() => {
   return true
 })
 
+/* ─── 直链开书（/#/reader?bookid=book_3） ───
+ * 外部入口（PWA 快捷方式、客户端 WebView、分享链接）凭 bookId 直达某本书。
+ * `bookid` / `bookId` 同义；书架接口按 id 取书再走与书架面板一致的开书链路
+ * （clear → loadBook → loadChapter，页内换书时视图靠 watch 群自愈）。 */
+function deepLinkBookId(query: LocationQuery): string {
+  const raw = query.bookid ?? query.bookId
+  const value = Array.isArray(raw) ? raw[0] : raw
+  return typeof value === 'string' ? value.trim() : ''
+}
+
+/** 按直链开书：书拉不到（不在书架/已删除/断网）返回 false，由调用方回首页；
+ *  loadBook / loadChapter 自身的失败已各自 toast 并落 loadError，留在阅读页
+ *  走重试通道——与书架入口（useOpenBook）口径一致。 */
+async function openBookFromDeepLink(bookId: string): Promise<boolean> {
+  let book: Awaited<ReturnType<typeof getShelfBook>> | null = null
+  try {
+    book = await getShelfBook(bookId)
+  } catch (error) {
+    appStore.showToast(describeRequestFailure(error, appStore.isOnline), 'error')
+    return false
+  }
+  if (!book?.bookId) return false
+  contentStore.clear()
+  await contentStore.loadBook(book).catch(() => undefined)
+  await contentStore.loadChapter(book.durChapterIndex || 0)
+  return true
+}
+
 onMounted(async () => {
   syncViewportSize()
   appStore.startReadingSession()
   if (!store.book) {
-    const restored = await contentStore.restorePersistedSession()
-    if (!restored) {
-      router.replace('/')
-      return
+    const linkedBookId = deepLinkBookId(route.query)
+    if (linkedBookId) {
+      // 直链明确指定的书优先于上次会话恢复
+      const opened = await openBookFromDeepLink(linkedBookId)
+      if (!opened) {
+        router.replace('/')
+        return
+      }
+    } else {
+      const restored = await contentStore.restorePersistedSession()
+      if (!restored) {
+        router.replace('/')
+        return
+      }
+      appStore.showToast('已恢复上次阅读的书籍', 'success')
     }
-    appStore.showToast('已恢复上次阅读的书籍', 'success')
   }
   loadSavedReadingPosition()
   window.addEventListener('keydown', handleKeydown)
@@ -2192,6 +2233,18 @@ watch(
     scheduleRefreshOfflineCacheState()
     // 编辑章清单的刷新由 contentStore.loadBook 负责（与目录并行取，落定后才返回），
     // 这里不再重复触发，避免开书瞬间并发拿到上一本书的集合
+  }
+)
+
+// 已在阅读页时直链换书：同一组件复用不会重新 mount，改盯查询参数。
+// bookid 被清掉（useOpenBook 从别页落地 /reader 不带参数）与目标即当前书
+// 都是无操作；书拉不到时回首页。
+watch(
+  () => deepLinkBookId(route.query),
+  async (bookId) => {
+    if (!bookId || store.book?.bookId === bookId) return
+    const opened = await openBookFromDeepLink(bookId)
+    if (!opened) router.replace('/')
   }
 )
 

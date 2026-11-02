@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test'
-import { gotoApp, loginViaPage } from './support/app'
+import { gotoApp, loginViaPage, waitForToast } from './support/app'
 import { hasLogin, readE2EConfig } from './support/env'
 
 const config = readE2EConfig()
@@ -95,6 +95,43 @@ test.describe('Standard E2E: reader', () => {
   test.beforeEach(async ({ page }) => {
     test.skip(!hasLogin(config), 'Set E2E_USERNAME and E2E_PASSWORD to enable reader regression.')
     await loginViaPage(page, config.username!, config.password!)
+  })
+
+  test('deep link with bookid opens the book without the shelf', async ({ page }) => {
+    const { bookId } = await seedLocalTxtBook(page)
+
+    // 直链直达（不经书架卡片），优先于上次会话恢复
+    await gotoApp(page, `/reader?bookid=${bookId}`)
+    await expect(page.locator('.chapter-title').first()).toHaveText(/第一章 开始/)
+    await expect(page.getByText('第一章正文内容。').first()).toBeVisible()
+
+    // 页内换书：同一组件复用不会重新 mount，直链改 hash（同文档导航）
+    // 走查询参数监听切到第二本书
+    const second = await page.evaluate(async () => {
+      const content = '第一章 第二本\n第二本书的正文。\n'
+      const form = new FormData()
+      form.append('file', new File([content], `直链换书-${Date.now()}.txt`, { type: 'text/plain' }))
+      const resp = await fetch('/reader3/uploadTxtBook', { method: 'POST', body: form })
+      if (!resp.ok) return null
+      const payload = await resp.json()
+      return { bookId: payload?.data?.bookId ?? null }
+    })
+    expect(second?.bookId, '第二本 TXT 上传应返回 bookId').toBeTruthy()
+    await page.evaluate(
+      (bookId) => {
+        window.location.hash = `/reader?bookid=${bookId}`
+      },
+      second!.bookId
+    )
+    await expect(page.locator('.chapter-title').first()).toHaveText(/第一章 第二本/)
+    await expect(page.getByText('第二本书的正文。').first()).toBeVisible()
+  })
+
+  test('deep link with unknown bookid redirects home with a toast', async ({ page }) => {
+    // bookId 大小写别名同义；书架里没有这本书 → toast + 回首页
+    await gotoApp(page, '/reader?bookId=book_99999999')
+    await waitForToast(page, '书籍不存在')
+    await expect(page).toHaveURL(/#\/$/)
   })
 
   test('opens local book, reads, pages, and jumps via catalog', async ({ page }) => {
