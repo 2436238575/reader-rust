@@ -42,7 +42,30 @@ POST /reader3/deleteBookGroup
 POST /reader3/saveBookGroupOrder
 ```
 
-请求体为 `BookGroup` 数组，整体替换分组列表（用于拖拽排序后保存）。响应 `data` 为 `"success"`。
+请求体为**排序项数组**（只描述顺序，不含分组名）：
+
+```json
+[
+  { "groupId": 1, "orderNo": 0 },
+  { "groupId": 4, "orderNo": 1 }
+]
+```
+
+语义是**只改顺序**：
+
+- 只写 `book_groups.order_no`，**不删组、不改名、不动书籍位掩码**；
+- **未提交的分组保持原 `orderNo`**，不会被删除（旧版整表覆盖会删组并清掉书上的位，已废弃）；
+- `groupId` 必须是合法的 2 的幂（1, 2, 4 … 2^30）且组必须存在；
+- 空数组、重复 `groupId`、非法幂位、组不存在一律 **400**；
+- 全部校验通过后在单事务内写入，不会出现「前几条生效、后面报错」的半截状态。
+
+分组的增删改入口只有 `POST /reader3/saveBookGroup`（新建/改名）与
+`POST /reader3/deleteBookGroup`（删除），排序接口不承担这些职责。
+
+响应 `data` 为 `"success"`。
+
+> **WebDAV 恢复**用的是整表覆盖语义（不在备份里的组应当被删除），走服务层
+> `save_groups`，与本接口无关。
 
 ## 设置书籍的分组
 

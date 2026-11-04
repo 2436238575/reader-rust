@@ -1,7 +1,7 @@
 use crate::api::AppState;
 use crate::auth::CurrentUser;
 use crate::error::error::{ApiResponse, AppError};
-use crate::model::book_group::BookGroup;
+use crate::model::book_group::{BookGroup, BookGroupOrderItem};
 use crate::service::book_group_service::validate_group_id;
 use axum::{extract::State, Json};
 use serde::Deserialize;
@@ -65,15 +65,21 @@ pub async fn delete_book_group(
     Ok(Json(ApiResponse::ok(serde_json::json!("success"))))
 }
 
+/// 分组排序（`POST /reader3/saveBookGroupOrder`）。
+///
+/// 请求体 `[{"groupId": 1, "orderNo": 0}, …]`，**只改顺序**：
+/// - 未提交的分组保持原 `orderNo`，不会被删除（旧版整表覆盖会删组并清书上的位）；
+/// - 不校验/不改 `groupName`——增删改唯一入口是 `/saveBookGroup` 与 `/deleteBookGroup`；
+/// - 空数组、重复 groupId、非法幂位、组不存在一律 400。
 pub async fn save_book_group_order(
     State(state): State<AppState>,
     user: CurrentUser,
-    Json(groups): Json<Vec<BookGroup>>,
+    Json(items): Json<Vec<BookGroupOrderItem>>,
 ) -> Result<Json<ApiResponse<Value>>, AppError> {
     let user_ns = user.0.ns.clone();
     state
         .book_group_service
-        .save_groups(&user_ns, &groups)
+        .reorder_groups(&user_ns, &items)
         .await?;
     Ok(Json(ApiResponse::ok(serde_json::json!("success"))))
 }
