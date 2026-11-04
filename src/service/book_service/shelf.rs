@@ -184,6 +184,69 @@ impl BookService {
         Ok(normalized)
     }
 
+    /// 只改书架顺序（`POST /reader3/saveBookOrder`）。
+    ///
+    /// 与 [`Self::save_books`] 的关键差别是**只写 position 一列**：整架替换
+    /// 会 DELETE 后按请求重插，请求体里没带的列（`infoHtml` / `tocHtml` /
+    /// `canReName` / `downloadUrls`）会被写成空——安卓 `Book` DTO 恰好就缺
+    /// 这四个字段，于是「拖一下顺序」= 静默丢数据（R-01）。
+    ///
+    /// 校验（全部 400，不落库）：
+    /// - 空数组；
+    /// - 重复 id；
+    /// - 数量超过书架现有数量；
+    /// - 集合与当前书架**不完全相等**——说明客户端视图已过期（中间有加书/
+    ///   删书），此时部分提交会把顺序写乱且无法自愈，直接让用户刷新重试。
+    pub async fn save_book_order(&self, user_ns: &str, book_ids: &[String]) -> Result<(), AppError> {
+        if book_ids.is_empty() {
+            return Err(AppError::BadRequest("bookIds 不能为空".to_string()));
+        }
+        // 归一为 canonical（`book_007` / `book_+7` 与 `book_7` 视为同一本），
+        // 顺带挡重复项
+        let mut canonical_ids: Vec<String> = Vec::with_capacity(book_ids.len());
+        let mut seen: std::collections::HashSet<String> =
+            std::collections::HashSet::with_capacity(book_ids.len());
+        for id in book_ids {
+            let canonical = crate::storage::db::repo::canonical_book_id(id)
+                .ok_or_else(|| AppError::BadRequest(format!("bookId 格式非法: {id:?}")))?;
+            if !seen.insert(canonical.clone()) {
+                return Err(AppError::BadRequest(format!("bookIds 存在重复项: {id}")));
+            }
+            canonical_ids.push(canonical);
+        }
+
+        let current = self.shelf_repo.list_ids(user_ns).await?;
+        if canonical_ids.len() > current.len() {
+            return Err(AppError::BadRequest(format!(
+                "提交的书籍数量（{}）超过书架现有数量（{}）",
+                canonical_ids.len(),
+                current.len()
+            )));
+        }
+        let current_set: std::collections::HashSet<&str> =
+            current.iter().map(String::as_str).collect();
+        if current.len() != canonical_ids.len()
+            || !canonical_ids
+                .iter()
+                .all(|id| current_set.contains(id.as_str()))
+        {
+            return Err(AppError::BadRequest(
+                "书架已变化，请刷新后重试".to_string(),
+            ));
+        }
+
+        // position 从 1 按数组下标连续递增：与 upsert 的「新书排末尾」同一口径
+        let items: Vec<(String, i64)> = canonical_ids
+            .into_iter()
+            .enumerate()
+            .map(|(index, id)| (id, index as i64 + 1))
+            .collect();
+        let mut tx = self.book_repo.begin().await?;
+        self.shelf_repo.reorder_on(&mut tx, user_ns, &items).await?;
+        tx.commit().await?;
+        Ok(())
+    }
+
     /// 按 bookId 从书架删除。登记行与正文历史保留：重新加入同一本书时
     /// book_id 不变，书签、编辑版和历史仍然接得上。
     pub async fn delete_book(&self, user_ns: &str, book_id: &str) -> Result<bool, AppError> {
@@ -343,6 +406,163 @@ fn shelf_row_of(book: &Book) -> ShelfBookRow {
 mod tests {
     use super::*;
     use crate::service::book_service::tests::{make_book, test_service};
+
+    /// 排序只写 position：其余列必须原样保留。
+    ///
+    /// R-01 的根因是拿 `/saveBooks`（DELETE 后按请求重插）当排序接口用，
+    /// 而移动端 `Book` DTO 不带 infoHtml/tocHtml/canReName/downloadUrls，
+    /// 于是「拖一下顺序」就把这四列写空。本用例盯住这条：改顺序前后，
+    /// 这四列 + 进度 + 分组位都必须逐字段相同。
+    #[tokio::test]
+    async fn save_book_order_only_rewrites_position() {
+        let storage_dir = std::env::temp_dir().join(format!(
+            "reader-rust-save-order-cols-{}",
+            std::process::id()
+        ));
+        let (service, pool) = test_service(&storage_dir).await;
+
+        let mut a = make_book("https://example.com/order-a");
+        a.info_html = Some("<p>a-info</p>".to_string());
+        a.toc_html = Some("<p>a-toc</p>".to_string());
+        a.can_re_name = Some("true".to_string());
+        a.download_urls = Some("[\"https://dl/a\"]".to_string());
+        a.intro = Some("简介 A".to_string());
+        a.dur_chapter_index = Some(7);
+        a.dur_chapter_pos = Some(1234);
+        a.dur_chapter_title = Some("第七章".to_string());
+        a.group = Some(1);
+        let a = service.save_book("u", a).await.unwrap();
+        let b = service
+            .save_book("u", make_book("https://example.com/order-b"))
+            .await
+            .unwrap();
+        let c = service
+            .save_book("u", make_book("https://example.com/order-c"))
+            .await
+            .unwrap();
+
+        let (a_id, b_id, c_id) = (
+            a.book_id.clone().unwrap(),
+            b.book_id.clone().unwrap(),
+            c.book_id.clone().unwrap(),
+        );
+        // 目标顺序：c → a → b
+        service
+            .save_book_order("u", &[c_id.clone(), a_id.clone(), b_id.clone()])
+            .await
+            .unwrap();
+
+        // 顺序生效
+        let order: Vec<String> = service
+            .get_bookshelf("u")
+            .await
+            .unwrap()
+            .iter()
+            .filter_map(|book| book.book_id.clone())
+            .collect();
+        assert_eq!(order, vec![c_id.clone(), a_id.clone(), b_id.clone()]);
+
+        // 「不能被动到」的列逐字段核对（get 走全列，get_bookshelf 是窄列）
+        let reloaded = service.get_shelf_book("u", &a_id).await.unwrap().unwrap();
+        assert_eq!(reloaded.info_html.as_deref(), Some("<p>a-info</p>"));
+        assert_eq!(reloaded.toc_html.as_deref(), Some("<p>a-toc</p>"));
+        assert_eq!(reloaded.can_re_name.as_deref(), Some("true"));
+        assert_eq!(
+            reloaded.download_urls.as_deref(),
+            Some("[\"https://dl/a\"]")
+        );
+        assert_eq!(reloaded.intro.as_deref(), Some("简介 A"));
+        assert_eq!(reloaded.dur_chapter_index, Some(7));
+        assert_eq!(reloaded.dur_chapter_pos, Some(1234));
+        assert_eq!(reloaded.dur_chapter_title.as_deref(), Some("第七章"));
+        assert_eq!(reloaded.group, Some(1));
+
+        pool.close().await;
+        let _ = std::fs::remove_dir_all(&storage_dir);
+    }
+
+    /// 集合与书架不一致时整批拒绝：顺序一点都不许动。
+    #[tokio::test]
+    async fn save_book_order_rejects_mismatched_set() {
+        let storage_dir = std::env::temp_dir().join(format!(
+            "reader-rust-save-order-set-{}",
+            std::process::id()
+        ));
+        let (service, pool) = test_service(&storage_dir).await;
+
+        let a = service
+            .save_book("u", make_book("https://example.com/set-a"))
+            .await
+            .unwrap()
+            .book_id
+            .unwrap();
+        let b = service
+            .save_book("u", make_book("https://example.com/set-b"))
+            .await
+            .unwrap()
+            .book_id
+            .unwrap();
+
+        // 缺一本（客户端视图过期）
+        let err = service
+            .save_book_order("u", std::slice::from_ref(&b))
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(&err, AppError::BadRequest(msg) if msg.contains("书架已变化")),
+            "缺项应 400「书架已变化」，实际 {err:?}"
+        );
+        // 多一本
+        let err = service
+            .save_book_order("u", &[b.clone(), a.clone(), "book_9999".to_string()])
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(&err, AppError::BadRequest(msg) if msg.contains("超过书架现有数量")),
+            "多项应 400，实际 {err:?}"
+        );
+        // 换成本书架的其它 id（等长但集合不同）
+        let err = service
+            .save_book_order("u", &[b.clone(), "book_9999".to_string()])
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(&err, AppError::BadRequest(msg) if msg.contains("书架已变化")),
+            "等长但集合不同应 400，实际 {err:?}"
+        );
+        // 空、重复、非法 id
+        assert!(matches!(
+            service.save_book_order("u", &[]).await.unwrap_err(),
+            AppError::BadRequest(_)
+        ));
+        assert!(matches!(
+            service
+                .save_book_order("u", &[a.clone(), a.clone()])
+                .await
+                .unwrap_err(),
+            AppError::BadRequest(_)
+        ));
+        assert!(matches!(
+            service
+                .save_book_order("u", &["../evil".to_string()])
+                .await
+                .unwrap_err(),
+            AppError::BadRequest(_)
+        ));
+
+        // 一次都没落库：仍是入架顺序
+        let order: Vec<String> = service
+            .get_bookshelf("u")
+            .await
+            .unwrap()
+            .iter()
+            .filter_map(|book| book.book_id.clone())
+            .collect();
+        assert_eq!(order, vec![a, b]);
+
+        pool.close().await;
+        let _ = std::fs::remove_dir_all(&storage_dir);
+    }
 
     #[tokio::test]
     async fn bookshelf_list_keeps_intro_but_drops_heavy_snapshots() {

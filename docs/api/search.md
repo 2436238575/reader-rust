@@ -299,12 +299,50 @@ POST /reader3/saveBook
 POST /reader3/saveBooks
 ```
 
+> **仅供 WebDAV 恢复（`restore=true`）与「以备份为准」的全量导入使用。**
+> 只调整书架顺序请用 [`POST /reader3/saveBookOrder`](#保存书架顺序)。
+>
+> 这条接口是 `DELETE` 后按请求重插的语义：请求体里**没带的列会被写成空**。
+> 移动端 `Book` DTO 不含 `infoHtml` / `tocHtml` / `canReName` / `downloadUrls`，
+> 拿它当「保存排序」的接口会静默清空这四列。
+
 两种请求体形态：
 
 - **裸 `Book` 数组**：**整体替换**当前书架（导入场景）。替换后总数超过 `USER_BOOK_LIMIT` 时整批拒绝。
 - `{ "books": [ ... ], "restore": true }`：WebDAV 恢复场景——**清表重建书籍登记表**，尊重备份自带的 `bookId`（避免恢复后书签、AI 记忆等按 `bookId` 关联的数据失配）；恢复后会顺带清理与登记表对不上的残留 AI 记忆。
 
 响应 `data` 为保存后的数组（各项含 `bookId`）。
+
+## 保存书架顺序
+
+```text
+POST /reader3/saveBookOrder
+```
+
+请求体：
+
+```json
+{ "bookIds": ["book_3", "book_1", "book_2"] }
+```
+
+语义是**只改顺序**：服务端逐条 `UPDATE shelf_books SET position = ?`，
+`position` 从 1 按数组下标递增，**不读写其它任何列**
+（`infoHtml` / `tocHtml` / `canReName` / `downloadUrls` / 进度 / 分组位全部原样保留）。
+
+`bookIds` 必须是**当前书架的完整集合**，服务端按集合完全相等校验：
+
+| 入参情况 | 结果 |
+| --- | --- |
+| 空数组 | 400 |
+| 存在重复 id | 400 |
+| 数量超过书架现有数量 | 400「提交的书籍数量（n）超过书架现有数量（m）」 |
+| 集合与书架不一致（多一本/少一本/换成别的 id） | 400「书架已变化，请刷新后重试」 |
+| 完全一致 | 200，`data` 为 `"success"` |
+
+集合校验的意义：部分提交会把未提交的书挤到并列 `position`，顺序从此错乱且
+无法自愈；直接拒绝并提示刷新，比写坏更安全。
+
+`bookId` 会先归一为 canonical（`book_007` 与 `book_7` 视为同一本）；格式非法返回 400。
 
 ## 更换书籍的书源
 

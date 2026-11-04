@@ -665,6 +665,23 @@ impl ShelfBookRepo {
         Ok(rows.iter().map(map_shelf_entry_list).collect())
     }
 
+    /// 书架上的全部 bookId（`book_<n>` 文本），按 position 升序。
+    ///
+    /// 排序接口的「集合完全相等」校验用它：只查 id 不展开整行，几百本书
+    /// 也只是几百个整数，不必为此读全列。
+    pub async fn list_ids(&self, user_ns: &str) -> Result<Vec<String>, AppError> {
+        let rows = sqlx::query(
+            "SELECT book_id FROM shelf_books WHERE user_ns=?1 ORDER BY position, book_id",
+        )
+        .bind(user_ns)
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows
+            .iter()
+            .map(|row| format_book_id(row.get::<i64, _>("book_id")))
+            .collect())
+    }
+
     pub async fn get(&self, user_ns: &str, book_id: &str) -> Result<Option<ShelfEntry>, AppError> {
         let Some(id) = parse_book_id(book_id) else {
             return Ok(None);
@@ -819,6 +836,34 @@ impl ShelfBookRepo {
             .bind(user_ns)
             .execute(&mut **tx)
             .await?;
+        Ok(())
+    }
+
+    /// 只改写 position（`saveBookOrder` 用）。
+    ///
+    /// 与 `replace_all_on` 的关键差别：**不做 DELETE + 重插**。整架替换会把
+    /// 请求体里没带的列（info_html/toc_html/can_re_name/download_urls 等）
+    /// 写成空，一条「只改顺序」的请求不该有这种副作用。这里逐条
+    /// `UPDATE shelf_books SET position=?`，语句里只出现 position 一列。
+    ///
+    /// 调用方负责保证 `items` 是完整的书架集合（服务层校验），本方法只做写入。
+    pub async fn reorder_on(
+        &self,
+        tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+        user_ns: &str,
+        items: &[(String, i64)],
+    ) -> Result<(), AppError> {
+        for (book_id, position) in items {
+            let id = parse_book_id(book_id).ok_or_else(|| {
+                AppError::BadRequest(format!("bookId 格式非法: {book_id:?}"))
+            })?;
+            sqlx::query("UPDATE shelf_books SET position = ?3 WHERE user_ns = ?1 AND book_id = ?2")
+                .bind(user_ns)
+                .bind(id)
+                .bind(position)
+                .execute(&mut **tx)
+                .await?;
+        }
         Ok(())
     }
 
@@ -1175,6 +1220,11 @@ impl BookGroupRepo {
         Self { pool }
     }
 
+    /// 开事务：分组重排序要「全部校验通过再一起写」，避免半截生效。
+    pub async fn begin(&self) -> Result<sqlx::Transaction<'_, sqlx::Sqlite>, AppError> {
+        Ok(self.pool.begin_with("BEGIN IMMEDIATE").await?)
+    }
+
     /// 全部组，按 order_no 排序。
     pub async fn list(
         &self,
@@ -1266,6 +1316,29 @@ impl BookGroupRepo {
         .execute(&mut *tx)
         .await?;
         tx.commit().await?;
+        Ok(())
+    }
+
+    /// 只改写 order_no（`saveBookGroupOrder` 用）：**不删组、不动书籍位掩码**。
+    ///
+    /// 旧语义是整表覆盖（不在数组里的组会被删掉并清书上的位），一次误提交
+    /// 就能丢分组。新语义只动顺序，未出现在 `items` 里的组保持原 order_no。
+    pub async fn reorder_on(
+        &self,
+        tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+        user_ns: &str,
+        items: &[(i64, i32)],
+    ) -> Result<(), AppError> {
+        for (group_id, order_no) in items {
+            sqlx::query(
+                "UPDATE book_groups SET order_no = ?3 WHERE user_ns = ?1 AND group_id = ?2",
+            )
+            .bind(user_ns)
+            .bind(group_id)
+            .bind(order_no)
+            .execute(&mut **tx)
+            .await?;
+        }
         Ok(())
     }
 }

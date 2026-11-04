@@ -144,6 +144,14 @@ pub async fn save_book(
     Ok(ok_with_cover_routes(&state, serde_json::to_value(saved).unwrap_or_default()).await)
 }
 
+/// 整架替换/恢复。
+///
+/// **仅供 WebDAV 恢复（`restore=true`）与「以备份为准」的全量导入使用**，
+/// 排序保存请用 [`save_book_order`]。
+///
+/// 这条路由是 `DELETE` + 按请求重插的语义：请求体里没带的列会被写成空。
+/// 移动端 `Book` DTO 不含 `infoHtml` / `tocHtml` / `canReName` / `downloadUrls`，
+/// 拿它当「保存顺序」的接口会静默清空这四列（R-01）。
 pub async fn save_books(
     State(state): State<AppState>,
     user: CurrentUser,
@@ -201,6 +209,32 @@ pub async fn save_books(
         .await?;
 
     Ok(ok_with_cover_routes(&state, serde_json::to_value(saved).unwrap_or_default()).await)
+}
+
+#[derive(Debug, Deserialize, Default)]
+pub struct SaveBookOrderRequest {
+    /// 书架全量 bookId，按目标顺序排列（position = 下标 + 1）。
+    #[serde(rename = "bookIds", default)]
+    book_ids: Vec<String>,
+}
+
+/// 只保存书架顺序（`POST /reader3/saveBookOrder`）。
+///
+/// 请求体 `{ "bookIds": ["book_1", "book_2", ...] }`，必须是**当前书架的完整
+/// 集合**：服务端只写 `position` 一列，其余字段（infoHtml/tocHtml/canReName/
+/// downloadUrls 等）原样保留。集合与书架不一致时返回 400「书架已变化，
+/// 请刷新后重试」。
+pub async fn save_book_order(
+    State(state): State<AppState>,
+    user: CurrentUser,
+    Json(req): Json<SaveBookOrderRequest>,
+) -> Result<Json<ApiResponse<Value>>, AppError> {
+    let user_ns = user.0.ns.clone();
+    state
+        .book_service
+        .save_book_order(&user_ns, &req.book_ids)
+        .await?;
+    Ok(Json(ApiResponse::ok(serde_json::json!("success"))))
 }
 
 pub async fn set_book_source(

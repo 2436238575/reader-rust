@@ -302,6 +302,8 @@ pub fn build_router(state: AppState) -> Router {
         )
         .route("/reader3/saveBook", post(handlers::save_book))
         .route("/reader3/saveBooks", post(handlers::save_books))
+        // 只改书架顺序（只写 position 一列）；saveBooks 保留给 WebDAV 恢复
+        .route("/reader3/saveBookOrder", post(handlers::save_book_order))
         .route("/reader3/setBookSource", post(handlers::set_book_source))
         .route("/reader3/deleteBook", post(handlers::delete_book))
         .route("/reader3/deleteBooks", post(handlers::delete_books))
