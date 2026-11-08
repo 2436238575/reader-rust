@@ -71,6 +71,46 @@ Refresh Token 的轮换状态。一次登录创建一条 `family_id`，每次换
 | `created_at`      | INTEGER | 登记时间，秒级时间戳                                                       |
 | `updated_at`      | INTEGER | 最近登记/改绑时间，秒级时间戳                                              |
 
+## chapters
+
+章节登记表（0007），整部署共享。目录的唯一持久载体：此前目录只存在可再生的
+文件缓存里，index 只是抓取时的数组下标；落库后 index 有了稳定归属，服务端
+可以只凭 `(bookId, index)` 定位章节（`BookService::resolve_chapter_by_index`），
+对外 API 不再要求客户端持有 chapterUrl。
+
+主键 `(book_id, chapter_index)`；唯一索引 `(book_id, url) WHERE url != ''`
+（空 URL 章节真实存在，不参与唯一约束），普通索引 `(book_id, url)` 供反查。
+
+| 字段            | 类型    | 用途                                                     |
+| --------------- | ------- | -------------------------------------------------------- |
+| `book_id`       | INTEGER | 关联 `books`                                             |
+| `chapter_index` | INTEGER | 书籍内稳定序号，从 0 连续编号                            |
+| `url`           | TEXT    | 章节 URL；空 URL 章节（个别书源/本地 TXT）允许重复       |
+| `title`         | TEXT    | 章节标题（上游抓取值；用户改名走 `chapter_title_overrides` 覆盖层） |
+| `tag`           | TEXT    | 书源目录规则的 `tag` 求值结果                            |
+| `is_vip`        | INTEGER | 布尔位                                                   |
+| `is_pay`        | INTEGER | 布尔位                                                   |
+| `is_volume`     | INTEGER | 布尔位                                                   |
+| `volume`        | TEXT    | 卷名，相同卷名的连续章节在目录 UI 归组                   |
+| `word_count`    | TEXT    | 书源目录规则的 `wordCount` 求值结果（原样字符串）        |
+
+写入形态两种：整书替换（refresh 重抓 / 完整抓取，事务内先删后插）与按 URL
+去重追加（后台补全，index 从现有最大值 +1 顺延）。换源整表替换，旧源章节行
+删除，正文历史按 chapter_url 键保留为孤儿（语义不变）。用户级清缓存
+（`purgeCache` scope=user / kind=chapterList）不动这张表——与登记行同为
+整部署共享的主数据；书籍级操作（refresh=1 / 换源 / deleteBookCache）才清。
+
+## book_toc_state
+
+目录抓取状态（0007），每本书一行，替代原 `toc/<bookId>.meta.json` 旁路标记。
+与 `books` 行解耦——目录写入不依赖登记行存在。
+
+| 字段         | 类型    | 用途                                                             |
+| ------------ | ------- | ---------------------------------------------------------------- |
+| `book_id`    | INTEGER | 主键                                                             |
+| `complete`   | INTEGER | 目录是否覆盖全部分页；截断（页数上限/整页重复熔断）保持 0        |
+| `fetched_at` | INTEGER | 最近一次抓取落库的 Unix 秒；读侧按 complete 分档判 TTL（完整 1h、未完成 60s） |
+
 ## chapter_contents
 
 正文池，整部署共享，**只插入不更新**。相同原文只存一份，`content_hash` 是原文的 SHA-256。

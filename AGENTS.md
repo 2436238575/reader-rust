@@ -142,7 +142,7 @@ src/
     middleware.rs         require_auth / optional_auth
   service/                业务编排
     book_service/         书籍服务主壳（目录：mod 结构体/构造/共享夹具 + fetch 抓取限速地基 +
-                          registry 登记与 Cookie + explore 搜索/发现/详情 + toc 目录抓取分页缓存 +
+                          registry 登记与 Cookie + explore 搜索/发现/详情 + toc 目录抓取与章节登记表 +
                           content 正文回源 + review 评论/配图 + cache 清理统计 +
                           shelf 书架读写 + cached_search 缓存内全文检索）
     chapter_content_service.rs 正文池与版本时间线：sha256 去重、zstd 压缩、版本追加、
@@ -167,8 +167,10 @@ src/
   storage/               SQLite（sqlx）+ 文件缓存
     db/migrations/        0001_init.sql（基础表结构、书籍/书源登记表、正文池与版本时间线）
                           + 0002（书签/替换规则实体表）+ 0004（book_groups 分组实体表）
-                          + 0005（refresh_tokens 轮换状态）；详见 docs/maintainers/database.md
+                          + 0005（refresh_tokens 轮换状态）+ 0006（chapter_title_overrides 章节标题覆盖）
+                          + 0007（chapters 章节登记表与 book_toc_state 目录状态）；详见 docs/maintainers/database.md
     db/content_repo.rs    正文池/时间线/最新指针的数据访问
+    db/chapters_repo.rs   章节登记表（目录持久层）的数据访问
     cache/file_cache.rs   目录型缓存的容量控制与占用统计（评论、图片等）
     cache/review_cache.rs 评论缓存；**有 TTL**（默认 7 天），按容量淘汰
   app/                    配置加载与启动引导
@@ -366,7 +368,7 @@ XPath 有资源上限（长度 8KB / 嵌套 64 层 / 总步数 100、`//` 50）�
 ## 数据与存储
 
 - SQLite 通过 `sqlx` 访问，连接池 10 条连接，开启 WAL（`synchronous=NORMAL`），启动时自动执行 `src/storage/db/migrations/` 下的迁移。
-- 主要表：`book_sources`（书源 JSON，整部署共享，`book_source_id INTEGER PRIMARY KEY AUTOINCREMENT` + `book_source_url` 唯一索引；**`book_source_id` 是书源的身份键**，删除后不复用，导入/订阅按 URL 去重时保号）、`books`（**书籍登记表**，整部署共享：`book_id INTEGER PRIMARY KEY AUTOINCREMENT` + `book_url` 唯一索引；对外一律 `book_<n>` 文本，repo 边界转换，绑定 `book_source_id`，换源只改绑不改 id；本地书 source_id 为 NULL；登记行不随清缓存删除）、`shelf_books`（**书架**，`(user_ns, book_id)` 主键，全列展开进度/分组/排序/元数据快照，读取时 JOIN books 注入 bookUrl/origin 等绑定字段）、`users`（`uid` 主键、用户数据命名空间锚点，命名空间一律 `user_<uid>`；username 仅登录与展示，唯一索引）、`json_documents`（`(user_ns, name)` 主键，通用键值；userdata 另有 `getUserdataBatch`/`saveUserdataBatch` 批量读写接口，单次 ≤20 个文档、任一条目非法整批 400 不落库、批量写走单事务任一失败整体回滚）、`bookmarks`（书签/划线实体表，`(user_ns, book_id, chapter_index, chapter_pos, kind)` 主键——kind 区分章书签 bookmark / 划线 underline，`chapter_pos` 是万分比章内进度 0–10000、章书签恒 0；删书级联 `DELETE WHERE book_id`）、`replace_rules`（替换规则实体表）、`ai_book_memories`（`(user_ns, book_id)` 主键，`book_url` 只作数据快照）、`book_groups`（书架分组实体表：`(user_ns, group_id)` 主键；**group_id 是位域、分配 2 的幂**（1/2/4/8…），与阅读3.0 的位掩码约定一致）。逐字段说明见 docs/maintainers/database.md。
+- 主要表：`book_sources`（书源 JSON，整部署共享，`book_source_id INTEGER PRIMARY KEY AUTOINCREMENT` + `book_source_url` 唯一索引；**`book_source_id` 是书源的身份键**，删除后不复用，导入/订阅按 URL 去重时保号）、`books`（**书籍登记表**，整部署共享：`book_id INTEGER PRIMARY KEY AUTOINCREMENT` + `book_url` 唯一索引；对外一律 `book_<n>` 文本，repo 边界转换，绑定 `book_source_id`，换源只改绑不改 id；本地书 source_id 为 NULL；登记行不随清缓存删除）、`chapters`（**章节登记表**，0007，整部署共享：`(book_id, chapter_index)` 主键 + `(book_id, url) WHERE url != ''` 部分唯一索引；index 的持久载体，服务端可只凭 (bookId, index) 定位章节；换源整表替换，用户级清缓存不动它）、`book_toc_state`（目录抓取状态，complete + fetched_at，完整 1h/未完成 60s TTL）、`shelf_books`（**书架**，`(user_ns, book_id)` 主键，全列展开进度/分组/排序/元数据快照，读取时 JOIN books 注入 bookUrl/origin 等绑定字段）、`users`（`uid` 主键、用户数据命名空间锚点，命名空间一律 `user_<uid>`；username 仅登录与展示，唯一索引）、`json_documents`（`(user_ns, name)` 主键，通用键值；userdata 另有 `getUserdataBatch`/`saveUserdataBatch` 批量读写接口，单次 ≤20 个文档、任一条目非法整批 400 不落库、批量写走单事务任一失败整体回滚）、`bookmarks`（书签/划线实体表，`(user_ns, book_id, chapter_index, chapter_pos, kind)` 主键——kind 区分章书签 bookmark / 划线 underline，`chapter_pos` 是万分比章内进度 0–10000、章书签恒 0；删书级联 `DELETE WHERE book_id`）、`replace_rules`（替换规则实体表）、`ai_book_memories`（`(user_ns, book_id)` 主键，`book_url` 只作数据快照）、`book_groups`（书架分组实体表：`(user_ns, group_id)` 主键；**group_id 是位域、分配 2 的幂**（1/2/4/8…），与阅读3.0 的位掩码约定一致）。逐字段说明见 docs/maintainers/database.md。
 - 前端 userdata 写入统一收口到 `frontend/src/utils/userdataQueue.ts` 的批量写队列：按文档名合并（同名后写覆盖前写）、200ms 防抖合成一次 `saveUserdataBatch`、单飞在途、失败按退避重试至多 3 次；成功清理按版本号判断是否被新写覆盖（每次入队分配递增版本，落地回调只删版本未变的条目——阅读统计入队的是同一活对象并原地修改，按引用相等会把在途期间的新值误删）；`pagehide` 与 `visibilitychange=hidden` 时用裸 fetch + `keepalive` 补发最后一次批量写（URL 走 `API_BASE`，不经 axios），同样按版本清理；登出前先 `flushUserdataQueue()`。阅读统计、最近阅读、已读标记三条写路径都经此队列。
 - 前端 userdata 首屏读取走批量预读：文档名常量收在 `frontend/src/utils/userdataDocs.ts`（reading-stats / recent-books / readChapterHistory，避免 app.ts 直接 import store 造成循环依赖）；`stores/app.ts` 在登录成功（`setUser`）与 `bootstrapAuth` 确认已登录后 fire-and-forget 调 `api/userdata.prefetchUserdata`，一次 `getUserdataBatch` 把三份文档写入 30s 一次性缓存（`getUserdataBatch` 命中即删、只对 miss/过期条目发请求，避免长期陈旧）；写成功（`saveUserdataBatch`）与登出（`clearUserdataPrefetch`，由 `clearUser` 调用）使对应缓存失效；缓存 miss、过期或预读失败都回落 `getUserdataBatch` 批量 GET。前端 userdata 读写已全部走批量接口；服务端单文档 `getUserdata`/`saveUserdata` 端点保留兼容、前端不再调用。
 - 书源列表在前端有一份 localStorage 冷启动快照（`reader-source-snapshot-v1`，24h TTL、最多 1000 条）：只存名称/链接/分组/启用状态等非敏感字段，**不落 header/loginUrl/jsLib/任何规则字段**。`stores/source.ts` 首屏先用快照渲染（`partial` 标记）再后台拉全量替换；书源编辑/批量写前一律先 `ensureFullSources()` 拿到全量对象，避免用残缺快照对象保存把规则清空。批量导入（`saveSources`）落库成功后的整表重拉是 **best-effort**：重拉失败只置 `partial`（本地列表暂缺新导入项，由下一次 `ensureFullSources` 补全），不把已成功的导入报成失败。
@@ -374,8 +376,8 @@ XPath 有资源上限（长度 8KB / 嵌套 64 层 / 总步数 100、`//` 50）�
 - **正文版本表（整部署共享，不带 `user_ns`）**：`chapter_contents`（正文池，`content_hash` 唯一，只插入不更新；`codec=1` 为 zstd）、`chapter_versions`（版本时间线，`kind` 为 upstream/edited/imported，含 `base_version_id` 与书源/章节快照，只插入不更新）、`chapter_latest`（最新上游/用户版本指针与回源时间，唯一允许更新的正文表）、`chapter_view_state`（`(user_ns, book_id, chapter_url)` 主键，每用户选中的版本；删除行表示跟随最新）。阅读页的 diff **始终以最新上游正文为基准**（评论源只对最新上游取段号，diff 标记要和它对齐）；`base_version_id` 只记录编辑时基于哪一版，不参与阅读页 diff。
 - **身份模型**：请求的身份参数只认 `bookId`（书籍）与 `bookSourceId`（书源）；`bookUrl`/`bookSourceUrl`/`origin` 只是数据字段（爬虫取数、导入去重），不参与「同 id 同书」校验。书籍与书源 id 都是 AUTOINCREMENT、删除后不复用，正文历史不会串书。搜索/发现产出即登记（响应必带 bookId）；书籍级接口经 `resolve_book`（handlers/book/mod.rs）由 bookId 解析出当前绑定的 bookUrl + 书源。升级存量部署（beta 之前）：删除 `storage/` 后重启重建。
 - **正文存储**：章节正文已从文件缓存迁到 SQLite 正文池；阅读默认版本按「用户选择 > 最近用户版本 > 最新上游」解析。读取时距上次回源尝试超过 `CONTENT_REVALIDATE_TTL_SECS` 会在后台回源，失败继续返回缓存并标记 `stale`。`refresh=1` 与历史面板的“检查更新”同步回源，失败也回退缓存。正文历史**严格保留，不自动淘汰，也不提供清理入口**。文本源返回空正文按失败处理，不写 0 字节上游版本；只有 `bookSourceType=2` 的图片源允许空正文，且只更新检查时间。存量空上游版本可用 `docs/maintainers/database.md` 的维护 SQL 手工清理。
-- 可再生缓存仍在 `cache/` 树下：目录缓存 `cache/<ns>/toc/<bookId>.json`（1h TTL；首屏先落盘并在旁路 `<bookId>.meta.json` 标记未完成，后台补全成功才置完成，未完成缓存只复用 60s；分页达到 `MAX_TOC_PAGES` 上限或整页重复熔断同样标未完成，60 秒后可重试）；书籍详情缓存 `cache/bookinfo/<ns>/<bookId>.json`（1h TTL，`refresh=1` 强刷）；换源候选 `cache/<ns>/source_candidates/<bookId>.json`（1h TTL）；评论缓存 `cache/reviews/...`；图片缓存 `cache/image/...`。`data/` 只剩用户资产：`local_books` 与 `userConfig.json`（用户配置备份快照）。
-- 可再生缓存**大多不按时间过期**，只在显式调用 `POST /reader3/purgeCache` 或超出容量上限时回收；占用可用 `GET /reader3/cacheStats` 查看。**正文历史不在清理范围内**（`purgeCache` 没有 content 类型）；`scope=book` 清目录/详情/换源候选/评论并连带该书的图片；`scope=user` 清该用户的全部可再生缓存，但不再删除书籍登记行。
+- 目录已迁 SQLite 章节登记表（`chapters` + `book_toc_state`，0007 迁移）：完整目录 1h TTL、首屏分页的未完成目录只复用 60s、分页达到 `MAX_TOC_PAGES` 上限或整页重复熔断标未完成——语义与旧文件缓存一致，文件缓存层已删除；`resolve_chapter_by_index` 是 (bookId, index) 定位章节的解析入口；书籍详情缓存 `cache/bookinfo/<ns>/<bookId>.json`（1h TTL，`refresh=1` 强刷）；换源候选 `cache/<ns>/source_candidates/<bookId>.json`（1h TTL）；评论缓存 `cache/reviews/...`；图片缓存 `cache/image/...`。`data/` 只剩用户资产：`local_books` 与 `userConfig.json`（用户配置备份快照）。
+- 可再生缓存**大多不按时间过期**，只在显式调用 `POST /reader3/purgeCache` 或超出容量上限时回收；占用可用 `GET /reader3/cacheStats` 查看。**正文历史不在清理范围内**（`purgeCache` 没有 content 类型）；`scope=book` 清目录/详情/换源候选/评论并连带该书的图片；`scope=user` 清该用户的全部可再生缓存，但不再删除书籍登记行，也不动章节登记表（与登记行同为整部署共享的主数据）。
 - **评论缓存**（`storage/cache/reviews/<ns>/<bookId>/`）是会变的第三方数据，
   保留 7 天 TTL（`REVIEW_CACHE_TTL_SECS`），同时也受容量上限约束。
 - **图片缓存**（`storage/cache/image/`）是书源图片的统一出口：`<id>.bin` 是图片本体、
