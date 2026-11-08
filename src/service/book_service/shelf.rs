@@ -197,7 +197,11 @@ impl BookService {
     /// - 数量超过书架现有数量；
     /// - 集合与当前书架**不完全相等**——说明客户端视图已过期（中间有加书/
     ///   删书），此时部分提交会把顺序写乱且无法自愈，直接让用户刷新重试。
-    pub async fn save_book_order(&self, user_ns: &str, book_ids: &[String]) -> Result<(), AppError> {
+    pub async fn save_book_order(
+        &self,
+        user_ns: &str,
+        book_ids: &[String],
+    ) -> Result<(), AppError> {
         if book_ids.is_empty() {
             return Err(AppError::BadRequest("bookIds 不能为空".to_string()));
         }
@@ -230,9 +234,7 @@ impl BookService {
                 .iter()
                 .all(|id| current_set.contains(id.as_str()))
         {
-            return Err(AppError::BadRequest(
-                "书架已变化，请刷新后重试".to_string(),
-            ));
+            return Err(AppError::BadRequest("书架已变化，请刷新后重试".to_string()));
         }
 
         // position 从 1 按数组下标连续递增：与 upsert 的「新书排末尾」同一口径
@@ -484,10 +486,8 @@ mod tests {
     /// 集合与书架不一致时整批拒绝：顺序一点都不许动。
     #[tokio::test]
     async fn save_book_order_rejects_mismatched_set() {
-        let storage_dir = std::env::temp_dir().join(format!(
-            "reader-rust-save-order-set-{}",
-            std::process::id()
-        ));
+        let storage_dir =
+            std::env::temp_dir().join(format!("reader-rust-save-order-set-{}", std::process::id()));
         let (service, pool) = test_service(&storage_dir).await;
 
         let a = service

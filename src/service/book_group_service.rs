@@ -61,11 +61,7 @@ impl BookGroupService {
     /// **不再绑定 HTTP 路由**：`/saveBookGroupOrder` 已改为只排序的
     /// [`Self::reorder_groups`]。本方法保留给 WebDAV 恢复——恢复是「以备份
     /// 为准」的整表重建，删掉备份里没有的组正是期望行为。
-    pub async fn save_groups(
-        &self,
-        user_ns: &str,
-        groups: &[BookGroup],
-    ) -> Result<(), AppError> {
+    pub async fn save_groups(&self, user_ns: &str, groups: &[BookGroup]) -> Result<(), AppError> {
         for group in groups {
             validate_group_id(group.group_id)?;
         }
@@ -129,7 +125,10 @@ impl BookGroupService {
             }
         }
 
-        let pairs: Vec<(i64, i32)> = items.iter().map(|item| (item.group_id, item.order_no)).collect();
+        let pairs: Vec<(i64, i32)> = items
+            .iter()
+            .map(|item| (item.group_id, item.order_no))
+            .collect();
         let mut tx = self.repo.begin().await?;
         self.repo.reorder_on(&mut tx, user_ns, &pairs).await?;
         tx.commit().await?;

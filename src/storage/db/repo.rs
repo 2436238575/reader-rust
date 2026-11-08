@@ -854,9 +854,8 @@ impl ShelfBookRepo {
         items: &[(String, i64)],
     ) -> Result<(), AppError> {
         for (book_id, position) in items {
-            let id = parse_book_id(book_id).ok_or_else(|| {
-                AppError::BadRequest(format!("bookId 格式非法: {book_id:?}"))
-            })?;
+            let id = parse_book_id(book_id)
+                .ok_or_else(|| AppError::BadRequest(format!("bookId 格式非法: {book_id:?}")))?;
             sqlx::query("UPDATE shelf_books SET position = ?3 WHERE user_ns = ?1 AND book_id = ?2")
                 .bind(user_ns)
                 .bind(id)
@@ -1384,15 +1383,19 @@ impl ChapterTitleOverrideRepo {
         &self,
         book_id: i64,
     ) -> Result<std::collections::HashMap<String, String>, AppError> {
-        let rows = sqlx::query(
-            "SELECT chapter_url, title FROM chapter_title_overrides WHERE book_id=?1",
-        )
-        .bind(book_id)
-        .fetch_all(&self.pool)
-        .await?;
+        let rows =
+            sqlx::query("SELECT chapter_url, title FROM chapter_title_overrides WHERE book_id=?1")
+                .bind(book_id)
+                .fetch_all(&self.pool)
+                .await?;
         Ok(rows
             .into_iter()
-            .map(|row| (row.get::<String, _>("chapter_url"), row.get::<String, _>("title")))
+            .map(|row| {
+                (
+                    row.get::<String, _>("chapter_url"),
+                    row.get::<String, _>("title"),
+                )
+            })
             .collect())
     }
 
@@ -1409,11 +1412,10 @@ impl ChapterTitleOverrideRepo {
 
     /// 删书级联清理。
     pub async fn delete_for_book(&self, book_id: i64) -> Result<u64, AppError> {
-        let result =
-            sqlx::query("DELETE FROM chapter_title_overrides WHERE book_id=?1")
-                .bind(book_id)
-                .execute(&self.pool)
-                .await?;
+        let result = sqlx::query("DELETE FROM chapter_title_overrides WHERE book_id=?1")
+            .bind(book_id)
+            .execute(&self.pool)
+            .await?;
         Ok(result.rows_affected())
     }
 }

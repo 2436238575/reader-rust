@@ -301,8 +301,14 @@ pub async fn rename_chapter(
     let Some(book_id) = parse_book_id(&req.book_id) else {
         return Err(AppError::BadRequest("bookId 格式非法".to_string()));
     };
-    let original_title =
-        original_toc_title(&state, &user.0.ns, &resolved, &req.book_id, &req.chapter_url).await;
+    let original_title = original_toc_title(
+        &state,
+        &user.0.ns,
+        &resolved,
+        &req.book_id,
+        &req.chapter_url,
+    )
+    .await;
     let trimmed = req.title.as_deref().map(str::trim).unwrap_or("");
     if trimmed.is_empty() || (!original_title.is_empty() && trimmed == original_title) {
         state
@@ -345,8 +351,14 @@ pub async fn get_chapter_title_override(
     let Some(book_id) = parse_book_id(&req.book_id) else {
         return Err(AppError::BadRequest("bookId 格式非法".to_string()));
     };
-    let original_title =
-        original_toc_title(&state, &user.0.ns, &resolved, &req.book_id, &req.chapter_url).await;
+    let original_title = original_toc_title(
+        &state,
+        &user.0.ns,
+        &resolved,
+        &req.book_id,
+        &req.chapter_url,
+    )
+    .await;
     let map = state.chapter_title_override_repo.get_map(book_id).await?;
     let override_title = map.get(&req.chapter_url);
     Ok(Json(ApiResponse::ok(json!({
@@ -1164,15 +1176,12 @@ async fn handle_chapter_import(
                 } else {
                     "unmatched"
                 };
-                let current_title = chapter
-                    .chapter_url
-                    .as_deref()
-                    .and_then(|url| {
-                        title_overrides
-                            .get(url)
-                            .cloned()
-                            .or_else(|| chapter.chapter_title.clone())
-                    });
+                let current_title = chapter.chapter_url.as_deref().and_then(|url| {
+                    title_overrides
+                        .get(url)
+                        .cloned()
+                        .or_else(|| chapter.chapter_title.clone())
+                });
                 let txt_title = chapter.title.trim();
                 let title_changed = status == "matched"
                     && !txt_title.is_empty()

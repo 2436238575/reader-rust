@@ -336,10 +336,7 @@ pub fn build_router(state: AppState) -> Router {
             "/reader3/saveChapterEdit",
             post(handlers::save_chapter_edit),
         )
-        .route(
-            "/reader3/renameChapter",
-            post(handlers::rename_chapter),
-        )
+        .route("/reader3/renameChapter", post(handlers::rename_chapter))
         .route(
             "/reader3/getChapterTitleOverride",
             get(handlers::get_chapter_title_override).post(handlers::get_chapter_title_override),
