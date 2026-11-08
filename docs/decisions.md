@@ -11,3 +11,15 @@ goal 执行中遇到「决策表与 spec 都沉默」的问题时，按 §5.4 �
 - **OpenAPI 3.1 由 utoipa 6 原生输出**：工具链定稿为 utoipa 6（`yaml` feature）+ openapi-typescript 7；生成锚文件在仓库根 `openapi.yaml`，漂移检查 `cargo test --test openapi_drift`（更新：`UPDATE_OPENAPI=1`）。
 - **`/v1/me` 的 `createdAt` 按 users 表毫秒口径换算**，输出 RFC 3339 秒级字符串（契约 §5.2「秒级足够」）；库内 users 时间戳与 DDL 注释不符（注释写秒、实写毫秒），以代码为准。
 - **限定令牌（scope）在 `/v1` 一律 403 `SCOPE_FORBIDDEN`**：限定令牌只服务 `/reader3` 的书源代理路径白名单，v1 不接受。
+
+## 2026-11-09 审阅返工（P0 第一轮）
+
+- **`deleteBookCache` / `purgeCache scope=book` / 移出书架不再删除章节登记行**：登记行是 `(bookId, index)` 的解析载体，删掉它离线解析就断了，而留下的反而是可再生数据，方向相反。改为只重置 `book_toc_state`（下次读目录照常重抓，效果等同「清目录」）。整表删除只剩换源（新源换 index 空间）与 refresh=1（删后立即重抓）两个场景。审阅建议的「删正文版本」**不采纳**：正文历史严格保留是项目级不变量（编辑章/导入版本在其中）。
+- **`/v1` 错误体的 `traceId` 由响应中间件统一补**：只改写 problem+json 的错误响应，handler 无需关心；`require_auth` 的手工盖章随之删除。
+- **`/v1` 挂入站超时与并发层**，并发许可与 `/reader3` 受保护组共享同一信号量（全局预算不翻倍）。
+- **新增 `V1User` 提取器**（rejection = `Problem`）：即使某条 /v1 路由漏挂鉴权中间件，失败形态也不会漏出 `ApiResponse`。
+- **`/v1/me` 账号行不存在改用 `AUTH_REFRESH_REPLAYED`**：`AUTH_EXPIRED` 会引导前端静默刷新，而刷新救不回不存在的账号，会形成一轮无效循环；`AUTH_REFRESH_REPLAYED` 的前端语义正是「必须重新登录」。
+- **状态码对齐契约**：`VALIDATION_FAILED` / `INVALID_CURSOR` / `UNKNOWN_FIELD` → 422（语法合法但值非法）；`MALFORMED_REQUEST` / `UPSTREAM_BLOCKED` 保持 400。
+- **spec 的 problem 可选成员加 `nullable = false`**：实现是缺省省略而不是 null，生成的 schema 从 `string | null` 收敛为可选属性，openapi-typescript 不再产出三态。
+- **生成 yaml 定位为 as-built，不另存 53 路径的目标文件**：spec-first 的闸门落在契约文档（Draft-2 端点表）+ 决策记录上，生成 yaml 随实现增长；避免两份 yaml 双真相。
+- **本地书（TXT/EPUB）的 index 解析**：v1 内容端点落地时按「本地书直接经本地服务按 index 取章」分支处理，不写入 chapters 表（本地目录由文件确定性生成，逐次解析成本低，写表无收益）。已注记到 goal 的 P1。
