@@ -1,7 +1,9 @@
 pub mod extract;
 pub mod handlers;
 pub mod inbound_guard;
+pub mod problem;
 pub mod router;
+pub mod v1;
 
 use crate::app::config::AppConfig;
 use crate::auth::AuthState;

@@ -1,0 +1,152 @@
+openapi: 3.1.0
+info:
+  title: reader-rust v1 API
+  description: ''
+  license:
+    name: ''
+  version: 0.1.0
+paths:
+  /v1/me:
+    get:
+      tags:
+      - me
+      summary: 当前账号资料。
+      description: 时间字段统一由服务端下发，客户端时钟不参与任何比较（契约 §5.2）。
+      operationId: getMe
+      responses:
+        '200':
+          description: 当前账号资料
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Me'
+        '401':
+          description: 未登录或令牌失效
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '500':
+          description: 服务端错误
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+components:
+  schemas:
+    ErrorCode:
+      type: string
+      description: |-
+        错误码：线上值是大写下划线（serde `SCREAMING_SNAKE_CASE`），稳定不变。
+        新增取值是兼容变更（客户端必须有 default 分支），改已有取值的语义是破坏变更。
+      enum:
+      - VALIDATION_FAILED
+      - MALFORMED_REQUEST
+      - INVALID_CURSOR
+      - INVALID_CREDENTIALS
+      - AUTH_EXPIRED
+      - AUTH_REFRESH_REPLAYED
+      - CSRF_HEADER_MISSING
+      - SCOPE_FORBIDDEN
+      - BOOK_NOT_FOUND
+      - CHAPTER_NOT_FOUND
+      - SOURCE_NOT_FOUND
+      - IMAGE_NOT_FOUND
+      - TASK_NOT_FOUND
+      - NOT_FOUND
+      - BOOK_NOT_IN_SHELF
+      - SOURCE_DISABLED
+      - TASK_ALREADY_RUNNING
+      - CONFLICT
+      - VERSION_CONFLICT
+      - PAYLOAD_TOO_LARGE
+      - UNSUPPORTED_MEDIA_TYPE
+      - RATE_LIMITED
+      - UPSTREAM_BLOCKED
+      - UPSTREAM_FAILED
+      - UPSTREAM_TIMEOUT
+      - PROCESSING_TIMEOUT
+      - TASK_LIMIT
+      - API_REMOVED
+      - UNKNOWN_FIELD
+      - INTERNAL
+    FieldIssue:
+      type: object
+      description: 422 校验失败的逐字段错误：`pointer` 是 JSON Pointer，前端直接映射表单控件。
+      required:
+      - pointer
+      - code
+      properties:
+        code:
+          type: string
+        detail:
+          type:
+          - string
+          - 'null'
+        pointer:
+          type: string
+    Me:
+      type: object
+      description: |-
+        当前账号资料。`id` 是不透明字符串（`u_<uid>`），客户端不解析。
+        `createdAt` 一律 RFC 3339 UTC（契约红线 7）。
+      required:
+      - id
+      - username
+      - createdAt
+      properties:
+        createdAt:
+          type: string
+          format: date-time
+          description: 注册时间，RFC 3339 UTC
+        id:
+          type: string
+        username:
+          type: string
+    Problem:
+      type: object
+      description: |-
+        problem+json 响应体。`type` 固定 `about:blank`（RFC 9457 缺省类型，
+        语义由 `code` 承载，不要求维护错误文档页）。
+      required:
+      - type
+      - code
+      - status
+      - title
+      properties:
+        code:
+          $ref: '#/components/schemas/ErrorCode'
+        detail:
+          type:
+          - string
+          - 'null'
+        errors:
+          type:
+          - array
+          - 'null'
+          items:
+            $ref: '#/components/schemas/FieldIssue'
+        instance:
+          type:
+          - string
+          - 'null'
+        status:
+          type: integer
+          format: int32
+          minimum: 0
+        title:
+          type: string
+        traceId:
+          type:
+          - string
+          - 'null'
+        type:
+          type: string
+        upstreamCode:
+          type:
+          - string
+          - 'null'
+          description: 上游业务码原样透传（FQWeb 的 `UPSTREAM_THROTTLED` 等）
+tags:
+- name: me
+  description: 当前账号

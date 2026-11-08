@@ -566,6 +566,17 @@ impl UserService {
         Ok(row.as_ref().map(|row| self.user_from_row(row)))
     }
 
+    /// `/v1/me` 的资料查询：按 uid 取用户名与注册时间。
+    /// 令牌有效但用户行不存在（理论不可达）时返回 `None`，调用方按 401 处理。
+    pub async fn get_profile(&self, uid: i64) -> Result<Option<(String, i64)>, AppError> {
+        let row: Option<(String, i64)> =
+            sqlx::query_as("SELECT username, created_at FROM users WHERE uid = ?1")
+                .bind(uid)
+                .fetch_optional(&self.pool)
+                .await?;
+        Ok(row)
+    }
+
     /// 对外返回的用户信息：不含任何凭据。
     fn format_user(&self, user: &User) -> Value {
         serde_json::json!({

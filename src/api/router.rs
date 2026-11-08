@@ -556,9 +556,14 @@ pub fn build_router(state: AppState) -> Router {
         .merge(public)
         .merge(optional)
         .merge(protected)
+        // `/v1` 契约命名空间（problem+json + 具名 schema），自带鉴权中间件；
+        // 未匹配的 /v1 路径回落到 JSON 404（下方 problem 形态统一处理）
+        .merge(super::v1::router(state.clone()))
         .route("/reader3", any(handlers::api_not_found))
         .route("/reader3/", any(handlers::api_not_found))
-        .route("/reader3/{*rest}", any(handlers::api_not_found));
+        .route("/reader3/{*rest}", any(handlers::api_not_found))
+        .route("/v1", any(super::v1::not_found))
+        .route("/v1/{*rest}", any(super::v1::not_found));
 
     let web_root = state.config.web_root.clone();
     let assets_root = state.config.assets_dir.clone();

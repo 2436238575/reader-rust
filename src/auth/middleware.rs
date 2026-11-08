@@ -53,7 +53,7 @@ pub async fn optional_auth(
 
 /// 令牌以所有权传入而非借用 `Request`：跨 `.await` 持有请求借用会让
 /// axum 无法推导中间件的 extractor 元组，`from_fn_with_state` 直接编译失败。
-async fn authenticate(state: &AuthState, token: String) -> Result<AuthUser, AppError> {
+pub(crate) async fn authenticate(state: &AuthState, token: String) -> Result<AuthUser, AppError> {
     let claims = decode_token(&token, state.jwt_secret())?;
     let token_version = state
         .load_token_version(claims.uid)
@@ -86,7 +86,7 @@ pub fn user_ns_of(uid: i64) -> String {
 /// 代理页的 30 分钟限定令牌（`bookSourceProxy` / `bookSourceClientLog`，
 /// 与限定令牌的路径白名单同一份口径）；SSE 与 `<img>` 无法设置请求头，
 /// 改由浏览器自动携带的会话 Cookie 鉴权，其他路径不再接受查询串令牌。
-fn extract_token<B>(request: &axum::http::Request<B>) -> Option<String> {
+pub(crate) fn extract_token<B>(request: &axum::http::Request<B>) -> Option<String> {
     if let Some(raw) = request
         .headers()
         .get(AUTHORIZATION)
