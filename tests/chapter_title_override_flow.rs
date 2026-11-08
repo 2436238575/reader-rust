@@ -22,6 +22,8 @@ struct TestServer {
     client: reqwest::Client,
     token: String,
     content: Arc<ChapterContentService>,
+    /// 独立连到测试库的池：目录登记表等 DB 侧预置用。
+    pool: sqlx::SqlitePool,
 }
 
 impl TestServer {
@@ -70,30 +72,53 @@ impl TestServer {
             .unwrap();
         let payload: Value = resp.json().await.unwrap();
         let token = payload["data"]["accessToken"].as_str().unwrap().to_string();
+        let pool = sqlx::SqlitePool::connect(&format!(
+            "sqlite:{}?mode=rw",
+            temp_dir.join("reader.db").display()
+        ))
+        .await
+        .unwrap();
         Self {
             base_url,
             temp_dir,
             client,
             token,
             content,
+            pool,
         }
     }
 
-    fn seed_toc(&self, book_id: &str, chapters: &[(&str, &str)]) {
-        let dir = self.temp_dir.join("cache").join("user_1").join("toc");
-        std::fs::create_dir_all(&dir).unwrap();
-        let list: Vec<Value> = chapters
-            .iter()
-            .enumerate()
-            .map(|(index, (title, url))| {
-                json!({ "title": title, "url": url, "index": index as i64 })
-            })
-            .collect();
-        std::fs::write(
-            dir.join(format!("{book_id}.json")),
-            serde_json::to_string(&list).unwrap(),
+    /// 预置目录登记行：chapters 表 + book_toc_state（完整目录）。
+    async fn seed_toc(&self, book_id: &str, chapters: &[(&str, &str)]) {
+        let id: i64 = book_id.trim_start_matches("book_").parse().unwrap();
+        let mut tx = self.pool.begin().await.unwrap();
+        // 整份重写语义：先清旧行（模拟上游重抓整表覆盖）
+        sqlx::query("DELETE FROM chapters WHERE book_id = ?1")
+            .bind(id)
+            .execute(&mut *tx)
+            .await
+            .unwrap();
+        for (index, (title, url)) in chapters.iter().enumerate() {
+            sqlx::query(
+                "INSERT INTO chapters (book_id, chapter_index, url, title) VALUES (?1, ?2, ?3, ?4)",
+            )
+            .bind(id)
+            .bind(index as i64)
+            .bind(url)
+            .bind(title)
+            .execute(&mut *tx)
+            .await
+            .unwrap();
+        }
+        sqlx::query(
+            "INSERT INTO book_toc_state (book_id, complete, fetched_at) VALUES (?1, 1, ?2)              ON CONFLICT(book_id) DO UPDATE SET complete = 1, fetched_at = excluded.fetched_at",
         )
+        .bind(id)
+        .bind(reader_rust::util::time::now_ts())
+        .execute(&mut *tx)
+        .await
         .unwrap();
+        tx.commit().await.unwrap();
     }
 
     async fn seed_chapter_cache(&self, book_id: &str, chapter_url: &str, content: &str) {
@@ -118,7 +143,11 @@ impl TestServer {
     async fn post(&self, path: &str, body: Value) -> Value {
         let (status, payload) = self.post_raw(path, body).await;
         assert_eq!(status, StatusCode::OK, "{path} 应返回 200");
-        assert_eq!(payload["isSuccess"], json!(true), "{path} 应成功: {payload}");
+        assert_eq!(
+            payload["isSuccess"],
+            json!(true),
+            "{path} 应成功: {payload}"
+        );
         payload["data"].clone()
     }
 
@@ -182,11 +211,7 @@ impl TestServer {
             .await
             .unwrap();
         let payload: Value = resp.json().await.unwrap();
-        assert_eq!(
-            payload["isSuccess"],
-            json!(true),
-            "导入应成功: {payload}"
-        );
+        assert_eq!(payload["isSuccess"], json!(true), "导入应成功: {payload}");
         payload["data"].clone()
     }
 
@@ -215,11 +240,7 @@ impl TestServer {
             .await
             .unwrap();
         let payload: Value = resp.json().await.unwrap();
-        assert_eq!(
-            payload["isSuccess"],
-            json!(true),
-            "预览应成功: {payload}"
-        );
+        assert_eq!(payload["isSuccess"], json!(true), "预览应成功: {payload}");
         payload["data"].clone()
     }
 
@@ -340,10 +361,15 @@ async fn rename_survives_toc_refresh_and_cache_rewrite() {
         )
         .await;
     let book_id = book["bookId"].as_str().unwrap().to_string();
-    server.seed_toc(
-        &book_id,
-        &[("第一章 开始", "http://up/ch/1"), ("第二章 继续", "http://up/ch/2")],
-    );
+    server
+        .seed_toc(
+            &book_id,
+            &[
+                ("第一章 开始", "http://up/ch/1"),
+                ("第二章 继续", "http://up/ch/2"),
+            ],
+        )
+        .await;
     let chapter_url = "http://up/ch/1";
     server
         .post(
@@ -356,13 +382,15 @@ async fn rename_survives_toc_refresh_and_cache_rewrite() {
 
     // 模拟上游重抓整份重写目录缓存：同 URL 不同标题重写缓存文件后，
     // 覆盖层必须按 url 重新套用（真实链路里 refresh=1 重抓后走同一读路径）
-    server.seed_toc(
-        &book_id,
-        &[
-            ("第一章 上游重抓标题", "http://up/ch/1"),
-            ("第二章 继续", "http://up/ch/2"),
-        ],
-    );
+    server
+        .seed_toc(
+            &book_id,
+            &[
+                ("第一章 上游重抓标题", "http://up/ch/1"),
+                ("第二章 继续", "http://up/ch/2"),
+            ],
+        )
+        .await;
     let (_, _, list) = server.chapter_list_with_etag(&book_id, false, None).await;
     assert_eq!(
         list[0]["title"],
@@ -442,7 +470,10 @@ async fn rename_rejects_bad_input() {
 
     // 缺 chapterUrl → 400
     let (status, _) = server
-        .post_raw("renameChapter", json!({ "bookId": book_id, "title": "新名字" }))
+        .post_raw(
+            "renameChapter",
+            json!({ "bookId": book_id, "title": "新名字" }),
+        )
         .await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
 
@@ -495,7 +526,8 @@ async fn timeline_keeps_original_title_snapshot() {
     assert!(!items.is_empty());
     for item in items {
         assert_eq!(
-            item["chapterTitle"], json!("第一章 开始"),
+            item["chapterTitle"],
+            json!("第一章 开始"),
             "时间线标题快照不随改名变化"
         );
     }
@@ -513,7 +545,10 @@ async fn txt_import_applies_titles_with_toggle() {
 
     // 预览：标题按序号匹配上，但 TXT 标题与目录不同 → titleChanged
     let preview = server
-        .preview_multipart(&[("bookId", book_id.as_str()), ("mode", "book")], import_text)
+        .preview_multipart(
+            &[("bookId", book_id.as_str()), ("mode", "book")],
+            import_text,
+        )
         .await;
     let preview_chapters = preview["chapters"].as_array().unwrap();
     assert_eq!(preview_chapters.len(), 2);
@@ -560,7 +595,9 @@ async fn txt_import_applies_titles_with_toggle() {
 async fn cached_search_uses_overridden_title() {
     let server = TestServer::start().await;
     let book_id = server.register_placeholder_book("检索改名测试").await;
-    server.seed_toc(&book_id, &[("第一章 开始", "http://up/ch/1")]);
+    server
+        .seed_toc(&book_id, &[("第一章 开始", "http://up/ch/1")])
+        .await;
     server
         .seed_chapter_cache(&book_id, "http://up/ch/1", "他走进了那座古庙。")
         .await;
@@ -573,13 +610,17 @@ async fn cached_search_uses_overridden_title() {
         .await;
 
     let (_, payload) = server
-        .post_raw("searchCachedContent", json!({ "bookId": book_id, "query": "古庙" }))
+        .post_raw(
+            "searchCachedContent",
+            json!({ "bookId": book_id, "query": "古庙" }),
+        )
         .await;
     assert_eq!(payload["isSuccess"], json!(true));
     let results = payload["data"]["results"].as_array().unwrap();
     assert_eq!(results.len(), 1);
     assert_eq!(
-        results[0]["chapterTitle"], json!("第一章 古庙"),
+        results[0]["chapterTitle"],
+        json!("第一章 古庙"),
         "命中条目标题应与目录显示一致"
     );
 }

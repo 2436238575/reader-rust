@@ -13,15 +13,14 @@ use crate::crawler::http_client::HttpClient;
 use crate::parser::rule_engine::RuleEngine;
 use crate::service::chapter_content_service::ChapterContentService;
 use crate::storage::cache::review_cache::ReviewCache;
+use crate::storage::db::chapters_repo::ChaptersRepo;
 use crate::storage::db::repo::{BookRepo, ShelfBookRepo};
-use crate::util::bounded_map::BoundedMap;
 use crate::util::keyed_mutex::KeyedMutex;
 use content::RecentBody;
 use fetch::RateState;
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
-use toc::TocSnapshotMemoEntry;
 use tokio::sync::RwLock;
 use tokio::time::Duration;
 
@@ -67,8 +66,8 @@ pub struct BookService {
     /// 串行化目录缓存的读-改-写（append）：无锁交错会互相覆盖丢章。
     /// 全局一把锁即可——append 只在目录后台补全时发生，频率低、临界区短。
     toc_append_lock: Arc<tokio::sync::Mutex<()>>,
-    /// 目录快照备忘（见 `toc_snapshot_map`）：批量落库复用一份 parse 结果。
-    toc_snapshots: Arc<Mutex<BoundedMap<TocSnapshotMemoEntry>>>,
+    /// 章节登记表数据访问：目录的持久存储层（见 `storage::db::chapters_repo`）。
+    chapters: ChaptersRepo,
     /// 正文回源 singleflight：`(user_ns, book_id, chapter_url)` -> 按键互斥锁。
     /// 并发未命中/并发到期回源的同一章只有一个真正打上游，其余等锁后
     /// 二次检查缓存直接复用。KeyedMutex 限条数：取消/panic 遗留的条目
@@ -77,8 +76,6 @@ pub struct BookService {
     refresh_locks: Arc<KeyedMutex>,
 }
 
-/// 备忘条目上限：同时批量缓存的书籍数有限，16 本足以覆盖且控住内存。
-const TOC_SNAPSHOT_MEMO_MAX_ENTRIES: usize = 16;
 /// 回源 singleflight 锁表上限：正常路径用完即清，上限只为兜住取消/panic
 /// 遗留的条目。
 const REFRESH_LOCK_MAX_ENTRIES: usize = 256;
@@ -104,6 +101,7 @@ impl BookService {
         storage_dir: &str,
         book_repo: BookRepo,
         shelf_repo: ShelfBookRepo,
+        chapters: ChaptersRepo,
     ) -> Self {
         let storage_dir = PathBuf::from(storage_dir);
         let review_cache = ReviewCache::new(
@@ -119,6 +117,7 @@ impl BookService {
             storage_dir,
             book_repo,
             shelf_repo,
+            chapters,
             source_cookies: Arc::new(RwLock::new(HashMap::new())),
             rate_states: Arc::new(RwLock::new(HashMap::new())),
             recent_bodies: Arc::new(RwLock::new(HashMap::new())),
@@ -127,7 +126,6 @@ impl BookService {
             pending_toc_fills: Arc::new(Mutex::new(HashSet::new())),
             pending_revalidations: Arc::new(Mutex::new(HashSet::new())),
             toc_append_lock: Arc::new(tokio::sync::Mutex::new(())),
-            toc_snapshots: Arc::new(Mutex::new(BoundedMap::new(TOC_SNAPSHOT_MEMO_MAX_ENTRIES))),
             refresh_locks: Arc::new(KeyedMutex::new("chapter_refresh", REFRESH_LOCK_MAX_ENTRIES)),
         }
     }
@@ -212,6 +210,7 @@ mod tests {
             storage_dir.to_str().unwrap(),
             BookRepo::new(pool.clone()),
             ShelfBookRepo::new(pool.clone()),
+            crate::storage::db::chapters_repo::ChaptersRepo::new(pool.clone()),
         );
         (service, pool)
     }

@@ -340,9 +340,18 @@ impl BookService {
             .unwrap_or(false)
     }
 
-    pub async fn chapter_list_cache_exists(&self, user_ns: &str, book_id: &str) -> bool {
-        let path = self.chapter_list_cache_path(user_ns, book_id);
-        path.exists()
+    /// 目录是否已落库（登记表有行）。别名 id 归一到 canonical 行 id，
+    /// 非法 id 按未落库处理。
+    pub async fn chapter_list_cache_exists(&self, _user_ns: &str, book_id: &str) -> bool {
+        match crate::storage::db::repo::parse_book_id(book_id) {
+            Some(id) => self
+                .chapters
+                .count_chapters(id)
+                .await
+                .map(|count| count > 0)
+                .unwrap_or(false),
+            None => false,
+        }
     }
 
     pub async fn load_book_sources_cache(
@@ -509,22 +518,15 @@ mod tests {
         let (service, pool) = test_service(&storage_dir).await;
 
         // 别名（前导零/显式正号）与 canonical 收敛到同一路径：同一本书一份缓存
-        let canonical = service.chapter_list_cache_path("u", "book_7");
-        assert_eq!(canonical, service.chapter_list_cache_path("u", "book_007"));
-        assert_eq!(canonical, service.chapter_list_cache_path("u", "book_+7"));
         assert!(service
             .book_source_cache_path("u", "book_07")
             .ends_with("book_7.json"));
 
         // 非法 id 落隔离段：读为空、写进隔离区、删除是 no-op，绝不越出缓存目录
-        for invalid in ["../../etc/passwd", "book_1/../../x", "C:/temp/x"] {
-            let path = service.chapter_list_cache_path("u", invalid);
-            assert!(
-                path.to_string_lossy().contains("__invalid_book__"),
-                "{invalid:?} 应落隔离段，实际 {path:?}"
-            );
-            assert!(path.starts_with(&storage_dir));
-        }
+        assert!(service
+            .book_source_cache_path("u", "../../etc/passwd")
+            .to_string_lossy()
+            .contains("__invalid_book__"));
         assert!(service
             .book_info_cache_path("u", "../x")
             .to_string_lossy()
@@ -581,7 +583,7 @@ mod tests {
             .save_chapter_list_cache(
                 "u",
                 &orphan_id,
-                &vec![BookChapter {
+                &[BookChapter {
                     url: "http://up/ch/1".to_string(),
                     title: "第一章".to_string(),
                     index: 0,
@@ -612,8 +614,9 @@ mod tests {
             .await
             .unwrap();
         assert!(latest.and_then(|row| row.latest_user_version_id).is_some());
-        // 目录缓存被清掉
-        assert!(!service.chapter_list_cache_exists("u", &orphan_id).await);
+        // 目录登记表是整部署共享的主数据，用户级清缓存不动它（与登记行
+        // 同一口径）；只有书籍级操作（refresh=1 / 换源 / 删书缓存）才清目录
+        assert!(service.chapter_list_cache_exists("u", &orphan_id).await);
 
         pool.close().await;
         let _ = tokio::fs::remove_dir_all(&storage_dir).await;

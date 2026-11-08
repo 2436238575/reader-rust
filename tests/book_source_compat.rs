@@ -36,18 +36,21 @@ async fn test_book_service(storage_dir: &std::path::Path) -> (BookService, sqlx:
         storage_dir.to_str().unwrap(),
         reader_rust::storage::db::repo::BookRepo::new(pool.clone()),
         reader_rust::storage::db::repo::ShelfBookRepo::new(pool.clone()),
+        reader_rust::storage::db::chapters_repo::ChaptersRepo::new(pool.clone()),
     );
     (service, pool)
 }
 
-/// 读目录缓存的旁路 meta（service 的 meta 路径是私有方法，测试里按同一布局拼）。
-fn read_toc_meta(storage_dir: &std::path::Path, ns: &str, book_id: &str) -> serde_json::Value {
-    let path = storage_dir
-        .join("cache")
-        .join(ns)
-        .join("toc")
-        .join(format!("{}.meta.json", book_id));
-    serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap()
+/// 读目录抓取状态（book_toc_state）：service 的状态查询走 repo，
+/// 测试里直接查库断言。
+async fn read_toc_complete(pool: &sqlx::SqlitePool, book_id: i64) -> bool {
+    let (complete,): (i64,) =
+        sqlx::query_as("SELECT complete FROM book_toc_state WHERE book_id = ?1")
+            .bind(book_id)
+            .fetch_one(pool)
+            .await
+            .unwrap();
+    complete != 0
 }
 
 async fn search_page(headers: HeaderMap) -> Html<&'static str> {
@@ -228,6 +231,7 @@ async fn toc_pagination_stops_at_page_cap_for_endless_next_links() {
         .unwrap();
 
     server.abort();
+    let toc_complete = read_toc_complete(&pool, 1).await;
     pool.close().await;
 
     // 首页 + MAX_TOC_PAGES（500）页后停止：请求数与章节数都钉在上限上，
@@ -237,11 +241,7 @@ async fn toc_pagination_stops_at_page_cap_for_endless_next_links() {
     assert_eq!(chapters[0].title, "第0章");
     // 截断目录按未完成落盘：读侧只给 60s 短 TTL，60 秒后重抓即可补全，
     // 而不是把残缺目录当完整目录缓存一小时
-    assert_eq!(
-        read_toc_meta(&storage_dir, "default", "book_1")["complete"],
-        serde_json::Value::Bool(false),
-        "达到 MAX_TOC_PAGES 截断应标未完成"
-    );
+    assert!(!toc_complete, "达到 MAX_TOC_PAGES 截断应标未完成");
     common::remove_dir_retried(&storage_dir);
 }
 
@@ -294,6 +294,7 @@ async fn toc_pagination_normal_two_pages_unaffected_by_cap() {
         .unwrap();
 
     server.abort();
+    let toc_complete = read_toc_complete(&pool, 1).await;
     pool.close().await;
 
     assert_eq!(chapters.len(), 2);
@@ -301,11 +302,7 @@ async fn toc_pagination_normal_two_pages_unaffected_by_cap() {
     assert_eq!(chapters[1].title, "第二章");
     assert!(chapters[1].url.ends_with("/ch/2.html"));
     // 单链自然结束：目录完整，缓存按完成落盘（正常路径不受截断改动影响）
-    assert_eq!(
-        read_toc_meta(&storage_dir, "default", "book_1")["complete"],
-        serde_json::Value::Bool(true),
-        "正常抓完应保持完整标志"
-    );
+    assert!(toc_complete, "正常抓完应保持完整标志");
     common::remove_dir_retried(&storage_dir);
 }
 
@@ -361,17 +358,14 @@ async fn toc_duplicate_page_marks_cache_incomplete() {
         .unwrap();
 
     server.abort();
+    let toc_complete = read_toc_complete(&pool, 1).await;
     pool.close().await;
 
     // 整页重复熔断：第二页与首页完全重复，只有首页章节
     assert_eq!(chapters.len(), 1);
     assert_eq!(chapters[0].title, "第一章");
     // 熔断视为截断：缓存按未完成落盘，60 秒后可重试
-    assert_eq!(
-        read_toc_meta(&storage_dir, "default", "book_1")["complete"],
-        serde_json::Value::Bool(false),
-        "整页重复熔断应标未完成"
-    );
+    assert!(!toc_complete, "整页重复熔断应标未完成");
     common::remove_dir_retried(&storage_dir);
 }
 
@@ -431,6 +425,7 @@ async fn toc_multi_branch_duplicate_page_marks_cache_incomplete() {
         .unwrap();
 
     server.abort();
+    let toc_complete = read_toc_complete(&pool, 1).await;
     pool.close().await;
 
     // 多分支全部处理完（重复分支跳过、新分支照常并入），但重复分支已把
@@ -438,11 +433,7 @@ async fn toc_multi_branch_duplicate_page_marks_cache_incomplete() {
     assert_eq!(chapters.len(), 2);
     assert_eq!(chapters[0].title, "第一章");
     assert_eq!(chapters[1].title, "第二章");
-    assert_eq!(
-        read_toc_meta(&storage_dir, "default", "book_1")["complete"],
-        serde_json::Value::Bool(false),
-        "多分支路径的整页重复也应标未完成"
-    );
+    assert!(!toc_complete, "多分支路径的整页重复也应标未完成");
     common::remove_dir_retried(&storage_dir);
 }
 

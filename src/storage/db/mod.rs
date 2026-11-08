@@ -1,3 +1,4 @@
+pub mod chapters_repo;
 pub mod content_repo;
 pub mod repo;
 

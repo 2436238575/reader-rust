@@ -45,7 +45,8 @@ async fn yckceo_live_non_webview_sources_end_to_end() {
         Arc::new(ChapterContentService::from_pool(pool.clone(), 0)),
         cache_root.to_string_lossy().as_ref(),
         reader_rust::storage::db::repo::BookRepo::new(pool.clone()),
-        reader_rust::storage::db::repo::ShelfBookRepo::new(pool),
+        reader_rust::storage::db::repo::ShelfBookRepo::new(pool.clone()),
+        reader_rust::storage::db::chapters_repo::ChaptersRepo::new(pool.clone()),
     );
 
     let mut attempted = Vec::new();
@@ -403,7 +404,8 @@ async fn yckceo_live_chapter_images_survive_content_parsing() {
         Arc::new(ChapterContentService::from_pool(pool.clone(), 0)),
         cache_root.to_string_lossy().as_ref(),
         reader_rust::storage::db::repo::BookRepo::new(pool.clone()),
-        reader_rust::storage::db::repo::ShelfBookRepo::new(pool),
+        reader_rust::storage::db::repo::ShelfBookRepo::new(pool.clone()),
+        reader_rust::storage::db::chapters_repo::ChaptersRepo::new(pool.clone()),
     );
 
     let mut checked = 0usize;

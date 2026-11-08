@@ -180,6 +180,7 @@ pub async fn build_state(cfg: AppConfig) -> anyhow::Result<AppState> {
     let repo = db::repo::BookSourceRepo::new(pool.clone());
     let book_repo = db::repo::BookRepo::new(pool.clone());
     let shelf_repo = db::repo::ShelfBookRepo::new(pool.clone());
+    let chapters_repo = db::chapters_repo::ChaptersRepo::new(pool.clone());
 
     let http = HttpClient::new(cfg.request_timeout_secs, None)?;
     // 书源 JS 的 java.ajax 等内部请求与主抓取共用同一超时口径
@@ -205,6 +206,7 @@ pub async fn build_state(cfg: AppConfig) -> anyhow::Result<AppState> {
             &cfg.storage_dir,
             book_repo,
             shelf_repo,
+            chapters_repo,
         )
         .with_user_book_limit(cfg.user_book_limit)
         .with_user_local_book_limit(cfg.user_local_book_limit)

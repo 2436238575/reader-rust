@@ -16,6 +16,8 @@ struct TestServer {
     client: reqwest::Client,
     token: String,
     content: Arc<ChapterContentService>,
+    /// 独立连到测试库的池：目录登记表等 DB 侧预置与断言用。
+    pool: sqlx::SqlitePool,
 }
 
 impl TestServer {
@@ -33,31 +35,47 @@ impl TestServer {
 
         let client = reqwest::Client::new();
         let token = common::login(&client, &base_url).await;
+        let pool = sqlx::SqlitePool::connect(&format!(
+            "sqlite:{}?mode=rw",
+            temp_dir.join("reader.db").display()
+        ))
+        .await
+        .unwrap();
         Self {
             base_url,
             temp_dir,
             client,
             token,
+            pool,
             content,
         }
     }
 
-    /// 预置目录缓存：`<storage>/cache/user_1/toc/<bookId>.json`
-    fn seed_toc(&self, book_id: &str, chapters: &[(&str, &str)]) {
-        let dir = self.temp_dir.join("cache").join("user_1").join("toc");
-        std::fs::create_dir_all(&dir).unwrap();
-        let list: Vec<Value> = chapters
-            .iter()
-            .enumerate()
-            .map(|(index, (title, url))| {
-                json!({ "title": title, "url": url, "index": index as i64 })
-            })
-            .collect();
-        std::fs::write(
-            dir.join(format!("{book_id}.json")),
-            serde_json::to_string(&list).unwrap(),
+    /// 预置目录登记行：chapters 表 + book_toc_state（完整目录）。
+    async fn seed_toc(&self, book_id: &str, chapters: &[(&str, &str)]) {
+        let id: i64 = book_id.trim_start_matches("book_").parse().unwrap();
+        let mut tx = self.pool.begin().await.unwrap();
+        for (index, (title, url)) in chapters.iter().enumerate() {
+            sqlx::query(
+                "INSERT INTO chapters (book_id, chapter_index, url, title) VALUES (?1, ?2, ?3, ?4)",
+            )
+            .bind(id)
+            .bind(index as i64)
+            .bind(url)
+            .bind(title)
+            .execute(&mut *tx)
+            .await
+            .unwrap();
+        }
+        sqlx::query(
+            "INSERT INTO book_toc_state (book_id, complete, fetched_at) VALUES (?1, 1, ?2)",
         )
+        .bind(id)
+        .bind(reader_rust::util::time::now_ts())
+        .execute(&mut *tx)
+        .await
         .unwrap();
+        tx.commit().await.unwrap();
     }
 
     /// 预置一组上游正文版本（正文池）。
@@ -151,7 +169,7 @@ async fn search_finds_across_cached_chapters_with_coverage() {
         ("第二章 发展", "http://up/ch/2"),
         ("第三章 高潮", "http://up/ch/3"),
     ];
-    server.seed_toc(&book_id, &chapters);
+    server.seed_toc(&book_id, &chapters).await;
     server
         .seed_chapter_cache(&book_id, "http://up/ch/1", "他走进了那座古庙。")
         .await;
@@ -193,7 +211,9 @@ async fn search_finds_across_cached_chapters_with_coverage() {
 async fn search_is_case_insensitive_and_strips_html() {
     let server = TestServer::start().await;
     let book_id = server.register_book("检索测试", "占位").await;
-    server.seed_toc(&book_id, &[("第一章", "http://up/ch/1")]);
+    server
+        .seed_toc(&book_id, &[("第一章", "http://up/ch/1")])
+        .await;
     server
         .seed_chapter_cache(
             &book_id,
@@ -227,7 +247,7 @@ async fn search_truncates_at_max_results() {
         .iter()
         .map(|(t, u)| (t.as_str(), u.as_str()))
         .collect();
-    server.seed_toc(&book_id, &refs);
+    server.seed_toc(&book_id, &refs).await;
     for (_, url) in &refs {
         server
             .seed_chapter_cache(&book_id, url, "每一章都提到那个人。")
@@ -258,7 +278,7 @@ async fn search_keeps_order_across_blocking_batches_and_limits_inside_later_batc
         .iter()
         .map(|(t, u)| (t.as_str(), u.as_str()))
         .collect();
-    server.seed_toc(&book_id, &refs);
+    server.seed_toc(&book_id, &refs).await;
     for (i, (_, url)) in chapter_list.iter().enumerate() {
         server
             .seed_chapter_cache(&book_id, url, &format!("第{i}节的雪山与长风。"))
@@ -319,7 +339,9 @@ async fn search_validates_input_and_handles_empty_cache() {
 async fn search_reads_edited_version_when_present() {
     let server = TestServer::start().await;
     let book_id = server.register_book("编辑版检索", "占位").await;
-    server.seed_toc(&book_id, &[("第一章", "http://up/ch/1")]);
+    server
+        .seed_toc(&book_id, &[("第一章", "http://up/ch/1")])
+        .await;
     server
         .seed_chapter_cache(&book_id, "http://up/ch/1", "上游缓存里的旧词。")
         .await;
@@ -372,17 +394,21 @@ async fn search_requires_login() {
 async fn book_cache_delete_validates_and_normalizes_book_id() {
     let server = TestServer::start().await;
     let book_id = server.register_book("缓存清理", "占位").await;
-    server.seed_toc(&book_id, &[("第一章", "http://up/ch/1")]);
+    server
+        .seed_toc(&book_id, &[("第一章", "http://up/ch/1")])
+        .await;
     server
         .seed_chapter_cache(&book_id, "http://up/ch/1", "正文。")
         .await;
-    let toc_path = server
-        .temp_dir
-        .join("cache")
-        .join("user_1")
-        .join("toc")
-        .join(format!("{book_id}.json"));
-    assert!(toc_path.exists());
+    let toc_rows = || async {
+        let (count,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM chapters WHERE book_id = ?1")
+            .bind(book_id.trim_start_matches("book_").parse::<i64>().unwrap())
+            .fetch_one(&server.pool)
+            .await
+            .unwrap();
+        count
+    };
+    assert_eq!(toc_rows().await, 1);
 
     // 别名 book_01（前导零）与 canonical 指向同一本书
     let alias = format!("book_0{}", book_id.trim_start_matches("book_"));
@@ -395,7 +421,7 @@ async fn book_cache_delete_validates_and_normalizes_book_id() {
         .await
         .unwrap();
     assert_eq!(resp.status(), StatusCode::OK, "别名应解析到同一本书");
-    assert!(!toc_path.exists(), "canonical toc 缓存应被别名调用清掉");
+    assert_eq!(toc_rows().await, 0, "canonical 目录登记行应被别名调用清掉");
 
     // 越界 id：两个端点都 404；toc 目录上一级的文件必须原样保留
     let keep = server
@@ -403,6 +429,7 @@ async fn book_cache_delete_validates_and_normalizes_book_id() {
         .join("cache")
         .join("user_1")
         .join("keep.json");
+    std::fs::create_dir_all(keep.parent().unwrap()).unwrap();
     std::fs::write(&keep, b"{}").unwrap();
     for (path, body) in [
         ("/reader3/deleteBookCache", json!({ "bookId": "../keep" })),

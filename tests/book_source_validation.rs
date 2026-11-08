@@ -29,6 +29,7 @@ async fn test_book_service(storage_dir: &std::path::Path) -> (BookService, sqlx:
         storage_dir.to_str().unwrap(),
         reader_rust::storage::db::repo::BookRepo::new(pool.clone()),
         reader_rust::storage::db::repo::ShelfBookRepo::new(pool.clone()),
+        reader_rust::storage::db::chapters_repo::ChaptersRepo::new(pool.clone()),
     );
     (service, pool)
 }

@@ -221,7 +221,8 @@ async fn saving_same_named_local_txt_books_keeps_distinct_book_urls() {
         Arc::new(ChapterContentService::from_pool(pool.clone(), 0)),
         storage_dir.to_str().unwrap(),
         reader_rust::storage::db::repo::BookRepo::new(pool.clone()),
-        reader_rust::storage::db::repo::ShelfBookRepo::new(pool),
+        reader_rust::storage::db::repo::ShelfBookRepo::new(pool.clone()),
+        reader_rust::storage::db::chapters_repo::ChaptersRepo::new(pool.clone()),
     );
 
     let first = local_service
