@@ -558,7 +558,11 @@ pub fn build_router(state: AppState) -> Router {
         .merge(protected)
         // `/v1` 契约命名空间（problem+json + 具名 schema），自带鉴权中间件；
         // 未匹配的 /v1 路径回落到 JSON 404（下方 problem 形态统一处理）
-        .merge(super::v1::router(state.clone()))
+        .merge(super::v1::router(
+            state.clone(),
+            inbound_timeout,
+            concurrency.clone(),
+        ))
         .route("/reader3", any(handlers::api_not_found))
         .route("/reader3/", any(handlers::api_not_found))
         .route("/reader3/{*rest}", any(handlers::api_not_found))

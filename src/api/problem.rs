@@ -87,11 +87,11 @@ impl ErrorCode {
     /// 与 HTTP 状态码一一对应；problem body 里的 `status` 与之一致。
     pub fn status(self) -> StatusCode {
         match self {
-            Self::ValidationFailed
-            | Self::MalformedRequest
-            | Self::InvalidCursor
-            | Self::UpstreamBlocked
-            | Self::UnknownField => StatusCode::BAD_REQUEST,
+            Self::MalformedRequest | Self::UpstreamBlocked => StatusCode::BAD_REQUEST,
+            // 契约口径：语法合法但字段值非法 → 422（cursor 无法解码同属此类）
+            Self::ValidationFailed | Self::InvalidCursor | Self::UnknownField => {
+                StatusCode::UNPROCESSABLE_ENTITY
+            }
             Self::InvalidCredentials | Self::AuthExpired | Self::AuthRefreshReplayed => {
                 StatusCode::UNAUTHORIZED
             }
@@ -160,6 +160,7 @@ pub struct FieldIssue {
     pub pointer: String,
     pub code: String,
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(nullable = false)]
     pub detail: Option<String>,
 }
 
@@ -174,15 +175,20 @@ pub struct Problem {
     status: u16,
     title: String,
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(nullable = false)]
     detail: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(nullable = false)]
     instance: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(nullable = false)]
     pub(crate) trace_id: Option<String>,
     /// 上游业务码原样透传（FQWeb 的 `UPSTREAM_THROTTLED` 等）
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(nullable = false)]
     upstream_code: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(nullable = false)]
     errors: Option<Vec<FieldIssue>>,
 }
 
@@ -279,7 +285,7 @@ mod tests {
         )
         .unwrap();
         assert_eq!(body["type"], "about:blank");
-        assert_eq!(body["code"], "BookNotInShelf");
+        assert_eq!(body["code"], "BOOK_NOT_IN_SHELF");
         assert_eq!(body["status"], 409);
         assert_eq!(body["title"], "Book Not In Shelf");
         assert_eq!(body["detail"], "这本书还没有加入书架");

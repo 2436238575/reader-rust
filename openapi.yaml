@@ -21,17 +21,20 @@ paths:
               schema:
                 $ref: '#/components/schemas/Me'
         '401':
-          description: 未登录或令牌失效
+          description: 未登录或令牌失效，客户端应静默刷新或重新登录
           content:
-            application/json:
+            application/problem+json:
               schema:
                 $ref: '#/components/schemas/Problem'
         '500':
           description: 服务端错误
           content:
-            application/json:
+            application/problem+json:
               schema:
                 $ref: '#/components/schemas/Problem'
+      security:
+      - cookieAuth: []
+      - bearerAuth: []
 components:
   schemas:
     ErrorCode:
@@ -80,9 +83,7 @@ components:
         code:
           type: string
         detail:
-          type:
-          - string
-          - 'null'
+          type: string
         pointer:
           type: string
     Me:
@@ -117,19 +118,13 @@ components:
         code:
           $ref: '#/components/schemas/ErrorCode'
         detail:
-          type:
-          - string
-          - 'null'
+          type: string
         errors:
-          type:
-          - array
-          - 'null'
+          type: array
           items:
             $ref: '#/components/schemas/FieldIssue'
         instance:
-          type:
-          - string
-          - 'null'
+          type: string
         status:
           type: integer
           format: int32
@@ -137,16 +132,21 @@ components:
         title:
           type: string
         traceId:
-          type:
-          - string
-          - 'null'
+          type: string
         type:
           type: string
         upstreamCode:
-          type:
-          - string
-          - 'null'
+          type: string
           description: 上游业务码原样透传（FQWeb 的 `UPSTREAM_THROTTLED` 等）
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+    cookieAuth:
+      type: apiKey
+      in: cookie
+      name: reader_access
+      description: 会话 Cookie（HttpOnly），登录后由服务端下发
 tags:
 - name: me
   description: 当前账号

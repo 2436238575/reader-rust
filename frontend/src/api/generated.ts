@@ -37,7 +37,7 @@ export interface components {
         /** @description 422 校验失败的逐字段错误：`pointer` 是 JSON Pointer，前端直接映射表单控件。 */
         FieldIssue: {
             code: string;
-            detail?: string | null;
+            detail?: string;
             pointer: string;
         };
         /**
@@ -49,7 +49,7 @@ export interface components {
              * Format: date-time
              * @description 注册时间，RFC 3339 UTC
              */
-            created_at: string;
+            createdAt: string;
             id: string;
             username: string;
         };
@@ -59,16 +59,16 @@ export interface components {
          */
         Problem: {
             code: components["schemas"]["ErrorCode"];
-            detail?: string | null;
-            errors?: components["schemas"]["FieldIssue"][] | null;
-            instance?: string | null;
+            detail?: string;
+            errors?: components["schemas"]["FieldIssue"][];
+            instance?: string;
             /** Format: int32 */
             status: number;
             title: string;
-            traceId?: string | null;
+            traceId?: string;
             type: string;
             /** @description 上游业务码原样透传（FQWeb 的 `UPSTREAM_THROTTLED` 等） */
-            upstreamCode?: string | null;
+            upstreamCode?: string;
         };
     };
     responses: never;
@@ -97,13 +97,13 @@ export interface operations {
                     "application/json": components["schemas"]["Me"];
                 };
             };
-            /** @description 未登录或令牌失效 */
+            /** @description 未登录或令牌失效，客户端应静默刷新或重新登录 */
             401: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["Problem"];
+                    "application/problem+json": components["schemas"]["Problem"];
                 };
             };
             /** @description 服务端错误 */
@@ -112,7 +112,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["Problem"];
+                    "application/problem+json": components["schemas"]["Problem"];
                 };
             };
         };

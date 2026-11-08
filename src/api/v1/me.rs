@@ -2,8 +2,8 @@
 //! openapi 生成 → problem+json → 具名响应 schema 的整条管线。
 
 use crate::api::problem::{ErrorCode, Problem};
+use crate::api::v1::V1User;
 use crate::api::AppState;
-use crate::auth::CurrentUser;
 use axum::extract::State;
 use axum::routing::get;
 use axum::{Json, Router};
@@ -34,21 +34,30 @@ pub fn router() -> Router<AppState> {
     path = "/v1/me",
     tag = "me",
     operation_id = "getMe",
+    security(("cookieAuth" = []), ("bearerAuth" = [])),
     responses(
         (status = 200, description = "当前账号资料", body = Me),
-        (status = 401, description = "未登录或令牌失效", body = Problem),
-        (status = 500, description = "服务端错误", body = Problem),
+        (status = 401, description = "未登录或令牌失效，客户端应静默刷新或重新登录",
+         body = Problem, content_type = "application/problem+json"),
+        (status = 500, description = "服务端错误",
+         body = Problem, content_type = "application/problem+json"),
     )
 )]
-pub async fn get_me(State(state): State<AppState>, user: CurrentUser) -> Result<Json<Me>, Problem> {
+pub async fn get_me(
+    State(state): State<AppState>,
+    V1User(user): V1User,
+) -> Result<Json<Me>, Problem> {
     let profile = state
         .user_service
-        .get_profile(user.0.uid)
+        .get_profile(user.uid)
         .await
         .map_err(Problem::from)?
-        .ok_or_else(|| Problem::new(ErrorCode::AuthExpired).detail("账号不存在，请重新登录"))?;
+        // 令牌有效但账号行不存在：静默刷新救不回来，必须重新登录
+        .ok_or_else(|| {
+            Problem::new(ErrorCode::AuthRefreshReplayed).detail("账号不存在，请重新登录")
+        })?;
     Ok(Json(Me {
-        id: format!("u_{}", user.0.uid),
+        id: format!("u_{}", user.uid),
         username: profile.0,
         created_at: rfc3339_from_millis(profile.1),
     }))
@@ -75,12 +84,12 @@ mod tests {
     #[test]
     fn rfc3339_formats_utc_seconds() {
         assert_eq!(rfc3339_secs(0), "1970-01-01T00:00:00Z");
-        assert_eq!(rfc3339_secs(1_762_557_600), "2025-11-07T22:00:00Z");
+        assert_eq!(rfc3339_secs(1_762_557_600), "2025-11-07T23:20:00Z");
         // users.created_at 是毫秒（与库内 users 表口径一致）
         assert_eq!(rfc3339_from_millis(0), "1970-01-01T00:00:00Z");
         assert_eq!(
             rfc3339_from_millis(1_762_557_600_000),
-            "2025-11-07T22:00:00Z"
+            "2025-11-07T23:20:00Z"
         );
     }
 }
