@@ -27,14 +27,30 @@ test.describe('Standard E2E: cookie session', () => {
     await context.addCookies(kept)
     await page.reload()
 
-    // 启动引导：getUserInfo 拿不到用户时凭 refresh Cookie 刷新，再取一次用户
+    // 启动引导：getUserInfo 拿不到用户时凭 refresh Cookie 刷新，再取一次用户。
+    // 标题可见只说明路由守卫放行（localStorage hint），刷新响应可能仍在途——
+    // Cookie 轮换完成与否要轮询确认，不能在标题出现后单次检查
     await expect(page.getByRole('heading', { name: /书架/ })).toBeVisible()
-    const after = await context.cookies()
-    const accessAfter = after.find((cookie) => cookie.name === 'reader_access')
-    const refreshAfter = after.find((cookie) => cookie.name === 'reader_refresh')
-    expect(accessAfter, '刷新后应重新下发 reader_access').toBeTruthy()
-    expect(refreshAfter, '刷新后应重新下发 reader_refresh').toBeTruthy()
+    await expect
+      .poll(
+        async () => {
+          const cookies = await context.cookies()
+          return {
+            access: cookies.some((cookie) => cookie.name === 'reader_access'),
+            refresh: cookies.find((cookie) => cookie.name === 'reader_refresh'),
+          }
+        },
+        {
+          message: '刷新后应重新下发一对 Cookie',
+          timeout: 10_000,
+        },
+      )
+      .toEqual({ access: true, refresh: expect.objectContaining({ name: 'reader_refresh' }) })
+
     // 一次性轮换：Refresh Cookie 的值必须变化
+    const refreshAfter = (await context.cookies()).find(
+      (cookie) => cookie.name === 'reader_refresh',
+    )
     expect(refreshAfter!.value).not.toBe(refreshBefore!.value)
   })
 
