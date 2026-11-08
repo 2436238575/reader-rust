@@ -234,7 +234,9 @@ impl BookService {
         Ok(())
     }
 
-    /// 清理单本书的可再生缓存（目录/详情/换源候选/评论）。正文历史不删。
+    /// 清理单本书的可再生缓存（详情/换源候选/评论 + 目录状态）。正文历史
+    /// 与章节登记表不删：登记行是 (bookId, index) 定位章节的持久载体，删掉
+    /// 它离线解析就断了；状态重置后下次读目录照常重抓，效果等同「清目录」。
     pub async fn purge_book_cache(
         &self,
         user_ns: &str,
@@ -242,9 +244,9 @@ impl BookService {
     ) -> Result<CachePurgeResult, AppError> {
         let mut result = CachePurgeResult::default();
         if self
-            .delete_chapter_list_cache(user_ns, book_id)
+            .reset_chapter_list_cache(user_ns, book_id)
             .await
-            .is_ok()
+            .unwrap_or(false)
         {
             result.chapter_list += 1;
         }
@@ -446,7 +448,9 @@ impl BookService {
         book_id: &str,
     ) -> Result<(), AppError> {
         let _ = self.delete_book_sources_cache(user_ns, book_id).await;
-        let _ = self.delete_chapter_list_cache(user_ns, book_id).await;
+        // 移出书架保留登记行与正文历史（重新加入接得上）；目录登记行同口径
+        // 保留，只重置抓取状态
+        let _ = self.reset_chapter_list_cache(user_ns, book_id).await;
         let _ = fs::remove_file(self.book_info_cache_path(user_ns, book_id)).await;
         let _ = self.review_cache.remove_book(user_ns, book_id).await;
         Ok(())
@@ -531,6 +535,55 @@ mod tests {
             .book_info_cache_path("u", "../x")
             .to_string_lossy()
             .contains("__invalid_book__"));
+
+        pool.close().await;
+        let _ = std::fs::remove_dir_all(&storage_dir);
+    }
+
+    /// 清缓存类操作不动章节登记表：`(bookId, index)` 的解析载体在离线场景
+    /// 必须仍然可用，只重置抓取状态（下次读目录照常重抓）。
+    #[tokio::test]
+    async fn purge_book_cache_keeps_chapter_registry_for_index_resolution() {
+        let storage_dir =
+            std::env::temp_dir().join(format!("reader-rust-purge-keep-{}", std::process::id()));
+        let (service, pool) = test_service(&storage_dir).await;
+        let book_id = "book_7";
+
+        service
+            .save_chapter_list_cache(
+                "u",
+                book_id,
+                &[BookChapter {
+                    url: "http://up/c1".into(),
+                    title: "第一章".into(),
+                    index: 0,
+                    ..Default::default()
+                }],
+            )
+            .await
+            .unwrap();
+
+        let result = service.purge_book_cache("u", book_id).await.unwrap();
+        assert_eq!(result.chapter_list, 1, "目录抓取状态被重置");
+
+        // 登记行保留：清缓存后离线仍能按 index 定位章节
+        let chapter = service
+            .resolve_chapter_by_index(book_id, 0)
+            .await
+            .unwrap()
+            .expect("登记行应保留");
+        assert_eq!(chapter.url, "http://up/c1");
+        // 状态已重置：新鲜读取按未命中（下次读目录会重抓），裸读不受影响
+        assert!(service
+            .load_fresh_chapter_list_cache("u", book_id)
+            .await
+            .unwrap()
+            .is_none());
+        assert!(service
+            .load_chapter_list_cache("u", book_id)
+            .await
+            .unwrap()
+            .is_some());
 
         pool.close().await;
         let _ = std::fs::remove_dir_all(&storage_dir);

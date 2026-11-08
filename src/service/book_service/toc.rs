@@ -535,7 +535,8 @@ impl BookService {
             .map_err(|e| AppError::Internal(e.into()))
     }
 
-    /// 删除某本书的目录登记行与抓取状态（refresh=1、换源、清缓存）。
+    /// 删除某本书的目录登记行与抓取状态（refresh=1、换源）。
+    /// 换源是唯一合法的整表删除场景：新源本来就要换一套 index 空间。
     pub async fn delete_chapter_list_cache(
         &self,
         _user_ns: &str,
@@ -546,6 +547,23 @@ impl BookService {
         };
         self.chapters
             .delete_chapters(id)
+            .await
+            .map_err(|e| AppError::Internal(e.into()))
+    }
+
+    /// 清缓存类操作：只重置目录抓取状态，登记行保留。
+    /// `(bookId, index)` 的解析载体不随清缓存消失（离线仍可定位章节），
+    /// 状态清掉后下次读目录照常重抓整表覆盖。返回是否存在状态行。
+    pub async fn reset_chapter_list_cache(
+        &self,
+        _user_ns: &str,
+        book_id: &str,
+    ) -> Result<bool, AppError> {
+        let Some(id) = Self::chapter_row_id(book_id) else {
+            return Ok(false);
+        };
+        self.chapters
+            .reset_toc_state(id)
             .await
             .map_err(|e| AppError::Internal(e.into()))
     }

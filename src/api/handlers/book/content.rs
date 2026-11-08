@@ -608,17 +608,12 @@ pub async fn delete_book_cache(
     //（与书籍级接口一致）；`../../x` 这类输入在这里就 404，到不了文件系统
     resolve_book(&state, &user_ns, &book_id).await?;
 
-    // 章节列表 + 换源候选；正文历史不删，评论与书籍详情也不动
+    // 目录状态重置（下次读目录照常重抓）+ 换源候选；正文历史与章节
+    // 登记表不删——登记行是 (bookId, index) 定位章节的持久载体
     let deleted_chapter_list = state
         .book_service
-        .chapter_list_cache_exists(&user_ns, &book_id)
-        .await;
-    if deleted_chapter_list {
-        state
-            .book_service
-            .delete_chapter_list_cache(&user_ns, &book_id)
-            .await?;
-    }
+        .reset_chapter_list_cache(&user_ns, &book_id)
+        .await?;
     let _ = state
         .book_service
         .delete_book_sources_cache(&user_ns, &book_id)

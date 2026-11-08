@@ -421,7 +421,16 @@ async fn book_cache_delete_validates_and_normalizes_book_id() {
         .await
         .unwrap();
     assert_eq!(resp.status(), StatusCode::OK, "别名应解析到同一本书");
-    assert_eq!(toc_rows().await, 0, "canonical 目录登记行应被别名调用清掉");
+    // 清缓存只重置目录抓取状态：登记行是 (bookId, index) 的解析载体，
+    // 离线定位章节依赖它，不随清缓存消失
+    assert_eq!(toc_rows().await, 1, "canonical 目录登记行应被别名调用保留");
+    let (state_count,): (i64,) =
+        sqlx::query_as("SELECT COUNT(*) FROM book_toc_state WHERE book_id = ?1")
+            .bind(book_id.trim_start_matches("book_").parse::<i64>().unwrap())
+            .fetch_one(&server.pool)
+            .await
+            .unwrap();
+    assert_eq!(state_count, 0, "抓取状态应被重置（下次读目录照常重抓）");
 
     // 越界 id：两个端点都 404；toc 目录上一级的文件必须原样保留
     let keep = server

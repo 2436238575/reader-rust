@@ -156,7 +156,7 @@ impl ChaptersRepo {
         Ok(existing)
     }
 
-    /// 删除某本书的目录行与抓取状态（换源 / 清缓存 / refresh=1 前置清理）。
+    /// 删除某本书的目录行与抓取状态（换源 / refresh=1 前置清理）。
     pub async fn delete_chapters(&self, book_id: i64) -> Result<(), sqlx::Error> {
         let mut tx = self.pool.begin().await?;
         sqlx::query("DELETE FROM chapters WHERE book_id = ?1")
@@ -168,6 +168,21 @@ impl ChaptersRepo {
             .execute(&mut *tx)
             .await?;
         tx.commit().await
+    }
+
+    /// 只重置目录抓取状态，登记行保留。清缓存类操作用这个而不是整表删除：
+    /// 登记行是 `(bookId, index)` 定位章节的持久载体，删掉它离线解析就断了，
+    /// 而留下的反而是可再生数据——方向反了。状态清掉后下次读目录照常重抓。
+    /// 返回是否存在状态行（供「是否清理过」的响应语义）。
+    pub async fn reset_toc_state(&self, book_id: i64) -> Result<bool, sqlx::Error> {
+        let existed = self.get_toc_state(book_id).await?.is_some();
+        if existed {
+            sqlx::query("DELETE FROM book_toc_state WHERE book_id = ?1")
+                .bind(book_id)
+                .execute(&self.pool)
+                .await?;
+        }
+        Ok(existed)
     }
 
     /// 读取目录抓取状态；从未抓取过的书返回 `None`（读侧按未命中处理）。
