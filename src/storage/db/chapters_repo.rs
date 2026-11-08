@@ -438,6 +438,46 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    /// 验收口径：按 (book_id, chapter_index) / (book_id, url) 的查询必须走
+    /// 索引，不允许全表扫描（百万行级目录的查询预算依赖这一点）。
+    #[tokio::test]
+    async fn lookups_use_indexes_never_table_scans() {
+        let (repo, pool, dir) = test_repo("explain-plan").await;
+        repo.replace_chapters(1, &[chapter(0, "a", "A")], true, 100)
+            .await
+            .unwrap();
+
+        for (sql, label) in [
+            (
+                "EXPLAIN QUERY PLAN SELECT chapter_index FROM chapters                  WHERE book_id = 1 AND chapter_index = 0",
+                "主键查询",
+            ),
+            (
+                "EXPLAIN QUERY PLAN SELECT chapter_index FROM chapters                  WHERE book_id = 1 AND url = 'a'",
+                "URL 反查",
+            ),
+            (
+                "EXPLAIN QUERY PLAN SELECT chapter_index, url, title FROM chapters                  WHERE book_id = 1 ORDER BY chapter_index ASC",
+                "整书读取",
+            ),
+        ] {
+            let rows = sqlx::query(sql).fetch_all(&pool).await.unwrap();
+            let joined: String = rows
+                .iter()
+                .map(|row| row.get::<String, _>("detail"))
+                .collect::<Vec<_>>()
+                .join("; ");
+            assert!(
+                !joined.contains("SCAN chapters"),
+                "{label}不允许全表扫描: {joined}"
+            );
+            assert!(joined.contains("SEARCH"), "{label}应命中索引: {joined}");
+        }
+
+        pool.close().await;
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     #[tokio::test]
     async fn find_by_url_and_index_and_count() {
         let (repo, pool, dir) = test_repo("find-lookup").await;
