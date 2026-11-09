@@ -56,3 +56,10 @@ goal 执行中遇到「决策表与 spec 都沉默」的问题时，按 §5.4 �
 - **列表 ETag 用强验证器**（对响应字节做 md5）：契约 §10 标注列表用弱 ETag；精确字节哈希是更严格的验证器，语义成立，且与章节目录沿用同一实现。
 - **`state` / `groupId` 过滤暂缓**：invalid 书源清单是独立缓存域、source group 是字符串字段而非实体，二者随写批次或 sources 域收尾时再定；本批 `q` 覆盖名称与 URL 的大小写不敏感子串。
 - **前端 api 层适配过渡**：`getBookSourceList` 内部走 `/v1/sources` 游标分页拉全量并映射回现有 `BookSourceSummary`（组件与快照逻辑零改动）；组件全面消费生成类型时删除适配层。`getUserInfo` 改打 `/v1/me`，401 在 api 层收敛为 `userInfo: null`（与旧可选鉴权语义对齐）。me 的 stats/settings 随 me 域后续批次落地。
+
+## 2026-11-09 审阅第五轮（sources 读链路收尾）
+
+- **书源列表排序语义变更已有意记录**：旧 `/reader3/getBookSourceList` 是 DB `updated_at` 降序（最近编辑在前）；v1 固定为 `id` 升序（创建顺序，keyset 依赖不可变排序键）。前端 store 不再依赖服务端顺序，**管理页可见顺序随之改变**；如需恢复旧观感，客户端可按 `updatedAt`（源材料字段）本地重排——注意它不等于 DB `updated_at`。spec 的 `/v1/sources` 描述已写明排序。
+- **`/v1/sources` 分页是「全量载入 + 内存切片」**：底层 `list_summary()` 每次把全部书源反序列化一遍，翻页会重复解析；几百个源可接受，书源量到万级时需下沉 SQL keyset（已标注在 `list_summary` 文档注释与 handler 注释，避免后人误以为已下沉）。
+- **`parseSourceId` 是过渡期反向映射**（`src_<n>` → 数字 id，编辑器继续走 `/reader3/getBookSource`）：sources 写批次切 v1 时删除，并同步去掉这一层适配；不得沉淀成长期 API（与 `serverProgressTime` 同类风险）。
+- **前端 v1 类型一律用生成的具名 schema**：`components['schemas']['SourceSummary']` 等别名，不手写接口（契约 §3.1）；后续 me 域铺开时同规则。
