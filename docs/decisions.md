@@ -48,3 +48,11 @@ goal 执行中遇到「决策表与 spec 都沉默」的问题时，按 §5.4 �
 - **测试脚手架统一走 v1**：`tests/common::login` 与十四个集成测试的本地登录助手一并切到 `/v1/auth/login`（带 CSRF 头、解析裸载荷）；e2e 的 fixture 就绪探测同口径。
 - **`getUserInfo` 过渡期留在 `/reader3`**：会话 Cookie 两套命名空间共用，me 域（用户资料 + stats/settings）切换时一并迁移到 `/v1/me`。
 - **存量浏览器会话需重新登录一次**：refresh Cookie `Path` 收紧到 `/v1/auth`，旧 Cookie（Path=/reader3 或 /）不再被刷新端点读取。
+
+## 2026-11-09 sources 读链路（列表）+ me 资料切换
+
+- **本批只迁 `/v1/sources` 列表**：单源详情与写链路（save/test/delete/import）随 sources 写批次一起迁移——编辑器拿不到 v1 写接口前没有迁移价值。列表期间两套读路径读同一张表，状态一致；前端列表页已切 v1，编辑器继续走 `/reader3`。
+- **列表排序固定为 `id` 升序**：`updated_at` 随编辑变化，做 keyset 游标会漏行/重行；`id` 不可变。展示排序（customOrder/weight）由客户端处理。游标载荷是 `{id}` 的 base64url，解码失败 → 422 `INVALID_CURSOR`。
+- **列表 ETag 用强验证器**（对响应字节做 md5）：契约 §10 标注列表用弱 ETag；精确字节哈希是更严格的验证器，语义成立，且与章节目录沿用同一实现。
+- **`state` / `groupId` 过滤暂缓**：invalid 书源清单是独立缓存域、source group 是字符串字段而非实体，二者随写批次或 sources 域收尾时再定；本批 `q` 覆盖名称与 URL 的大小写不敏感子串。
+- **前端 api 层适配过渡**：`getBookSourceList` 内部走 `/v1/sources` 游标分页拉全量并映射回现有 `BookSourceSummary`（组件与快照逻辑零改动）；组件全面消费生成类型时删除适配层。`getUserInfo` 改打 `/v1/me`，401 在 api 层收敛为 `userInfo: null`（与旧可选鉴权语义对齐）。me 的 stats/settings 随 me 域后续批次落地。
