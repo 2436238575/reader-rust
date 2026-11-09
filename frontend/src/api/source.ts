@@ -1,15 +1,77 @@
 import http from './http'
 import type { BookSource, BookSourceSummary, BookSourceTestResponse } from '../types'
 import { MAX_SOURCE_TEST_BATCH_SIZE } from '../utils/sourceTesting'
+import { API_V1_BASE } from '../utils/appBase'
 
 /** 全量列表（含规则 JSON，可达 MB 级）：只给导出/WebDAV 备份等真正需要全量的低频场景 */
 export function getBookSources() {
   return http.get<BookSource[]>('/getBookSources').then((r) => r.data)
 }
 
-/** 摘要列表：展示字段 + exploreUrl，无规则 JSON；书源管理页的日常加载走这条 */
-export function getBookSourceList() {
-  return http.get<BookSourceSummary[]>('/getBookSourceList').then((r) => r.data)
+/** v1 摘要页的原始形状（/v1/sources） */
+interface V1SourceSummary {
+  id: string
+  name: string
+  url: string
+  group?: string | null
+  type?: number | null
+  enabled: boolean
+  enabledExplore: boolean
+  enabledCookieJar: boolean
+  updatedAt?: string | null
+  respondTime?: number | null
+  customOrder?: number | null
+  weight?: number | null
+  exploreUrl?: string | null
+}
+
+interface V1SourcePage {
+  items: V1SourceSummary[]
+  nextCursor: string | null
+  total: number | null
+}
+
+/** `src_<n>` → 数字 id（过渡期适配：现有组件仍消费数字 id，全面切 v1 类型时删除） */
+function parseSourceId(v1Id: string): number {
+  return Number(v1Id.replace(/^src_/, ''))
+}
+
+function toLegacySummary(item: V1SourceSummary): BookSourceSummary {
+  const updatedMs = item.updatedAt ? Date.parse(item.updatedAt) : Number.NaN
+  return {
+    bookSourceId: parseSourceId(item.id),
+    bookSourceName: item.name,
+    bookSourceUrl: item.url,
+    bookSourceGroup: item.group ?? undefined,
+    bookSourceType: item.type ?? undefined,
+    enabled: item.enabled,
+    enabledExplore: item.enabledExplore,
+    enabledCookieJar: item.enabledCookieJar,
+    lastUpdateTime: Number.isFinite(updatedMs) ? updatedMs : undefined,
+    respondTime: item.respondTime ?? undefined,
+    customOrder: item.customOrder ?? undefined,
+    weight: item.weight ?? undefined,
+    exploreUrl: item.exploreUrl ?? undefined,
+  } as BookSourceSummary
+}
+
+/**
+ * 摘要列表：走 v1 游标分页接口拉全量后适配（书源数量在几百级，200/页最多几个来回）。
+ * 摘要不含规则 JSON；编辑器等按 id 取全量的场景继续走 /reader3（sources 写批次迁移）。
+ */
+export async function getBookSourceList(): Promise<BookSourceSummary[]> {
+  const out: BookSourceSummary[] = []
+  let cursor: string | null = null
+  do {
+    const params: { limit: number; cursor?: string } = { limit: 200 }
+    if (cursor) params.cursor = cursor
+    const page: V1SourcePage = await http
+      .get<V1SourcePage>('/sources', { baseURL: API_V1_BASE, params })
+      .then((r) => r.data)
+    out.push(...page.items.map(toLegacySummary))
+    cursor = page.nextCursor
+  } while (cursor)
+  return out
 }
 
 /** 单条全量：编辑器/启停翻转等「按整条 upsert 保存」的场景按需取 */

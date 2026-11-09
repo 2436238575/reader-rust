@@ -24,14 +24,27 @@ export function logout() {
   })
 }
 
+/// /v1/me 的原始形状（profile 切片；stats/settings 随 me 域后续批次落地）
+interface V1Me {
+  id: string
+  username: string
+  createdAt: string
+}
+
+/**
+ * 当前账号资料：走 /v1/me。未登录语义在 api 层收敛为 `userInfo: null`
+ * （与旧 /reader3 可选鉴权对齐，store 的登录判定逻辑不变）；401 的静默
+ * 刷新与失效处理仍由 http 拦截器 + authSession 完成。
+ */
 export function getUserInfo() {
-  // 过渡期：资料读取仍在 /reader3（会话 Cookie 两套命名空间共用），
-  // me 域切换时随 stats/settings 一起迁移到 /v1/me
   return http
-    .get<{
-      userInfo: UserInfo | null
-    }>('/getUserInfo')
-    .then((r) => r.data)
+    .get<V1Me>('/me', { baseURL: API_V1_BASE })
+    .then((r) => ({ userInfo: { username: r.data.username } as UserInfo }))
+    .catch((error: unknown) => {
+      const status = (error as { status?: number }).status
+      if (status === 401) return { userInfo: null }
+      throw error
+    })
 }
 
 /// 改密成功（204）：后端吊销其他会话并换发当前会话 Cookie
