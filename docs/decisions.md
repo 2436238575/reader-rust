@@ -63,3 +63,10 @@ goal 执行中遇到「决策表与 spec 都沉默」的问题时，按 §5.4 �
 - **`/v1/sources` 分页是「全量载入 + 内存切片」**：底层 `list_summary()` 每次把全部书源反序列化一遍，翻页会重复解析；几百个源可接受，书源量到万级时需下沉 SQL keyset（已标注在 `list_summary` 文档注释与 handler 注释，避免后人误以为已下沉）。
 - **`parseSourceId` 是过渡期反向映射**（`src_<n>` → 数字 id，编辑器继续走 `/reader3/getBookSource`）：sources 写批次切 v1 时删除，并同步去掉这一层适配；不得沉淀成长期 API（与 `serverProgressTime` 同类风险）。
 - **前端 v1 类型一律用生成的具名 schema**：`components['schemas']['SourceSummary']` 等别名，不手写接口（契约 §3.1）；后续 me 域铺开时同规则。
+
+## 2026-11-09 P1 第一片：`GET /v1/books/{bookId}/chapters`
+
+- **书籍 id 沿用 `book_<n>`，不引入契约 §5.1 示例里的 `bk_` 前缀**：`book_<n>` 已是既有线缆形态（`parse_book_id`/`format_book_id` 收口），再加一套前缀等于在每个 v1 域加翻译 shim；§5.1 的 `bk_` 是示意。sources 用 `src_` 是因为后端此前没有书源的线缆 id 形态，两者不矛盾。
+- **章节列表数据来源三分支**：本地书走本地服务（目录由文件确定性生成，不写登记表）；网络书登记表优先，空则走 `/reader3` 同一份抓取服务填充登记表（首屏分页 + 后台补全的「先回首页」优化随阅读器切换再引入，本片同步全量抓取，入站 120s 超时兜底）。
+- **URL 不出现在章节响应里**（红线 6）：身份是 `(bookId, index)`；标题覆盖层在出口叠加并显式给 `titleOverridden`。
+- 暂缓项：Book 详情端点（`GET /v1/books/{id}` 需定 getBookInfo 语义与封面形态）与 content 端点（版本 ETag 语义设计）随阅读器切换批次一起做。
