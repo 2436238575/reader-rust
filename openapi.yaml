@@ -28,8 +28,26 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/SessionTokens'
+        '400':
+          description: 请求体不是合法 JSON 或字段类型不符
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
         '401':
           description: 用户名或密码错误
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '413':
+          description: 请求体超过 1MB 上限
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '415':
+          description: Content-Type 不是 application/json
           content:
             application/problem+json:
               schema:
@@ -68,8 +86,26 @@ paths:
       responses:
         '204':
           description: 已修改并换发当前会话
+        '400':
+          description: 请求体不是合法 JSON 或字段类型不符
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
         '401':
           description: 未登录或当前密码错误
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '413':
+          description: 请求体超过 1MB 上限
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '415':
+          description: Content-Type 不是 application/json
           content:
             application/problem+json:
               schema:

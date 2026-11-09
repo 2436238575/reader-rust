@@ -12,6 +12,7 @@
 //! `AUTH_EXPIRED` / `AUTH_REFRESH_REPLAYED`，并附带清除 Cookie 的头。
 
 use crate::api::problem::{ErrorCode, Problem};
+use crate::api::v1::V1Json;
 use crate::api::AppState;
 use crate::auth::cookie::{
     build_cookie, clear_cookie, cookie_secure, cookie_value, host_header_value, v1_refresh_path,
@@ -165,13 +166,19 @@ fn cleared_problem_response(state: &AppState, headers: &HeaderMap, problem: Prob
          body = Problem, content_type = "application/problem+json"),
         (status = 429, description = "登录失败次数过多",
          body = Problem, content_type = "application/problem+json"),
+        (status = 400, description = "请求体不是合法 JSON 或字段类型不符",
+         body = Problem, content_type = "application/problem+json"),
+        (status = 413, description = "请求体超过 1MB 上限",
+         body = Problem, content_type = "application/problem+json"),
+        (status = 415, description = "Content-Type 不是 application/json",
+         body = Problem, content_type = "application/problem+json"),
     )
 )]
 pub async fn login(
     State(state): State<AppState>,
     ConnectInfo(addr): ConnectInfo<std::net::SocketAddr>,
     headers: HeaderMap,
-    Json(req): Json<LoginRequest>,
+    V1Json(req): V1Json<LoginRequest>,
 ) -> Result<Response, Problem> {
     let username = req.username.unwrap_or_default();
     let password = req.password.unwrap_or_default();
@@ -279,13 +286,19 @@ pub async fn logout(State(state): State<AppState>, headers: HeaderMap) -> Respon
         (status = 204, description = "已修改并换发当前会话"),
         (status = 401, description = "未登录或当前密码错误",
          body = Problem, content_type = "application/problem+json"),
+        (status = 400, description = "请求体不是合法 JSON 或字段类型不符",
+         body = Problem, content_type = "application/problem+json"),
+        (status = 413, description = "请求体超过 1MB 上限",
+         body = Problem, content_type = "application/problem+json"),
+        (status = 415, description = "Content-Type 不是 application/json",
+         body = Problem, content_type = "application/problem+json"),
     )
 )]
 pub async fn change_password(
     State(state): State<AppState>,
     headers: HeaderMap,
     user: crate::api::v1::V1User,
-    Json(req): Json<ChangePasswordRequest>,
+    V1Json(req): V1Json<ChangePasswordRequest>,
 ) -> Result<Response, Problem> {
     let current = req.current_password.unwrap_or_default();
     let new = req.new_password.unwrap_or_default();

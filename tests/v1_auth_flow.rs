@@ -17,6 +17,10 @@ struct TestServer {
     client: reqwest::Client,
     /// 独立连到测试库的池：回拨 refresh 轮换时间戳（穿过 30s 宽限窗口）用。
     pool: sqlx::SqlitePool,
+    /// Router 的克隆：body 上限类用例走进程内 oneshot，绕开 TCP——真实
+    /// socket 上「服务端读完上限就停止读取并关闭」会与客户端继续写形成 RST
+    /// 竞态，413 与连接重置的胜负取决于时序（约三分之一翻车）。
+    app: axum::Router,
 }
 
 impl TestServer {
@@ -34,7 +38,7 @@ impl TestServer {
         let cfg = mutate(common::base_config(&temp_dir, "v1-auth-test-secret"));
         let state = build_state(cfg).await.unwrap();
         let app = build_router(state);
-        let (base_url, _server) = common::spawn_app(app).await;
+        let (base_url, _server) = common::spawn_app(app.clone()).await;
         let pool = sqlx::SqlitePool::connect(&format!(
             "sqlite:{}?mode=rw",
             temp_dir.join("reader.db").display()
@@ -50,6 +54,7 @@ impl TestServer {
                 .build()
                 .unwrap(),
             pool,
+            app,
         }
     }
 
@@ -459,29 +464,69 @@ async fn bearer_requests_are_exempt_from_csrf_header() {
     server.cleanup();
 }
 
-/// 公开认证端点按 1MB 上限缓冲（不是最外层 100MB 兜底）：2MB 垃圾 JSON
-/// 必须 413。此前该用例随 /reader3 登录一起被误删，端点行为悄悄退化过一次——
-/// 测试要随端点迁移，不能跟着删。
+/// 进程内驱动 Router（不经 TCP）：body 超限返回确定性的 413 响应体。
+async fn oneshot_json(
+    app: axum::Router,
+    path: &str,
+    content_type: Option<&str>,
+    body: Vec<u8>,
+) -> (StatusCode, axum::http::HeaderMap, serde_json::Value) {
+    use tower::util::ServiceExt;
+    let mut builder = axum::http::Request::builder()
+        .method("POST")
+        .uri(path)
+        .header("x-requested-with", "XMLHttpRequest");
+    if let Some(content_type) = content_type {
+        builder = builder.header("content-type", content_type);
+    }
+    let mut request = builder.body(axum::body::Body::from(body)).unwrap();
+    // 真实服务经 into_make_service_with_connect_info 注入连接信息；
+    // 进程内驱动要手工补上，否则登录 handler 的 ConnectInfo 提取器直接 500
+    request
+        .extensions_mut()
+        .insert(axum::extract::ConnectInfo(std::net::SocketAddr::from((
+            [127, 0, 0, 1],
+            0,
+        ))));
+    let response = app.oneshot(request).await.unwrap();
+    let status = response.status();
+    let headers = response.headers().clone();
+    let bytes = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+        .await
+        .unwrap();
+    let value = serde_json::from_slice(&bytes).unwrap_or(serde_json::Value::Null);
+    (status, headers, value)
+}
+
+/// 公开认证端点按 1MB 上限缓冲（不是最外层 100MB 兜底）：2MB JSON 必须 413，
+/// 且响应体是 problem+json 的 PAYLOAD_TOO_LARGE。进程内 oneshot 驱动，结果
+/// 确定——真实 socket 的 RST 竞态会让 413 与连接重置随机决胜。
 #[tokio::test]
-async fn login_body_is_capped_at_1mb() {
+async fn login_body_is_capped_at_1mb_with_problem_413() {
     let server = TestServer::start().await;
 
     let big_password = "x".repeat(2 * 1024 * 1024);
-    let resp = server
-        .client
-        .post(format!("{}/v1/auth/login", server.base_url))
-        .header("x-requested-with", "XMLHttpRequest")
-        .json(&json!({"username": "reader1", "password": big_password}))
-        .send()
-        .await
-        .unwrap();
+    let body =
+        serde_json::to_vec(&json!({"username": "reader1", "password": big_password})).unwrap();
+    let (status, headers, value) = oneshot_json(
+        server.app.clone(),
+        "/v1/auth/login",
+        Some("application/json"),
+        body,
+    )
+    .await;
     assert_eq!(
-        resp.status(),
+        status,
         StatusCode::PAYLOAD_TOO_LARGE,
-        "超过 1MB 上限应 413"
+        "超过 1MB 上限应 413: {value}"
     );
+    assert_eq!(
+        headers["content-type"], "application/problem+json",
+        "413 必须是 problem+json"
+    );
+    assert_eq!(value["code"], json!("PAYLOAD_TOO_LARGE"));
 
-    // 正常小 body 不受影响
+    // 正常小 body 不受影响（真实 HTTP 路径也验一次）
     let resp = server
         .post_json(
             "/v1/auth/login",
@@ -490,6 +535,36 @@ async fn login_body_is_capped_at_1mb() {
         .await;
     assert_eq!(resp.status(), StatusCode::OK, "小 body 不应被上限误伤");
 
+    server.cleanup();
+}
+
+/// 缺 content-type：415 problem+json（axum 默认是纯文本 415）。
+#[tokio::test]
+async fn missing_content_type_gets_problem_415() {
+    let server = TestServer::start().await;
+    let body = serde_json::to_vec(&json!({"username": "reader1", "password": "x"})).unwrap();
+    let (status, headers, value) =
+        oneshot_json(server.app.clone(), "/v1/auth/login", None, body).await;
+    assert_eq!(status, StatusCode::UNSUPPORTED_MEDIA_TYPE);
+    assert_eq!(headers["content-type"], "application/problem+json");
+    assert_eq!(value["code"], json!("UNSUPPORTED_MEDIA_TYPE"));
+    server.cleanup();
+}
+
+/// 非法 JSON：400 MALFORMED_REQUEST problem+json。
+#[tokio::test]
+async fn malformed_json_gets_problem_400() {
+    let server = TestServer::start().await;
+    let (status, headers, value) = oneshot_json(
+        server.app.clone(),
+        "/v1/auth/login",
+        Some("application/json"),
+        b"{not json".to_vec(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{value}");
+    assert_eq!(headers["content-type"], "application/problem+json");
+    assert_eq!(value["code"], json!("MALFORMED_REQUEST"));
     server.cleanup();
 }
 

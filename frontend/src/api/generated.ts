@@ -206,8 +206,35 @@ export interface operations {
                     "application/json": components["schemas"]["SessionTokens"];
                 };
             };
+            /** @description 请求体不是合法 JSON 或字段类型不符 */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
             /** @description 用户名或密码错误 */
             401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description 请求体超过 1MB 上限 */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Content-Type 不是 application/json */
+            415: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -264,8 +291,35 @@ export interface operations {
                 };
                 content?: never;
             };
+            /** @description 请求体不是合法 JSON 或字段类型不符 */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
             /** @description 未登录或当前密码错误 */
             401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description 请求体超过 1MB 上限 */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Content-Type 不是 application/json */
+            415: {
                 headers: {
                     [name: string]: unknown;
                 };

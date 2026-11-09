@@ -170,6 +170,45 @@ async fn attach_problem_trace(request: Request, next: Next) -> Response {
     Response::from_parts(parts, Body::from(rewritten))
 }
 
+/// `/v1` 的 JSON 提取器：rejection 是 problem+json。
+/// axum 的 `Json<T>` 默认 rejection 是纯文本（400/413/415），前端拿不到
+/// `code` 只能退回通用文案；`/v1` 的每一个 body 解析失败都应是可派发的
+/// problem。映射：413 → PAYLOAD_TOO_LARGE、415 → UNSUPPORTED_MEDIA_TYPE、
+/// 其余（语法错误/类型不匹配）→ MALFORMED_REQUEST 400。
+#[derive(Debug, Clone, Copy, Default)]
+pub struct V1Json<T>(pub T);
+
+impl<T, S> axum::extract::FromRequest<S> for V1Json<T>
+where
+    T: serde::de::DeserializeOwned,
+    S: Send + Sync,
+{
+    type Rejection = Problem;
+
+    async fn from_request(req: axum::extract::Request, state: &S) -> Result<Self, Self::Rejection> {
+        use axum::extract::rejection::JsonRejection;
+        match axum::Json::<T>::from_request(req, state).await {
+            Ok(axum::Json(value)) => Ok(V1Json(value)),
+            Err(rejection) => {
+                let (code, detail) = match rejection {
+                    JsonRejection::MissingJsonContentType(_) => (
+                        ErrorCode::UnsupportedMediaType,
+                        "Content-Type 必须为 application/json",
+                    ),
+                    ref other if other.status() == axum::http::StatusCode::PAYLOAD_TOO_LARGE => {
+                        (ErrorCode::PayloadTooLarge, "请求体超过大小上限")
+                    }
+                    _ => (
+                        ErrorCode::MalformedRequest,
+                        "请求体不是合法 JSON 或字段类型不符",
+                    ),
+                };
+                Err(Problem::new(code).detail(detail))
+            }
+        }
+    }
+}
+
 /// `/v1` 的身份提取器：rejection 是 `Problem`，杜绝 `ApiResponse` 形态
 /// 泄漏——即使某条 `/v1` 路由漏挂鉴权中间件，失败形态仍是 problem+json。
 #[derive(Debug, Clone)]
