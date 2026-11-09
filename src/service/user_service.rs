@@ -95,6 +95,15 @@ async fn equalize_login_timing(password: &str) {
 /// 登录/刷新/改密签发的会话：`data` 是面向客户端的 JSON（含 `accessToken`，
 /// 不含凭据），`refresh_token` 是明文 Refresh Token，只经 handler 写进
 /// `reader_refresh` HttpOnly Cookie 下发，从不进入 JSON 响应体。
+/// 刷新失败的原因细分（`/v1/auth/refresh` 用）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RefreshFailure {
+    /// 令牌无效或已过期（含存储层错误）
+    Invalid,
+    /// 重放检测：会话家族已吊销，必须重新登录
+    Replayed,
+}
+
 pub struct IssuedSession {
     pub data: Value,
     pub refresh_token: String,
@@ -237,25 +246,29 @@ impl UserService {
 
         // 用户名维度：失败 10 次封 6 小时
         if throttle.users.len() >= MAX_THROTTLE_ENTRIES && !throttle.users.contains_key(username) {
-            return Err(AppError::BadRequest(
-                "登录失败次数过多，请稍后再试".to_string(),
-            ));
+            return Err(AppError::TooManyRequests {
+                message: "登录失败次数过多，请稍后再试".to_string(),
+                retry_after_secs: (USER_LOGIN_BAN_MS / 1000) as u64,
+            });
         }
         let user = throttle.users.entry(username.to_string()).or_default();
         if user.banned_until > now {
-            return Err(AppError::BadRequest(format!(
-                "登录失败次数过多，请 {} 秒后再试",
-                remaining_secs(user.banned_until, now)
-            )));
+            return Err(AppError::TooManyRequests {
+                message: format!(
+                    "登录失败次数过多，请 {} 秒后再试",
+                    remaining_secs(user.banned_until, now)
+                ),
+                retry_after_secs: remaining_secs(user.banned_until, now).max(0) as u64,
+            });
         }
         if user.failures + 1 > USER_LOGIN_MAX_FAILURES {
             user.banned_until = now + USER_LOGIN_BAN_MS;
             user.failures = 0;
             user.last_active = now;
-            return Err(AppError::BadRequest(format!(
-                "登录失败次数过多，请 {} 秒后再试",
-                USER_LOGIN_BAN_MS / 1000
-            )));
+            return Err(AppError::TooManyRequests {
+                message: format!("登录失败次数过多，请 {} 秒后再试", USER_LOGIN_BAN_MS / 1000),
+                retry_after_secs: (USER_LOGIN_BAN_MS / 1000) as u64,
+            });
         }
         user.failures += 1;
         user.last_active = now;
@@ -266,10 +279,13 @@ impl UserService {
         };
         if let Some(entry) = throttle.ips.get_mut(ip) {
             if entry.login_banned_until > now {
-                return Err(AppError::BadRequest(format!(
-                    "该地址登录失败次数过多，请 {} 秒后再试",
-                    remaining_secs(entry.login_banned_until, now)
-                )));
+                return Err(AppError::TooManyRequests {
+                    message: format!(
+                        "该地址登录失败次数过多，请 {} 秒后再试",
+                        remaining_secs(entry.login_banned_until, now)
+                    ),
+                    retry_after_secs: remaining_secs(entry.login_banned_until, now).max(0) as u64,
+                });
             }
         } else if throttle.ips.len() >= MAX_THROTTLE_ENTRIES {
             // IP 表满：放行用户维度的判定，不再新增条目
@@ -280,10 +296,13 @@ impl UserService {
             ip_entry.login_banned_until = now + IP_LOGIN_BAN_MS;
             ip_entry.login_failures = 0;
             ip_entry.last_active = now;
-            return Err(AppError::BadRequest(format!(
-                "该地址登录失败次数过多，请 {} 秒后再试",
-                IP_LOGIN_BAN_MS / 1000
-            )));
+            return Err(AppError::TooManyRequests {
+                message: format!(
+                    "该地址登录失败次数过多，请 {} 秒后再试",
+                    IP_LOGIN_BAN_MS / 1000
+                ),
+                retry_after_secs: (IP_LOGIN_BAN_MS / 1000) as u64,
+            });
         }
         ip_entry.login_failures += 1;
         ip_entry.last_active = now;
@@ -380,18 +399,34 @@ impl UserService {
     /// 所有失败（不存在/已过期/已吊销/版本不匹配/重放）统一 401，避免把
     /// 底层原因回给客户端；重放检测与家族吊销在 store 内完成。
     pub async fn refresh_session(&self, refresh_token: &str) -> Result<IssuedSession, AppError> {
-        match self.refresh_store.rotate(refresh_token).await? {
-            RotateOutcome::Rotated(session) => {
-                let access_token =
-                    self.sign_access_token(session.uid, &session.username, session.token_version)?;
+        self.refresh_session_detailed(refresh_token)
+            .await
+            .map_err(|failure| {
+                // /reader3 口径：两类失败统一 401「需要登录」并清 Cookie
+                let _ = failure;
+                AppError::Unauthorized(NEED_LOGIN.to_string())
+            })
+    }
+
+    /// 刷新失败的原因细分：`/v1/auth/refresh` 按它区分「令牌无效/过期」
+    /// （`AUTH_EXPIRED`）与「重放检测、会话家族已吊销」（`AUTH_REFRESH_REPLAYED`）。
+    pub async fn refresh_session_detailed(
+        &self,
+        refresh_token: &str,
+    ) -> Result<IssuedSession, RefreshFailure> {
+        match self.refresh_store.rotate(refresh_token).await {
+            Ok(RotateOutcome::Rotated(session)) => {
+                let access_token = self
+                    .sign_access_token(session.uid, &session.username, session.token_version)
+                    .map_err(|_| RefreshFailure::Invalid)?;
                 Ok(IssuedSession {
                     data: self.format_session(&access_token),
                     refresh_token: session.refresh_token,
                 })
             }
-            RotateOutcome::Invalid | RotateOutcome::ReuseDetected => {
-                Err(AppError::Unauthorized(NEED_LOGIN.to_string()))
-            }
+            Ok(RotateOutcome::Invalid) => Err(RefreshFailure::Invalid),
+            Ok(RotateOutcome::ReuseDetected) => Err(RefreshFailure::Replayed),
+            Err(_) => Err(RefreshFailure::Invalid),
         }
     }
 
@@ -892,7 +927,11 @@ mod tests {
         let mut locked = 0;
         for h in handles {
             match h.await.unwrap() {
-                Err(AppError::BadRequest(msg)) if msg.contains("失败次数过多") => locked += 1,
+                Err(AppError::TooManyRequests { message, .. })
+                    if message.contains("失败次数过多") =>
+                {
+                    locked += 1
+                }
                 Err(AppError::BadRequest(msg)) if msg.contains("密码错误") => verified += 1,
                 other => panic!("错误密码登录的返回异常: {other:?}"),
             }
@@ -905,7 +944,10 @@ mod tests {
             .login("reader1", "password123", None)
             .await
             .unwrap_err();
-        assert!(err.to_string().contains("失败次数过多"));
+        assert!(
+            matches!(err, AppError::TooManyRequests { .. }),
+            "锁定状态下应返回 429: {err:?}"
+        );
 
         service.close_pool_for_test().await;
         let _ = fs::remove_dir_all(temp_dir).await;
@@ -1015,7 +1057,7 @@ mod tests {
             .verify_basic_webdav("nobody", "whatever", None)
             .await;
         assert!(
-            matches!(&outcome, Err(AppError::BadRequest(msg)) if msg.contains("失败次数过多")),
+            matches!(&outcome, Err(AppError::TooManyRequests { message, .. }) if message.contains("失败次数过多")),
             "不存在用户名探测应触发限速，实际返回: {outcome:?}"
         );
 

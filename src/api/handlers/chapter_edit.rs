@@ -1110,6 +1110,7 @@ fn readable_error(error: &AppError) -> String {
         | AppError::Blocked(message)
         | AppError::Conflict(message) => message.clone(),
         AppError::Upstream { message, .. } => message.clone(),
+        AppError::TooManyRequests { message, .. } => message.clone(),
         AppError::Internal(_) => "服务端内部错误".to_string(),
         AppError::Db(_) => "数据库错误".to_string(),
         AppError::Http(_) => "网络错误".to_string(),

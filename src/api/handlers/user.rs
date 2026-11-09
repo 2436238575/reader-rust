@@ -256,15 +256,12 @@ pub async fn save_userdata_batch(
 }
 
 /// 从请求 `Host` 头取值（Cookie 的 `Secure` 判定用）。
-fn host_header_value(headers: &HeaderMap) -> Option<&str> {
-    headers
-        .get(header::HOST)
-        .and_then(|value| value.to_str().ok())
-}
-
 /// 当前请求下会话 Cookie 是否加 `Secure`（COOKIE_SECURE 三态，见 auth::cookie）。
 fn session_cookie_secure(config: &AppConfig, headers: &HeaderMap) -> bool {
-    cookie_secure(&config.cookie_secure, host_header_value(headers))
+    cookie_secure(
+        &config.cookie_secure,
+        crate::auth::cookie::host_header_value(headers),
+    )
 }
 
 /// 登录/改密/刷新成功的响应：两枚 HttpOnly Cookie + JSON。

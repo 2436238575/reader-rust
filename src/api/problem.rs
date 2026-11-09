@@ -195,6 +195,9 @@ pub struct Problem {
     #[serde(skip_serializing_if = "Option::is_none")]
     #[schema(nullable = false)]
     errors: Option<Vec<FieldIssue>>,
+    /// 429 的 `Retry-After` 秒数；只进响应头，不进 body
+    #[serde(skip)]
+    retry_after: Option<u64>,
 }
 
 impl Problem {
@@ -209,6 +212,7 @@ impl Problem {
             trace_id: None,
             upstream_code: None,
             errors: None,
+            retry_after: None,
         }
     }
 
@@ -237,17 +241,30 @@ impl Problem {
         self.errors = Some(errors);
         self
     }
+
+    /// 429 的 `Retry-After` 秒数（进响应头）。
+    pub fn retry_after(mut self, secs: u64) -> Self {
+        self.retry_after = Some(secs);
+        self
+    }
 }
 
 impl IntoResponse for Problem {
     fn into_response(self) -> Response {
         let status = StatusCode::from_u16(self.status).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
+        let retry_after = self.retry_after;
         let mut response = Json(self).into_response();
         *response.status_mut() = status;
         response.headers_mut().insert(
             header::CONTENT_TYPE,
             header::HeaderValue::from_static("application/problem+json"),
         );
+        // 429 的 Retry-After：只进响应头，不进 body
+        if let Some(secs) = retry_after {
+            if let Ok(value) = header::HeaderValue::from_str(&secs.to_string()) {
+                response.headers_mut().insert(header::RETRY_AFTER, value);
+            }
+        }
         response
     }
 }
@@ -263,6 +280,12 @@ impl From<crate::error::error::AppError> for Problem {
             AppError::Blocked(message) => Self::new(ErrorCode::UpstreamBlocked).detail(message),
             AppError::NotFound(_) => Self::new(ErrorCode::NotFound),
             AppError::Conflict(message) => Self::new(ErrorCode::Conflict).detail(message),
+            AppError::TooManyRequests {
+                message,
+                retry_after_secs,
+            } => Self::new(ErrorCode::RateLimited)
+                .detail(message)
+                .retry_after(retry_after_secs),
             AppError::Upstream { status, message } => {
                 let code = if status == 408 {
                     ErrorCode::UpstreamTimeout

@@ -37,6 +37,17 @@ paths:
       - bearerAuth: []
 components:
   schemas:
+    ChangePasswordRequest:
+      type: object
+      properties:
+        currentPassword:
+          type:
+          - string
+          - 'null'
+        newPassword:
+          type:
+          - string
+          - 'null'
     ErrorCode:
       type: string
       description: |-
@@ -87,6 +98,17 @@ components:
           type: string
         pointer:
           type: string
+    LoginRequest:
+      type: object
+      properties:
+        password:
+          type:
+          - string
+          - 'null'
+        username:
+          type:
+          - string
+          - 'null'
     Me:
       type: object
       description: |-
@@ -139,6 +161,21 @@ components:
         upstreamCode:
           type: string
           description: 上游业务码原样透传（FQWeb 的 `UPSTREAM_THROTTLED` 等）
+    SessionTokens:
+      type: object
+      description: |-
+        会话令牌对。`accessToken` 供非浏览器客户端走 `Authorization: Bearer`；
+        浏览器只依赖 HttpOnly Cookie，`refreshToken` 永不进响应体。
+      required:
+      - accessToken
+      - accessTokenExpiresAt
+      properties:
+        accessToken:
+          type: string
+        accessTokenExpiresAt:
+          type: string
+          format: date-time
+          description: access token 的过期时间，RFC 3339 UTC
   securitySchemes:
     bearerAuth:
       type: http
@@ -151,3 +188,5 @@ components:
 tags:
 - name: me
   description: 当前账号
+- name: auth
+  description: 会话认证

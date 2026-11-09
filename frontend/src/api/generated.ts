@@ -28,6 +28,10 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        ChangePasswordRequest: {
+            currentPassword?: string | null;
+            newPassword?: string | null;
+        };
         /**
          * @description 错误码：线上值是大写下划线（serde `SCREAMING_SNAKE_CASE`），稳定不变。
          *     新增取值是兼容变更（客户端必须有 default 分支），改已有取值的语义是破坏变更。
@@ -39,6 +43,10 @@ export interface components {
             code: string;
             detail?: string;
             pointer: string;
+        };
+        LoginRequest: {
+            password?: string | null;
+            username?: string | null;
         };
         /**
          * @description 当前账号资料。`id` 是不透明字符串（`u_<uid>`），客户端不解析。
@@ -69,6 +77,18 @@ export interface components {
             type: string;
             /** @description 上游业务码原样透传（FQWeb 的 `UPSTREAM_THROTTLED` 等） */
             upstreamCode?: string;
+        };
+        /**
+         * @description 会话令牌对。`accessToken` 供非浏览器客户端走 `Authorization: Bearer`；
+         *     浏览器只依赖 HttpOnly Cookie，`refreshToken` 永不进响应体。
+         */
+        SessionTokens: {
+            accessToken: string;
+            /**
+             * Format: date-time
+             * @description access token 的过期时间，RFC 3339 UTC
+             */
+            accessTokenExpiresAt: string;
         };
     };
     responses: never;

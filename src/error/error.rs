@@ -29,6 +29,12 @@ pub enum AppError {
     /// 409：已有同类任务进行中（AI 资料批量更新为单任务串行）。
     #[error("conflict: {0}")]
     Conflict(String),
+    /// 429：登录限速命中。`retry_after_secs` 供 `Retry-After` 头与 problem 体。
+    #[error("too many requests: {message}")]
+    TooManyRequests {
+        message: String,
+        retry_after_secs: u64,
+    },
     /// 502：上游站点失败——返回了错误状态码（403/404/限流等），或网络层
     /// 超时/连接失败。
     ///
@@ -161,6 +167,7 @@ impl AppError {
             | AppError::BadRequest(msg)
             | AppError::Blocked(msg)
             | AppError::Conflict(msg) => msg.clone(),
+            AppError::TooManyRequests { message, .. } => message.clone(),
             AppError::Upstream { message, .. } => message.clone(),
             AppError::Db(_) => "database error".to_string(),
             AppError::Http(_) => "upstream error".to_string(),
@@ -176,6 +183,7 @@ impl IntoResponse for AppError {
             AppError::NotFound(_) => StatusCode::NOT_FOUND,
             AppError::BadRequest(_) | AppError::Blocked(_) => StatusCode::BAD_REQUEST,
             AppError::Conflict(_) => StatusCode::CONFLICT,
+            AppError::TooManyRequests { .. } => StatusCode::TOO_MANY_REQUESTS,
             AppError::Upstream { .. } => StatusCode::BAD_GATEWAY,
             AppError::Db(_) | AppError::Internal(_) => StatusCode::INTERNAL_SERVER_ERROR,
             AppError::Http(_) => StatusCode::BAD_GATEWAY,
@@ -190,7 +198,19 @@ impl IntoResponse for AppError {
             tracing::warn!(error = %self.log_summary(), "请求被拒绝");
         }
         let body = Json(ApiResponse::<serde_json::Value>::err(self.client_message()));
-        (status, body).into_response()
+        let mut response = (status, body).into_response();
+        // 限流响应带 Retry-After（契约口径）；其余状态码无此头
+        if let AppError::TooManyRequests {
+            retry_after_secs, ..
+        } = &self
+        {
+            if let Ok(value) = axum::http::HeaderValue::from_str(&retry_after_secs.to_string()) {
+                response
+                    .headers_mut()
+                    .insert(axum::http::header::RETRY_AFTER, value);
+            }
+        }
+        response
     }
 }
 

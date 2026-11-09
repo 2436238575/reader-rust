@@ -25,6 +25,7 @@ use axum::Router;
 use utoipa::openapi::security::{ApiKey, ApiKeyValue, Http, HttpAuthScheme, SecurityScheme};
 use utoipa::{Modify, OpenApi};
 
+mod auth;
 mod me;
 
 /// `/v1` 路由。并发层与 `/reader3` 的受保护组共享同一份许可
@@ -37,23 +38,27 @@ pub fn router(
 ) -> Router {
     let v1 = Router::new()
         .merge(me::router())
+        .merge(auth::authed_router())
         .route_layer(axum::middleware::from_fn_with_state(
             state.clone(),
             require_auth,
-        ));
+        ))
+        // 公开认证端点（登录/刷新/登出）在鉴权层之外，同样受 CSRF 约束
+        .merge(auth::public_router());
     let v1 = match concurrency {
         Some(layer) => v1.layer(layer),
         None => v1,
     };
-    v1.layer(axum::middleware::from_fn_with_state(
-        (
-            inbound_timeout,
-            crate::api::inbound_guard::TimeoutShape::Problem,
-        ),
-        crate::api::inbound_guard::timeout_middleware,
-    ))
-    .layer(axum::middleware::from_fn(attach_problem_trace))
-    .with_state(state)
+    v1.layer(axum::middleware::from_fn(require_csrf))
+        .layer(axum::middleware::from_fn_with_state(
+            (
+                inbound_timeout,
+                crate::api::inbound_guard::TimeoutShape::Problem,
+            ),
+            crate::api::inbound_guard::timeout_middleware,
+        ))
+        .layer(axum::middleware::from_fn(attach_problem_trace))
+        .with_state(state)
 }
 
 /// 未注册的 `/v1` 路径：problem+json 404（`/v1` 是纯 API 命名空间，
@@ -82,6 +87,32 @@ async fn require_auth(
     }
     request.extensions_mut().insert(user);
     Ok(next.run(request).await)
+}
+
+/// CSRF 双保险：`/v1` 的全部非 GET 请求要求 `X-Requested-With:
+/// XMLHttpRequest`（跨站表单无法设置自定义头）。携带 `Authorization`
+/// 的请求豁免（Bearer 客户端不经 Cookie 会话，天然免疫 CSRF）。
+/// `SameSite=Lax` 挡掉跨站非 GET 的 Cookie 携带，这里补上第二道。
+async fn require_csrf(request: Request, next: Next) -> Response {
+    let is_safe = matches!(
+        *request.method(),
+        axum::http::Method::GET | axum::http::Method::HEAD | axum::http::Method::OPTIONS
+    );
+    let has_bearer = request.headers().get(header::AUTHORIZATION).is_some();
+    if is_safe || has_bearer {
+        return next.run(request).await;
+    }
+    let marked = request
+        .headers()
+        .get("x-requested-with")
+        .and_then(|value| value.to_str().ok())
+        .is_some_and(|value| value.eq_ignore_ascii_case("XMLHttpRequest"));
+    if marked {
+        return next.run(request).await;
+    }
+    Problem::new(ErrorCode::CsrfHeaderMissing)
+        .detail("缺少 X-Requested-With 头")
+        .into_response()
 }
 
 /// problem 体统一补 `traceId`：与响应头 `X-Request-Id` 一致（用户截图能
@@ -185,8 +216,16 @@ pub fn openapi_yaml() -> String {
 #[openapi(
     info(title = "reader-rust v1 API", version = "0.1.0"),
     paths(me::get_me),
-    components(schemas(me::Me, Problem, ErrorCode, crate::api::problem::FieldIssue)),
-    tags((name = "me", description = "当前账号")),
+    components(schemas(
+        me::Me,
+        Problem,
+        ErrorCode,
+        crate::api::problem::FieldIssue,
+        auth::LoginRequest,
+        auth::ChangePasswordRequest,
+        auth::SessionTokens,
+    )),
+    tags((name = "me", description = "当前账号"), (name = "auth", description = "会话认证")),
     modifiers(&SecurityAddon)
 )]
 struct V1ApiDoc;

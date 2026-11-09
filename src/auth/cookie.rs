@@ -2,9 +2,12 @@
 //!
 //! Access / Refresh 令牌从 JSON 响应迁移到 HttpOnly Cookie：JS 读不到，
 //! XSS 也偷不走。两枚 Cookie 都是 host-only（不设 `Domain`）、
-//! `SameSite=Strict`；`Path` 由 `COOKIE_PATH` 配置（默认 `/reader3`，
-//! 子路径部署需同步改为 `/<前缀>/reader3`）；`Secure` 由 `COOKIE_SECURE`
-//! 三态控制，默认 `auto` 按请求 Host 判定（回环主机不加，其余一律加）。
+//! `SameSite=Lax`（v1 契约口径：Strict 会让「从外部应用点链接进入」的
+//! 场景收不到 Cookie；Lax 已挡住跨站非 GET 的 Cookie 携带，CSRF 由
+//! `/v1` 的 `X-Requested-With` 双保险兜底）；`Path` 由 `COOKIE_PATH`
+//! 配置（默认 `/reader3`，子路径部署需同步改为 `/<前缀>/reader3`）；
+//! `Secure` 由 `COOKIE_SECURE` 三态控制，默认 `auto` 按请求 Host 判定
+//! （回环主机不加，其余一律加）。
 
 use axum::http::{header, HeaderMap, HeaderValue};
 
@@ -45,7 +48,7 @@ pub fn build_cookie(
     secure: bool,
 ) -> HeaderValue {
     let mut cookie =
-        format!("{name}={value}; Max-Age={max_age}; Path={path}; HttpOnly; SameSite=Strict");
+        format!("{name}={value}; Max-Age={max_age}; Path={path}; HttpOnly; SameSite=Lax");
     if secure {
         cookie.push_str("; Secure");
     }
@@ -59,6 +62,27 @@ pub fn build_cookie(
 /// 浏览器按同名同路径覆盖删除；属性不一致会留下孤儿 Cookie。
 pub fn clear_cookie(name: &str, path: &str, secure: bool) -> HeaderValue {
     build_cookie(name, "", 0, path, secure)
+}
+
+/// `/v1` 的 access Cookie 路径：覆盖全站（业务接口仍可能在 `/reader3`，
+/// 两套命名空间共用同一枚会话）。
+pub const V1_ACCESS_PATH: &str = "/";
+
+/// `/v1` 的 refresh Cookie 路径：收紧到 `/v1/auth`。子路径部署从
+/// `COOKIE_PATH`（浏览器访问 `/reader3` 的实际前缀）推导同前缀的
+/// `/v1/auth`；非标准配置回落根路径（安全兜底，保证可用性）。
+pub fn v1_refresh_path(cookie_path: &str) -> String {
+    cookie_path
+        .strip_suffix("/reader3")
+        .map(|prefix| format!("{prefix}/v1/auth"))
+        .unwrap_or_else(|| "/v1/auth".to_string())
+}
+
+/// 请求 `Host` 头的原始值（剥端口前），供 `cookie_secure` 判定。
+pub fn host_header_value(headers: &HeaderMap) -> Option<&str> {
+    headers
+        .get(header::HOST)
+        .and_then(|value| value.to_str().ok())
 }
 
 /// `COOKIE_SECURE` 三态开关：
@@ -162,7 +186,7 @@ mod tests {
         assert!(cookie.contains("Max-Age=21600"));
         assert!(cookie.contains("Path=/reader3"));
         assert!(cookie.contains("HttpOnly"));
-        assert!(cookie.contains("SameSite=Strict"));
+        assert!(cookie.contains("SameSite=Lax"));
         assert!(!cookie.contains("Secure"), "非安全模式不应带 Secure");
         assert!(
             !cookie.contains("Domain="),
@@ -194,7 +218,7 @@ mod tests {
         assert!(cookie.contains("Max-Age=0"));
         assert!(cookie.contains("Path=/reader3"));
         assert!(cookie.contains("HttpOnly"));
-        assert!(cookie.contains("SameSite=Strict"));
+        assert!(cookie.contains("SameSite=Lax"));
         assert!(cookie.contains("Secure"));
     }
 

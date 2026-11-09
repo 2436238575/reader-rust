@@ -349,7 +349,7 @@ async fn login_issues_short_lived_access_and_rotating_refresh_token() {
     assert_ne!(refresh, access, "Refresh Token 不能是 Access Token 本身");
 }
 
-/// Cookie 属性契约：HttpOnly、SameSite=Strict、Path=/reader3、Max-Age 取
+/// Cookie 属性契约：HttpOnly、SameSite=Lax、Path=/reader3、Max-Age 取
 /// 各自 TTL；host-only（不设 Domain）。
 #[tokio::test]
 async fn session_cookies_carry_the_contracted_attributes() {
@@ -357,12 +357,7 @@ async fn session_cookies_carry_the_contracted_attributes() {
     let (_, cookies) = server.login_with_cookies().await;
 
     let access = set_cookie_of(&cookies, "reader_access").expect("应下发 reader_access");
-    for attr in [
-        "HttpOnly",
-        "SameSite=Strict",
-        "Path=/reader3",
-        "Max-Age=21600",
-    ] {
+    for attr in ["HttpOnly", "SameSite=Lax", "Path=/reader3", "Max-Age=21600"] {
         assert!(
             access.contains(attr),
             "reader_access 缺属性 {attr}: {access}"
@@ -376,7 +371,7 @@ async fn session_cookies_carry_the_contracted_attributes() {
     let refresh = set_cookie_of(&cookies, "reader_refresh").expect("应下发 reader_refresh");
     for attr in [
         "HttpOnly",
-        "SameSite=Strict",
+        "SameSite=Lax",
         "Path=/reader3",
         "Max-Age=604800",
     ] {
