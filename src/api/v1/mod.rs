@@ -27,6 +27,7 @@ use utoipa::{Modify, OpenApi};
 
 mod auth;
 mod me;
+mod sources;
 
 /// `/v1` 路由。并发层与 `/reader3` 的受保护组共享同一份许可
 /// （`GlobalConcurrencyLimitLayer` clone 共享内部信号量），两个命名空间
@@ -38,6 +39,7 @@ pub fn router(
 ) -> Router {
     let v1 = Router::new()
         .merge(me::router())
+        .merge(sources::router())
         .merge(auth::authed_router())
         .route_layer(axum::middleware::from_fn_with_state(
             state.clone(),
@@ -263,6 +265,7 @@ pub fn openapi_yaml() -> String {
     info(title = "reader-rust v1 API", version = "0.1.0"),
     paths(
         me::get_me,
+        sources::list_sources,
         auth::login,
         auth::refresh,
         auth::logout,
@@ -276,8 +279,14 @@ pub fn openapi_yaml() -> String {
         auth::LoginRequest,
         auth::ChangePasswordRequest,
         auth::SessionTokens,
+        sources::SourceSummary,
+        sources::SourcePage,
     )),
-    tags((name = "me", description = "当前账号"), (name = "auth", description = "会话认证")),
+    tags(
+        (name = "me", description = "当前账号"),
+        (name = "auth", description = "会话认证"),
+        (name = "sources", description = "书源"),
+    ),
     modifiers(&SecurityAddon)
 )]
 struct V1ApiDoc;

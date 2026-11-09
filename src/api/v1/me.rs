@@ -64,7 +64,7 @@ pub async fn get_me(
 
 /// Unix 毫秒 → RFC 3339 UTC（秒级精度，契约 §5.2「秒级足够」）。
 /// users 表的时间戳是毫秒；0（未记录）同样渲染为 epoch。
-fn rfc3339_from_millis(millis: i64) -> String {
+pub(crate) fn rfc3339_from_millis(millis: i64) -> String {
     rfc3339_secs(millis.div_euclid(1000))
 }
 

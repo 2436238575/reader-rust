@@ -107,6 +107,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/sources": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 书源列表。 */
+        get: operations["listSources"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -174,6 +191,41 @@ export interface components {
             accessTokenExpiresAt: string;
             /** @description 登录用户名（hint 展示与 API 客户端识别；/v1/me 才是资料源） */
             username: string;
+        };
+        /** @description 游标分页容器（契约 §5.4）：`nextCursor: null` 表示到底。 */
+        SourcePage: {
+            items: components["schemas"]["SourceSummary"][];
+            nextCursor?: string | null;
+            /**
+             * Format: int32
+             * @description 过滤后的总数（小表直接算，不做惰性统计）
+             */
+            total?: number | null;
+        };
+        /** @description 书源摘要：展示字段 + `exploreUrl`，不含规则 JSON。 */
+        SourceSummary: {
+            /** Format: int32 */
+            customOrder?: number | null;
+            enabled: boolean;
+            enabledCookieJar: boolean;
+            enabledExplore: boolean;
+            exploreUrl?: string | null;
+            group?: string | null;
+            /** @description 不透明 id（`src_<n>`），客户端不解析 */
+            id: string;
+            name: string;
+            /** Format: int64 */
+            respondTime?: number | null;
+            /** Format: int32 */
+            type?: number | null;
+            /**
+             * Format: date-time
+             * @description 源材料里的更新时间（服务端存毫秒），输出 RFC 3339 UTC
+             */
+            updatedAt?: string | null;
+            url: string;
+            /** Format: int32 */
+            weight?: number | null;
         };
     };
     responses: never;
@@ -387,6 +439,67 @@ export interface operations {
             };
             /** @description 服务端错误 */
             500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    listSources: {
+        parameters: {
+            query?: {
+                /** @description 名称或 URL 的大小写不敏感子串 */
+                q?: string;
+                /** @description 上一页的 nextCursor */
+                cursor?: string;
+                /** @description 页大小，默认 50，上限 200 */
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 书源摘要页 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SourcePage"];
+                };
+            };
+            /** @description If-None-Match 命中，无 body */
+            304: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description limit 超上限 */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description 未登录或令牌失效 */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description 游标无法解码 */
+            422: {
                 headers: {
                     [name: string]: unknown;
                 };
