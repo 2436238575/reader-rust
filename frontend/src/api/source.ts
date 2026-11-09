@@ -34,7 +34,7 @@ function toLegacySummary(item: ApiSourceSummary): BookSourceSummary {
     customOrder: item.customOrder ?? undefined,
     weight: item.weight ?? undefined,
     exploreUrl: item.exploreUrl ?? undefined,
-  } as BookSourceSummary
+  } satisfies BookSourceSummary
 }
 
 /**
