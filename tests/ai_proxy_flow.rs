@@ -101,7 +101,8 @@ impl TestServer {
     async fn login_token(&self) -> String {
         let res = self
             .client
-            .post(format!("{}/reader3/login", self.base_url))
+            .post(format!("{}/v1/auth/login", self.base_url))
+            .header("x-requested-with", "XMLHttpRequest")
             .json(&serde_json::json!({
                 "username": TEST_USERNAME,
                 "password": TEST_PASSWORD,
@@ -111,7 +112,7 @@ impl TestServer {
             .unwrap();
         assert_eq!(res.status(), reqwest::StatusCode::OK, "登录应成功");
         let body: serde_json::Value = res.json().await.unwrap();
-        body["data"]["accessToken"]
+        body["accessToken"]
             .as_str()
             .expect("登录响应应含 accessToken")
             .to_string()

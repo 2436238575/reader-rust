@@ -186,7 +186,8 @@ impl Drop for TestServer {
 
 async fn login(client: &reqwest::Client, base_url: &str) -> String {
     let resp = client
-        .post(format!("{base_url}/reader3/login"))
+        .post(format!("{base_url}/v1/auth/login"))
+        .header("x-requested-with", "XMLHttpRequest")
         .json(&serde_json::json!({
             "username": TEST_USERNAME,
             "password": TEST_PASSWORD,
@@ -196,7 +197,7 @@ async fn login(client: &reqwest::Client, base_url: &str) -> String {
         .unwrap();
     assert_eq!(resp.status(), 200);
     let body: serde_json::Value = resp.json().await.unwrap();
-    body["data"]["accessToken"].as_str().unwrap().to_string()
+    body["accessToken"].as_str().unwrap().to_string()
 }
 
 #[tokio::test]

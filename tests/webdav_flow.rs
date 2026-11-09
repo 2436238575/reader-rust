@@ -108,7 +108,8 @@ impl TestServer {
     async fn login_token(&self) -> String {
         let res = self
             .client
-            .post(self.url("/reader3/login"))
+            .post(self.url("/v1/auth/login"))
+            .header("x-requested-with", "XMLHttpRequest")
             .json(&serde_json::json!({
                 "username": TEST_USERNAME,
                 "password": TEST_PASSWORD,
@@ -118,7 +119,7 @@ impl TestServer {
             .unwrap();
         assert_eq!(res.status(), StatusCode::OK, "登录应成功");
         let body: serde_json::Value = res.json().await.unwrap();
-        body["data"]["accessToken"]
+        body["accessToken"]
             .as_str()
             .expect("登录响应应含 accessToken")
             .to_string()
@@ -710,7 +711,11 @@ async fn upload_file_to_webdav_streams_binary_and_overwrites() {
     let res = upload(&payload).send().await.unwrap();
     assert_eq!(res.status(), StatusCode::OK, "上传应成功");
     let body: serde_json::Value = res.json().await.unwrap();
-    assert_eq!(body["isSuccess"], serde_json::json!(true));
+    assert_eq!(
+        body["isSuccess"],
+        serde_json::json!(true),
+        "上传应直接成功: {body}"
+    );
     assert_eq!(body["data"][0]["name"], "backup.bin");
     assert_eq!(body["data"][0]["size"], serde_json::json!(payload.len()));
 
@@ -752,7 +757,11 @@ async fn upload_file_to_webdav_streams_binary_and_overwrites() {
     let res = upload(&payload2).send().await.unwrap();
     assert_eq!(res.status(), StatusCode::OK, "同名覆盖上传应成功");
     let body: serde_json::Value = res.json().await.unwrap();
-    assert_eq!(body["isSuccess"], serde_json::json!(true));
+    assert_eq!(
+        body["isSuccess"],
+        serde_json::json!(true),
+        "上传应成功: {body}"
+    );
     assert_eq!(body["data"][0]["size"], serde_json::json!(payload2.len()));
     let disk = std::fs::read(app.home().join("backup").join("backup.bin")).unwrap();
     assert_eq!(disk, payload2, "覆盖上传后落盘内容应更新");

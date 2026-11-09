@@ -86,9 +86,6 @@ pub fn build_router(state: AppState) -> Router {
     // ── 公开：无需任何凭据 ──
     let public = Router::new()
         .route("/health", get(handlers::health))
-        .route("/reader3/login", post(handlers::login))
-        // Refresh Token 本身就是凭据，不能挂在 require_auth 后面
-        .route("/reader3/refreshToken", post(handlers::refresh_token))
         // 请求体上限按下组下发：DefaultBodyLimit 经请求扩展覆盖，最内层先生效
         // （axum-core 0.4 的 DefaultBodyLimitService 对扩展是 insert 覆盖写），
         // 因此这里的 1MB 优先于最外层的 100MB 兜底
@@ -102,7 +99,6 @@ pub fn build_router(state: AppState) -> Router {
     // ── 可选鉴权：未登录也返回成功，只是内容为空 ──
     let optional = Router::new()
         .route("/reader3/getUserInfo", get(handlers::get_user_info))
-        .route("/reader3/logout", post(handlers::logout))
         .layer(middleware::from_fn_with_state(state.clone(), optional_auth))
         .layer(DefaultBodyLimit::max(PUBLIC_BODY_LIMIT_BYTES))
         .layer(middleware::from_fn_with_state(
@@ -499,7 +495,6 @@ pub fn build_router(state: AppState) -> Router {
             "/reader3/deleteWebdavFileList",
             post(handlers::delete_webdav_file_list),
         )
-        .route("/reader3/changePassword", post(handlers::change_password))
         .route("/reader3/saveUserConfig", post(handlers::save_user_config))
         .route("/reader3/getUserConfig", get(handlers::get_user_config))
         .route("/reader3/getUserdata", get(handlers::get_userdata))

@@ -92,19 +92,23 @@ async function waitForFixture(url: string, child: ChildProcess): Promise<boolean
     // 子进程提前退出：端口被抢/启动失败，马上失败而不是空等
     if (child.exitCode !== null) return false
     try {
-      const resp = await fetch(`${url}/reader3/login`, {
+      const resp = await fetch(`${url}/v1/auth/login`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          // v1 的非 GET 一律要求 CSRF 自定义头
+          'X-Requested-With': 'XMLHttpRequest',
+        },
         body: JSON.stringify({ username: FIXTURE_USERNAME, password: FIXTURE_PASSWORD }),
       })
       if (resp.status === 200) {
         const payload = (await resp.json()) as {
-          data?: { accessToken?: string }
+          accessToken?: string
         }
-        // 新版后端把 Refresh Token 放进 HttpOnly Cookie，JSON 里不再回吐；
+        // Refresh Token 在 HttpOnly Cookie 里，JSON 只有 accessToken；
         // 用「accessToken + reader_refresh Set-Cookie」确认是自己刚 bootstrap 的实例
         const setCookie = resp.headers.get('set-cookie') || ''
-        if (payload?.data?.accessToken && setCookie.includes('reader_refresh=')) return true
+        if (payload?.accessToken && setCookie.includes('reader_refresh=')) return true
       }
     } catch {
       // 还没起来

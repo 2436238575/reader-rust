@@ -140,14 +140,15 @@ impl Drop for TestServer {
 
 async fn register(client: &reqwest::Client, base_url: &str) -> String {
     let resp = client
-        .post(format!("{base_url}/reader3/login"))
+        .post(format!("{base_url}/v1/auth/login"))
+        .header("x-requested-with", "XMLHttpRequest")
         .json(&json!({ "username": "reader1", "password": "password123" }))
         .send()
         .await
         .unwrap();
     let payload: Value = resp.json().await.unwrap();
-    assert_eq!(payload["isSuccess"], json!(true), "登录应成功: {payload}");
-    payload["data"]["accessToken"].as_str().unwrap().to_string()
+    assert!(payload["accessToken"].is_string(), "登录应成功: {payload}");
+    payload["accessToken"].as_str().unwrap().to_string()
 }
 
 /// 保存假书源（目录规则只解析 `$.data.list[*]`），返回分配到的 bookSourceId。

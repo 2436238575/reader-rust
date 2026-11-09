@@ -46,9 +46,8 @@ pub use replace_rule::{
 pub use review::{get_chapter_comments, get_para_comment_index, get_para_comments};
 pub use search_cache::search_cached_content;
 pub use user::{
-    change_password, delete_file, get_user_config, get_user_info, get_userdata, get_userdata_batch,
-    login, logout, refresh_token, save_user_config, save_userdata, save_userdata_batch,
-    upload_file,
+    delete_file, get_user_config, get_user_info, get_userdata, get_userdata_batch,
+    save_user_config, save_userdata, save_userdata_batch, upload_file,
 };
 pub(crate) use webdav::sweep_webdav_upload_artifacts;
 pub use webdav::{

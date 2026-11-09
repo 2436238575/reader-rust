@@ -63,7 +63,8 @@ impl TestServer {
     async fn login(&self) -> String {
         let response = self
             .client
-            .post(self.url("/reader3/login"))
+            .post(self.url("/v1/auth/login"))
+            .header("x-requested-with", "XMLHttpRequest")
             .json(&serde_json::json!({
                 "username": TEST_USERNAME,
                 "password": TEST_PASSWORD,
@@ -73,7 +74,7 @@ impl TestServer {
             .unwrap();
         assert_eq!(response.status(), 200, "登录应成功");
         let body: serde_json::Value = response.json().await.unwrap();
-        body["data"]["accessToken"]
+        body["accessToken"]
             .as_str()
             .expect("登录响应应含 accessToken")
             .to_string()

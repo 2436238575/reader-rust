@@ -89,6 +89,8 @@ export interface components {
              * @description access token 的过期时间，RFC 3339 UTC
              */
             accessTokenExpiresAt: string;
+            /** @description 登录用户名（hint 展示与 API 客户端识别；/v1/me 才是资料源） */
+            username: string;
         };
     };
     responses: never;

@@ -64,6 +64,8 @@ pub struct SessionTokens {
     /// access token 的过期时间，RFC 3339 UTC
     #[schema(format = DateTime)]
     pub access_token_expires_at: String,
+    /// 登录用户名（hint 展示与 API 客户端识别；/v1/me 才是资料源）
+    pub username: String,
 }
 
 fn v1_cookie_paths(config: &crate::app::config::AppConfig) -> (&'static str, String) {
@@ -111,6 +113,10 @@ fn v1_session_response(
         Json(SessionTokens {
             access_token,
             access_token_expires_at: expires_at,
+            username: session.data["username"]
+                .as_str()
+                .unwrap_or_default()
+                .to_string(),
         }),
     )
         .into_response()

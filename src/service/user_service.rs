@@ -419,8 +419,15 @@ impl UserService {
                 let access_token = self
                     .sign_access_token(session.uid, &session.username, session.token_version)
                     .map_err(|_| RefreshFailure::Invalid)?;
+                let mut data = self.format_session(&access_token);
+                if let Some(obj) = data.as_object_mut() {
+                    obj.insert(
+                        "username".to_string(),
+                        serde_json::Value::from(session.username.as_str()),
+                    );
+                }
                 Ok(IssuedSession {
-                    data: self.format_session(&access_token),
+                    data,
                     refresh_token: session.refresh_token,
                 })
             }

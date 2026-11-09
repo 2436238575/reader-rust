@@ -307,14 +307,15 @@ impl Drop for TestServer {
 
 async fn login(client: &reqwest::Client, base_url: &str) -> String {
     let resp = client
-        .post(format!("{base_url}/reader3/login"))
+        .post(format!("{base_url}/v1/auth/login"))
+        .header("x-requested-with", "XMLHttpRequest")
         .json(&json!({ "username": "reader1", "password": "password123" }))
         .send()
         .await
         .unwrap();
     let payload: Value = resp.json().await.unwrap();
-    assert_eq!(payload["isSuccess"], json!(true), "登录应成功: {payload}");
-    payload["data"]["accessToken"].as_str().unwrap().to_string()
+    assert!(payload["accessToken"].is_string(), "登录应成功: {payload}");
+    payload["accessToken"].as_str().unwrap().to_string()
 }
 
 #[tokio::test]

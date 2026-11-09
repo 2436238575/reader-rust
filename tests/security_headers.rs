@@ -77,7 +77,8 @@ impl TestServer {
     async fn login(&self) -> String {
         let response = self
             .client
-            .post(self.url("/reader3/login"))
+            .post(self.url("/v1/auth/login"))
+            .header("x-requested-with", "XMLHttpRequest")
             .json(&serde_json::json!({
                 "username": TEST_USERNAME,
                 "password": TEST_PASSWORD,
@@ -87,7 +88,7 @@ impl TestServer {
             .unwrap();
         assert_eq!(response.status(), 200);
         let body: serde_json::Value = response.json().await.unwrap();
-        body["data"]["accessToken"].as_str().unwrap().to_string()
+        body["accessToken"].as_str().unwrap().to_string()
     }
 
     /// 手工拼 multipart body（与 auth_flow 的既有做法一致，避免引入新依赖）。
@@ -303,7 +304,11 @@ async fn upload_file_rejects_non_bitmap_extensions() {
         .await;
     assert_eq!(response.status(), 200, "PNG 上传应成功");
     let body: serde_json::Value = response.json().await.unwrap();
-    assert_eq!(body["isSuccess"], serde_json::json!(true));
+    assert_eq!(
+        body["isSuccess"],
+        serde_json::json!(true),
+        "PNG 上传应成功: {body}"
+    );
     let urls = body["data"].as_array().unwrap();
     assert_eq!(urls.len(), 1);
 }

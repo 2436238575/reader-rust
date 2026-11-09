@@ -169,6 +169,7 @@ components:
       required:
       - accessToken
       - accessTokenExpiresAt
+      - username
       properties:
         accessToken:
           type: string
@@ -176,6 +177,9 @@ components:
           type: string
           format: date-time
           description: access token 的过期时间，RFC 3339 UTC
+        username:
+          type: string
+          description: 登录用户名（hint 展示与 API 客户端识别；/v1/me 才是资料源）
   securitySchemes:
     bearerAuth:
       type: http

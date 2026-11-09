@@ -115,7 +115,8 @@ impl TestServer {
     async fn login(&self) -> String {
         let response = self
             .client
-            .post(self.url("/reader3/login"))
+            .post(self.url("/v1/auth/login"))
+            .header("x-requested-with", "XMLHttpRequest")
             .json(&json!({"username": TEST_USERNAME, "password": TEST_PASSWORD}))
             .send()
             .await
@@ -126,7 +127,7 @@ impl TestServer {
             response.status()
         );
         let body: Value = response.json().await.unwrap();
-        body["data"]["accessToken"].as_str().unwrap().to_string()
+        body["accessToken"].as_str().unwrap().to_string()
     }
 
     /// 上传本地 TXT（multipart 手工构造），返回 (bookId, bookUrl)。

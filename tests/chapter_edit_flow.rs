@@ -64,13 +64,14 @@ async fn boot_with_options(content_revalidate_ttl_secs: u64) -> TestServer {
     let client = reqwest::Client::new();
     let base_url = format!("http://{addr}");
     let resp = client
-        .post(format!("{base_url}/reader3/login"))
+        .post(format!("{base_url}/v1/auth/login"))
+        .header("x-requested-with", "XMLHttpRequest")
         .json(&json!({ "username": "reader1", "password": "password123" }))
         .send()
         .await
         .unwrap();
     let payload: Value = resp.json().await.unwrap();
-    let token = payload["data"]["accessToken"].as_str().unwrap().to_string();
+    let token = payload["accessToken"].as_str().unwrap().to_string();
     TestServer {
         base_url,
         temp_dir,

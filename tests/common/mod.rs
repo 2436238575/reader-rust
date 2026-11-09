@@ -70,18 +70,16 @@ pub async fn login_as(
     password: &str,
 ) -> String {
     let response = client
-        .post(format!("{base_url}/reader3/login"))
+        .post(format!("{base_url}/v1/auth/login"))
+        // /v1 非 GET 一律要求 CSRF 自定义头
+        .header("x-requested-with", "XMLHttpRequest")
         .json(&serde_json::json!({ "username": username, "password": password }))
         .send()
         .await
         .unwrap();
+    assert_eq!(response.status(), reqwest::StatusCode::OK, "登录应成功");
     let payload: serde_json::Value = response.json().await.unwrap();
-    assert_eq!(
-        payload["isSuccess"],
-        serde_json::json!(true),
-        "登录应成功: {payload}"
-    );
-    payload["data"]["accessToken"].as_str().unwrap().to_string()
+    payload["accessToken"].as_str().unwrap().to_string()
 }
 
 /// 保存一条书源，返回后端分配的 bookSourceId。

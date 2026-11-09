@@ -1,13 +1,7 @@
 use crate::api::AppState;
-use crate::app::config::AppConfig;
-use crate::auth::cookie::{
-    build_cookie, clear_cookie, cookie_secure, cookie_value, ACCESS_COOKIE, REFRESH_COOKIE,
-};
 use crate::auth::{CurrentUser, MaybeUser};
 use axum::{
-    extract::{ConnectInfo, Multipart, Query, State},
-    http::{header, HeaderMap},
-    response::{IntoResponse, Response},
+    extract::{Multipart, Query, State},
     Json,
 };
 use serde::Deserialize;
@@ -15,7 +9,7 @@ use serde_json::Value;
 use std::path::{Path, PathBuf};
 use tokio::fs;
 
-use crate::error::error::{ApiResponse, AppError, NEED_LOGIN};
+use crate::error::error::{ApiResponse, AppError};
 use crate::util::safe_path;
 
 /// 上传资源文件的单文件上限。axum 0.7.9 的 `Multipart` 提取器经
@@ -52,23 +46,9 @@ fn is_allowed_upload_extension(name: &str) -> bool {
 }
 
 #[derive(Debug, Deserialize)]
-pub struct LoginRequest {
-    pub username: Option<String>,
-    pub password: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
 pub struct FileTypeQuery {
     #[serde(rename = "type")]
     pub file_type: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct ChangePasswordRequest {
-    #[serde(rename = "oldPassword")]
-    pub old_password: Option<String>,
-    #[serde(rename = "newPassword")]
-    pub new_password: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -255,160 +235,6 @@ pub async fn save_userdata_batch(
     Ok(Json(ApiResponse::ok(serde_json::json!({ "saved": saved }))))
 }
 
-/// 从请求 `Host` 头取值（Cookie 的 `Secure` 判定用）。
-/// 当前请求下会话 Cookie 是否加 `Secure`（COOKIE_SECURE 三态，见 auth::cookie）。
-fn session_cookie_secure(config: &AppConfig, headers: &HeaderMap) -> bool {
-    cookie_secure(
-        &config.cookie_secure,
-        crate::auth::cookie::host_header_value(headers),
-    )
-}
-
-/// 登录/改密/刷新成功的响应：两枚 HttpOnly Cookie + JSON。
-///
-/// Refresh Token 只经 `reader_refresh` Set-Cookie 下发，不进 JSON
-///（service 层通过 `IssuedSession` 把它与 JSON 数据分开带出）；JSON 保留
-/// `accessToken` 供 API 客户端（`Authorization: Bearer`）继续使用。
-fn session_response(
-    config: &AppConfig,
-    headers: &HeaderMap,
-    data: Value,
-    refresh_token: &str,
-) -> Response {
-    let access = data["accessToken"].as_str().unwrap_or_default().to_string();
-    let secure = session_cookie_secure(config, headers);
-    let mut cookies = HeaderMap::new();
-    cookies.append(
-        header::SET_COOKIE,
-        build_cookie(
-            ACCESS_COOKIE,
-            &access,
-            config.access_token_ttl_secs,
-            &config.cookie_path,
-            secure,
-        ),
-    );
-    cookies.append(
-        header::SET_COOKIE,
-        build_cookie(
-            REFRESH_COOKIE,
-            refresh_token,
-            config.refresh_token_ttl_secs,
-            &config.cookie_path,
-            secure,
-        ),
-    );
-    (cookies, Json(ApiResponse::ok(data))).into_response()
-}
-
-/// 登出/会话失效的响应：`Max-Age=0` 清掉两枚 Cookie，其余属性与下发时
-/// 一致（同名同路径覆盖删除），JSON 仍按统一包装返回。
-fn session_cleared_response(config: &AppConfig, headers: &HeaderMap, data: Value) -> Response {
-    let secure = session_cookie_secure(config, headers);
-    let mut cookies = HeaderMap::new();
-    cookies.append(
-        header::SET_COOKIE,
-        clear_cookie(ACCESS_COOKIE, &config.cookie_path, secure),
-    );
-    cookies.append(
-        header::SET_COOKIE,
-        clear_cookie(REFRESH_COOKIE, &config.cookie_path, secure),
-    );
-    (cookies, Json(ApiResponse::ok(data))).into_response()
-}
-
-/// 刷新失败的 401：错误响应也要带清除 Cookie 的头。
-///
-/// 走 `Ok(...)` 而不是 `Err(AppError::Unauthorized)`：`AppError` 的
-/// `IntoResponse` 不知道会话 Cookie，`Err` 分支挂不上 `Set-Cookie`。
-fn unauthorized_with_cleared_cookies(config: &AppConfig, headers: &HeaderMap) -> Response {
-    let secure = session_cookie_secure(config, headers);
-    let mut response = AppError::Unauthorized(NEED_LOGIN.to_string()).into_response();
-    response.headers_mut().append(
-        header::SET_COOKIE,
-        clear_cookie(ACCESS_COOKIE, &config.cookie_path, secure),
-    );
-    response.headers_mut().append(
-        header::SET_COOKIE,
-        clear_cookie(REFRESH_COOKIE, &config.cookie_path, secure),
-    );
-    response
-}
-
-/// 公开端点：登录。成功时下发两枚 HttpOnly Cookie，JSON 只保留用户信息
-/// 与 `accessToken` / `accessTokenExpiresIn`（`refreshToken` 不交给 JS）。
-///
-/// 不提供注册：唯一账号由启动时的 bootstrap 创建（`ADMIN_USERNAME` /
-/// `ADMIN_PASSWORD`，见 `UserService::bootstrap_admin`）。
-pub async fn login(
-    State(state): State<AppState>,
-    ConnectInfo(addr): ConnectInfo<std::net::SocketAddr>,
-    headers: HeaderMap,
-    Json(req): Json<LoginRequest>,
-) -> Result<Response, AppError> {
-    let username = req.username.unwrap_or_default();
-    let password = req.password.unwrap_or_default();
-    // 限速按客户端 IP 记账：对端命中 TRUSTED_PROXIES 时从 X-Forwarded-For
-    // 还原真实地址（挂 nginx/Docker NAT 后全体请求同 socket IP，会互相连坐），
-    // 否则一律用 socket 地址（ConnectInfo 由 into_make_service_with_connect_info 注入）
-    let trusted = crate::util::client_ip::parse_or_default(&state.config.trusted_proxies);
-    let client_ip = crate::util::client_ip::resolve_client_ip(addr.ip(), &headers, &trusted);
-    let session = state
-        .user_service
-        .login(&username, &password, Some(&client_ip))
-        .await?;
-    Ok(session_response(
-        &state.config,
-        &headers,
-        session.data,
-        &session.refresh_token,
-    ))
-}
-
-/// 公开端点：用一次性 Refresh Token 换一对新令牌。
-///
-/// 令牌只认 `reader_refresh` HttpOnly Cookie。成功换发两枚新 Cookie
-/// （Refresh 重新计时）；任何失败（不存在、已过期、已吊销、重放）统一 401
-/// `需要登录`，并清除两枚 Cookie，让浏览器无感知地退出会话。
-pub async fn refresh_token(
-    State(state): State<AppState>,
-    headers: HeaderMap,
-) -> Result<Response, AppError> {
-    let Some(token) = cookie_value(&headers, REFRESH_COOKIE) else {
-        return Ok(unauthorized_with_cleared_cookies(&state.config, &headers));
-    };
-    match state.user_service.refresh_session(&token).await {
-        Ok(session) => Ok(session_response(
-            &state.config,
-            &headers,
-            session.data,
-            &session.refresh_token,
-        )),
-        Err(_) => Ok(unauthorized_with_cleared_cookies(&state.config, &headers)),
-    }
-}
-
-/// 登出。
-///
-/// Refresh Token 需要在服务端吊销：读 `reader_refresh` Cookie。Cookie 缺失
-/// 或令牌已损坏时仍返回成功并清除 Cookie——令牌已过期的情况下，前端同样
-/// 只需要清掉本地状态（幂等）。
-pub async fn logout(
-    State(state): State<AppState>,
-    headers: HeaderMap,
-) -> Result<Response, AppError> {
-    if let Some(token) = cookie_value(&headers, REFRESH_COOKIE) {
-        if let Err(error) = state.user_service.revoke_refresh_token(&token).await {
-            tracing::warn!("登出时吊销 Refresh Token 失败: {error}");
-        }
-    }
-    Ok(session_cleared_response(
-        &state.config,
-        &headers,
-        Value::String(String::new()),
-    ))
-}
-
 /// 可选鉴权：未登录时返回 `userInfo: null`，不报错。
 pub async fn get_user_info(
     State(state): State<AppState>,
@@ -439,33 +265,6 @@ pub async fn get_user_config(
 ) -> Result<Json<ApiResponse<Value>>, AppError> {
     let cfg = state.user_service.get_user_config(&user.0.ns).await?;
     Ok(Json(ApiResponse::ok(cfg)))
-}
-
-/// 修改密码；响应换发两枚新的会话 Cookie。
-///
-/// 改密码会自增撤销版本号，令其他设备上的令牌立即失效；当前设备用
-/// 换发的新令牌继续使用，避免用户改完密码就被登出。
-pub async fn change_password(
-    State(state): State<AppState>,
-    user: CurrentUser,
-    headers: HeaderMap,
-    Json(req): Json<ChangePasswordRequest>,
-) -> Result<Response, AppError> {
-    let old_password = req.old_password.unwrap_or_default();
-    let new_password = req.new_password.unwrap_or_default();
-    if old_password.is_empty() || new_password.is_empty() {
-        return Err(AppError::BadRequest("请填写当前密码和新密码".to_string()));
-    }
-    let session = state
-        .user_service
-        .change_password(&user.0.username, &old_password, &new_password)
-        .await?;
-    Ok(session_response(
-        &state.config,
-        &headers,
-        session.data,
-        &session.refresh_token,
-    ))
 }
 
 pub async fn upload_file(
