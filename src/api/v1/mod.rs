@@ -26,6 +26,7 @@ use utoipa::openapi::security::{ApiKey, ApiKeyValue, Http, HttpAuthScheme, Secur
 use utoipa::{Modify, OpenApi};
 
 mod auth;
+mod books;
 mod me;
 mod sources;
 
@@ -39,6 +40,7 @@ pub fn router(
 ) -> Router {
     let v1 = Router::new()
         .merge(me::router())
+        .merge(books::router())
         .merge(sources::router())
         .merge(auth::authed_router())
         .route_layer(axum::middleware::from_fn_with_state(
@@ -265,6 +267,7 @@ pub fn openapi_yaml() -> String {
     info(title = "reader-rust v1 API", version = "0.1.0"),
     paths(
         me::get_me,
+        books::list_chapters,
         sources::list_sources,
         auth::login,
         auth::refresh,
@@ -281,11 +284,14 @@ pub fn openapi_yaml() -> String {
         auth::SessionTokens,
         sources::SourceSummary,
         sources::SourcePage,
+        books::ChapterItem,
+        books::ChapterPage,
     )),
     tags(
         (name = "me", description = "当前账号"),
         (name = "auth", description = "会话认证"),
         (name = "sources", description = "书源"),
+        (name = "books", description = "书籍与章节"),
     ),
     modifiers(&SecurityAddon)
 )]

@@ -87,6 +87,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/books/{bookId}/chapters": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 章节列表。 */
+        get: operations["listChapters"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/me": {
         parameters: {
             query?: never;
@@ -134,6 +151,26 @@ export interface components {
         ChangePasswordRequest: {
             currentPassword?: string | null;
             newPassword?: string | null;
+        };
+        /** @description 章节条目：身份是 `index`（书籍内稳定序号，换源整表替换）。 */
+        ChapterItem: {
+            /** Format: int32 */
+            index: number;
+            isPay: boolean;
+            isVip: boolean;
+            isVolume: boolean;
+            title: string;
+            /** @description 用户改名覆盖生效中（改名走 `chapter_title_overrides`，不写回上游标题） */
+            titleOverridden: boolean;
+            volume?: string | null;
+            wordCount?: string | null;
+        };
+        /** @description 游标分页容器（契约 §5.4）：`nextCursor: null` 表示到底。 */
+        ChapterPage: {
+            items: components["schemas"]["ChapterItem"][];
+            nextCursor?: string | null;
+            /** Format: int32 */
+            total?: number | null;
         };
         /**
          * @description 错误码：线上值是大写下划线（serde `SCREAMING_SNAKE_CASE`），稳定不变。
@@ -404,6 +441,77 @@ export interface operations {
             };
             /** @description 令牌无效/过期或重放检测命中，附清除 Cookie */
             401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    listChapters: {
+        parameters: {
+            query?: {
+                /** @description 上一页的 nextCursor */
+                cursor?: string;
+                /** @description 页大小，默认 50，上限 200 */
+                limit?: number;
+            };
+            header?: never;
+            path: {
+                /** @description 书籍 id（bk_<n>） */
+                bookId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 章节页（按 index 升序） */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ChapterPage"];
+                };
+            };
+            /** @description If-None-Match 命中，无 body */
+            304: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description limit 超上限 */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description 未登录或令牌失效 */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description 书籍不存在 */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description 游标无法解码 */
+            422: {
                 headers: {
                     [name: string]: unknown;
                 };

@@ -2,7 +2,7 @@ mod agent;
 mod ai_book;
 mod ai_model;
 mod ai_proxy;
-mod book;
+pub(crate) mod book;
 mod book_group;
 mod book_source;
 mod bookmark;

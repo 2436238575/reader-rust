@@ -136,6 +136,69 @@ paths:
             application/problem+json:
               schema:
                 $ref: '#/components/schemas/Problem'
+  /v1/books/{bookId}/chapters:
+    get:
+      tags:
+      - books
+      summary: 章节列表。
+      operationId: listChapters
+      parameters:
+      - name: bookId
+        in: path
+        description: 书籍 id（bk_<n>）
+        required: true
+        schema:
+          type: string
+      - name: cursor
+        in: query
+        description: 上一页的 nextCursor
+        required: false
+        schema:
+          type: string
+      - name: limit
+        in: query
+        description: 页大小，默认 50，上限 200
+        required: false
+        schema:
+          type: integer
+          format: int32
+          minimum: 0
+      responses:
+        '200':
+          description: 章节页（按 index 升序）
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ChapterPage'
+        '304':
+          description: If-None-Match 命中，无 body
+        '400':
+          description: limit 超上限
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '401':
+          description: 未登录或令牌失效
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '404':
+          description: 书籍不存在
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '422':
+          description: 游标无法解码
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+      security:
+      - cookieAuth: []
+      - bearerAuth: []
   /v1/me:
     get:
       tags:
@@ -236,6 +299,59 @@ components:
           type:
           - string
           - 'null'
+    ChapterItem:
+      type: object
+      description: 章节条目：身份是 `index`（书籍内稳定序号，换源整表替换）。
+      required:
+      - index
+      - title
+      - titleOverridden
+      - isVip
+      - isPay
+      - isVolume
+      properties:
+        index:
+          type: integer
+          format: int32
+        isPay:
+          type: boolean
+        isVip:
+          type: boolean
+        isVolume:
+          type: boolean
+        title:
+          type: string
+        titleOverridden:
+          type: boolean
+          description: 用户改名覆盖生效中（改名走 `chapter_title_overrides`，不写回上游标题）
+        volume:
+          type:
+          - string
+          - 'null'
+        wordCount:
+          type:
+          - string
+          - 'null'
+    ChapterPage:
+      type: object
+      description: '游标分页容器（契约 §5.4）：`nextCursor: null` 表示到底。'
+      required:
+      - items
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/ChapterItem'
+        nextCursor:
+          type:
+          - string
+          - 'null'
+        total:
+          type:
+          - integer
+          - 'null'
+          format: int32
+          minimum: 0
     ErrorCode:
       type: string
       description: |-
@@ -463,3 +579,5 @@ tags:
   description: 会话认证
 - name: sources
   description: 书源
+- name: books
+  description: 书籍与章节
