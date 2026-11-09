@@ -1,6 +1,10 @@
 import http from './http'
 import type { UserInfo } from '../types'
 import { API_V1_BASE } from '../utils/appBase'
+import type { components } from './generated'
+
+/** v1 生成的具名 schema（契约 §3.1：手写接口与生成物重复会被打回） */
+type ApiMe = components['schemas']['Me']
 
 /** 登录响应的令牌对（v1）：refreshToken 只在 HttpOnly Cookie 里。 */
 export interface SessionTokens {
@@ -24,13 +28,6 @@ export function logout() {
   })
 }
 
-/// /v1/me 的原始形状（profile 切片；stats/settings 随 me 域后续批次落地）
-interface V1Me {
-  id: string
-  username: string
-  createdAt: string
-}
-
 /**
  * 当前账号资料：走 /v1/me。未登录语义在 api 层收敛为 `userInfo: null`
  * （与旧 /reader3 可选鉴权对齐，store 的登录判定逻辑不变）；401 的静默
@@ -38,7 +35,7 @@ interface V1Me {
  */
 export function getUserInfo() {
   return http
-    .get<V1Me>('/me', { baseURL: API_V1_BASE })
+    .get<ApiMe>('/me', { baseURL: API_V1_BASE })
     .then((r) => ({ userInfo: { username: r.data.username } as UserInfo }))
     .catch((error: unknown) => {
       const status = (error as { status?: number }).status

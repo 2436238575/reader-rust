@@ -2,33 +2,15 @@ import http from './http'
 import type { BookSource, BookSourceSummary, BookSourceTestResponse } from '../types'
 import { MAX_SOURCE_TEST_BATCH_SIZE } from '../utils/sourceTesting'
 import { API_V1_BASE } from '../utils/appBase'
+import type { components } from './generated'
+
+/** v1 生成的具名 schema（契约 §3.1：手写接口与生成物重复会被打回） */
+type ApiSourceSummary = components['schemas']['SourceSummary']
+type ApiSourcePage = components['schemas']['SourcePage']
 
 /** 全量列表（含规则 JSON，可达 MB 级）：只给导出/WebDAV 备份等真正需要全量的低频场景 */
 export function getBookSources() {
   return http.get<BookSource[]>('/getBookSources').then((r) => r.data)
-}
-
-/** v1 摘要页的原始形状（/v1/sources） */
-interface V1SourceSummary {
-  id: string
-  name: string
-  url: string
-  group?: string | null
-  type?: number | null
-  enabled: boolean
-  enabledExplore: boolean
-  enabledCookieJar: boolean
-  updatedAt?: string | null
-  respondTime?: number | null
-  customOrder?: number | null
-  weight?: number | null
-  exploreUrl?: string | null
-}
-
-interface V1SourcePage {
-  items: V1SourceSummary[]
-  nextCursor: string | null
-  total: number | null
 }
 
 /** `src_<n>` → 数字 id（过渡期适配：现有组件仍消费数字 id，全面切 v1 类型时删除） */
@@ -36,7 +18,7 @@ function parseSourceId(v1Id: string): number {
   return Number(v1Id.replace(/^src_/, ''))
 }
 
-function toLegacySummary(item: V1SourceSummary): BookSourceSummary {
+function toLegacySummary(item: ApiSourceSummary): BookSourceSummary {
   const updatedMs = item.updatedAt ? Date.parse(item.updatedAt) : Number.NaN
   return {
     bookSourceId: parseSourceId(item.id),
@@ -65,11 +47,11 @@ export async function getBookSourceList(): Promise<BookSourceSummary[]> {
   do {
     const params: { limit: number; cursor?: string } = { limit: 200 }
     if (cursor) params.cursor = cursor
-    const page: V1SourcePage = await http
-      .get<V1SourcePage>('/sources', { baseURL: API_V1_BASE, params })
+    const page: ApiSourcePage = await http
+      .get<ApiSourcePage>('/sources', { baseURL: API_V1_BASE, params })
       .then((r) => r.data)
     out.push(...page.items.map(toLegacySummary))
-    cursor = page.nextCursor
+    cursor = page.nextCursor ?? null
   } while (cursor)
   return out
 }
