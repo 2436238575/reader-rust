@@ -46,7 +46,10 @@ pub fn router(
         None => v1,
     };
     v1.layer(axum::middleware::from_fn_with_state(
-        inbound_timeout,
+        (
+            inbound_timeout,
+            crate::api::inbound_guard::TimeoutShape::Problem,
+        ),
         crate::api::inbound_guard::timeout_middleware,
     ))
     .layer(axum::middleware::from_fn(attach_problem_trace))

@@ -1,4 +1,4 @@
-use crate::api::inbound_guard::{concurrency_layer, timeout_middleware};
+use crate::api::inbound_guard::{concurrency_layer, timeout_middleware, TimeoutShape};
 use crate::api::{handlers, AppState};
 use crate::auth::{optional_auth, require_auth};
 use axum::{
@@ -94,7 +94,7 @@ pub fn build_router(state: AppState) -> Router {
         // 因此这里的 1MB 优先于最外层的 100MB 兜底
         .layer(DefaultBodyLimit::max(PUBLIC_BODY_LIMIT_BYTES))
         .layer(middleware::from_fn_with_state(
-            inbound_timeout,
+            (inbound_timeout, TimeoutShape::Legacy),
             timeout_middleware,
         ))
         .with_state(state.clone());
@@ -106,7 +106,7 @@ pub fn build_router(state: AppState) -> Router {
         .layer(middleware::from_fn_with_state(state.clone(), optional_auth))
         .layer(DefaultBodyLimit::max(PUBLIC_BODY_LIMIT_BYTES))
         .layer(middleware::from_fn_with_state(
-            inbound_timeout,
+            (inbound_timeout, TimeoutShape::Legacy),
             timeout_middleware,
         ))
         .with_state(state.clone());
@@ -160,7 +160,7 @@ pub fn build_router(state: AppState) -> Router {
         )
         .layer(DefaultBodyLimit::max(MAX_BODY_LIMIT_BYTES))
         .layer(middleware::from_fn_with_state(
-            upload_timeout,
+            (upload_timeout, TimeoutShape::Legacy),
             timeout_middleware,
         ));
     // 批量导入书源：一次性贴几 MB 到几十 MB 的 JSON 数组
@@ -171,7 +171,7 @@ pub fn build_router(state: AppState) -> Router {
         )
         .layer(DefaultBodyLimit::max(SAVE_SOURCES_BODY_LIMIT_BYTES))
         .layer(middleware::from_fn_with_state(
-            upload_timeout,
+            (upload_timeout, TimeoutShape::Legacy),
             timeout_middleware,
         ));
 
@@ -193,7 +193,7 @@ pub fn build_router(state: AppState) -> Router {
         None => ai_proxy_routes,
     };
     let ai_proxy_routes = ai_proxy_routes.layer(middleware::from_fn_with_state(
-        upload_timeout,
+        (upload_timeout, TimeoutShape::Legacy),
         timeout_middleware,
     ));
 
@@ -536,7 +536,7 @@ pub fn build_router(state: AppState) -> Router {
     };
     let protected = protected
         .layer(middleware::from_fn_with_state(
-            inbound_timeout,
+            (inbound_timeout, TimeoutShape::Legacy),
             timeout_middleware,
         ))
         // 大上传路由在这里才 merge：位于上面的 120s 超时与并发层之外，

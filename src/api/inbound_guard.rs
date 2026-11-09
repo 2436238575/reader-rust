@@ -6,6 +6,7 @@
 //! 挂起的 handler 持着连接、内存与 `spawn_blocking` 槽位，慢客户端或恶意
 //! 慢请求能无限堆积。这里在 `api/router.rs` 的三个鉴权分组上补两层防线。
 
+use crate::api::problem::{ErrorCode, Problem};
 use crate::error::error::ApiResponse;
 use axum::{
     extract::{Request, State},
@@ -15,6 +16,15 @@ use axum::{
     Json,
 };
 use std::time::Duration;
+
+/// 超时响应形态。`/reader3` 沿用 ApiResponse（408）；`/v1` 用 problem+json
+/// 的 `504 PROCESSING_TIMEOUT`——契约红线：408 的语义是客户端发请求太慢，
+/// 服务端处理超时应为 504。两个命名空间共用同一份超时中间件，只换响应形态。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TimeoutShape {
+    Legacy,
+    Problem,
+}
 
 /// 入站请求超时中间件：`tokio::time::timeout` 包住 `next.run(request)`。
 ///
@@ -29,12 +39,18 @@ use std::time::Duration;
 ///   因此 aiProxy/aiProxyImage 路由在 router.rs 里与上传路由同档用
 ///   `INBOUND_UPLOAD_TIMEOUT_SECS`（其上游调用自身另有 300s 客户端预算）。
 pub async fn timeout_middleware(
-    State(timeout): State<Duration>,
+    State((timeout, shape)): State<(Duration, TimeoutShape)>,
     request: Request,
     next: Next,
 ) -> Response {
     let method = request.method().clone();
     let path = request.uri().path().to_string();
+    // RequestId 由最外层 SetRequestIdLayer 注入，先取再交出请求所有权
+    let trace_id = request
+        .extensions()
+        .get::<tower_http::request_id::RequestId>()
+        .and_then(|id| id.header_value().to_str().ok())
+        .map(str::to_string);
     match tokio::time::timeout(timeout, next.run(request)).await {
         Ok(response) => response,
         Err(_elapsed) => {
@@ -44,11 +60,21 @@ pub async fn timeout_middleware(
                 timeout_secs = timeout.as_secs(),
                 "入站请求处理超时"
             );
-            (
-                StatusCode::REQUEST_TIMEOUT,
-                Json(ApiResponse::<serde_json::Value>::err("请求超时")),
-            )
-                .into_response()
+            match shape {
+                TimeoutShape::Legacy => (
+                    StatusCode::REQUEST_TIMEOUT,
+                    Json(ApiResponse::<serde_json::Value>::err("请求超时")),
+                )
+                    .into_response(),
+                TimeoutShape::Problem => {
+                    let mut problem = Problem::new(ErrorCode::ProcessingTimeout)
+                        .detail("服务端处理超时，请稍后重试");
+                    if let Some(trace_id) = trace_id {
+                        problem = problem.trace(trace_id);
+                    }
+                    problem.into_response()
+                }
+            }
         }
     }
 }
@@ -90,7 +116,10 @@ mod tests {
                 }),
             )
             .route("/fast", get(|| async { "ok" }))
-            .layer(middleware::from_fn_with_state(timeout, timeout_middleware))
+            .layer(middleware::from_fn_with_state(
+                (timeout, TimeoutShape::Legacy),
+                timeout_middleware,
+            ))
     }
 
     async fn send(app: Router, uri: &str) -> (StatusCode, bytes::Bytes) {
@@ -118,6 +147,71 @@ mod tests {
         assert_eq!(json["isSuccess"], serde_json::Value::Bool(false));
         assert_eq!(json["errorMsg"], "请求超时");
         assert!(json["data"].is_null(), "失败时 data 必须为 null");
+    }
+
+    /// /v1 口径：超时回 504 + problem+json PROCESSING_TIMEOUT（不是 408），
+    /// 请求带 request-id 时 problem 体带一致的 traceId。
+    #[tokio::test]
+    async fn slow_request_times_out_with_problem_shape() {
+        let app = Router::new()
+            .route(
+                "/slow",
+                get(|| async {
+                    tokio::time::sleep(Duration::from_millis(200)).await;
+                    "ok"
+                }),
+            )
+            .layer(middleware::from_fn_with_state(
+                (Duration::from_millis(20), TimeoutShape::Problem),
+                timeout_middleware,
+            ));
+        let request = Request::get("/slow")
+            .body(axum::body::Body::empty())
+            .unwrap();
+        let response = app.oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::GATEWAY_TIMEOUT);
+        assert_eq!(
+            response.headers()["content-type"],
+            "application/problem+json",
+            "v1 超时必须是 problem+json"
+        );
+        let body = response.into_body().collect().await.unwrap().to_bytes();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(json["code"], "PROCESSING_TIMEOUT");
+        assert_eq!(json["status"], 504);
+        assert!(
+            json.get("traceId").is_none(),
+            "无 request-id 层时 traceId 缺省省略"
+        );
+    }
+
+    /// traceId 与请求的 X-Request-Id 扩展一致（用户截图能定位日志）。
+    #[tokio::test]
+    async fn problem_timeout_carries_request_trace_id() {
+        let app = Router::new()
+            .route(
+                "/slow",
+                get(|| async {
+                    tokio::time::sleep(Duration::from_millis(200)).await;
+                    "ok"
+                }),
+            )
+            .layer(middleware::from_fn_with_state(
+                (Duration::from_millis(20), TimeoutShape::Problem),
+                timeout_middleware,
+            ));
+        let mut request = Request::get("/slow")
+            .body(axum::body::Body::empty())
+            .unwrap();
+        request
+            .extensions_mut()
+            .insert(tower_http::request_id::RequestId::new(
+                axum::http::HeaderValue::from_static("trace-test-1"),
+            ));
+        let response = app.oneshot(request).await.unwrap();
+        let body = response.into_body().collect().await.unwrap().to_bytes();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(json["traceId"], "trace-test-1");
     }
 
     #[tokio::test]

@@ -33,6 +33,9 @@ pub enum ErrorCode {
     AuthExpired,
     /// refresh token 重放，会话已吊销，必须重新登录
     AuthRefreshReplayed,
+    /// 会话失效（如账号行已不存在），必须重新登录；与 `AUTH_EXPIRED` 的
+    /// 区别是静默刷新救不回来，前端不应尝试刷新
+    SessionInvalid,
     /// 缺少 `X-Requested-With` 头（CSRF 双保险）
     CsrfHeaderMissing,
     /// 限定 scope 的令牌访问了白名单外路径
@@ -92,9 +95,10 @@ impl ErrorCode {
             Self::ValidationFailed | Self::InvalidCursor | Self::UnknownField => {
                 StatusCode::UNPROCESSABLE_ENTITY
             }
-            Self::InvalidCredentials | Self::AuthExpired | Self::AuthRefreshReplayed => {
-                StatusCode::UNAUTHORIZED
-            }
+            Self::InvalidCredentials
+            | Self::AuthExpired
+            | Self::AuthRefreshReplayed
+            | Self::SessionInvalid => StatusCode::UNAUTHORIZED,
             Self::CsrfHeaderMissing | Self::ScopeForbidden => StatusCode::FORBIDDEN,
             Self::BookNotFound
             | Self::ChapterNotFound
@@ -127,6 +131,7 @@ impl ErrorCode {
             Self::InvalidCredentials => "Invalid Credentials",
             Self::AuthExpired => "Auth Expired",
             Self::AuthRefreshReplayed => "Auth Refresh Replayed",
+            Self::SessionInvalid => "Session Invalid",
             Self::CsrfHeaderMissing => "CSRF Header Missing",
             Self::ScopeForbidden => "Scope Forbidden",
             Self::BookNotFound => "Book Not Found",

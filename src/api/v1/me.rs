@@ -53,9 +53,8 @@ pub async fn get_me(
         .await
         .map_err(Problem::from)?
         // 令牌有效但账号行不存在：静默刷新救不回来，必须重新登录
-        .ok_or_else(|| {
-            Problem::new(ErrorCode::AuthRefreshReplayed).detail("账号不存在，请重新登录")
-        })?;
+        //（AUTH_REFRESH_REPLAYED 是安全告警语义，这里用会话失效）
+        .ok_or_else(|| Problem::new(ErrorCode::SessionInvalid).detail("账号不存在，请重新登录"))?;
     Ok(Json(Me {
         id: format!("u_{}", user.uid),
         username: profile.0,
