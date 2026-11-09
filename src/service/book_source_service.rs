@@ -65,6 +65,10 @@ impl BookSourceService {
     /// 摘要列表：列表场景只回展示字段 + exploreUrl，不下发 MB 级规则 JSON。
     /// 每行 blob 仍在服务端解析（复用旧版迁移逻辑），用 CPU 换下行流量；
     /// 单条全量走 get_by_id，编辑/翻转开关按需取。
+    ///
+    /// **每次调用全量载入并逐行反序列化**：`/v1/sources` 的游标分页目前建立在
+    /// 这个全量结果上（几百个书源可接受，但翻页会重复解析）。书源量增长到
+    /// 万级时，分页需下沉到 SQL（`ORDER BY book_source_id` 的 keyset 查询）。
     pub async fn list_summary(&self, user_ns: &str) -> Result<Vec<BookSourceSummary>, AppError> {
         let rows = self.repo.list(user_ns).await?;
         let mut out = Vec::with_capacity(rows.len());

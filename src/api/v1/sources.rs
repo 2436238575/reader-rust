@@ -70,7 +70,8 @@ pub struct SourcePage {
     pub total: Option<u32>,
 }
 
-/// 游标载荷：上一页最后一条的 id（keyset on 不可变主键）。
+/// 游标载荷：上一页最后一条的 id。语义上是 keyset（不可变主键之后的下一页），
+/// 当前实现为内存切片，不下沉到 SQL。
 #[derive(Serialize, Deserialize)]
 struct CursorPayload {
     id: i64,
@@ -125,11 +126,16 @@ fn if_none_match_matches(if_none_match: Option<&HeaderValue>, etag: &HeaderValue
 }
 
 /// 书源列表。
+///
+/// **排序固定为 `id` 升序（创建顺序）**：游标 keyset 依赖不可变排序键；
+/// 旧 `/reader3/getBookSourceList` 是 `updated_at` 降序（最近编辑在前），
+/// 切换后列表顺序语义随之变化（决策记录有档）。展示层如需其他顺序自行排序。
 #[utoipa::path(
     get,
     path = "/v1/sources",
     tag = "sources",
     operation_id = "listSources",
+    description = "书源摘要页。排序固定为 id 升序（创建顺序）；游标 keyset 依赖不可变排序键。",
     params(
         ("q" = Option<String>, Query, description = "名称或 URL 的大小写不敏感子串"),
         ("cursor" = Option<String>, Query, description = "上一页的 nextCursor"),
@@ -201,7 +207,8 @@ pub async fn list_sources(
             })
         })
         .collect();
-    // keyset 排序：id 升序（不可变，翻页稳定）
+    // 当前实现：全量载入 + 内存切片（书源量级几百，够用；SQL keyset 下沉
+    // 留待书源量增长）。排序键是 id 升序（不可变，翻页稳定）。
     items.sort_by_key(|item| {
         item.id
             .strip_prefix("src_")

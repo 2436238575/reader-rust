@@ -114,7 +114,10 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** 书源列表。 */
+        /**
+         * 书源列表。
+         * @description 书源摘要页。排序固定为 id 升序（创建顺序）；游标 keyset 依赖不可变排序键。
+         */
         get: operations["listSources"];
         put?: never;
         post?: never;
