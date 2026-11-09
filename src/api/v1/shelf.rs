@@ -23,6 +23,9 @@ use axum::Router;
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
+/// 「最近阅读时间」刷新节流：窗口内的重复保存不改动时间戳。
+const PROGRESS_TIME_THROTTLE_SECS: i64 = 60;
+
 pub fn router() -> Router<AppState> {
     Router::new()
         .route(
@@ -189,39 +192,66 @@ pub async fn patch_shelf_book(
         // merge-patch 空体：合法但无事可做
         return Ok(StatusCode::NO_CONTENT);
     };
-    let offset = progress
-        .offset
-        .map(|value| value.clamp(0.0, 1.0))
-        .map(|value| (value * 10_000.0).round() as i32);
-    // 章节标题缺省时从登记表解析（与目录显示一致，覆盖层后续在读取出口叠加）
-    let title = match &progress.chapter_title {
-        Some(title) => Some(title.clone()),
-        None => state
-            .book_service
-            .resolve_chapter_by_index(&book_id, progress.chapter_index)
-            .await
-            .map_err(Problem::from)?
-            .map(|chapter| chapter.title),
+    // offset 越界是字段值非法（契约 422 VALIDATION_FAILED，带 pointer），
+    // 不做静默 clamp——静默改写客户端给的值会掩盖调用方 bug
+    let offset = match progress.offset {
+        Some(offset) if !(0.0..=1.0).contains(&offset) => {
+            return Err(Problem::new(ErrorCode::ValidationFailed)
+                .detail("progress.offset 必须在 0..1 之间")
+                .errors(vec![crate::api::problem::FieldIssue {
+                    pointer: "/progress/offset".to_string(),
+                    code: "OUT_OF_RANGE".to_string(),
+                    detail: Some("必须在 0..1 之间".to_string()),
+                }]));
+        }
+        other => other,
     };
-    let index_changed = state
+    let offset = offset.map(|value| (value * 10_000.0).round() as i32);
+    // 章节标题缺省时从登记表解析（与目录显示一致，覆盖层后续在读取出口叠加）；
+    // 只有确实切了章才解析（原地保存不改标题）
+    let entry = state
         .book_service
         .get_shelf_book(&user.ns, &book_id)
         .await?
-        .and_then(|book| book.dur_chapter_index)
+        .ok_or_else(book_not_in_shelf)?;
+    let index_changed = entry
+        .dur_chapter_index
         .is_none_or(|current| current != progress.chapter_index);
+    let title = match &progress.chapter_title {
+        Some(title) => Some(title.clone()),
+        None => {
+            if index_changed {
+                state
+                    .book_service
+                    .resolve_chapter_by_index(&book_id, progress.chapter_index)
+                    .await
+                    .map_err(Problem::from)?
+                    .map(|chapter| chapter.title)
+            } else {
+                None
+            }
+        }
+    };
 
     let updated = state
         .book_service
         .update_shelf_book(&user.ns, &book_id, |book| {
             book.dur_chapter_index = Some(progress.chapter_index);
-            if index_changed {
-                book.dur_chapter_time = Some(crate::util::time::now_ts());
-            }
             if let Some(title) = title {
                 book.dur_chapter_title = Some(title);
             }
             if let Some(offset) = offset {
                 book.dur_chapter_pos = Some(offset);
+            }
+            // 最近阅读时间：每次进度保存都刷新（旧 saveBookProgress 口径），
+            // 60s 节流避免高频 ping 的无谓写入；语义是「最近阅读」，
+            // 不绑在换章上——同一章读两小时也不能沉下去
+            let now = crate::util::time::now_ts();
+            let throttled = book
+                .dur_chapter_time
+                .is_some_and(|last| now - last < PROGRESS_TIME_THROTTLE_SECS);
+            if !throttled {
+                book.dur_chapter_time = Some(now);
             }
         })
         .await
@@ -378,6 +408,12 @@ pub async fn get_book(
             )
         }
     };
+    // 封面走图片管道：coverImageId = md5(去查询串的上游地址)，同一张图
+    // 永远同一个 id——签名的上游直出地址会过期，不能给客户端
+    let cover_image_id = info
+        .cover_url
+        .as_deref()
+        .map(crate::service::image_service::ImageService::image_key);
     let chapters = state
         .book_service
         .load_chapter_list_cache(&user.ns, &book_id)
@@ -398,7 +434,7 @@ pub async fn get_book(
         book_url: resolved.book_url.clone(),
         intro: info.intro,
         kind: info.kind,
-        cover_url: info.cover_url,
+        cover_image_id,
         total_chapters,
         last_chapter,
         stale,
@@ -418,8 +454,9 @@ pub struct BookDetail {
     pub book_url: String,
     pub intro: Option<String>,
     pub kind: Option<String>,
-    /// 上游封面地址（诊断；正式封面走图片管道，随该域切换迁移）
-    pub cover_url: Option<String>,
+    /// 封面在图片管道中的 id（md5(去查询串地址)）；取图地址随 images 域
+    /// 切换迁移（当前 /reader3/image/<id>）
+    pub cover_image_id: Option<String>,
     /// 章节登记表的章节数（目录未抓时缺省）
     pub total_chapters: Option<u32>,
     pub last_chapter: Option<LastChapter>,

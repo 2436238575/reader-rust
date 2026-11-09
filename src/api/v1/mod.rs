@@ -28,7 +28,6 @@ use utoipa::{Modify, OpenApi};
 mod auth;
 mod books;
 
-pub(crate) use books::if_none_match_matches;
 mod content;
 mod me;
 mod shelf;

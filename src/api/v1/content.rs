@@ -13,8 +13,9 @@
 //! Draft-1 §9.5 的 `?include=blocks` 与内联 diff 暂未实现：blocks 的消费方
 //! （段评/编辑器）在 P3，diff 有独立端点（`versions/{v}/diff`）。
 
+use crate::api::etag::if_none_match_matches;
 use crate::api::problem::{ErrorCode, Problem};
-use crate::api::v1::{if_none_match_matches, V1User};
+use crate::api::v1::V1User;
 use crate::api::AppState;
 use axum::extract::{Path, Query, State};
 use axum::http::{header, HeaderMap, HeaderValue, StatusCode};
@@ -322,4 +323,38 @@ pub async fn get_chapter_content(
         HeaderValue::from_static("private, no-cache"),
     );
     Ok(response)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::detect_content_format;
+
+    /// 与前端 chapterRender.test.ts 的四条边界用例同口径（D15：判定收口到
+    /// 服务端一处，判错的代价全在服务端——前端按 format 直接渲染）。
+    #[test]
+    fn detects_html_and_text_boundary_cases() {
+        // 前端既有边界用例
+        assert_eq!(
+            detect_content_format("<b>没有闭合"),
+            "text",
+            "无闭合标签不算 HTML"
+        );
+        assert_eq!(detect_content_format("a<b>c"), "text");
+        assert_eq!(detect_content_format("1 < 2 > 0"), "text");
+        assert_eq!(detect_content_format("<p>hello</p>"), "html");
+        // 补充边界
+        assert_eq!(
+            detect_content_format("<br>"),
+            "html",
+            "自闭合块级标签单独出现"
+        );
+        assert_eq!(
+            detect_content_format("<p>a</p>明文"),
+            "html",
+            "HTML 与明文混排按 HTML 渲染（消毒层负责安全）"
+        );
+        // 纯文本基本盘
+        assert_eq!(detect_content_format("第一章 正文。"), "text");
+        assert_eq!(detect_content_format(""), "text");
+    }
 }

@@ -1,3 +1,4 @@
+pub mod etag;
 pub mod extract;
 pub mod handlers;
 pub mod inbound_guard;

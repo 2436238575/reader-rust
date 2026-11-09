@@ -20,12 +20,13 @@ use axum::response::{IntoResponse, Response};
 use axum::routing::get;
 use axum::Router;
 use base64::Engine;
-use md5::{Digest, Md5};
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
 const DEFAULT_LIMIT: u32 = 50;
 const MAX_LIMIT: u32 = 200;
+
+use crate::api::etag::if_none_match_matches;
 
 pub fn router() -> Router<AppState> {
     Router::new().route("/v1/books/{bookId}/chapters", get(list_chapters))
@@ -80,38 +81,6 @@ fn decode_cursor(raw: &str) -> Result<i32, Problem> {
     let payload: CursorPayload = serde_json::from_slice(&bytes)
         .map_err(|_| Problem::new(ErrorCode::InvalidCursor).detail("游标无法解码"))?;
     Ok(payload.index)
-}
-
-fn response_etag(bytes: &[u8]) -> HeaderValue {
-    let digest = Md5::digest(bytes);
-    HeaderValue::from_str(&format!("\"{}\"", hex::encode(digest)))
-        .expect("md5 hex + 引号必为合法 header 值")
-}
-
-pub(crate) fn if_none_match_matches(
-    if_none_match: Option<&HeaderValue>,
-    etag: &HeaderValue,
-) -> bool {
-    let Some(header_value) = if_none_match else {
-        return false;
-    };
-    let Ok(raw) = header_value.to_str() else {
-        return false;
-    };
-    let raw = raw.trim();
-    if raw == "*" {
-        return true;
-    }
-    let Some(current) = etag.to_str().ok() else {
-        return false;
-    };
-    raw.split(',').any(|candidate| {
-        candidate
-            .trim()
-            .strip_prefix("W/")
-            .unwrap_or(candidate.trim())
-            == current
-    })
 }
 
 /// 章节列表。
@@ -204,7 +173,7 @@ pub async fn list_chapters(
         total: Some(total),
     };
     let body = serde_json::to_vec(&page).expect("chapter page serializes");
-    let etag = response_etag(&body);
+    let etag = crate::api::etag::strong_etag(&body);
     let mut response = if if_none_match_matches(headers.get(header::IF_NONE_MATCH), &etag) {
         StatusCode::NOT_MODIFIED.into_response()
     } else {

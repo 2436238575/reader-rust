@@ -11,7 +11,6 @@ use crate::util::text::repair_encoded_url;
 use axum::http::{header, HeaderMap, HeaderValue, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::{extract::State, Json};
-use md5::{Digest, Md5};
 use serde::Deserialize;
 use serde_json::Value;
 
@@ -22,39 +21,13 @@ pub struct ChapterListRequest {
     pub refresh: Option<i32>,
 }
 
-/// 目录响应的强 ETag：对实际返回的章节列表序列化后取 md5。
-/// 同一份目录字节级稳定 → ETag 稳定；章节增删或标题/URL 变化必然改变
-/// 序列化字节 → ETag 变化，客户端据此复用浏览器缓存（304）。
+/// 目录响应的强 ETag：对实际返回的章节列表序列化后取 md5（共享实现）。
 fn chapter_list_etag(chapters: &Value) -> HeaderValue {
     let bytes = serde_json::to_vec(chapters).unwrap_or_default();
-    let digest = Md5::digest(&bytes);
-    let quoted = format!("\"{}\"", hex::encode(digest));
-    HeaderValue::from_str(&quoted).expect("md5 hex + 引号必为合法 header 值")
+    crate::api::etag::strong_etag(&bytes)
 }
 
-/// `If-None-Match` 的宽松比较（RFC 9110 §13.1.2：GET/HEAD 用弱比较）：
-/// 候选按逗号分隔，忽略 `W/` 弱前缀与两端空白；`*` 匹配任意现有表示。
-/// 头缺失或非法 UTF-8 一律不匹配——宁可多回一次 200，不误报 304。
-fn if_none_match_matches(if_none_match: Option<&HeaderValue>, etag: &HeaderValue) -> bool {
-    let Some(header_value) = if_none_match else {
-        return false;
-    };
-    let Ok(raw) = header_value.to_str() else {
-        return false;
-    };
-    let raw = raw.trim();
-    if raw == "*" {
-        return true;
-    }
-    let Some(current) = etag.to_str().ok() else {
-        return false;
-    };
-    raw.split(',').any(|candidate| {
-        let candidate = candidate.trim();
-        let candidate = candidate.strip_prefix("W/").unwrap_or(candidate);
-        candidate == current
-    })
-}
+use crate::api::etag::if_none_match_matches;
 
 /// 目录接口统一出口：未变化时 304 空 body，否则 200 JSON；
 /// 两种结果都带 ETag 与 `Cache-Control: private, no-cache`

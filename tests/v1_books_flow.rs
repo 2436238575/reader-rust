@@ -613,8 +613,8 @@ async fn patch_shelf_progress_updates_and_validates() {
     assert_eq!(entry["durChapterPos"], json!(5000));
     assert_eq!(entry["durChapterTitle"], json!("第 2 章"));
 
-    // offset 越界钳制到 0..1
-    let clamped = server
+    // offset 越界：422 VALIDATION_FAILED 带 pointer（不做静默 clamp）
+    let out_of_range = server
         .client
         .patch(format!("{}/v1/me/shelf/{book_id}", server.base_url))
         .bearer_auth(&server.token)
@@ -622,18 +622,10 @@ async fn patch_shelf_progress_updates_and_validates() {
         .send()
         .await
         .unwrap();
-    assert_eq!(clamped.status(), StatusCode::NO_CONTENT);
-    let shelf: Value = server
-        .client
-        .get(format!("{}/reader3/getBookshelf", server.base_url))
-        .bearer_auth(&server.token)
-        .send()
-        .await
-        .unwrap()
-        .json()
-        .await
-        .unwrap();
-    assert_eq!(shelf["data"][0]["durChapterPos"], json!(10000));
+    assert_eq!(out_of_range.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    let body: Value = out_of_range.json().await.unwrap();
+    assert_eq!(body["code"], json!("VALIDATION_FAILED"));
+    assert_eq!(body["errors"][0]["pointer"], json!("/progress/offset"));
 
     // 未知字段：422 UNKNOWN_FIELD
     let unknown = server

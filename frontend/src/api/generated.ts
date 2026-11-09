@@ -218,8 +218,11 @@ export interface components {
             author?: string | null;
             /** @description 上游地址：只读诊断字段（红线 6 例外之外的只读输出） */
             bookUrl: string;
-            /** @description 上游封面地址（诊断；正式封面走图片管道，随该域切换迁移） */
-            coverUrl?: string | null;
+            /**
+             * @description 封面在图片管道中的 id（md5(去查询串地址)）；取图地址随 images 域
+             *     切换迁移（当前 /reader3/image/<id>）
+             */
+            coverImageId?: string | null;
             /** @description 不透明 id（`book_<n>`） */
             id: string;
             intro?: string | null;

@@ -7,6 +7,7 @@
 //! 排序由服务端固定为 `id` 升序（不可变、keyset 稳定）：`updated_at` 会随
 //! 编辑变化，做游标会漏行/重行；展示排序各端自行处理。
 
+use crate::api::etag::if_none_match_matches;
 use crate::api::problem::{ErrorCode, Problem};
 use crate::api::v1::V1User;
 use crate::api::AppState;
@@ -16,7 +17,6 @@ use axum::response::{IntoResponse, Response};
 use axum::routing::get;
 use axum::Router;
 use base64::Engine;
-use md5::{Digest, Md5};
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
@@ -90,39 +90,6 @@ fn decode_cursor(raw: &str) -> Result<i64, Problem> {
     let payload: CursorPayload = serde_json::from_slice(&bytes)
         .map_err(|_| Problem::new(ErrorCode::InvalidCursor).detail("游标无法解码"))?;
     Ok(payload.id)
-}
-
-/// 列表响应的强 ETag：对实际返回的 JSON 取 md5，同一份数据字节级稳定。
-/// （契约 §10 标注列表用弱 ETag；这里对精确字节做哈希，强验证器更严格，
-/// 语义上成立且与章节目录沿用同一做法。）
-fn response_etag(bytes: &[u8]) -> HeaderValue {
-    let digest = Md5::digest(bytes);
-    HeaderValue::from_str(&format!("\"{}\"", hex::encode(digest)))
-        .expect("md5 hex + 引号必为合法 header 值")
-}
-
-/// `If-None-Match` 的宽松比较（RFC 9110 §13.1.2），与章节目录同一实现。
-fn if_none_match_matches(if_none_match: Option<&HeaderValue>, etag: &HeaderValue) -> bool {
-    let Some(header_value) = if_none_match else {
-        return false;
-    };
-    let Ok(raw) = header_value.to_str() else {
-        return false;
-    };
-    let raw = raw.trim();
-    if raw == "*" {
-        return true;
-    }
-    let Some(current) = etag.to_str().ok() else {
-        return false;
-    };
-    raw.split(',').any(|candidate| {
-        candidate
-            .trim()
-            .strip_prefix("W/")
-            .unwrap_or(candidate.trim())
-            == current
-    })
 }
 
 /// 书源列表。
@@ -242,7 +209,7 @@ pub async fn list_sources(
         total: Some(total),
     };
     let body = serde_json::to_vec(&page).expect("source page serializes");
-    let etag = response_etag(&body);
+    let etag = crate::api::etag::strong_etag(&body);
     let mut response = if if_none_match_matches(headers.get(header::IF_NONE_MATCH), &etag) {
         StatusCode::NOT_MODIFIED.into_response()
     } else {
