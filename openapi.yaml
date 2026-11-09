@@ -136,6 +136,74 @@ paths:
             application/problem+json:
               schema:
                 $ref: '#/components/schemas/Problem'
+  /v1/books/{bookId}:
+    get:
+      tags:
+      - books
+      summary: 书籍详情：详情规则求值（1h 缓存）+ 章节登记表的统计切片。
+      operationId: getBook
+      parameters:
+      - name: bookId
+        in: path
+        description: 书籍 id（book_<n>）
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: 书籍详情
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BookDetail'
+        '404':
+          description: 书籍不存在
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+      security:
+      - cookieAuth: []
+      - bearerAuth: []
+    patch:
+      tags:
+      - books
+      summary: 改书名/作者（登记表列；merge-patch，只写出现的字段）。
+      description: |-
+        intro/kind/wordCount/cover 的存储还在 `shelf_books`（元数据迁移未做），
+        本端点暂不收——传入即 422 `UNKNOWN_FIELD`。
+      operationId: patchBook
+      parameters:
+      - name: bookId
+        in: path
+        description: 书籍 id（book_<n>）
+        required: true
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BookPatch'
+        required: true
+      responses:
+        '204':
+          description: 已更新
+        '404':
+          description: 书籍不存在
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '422':
+          description: 未知字段（本端点只收 name/author）
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+      security:
+      - cookieAuth: []
+      - bearerAuth: []
   /v1/books/{bookId}/chapters:
     get:
       tags:
@@ -290,6 +358,113 @@ paths:
       security:
       - cookieAuth: []
       - bearerAuth: []
+  /v1/me/shelf/{bookId}:
+    put:
+      tags:
+      - me
+      summary: 入架（幂等）：已登记的书籍确保在架。201 首次 / 200 已在架。
+      description: |-
+        元数据用书籍详情（1h 缓存，详情页刚看过时命中）填充；冷缓存会回源一次
+        上游——与打开详情页的成本相同。
+      operationId: addToShelf
+      parameters:
+      - name: bookId
+        in: path
+        description: 书籍 id（book_<n>）
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: 已在架（幂等重复调用，不重置进度）
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ShelfWriteResult'
+        '201':
+          description: 已入架
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ShelfWriteResult'
+        '404':
+          description: 书籍不存在
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+      security:
+      - cookieAuth: []
+      - bearerAuth: []
+    delete:
+      tags:
+      - me
+      summary: 移出书架（幂等）：登记行、书签与正文历史保留。书籍不存在同样 204。
+      operationId: removeFromShelf
+      parameters:
+      - name: bookId
+        in: path
+        description: 书籍 id（book_<n>）
+        required: true
+        schema:
+          type: string
+      responses:
+        '204':
+          description: 已移出（幂等）
+        '404':
+          description: 书籍不存在
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+      security:
+      - cookieAuth: []
+      - bearerAuth: []
+    patch:
+      tags:
+      - me
+      summary: 进度与书架状态（merge-patch，只写出现的字段）。
+      description: |-
+        未提供 `chapterTitle` 且章节切换时，标题从章节登记表解析；
+        `lastReadAt` 服务端写——客户端时间不参与比较（契约 §5.2）。
+      operationId: patchShelfBook
+      parameters:
+      - name: bookId
+        in: path
+        description: 书籍 id（book_<n>）
+        required: true
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ShelfPatch'
+        required: true
+      responses:
+        '204':
+          description: 已更新
+        '404':
+          description: 书籍不存在
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '409':
+          description: 书籍未加入书架
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '422':
+          description: 未知字段或取值非法
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+      security:
+      - cookieAuth: []
+      - bearerAuth: []
   /v1/sources:
     get:
       tags:
@@ -350,6 +525,70 @@ paths:
       - bearerAuth: []
 components:
   schemas:
+    BookDetail:
+      type: object
+      required:
+      - id
+      - name
+      - bookUrl
+      - stale
+      properties:
+        author:
+          type:
+          - string
+          - 'null'
+        bookUrl:
+          type: string
+          description: 上游地址：只读诊断字段（红线 6 例外之外的只读输出）
+        coverUrl:
+          type:
+          - string
+          - 'null'
+          description: 上游封面地址（诊断；正式封面走图片管道，随该域切换迁移）
+        id:
+          type: string
+          description: 不透明 id（`book_<n>`）
+        intro:
+          type:
+          - string
+          - 'null'
+        kind:
+          type:
+          - string
+          - 'null'
+        lastChapter:
+          oneOf:
+          - $ref: '#/components/schemas/LastChapter'
+          - type: 'null'
+        name:
+          type: string
+        sourceId:
+          type:
+          - string
+          - 'null'
+          description: 绑定书源；null 表示本地书
+        stale:
+          type: boolean
+          description: 上游详情获取失败，当前是登记行回退数据
+        totalChapters:
+          type:
+          - integer
+          - 'null'
+          format: int32
+          description: 章节登记表的章节数（目录未抓时缺省）
+          minimum: 0
+    BookPatch:
+      type: object
+      properties:
+        author:
+          type:
+          - string
+          - 'null'
+        name:
+          type:
+          - string
+          - 'null'
+      additionalProperties: false
     ChangePasswordRequest:
       type: object
       properties:
@@ -526,6 +765,17 @@ components:
           type: string
         pointer:
           type: string
+    LastChapter:
+      type: object
+      required:
+      - index
+      - title
+      properties:
+        index:
+          type: integer
+          format: int32
+        title:
+          type: string
     LoginRequest:
       type: object
       properties:
@@ -589,6 +839,25 @@ components:
         upstreamCode:
           type: string
           description: 上游业务码原样透传（FQWeb 的 `UPSTREAM_THROTTLED` 等）
+    ProgressPatch:
+      type: object
+      required:
+      - chapterIndex
+      properties:
+        chapterIndex:
+          type: integer
+          format: int32
+        chapterTitle:
+          type:
+          - string
+          - 'null'
+        offset:
+          type:
+          - number
+          - 'null'
+          format: double
+          description: 0..1 的章内比例（服务端存万分比）
+      additionalProperties: false
     SessionTokens:
       type: object
       description: |-
@@ -608,6 +877,21 @@ components:
         username:
           type: string
           description: 登录用户名（hint 展示与 API 客户端识别；/v1/me 才是资料源）
+    ShelfPatch:
+      type: object
+      properties:
+        progress:
+          oneOf:
+          - $ref: '#/components/schemas/ProgressPatch'
+          - type: 'null'
+      additionalProperties: false
+    ShelfWriteResult:
+      type: object
+      required:
+      - bookId
+      properties:
+        bookId:
+          type: string
     SourcePage:
       type: object
       description: '游标分页容器（契约 §5.4）：`nextCursor: null` 表示到底。'

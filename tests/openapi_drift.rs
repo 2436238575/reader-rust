@@ -35,7 +35,9 @@ fn openapi_yaml_matches_code() {
 /// 漂移检查天然抓不到，只有清单断言能兜住（2026-11-09 审阅发现的问题）。
 const REQUIRED_PATHS: &[&str] = &[
     "/v1/me:",
+    "/v1/me/shelf/{bookId}:",
     "/v1/sources:",
+    "/v1/books/{bookId}:",
     "/v1/books/{bookId}/chapters:",
     "/v1/books/{bookId}/chapters/{index}/content:",
     "/v1/auth/login:",

@@ -514,3 +514,232 @@ async fn local_book_content_reads_from_file() {
 
     server.cleanup();
 }
+
+#[tokio::test]
+async fn put_shelf_enrolls_then_is_idempotent() {
+    let server = TestServer::start().await;
+    let book_id = server
+        .seed_book_with_chapters("https://up.example.com", 3)
+        .await;
+
+    // 首次入架：上游不可达也不阻塞（登记行信息兜底）
+    let first = server
+        .client
+        .put(format!("{}/v1/me/shelf/{book_id}", server.base_url))
+        .bearer_auth(&server.token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(first.status(), StatusCode::CREATED);
+    let body: Value = first.json().await.unwrap();
+    assert_eq!(body["bookId"], json!(book_id));
+
+    // 重复入架：200 幂等
+    let second = server
+        .client
+        .put(format!("{}/v1/me/shelf/{book_id}", server.base_url))
+        .bearer_auth(&server.token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(second.status(), StatusCode::OK);
+
+    // 未知书：404 精确码
+    let missing = server
+        .client
+        .put(format!("{}/v1/me/shelf/book_999", server.base_url))
+        .bearer_auth(&server.token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(missing.status(), StatusCode::NOT_FOUND);
+    let body: Value = missing.json().await.unwrap();
+    assert_eq!(body["code"], json!("BOOK_NOT_FOUND"));
+
+    server.cleanup();
+}
+
+#[tokio::test]
+async fn patch_shelf_progress_updates_and_validates() {
+    let server = TestServer::start().await;
+    let book_id = server
+        .seed_book_with_chapters("https://up.example.com", 5)
+        .await;
+
+    // 未入架先 PATCH：409 BOOK_NOT_IN_SHELF
+    let before = server
+        .client
+        .patch(format!("{}/v1/me/shelf/{book_id}", server.base_url))
+        .bearer_auth(&server.token)
+        .json(&json!({"progress": {"chapterIndex": 2, "offset": 0.5}}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(before.status(), StatusCode::CONFLICT);
+    let body: Value = before.json().await.unwrap();
+    assert_eq!(body["code"], json!("BOOK_NOT_IN_SHELF"));
+
+    // 入架 → 进度 PATCH：204；标题缺省从登记表解析
+    server
+        .client
+        .put(format!("{}/v1/me/shelf/{book_id}", server.base_url))
+        .bearer_auth(&server.token)
+        .send()
+        .await
+        .unwrap();
+    let patched = server
+        .client
+        .patch(format!("{}/v1/me/shelf/{book_id}", server.base_url))
+        .bearer_auth(&server.token)
+        .json(&json!({"progress": {"chapterIndex": 2, "offset": 0.5}}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(patched.status(), StatusCode::NO_CONTENT);
+
+    // 交叉验证：/reader3 读侧看到同样的进度（offset 0.5 → 万分比 5000）
+    let shelf: Value = server
+        .client
+        .get(format!("{}/reader3/getBookshelf", server.base_url))
+        .bearer_auth(&server.token)
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let entry = &shelf["data"][0];
+    assert_eq!(entry["durChapterIndex"], json!(2));
+    assert_eq!(entry["durChapterPos"], json!(5000));
+    assert_eq!(entry["durChapterTitle"], json!("第 2 章"));
+
+    // offset 越界钳制到 0..1
+    let clamped = server
+        .client
+        .patch(format!("{}/v1/me/shelf/{book_id}", server.base_url))
+        .bearer_auth(&server.token)
+        .json(&json!({"progress": {"chapterIndex": 3, "offset": 1.7}}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(clamped.status(), StatusCode::NO_CONTENT);
+    let shelf: Value = server
+        .client
+        .get(format!("{}/reader3/getBookshelf", server.base_url))
+        .bearer_auth(&server.token)
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(shelf["data"][0]["durChapterPos"], json!(10000));
+
+    // 未知字段：422 UNKNOWN_FIELD
+    let unknown = server
+        .client
+        .patch(format!("{}/v1/me/shelf/{book_id}", server.base_url))
+        .bearer_auth(&server.token)
+        .json(&json!({"bookUrl": "https://x.example.com"}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(unknown.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    let body: Value = unknown.json().await.unwrap();
+    assert_eq!(body["code"], json!("UNKNOWN_FIELD"));
+
+    server.cleanup();
+}
+
+#[tokio::test]
+async fn delete_shelf_is_idempotent_and_keeps_registration() {
+    let server = TestServer::start().await;
+    let book_id = server
+        .seed_book_with_chapters("https://up.example.com", 2)
+        .await;
+
+    server
+        .client
+        .put(format!("{}/v1/me/shelf/{book_id}", server.base_url))
+        .bearer_auth(&server.token)
+        .send()
+        .await
+        .unwrap();
+
+    let deleted = server
+        .client
+        .delete(format!("{}/v1/me/shelf/{book_id}", server.base_url))
+        .bearer_auth(&server.token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(deleted.status(), StatusCode::NO_CONTENT);
+
+    // 幂等：再删仍 204（删除的不是登记行，章节列表仍可读）
+    let again = server
+        .client
+        .delete(format!("{}/v1/me/shelf/{book_id}", server.base_url))
+        .bearer_auth(&server.token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(again.status(), StatusCode::NO_CONTENT);
+    let chapters = server.get(&format!("/v1/books/{book_id}/chapters")).await;
+    assert_eq!(chapters.status(), StatusCode::OK);
+
+    server.cleanup();
+}
+
+#[tokio::test]
+async fn patch_book_updates_registration_fields() {
+    let server = TestServer::start().await;
+    let book_id = server
+        .seed_book_with_chapters("https://up.example.com", 2)
+        .await;
+
+    let resp = server
+        .client
+        .patch(format!("{}/v1/books/{book_id}", server.base_url))
+        .bearer_auth(&server.token)
+        .json(&json!({"name": "改名后的书", "author": "新作者"}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::NO_CONTENT, "PATCH 应成功");
+
+    let detail = server.get(&format!("/v1/books/{book_id}")).await;
+    assert_eq!(detail.status(), StatusCode::OK);
+    let body: Value = detail.json().await.unwrap();
+    assert_eq!(body["name"], json!("改名后的书"));
+    assert_eq!(body["author"], json!("新作者"));
+    assert_eq!(body["id"], json!(book_id));
+    assert_eq!(body["totalChapters"], json!(2));
+    assert_eq!(body["lastChapter"]["index"], json!(1));
+
+    // 未知字段 422
+    let unknown = server
+        .client
+        .patch(format!("{}/v1/books/{book_id}", server.base_url))
+        .bearer_auth(&server.token)
+        .json(&json!({"bookUrl": "https://x.example.com"}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(unknown.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    let body: Value = unknown.json().await.unwrap();
+    assert_eq!(body["code"], json!("UNKNOWN_FIELD"));
+
+    server.cleanup();
+}
+
+#[tokio::test]
+async fn book_detail_gets_precise_404() {
+    let server = TestServer::start().await;
+
+    let resp = server.get("/v1/books/book_999").await;
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+    let body: Value = resp.json().await.unwrap();
+    assert_eq!(body["code"], json!("BOOK_NOT_FOUND"));
+
+    server.cleanup();
+}

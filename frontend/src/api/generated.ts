@@ -87,6 +87,28 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/books/{bookId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 书籍详情：详情规则求值（1h 缓存）+ 章节登记表的统计切片。 */
+        get: operations["getBook"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /**
+         * 改书名/作者（登记表列；merge-patch，只写出现的字段）。
+         * @description intro/kind/wordCount/cover 的存储还在 `shelf_books`（元数据迁移未做），
+         *     本端点暂不收——传入即 422 `UNKNOWN_FIELD`。
+         */
+        patch: operations["patchBook"];
+        trace?: never;
+    };
     "/v1/books/{bookId}/chapters": {
         parameters: {
             query?: never;
@@ -141,6 +163,33 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/me/shelf/{bookId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * 入架（幂等）：已登记的书籍确保在架。201 首次 / 200 已在架。
+         * @description 元数据用书籍详情（1h 缓存，详情页刚看过时命中）填充；冷缓存会回源一次
+         *     上游——与打开详情页的成本相同。
+         */
+        put: operations["addToShelf"];
+        post?: never;
+        /** 移出书架（幂等）：登记行、书签与正文历史保留。书籍不存在同样 204。 */
+        delete: operations["removeFromShelf"];
+        options?: never;
+        head?: never;
+        /**
+         * 进度与书架状态（merge-patch，只写出现的字段）。
+         * @description 未提供 `chapterTitle` 且章节切换时，标题从章节登记表解析；
+         *     `lastReadAt` 服务端写——客户端时间不参与比较（契约 §5.2）。
+         */
+        patch: operations["patchShelfBook"];
+        trace?: never;
+    };
     "/v1/sources": {
         parameters: {
             query?: never;
@@ -165,6 +214,32 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        BookDetail: {
+            author?: string | null;
+            /** @description 上游地址：只读诊断字段（红线 6 例外之外的只读输出） */
+            bookUrl: string;
+            /** @description 上游封面地址（诊断；正式封面走图片管道，随该域切换迁移） */
+            coverUrl?: string | null;
+            /** @description 不透明 id（`book_<n>`） */
+            id: string;
+            intro?: string | null;
+            kind?: string | null;
+            lastChapter?: components["schemas"]["LastChapter"] | null;
+            name: string;
+            /** @description 绑定书源；null 表示本地书 */
+            sourceId?: string | null;
+            /** @description 上游详情获取失败，当前是登记行回退数据 */
+            stale: boolean;
+            /**
+             * Format: int32
+             * @description 章节登记表的章节数（目录未抓时缺省）
+             */
+            totalChapters?: number | null;
+        };
+        BookPatch: {
+            author?: string | null;
+            name?: string | null;
+        };
         ChangePasswordRequest: {
             currentPassword?: string | null;
             newPassword?: string | null;
@@ -231,6 +306,11 @@ export interface components {
             detail?: string;
             pointer: string;
         };
+        LastChapter: {
+            /** Format: int32 */
+            index: number;
+            title: string;
+        };
         LoginRequest: {
             password?: string | null;
             username?: string | null;
@@ -265,6 +345,16 @@ export interface components {
             /** @description 上游业务码原样透传（FQWeb 的 `UPSTREAM_THROTTLED` 等） */
             upstreamCode?: string;
         };
+        ProgressPatch: {
+            /** Format: int32 */
+            chapterIndex: number;
+            chapterTitle?: string | null;
+            /**
+             * Format: double
+             * @description 0..1 的章内比例（服务端存万分比）
+             */
+            offset?: number | null;
+        };
         /**
          * @description 会话令牌对。`accessToken` 供非浏览器客户端走 `Authorization: Bearer`；
          *     浏览器只依赖 HttpOnly Cookie，`refreshToken` 永不进响应体。
@@ -278,6 +368,12 @@ export interface components {
             accessTokenExpiresAt: string;
             /** @description 登录用户名（hint 展示与 API 客户端识别；/v1/me 才是资料源） */
             username: string;
+        };
+        ShelfPatch: {
+            progress?: components["schemas"]["ProgressPatch"] | null;
+        };
+        ShelfWriteResult: {
+            bookId: string;
         };
         /** @description 游标分页容器（契约 §5.4）：`nextCursor: null` 表示到底。 */
         SourcePage: {
@@ -497,6 +593,81 @@ export interface operations {
             };
         };
     };
+    getBook: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description 书籍 id（book_<n>） */
+                bookId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 书籍详情 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BookDetail"];
+                };
+            };
+            /** @description 书籍不存在 */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    patchBook: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description 书籍 id（book_<n>） */
+                bookId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["BookPatch"];
+            };
+        };
+        responses: {
+            /** @description 已更新 */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description 书籍不存在 */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description 未知字段（本端点只收 name/author） */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
     listChapters: {
         parameters: {
             query?: {
@@ -661,6 +832,129 @@ export interface operations {
             };
             /** @description 服务端错误 */
             500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    addToShelf: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description 书籍 id（book_<n>） */
+                bookId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 已在架（幂等重复调用，不重置进度） */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ShelfWriteResult"];
+                };
+            };
+            /** @description 已入架 */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ShelfWriteResult"];
+                };
+            };
+            /** @description 书籍不存在 */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    removeFromShelf: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description 书籍 id（book_<n>） */
+                bookId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 已移出（幂等） */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description 书籍不存在 */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    patchShelfBook: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description 书籍 id（book_<n>） */
+                bookId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ShelfPatch"];
+            };
+        };
+        responses: {
+            /** @description 已更新 */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description 书籍不存在 */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description 书籍未加入书架 */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description 未知字段或取值非法 */
+            422: {
                 headers: {
                     [name: string]: unknown;
                 };

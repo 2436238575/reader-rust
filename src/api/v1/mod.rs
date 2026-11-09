@@ -31,6 +31,7 @@ mod books;
 pub(crate) use books::if_none_match_matches;
 mod content;
 mod me;
+mod shelf;
 mod sources;
 
 /// `/v1` 路由。并发层与 `/reader3` 的受保护组共享同一份许可
@@ -43,6 +44,7 @@ pub fn router(
 ) -> Router {
     let v1 = Router::new()
         .merge(me::router())
+        .merge(shelf::router())
         .merge(books::router())
         .merge(content::router())
         .merge(sources::router())
@@ -198,6 +200,7 @@ where
         match axum::Json::<T>::from_request(req, state).await {
             Ok(axum::Json(value)) => Ok(V1Json(value)),
             Err(rejection) => {
+                let text = rejection.body_text();
                 let (code, detail) = match rejection {
                     JsonRejection::MissingJsonContentType(_) => (
                         ErrorCode::UnsupportedMediaType,
@@ -205,6 +208,14 @@ where
                     ),
                     ref other if other.status() == axum::http::StatusCode::PAYLOAD_TOO_LARGE => {
                         (ErrorCode::PayloadTooLarge, "请求体超过大小上限")
+                    }
+                    // deny_unknown_fields 的未知字段：契约要求 422 UNKNOWN_FIELD
+                    // （book-fields §4），从错误文本识别（serde 无结构化变体）
+                    ref other
+                        if other.status() == axum::http::StatusCode::UNPROCESSABLE_ENTITY
+                            || text.contains("unknown field") =>
+                    {
+                        (ErrorCode::UnknownField, "请求包含未知或不可写的字段")
                     }
                     _ => (
                         ErrorCode::MalformedRequest,
@@ -274,6 +285,11 @@ pub fn openapi_yaml() -> String {
         books::list_chapters,
         content::get_chapter_content,
         sources::list_sources,
+        shelf::add_to_shelf,
+        shelf::patch_shelf_book,
+        shelf::remove_from_shelf,
+        shelf::get_book,
+        shelf::patch_book,
         auth::login,
         auth::refresh,
         auth::logout,
@@ -293,6 +309,12 @@ pub fn openapi_yaml() -> String {
         books::ChapterPage,
         content::ChapterContent,
         content::ChapterVersionInfo,
+        shelf::ShelfWriteResult,
+        shelf::ShelfPatch,
+        shelf::ProgressPatch,
+        shelf::BookPatch,
+        shelf::BookDetail,
+        shelf::LastChapter,
     )),
     tags(
         (name = "me", description = "当前账号"),
