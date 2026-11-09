@@ -199,6 +199,68 @@ paths:
       security:
       - cookieAuth: []
       - bearerAuth: []
+  /v1/books/{bookId}/chapters/{index}/content:
+    get:
+      tags:
+      - books
+      summary: 章节正文。
+      operationId: getChapterContent
+      parameters:
+      - name: bookId
+        in: path
+        description: 书籍 id（book_<n>）
+        required: true
+        schema:
+          type: string
+      - name: index
+        in: path
+        description: 章节序号（登记表分配的稳定序号）
+        required: true
+        schema:
+          type: integer
+          format: int32
+      - name: variant
+        in: query
+        description: default（用户选择）或 upstream（上游预览）
+        required: false
+        schema:
+          type: string
+      - name: refresh
+        in: query
+        description: 同步回源一次，失败回退已有缓存
+        required: false
+        schema:
+          type: boolean
+      responses:
+        '200':
+          description: 章节正文
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ChapterContent'
+        '304':
+          description: If-None-Match 命中当前版本，客户端用缓存正文
+        '400':
+          description: variant 取值非法
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '401':
+          description: 未登录或令牌失效
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '404':
+          description: 书籍或章节不存在
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+      security:
+      - cookieAuth: []
+      - bearerAuth: []
   /v1/me:
     get:
       tags:
@@ -299,6 +361,51 @@ components:
           type:
           - string
           - 'null'
+    ChapterContent:
+      type: object
+      description: 章节正文（v1 形状）。`format` 由服务端统一判定并下发（契约 §9.5）。
+      required:
+      - bookId
+      - index
+      - format
+      - body
+      - upstreamChangedSinceBase
+      - selectionSource
+      - stale
+      properties:
+        body:
+          type: string
+        bookId:
+          type: string
+        fetchedAt:
+          type:
+          - string
+          - 'null'
+          format: date-time
+          description: 最近一次回源成功时间，RFC 3339 UTC
+        format:
+          type: string
+          description: '`text` 或 `html`（服务端统一判定，D15）'
+        index:
+          type: integer
+          format: int32
+        latestUpstreamVersionId:
+          type:
+          - string
+          - 'null'
+        selectionSource:
+          type: string
+          description: '`selected` / `edited` / `upstream` / `upstream_preview`'
+        stale:
+          type: boolean
+          description: 到期未回源或最近一次回源失败（旧数据，仍可读）
+        upstreamChangedSinceBase:
+          type: boolean
+          description: 用户版本的基准上游之后，上游是否又变过
+        version:
+          oneOf:
+          - $ref: '#/components/schemas/ChapterVersionInfo'
+          - type: 'null'
     ChapterItem:
       type: object
       description: 章节条目：身份是 `index`（书籍内稳定序号，换源整表替换）。
@@ -352,6 +459,23 @@ components:
           - 'null'
           format: int32
           minimum: 0
+    ChapterVersionInfo:
+      type: object
+      description: 当前解析版本的信息。`basedOn` 只记录编辑时基于哪一版（历史信息）。
+      required:
+      - id
+      - kind
+      properties:
+        basedOn:
+          type:
+          - string
+          - 'null'
+        id:
+          type: string
+          description: 不透明版本 id（`cv_<n>`），同时是 If-None-Match 的实体标签
+        kind:
+          type: string
+          description: '`upstream` / `edited` / `imported`'
     ErrorCode:
       type: string
       description: |-

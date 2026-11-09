@@ -1,0 +1,325 @@
+//! `GET /v1/books/{bookId}/chapters/{index}/content`：章节正文。
+//!
+//! 与 `/reader3/getBookContent` 共用同一份读取链路（版本解析、强刷、24h
+//! 后台回源、本地书分支）；差异在对外契约：
+//! - **身份是 `(bookId, index)`**：index 经章节登记表/本地目录解析出内部
+//!   chapterUrl（红线 6）；
+//! - **`If-None-Match` 取代 `knownVersionId`**：ETag 取当前解析版本的
+//!   `cv_<version_id>`（无版本时退回正文 md5），命中回 304，客户端用
+//!   本地缓存正文补上——浏览器/Service Worker 缓存自动生效；
+//! - **`format` 由服务端统一判定**（D15）：沿用前端嗅探口径（块级标签
+//!   白名单 + 成对 b/i/u 补偿），各客户端不再各猜一遍。
+//!
+//! Draft-1 §9.5 的 `?include=blocks` 与内联 diff 暂未实现：blocks 的消费方
+//! （段评/编辑器）在 P3，diff 有独立端点（`versions/{v}/diff`）。
+
+use crate::api::problem::{ErrorCode, Problem};
+use crate::api::v1::{if_none_match_matches, V1User};
+use crate::api::AppState;
+use axum::extract::{Path, Query, State};
+use axum::http::{header, HeaderMap, HeaderValue, StatusCode};
+use axum::response::{IntoResponse, Response};
+use axum::routing::get;
+use axum::{Json, Router};
+use md5::{Digest, Md5};
+use serde::{Deserialize, Serialize};
+use utoipa::ToSchema;
+
+pub fn router() -> Router<AppState> {
+    Router::new().route(
+        "/v1/books/{bookId}/chapters/{index}/content",
+        get(get_chapter_content),
+    )
+}
+
+#[derive(Debug, Deserialize, ToSchema)]
+pub struct ContentQuery {
+    /// `default`（用户选择 > 最新用户版本 > 最新上游）或 `upstream`（显式上游预览）
+    pub variant: Option<String>,
+    /// 同步回源一次；失败回退已有缓存
+    pub refresh: Option<bool>,
+}
+
+/// 当前解析版本的信息。`basedOn` 只记录编辑时基于哪一版（历史信息）。
+#[derive(Debug, Clone, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct ChapterVersionInfo {
+    /// 不透明版本 id（`cv_<n>`），同时是 If-None-Match 的实体标签
+    pub id: String,
+    /// `upstream` / `edited` / `imported`
+    pub kind: String,
+    pub based_on: Option<String>,
+}
+
+/// 章节正文（v1 形状）。`format` 由服务端统一判定并下发（契约 §9.5）。
+#[derive(Debug, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct ChapterContent {
+    pub book_id: String,
+    pub index: i32,
+    /// `text` 或 `html`（服务端统一判定，D15）
+    pub format: String,
+    pub body: String,
+    pub version: Option<ChapterVersionInfo>,
+    pub latest_upstream_version_id: Option<String>,
+    /// 用户版本的基准上游之后，上游是否又变过
+    pub upstream_changed_since_base: bool,
+    /// `selected` / `edited` / `upstream` / `upstream_preview`
+    pub selection_source: String,
+    /// 到期未回源或最近一次回源失败（旧数据，仍可读）
+    pub stale: bool,
+    /// 最近一次回源成功时间，RFC 3339 UTC
+    #[schema(format = DateTime)]
+    pub fetched_at: Option<String>,
+}
+
+fn cv_id(version_id: i64) -> String {
+    format!("cv_{version_id}")
+}
+
+/// 正文格式判定（D15）：沿用前端 `chapterRender.ts` 的两段嗅探口径——
+/// 块级/常用标签白名单 + 成对 b/i/u 补偿（regex crate 不支持反向引用，
+/// 成对检测手工扫描）。
+pub(crate) fn detect_content_format(body: &str) -> &'static str {
+    static KNOWN_HTML_TAG: once_cell::sync::Lazy<regex::Regex> = once_cell::sync::Lazy::new(|| {
+        regex::Regex::new(
+            r"(?i)</?(?:p|div|br|hr|img|h[1-6]|ul|ol|li|dl|dt|dd|table|thead|tbody|tfoot|tr|td|th|caption|colgroup|col|blockquote|pre|code|figure|figcaption|section|article|aside|details|summary|center|span|em|strong|a|ruby|rt|rp|sup|sub|video|audio|svg)[\s/>]",
+        )
+        .expect("static regex")
+    });
+    if KNOWN_HTML_TAG.is_match(body) || has_paired_inline_tag(body) {
+        "html"
+    } else {
+        "text"
+    }
+}
+
+/// 成对 b/i/u 检测：存在开标签（可带属性）且其后有同名的闭合标签。
+/// 纯文本里的 `<b>`、`<i>` 字面量没有闭合标签，不受影响。
+fn has_paired_inline_tag(body: &str) -> bool {
+    static OPEN_TAG: once_cell::sync::Lazy<regex::Regex> = once_cell::sync::Lazy::new(|| {
+        regex::Regex::new(r"(?i)<(b|i|u)(?:\s[^<>]*)?>").expect("static regex")
+    });
+    for capture in OPEN_TAG.captures_iter(body) {
+        let tag = capture
+            .get(1)
+            .map(|m| m.as_str())
+            .expect("分组在模式里固定存在")
+            .to_ascii_lowercase();
+        let close_from = capture.get(0).expect("match 0 固定存在").end();
+        let close = format!("</{tag}>");
+        if body[close_from..].to_ascii_lowercase().contains(&close) {
+            return true;
+        }
+    }
+    false
+}
+
+fn etag_for(data: &crate::api::handlers::book::content::ChapterContentData) -> HeaderValue {
+    // 有版本走版本标签（If-None-Match 的实体）；无版本（本地书上游原文等）
+    // 退回正文 md5——内容寻址，同样稳定
+    match data.version_id {
+        Some(id) => {
+            HeaderValue::from_str(&format!("\"{}\"", cv_id(id))).expect("cv id 必为合法 header 值")
+        }
+        None => {
+            let mut hasher = Md5::new();
+            hasher.update(data.content.as_bytes());
+            HeaderValue::from_str(&format!("\"body-{}\"", hex::encode(hasher.finalize())))
+                .expect("md5 hex 必为合法 header 值")
+        }
+    }
+}
+
+/// index → 内部 chapterUrl：登记表/本地目录解析；URL 不出现在请求或响应里。
+async fn resolve_chapter_url(
+    state: &AppState,
+    user_ns: &str,
+    book_id: &str,
+    book: &crate::api::handlers::book::ResolvedBook,
+    index: i32,
+) -> Result<String, Problem> {
+    use crate::service::local_epub_book::is_local_epub_url;
+    use crate::service::local_txt_book::is_local_txt_url;
+
+    if is_local_txt_url(&book.book_url) || is_local_epub_url(&book.book_url) {
+        let chapters = if is_local_txt_url(&book.book_url) {
+            state
+                .local_txt_book_service
+                .get_chapter_list(user_ns, &book.book_url)
+                .await
+                .map_err(Problem::from)?
+        } else {
+            state
+                .local_epub_book_service
+                .get_chapter_list(user_ns, &book.book_url)
+                .await
+                .map_err(Problem::from)?
+        };
+        return chapters
+            .get(index.max(0) as usize)
+            .filter(|_| index >= 0)
+            .map(|chapter| chapter.url.clone())
+            .ok_or_else(chapter_not_found);
+    }
+
+    // 网络书：登记表是 index → URL 的权威映射（P-1）
+    if let Some(chapter) = state
+        .book_service
+        .resolve_chapter_by_index(book_id, index)
+        .await
+        .map_err(Problem::from)?
+    {
+        return non_empty_url(chapter.url);
+    }
+    // 登记表已有条目：index 越界就是章节不存在——不回源目录，
+    // 否则一次 404 会被上游故障放大成 400/502（404 的语义要稳定）
+    if state
+        .book_service
+        .chapter_list_cache_exists(user_ns, book_id)
+        .await
+    {
+        return Err(chapter_not_found());
+    }
+    // 登记表为空（目录从未抓过）：走一次目录抓取填充后再解析
+    let toc_url = match book
+        .toc_url
+        .as_deref()
+        .filter(|value| !value.trim().is_empty())
+    {
+        Some(toc_url) => toc_url.to_string(),
+        None => state
+            .book_service
+            .get_book_info(user_ns, book_id, &book.source, &book.book_url, false)
+            .await
+            .map_err(Problem::from)?
+            .toc_url
+            .unwrap_or_else(|| book.book_url.clone()),
+    };
+    let toc_url = crate::util::text::repair_encoded_url(&toc_url);
+    // 抓取失败不外抛：目录拿不到时按章节不存在回答，而不是 502 掩盖 404
+    let _ = state
+        .book_service
+        .get_chapter_list(user_ns, book_id, &book.source, &toc_url)
+        .await;
+    if let Some(chapter) = state
+        .book_service
+        .resolve_chapter_by_index(book_id, index)
+        .await
+        .map_err(Problem::from)?
+    {
+        return non_empty_url(chapter.url);
+    }
+    Err(chapter_not_found())
+}
+
+fn chapter_not_found() -> Problem {
+    Problem::new(ErrorCode::ChapterNotFound).detail("章节不存在或没有可读地址")
+}
+
+fn non_empty_url(url: String) -> Result<String, Problem> {
+    if url.trim().is_empty() {
+        // 空 URL 章节（个别书源没有独立地址）在正文池里没有可定位的键
+        return Err(chapter_not_found());
+    }
+    Ok(url)
+}
+
+/// 章节正文。
+#[utoipa::path(
+    get,
+    path = "/v1/books/{bookId}/chapters/{index}/content",
+    tag = "books",
+    operation_id = "getChapterContent",
+    params(
+        ("bookId" = String, Path, description = "书籍 id（book_<n>）"),
+        ("index" = i32, Path, description = "章节序号（登记表分配的稳定序号）"),
+        ("variant" = Option<String>, Query, description = "default（用户选择）或 upstream（上游预览）"),
+        ("refresh" = Option<bool>, Query, description = "同步回源一次，失败回退已有缓存"),
+    ),
+    security(("cookieAuth" = []), ("bearerAuth" = [])),
+    responses(
+        (status = 200, description = "章节正文", body = ChapterContent),
+        (status = 304, description = "If-None-Match 命中当前版本，客户端用缓存正文"),
+        (status = 400, description = "variant 取值非法", body = Problem, content_type = "application/problem+json"),
+        (status = 401, description = "未登录或令牌失效", body = Problem, content_type = "application/problem+json"),
+        (status = 404, description = "书籍或章节不存在", body = Problem, content_type = "application/problem+json"),
+    )
+)]
+pub async fn get_chapter_content(
+    State(state): State<AppState>,
+    V1User(user): V1User,
+    Path((book_id, index)): Path<(String, i32)>,
+    Query(query): Query<ContentQuery>,
+    headers: HeaderMap,
+) -> Result<Response, Problem> {
+    if let Some(variant) = query.variant.as_deref() {
+        if !variant.trim().eq_ignore_ascii_case("default")
+            && !variant.trim().eq_ignore_ascii_case("upstream")
+        {
+            return Err(Problem::new(ErrorCode::MalformedRequest)
+                .detail("variant 只接受 default 或 upstream"));
+        }
+    }
+    let resolved = crate::api::handlers::book::resolve_book(&state, &user.ns, &book_id)
+        .await
+        .map_err(|error| match error {
+            crate::error::error::AppError::NotFound(_) => {
+                Problem::new(ErrorCode::BookNotFound).detail("书籍不存在")
+            }
+            other => Problem::from(other),
+        })?;
+    let chapter_url = resolve_chapter_url(&state, &user.ns, &book_id, &resolved, index).await?;
+
+    let data = crate::api::handlers::book::content::read_chapter_content(
+        &state,
+        &user.ns,
+        Some(&book_id),
+        Some(&chapter_url),
+        crate::api::handlers::book::content::ChapterReadOptions {
+            index: Some(index),
+            variant: crate::api::handlers::book::content::ContentVariant::parse(
+                query.variant.as_deref(),
+            ),
+            do_refresh: query.refresh.unwrap_or(false),
+            known_version_id: None,
+        },
+    )
+    .await
+    .map_err(Problem::from)?;
+
+    let etag = etag_for(&data);
+    if if_none_match_matches(headers.get(header::IF_NONE_MATCH), &etag) {
+        let mut response = StatusCode::NOT_MODIFIED.into_response();
+        response.headers_mut().insert(header::ETAG, etag);
+        response.headers_mut().insert(
+            header::CACHE_CONTROL,
+            HeaderValue::from_static("private, no-cache"),
+        );
+        return Ok(response);
+    }
+
+    let content = ChapterContent {
+        book_id: book_id.clone(),
+        index,
+        format: detect_content_format(&data.content).to_string(),
+        body: data.content,
+        version: data.version_id.map(|id| ChapterVersionInfo {
+            id: cv_id(id),
+            kind: data.version_kind.unwrap_or_else(|| "upstream".to_string()),
+            based_on: data.base_version_id.map(cv_id),
+        }),
+        latest_upstream_version_id: data.latest_upstream_version_id.map(cv_id),
+        upstream_changed_since_base: data.upstream_changed,
+        selection_source: data.selection_source,
+        stale: data.stale,
+        fetched_at: data.last_success_at.map(crate::api::v1::me::rfc3339_secs),
+    };
+    let mut response = Json(content).into_response();
+    response.headers_mut().insert(header::ETAG, etag);
+    response.headers_mut().insert(
+        header::CACHE_CONTROL,
+        HeaderValue::from_static("private, no-cache"),
+    );
+    Ok(response)
+}

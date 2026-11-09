@@ -104,6 +104,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/books/{bookId}/chapters/{index}/content": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 章节正文。 */
+        get: operations["getChapterContent"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/me": {
         parameters: {
             query?: never;
@@ -152,6 +169,28 @@ export interface components {
             currentPassword?: string | null;
             newPassword?: string | null;
         };
+        /** @description 章节正文（v1 形状）。`format` 由服务端统一判定并下发（契约 §9.5）。 */
+        ChapterContent: {
+            body: string;
+            bookId: string;
+            /**
+             * Format: date-time
+             * @description 最近一次回源成功时间，RFC 3339 UTC
+             */
+            fetchedAt?: string | null;
+            /** @description `text` 或 `html`（服务端统一判定，D15） */
+            format: string;
+            /** Format: int32 */
+            index: number;
+            latestUpstreamVersionId?: string | null;
+            /** @description `selected` / `edited` / `upstream` / `upstream_preview` */
+            selectionSource: string;
+            /** @description 到期未回源或最近一次回源失败（旧数据，仍可读） */
+            stale: boolean;
+            /** @description 用户版本的基准上游之后，上游是否又变过 */
+            upstreamChangedSinceBase: boolean;
+            version?: components["schemas"]["ChapterVersionInfo"] | null;
+        };
         /** @description 章节条目：身份是 `index`（书籍内稳定序号，换源整表替换）。 */
         ChapterItem: {
             /** Format: int32 */
@@ -171,6 +210,14 @@ export interface components {
             nextCursor?: string | null;
             /** Format: int32 */
             total?: number | null;
+        };
+        /** @description 当前解析版本的信息。`basedOn` 只记录编辑时基于哪一版（历史信息）。 */
+        ChapterVersionInfo: {
+            basedOn?: string | null;
+            /** @description 不透明版本 id（`cv_<n>`），同时是 If-None-Match 的实体标签 */
+            id: string;
+            /** @description `upstream` / `edited` / `imported` */
+            kind: string;
         };
         /**
          * @description 错误码：线上值是大写下划线（serde `SCREAMING_SNAKE_CASE`），稳定不变。
@@ -512,6 +559,70 @@ export interface operations {
             };
             /** @description 游标无法解码 */
             422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    getChapterContent: {
+        parameters: {
+            query?: {
+                /** @description default（用户选择）或 upstream（上游预览） */
+                variant?: string;
+                /** @description 同步回源一次，失败回退已有缓存 */
+                refresh?: boolean;
+            };
+            header?: never;
+            path: {
+                /** @description 书籍 id（book_<n>） */
+                bookId: string;
+                /** @description 章节序号（登记表分配的稳定序号） */
+                index: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 章节正文 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ChapterContent"];
+                };
+            };
+            /** @description If-None-Match 命中当前版本，客户端用缓存正文 */
+            304: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description variant 取值非法 */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description 未登录或令牌失效 */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description 书籍或章节不存在 */
+            404: {
                 headers: {
                     [name: string]: unknown;
                 };

@@ -37,6 +37,7 @@ const REQUIRED_PATHS: &[&str] = &[
     "/v1/me:",
     "/v1/sources:",
     "/v1/books/{bookId}/chapters:",
+    "/v1/books/{bookId}/chapters/{index}/content:",
     "/v1/auth/login:",
     "/v1/auth/refresh:",
     "/v1/auth/logout:",

@@ -17,6 +17,8 @@ struct TestServer {
     token: String,
     /// 独立连到测试库的池：登记表/覆盖层的 SQL 预置用。
     pool: sqlx::SqlitePool,
+    /// 正文池服务：content 用例的预置写入用。
+    content: std::sync::Arc<reader_rust::service::chapter_content_service::ChapterContentService>,
 }
 
 impl TestServer {
@@ -28,6 +30,7 @@ impl TestServer {
 
         let cfg = common::base_config(&temp_dir, "v1-books-test-secret");
         let state = build_state(cfg).await.unwrap();
+        let content = state.chapter_content_service.clone();
         let app = build_router(state);
         let (base_url, _server) = common::spawn_app(app.clone()).await;
         let client = reqwest::Client::new();
@@ -44,6 +47,7 @@ impl TestServer {
             client,
             token,
             pool,
+            content,
         }
     }
 
@@ -88,6 +92,26 @@ impl TestServer {
             .await
             .unwrap();
         format!("book_{book_id}")
+    }
+
+    /// 预置一章上游正文（正文池，网络书读取链路的输入）。
+    async fn seed_upstream_content(&self, book_id: &str, index: i32, url: &str, content: &str) {
+        self.content
+            .save_upstream(
+                reader_rust::service::chapter_content_service::UpstreamChapterMeta {
+                    book_id,
+                    chapter_url: url,
+                    book_source_id: None,
+                    book_source_name: "",
+                    chapter_index: index,
+                    chapter_title: "",
+                    book_url: "",
+                    fetch_url: url,
+                },
+                content,
+            )
+            .await
+            .unwrap();
     }
 
     async fn get(&self, path: &str) -> reqwest::Response {
@@ -296,16 +320,197 @@ async fn limit_bounds_and_invalid_cursor() {
 async fn local_txt_book_chapters_come_from_the_local_branch() {
     let server = TestServer::start().await;
     let book_id = server
-        .upload_local_book("本地测试", "第一章 内容甲\n第二章 内容乙\n第三章 内容丙\n")
+        .upload_local_book(
+            "本地测试",
+            "第一章 开始
+正文内容甲。
+第二章 后来
+正文内容乙。
+",
+        )
         .await;
 
     let resp = server.get(&format!("/v1/books/{book_id}/chapters")).await;
     assert_eq!(resp.status(), StatusCode::OK);
     let body: Value = resp.json().await.unwrap();
     let items = body["items"].as_array().unwrap();
-    assert_eq!(items.len(), 3, "TXT 按空行/章节标题切分：{body}");
+    assert_eq!(items.len(), 2, "TXT 按章节标题切分：{body}");
+    assert_eq!(items[0]["title"], json!("第一章 开始"));
     assert_eq!(items[0]["index"], json!(0));
     assert_eq!(items[0]["titleOverridden"], json!(false));
+
+    server.cleanup();
+}
+
+#[tokio::test]
+async fn content_reads_via_index_with_version_etag() {
+    let server = TestServer::start().await;
+    let book_id = server
+        .seed_book_with_chapters("https://up.example.com", 2)
+        .await;
+    server
+        .seed_upstream_content(
+            &book_id,
+            0,
+            "https://up.example.com/ch/0",
+            "第一章的纯文本正文。",
+        )
+        .await;
+
+    let resp = server
+        .get(&format!("/v1/books/{book_id}/chapters/0/content"))
+        .await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let etag = resp.headers()["etag"].to_str().unwrap().to_string();
+    assert!(etag.starts_with("\"cv_"), "ETag 应是版本标签: {etag}");
+    let body: Value = resp.json().await.unwrap();
+    assert!(
+        body.get("isSuccess").is_none(),
+        "v1 响应不带 ApiResponse 包装"
+    );
+    assert_eq!(body["bookId"], json!(book_id));
+    assert_eq!(body["index"], json!(0));
+    assert_eq!(body["format"], json!("text"), "纯文本正文应判为 text");
+    assert_eq!(body["body"], json!("第一章的纯文本正文。"));
+    assert!(body["version"]["id"].as_str().unwrap().starts_with("cv_"));
+    assert_eq!(body["version"]["kind"], json!("upstream"));
+    assert_eq!(body["selectionSource"], json!("upstream"));
+    assert_eq!(body["stale"], json!(false));
+
+    // If-None-Match 命中当前版本：304，客户端用缓存正文
+    let not_modified = server
+        .client
+        .get(format!(
+            "{}/v1/books/{book_id}/chapters/0/content",
+            server.base_url
+        ))
+        .bearer_auth(&server.token)
+        .header(header::IF_NONE_MATCH, &etag)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(not_modified.status(), StatusCode::NOT_MODIFIED);
+
+    server.cleanup();
+}
+
+#[tokio::test]
+async fn content_detects_html_format_and_maps_fields() {
+    let server = TestServer::start().await;
+    let book_id = server
+        .seed_book_with_chapters("https://up.example.com", 1)
+        .await;
+    server
+        .seed_upstream_content(
+            &book_id,
+            0,
+            "https://up.example.com/ch/0",
+            "<p>富文本段落。</p><p>第二段。</p>",
+        )
+        .await;
+
+    let resp = server
+        .get(&format!(
+            "/v1/books/{book_id}/chapters/0/content?variant=upstream"
+        ))
+        .await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body: Value = resp.json().await.unwrap();
+    assert_eq!(body["format"], json!("html"), "含 <p> 的正文应判为 html");
+    assert_eq!(body["selectionSource"], json!("upstream_preview"));
+
+    server.cleanup();
+}
+
+#[tokio::test]
+async fn content_index_beyond_registry_gets_chapter_404() {
+    let server = TestServer::start().await;
+    let book_id = server
+        .seed_book_with_chapters("https://up.example.com", 2)
+        .await;
+
+    // index 超出登记表：抓取路径也拿不到（上游不可达）→ 章节级 404
+    let resp = server
+        .get(&format!("/v1/books/{book_id}/chapters/9/content"))
+        .await;
+    let status = resp.status();
+    let body: Value = resp.json().await.unwrap();
+    assert_eq!(
+        status,
+        StatusCode::NOT_FOUND,
+        "章节不存在应 404: {status} {body}"
+    );
+    assert_eq!(body["code"], json!("CHAPTER_NOT_FOUND"));
+
+    server.cleanup();
+}
+
+#[tokio::test]
+async fn content_empty_url_chapter_gets_chapter_404() {
+    let server = TestServer::start().await;
+    let book_id = server
+        .seed_book_with_chapters("https://up.example.com", 2)
+        .await;
+    // 个别书源的章节没有独立 URL：登记表里有行，但正文池没有可定位的键
+    sqlx::query("UPDATE chapters SET url = '' WHERE book_id = 1 AND chapter_index = 1")
+        .execute(&server.pool)
+        .await
+        .unwrap();
+
+    let resp = server
+        .get(&format!("/v1/books/{book_id}/chapters/1/content"))
+        .await;
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+    let body: Value = resp.json().await.unwrap();
+    assert_eq!(body["code"], json!("CHAPTER_NOT_FOUND"));
+
+    server.cleanup();
+}
+
+#[tokio::test]
+async fn content_malformed_variant_gets_400() {
+    let server = TestServer::start().await;
+    let book_id = server
+        .seed_book_with_chapters("https://up.example.com", 1)
+        .await;
+
+    let resp = server
+        .get(&format!(
+            "/v1/books/{book_id}/chapters/0/content?variant=bogus"
+        ))
+        .await;
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    let body: Value = resp.json().await.unwrap();
+    assert_eq!(body["code"], json!("MALFORMED_REQUEST"));
+
+    server.cleanup();
+}
+
+#[tokio::test]
+async fn local_book_content_reads_from_file() {
+    let server = TestServer::start().await;
+    let book_id = server
+        .upload_local_book(
+            "正文读取",
+            "第一章 开始
+正文内容甲。
+第二章 后来
+正文内容乙。
+",
+        )
+        .await;
+
+    let resp = server
+        .get(&format!("/v1/books/{book_id}/chapters/0/content"))
+        .await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body: Value = resp.json().await.unwrap();
+    assert_eq!(body["format"], json!("text"));
+    let body_text = body["body"].as_str().unwrap();
+    assert!(
+        body_text.contains("正文内容甲"),
+        "本地正文来自文件: {body_text}"
+    );
 
     server.cleanup();
 }

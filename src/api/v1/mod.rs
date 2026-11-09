@@ -27,6 +27,9 @@ use utoipa::{Modify, OpenApi};
 
 mod auth;
 mod books;
+
+pub(crate) use books::if_none_match_matches;
+mod content;
 mod me;
 mod sources;
 
@@ -41,6 +44,7 @@ pub fn router(
     let v1 = Router::new()
         .merge(me::router())
         .merge(books::router())
+        .merge(content::router())
         .merge(sources::router())
         .merge(auth::authed_router())
         .route_layer(axum::middleware::from_fn_with_state(
@@ -268,6 +272,7 @@ pub fn openapi_yaml() -> String {
     paths(
         me::get_me,
         books::list_chapters,
+        content::get_chapter_content,
         sources::list_sources,
         auth::login,
         auth::refresh,
@@ -286,6 +291,8 @@ pub fn openapi_yaml() -> String {
         sources::SourcePage,
         books::ChapterItem,
         books::ChapterPage,
+        content::ChapterContent,
+        content::ChapterVersionInfo,
     )),
     tags(
         (name = "me", description = "当前账号"),

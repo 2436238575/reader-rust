@@ -70,7 +70,7 @@ pub enum ContentVariant {
 }
 
 impl ContentVariant {
-    fn parse(value: Option<&str>) -> Self {
+    pub(crate) fn parse(value: Option<&str>) -> Self {
         if value.is_some_and(|v| v.trim().eq_ignore_ascii_case("upstream")) {
             Self::Upstream
         } else {
@@ -78,7 +78,7 @@ impl ContentVariant {
         }
     }
 
-    fn as_str(self) -> &'static str {
+    pub(crate) fn as_str(self) -> &'static str {
         match self {
             Self::Default => "default",
             Self::Upstream => "upstream",
@@ -90,7 +90,7 @@ impl ContentVariant {
 /// 上游版本之间的差异走历史面板的版本 diff 接口。
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct ChapterContentData {
+pub(crate) struct ChapterContentData {
     pub content: String,
     /// 当前返回的是否为用户版本（编辑版或手动导入）。
     pub edited: bool,
@@ -402,13 +402,13 @@ pub async fn get_book_contents(
 }
 /// 单章/批量共用的正文读取选项（版本解析之外的可调输入）。
 #[derive(Debug, Clone, Copy, Default)]
-struct ChapterReadOptions {
-    index: Option<i32>,
-    variant: ContentVariant,
+pub(crate) struct ChapterReadOptions {
+    pub index: Option<i32>,
+    pub variant: ContentVariant,
     /// refresh=1 同步回源；强刷忽略 known_version_id（语义就是拿新正文）。
-    do_refresh: bool,
+    pub do_refresh: bool,
     /// 调用方本地缓存的版本号：与当前解析版本一致时响应 unchanged 不传正文。
-    known_version_id: Option<i64>,
+    pub known_version_id: Option<i64>,
 }
 
 /// 单章正文的完整读取链路：本地 TXT/EPUB 分支 + 网络书分支
@@ -416,7 +416,7 @@ struct ChapterReadOptions {
 ///
 /// 单章 getBookContent 与批量 getBookContents 共用这一份实现，
 /// 避免两套版本解析/回源/本地书逻辑各自漂移。
-async fn read_chapter_content(
+pub(crate) async fn read_chapter_content(
     state: &AppState,
     user_ns: &str,
     book_id: Option<&str>,

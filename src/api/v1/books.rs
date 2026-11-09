@@ -88,7 +88,10 @@ fn response_etag(bytes: &[u8]) -> HeaderValue {
         .expect("md5 hex + 引号必为合法 header 值")
 }
 
-fn if_none_match_matches(if_none_match: Option<&HeaderValue>, etag: &HeaderValue) -> bool {
+pub(crate) fn if_none_match_matches(
+    if_none_match: Option<&HeaderValue>,
+    etag: &HeaderValue,
+) -> bool {
     let Some(header_value) = if_none_match else {
         return false;
     };
