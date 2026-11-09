@@ -18,7 +18,7 @@ goal 执行中遇到「决策表与 spec 都沉默」的问题时，按 §5.4 �
 - **`/v1` 错误体的 `traceId` 由响应中间件统一补**：只改写 problem+json 的错误响应，handler 无需关心；`require_auth` 的手工盖章随之删除。
 - **`/v1` 挂入站超时与并发层**，并发许可与 `/reader3` 受保护组共享同一信号量（全局预算不翻倍）。
 - **新增 `V1User` 提取器**（rejection = `Problem`）：即使某条 /v1 路由漏挂鉴权中间件，失败形态也不会漏出 `ApiResponse`。
-- **`/v1/me` 账号行不存在改用 `AUTH_REFRESH_REPLAYED`**：`AUTH_EXPIRED` 会引导前端静默刷新，而刷新救不回不存在的账号，会形成一轮无效循环；`AUTH_REFRESH_REPLAYED` 的前端语义正是「必须重新登录」。
+- **`/v1/me` 账号行不存在改用 `AUTH_REFRESH_REPLAYED`**（**已被下文「审阅第二轮」的 `SESSION_INVALID` 覆盖，勿照此实现**）：当时的考虑是「必须重新登录」的前端语义；后续审阅指出该码是安全告警语义，已改用 `SessionInvalid`。
 - **状态码对齐契约**：`VALIDATION_FAILED` / `INVALID_CURSOR` / `UNKNOWN_FIELD` → 422（语法合法但值非法）；`MALFORMED_REQUEST` / `UPSTREAM_BLOCKED` 保持 400。
 - **spec 的 problem 可选成员加 `nullable = false`**：实现是缺省省略而不是 null，生成的 schema 从 `string | null` 收敛为可选属性，openapi-typescript 不再产出三态。
 - **生成 yaml 定位为 as-built，不另存 53 路径的目标文件**：spec-first 的闸门落在契约文档（Draft-2 端点表）+ 决策记录上，生成 yaml 随实现增长；避免两份 yaml 双真相。

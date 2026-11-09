@@ -44,7 +44,14 @@ pub fn router(
             require_auth,
         ))
         // 公开认证端点（登录/刷新/登出）在鉴权层之外，同样受 CSRF 约束
-        .merge(auth::public_router());
+        .merge(auth::public_router())
+        // /v1 的请求体上限：现有端点都是小 JSON（登录/改密/资料），按 1MB
+        // 缓冲而不是最外层兜底的 100MB——大 body 域（章节导入等）在各自
+        // 路由上挂更大的独立上限。Router::layer 只作用于已添加的路由，
+        // 必须放在全部 merge 之后
+        .layer(axum::extract::DefaultBodyLimit::max(
+            crate::api::router::PUBLIC_BODY_LIMIT_BYTES,
+        ));
     let v1 = match concurrency {
         Some(layer) => v1.layer(layer),
         None => v1,
@@ -215,7 +222,13 @@ pub fn openapi_yaml() -> String {
 #[derive(OpenApi)]
 #[openapi(
     info(title = "reader-rust v1 API", version = "0.1.0"),
-    paths(me::get_me),
+    paths(
+        me::get_me,
+        auth::login,
+        auth::refresh,
+        auth::logout,
+        auth::change_password,
+    ),
     components(schemas(
         me::Me,
         Problem,

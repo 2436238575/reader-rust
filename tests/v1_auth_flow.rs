@@ -459,6 +459,40 @@ async fn bearer_requests_are_exempt_from_csrf_header() {
     server.cleanup();
 }
 
+/// 公开认证端点按 1MB 上限缓冲（不是最外层 100MB 兜底）：2MB 垃圾 JSON
+/// 必须 413。此前该用例随 /reader3 登录一起被误删，端点行为悄悄退化过一次——
+/// 测试要随端点迁移，不能跟着删。
+#[tokio::test]
+async fn login_body_is_capped_at_1mb() {
+    let server = TestServer::start().await;
+
+    let big_password = "x".repeat(2 * 1024 * 1024);
+    let resp = server
+        .client
+        .post(format!("{}/v1/auth/login", server.base_url))
+        .header("x-requested-with", "XMLHttpRequest")
+        .json(&json!({"username": "reader1", "password": big_password}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(
+        resp.status(),
+        StatusCode::PAYLOAD_TOO_LARGE,
+        "超过 1MB 上限应 413"
+    );
+
+    // 正常小 body 不受影响
+    let resp = server
+        .post_json(
+            "/v1/auth/login",
+            json!({"username": "reader1", "password": "password123"}),
+        )
+        .await;
+    assert_eq!(resp.status(), StatusCode::OK, "小 body 不应被上限误伤");
+
+    server.cleanup();
+}
+
 #[tokio::test]
 async fn login_rate_limit_returns_429_with_retry_after() {
     // 测试配置默认豁免限速（RATE_LIMIT_DISABLED=true），这条用例单独打开：
