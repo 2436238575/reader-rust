@@ -40,3 +40,11 @@ goal 执行中遇到「决策表与 spec 都沉默」的问题时，按 §5.4 �
 - **CSRF 检查挂 `/v1` 全域（公开端点也在内），Bearer 豁免**：`X-Requested-With: XMLHttpRequest` 缺失即 403；登录接口同样要求（防 Login CSRF）。`/reader3` 过渡期不挂（等域切换收尾收全局）。
 - **宽限窗口的测试手法**：refresh 重放宽限是 30s 常量，集成测试用同一 SQL 回拨 `used_at` 穿过窗口（与该服务单测一致），不为此加配置项。
 - **auth 域拆两批交付**：本批是后端增量（/reader3 认证原样保留，双轨并存）。下一批前端切换 + 删除 /reader3/login、refreshToken、logout、changePassword + auth_flow 移植 + e2e 核对。SSE 票据端点延到 P2（消费方 /v1/tasks/{id}/events 还没落地，先建是死代码）。
+
+## 2026-11-09 auth 域收尾（前端切换 + /reader3 认证下线)
+
+- **`SessionTokens` 带 `username`**：登录响应加一个 `username` 字段（契约只列了 accessTokenExpiresAt）——前端 hint 与登录页展示都需要它，且旧 `/reader3` 登录响应本就带用户名，加性字段零破坏。
+- **`auth_flow.rs` 删除而非移植**：其覆盖的登录/刷新/重放/登出/改密语义已由 `v1_auth_flow.rs` 的九条用例完整覆盖（后者按 v1 契约断言），逐条移植等于重复维护。删除理由写进提交信息。
+- **测试脚手架统一走 v1**：`tests/common::login` 与十四个集成测试的本地登录助手一并切到 `/v1/auth/login`（带 CSRF 头、解析裸载荷）；e2e 的 fixture 就绪探测同口径。
+- **`getUserInfo` 过渡期留在 `/reader3`**：会话 Cookie 两套命名空间共用，me 域（用户资料 + stats/settings）切换时一并迁移到 `/v1/me`。
+- **存量浏览器会话需重新登录一次**：refresh Cookie `Path` 收紧到 `/v1/auth`，旧 Cookie（Path=/reader3 或 /）不再被刷新端点读取。
