@@ -29,3 +29,14 @@ goal 执行中遇到「决策表与 spec 都沉默」的问题时，按 §5.4 �
 - **入站超时中间件参数化（`TimeoutShape::Legacy | Problem`）**：`/reader3` 保持 408 + ApiResponse；`/v1` 回 `504 PROCESSING_TIMEOUT` problem+json（408 的语义是客户端发请求太慢）。traceId 在中间件内直接盖章（超时响应不经过内层 trace 中间件）。
 - **新增 `SESSION_INVALID`（401）**：账号行不存在这类「会话已失效、刷新救不回」的状态不再借用 `AUTH_REFRESH_REPLAYED`——那是安全告警语义（重放检测、家族吊销），前端按码埋点会跑偏。兼容变更。
 - **`deleteBookCache` 的产品语义留待 P4 拆分**：登记行保留后，书籍级清理真正能释放的空间只剩候选清单与详情文件。P4 把「清理本书缓存」拆成两个动作——「重置目录/候选」（快）与「清除已下载正文」（真释放空间；实现约束：编辑/导入版本必须保留，仅删可再生上游版本并重置版本指针，图片连带）。未拍板，先记约束。
+
+## 2026-11-09 auth 域（后端批）
+
+- **响应体保留 `accessToken`**：契约 §6.1 只写「不再返回 refreshToken」，但 §6.2 允许 Bearer 客户端——拿不到 JWT 就无法使用。保留 `accessToken` + `accessTokenExpiresAt`；`refreshToken` 永不进 body。
+- **refresh Cookie Path 由 `COOKIE_PATH` 推导**：根部署 `/reader3` → `/v1/auth`；子路径部署 `/read/reader3` → `/read/v1/auth`；非标准配置回落 `/v1/auth`。access Cookie 一律 `Path=/`（两套命名空间共用同一会话）。
+- **`SameSite` 全局切 Lax**：与契约一致。Strict 时「从外部应用点链接进入」的场景收不到 Cookie；跨站非 GET 已由 Lax 挡掉，自定义头检查给 `/v1` 补第二道。
+- **登录限速错误变体 `AppError::TooManyRequests { message, retry_after_secs }`**：限速从「BadRequest 文案可辩」变成结构化变体，`/reader3` 顺带从 400 变 429（前端按 errorMsg 展示，无感）；`Problem` 带 `retry_after` 进 Retry-After 头。
+- **刷新失败细分由 service 暴露**（`refresh_session_detailed` → `RefreshFailure::Invalid | Replayed`）：`/v1/auth/refresh` 据此区分 `AUTH_EXPIRED` 与 `AUTH_REFRESH_REPLAYED`；`/reader3` 语义不变（统一 401 + 清 Cookie）。
+- **CSRF 检查挂 `/v1` 全域（公开端点也在内），Bearer 豁免**：`X-Requested-With: XMLHttpRequest` 缺失即 403；登录接口同样要求（防 Login CSRF）。`/reader3` 过渡期不挂（等域切换收尾收全局）。
+- **宽限窗口的测试手法**：refresh 重放宽限是 30s 常量，集成测试用同一 SQL 回拨 `used_at` 穿过窗口（与该服务单测一致），不为此加配置项。
+- **auth 域拆两批交付**：本批是后端增量（/reader3 认证原样保留，双轨并存）。下一批前端切换 + 删除 /reader3/login、refreshToken、logout、changePassword + auth_flow 移植 + e2e 核对。SSE 票据端点延到 P2（消费方 /v1/tasks/{id}/events 还没落地，先建是死代码）。
