@@ -54,14 +54,12 @@ describe('openaiSpeech', () => {
 
   it('refreshes once and retries an expired server speech request', async () => {
     installLocalStorage()
+    // v1 刷新端点：裸载荷 {accessToken, accessTokenExpiresAt, username}
     const post = vi.spyOn(axios, 'post').mockResolvedValue({
       data: {
-        isSuccess: true,
-        errorMsg: '',
-        data: {
-          accessToken: 'new-token',
-          accessTokenExpiresIn: 21600,
-        },
+        accessToken: 'new-token',
+        accessTokenExpiresAt: new Date(Date.now() + 21600 * 1000).toISOString(),
+        username: 'reader1',
       },
     })
     const fetchMock = vi

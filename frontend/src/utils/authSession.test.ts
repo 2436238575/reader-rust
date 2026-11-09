@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import axios from 'axios'
-import { API_BASE } from './appBase'
+import { API_V1_BASE } from './appBase'
 import {
   RefreshNetworkError,
   SessionExpiredError,
@@ -17,13 +17,13 @@ import {
   storeAuthHint,
 } from './secureAccess'
 
-function refreshResponse(accessTokenExpiresIn = 21600) {
+function refreshResponse(expiresInSecs = 21600) {
+  // v1 契约：裸载荷 {accessToken, accessTokenExpiresAt(RFC3339), username}
   return {
     data: {
-      isSuccess: true,
-      errorMsg: '',
-      // 新契约：刷新响应只有 accessToken 与 accessTokenExpiresIn，不再回 refreshToken
-      data: { accessToken: 'new-access', accessTokenExpiresIn },
+      accessToken: 'new-access',
+      accessTokenExpiresAt: new Date(Date.now() + expiresInSecs * 1000).toISOString(),
+      username: 'alice',
     },
   }
 }
@@ -54,7 +54,7 @@ describe('authSession Cookie 刷新', () => {
 
     expect(post).toHaveBeenCalledTimes(1)
     const [url, body, config] = post.mock.calls[0]
-    expect(url).toBe(`${API_BASE}/refreshToken`)
+    expect(url).toBe(`${API_V1_BASE}/auth/refresh`)
     expect(body).toEqual({})
     expect(config?.withCredentials).toBe(true)
 
@@ -93,7 +93,7 @@ describe('authSession Cookie 刷新', () => {
     expect(post).toHaveBeenCalledTimes(1)
   })
 
-  it('400/401 是对会话的明确否定：清 hint 并抛 SessionExpiredError', async () => {
+  it('401 是对会话的明确否定：清 hint 并抛 SessionExpiredError', async () => {
     seedHint()
     vi.spyOn(axios, 'post').mockRejectedValue({ response: { status: 401 } })
 
@@ -101,11 +101,9 @@ describe('authSession Cookie 刷新', () => {
     expect(hasAuthHint()).toBe(false)
   })
 
-  it('响应 isSuccess=false 同样视为会话失效', async () => {
+  it('响应缺 accessTokenExpiresAt 视为会话失效（v1 裸载荷）', async () => {
     seedHint()
-    vi.spyOn(axios, 'post').mockResolvedValue({
-      data: { isSuccess: false, errorMsg: '令牌无效', data: null },
-    })
+    vi.spyOn(axios, 'post').mockResolvedValue({ data: {} })
 
     await expect(refreshAccessToken()).rejects.toBeInstanceOf(SessionExpiredError)
     expect(hasAuthHint()).toBe(false)
@@ -124,7 +122,8 @@ describe('authSession Cookie 刷新', () => {
     vi.useFakeTimers()
     vi.setSystemTime(new Date('2026-01-01T00:00:00Z'))
     seedHint('alice', 10 * 60)
-    const post = vi.spyOn(axios, 'post').mockResolvedValue(refreshResponse())
+    // 响应在请求发生时构造：假时钟推进 5 分钟后，过期时间仍以「此刻」为基准
+    const post = vi.spyOn(axios, 'post').mockImplementation(async () => refreshResponse())
 
     scheduleAutoRefresh()
     await vi.advanceTimersByTimeAsync(5 * 60 * 1000)

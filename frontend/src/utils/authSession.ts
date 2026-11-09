@@ -8,7 +8,7 @@
 // - 到期前 5 分钟主动续期（依据非敏感 hint 里的过期时间）；
 // - 页面重新可见/聚焦时核对过期时间，必要时提前续期。
 import axios, { AxiosError } from 'axios'
-import { API_BASE } from './appBase'
+import { API_V1_BASE } from './appBase'
 import { notifyNeedLogin } from './authEvents'
 import {
   AUTH_HINT_STORAGE_KEY,
@@ -64,7 +64,8 @@ export class RefreshNetworkError extends Error {
 }
 
 interface RefreshPayload {
-  accessTokenExpiresIn: number
+  accessTokenExpiresAt: string
+  username: string
 }
 
 let inflight: Promise<void> | null = null
@@ -101,34 +102,40 @@ async function doRefresh(): Promise<void> {
   let response
   try {
     // 服务端只认 reader_refresh Cookie，body 恒为空对象
-    response = await axios.post(`${API_BASE}/refreshToken`, {}, {
+    response = await axios.post(`${API_V1_BASE}/auth/refresh`, {}, {
       timeout: REFRESH_TIMEOUT_MS,
       // 刷新必须带上 reader_refresh Cookie；跨域 CORS 部署同样要发凭据
       withCredentials: true,
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+        // /v1 非 GET 的 CSRF 头
+        'X-Requested-With': 'XMLHttpRequest',
+      },
     })
   } catch (error) {
     const status = (error as AxiosError)?.response?.status
-    // 400/401 是服务端对会话的明确否定（Cookie 缺失/过期/重放），必须重新登录
-    if (status === 400 || status === 401) {
+    // 401 是服务端对会话的明确否定（Cookie 缺失/过期/重放），必须重新登录；
+    // 5xx/网络错误保留会话，稍后重试
+    if (status === 401) {
       clearAuthHint()
       throw new SessionExpiredError()
     }
     throw new RefreshNetworkError()
   }
 
-  const payload = response?.data
-  const data = payload?.data as Partial<RefreshPayload> | undefined
-  if (!payload?.isSuccess || typeof data?.accessTokenExpiresIn !== 'number') {
+  const data = response?.data as Partial<RefreshPayload> | undefined
+  const expiresAtMs = data?.accessTokenExpiresAt
+    ? Date.parse(data.accessTokenExpiresAt)
+    : Number.NaN
+  if (!Number.isFinite(expiresAtMs)) {
     clearAuthHint()
     throw new SessionExpiredError()
   }
 
   lastRefreshAt = Date.now()
-  const hint = readAuthHint()
   storeAuthHint({
-    username: hint?.username ?? '',
-    accessTokenExpiresAt: Date.now() + data.accessTokenExpiresIn * 1000,
+    username: data?.username || readAuthHint()?.username || '',
+    accessTokenExpiresAt: expiresAtMs,
   })
   scheduleAutoRefresh()
 }

@@ -152,7 +152,7 @@ describe('http auth interceptor', () => {
     seedHint()
     http.defaults.adapter = async (config) => unauthorized(config)
 
-    await expect(http.post('/login', { username: 'a', password: 'b' })).rejects.toThrow(
+    await expect(http.post('/auth/login', { username: 'a', password: 'b' })).rejects.toThrow(
       '需要登录'
     )
     expect(refreshMock).not.toHaveBeenCalled()

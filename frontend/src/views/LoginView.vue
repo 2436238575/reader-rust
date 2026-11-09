@@ -86,8 +86,8 @@ async function handleSubmit() {
   if (!form.username || !form.password) return
   submitting.value = true
   try {
-    const user = await login(form.username, form.password)
-    appStore.setUser(user)
+    const session = await login(form.username, form.password)
+    appStore.setUser(session)
     appStore.showToast('登录成功', 'success')
     // 不在这里直接拉书架：首页激活时按脏标记自行拉取。但要先标脏——
     // 登录前书架可能已有旧数据（脏标记为 false），别的设备在登出期间

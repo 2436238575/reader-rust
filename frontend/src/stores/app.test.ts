@@ -84,6 +84,13 @@ function createUserInfo(username = 'admin'): UserInfo {
   return { username }
 }
 
+function createSession(username = 'admin'): { username: string; accessTokenExpiresAt: string } {
+  return {
+    username,
+    accessTokenExpiresAt: new Date(Date.now() + 6 * 3600 * 1000).toISOString(),
+  }
+}
+
 /** 模拟一次已登录的 Cookie 会话：本地有非敏感登录提示。 */
 function seedHint(username = 'admin') {
   storeAuthHint({ username, accessTokenExpiresAt: Date.now() + 6 * 3600 * 1000 })
@@ -148,7 +155,7 @@ describe('app store fetchUserInfo 合并与新鲜期', () => {
     const store = useAppStore()
     // 模拟已经离线启动（bootstrap 依据 hint 保持登录态）后，页面又调了一次
     // fetchUserInfo：网络失败不能把登录态翻回未登录
-    store.setUser(createUserInfo())
+    store.setUser(createSession())
     getUserInfoMock.mockRejectedValue(new Error('网络错误'))
 
     await store.fetchUserInfo({ force: true })
@@ -158,7 +165,7 @@ describe('app store fetchUserInfo 合并与新鲜期', () => {
 
   it('setUser 写入服务端用户信息后，fetchUserInfo 直接复用不再请求', async () => {
     const store = useAppStore()
-    store.setUser(createUserInfo())
+    store.setUser(createSession())
 
     await store.fetchUserInfo()
 
@@ -168,7 +175,7 @@ describe('app store fetchUserInfo 合并与新鲜期', () => {
 
   it('setUser 保存非敏感 hint（用户名 + 过期时间），不写任何令牌', () => {
     const store = useAppStore()
-    store.setUser({ username: 'alice', accessTokenExpiresIn: 3600 })
+    store.setUser({ username: 'alice', accessTokenExpiresAt: new Date(Date.now() + 3600 * 1000).toISOString() })
 
     const hint = readAuthHint()
     expect(hint?.username).toBe('alice')
@@ -180,7 +187,7 @@ describe('app store fetchUserInfo 合并与新鲜期', () => {
 
   it('clearUser 清掉 hint 与登录态', () => {
     const store = useAppStore()
-    store.setUser(createUserInfo())
+    store.setUser(createSession())
     expect(hasAuthHint()).toBe(true)
 
     store.clearUser()
@@ -192,7 +199,7 @@ describe('app store fetchUserInfo 合并与新鲜期', () => {
 
   it('clearUser 同时取消 userdata 待写队列，避免登出后残留重试 401 触发 need-login', () => {
     const store = useAppStore()
-    store.setUser(createUserInfo())
+    store.setUser(createSession())
 
     store.clearUser()
 
@@ -202,7 +209,7 @@ describe('app store fetchUserInfo 合并与新鲜期', () => {
   it('setUser 登录成功后批量预读三份首屏 userdata 文档', () => {
     const store = useAppStore()
 
-    store.setUser(createUserInfo())
+    store.setUser(createSession())
 
     expect(prefetchUserdataMock).toHaveBeenCalledTimes(1)
     expect(prefetchUserdataMock).toHaveBeenCalledWith(FIRST_SCREEN_DOCS)
@@ -210,7 +217,7 @@ describe('app store fetchUserInfo 合并与新鲜期', () => {
 
   it('clearUser 同时清空 userdata 预读缓存', () => {
     const store = useAppStore()
-    store.setUser(createUserInfo())
+    store.setUser(createSession())
 
     store.clearUser()
 

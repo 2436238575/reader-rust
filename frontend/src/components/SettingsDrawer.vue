@@ -355,10 +355,10 @@ function togglePasswordPanel() {
     }
     changingPassword.value = true
     try {
-      const updated = await changePassword(passwordForm.oldPassword, passwordForm.newPassword)
+      await changePassword(passwordForm.oldPassword, passwordForm.newPassword)
       // 后端改密时自增 token_version（其他设备登出）并已为当前设备换发
-      // Cookie；前端只更新用户信息与 hint（新过期时间），不保存任何令牌
-      appStore.setUser(updated)
+      // Cookie；204 无响应体，本地重排 hint 过期时间即可，不保存任何令牌
+      appStore.refreshSessionHint()
       appStore.showToast('密码修改成功', 'success')
       showPasswordPanel.value = false
       resetPasswordForm()

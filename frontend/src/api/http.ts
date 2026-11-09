@@ -24,15 +24,28 @@ const http = axios.create({
   timeout: 120000,
   // 会话凭据在 HttpOnly Cookie 里，浏览器自动携带；跨域 CORS 部署也要发凭据
   withCredentials: true,
-  headers: { 'Content-Type': 'application/json' },
+  headers: {
+    'Content-Type': 'application/json',
+    // `/v1` 的非 GET 一律要求该头（CSRF 双保险）；`/reader3` 忽略它，无害
+    'X-Requested-With': 'XMLHttpRequest',
+  },
 })
 
 /** 登录与刷新本身不参与 401 重试，避免递归。 */
 function isAuthFreePath(url: string | undefined): boolean {
   if (!url) return false
   const path = url.split('?')[0]
-  return path === '/login' || path === '/refreshToken' || path === '/logout'
+  return (
+    path === '/auth/login' || path === '/auth/refresh' || path === '/auth/logout'
+  )
 }
+
+/** 凭据本身无效的错误码：静默刷新救不回来，直接走登录流程。 */
+const DEAD_CREDENTIAL_CODES = new Set([
+  'INVALID_CREDENTIALS',
+  'AUTH_REFRESH_REPLAYED',
+  'SESSION_INVALID',
+])
 
 // ─── Response interceptor: unwrap ApiResponse, refresh on 401 ───
 // 请求侧不再注入 Authorization：浏览器会自动带上 HttpOnly Cookie。
@@ -51,9 +64,13 @@ http.interceptors.response.use(
     return response
   },
   async (error) => {
-    const data = error.response?.data as Partial<ApiResponse> | undefined
+    const data = error.response?.data as
+      | (Partial<ApiResponse> & { code?: string; detail?: string })
+      | undefined
     const status = error.response?.status
     const config = error.config as RetriableConfig | undefined
+    // /v1 的错误是 problem+json：detail 给用户、code 给分支判断
+    const problemCode = typeof data?.code === 'string' ? data.code : undefined
 
     // 413 可能来自反向代理（nginx 默认 client_max_body_size 只有 1m），
     // 此时响应体是 HTML，没有 errorMsg；给一句能直接照着改配置的提示。
@@ -73,7 +90,11 @@ http.interceptors.response.use(
     // authSession 的单飞逻辑合并。
     if (status === 401) {
       const canRetry =
-        !!config && !config._authRetried && !isAuthFreePath(config.url) && hasAuthHint()
+        !!config &&
+        !config._authRetried &&
+        !isAuthFreePath(config.url) &&
+        !DEAD_CREDENTIAL_CODES.has(problemCode ?? '') &&
+        hasAuthHint()
       if (canRetry && config) {
         config._authRetried = true
         try {
@@ -93,8 +114,16 @@ http.interceptors.response.use(
       notifyNeedLogin()
     }
 
-    // errorMsg 是用户可读的文案，直接作为错误信息抛出
+    // 错误文案：/v1 problem 的 detail 优先，/reader3 回落到 errorMsg；
+    // 两者都是用户可读文案，前端只展示不解析
     if (data && typeof data === 'object') {
+      if (typeof data.detail === 'string' && data.detail.trim()) {
+        const err = withStatus(new Error(data.detail), status) as Error & {
+          code?: string
+        }
+        err.code = problemCode
+        return Promise.reject(err)
+      }
       if (typeof data.errorMsg === 'string' && data.errorMsg.trim()) {
         return Promise.reject(withStatus(new Error(data.errorMsg), status))
       }

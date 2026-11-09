@@ -128,22 +128,45 @@ export const useAppStore = defineStore('app', () => {
   /** 登录/改密响应缺省时按后端默认的 6 小时计。 */
   const DEFAULT_ACCESS_TOKEN_TTL_SECS = 6 * 3600
 
-  function setUser(user: UserInfo) {
-    userInfo.value = user
+  /** /v1 登录/改密返回的会话信息（2026-11 起令牌过期时间由服务端给 RFC3339）。 */
+  interface SessionProfile {
+    username: string
+    accessTokenExpiresAt: string
+  }
+
+  function setUser(user: SessionProfile) {
+    userInfo.value = { username: user.username } as UserInfo
     isLoggedIn.value = true
-    // 服务端登录响应带来的用户信息是新鲜的：登录后 HomeView 立刻调用的
-    // fetchUserInfo 直接复用，不再发一次 getUserInfo
+    // 登录态刚由服务端确认：登录后 HomeView 立刻调用的 fetchUserInfo
+    // 直接复用，不再发一次 getUserInfo
     markUserInfoFresh()
-    // 凭据在 HttpOnly Cookie 里，前端只留非敏感 hint（用户名 + 过期时间）
+    // 凭据在 HttpOnly Cookie 里，前端只留非敏感 hint（用户名 + 过期时间）；
+    // 响应缺省/解析失败时按默认 TTL 兜底
+    const expiresAtMs = Date.parse(user.accessTokenExpiresAt)
     storeAuthHint({
       username: user.username,
-      accessTokenExpiresAt:
-        Date.now() + (user.accessTokenExpiresIn ?? DEFAULT_ACCESS_TOKEN_TTL_SECS) * 1000,
+      accessTokenExpiresAt: Number.isFinite(expiresAtMs)
+        ? expiresAtMs
+        : Date.now() + DEFAULT_ACCESS_TOKEN_TTL_SECS * 1000,
     })
     startAuthLifecycle()
     // 登录后不一定经过会调 fetchUserInfo 的页面，直接在登录点触发
     syncStatsOnce()
     prefetchFirstScreenDocs()
+  }
+
+  /**
+   * 改密成功（204，无响应体）：后端换发了当前会话 Cookie，hint 只需重排
+   * 本地过期时间（用户名沿用现值）。
+   */
+  function refreshSessionHint(ttlSecs = DEFAULT_ACCESS_TOKEN_TTL_SECS) {
+    const username =
+      userInfo.value?.username ?? readAuthHint()?.username ?? ''
+    storeAuthHint({
+      username,
+      accessTokenExpiresAt: Date.now() + ttlSecs * 1000,
+    })
+    startAuthLifecycle()
   }
 
   /** 服务端确认的用户信息落地：hint 已存在时补齐用户名（首刷时可能未知）。 */
@@ -392,6 +415,7 @@ export const useAppStore = defineStore('app', () => {
     fetchUserInfo,
     bootstrapAuth,
     setUser,
+    refreshSessionHint,
     clearUser,
     updateUserInfo,
     showSettingsDrawer,

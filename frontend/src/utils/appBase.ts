@@ -12,6 +12,12 @@ export const APP_BASE = import.meta.env.BASE_URL || '/'
 export const API_BASE = `${APP_BASE.replace(/\/+$/, '')}/reader3`
 
 /**
+ * `/v1` 契约命名空间基址。axios 的 baseURL 拼接只对相对路径生效，
+ * `/v1` 端点一律以 `{ baseURL: API_V1_BASE, url: '/auth/login' }` 的形式调用。
+ */
+export const API_V1_BASE = `${APP_BASE.replace(/\/+$/, '')}/v1`
+
+/**
  * 给应用内的绝对路径套上部署前缀。
  *
  * 需要过这里的有两类：服务端返回的路径（封面 `/reader3/image/<id>`、

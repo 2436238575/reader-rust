@@ -86,7 +86,7 @@ describe('authedEventSource', () => {
   it('URL 不携带任何令牌，会话临近过期时刷新后重连', async () => {
     seedHint(Date.now() - 1000) // hint 里的过期时间已过
     const post = vi.spyOn(axios, 'post').mockResolvedValue({
-      data: { isSuccess: true, errorMsg: '', data: { accessTokenExpiresIn: 21600 } },
+      data: { accessToken: 'a', accessTokenExpiresAt: new Date(Date.now() + 21600 * 1000).toISOString(), username: 'alice' },
     })
 
     const stream = createAuthedEventSource('/searchBookMultiSSE', { key: 'x' })
@@ -98,7 +98,7 @@ describe('authedEventSource', () => {
     await flushMicrotasks()
 
     expect(post).toHaveBeenCalledWith(
-      expect.stringContaining('/refreshToken'),
+      expect.stringContaining('/auth/refresh'),
       expect.anything(),
       expect.objectContaining({ withCredentials: true })
     )
@@ -112,7 +112,7 @@ describe('authedEventSource', () => {
   it('会话新鲜时首次失败交给原生重连，连续第二次失败才刷新', async () => {
     seedHint(Date.now() + 3_600_000)
     const post = vi.spyOn(axios, 'post').mockResolvedValue({
-      data: { isSuccess: true, errorMsg: '', data: { accessTokenExpiresIn: 21600 } },
+      data: { accessToken: 'a', accessTokenExpiresAt: new Date(Date.now() + 21600 * 1000).toISOString(), username: 'alice' },
     })
 
     createAuthedEventSource('/searchBookMultiSSE', { key: 'x' })
@@ -169,7 +169,7 @@ describe('authedEventSource', () => {
   it('close 之后不再刷新重连', async () => {
     seedHint(Date.now() - 1000)
     const post = vi.spyOn(axios, 'post').mockResolvedValue({
-      data: { isSuccess: true, errorMsg: '', data: { accessTokenExpiresIn: 21600 } },
+      data: { accessToken: 'a', accessTokenExpiresAt: new Date(Date.now() + 21600 * 1000).toISOString(), username: 'alice' },
     })
 
     const stream = createAuthedEventSource('/cacheBookSSE', { bookId: 'book_1' })
@@ -185,7 +185,7 @@ describe('authedEventSource', () => {
   it('重连后监听器与 onmessage 被重放到新连接，removeEventListener 生效', async () => {
     seedHint(Date.now() - 1000)
     vi.spyOn(axios, 'post').mockResolvedValue({
-      data: { isSuccess: true, errorMsg: '', data: { accessTokenExpiresIn: 21600 } },
+      data: { accessToken: 'a', accessTokenExpiresAt: new Date(Date.now() + 21600 * 1000).toISOString(), username: 'alice' },
     })
 
     const stream = createAuthedEventSource('/searchBookMultiSSE', { key: 'x' })
