@@ -40,29 +40,51 @@ function mapChapterItem(item: ApiChapterItem): BookChapter {
 async function fetchAllChaptersV1(
   bookId: string,
   refresh: boolean
-): Promise<{ chapters: BookChapter[]; stale: boolean }> {
-  const chapters: BookChapter[] = []
-  let cursor: string | null = null
-  let needRefresh = refresh
-  let stale = false
-  do {
-    const params: Record<string, unknown> = { limit: 200 }
-    if (cursor) params.cursor = cursor
-    // refresh 只随第一页发送：后端同步重抓后整表替换，续页沿用新目录
-    if (needRefresh) params.refresh = true
-    needRefresh = false
-    const page: ApiChapterPage = await http
-      .get<ApiChapterPage>(`/books/${bookId}/chapters`, {
-        baseURL: API_V1_BASE,
-        params,
-        timeout: CHAPTER_LIST_TIMEOUT_MS,
-      })
-      .then((r) => r.data)
-    for (const item of page.items) chapters.push(mapChapterItem(item))
-    stale = stale || Boolean(page.stale)
-    cursor = page.nextCursor ?? null
-  } while (cursor)
-  return { chapters, stale }
+): Promise<{ chapters: BookChapter[]; stale: boolean; complete: boolean }> {
+  const fetchOnce = async (allowRefresh: boolean) => {
+    const chapters: BookChapter[] = []
+    let cursor: string | null = null
+    let stale = false
+    let complete = true
+    // 第一页的目录快照令牌：续页回传，服务端发现目录已被后台刷新时回 409
+    let tocVersion: number | null = null
+    let firstPage = true
+    let needRefresh = allowRefresh
+    do {
+      const params: Record<string, unknown> = { limit: 200 }
+      if (cursor) {
+        params.cursor = cursor
+        if (tocVersion !== null) params.tocVersion = tocVersion
+      }
+      // refresh 只随第一页发送：后端同步重抓后整表替换，续页沿用新目录
+      if (needRefresh && firstPage) params.refresh = true
+      const page: ApiChapterPage = await http
+        .get<ApiChapterPage>(`/books/${bookId}/chapters`, {
+          baseURL: API_V1_BASE,
+          params,
+          timeout: CHAPTER_LIST_TIMEOUT_MS,
+        })
+        .then((r) => r.data)
+      for (const item of page.items) chapters.push(mapChapterItem(item))
+      stale = stale || Boolean(page.stale)
+      complete = complete && page.complete !== false
+      if (firstPage) tocVersion = page.tocVersion ?? null
+      firstPage = false
+      needRefresh = false
+      cursor = page.nextCursor ?? null
+    } while (cursor)
+    return { chapters, stale, complete }
+  }
+  try {
+    return await fetchOnce(refresh)
+  } catch (error) {
+    // 翻页途中目录被后台刷新整表替换（index 可能重排）：从第一页重拉一次。
+    // 重拉不再带 refresh——快照已经换新，不需要再回源。
+    if ((error as { code?: string }).code === 'STALE_CURSOR') {
+      return fetchOnce(false)
+    }
+    throw error
+  }
 }
 
 function mapContentToLegacy(data: ApiContent, variant?: ContentVariant): ChapterContentResponse {
@@ -228,15 +250,17 @@ export function getChapterList(params: { bookId: string; refresh?: number }) {
   // v1：游标分页拉全量；响应带 ETag + Cache-Control: no-cache，浏览器对
   // 同一 URL 自动携 If-None-Match 重验证，命中 304 直接复用本地响应体
   const request = fetchAllChaptersV1(bookId, forceRefresh)
-    .then(({ chapters, stale }) => {
+    .then(({ chapters, stale, complete }) => {
       // 只有仍是该书最新一次请求时才写缓存：force 请求可能已抢先写入更新的
       // 结果，慢到的旧请求不应把缓存盖回旧数据。失败不进缓存：回调只在成功时执行
       if (chapterListInFlight.get(bookId) === request) {
-        // 上限 20 本，Map 按插入序淘汰最旧，避免会话内无限增长
+        // 上限 20 本，Map 按插入序淘汰最旧，避免会话内无限增长。
+        // 过期（后台刷新中）或未抓全的目录用短 TTL，尽快换到补全后的结果
         chapterListCache.set(bookId, {
           data: chapters,
           expiresAt:
-            Date.now() + (stale ? STALE_CHAPTER_LIST_TTL_MS : CHAPTER_LIST_TTL_MS),
+            Date.now() +
+            (stale || !complete ? STALE_CHAPTER_LIST_TTL_MS : CHAPTER_LIST_TTL_MS),
         })
         if (chapterListCache.size > CHAPTER_LIST_CACHE_MAX) {
           const oldest = chapterListCache.keys().next().value

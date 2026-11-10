@@ -126,6 +126,7 @@ describe('getChapterList 会话内缓存（v1 游标分页）', () => {
       nextCursor: null,
       stale: false,
       complete: true,
+      tocVersion: null,
     },
   })
   const v1Get = (extra: Record<string, unknown> = {}) => ({
@@ -211,6 +212,51 @@ describe('getChapterList 会话内缓存（v1 游标分页）', () => {
     } finally {
       vi.useRealTimers()
     }
+  })
+
+  it('未抓全的目录同样使用短 TTL', async () => {
+    vi.useFakeTimers()
+    try {
+      getMock.mockResolvedValue({
+        data: { ...page([{ title: '部分目录' }]).data, complete: false },
+      })
+      await getChapterList({ bookId: 'incomplete-book' })
+      await getChapterList({ bookId: 'incomplete-book' })
+      expect(getMock).toHaveBeenCalledTimes(1)
+
+      vi.advanceTimersByTime(11_000)
+      await getChapterList({ bookId: 'incomplete-book' })
+      expect(getMock).toHaveBeenCalledTimes(2)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('续页收到 STALE_CURSOR 时从第一页重拉一次', async () => {
+    getMock.mockResolvedValueOnce({
+      data: {
+        ...page([{ title: '第一章' }, { title: '第二章' }]).data,
+        nextCursor: 'cursor-1',
+        tocVersion: 7,
+      },
+    })
+    getMock.mockRejectedValueOnce(
+      Object.assign(new Error('目录已刷新'), { code: 'STALE_CURSOR' })
+    )
+    getMock.mockResolvedValueOnce({
+      data: { ...page([{ title: '新第一章' }]).data, tocVersion: 8 },
+    })
+
+    const chapters = await getChapterList({ bookId: 'stale-cursor-book' })
+
+    expect(chapters.map((chapter) => chapter.title)).toEqual(['新第一章'])
+    expect(getMock).toHaveBeenCalledTimes(3)
+    // 第二页带上了第一页的 tocVersion；重拉从无游标的第一页开始
+    expect(getMock.mock.calls[1][1].params).toMatchObject({
+      cursor: 'cursor-1',
+      tocVersion: 7,
+    })
+    expect(getMock.mock.calls[2][1].params).toEqual({ limit: 200 })
   })
 
   it('请求失败不缓存失败结果', async () => {
