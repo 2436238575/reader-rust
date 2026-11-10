@@ -14,7 +14,7 @@ export function getBookSources() {
 }
 
 /** `src_<n>` → 数字 id（过渡期适配：现有组件仍消费数字 id，全面切 v1 类型时删除） */
-function parseSourceId(v1Id: string): number {
+export function parseSourceId(v1Id: string): number {
   return Number(v1Id.replace(/^src_/, ''))
 }
 

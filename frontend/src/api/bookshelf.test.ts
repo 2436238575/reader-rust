@@ -3,8 +3,10 @@ import { beforeEach, describe, expect, it, vi, type Mock } from 'vitest'
 import http from './http'
 import {
   deleteBookCache,
+  getBookshelfWithCacheInfo,
   getChapterList,
   getCoverUrl,
+  getShelfBook,
   setBookSource,
   withImageWidth,
 } from './bookshelf'
@@ -105,6 +107,86 @@ describe('withImageWidth', () => {
   it('宽度缺失或非正数时不加参数', () => {
     expect(withImageWidth('/reader3/image/abc123')).toBe('/reader3/image/abc123')
     expect(withImageWidth('/reader3/image/abc123', 0)).toBe('/reader3/image/abc123')
+  })
+})
+
+describe('书架读取（v1 ShelfItem）', () => {
+  const shelfItem = (overrides: Record<string, unknown> = {}) => ({
+    bookId: 'book_1',
+    sourceId: 'src_7',
+    name: '书',
+    author: '作者',
+    bookUrl: 'https://up.example/book',
+    origin: 'https://source.example',
+    originName: '源',
+    coverImageId: 'abc123',
+    customCoverUrl: null,
+    intro: '简介',
+    kind: '玄幻',
+    charset: 'utf-8',
+    canUpdate: true,
+    group: 4,
+    progress: { chapterIndex: 3, chapterTitle: '第四章', offset: 0.25 },
+    lastReadAt: '2026-11-08T11:20:00Z',
+    latestChapterTitle: '最新章',
+    totalChapters: 100,
+    wordCount: '12万字',
+    lastCheckAt: '2026-11-08T10:00:00Z',
+    cachedChapters: 9,
+    position: 2,
+    ...overrides,
+  })
+
+  beforeEach(() => {
+    getMock.mockReset()
+  })
+
+  it('getShelfBook 把 v1 条目映射回旧 Book 形状', async () => {
+    getMock.mockResolvedValue({ data: shelfItem() })
+
+    const book = await getShelfBook('book_1')
+
+    expect(getMock).toHaveBeenCalledWith('/me/shelf/book_1', { baseURL: API_V1_BASE })
+    expect(book).toMatchObject({
+      bookId: 'book_1',
+      bookSourceId: 7,
+      coverUrl: '/reader3/image/abc123',
+      group: 4,
+      durChapterIndex: 3,
+      durChapterPos: 2500,
+      durChapterTitle: '第四章',
+      durChapterTime: Math.floor(Date.parse('2026-11-08T11:20:00Z') / 1000),
+      cachedChapterCount: 9,
+      totalChapterNum: 100,
+      latestChapterTitle: '最新章',
+    })
+  })
+
+  it('getBookshelfWithCacheInfo 按游标拉全量并映射', async () => {
+    getMock
+      .mockResolvedValueOnce({
+        data: {
+          items: [shelfItem({ bookId: 'book_1', position: 0 })],
+          nextCursor: 'c1',
+          total: 2,
+        },
+      })
+      .mockResolvedValueOnce({
+        data: {
+          items: [shelfItem({ bookId: 'book_2', position: 1 })],
+          nextCursor: null,
+          total: 2,
+        },
+      })
+
+    const books = await getBookshelfWithCacheInfo()
+
+    expect(books.map((book) => book.bookId)).toEqual(['book_1', 'book_2'])
+    expect(getMock).toHaveBeenCalledTimes(2)
+    expect(getMock.mock.calls[0][1]).toMatchObject({ params: { limit: 200 } })
+    expect(getMock.mock.calls[1][1]).toMatchObject({
+      params: { limit: 200, cursor: 'c1' },
+    })
   })
 })
 

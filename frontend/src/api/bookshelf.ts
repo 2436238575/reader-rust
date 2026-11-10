@@ -1,13 +1,16 @@
 import http, { UPLOAD_TIMEOUT_MS } from './http'
-import type { Book, BookChapter, BookGroup, ChapterImages } from '../types'
+import type { Book, BookChapter, BookGroup, ChapterImages, ShelfBook } from '../types'
 import { API_V1_BASE, withAppBase } from '../utils/appBase'
 import type { components } from './generated'
+import { parseSourceId } from './source'
 
 // v1 生成的具名 schema（契约 §3.1）
 type ApiChapterItem = components['schemas']['ChapterItem']
 type ApiChapterPage = components['schemas']['ChapterPage']
 type ApiContent = components['schemas']['ChapterContent']
 type ApiBatchContent = components['schemas']['BatchContentItem']
+type ApiShelfItem = components['schemas']['ShelfItem']
+type ApiShelfPage = components['schemas']['ShelfPage']
 
 /** `cv_<n>` → 数字版本号（旧响应形状消费方仍用数字；解析失败按缺省处理） */
 function parseVersionId(id: string | null | undefined): number | undefined {
@@ -111,16 +114,69 @@ function mapContentToLegacy(data: ApiContent, variant?: ContentVariant): Chapter
   }
 }
 
+/** v1 ShelfItem → 旧 Book 形状（store/组件仍在消费平铺字段）。 */
+function mapShelfItem(item: ApiShelfItem): ShelfBook {
+  return {
+    bookId: item.bookId,
+    bookSourceId: item.sourceId ? parseSourceId(item.sourceId) : undefined,
+    name: item.name,
+    author: item.author,
+    bookUrl: item.bookUrl,
+    origin: item.origin,
+    originName: item.originName ?? undefined,
+    // 后端只给图片管道 id；本站取图地址仍走 /reader3/image/<id>（图片域未迁）
+    coverUrl: item.coverImageId ? `/reader3/image/${item.coverImageId}` : undefined,
+    customCoverUrl: item.customCoverUrl ?? undefined,
+    intro: item.intro ?? undefined,
+    kind: item.kind ?? undefined,
+    charset: item.charset ?? undefined,
+    canUpdate: item.canUpdate ?? undefined,
+    group: item.group,
+    durChapterIndex: item.progress.chapterIndex,
+    durChapterPos: Math.round((item.progress.offset ?? 0) * 10000),
+    durChapterTitle: item.progress.chapterTitle ?? undefined,
+    durChapterTime: parseSeconds(item.lastReadAt),
+    latestChapterTitle: item.latestChapterTitle ?? undefined,
+    totalChapterNum: item.totalChapters ?? undefined,
+    wordCount: item.wordCount ?? undefined,
+    lastCheckTime: parseSeconds(item.lastCheckAt),
+    cachedChapterCount: item.cachedChapters,
+  }
+}
+
+/** v1 游标分页拉全量书架（阅读器/书架页需要整架数据，200/页）。 */
+async function fetchAllShelfV1(): Promise<ShelfBook[]> {
+  const books: ShelfBook[] = []
+  let cursor: string | null = null
+  do {
+    const params: Record<string, unknown> = { limit: 200 }
+    if (cursor) params.cursor = cursor
+    const page: ApiShelfPage = await http
+      .get<ApiShelfPage>('/me/shelf', { baseURL: API_V1_BASE, params })
+      .then((r) => r.data)
+    for (const item of page.items) books.push(mapShelfItem(item))
+    cursor = page.nextCursor ?? null
+  } while (cursor)
+  return books
+}
+
+/**
+ * 书架列表（带服务端缓存章数）。仍保留 WebDAV 备份专用 `getBookshelf`
+ * 走 `/reader3`：备份快照要完整 Book（tocUrl/infoHtml 等在 v1 书架条目里
+ * 不暴露），备份域切换时一并迁移。
+ */
 export function getBookshelf() {
   return http.get<Book[]>('/getBookshelf').then((r) => r.data)
 }
 
 export function getBookshelfWithCacheInfo() {
-  return http.get<Book[]>('/getShelfBookWithCacheInfo').then((r) => r.data)
+  return fetchAllShelfV1()
 }
 
 export function getShelfBook(bookId: string) {
-  return http.post<Book>('/getShelfBook', { bookId }).then((r) => r.data)
+  return http
+    .get<ApiShelfItem>(`/me/shelf/${bookId}`, { baseURL: API_V1_BASE })
+    .then((r) => mapShelfItem(r.data))
 }
 
 /**
