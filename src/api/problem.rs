@@ -52,6 +52,8 @@ pub enum ErrorCode {
     TaskNotFound,
     /// 通用 404 兜底（领域 handler 应使用带资源的精确码）
     NotFound,
+    /// 替换规则不存在
+    ReplaceRuleNotFound,
     /// 书籍未加入书架
     BookNotInShelf,
     /// 书源已禁用
@@ -105,6 +107,7 @@ impl ErrorCode {
             | Self::SourceNotFound
             | Self::ImageNotFound
             | Self::TaskNotFound
+            | Self::ReplaceRuleNotFound
             | Self::NotFound => StatusCode::NOT_FOUND,
             Self::BookNotInShelf
             | Self::SourceDisabled
@@ -139,6 +142,7 @@ impl ErrorCode {
             Self::SourceNotFound => "Source Not Found",
             Self::ImageNotFound => "Image Not Found",
             Self::TaskNotFound => "Task Not Found",
+            Self::ReplaceRuleNotFound => "Replace Rule Not Found",
             Self::NotFound => "Not Found",
             Self::BookNotInShelf => "Book Not In Shelf",
             Self::SourceDisabled => "Source Disabled",

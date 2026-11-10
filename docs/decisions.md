@@ -81,7 +81,7 @@ goal 执行中遇到「决策表与 spec 都沉默」的问题时，按 §5.4 �
 按依赖顺序（每条改动面单独提交，仍全绿）：
 
 1. **api 层**：`bookshelf.ts` 增 v1 函数——`listChaptersV1(bookId)`（游标拉全量）、`getContentV1(bookId, index)`（带 If-None-Match）、`batchContentV1(bookId, indices)`、`patchProgressV1(bookId, progress)`、`getBookV1(bookId)`；旧 `/reader3` 函数保留到切换点删除。
-2. **IndexedDB**：缓存条目从 `knownVersionId` 改存 `etag`（单章 content 响应头）；读时带 `If-None-Match`，304 用本地正文，200 落新正文 + 新 etag。
+2. **IndexedDB**：缓存条目改存 `etag`。单章 content 响应头带 ETag，可直接落；**批量接口没有响应头**，预加载条目的 etag 由 `items[].data.version.id`（`cv_<n>`）派生——与单章 GET 的 ETag 值完全一致。无版本内容（本地书上游原文，单章 GET 退回 `"body-<md5>"`）不参与条件请求，始终 200 全量（本地读取本身便宜），批量预加载的此类章节同理。读时带 `If-None-Match`，304 用本地正文，200 落新正文 + 新 etag。
 3. **stores/readerContent**：章节列表走 v1（keyset 全量拉）；正文按 index 直读（不再拼 chapterUrl）；`refresh=1` → `refresh=true`；失败降级用本地缓存正文（同现状）。
 4. **stores/bookshelf + 进度写入**：`saveBookProgress` → `PATCH /v1/me/shelf/{id}`；入架/移出/删除走 v1 三端点；`getBookshelf` 留 `/reader3`（书架列表域另切）。
 5. **阅读器内评论/配图/编辑**继续走 `/reader3`（P3 批次）；目录/正文/进度切完即可删 `/reader3` 的 getChapterList/getBookContent/getBookContents/saveBookProgress。

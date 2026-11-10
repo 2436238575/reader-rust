@@ -80,13 +80,39 @@ pub struct ReplaceRuleWrite {
     pub order: Option<i32>,
 }
 
+/// 规则名是资源身份（路径参数），含 URL 保留字符会让 PATCH/DELETE 永远
+/// 打不中（`/`）或语义漂移（`% ? #`）——创建时直接拒绝。旧规则（/reader3
+/// 时代导入）可能已含这些字符，唯一的清理途径是批量接口（名字在 body 里）。
+fn validate_rule_name(name: &str) -> Result<(), Problem> {
+    if name.trim().is_empty() {
+        return Err(Problem::new(ErrorCode::ValidationFailed)
+            .detail("规则名不能为空")
+            .errors(vec![crate::api::problem::FieldIssue {
+                pointer: "/name".to_string(),
+                code: "REQUIRED".to_string(),
+                detail: None,
+            }]));
+    }
+    if name.contains(['/', '%', '?', '#']) {
+        return Err(Problem::new(ErrorCode::ValidationFailed)
+            .detail("规则名不能包含 / % ? #（它是资源身份，用于接口路径）")
+            .errors(vec![crate::api::problem::FieldIssue {
+                pointer: "/name".to_string(),
+                code: "INVALID_FORMAT".to_string(),
+                detail: Some("不能包含 / % ? #".to_string()),
+            }]));
+    }
+    Ok(())
+}
+
 impl ReplaceRuleWrite {
     fn validate(&self) -> Result<(), Problem> {
-        if self.name.trim().is_empty() || self.pattern.is_empty() {
+        validate_rule_name(&self.name)?;
+        if self.pattern.is_empty() {
             return Err(Problem::new(ErrorCode::ValidationFailed)
-                .detail("规则名与匹配串不能为空")
+                .detail("匹配串不能为空")
                 .errors(vec![crate::api::problem::FieldIssue {
-                    pointer: "/name".to_string(),
+                    pointer: "/pattern".to_string(),
                     code: "REQUIRED".to_string(),
                     detail: None,
                 }]));
@@ -109,28 +135,46 @@ impl ReplaceRuleWrite {
     }
 }
 
-/// merge-patch 请求：只写出现的字段。
+/// merge-patch 请求：只写出现的字段；可空字段用「双重 Option」表达
+/// 「缺省 = 不改 / null = 清空」（`scope` 改回全局就靠这个）。
 #[derive(Debug, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ReplaceRulePatch {
-    pub group: Option<String>,
+    #[serde(default, deserialize_with = "deserialize_double_option")]
+    pub group: Option<Option<String>>,
     pub pattern: Option<String>,
-    pub replacement: Option<String>,
-    pub scope: Option<String>,
+    #[serde(default, deserialize_with = "deserialize_double_option")]
+    pub replacement: Option<Option<String>>,
+    #[serde(default, deserialize_with = "deserialize_double_option")]
+    pub scope: Option<Option<String>>,
     pub is_enabled: Option<bool>,
     pub is_regex: Option<bool>,
     pub order: Option<i32>,
 }
 
+/// `null` → `Some(None)`（清空），字段缺省 → `None`（不改）。
+fn deserialize_double_option<'de, D>(deserializer: D) -> Result<Option<Option<String>>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    Ok(Some(Option::<String>::deserialize(deserializer)?))
+}
+
 #[derive(Debug, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
 pub struct BatchUpsertRequest {
     pub rules: Vec<ReplaceRuleWrite>,
 }
 
 #[derive(Debug, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
 pub struct BatchDeleteRequest {
     pub names: Vec<String>,
 }
+
+/// 批量上限：与其余批量接口的个位数上限不同，替换规则是整表同步场景，
+/// 100 条对单用户足够；超限 400（与批量正文口径一致）。
+const MAX_BATCH_RULES: usize = 100;
 
 /// 替换规则列表（按 `order` 升序）。
 #[utoipa::path(
@@ -216,50 +260,52 @@ pub async fn patch_replace_rule(
     Path(name): Path<String>,
     V1Json(patch): V1Json<ReplaceRulePatch>,
 ) -> Result<axum::Json<ReplaceRuleItem>, Problem> {
-    let mut rule = state
+    if pattern_is_invalid(&patch.pattern) {
+        return Err(empty_pattern_problem());
+    }
+    let updated = state
         .replace_rule_repo
-        .list(&user.ns)
+        .patch_by_name(&user.ns, &name, |rule| {
+            if let Some(group) = &patch.group {
+                rule.group = group.clone();
+            }
+            if let Some(pattern) = &patch.pattern {
+                rule.pattern = pattern.clone();
+            }
+            if let Some(replacement) = &patch.replacement {
+                rule.replacement = replacement.clone().unwrap_or_default();
+            }
+            if let Some(scope) = &patch.scope {
+                rule.scope = scope.clone();
+            }
+            if let Some(enabled) = patch.is_enabled {
+                rule.is_enabled = enabled;
+            }
+            if let Some(is_regex) = patch.is_regex {
+                rule.is_regex = is_regex;
+            }
+            if let Some(order) = patch.order {
+                rule.order = order;
+            }
+        })
         .await
         .map_err(Problem::from)?
-        .into_iter()
-        .find(|rule| rule.name == name)
-        .ok_or_else(|| Problem::new(ErrorCode::NotFound).detail("替换规则不存在"))?;
-    if let Some(group) = patch.group {
-        rule.group = Some(group);
-    }
-    if let Some(pattern) = patch.pattern {
-        if pattern.is_empty() {
-            return Err(Problem::new(ErrorCode::ValidationFailed)
-                .detail("匹配串不能为空")
-                .errors(vec![crate::api::problem::FieldIssue {
-                    pointer: "/pattern".to_string(),
-                    code: "REQUIRED".to_string(),
-                    detail: None,
-                }]));
-        }
-        rule.pattern = pattern;
-    }
-    if let Some(replacement) = patch.replacement {
-        rule.replacement = replacement;
-    }
-    if let Some(scope) = patch.scope {
-        rule.scope = Some(scope);
-    }
-    if let Some(enabled) = patch.is_enabled {
-        rule.is_enabled = enabled;
-    }
-    if let Some(is_regex) = patch.is_regex {
-        rule.is_regex = is_regex;
-    }
-    if let Some(order) = patch.order {
-        rule.order = order;
-    }
-    state
-        .replace_rule_repo
-        .upsert(&user.ns, &rule)
-        .await
-        .map_err(Problem::from)?;
-    Ok(axum::Json(ReplaceRuleItem::from(rule)))
+        .ok_or_else(|| Problem::new(ErrorCode::ReplaceRuleNotFound).detail("替换规则不存在"))?;
+    Ok(axum::Json(ReplaceRuleItem::from(updated)))
+}
+
+fn pattern_is_invalid(pattern: &Option<String>) -> bool {
+    pattern.as_deref().is_some_and(str::is_empty)
+}
+
+fn empty_pattern_problem() -> Problem {
+    Problem::new(ErrorCode::ValidationFailed)
+        .detail("匹配串不能为空")
+        .errors(vec![crate::api::problem::FieldIssue {
+            pointer: "/pattern".to_string(),
+            code: "REQUIRED".to_string(),
+            detail: None,
+        }])
 }
 
 /// 删除（幂等）：不存在也 204。
@@ -300,6 +346,10 @@ pub async fn batch_upsert_replace_rules(
     V1User(user): V1User,
     V1Json(request): V1Json<BatchUpsertRequest>,
 ) -> Result<axum::Json<serde_json::Value>, Problem> {
+    if request.rules.is_empty() || request.rules.len() > MAX_BATCH_RULES {
+        return Err(Problem::new(ErrorCode::MalformedRequest)
+            .detail(format!("rules 需要提供 1 到 {MAX_BATCH_RULES} 条")));
+    }
     for write in &request.rules {
         write.validate()?;
     }
@@ -330,6 +380,10 @@ pub async fn batch_delete_replace_rules(
     V1User(user): V1User,
     V1Json(request): V1Json<BatchDeleteRequest>,
 ) -> Result<axum::Json<serde_json::Value>, Problem> {
+    if request.names.is_empty() || request.names.len() > MAX_BATCH_RULES {
+        return Err(Problem::new(ErrorCode::MalformedRequest)
+            .detail(format!("names 需要提供 1 到 {MAX_BATCH_RULES} 个")));
+    }
     for name in &request.names {
         state
             .replace_rule_repo

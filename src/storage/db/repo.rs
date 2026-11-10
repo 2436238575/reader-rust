@@ -1197,6 +1197,47 @@ impl ReplaceRuleRepo {
             .await?;
         Ok(())
     }
+
+    /// 按名的原子「读-改-写」：BEGIN IMMEDIATE 事务内取单行、应用改动、
+    /// 整行更新。两个并发 PATCH 在写者间串行化，不会互相覆盖对方的字段；
+    /// 规则不存在返回 None（调用方映射为精确 404）。
+    pub async fn patch_by_name(
+        &self,
+        user_ns: &str,
+        name: &str,
+        apply: impl FnOnce(&mut crate::model::replace_rule::ReplaceRule),
+    ) -> Result<Option<crate::model::replace_rule::ReplaceRule>, AppError> {
+        let mut tx = self.pool.begin_with("BEGIN IMMEDIATE").await?;
+        let row = sqlx::query(sqlx::AssertSqlSafe(format!(
+            "SELECT {REPLACE_RULE_COLS} FROM replace_rules WHERE user_ns=?1 AND name=?2"
+        )))
+        .bind(user_ns)
+        .bind(name)
+        .fetch_optional(&mut *tx)
+        .await?;
+        let Some(row) = row else {
+            return Ok(None);
+        };
+        let mut rule = map_replace_rule(&row);
+        apply(&mut rule);
+        sqlx::query(
+            "UPDATE replace_rules SET id=?3, group_name=?4, pattern=?5, replacement=?6,              scope=?7, is_enabled=?8, is_regex=?9, rule_order=?10              WHERE user_ns=?1 AND name=?2",
+        )
+        .bind(user_ns)
+        .bind(name)
+        .bind(rule.id)
+        .bind(rule.group.as_deref())
+        .bind(&rule.pattern)
+        .bind(&rule.replacement)
+        .bind(rule.scope.as_deref())
+        .bind(if rule.is_enabled { 1i64 } else { 0i64 })
+        .bind(if rule.is_regex { 1i64 } else { 0i64 })
+        .bind(i64::from(rule.order))
+        .execute(&mut *tx)
+        .await?;
+        tx.commit().await?;
+        Ok(Some(rule))
+    }
 }
 
 // ─── 书架分组（位域：group_id 必须是 2 的幂，与阅读3.0 一致） ─────────────
