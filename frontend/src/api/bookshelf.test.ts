@@ -2,6 +2,7 @@
 import { beforeEach, describe, expect, it, vi, type Mock } from 'vitest'
 import http from './http'
 import {
+  batchRemoveFromShelf,
   deleteBookCache,
   getBookshelfWithCacheInfo,
   getChapterList,
@@ -187,6 +188,39 @@ describe('书架读取（v1 ShelfItem）', () => {
     expect(getMock.mock.calls[1][1]).toMatchObject({
       params: { limit: 200, cursor: 'c1' },
     })
+  })
+})
+
+describe('batchRemoveFromShelf 分片', () => {
+  beforeEach(() => {
+    getMock.mockReset()
+    postMock.mockReset()
+  })
+
+  it('超过单批上限时按 500 串行分片，deleted 累加', async () => {
+    postMock.mockResolvedValue({ data: { deleted: 500 } })
+    const ids = Array.from({ length: 1200 }, (_, i) => `book_${i}`)
+
+    const result = await batchRemoveFromShelf(ids)
+
+    expect(postMock).toHaveBeenCalledTimes(3)
+    expect(postMock.mock.calls[0]).toEqual([
+      '/me/shelf:batchDelete',
+      { bookIds: ids.slice(0, 500) },
+      { baseURL: API_V1_BASE },
+    ])
+    expect(postMock.mock.calls[1][1].bookIds).toHaveLength(500)
+    expect(postMock.mock.calls[2][1].bookIds).toHaveLength(200)
+    expect(result.deleted).toBe(1500)
+  })
+
+  it('单批以内只发一次', async () => {
+    postMock.mockResolvedValue({ data: { deleted: 2 } })
+
+    const result = await batchRemoveFromShelf(['book_a', 'book_b'])
+
+    expect(postMock).toHaveBeenCalledTimes(1)
+    expect(result.deleted).toBe(2)
   })
 })
 

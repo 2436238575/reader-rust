@@ -215,18 +215,27 @@ export function addToShelf(
     }))
 }
 
+/** 批量移出的分片大小：服务端单批上限 1000，按 500 串行分片，
+ *  全选超大书架也不会撞 400。 */
+const SHELF_BATCH_DELETE_CHUNK = 500
+
 /**
  * 批量移出（v1）：与单个 DELETE 同语义（登记行/书签/正文历史保留），
- * 不存在的 id 忽略。整架全选也不会拆成 N 个请求。
+ * 不存在的 id 忽略。超过单批上限时按 500 分片串行发送。
  */
-export function batchRemoveFromShelf(bookIds: string[]) {
-  return http
-    .post<{ deleted: number }>(
-      '/me/shelf:batchDelete',
-      { bookIds },
-      { baseURL: API_V1_BASE }
-    )
-    .then((r) => r.data)
+export async function batchRemoveFromShelf(bookIds: string[]) {
+  let deleted = 0
+  for (let i = 0; i < bookIds.length; i += SHELF_BATCH_DELETE_CHUNK) {
+    const result = await http
+      .post<{ deleted: number }>(
+        '/me/shelf:batchDelete',
+        { bookIds: bookIds.slice(i, i + SHELF_BATCH_DELETE_CHUNK) },
+        { baseURL: API_V1_BASE }
+      )
+      .then((r) => r.data)
+    deleted += result.deleted
+  }
+  return { deleted }
 }
 
 /**
