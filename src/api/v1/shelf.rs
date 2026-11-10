@@ -49,9 +49,10 @@ fn book_not_in_shelf() -> Problem {
     Problem::new(ErrorCode::BookNotInShelf).detail("这本书还没有加入书架")
 }
 
-/// 入架请求体：全部字段可选（`{}` 表示全部缺省）。调用方（搜索/发现结果）
-/// 已有展示字段时带上，服务端跳过回源详情——发现页直接入架、源已挂时，
-/// 不让「加入书架」干等最坏 3×10s 的详情重试。
+/// 入架请求体：全部字段可选（`{}` 表示全部缺省），**但请求体本身必填**——
+/// 无 body / 无 `Content-Type` 会 415/400，无字段的调用方也至少传 `{}`。
+/// 调用方（搜索/发现结果）已有展示字段时带上，服务端跳过回源详情——
+/// 发现页直接入架、源已挂时，不让「加入书架」干等最坏 3×10s 的详情重试。
 #[derive(Debug, Default, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase", default, deny_unknown_fields)]
 pub struct ShelfPutBody {

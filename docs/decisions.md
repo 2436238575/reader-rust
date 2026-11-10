@@ -129,7 +129,7 @@ goal 执行中遇到「决策表与 spec 都沉默」的问题时，按 §5.4 �
 
 - **三条读取路径的排序键统一为 `(position, book_id)`**：`shelf list()` 原来只 `ORDER BY position`，与 `list_ids()` 及 v1 游标的 tie-break 不一致——position 一旦重复，翻页边界会静默跳书。一行 SQL 对齐。
 - **空封面不派生图片 id**：`cover_url = Some("")` 会得出 `md5("")` 指向不存在的图；shelf 与 books 详情两处都加了空串过滤。
-- **PUT `/v1/me/shelf/{bookId}` 接受可选展示字段**（name/author/coverUrl/intro/kind，`{}` 全缺省）：带上即跳过回源详情，发现页直接入架、源已挂时不再等最坏 3×10s。本站取图地址传回时还原成上游地址落库（与 saveBook 的 restore_cover_urls 同语义）；空串不覆盖登记行真名。
+- **PUT `/v1/me/shelf/{bookId}` 接受可选展示字段**（name/author/coverUrl/intro/kind，`{}` 全缺省；**请求体本身必填**——无 body / 无 `Content-Type` 会 415/400，curl/脚本至少要给 `{}`）：带上即跳过回源详情，发现页直接入架、源已挂时不再等最坏 3×10s。本站取图地址传回时还原成上游地址落库（与 saveBook 的 restore_cover_urls 同语义）；空串不覆盖登记行真名。
 - **`POST /v1/me/shelf:batchDelete`**：批量移出，逐本 `delete_book`（各自清缓存）不做整体事务，不存在/非法 id 忽略不计数，上限 1000。前端 `bulkDelete` 从 N 次串行 DELETE 改为一次调用——原来中途失败会「服务端删了一半、本地一个没动」。
 - **前端 `addBook` 201 后补一次 `getShelfBook` 对齐**：封面统一成图片管道 id（搜索结果里可能是签名上游直出地址），只在新增时多一次请求。
 - **缓存章数从每条 2 次 COUNT 减到 1 次**：`chapter_list_cache_exists` 的预探测冗余（count==0 已涵盖），且会把「有缓存正文但登记行被清」的书写成 0——直接 COUNT 反而更准。
