@@ -116,3 +116,11 @@ goal 执行中遇到「决策表与 spec 都沉默」的问题时，按 §5.4 �
 - **`addBook` → `PUT /v1/me/shelf/{bookId}`**：201 新建时用调用方传入的展示字段就地追加（不整架重拉）；200 已在架时服务端不重置进度/元数据，本地条目原样保留（避免用搜索结果覆盖本地的书名/进度）。缺 `bookId` 直接报错——搜索/发现产出即登记，正常路径必有。
 - **`removeBook` / `bulkDelete` → `DELETE /v1/me/shelf/{bookId}`**（批量逐本串行；v1 没有批量端点）。语义变化：不再顺带删书签、AI 记忆、图片与本地书文件，登记行与正文历史保留（重新加入接得上）。本地书文件因此不再随移出释放——这是「可恢复」语义的代价，彻底删除属于后续动作。
 - **仍在 `/reader3` 的书架读域**：`getBookshelf`、`getShelfBook`（单条带缓存计数）、WebDAV 备份的 `saveBooks`/`restoreBooks`/`deleteBooks`。旧 api 的 `saveBook`/`deleteBook` 已无调用方，随本批删除。
+
+## 2026-11-10 书架读链路切 v1
+
+- **`GET /v1/me/shelf` + `GET /v1/me/shelf/{bookId}`**：返回 `ShelfItem`（注册信息快照 + progress/group/lastReadAt/cachedChapters/position），ETag/304，时间 RFC 3339，封面只给 `coverImageId`（取图仍走 `/reader3/image/<id>`）。游标按 `(position, bookId)`，与拖拽排序的位置列一致。
+- **`sourceId` 用 `src_<n>`**：前端过渡期用 `parseSourceId` 反解成数字给旧组件（书源编辑/换源面板）。
+- **列表不做 `/reader3` 的目录后台预取**：缓存章数来自正文池计数，预取只预热目录、不影响计数；去掉它等于「打开书架不再扇出抓几百个目录」。需要目录时按书读目录自然会抓。
+- **不在架的单条读复用 `BOOK_NOT_IN_SHELF`（409，与 PATCH 同码）**；契约 §8.2 的 `?include=book,cache` 与 `?groupId/?q/?sort` 过滤未实现——前端仍本地过滤/排序，后续书架管理批次再下沉。
+- **`getBookshelf`（无计数版本）仍留 `/reader3`**：WebDAV 备份快照需要 `tocUrl`/`infoHtml` 等 v1 书架条目不暴露的字段，备份域切换时一并迁移。

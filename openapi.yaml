@@ -575,7 +575,100 @@ paths:
       security:
       - cookieAuth: []
       - bearerAuth: []
+  /v1/me/shelf:
+    get:
+      tags:
+      - me
+      summary: 我的书架（按 position 升序，游标分页）。
+      operationId: listShelf
+      parameters:
+      - name: cursor
+        in: query
+        description: 上一页的 nextCursor
+        required: false
+        schema:
+          type: string
+      - name: limit
+        in: query
+        description: 页大小，默认 50，上限 200
+        required: false
+        schema:
+          type: integer
+          format: int32
+          minimum: 0
+      responses:
+        '200':
+          description: 书架页
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ShelfPage'
+        '304':
+          description: If-None-Match 命中，无 body
+        '400':
+          description: limit 超上限
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '401':
+          description: 未登录或令牌失效
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '422':
+          description: 游标无法解码
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+      security:
+      - cookieAuth: []
+      - bearerAuth: []
   /v1/me/shelf/{bookId}:
+    get:
+      tags:
+      - me
+      summary: 单本书的书架条目（含缓存章数）。
+      operationId: getShelfItem
+      parameters:
+      - name: bookId
+        in: path
+        description: 书籍 id（book_<n>）
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: 书架条目
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ShelfItem'
+        '304':
+          description: If-None-Match 命中，无 body
+        '401':
+          description: 未登录或令牌失效
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '404':
+          description: 书籍不存在（未登记）
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '409':
+          description: 书籍不在书架（BOOK_NOT_IN_SHELF）
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+      security:
+      - cookieAuth: []
+      - bearerAuth: []
     put:
       tags:
       - me
@@ -1362,6 +1455,125 @@ components:
         username:
           type: string
           description: 登录用户名（hint 展示与 API 客户端识别；/v1/me 才是资料源）
+    ShelfItem:
+      type: object
+      description: 书架条目：书的注册信息快照 + 我的进度/分组。
+      required:
+      - bookId
+      - name
+      - author
+      - bookUrl
+      - origin
+      - group
+      - progress
+      - cachedChapters
+      - position
+      properties:
+        author:
+          type: string
+        bookId:
+          type: string
+        bookUrl:
+          type: string
+          description: 上游地址：只读诊断字段（红线 6 例外）
+        cachedChapters:
+          type: integer
+          format: int32
+          description: 已缓存正文的章节数（本地书恒 0）
+          minimum: 0
+        canUpdate:
+          type:
+          - boolean
+          - 'null'
+        charset:
+          type:
+          - string
+          - 'null'
+        coverImageId:
+          type:
+          - string
+          - 'null'
+          description: 封面在图片管道中的 id；客户端取图走 `/reader3/image/<id>`
+        customCoverUrl:
+          type:
+          - string
+          - 'null'
+          description: 用户自设封面（任意地址，原样透传）
+        group:
+          type: integer
+          format: int64
+          description: 分组位掩码（与阅读3.0 约定一致，前端按位与过滤）
+        intro:
+          type:
+          - string
+          - 'null'
+        kind:
+          type:
+          - string
+          - 'null'
+        lastCheckAt:
+          type:
+          - string
+          - 'null'
+          format: date-time
+        lastReadAt:
+          type:
+          - string
+          - 'null'
+          format: date-time
+          description: 最近阅读时间，RFC 3339 UTC；未读过为 null
+        latestChapterTitle:
+          type:
+          - string
+          - 'null'
+        name:
+          type: string
+        origin:
+          type: string
+        originName:
+          type:
+          - string
+          - 'null'
+        position:
+          type: integer
+          format: int64
+          description: 书架排序位置（升序）
+        progress:
+          $ref: '#/components/schemas/ShelfProgress'
+        sourceId:
+          type:
+          - string
+          - 'null'
+          description: 绑定书源（`src_<n>`）；null 表示本地书
+        totalChapters:
+          type:
+          - integer
+          - 'null'
+          format: int32
+          minimum: 0
+        wordCount:
+          type:
+          - string
+          - 'null'
+    ShelfPage:
+      type: object
+      description: 书架页（按 position 升序）。
+      required:
+      - items
+      - total
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/ShelfItem'
+        nextCursor:
+          type:
+          - string
+          - 'null'
+        total:
+          type: integer
+          format: int32
+          minimum: 0
     ShelfPatch:
       type: object
       properties:
@@ -1370,6 +1582,23 @@ components:
           - $ref: '#/components/schemas/ProgressPatch'
           - type: 'null'
       additionalProperties: false
+    ShelfProgress:
+      type: object
+      required:
+      - chapterIndex
+      - offset
+      properties:
+        chapterIndex:
+          type: integer
+          format: int32
+        chapterTitle:
+          type:
+          - string
+          - 'null'
+        offset:
+          type: number
+          format: double
+          description: 章内进度 0..1（存储是万分比）
     ShelfWriteResult:
       type: object
       required:

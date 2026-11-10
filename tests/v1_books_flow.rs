@@ -154,6 +154,34 @@ impl TestServer {
         }
     }
 
+    /// 直接插入书架行（v1 写端点只能保证在架，排序/进度/封面快照需要 SQL 预置）。
+    async fn seed_shelf_row(
+        &self,
+        book_id: &str,
+        position: i64,
+        group: i64,
+        progress: (i32, i32, i64, &str),
+        cover_url: Option<&str>,
+    ) {
+        sqlx::query(
+            "INSERT INTO shelf_books (user_ns, book_id, position, group_bits, \
+             dur_chapter_index, dur_chapter_pos, dur_chapter_time, dur_chapter_title, \
+             cover_url, intro, latest_chapter_title, total_chapter_num, created_at, updated_at) \
+             VALUES ('user_1', ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, '简介', '最新章', 100, 0, 0)",
+        )
+        .bind(book_id.trim_start_matches("book_").parse::<i64>().unwrap())
+        .bind(position)
+        .bind(group)
+        .bind(progress.0)
+        .bind(progress.1)
+        .bind(progress.2)
+        .bind(progress.3)
+        .bind(cover_url)
+        .execute(&self.pool)
+        .await
+        .unwrap();
+    }
+
     async fn get(&self, path: &str) -> reqwest::Response {
         self.client
             .get(format!("{}{path}", self.base_url))
@@ -1062,6 +1090,142 @@ async fn batch_content_collects_per_chapter_outcomes() {
         let body: Value = resp.json().await.unwrap();
         assert_eq!(body["code"], json!("MALFORMED_REQUEST"));
     }
+
+    server.cleanup();
+}
+
+// ─── 书架读取（v1） ───
+
+#[tokio::test]
+async fn shelf_list_orders_paginates_and_revalidates() {
+    let server = TestServer::start().await;
+    let book_a = server
+        .seed_book_with_chapters("https://up1.example.com", 1)
+        .await;
+    let book_b = server
+        .seed_book_with_chapters("https://up2.example.com", 1)
+        .await;
+    let book_c = server
+        .seed_book_with_chapters("https://up3.example.com", 1)
+        .await;
+    server
+        .seed_shelf_row(
+            &book_a,
+            0,
+            2,
+            (1, 2500, 1_760_000_000, "第一章"),
+            Some("https://img.example/a.jpg?x=1"),
+        )
+        .await;
+    server
+        .seed_shelf_row(&book_b, 1, 0, (0, 0, 0, ""), None)
+        .await;
+    server
+        .seed_shelf_row(&book_c, 2, 4, (2, 10_000, 1_760_000_100, "第三章"), None)
+        .await;
+
+    let resp = server.get("/v1/me/shelf?limit=2").await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    assert_eq!(resp.headers()["cache-control"], "private, no-cache");
+    let etag = resp.headers()["etag"].to_str().unwrap().to_string();
+    let body: Value = resp.json().await.unwrap();
+    assert!(body.get("isSuccess").is_none(), "v1 响应不带包装");
+    let items = body["items"].as_array().unwrap();
+    assert_eq!(items.len(), 2);
+    assert_eq!(body["total"], json!(3));
+    assert_eq!(items[0]["bookId"], json!(book_a));
+    assert_eq!(items[0]["group"], json!(2), "分组位掩码原样下发");
+    assert_eq!(items[0]["progress"]["chapterIndex"], json!(1));
+    assert_eq!(items[0]["progress"]["offset"], json!(0.25));
+    assert_eq!(items[0]["progress"]["chapterTitle"], json!("第一章"));
+    assert_eq!(items[0]["cachedChapters"], json!(0), "没有缓存正文");
+    assert!(
+        items[0]["sourceId"].as_str().unwrap().starts_with("src_"),
+        "书源引用是 src_<n>"
+    );
+    assert!(items[0]["coverImageId"].is_string(), "封面走图片管道 id");
+    assert_eq!(items[1]["bookId"], json!(book_b));
+
+    // 续页
+    let cursor = body["nextCursor"].as_str().unwrap().to_string();
+    let body: Value = server
+        .get(&format!("/v1/me/shelf?limit=2&cursor={cursor}"))
+        .await
+        .json()
+        .await
+        .unwrap();
+    let items = body["items"].as_array().unwrap();
+    assert_eq!(items.len(), 1);
+    assert_eq!(items[0]["bookId"], json!(book_c));
+    assert!(body["nextCursor"].is_null());
+
+    // ETag 再验证（同一分页参数，body 才与首次一致）
+    let resp = server
+        .client
+        .get(format!("{}/v1/me/shelf?limit=2", server.base_url))
+        .bearer_auth(&server.token)
+        .header(header::IF_NONE_MATCH, &etag)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::NOT_MODIFIED);
+
+    // limit 校验
+    let resp = server.get("/v1/me/shelf?limit=0").await;
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+
+    server.cleanup();
+}
+
+#[tokio::test]
+async fn shelf_item_returns_single_and_404_when_not_in_shelf() {
+    let server = TestServer::start().await;
+    let on_shelf = server
+        .seed_book_with_chapters("https://up1.example.com", 1)
+        .await;
+    let not_on_shelf = server
+        .seed_book_with_chapters("https://up2.example.com", 1)
+        .await;
+    server
+        .seed_shelf_row(&on_shelf, 0, 0, (0, 0, 0, ""), None)
+        .await;
+
+    let resp = server.get(&format!("/v1/me/shelf/{on_shelf}")).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body: Value = resp.json().await.unwrap();
+    assert_eq!(body["bookId"], json!(on_shelf));
+    assert_eq!(body["position"], json!(0));
+
+    // 已登记但不在书架：精确码 BOOK_NOT_IN_SHELF（409，与 PATCH 同码）
+    let resp = server.get(&format!("/v1/me/shelf/{not_on_shelf}")).await;
+    assert_eq!(resp.status(), StatusCode::CONFLICT);
+    let body: Value = resp.json().await.unwrap();
+    assert_eq!(body["code"], json!("BOOK_NOT_IN_SHELF"));
+
+    // 连登记都没有：404 BOOK_NOT_FOUND，与「没入架」区分
+    let resp = server.get("/v1/me/shelf/book_99999999").await;
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+    let body: Value = resp.json().await.unwrap();
+    assert_eq!(body["code"], json!("BOOK_NOT_FOUND"));
+
+    server.cleanup();
+}
+
+#[tokio::test]
+async fn shelf_cached_chapters_reflects_content_pool() {
+    let server = TestServer::start().await;
+    let book_id = server
+        .seed_book_with_chapters("https://up.example.com", 2)
+        .await;
+    server
+        .seed_shelf_row(&book_id, 0, 0, (0, 0, 0, ""), None)
+        .await;
+    server
+        .seed_upstream_content(&book_id, 0, "https://up.example.com/ch/0", "第一章正文。")
+        .await;
+
+    let body: Value = server.get("/v1/me/shelf").await.json().await.unwrap();
+    assert_eq!(body["items"][0]["cachedChapters"], json!(1));
 
     server.cleanup();
 }

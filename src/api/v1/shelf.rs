@@ -15,11 +15,12 @@ use crate::api::v1::{V1Json, V1User};
 use crate::api::AppState;
 use crate::model::book::Book;
 use crate::storage::db::repo::RegisterBook;
-use axum::extract::{Path, State};
-use axum::http::StatusCode;
+use axum::extract::{Path, Query, State};
+use axum::http::{header, HeaderMap, HeaderValue, StatusCode};
 use axum::response::{IntoResponse, Response};
-use axum::routing::{get, put};
+use axum::routing::get;
 use axum::Router;
+use base64::Engine;
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
@@ -28,9 +29,11 @@ const PROGRESS_TIME_THROTTLE_SECS: i64 = 60;
 
 pub fn router() -> Router<AppState> {
     Router::new()
+        .route("/v1/me/shelf", get(list_shelf))
         .route(
             "/v1/me/shelf/{bookId}",
-            put(add_to_shelf)
+            get(get_shelf_item)
+                .put(add_to_shelf)
                 .patch(patch_shelf_book)
                 .delete(remove_from_shelf),
         )
@@ -472,3 +475,314 @@ pub struct LastChapter {
 }
 
 use axum::Json;
+
+// ─── 书架读取（v1） ─────────────────────────────────────────────────────
+
+const DEFAULT_SHELF_LIMIT: u32 = 50;
+const MAX_SHELF_LIMIT: u32 = 200;
+
+#[derive(Debug, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct ListShelfQuery {
+    /// 上一页返回的 nextCursor；空表示第一页
+    pub cursor: Option<String>,
+    pub limit: Option<u32>,
+}
+
+/// 书架页（按 position 升序）。
+#[derive(Debug, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct ShelfPage {
+    pub items: Vec<ShelfItem>,
+    pub next_cursor: Option<String>,
+    pub total: u32,
+}
+
+/// 书架条目：书的注册信息快照 + 我的进度/分组。
+#[derive(Debug, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct ShelfItem {
+    pub book_id: String,
+    /// 绑定书源（`src_<n>`）；null 表示本地书
+    pub source_id: Option<String>,
+    pub name: String,
+    pub author: String,
+    /// 上游地址：只读诊断字段（红线 6 例外）
+    pub book_url: String,
+    pub origin: String,
+    pub origin_name: Option<String>,
+    /// 封面在图片管道中的 id；客户端取图走 `/reader3/image/<id>`
+    pub cover_image_id: Option<String>,
+    /// 用户自设封面（任意地址，原样透传）
+    pub custom_cover_url: Option<String>,
+    pub intro: Option<String>,
+    pub kind: Option<String>,
+    pub charset: Option<String>,
+    pub can_update: Option<bool>,
+    /// 分组位掩码（与阅读3.0 约定一致，前端按位与过滤）
+    pub group: i64,
+    pub progress: ShelfProgress,
+    /// 最近阅读时间，RFC 3339 UTC；未读过为 null
+    #[schema(format = DateTime)]
+    pub last_read_at: Option<String>,
+    pub latest_chapter_title: Option<String>,
+    pub total_chapters: Option<u32>,
+    pub word_count: Option<String>,
+    #[schema(format = DateTime)]
+    pub last_check_at: Option<String>,
+    /// 已缓存正文的章节数（本地书恒 0）
+    pub cached_chapters: u32,
+    /// 书架排序位置（升序）
+    pub position: i64,
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct ShelfProgress {
+    pub chapter_index: i32,
+    pub chapter_title: Option<String>,
+    /// 章内进度 0..1（存储是万分比）
+    pub offset: f64,
+}
+
+#[derive(Serialize, Deserialize)]
+struct ShelfCursorPayload {
+    position: i64,
+    book_id: String,
+}
+
+fn encode_shelf_cursor(position: i64, book_id: &str) -> String {
+    use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+    URL_SAFE_NO_PAD.encode(
+        serde_json::to_vec(&ShelfCursorPayload {
+            position,
+            book_id: book_id.to_string(),
+        })
+        .expect("shelf cursor json"),
+    )
+}
+
+fn decode_shelf_cursor(raw: &str) -> Result<(i64, String), Problem> {
+    use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+    let bytes = URL_SAFE_NO_PAD
+        .decode(raw)
+        .map_err(|_| Problem::new(ErrorCode::InvalidCursor).detail("游标无法解码"))?;
+    let payload: ShelfCursorPayload = serde_json::from_slice(&bytes)
+        .map_err(|_| Problem::new(ErrorCode::InvalidCursor).detail("游标无法解码"))?;
+    Ok((payload.position, payload.book_id))
+}
+
+fn is_local_shelf_book(book: &Book) -> bool {
+    use crate::service::local_epub_book::is_local_epub_url;
+    use crate::service::local_txt_book::is_local_txt_url;
+    is_local_txt_url(&book.book_url) || is_local_epub_url(&book.book_url)
+}
+
+fn shelf_cover_image_id(url: &str) -> Option<String> {
+    use crate::service::image_service::ImageService;
+    ImageService::id_from_route(url)
+        .map(str::to_string)
+        .or_else(|| Some(ImageService::image_key(url)))
+}
+
+async fn build_shelf_item(
+    state: &AppState,
+    user_ns: &str,
+    book: &Book,
+    position: i64,
+) -> Result<ShelfItem, Problem> {
+    let book_id = book.book_id.clone().unwrap_or_default();
+    // 与 /reader3 getShelfBookWithCacheInfo 同口径：本地书恒 0；没有目录
+    // 登记行的书也按 0（列表不做目录后台预取，见 decisions）
+    let cached_chapters = if is_local_shelf_book(book) {
+        0
+    } else if state
+        .book_service
+        .chapter_list_cache_exists(user_ns, &book_id)
+        .await
+    {
+        state
+            .book_service
+            .cached_chapter_count(user_ns, &book_id)
+            .await
+            .map_err(Problem::from)? as u32
+    } else {
+        0
+    };
+    let offset = f64::from(book.dur_chapter_pos.unwrap_or(0).clamp(0, 10_000)) / 10_000.0;
+    Ok(ShelfItem {
+        book_id,
+        source_id: book.book_source_id.map(|id| format!("src_{id}")),
+        name: book.name.clone(),
+        author: book.author.clone(),
+        book_url: book.book_url.clone(),
+        origin: book.origin.clone(),
+        origin_name: book.origin_name.clone(),
+        cover_image_id: book.cover_url.as_deref().and_then(shelf_cover_image_id),
+        custom_cover_url: book.custom_cover_url.clone(),
+        intro: book.intro.clone(),
+        kind: book.kind.clone(),
+        charset: book.charset.clone(),
+        can_update: book.can_update,
+        group: book.group.unwrap_or(0),
+        progress: ShelfProgress {
+            chapter_index: book.dur_chapter_index.unwrap_or(0),
+            chapter_title: book.dur_chapter_title.clone(),
+            offset,
+        },
+        last_read_at: book.dur_chapter_time.map(crate::api::v1::me::rfc3339_secs),
+        latest_chapter_title: book.latest_chapter_title.clone(),
+        total_chapters: book
+            .total_chapter_num
+            .and_then(|count| u32::try_from(count).ok()),
+        word_count: book.word_count.clone(),
+        last_check_at: book.last_check_time.map(crate::api::v1::me::rfc3339_secs),
+        cached_chapters,
+        position,
+    })
+}
+
+/// 我的书架（按 position 升序，游标分页）。
+#[utoipa::path(
+    get,
+    path = "/v1/me/shelf",
+    tag = "me",
+    operation_id = "listShelf",
+    params(
+        ("cursor" = Option<String>, Query, description = "上一页的 nextCursor"),
+        ("limit" = Option<u32>, Query, description = "页大小，默认 50，上限 200"),
+    ),
+    security(("cookieAuth" = []), ("bearerAuth" = [])),
+    responses(
+        (status = 200, description = "书架页", body = ShelfPage),
+        (status = 304, description = "If-None-Match 命中，无 body"),
+        (status = 400, description = "limit 超上限", body = Problem, content_type = "application/problem+json"),
+        (status = 401, description = "未登录或令牌失效", body = Problem, content_type = "application/problem+json"),
+        (status = 422, description = "游标无法解码", body = Problem, content_type = "application/problem+json"),
+    )
+)]
+pub async fn list_shelf(
+    State(state): State<AppState>,
+    V1User(user): V1User,
+    Query(query): Query<ListShelfQuery>,
+    headers: HeaderMap,
+) -> Result<Response, Problem> {
+    let limit = query.limit.unwrap_or(DEFAULT_SHELF_LIMIT);
+    if limit == 0 || limit > MAX_SHELF_LIMIT {
+        return Err(Problem::new(ErrorCode::MalformedRequest)
+            .detail(format!("limit 必须在 1..={MAX_SHELF_LIMIT} 之间")));
+    }
+    let cursor = match query.cursor.as_deref() {
+        Some(raw) if !raw.trim().is_empty() => Some(decode_shelf_cursor(raw)?),
+        _ => None,
+    };
+
+    let all = state
+        .book_service
+        .get_bookshelf_ordered(&user.ns)
+        .await
+        .map_err(Problem::from)?;
+    let total = all.len() as u32;
+
+    let mut selected: Vec<(Book, i64)> = Vec::new();
+    for (book, position) in all {
+        let after_cursor = match &cursor {
+            None => true,
+            Some((cursor_position, cursor_book_id)) => {
+                position > *cursor_position
+                    || (position == *cursor_position
+                        && book.book_id.as_deref().unwrap_or("") > cursor_book_id.as_str())
+            }
+        };
+        if after_cursor {
+            selected.push((book, position));
+        }
+    }
+    let has_more = selected.len() as u32 > limit;
+    selected.truncate(limit as usize);
+
+    let mut items = Vec::with_capacity(selected.len());
+    for (book, position) in &selected {
+        items.push(build_shelf_item(&state, &user.ns, book, *position).await?);
+    }
+    let next_cursor = has_more
+        .then(|| {
+            items
+                .last()
+                .map(|last| encode_shelf_cursor(last.position, &last.book_id))
+        })
+        .flatten();
+
+    let page = ShelfPage {
+        items,
+        next_cursor,
+        total,
+    };
+    let body = serde_json::to_vec(&page).expect("shelf page serializes");
+    let etag = crate::api::etag::strong_etag(&body);
+    let mut response =
+        if crate::api::etag::if_none_match_matches(headers.get(header::IF_NONE_MATCH), &etag) {
+            StatusCode::NOT_MODIFIED.into_response()
+        } else {
+            ([(header::CONTENT_TYPE, "application/json")], body).into_response()
+        };
+    response.headers_mut().insert(header::ETAG, etag);
+    response.headers_mut().insert(
+        header::CACHE_CONTROL,
+        HeaderValue::from_static("private, no-cache"),
+    );
+    Ok(response)
+}
+
+/// 单本书的书架条目（含缓存章数）。
+#[utoipa::path(
+    get,
+    path = "/v1/me/shelf/{bookId}",
+    tag = "me",
+    operation_id = "getShelfItem",
+    params(("bookId" = String, Path, description = "书籍 id（book_<n>）")),
+    security(("cookieAuth" = []), ("bearerAuth" = [])),
+    responses(
+        (status = 200, description = "书架条目", body = ShelfItem),
+        (status = 304, description = "If-None-Match 命中，无 body"),
+        (status = 401, description = "未登录或令牌失效", body = Problem, content_type = "application/problem+json"),
+        (status = 404, description = "书籍不存在（未登记）", body = Problem, content_type = "application/problem+json"),
+        (status = 409, description = "书籍不在书架（BOOK_NOT_IN_SHELF）", body = Problem, content_type = "application/problem+json"),
+    )
+)]
+pub async fn get_shelf_item(
+    State(state): State<AppState>,
+    V1User(user): V1User,
+    Path(book_id): Path<String>,
+    headers: HeaderMap,
+) -> Result<Response, Problem> {
+    // 未登记的 bookId 是 404「书籍不存在」；已登记但不在架是 409
+    // BOOK_NOT_IN_SHELF——与 PATCH 同码，客户端据此区分「书没了」与「没入架」
+    crate::api::handlers::book::resolve_book(&state, &user.ns, &book_id)
+        .await
+        .map_err(|error| match error {
+            crate::error::error::AppError::NotFound(_) => book_not_found(),
+            other => Problem::from(other),
+        })?;
+    let (book, position) = state
+        .book_service
+        .get_shelf_book_with_position(&user.ns, &book_id)
+        .await
+        .map_err(Problem::from)?
+        .ok_or_else(|| Problem::new(ErrorCode::BookNotInShelf).detail("这本书还没有加入书架"))?;
+    let item = build_shelf_item(&state, &user.ns, &book, position).await?;
+    let body = serde_json::to_vec(&item).expect("shelf item serializes");
+    let etag = crate::api::etag::strong_etag(&body);
+    let mut response =
+        if crate::api::etag::if_none_match_matches(headers.get(header::IF_NONE_MATCH), &etag) {
+            StatusCode::NOT_MODIFIED.into_response()
+        } else {
+            ([(header::CONTENT_TYPE, "application/json")], body).into_response()
+        };
+    response.headers_mut().insert(header::ETAG, etag);
+    response.headers_mut().insert(
+        header::CACHE_CONTROL,
+        HeaderValue::from_static("private, no-cache"),
+    );
+    Ok(response)
+}

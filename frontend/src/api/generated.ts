@@ -257,6 +257,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/me/shelf": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 我的书架（按 position 升序，游标分页）。 */
+        get: operations["listShelf"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/me/shelf/{bookId}": {
         parameters: {
             query?: never;
@@ -264,7 +281,8 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        get?: never;
+        /** 单本书的书架条目（含缓存章数）。 */
+        get: operations["getShelfItem"];
         /**
          * 入架（幂等）：已登记的书籍确保在架。201 首次 / 200 已在架。
          * @description 元数据用书籍详情（1h 缓存，详情页刚看过时命中）填充；冷缓存会回源一次
@@ -586,8 +604,72 @@ export interface components {
             /** @description 登录用户名（hint 展示与 API 客户端识别；/v1/me 才是资料源） */
             username: string;
         };
+        /** @description 书架条目：书的注册信息快照 + 我的进度/分组。 */
+        ShelfItem: {
+            author: string;
+            bookId: string;
+            /** @description 上游地址：只读诊断字段（红线 6 例外） */
+            bookUrl: string;
+            /**
+             * Format: int32
+             * @description 已缓存正文的章节数（本地书恒 0）
+             */
+            cachedChapters: number;
+            canUpdate?: boolean | null;
+            charset?: string | null;
+            /** @description 封面在图片管道中的 id；客户端取图走 `/reader3/image/<id>` */
+            coverImageId?: string | null;
+            /** @description 用户自设封面（任意地址，原样透传） */
+            customCoverUrl?: string | null;
+            /**
+             * Format: int64
+             * @description 分组位掩码（与阅读3.0 约定一致，前端按位与过滤）
+             */
+            group: number;
+            intro?: string | null;
+            kind?: string | null;
+            /** Format: date-time */
+            lastCheckAt?: string | null;
+            /**
+             * Format: date-time
+             * @description 最近阅读时间，RFC 3339 UTC；未读过为 null
+             */
+            lastReadAt?: string | null;
+            latestChapterTitle?: string | null;
+            name: string;
+            origin: string;
+            originName?: string | null;
+            /**
+             * Format: int64
+             * @description 书架排序位置（升序）
+             */
+            position: number;
+            progress: components["schemas"]["ShelfProgress"];
+            /** @description 绑定书源（`src_<n>`）；null 表示本地书 */
+            sourceId?: string | null;
+            /** Format: int32 */
+            totalChapters?: number | null;
+            wordCount?: string | null;
+        };
+        /** @description 书架页（按 position 升序）。 */
+        ShelfPage: {
+            items: components["schemas"]["ShelfItem"][];
+            nextCursor?: string | null;
+            /** Format: int32 */
+            total: number;
+        };
         ShelfPatch: {
             progress?: components["schemas"]["ProgressPatch"] | null;
+        };
+        ShelfProgress: {
+            /** Format: int32 */
+            chapterIndex: number;
+            chapterTitle?: string | null;
+            /**
+             * Format: double
+             * @description 章内进度 0..1（存储是万分比）
+             */
+            offset: number;
         };
         ShelfWriteResult: {
             bookId: string;
@@ -1294,6 +1376,113 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+        };
+    };
+    listShelf: {
+        parameters: {
+            query?: {
+                /** @description 上一页的 nextCursor */
+                cursor?: string;
+                /** @description 页大小，默认 50，上限 200 */
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 书架页 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ShelfPage"];
+                };
+            };
+            /** @description If-None-Match 命中，无 body */
+            304: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description limit 超上限 */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description 未登录或令牌失效 */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description 游标无法解码 */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    getShelfItem: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description 书籍 id（book_<n>） */
+                bookId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 书架条目 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ShelfItem"];
+                };
+            };
+            /** @description If-None-Match 命中，无 body */
+            304: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description 未登录或令牌失效 */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description 书籍不在书架（BOOK_NOT_IN_SHELF） */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
             };
         };
     };

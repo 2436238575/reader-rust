@@ -20,6 +20,19 @@ impl BookService {
         Ok(entries.into_iter().map(assemble_shelf_book).collect())
     }
 
+    /// 书架列表 + 排序位置。`Book` 结构体不带 `position`，而 v1 的游标
+    /// 分页要以它为排序键，所以单独给一个不丢位置的读取入口。
+    pub async fn get_bookshelf_ordered(&self, user_ns: &str) -> Result<Vec<(Book, i64)>, AppError> {
+        let entries = self.shelf_repo.list(user_ns).await?;
+        Ok(entries
+            .into_iter()
+            .map(|entry| {
+                let position = entry.shelf.position;
+                (assemble_shelf_book(entry), position)
+            })
+            .collect())
+    }
+
     /// 按 bookId 取书架条目。
     pub async fn get_shelf_book(
         &self,
@@ -31,6 +44,19 @@ impl BookService {
             .get(user_ns, book_id)
             .await?
             .map(assemble_shelf_book))
+    }
+
+    /// 按 bookId 取书架条目 + 排序位置（v1 单条读）。
+    pub async fn get_shelf_book_with_position(
+        &self,
+        user_ns: &str,
+        book_id: &str,
+    ) -> Result<Option<(Book, i64)>, AppError> {
+        let Some(entry) = self.shelf_repo.get(user_ns, book_id).await? else {
+            return Ok(None);
+        };
+        let position = entry.shelf.position;
+        Ok(Some((assemble_shelf_book(entry), position)))
     }
 
     /// 就地更新一本书（按 bookId）：单行读-改-写。
