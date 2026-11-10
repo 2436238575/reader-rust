@@ -30,6 +30,7 @@ mod books;
 
 mod content;
 mod me;
+mod replace_rules;
 mod shelf;
 mod sources;
 
@@ -43,6 +44,7 @@ pub fn router(
 ) -> Router {
     let v1 = Router::new()
         .merge(me::router())
+        .merge(replace_rules::router())
         .merge(shelf::router())
         .merge(books::router())
         .merge(content::router())
@@ -288,6 +290,12 @@ pub fn openapi_yaml() -> String {
         shelf::patch_shelf_book,
         shelf::remove_from_shelf,
         shelf::get_book,
+        replace_rules::list_replace_rules,
+        replace_rules::create_replace_rule,
+        replace_rules::patch_replace_rule,
+        replace_rules::delete_replace_rule,
+        replace_rules::batch_upsert_replace_rules,
+        replace_rules::batch_delete_replace_rules,
         shelf::patch_book,
         auth::login,
         auth::refresh,
@@ -312,6 +320,11 @@ pub fn openapi_yaml() -> String {
         shelf::ShelfPatch,
         shelf::ProgressPatch,
         shelf::BookPatch,
+        replace_rules::ReplaceRuleItem,
+        replace_rules::ReplaceRuleWrite,
+        replace_rules::ReplaceRulePatch,
+        replace_rules::BatchUpsertRequest,
+        replace_rules::BatchDeleteRequest,
         shelf::BookDetail,
         shelf::LastChapter,
     )),

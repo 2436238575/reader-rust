@@ -163,6 +163,76 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/me/replace-rules": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 替换规则列表（按 `order` 升序）。 */
+        get: operations["listReplaceRules"];
+        put?: never;
+        /** 新建或整体替换（按 name upsert）：201 新建 / 200 替换。 */
+        post: operations["createReplaceRule"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/me/replace-rules/{name}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** 删除（幂等）：不存在也 204。 */
+        delete: operations["deleteReplaceRule"];
+        options?: never;
+        head?: never;
+        /** 部分更新（merge-patch）：404 规则不存在。 */
+        patch: operations["patchReplaceRule"];
+        trace?: never;
+    };
+    "/v1/me/replace-rules:batch": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 批量 upsert（导入/跨端同步）：返回写入条数。 */
+        post: operations["batchUpsertReplaceRules"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/me/replace-rules:batchDelete": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 批量删除：返回删除条数（不存在的名字忽略）。 */
+        post: operations["batchDeleteReplaceRules"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/me/shelf/{bookId}": {
         parameters: {
             query?: never;
@@ -214,6 +284,12 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        BatchDeleteRequest: {
+            names: string[];
+        };
+        BatchUpsertRequest: {
+            rules: components["schemas"]["ReplaceRuleWrite"][];
+        };
         BookDetail: {
             author?: string | null;
             /** @description 上游地址：只读诊断字段（红线 6 例外之外的只读输出） */
@@ -357,6 +433,42 @@ export interface components {
              * @description 0..1 的章内比例（服务端存万分比）
              */
             offset?: number | null;
+        };
+        /** @description 替换规则条目。`name` 是身份（书名内唯一）。 */
+        ReplaceRuleItem: {
+            group?: string | null;
+            isEnabled: boolean;
+            isRegex: boolean;
+            name: string;
+            /** Format: int32 */
+            order: number;
+            /** @description 匹配串；`isRegex` 为 true 时按正则解释 */
+            pattern: string;
+            replacement: string;
+            /** @description `book:<bookId>` / `source:<bookSourceId>`；null 表示全局 */
+            scope?: string | null;
+        };
+        /** @description merge-patch 请求：只写出现的字段。 */
+        ReplaceRulePatch: {
+            group?: string | null;
+            isEnabled?: boolean | null;
+            isRegex?: boolean | null;
+            /** Format: int32 */
+            order?: number | null;
+            pattern?: string | null;
+            replacement?: string | null;
+            scope?: string | null;
+        };
+        ReplaceRuleWrite: {
+            group?: string | null;
+            isEnabled?: boolean | null;
+            isRegex?: boolean | null;
+            name: string;
+            /** Format: int32 */
+            order?: number | null;
+            pattern: string;
+            replacement?: string | null;
+            scope?: string | null;
         };
         /**
          * @description 会话令牌对。`accessToken` 供非浏览器客户端走 `Authorization: Bearer`；
@@ -841,6 +953,169 @@ export interface operations {
                 content: {
                     "application/problem+json": components["schemas"]["Problem"];
                 };
+            };
+        };
+    };
+    listReplaceRules: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 替换规则列表 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReplaceRuleItem"][];
+                };
+            };
+        };
+    };
+    createReplaceRule: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ReplaceRuleWrite"];
+            };
+        };
+        responses: {
+            /** @description 同名规则已存在，整体替换 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReplaceRuleItem"];
+                };
+            };
+            /** @description 已新建 */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReplaceRuleItem"];
+                };
+            };
+            /** @description 规则名或匹配串为空 */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    deleteReplaceRule: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description 规则名（身份） */
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 已删除（幂等） */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    patchReplaceRule: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description 规则名（身份） */
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ReplaceRulePatch"];
+            };
+        };
+        responses: {
+            /** @description 更新后的规则 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReplaceRuleItem"];
+                };
+            };
+            /** @description 规则不存在 */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    batchUpsertReplaceRules: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["BatchUpsertRequest"];
+            };
+        };
+        responses: {
+            /** @description 写入条数 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    batchDeleteReplaceRules: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["BatchDeleteRequest"];
+            };
+        };
+        responses: {
+            /** @description 删除条数 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
         };
     };

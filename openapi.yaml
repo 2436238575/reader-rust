@@ -358,6 +358,146 @@ paths:
       security:
       - cookieAuth: []
       - bearerAuth: []
+  /v1/me/replace-rules:
+    get:
+      tags:
+      - me
+      summary: 替换规则列表（按 `order` 升序）。
+      operationId: listReplaceRules
+      responses:
+        '200':
+          description: 替换规则列表
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/ReplaceRuleItem'
+      security:
+      - cookieAuth: []
+      - bearerAuth: []
+    post:
+      tags:
+      - me
+      summary: 新建或整体替换（按 name upsert）：201 新建 / 200 替换。
+      operationId: createReplaceRule
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ReplaceRuleWrite'
+        required: true
+      responses:
+        '200':
+          description: 同名规则已存在，整体替换
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReplaceRuleItem'
+        '201':
+          description: 已新建
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReplaceRuleItem'
+        '422':
+          description: 规则名或匹配串为空
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+      security:
+      - cookieAuth: []
+      - bearerAuth: []
+  /v1/me/replace-rules/{name}:
+    delete:
+      tags:
+      - me
+      summary: 删除（幂等）：不存在也 204。
+      operationId: deleteReplaceRule
+      parameters:
+      - name: name
+        in: path
+        description: 规则名（身份）
+        required: true
+        schema:
+          type: string
+      responses:
+        '204':
+          description: 已删除（幂等）
+      security:
+      - cookieAuth: []
+      - bearerAuth: []
+    patch:
+      tags:
+      - me
+      summary: 部分更新（merge-patch）：404 规则不存在。
+      operationId: patchReplaceRule
+      parameters:
+      - name: name
+        in: path
+        description: 规则名（身份）
+        required: true
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ReplaceRulePatch'
+        required: true
+      responses:
+        '200':
+          description: 更新后的规则
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReplaceRuleItem'
+        '404':
+          description: 规则不存在
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+      security:
+      - cookieAuth: []
+      - bearerAuth: []
+  /v1/me/replace-rules:batch:
+    post:
+      tags:
+      - me
+      summary: 批量 upsert（导入/跨端同步）：返回写入条数。
+      operationId: batchUpsertReplaceRules
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BatchUpsertRequest'
+        required: true
+      responses:
+        '200':
+          description: 写入条数
+      security:
+      - cookieAuth: []
+      - bearerAuth: []
+  /v1/me/replace-rules:batchDelete:
+    post:
+      tags:
+      - me
+      summary: 批量删除：返回删除条数（不存在的名字忽略）。
+      operationId: batchDeleteReplaceRules
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BatchDeleteRequest'
+        required: true
+      responses:
+        '200':
+          description: 删除条数
+      security:
+      - cookieAuth: []
+      - bearerAuth: []
   /v1/me/shelf/{bookId}:
     put:
       tags:
@@ -525,6 +665,24 @@ paths:
       - bearerAuth: []
 components:
   schemas:
+    BatchDeleteRequest:
+      type: object
+      required:
+      - names
+      properties:
+        names:
+          type: array
+          items:
+            type: string
+    BatchUpsertRequest:
+      type: object
+      required:
+      - rules
+      properties:
+        rules:
+          type: array
+          items:
+            $ref: '#/components/schemas/ReplaceRuleWrite'
     BookDetail:
       type: object
       required:
@@ -859,6 +1017,110 @@ components:
           - 'null'
           format: double
           description: 0..1 的章内比例（服务端存万分比）
+      additionalProperties: false
+    ReplaceRuleItem:
+      type: object
+      description: 替换规则条目。`name` 是身份（书名内唯一）。
+      required:
+      - name
+      - pattern
+      - replacement
+      - isEnabled
+      - isRegex
+      - order
+      properties:
+        group:
+          type:
+          - string
+          - 'null'
+        isEnabled:
+          type: boolean
+        isRegex:
+          type: boolean
+        name:
+          type: string
+        order:
+          type: integer
+          format: int32
+        pattern:
+          type: string
+          description: 匹配串；`isRegex` 为 true 时按正则解释
+        replacement:
+          type: string
+        scope:
+          type:
+          - string
+          - 'null'
+          description: '`book:<bookId>` / `source:<bookSourceId>`；null 表示全局'
+    ReplaceRulePatch:
+      type: object
+      description: merge-patch 请求：只写出现的字段。
+      properties:
+        group:
+          type:
+          - string
+          - 'null'
+        isEnabled:
+          type:
+          - boolean
+          - 'null'
+        isRegex:
+          type:
+          - boolean
+          - 'null'
+        order:
+          type:
+          - integer
+          - 'null'
+          format: int32
+        pattern:
+          type:
+          - string
+          - 'null'
+        replacement:
+          type:
+          - string
+          - 'null'
+        scope:
+          type:
+          - string
+          - 'null'
+      additionalProperties: false
+    ReplaceRuleWrite:
+      type: object
+      required:
+      - name
+      - pattern
+      properties:
+        group:
+          type:
+          - string
+          - 'null'
+        isEnabled:
+          type:
+          - boolean
+          - 'null'
+        isRegex:
+          type:
+          - boolean
+          - 'null'
+        name:
+          type: string
+        order:
+          type:
+          - integer
+          - 'null'
+          format: int32
+        pattern:
+          type: string
+        replacement:
+          type:
+          - string
+          - 'null'
+        scope:
+          type:
+          - string
+          - 'null'
       additionalProperties: false
     SessionTokens:
       type: object

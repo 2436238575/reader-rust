@@ -36,6 +36,7 @@ fn openapi_yaml_matches_code() {
 const REQUIRED_PATHS: &[&str] = &[
     "/v1/me:",
     "/v1/me/shelf/{bookId}:",
+    "/v1/me/replace-rules:",
     "/v1/sources:",
     "/v1/books/{bookId}:",
     "/v1/books/{bookId}/chapters:",

@@ -643,6 +643,91 @@ async fn patch_shelf_progress_updates_and_validates() {
     server.cleanup();
 }
 
+/// 节流语义的回归钉：「最近阅读时间」每次进度保存都刷新、60s 内节流。
+/// 如果把它改回「只在换章时刷新」，这个用例会红——否则套件全绿，
+/// 「同一章读两小时沉下去」的 bug 会原样回来。
+#[tokio::test]
+async fn patch_shelf_progress_refreshes_last_read_time_with_throttle() {
+    let server = TestServer::start().await;
+    let book_id = server
+        .seed_book_with_chapters("https://up.example.com", 3)
+        .await;
+
+    server
+        .client
+        .put(format!("{}/v1/me/shelf/{book_id}", server.base_url))
+        .bearer_auth(&server.token)
+        .send()
+        .await
+        .unwrap();
+
+    let read_time = |pool: sqlx::SqlitePool| async move {
+        let (time,): (Option<i64>,) = sqlx::query_as(
+            "SELECT dur_chapter_time FROM shelf_books WHERE user_ns = 'user_1' AND book_id = 1",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        time
+    };
+
+    // 第一次保存：时间戳落为「现在」
+    server
+        .client
+        .patch(format!("{}/v1/me/shelf/{book_id}", server.base_url))
+        .bearer_auth(&server.token)
+        .json(&json!({"progress": {"chapterIndex": 1, "offset": 0.1}}))
+        .send()
+        .await
+        .unwrap();
+    let first = read_time(server.pool.clone())
+        .await
+        .expect("首次保存应写入时间");
+    assert!(first > 0, "时间戳应是服务端时间: {first}");
+
+    // 60s 窗口内同一章再保存：节流，不改动时间戳
+    server
+        .client
+        .patch(format!("{}/v1/me/shelf/{book_id}", server.base_url))
+        .bearer_auth(&server.token)
+        .json(&json!({"progress": {"chapterIndex": 1, "offset": 0.2}}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(
+        read_time(server.pool.clone()).await,
+        Some(first),
+        "60s 内的重复保存应被节流（时间戳不变）"
+    );
+
+    // 把时间回拨到 120 秒前，再保存**同一章**：必须刷新——
+    // 这是「不绑在换章上」的直接断言（换章绑定实现会保持旧值）
+    sqlx::query(
+        "UPDATE shelf_books SET dur_chapter_time = ?1 WHERE user_ns = 'user_1' AND book_id = 1",
+    )
+    .bind(reader_rust::util::time::now_ts() - 120)
+    .execute(&server.pool)
+    .await
+    .unwrap();
+    server
+        .client
+        .patch(format!("{}/v1/me/shelf/{book_id}", server.base_url))
+        .bearer_auth(&server.token)
+        .json(&json!({"progress": {"chapterIndex": 1, "offset": 0.3}}))
+        .send()
+        .await
+        .unwrap();
+    let refreshed = read_time(server.pool.clone()).await.expect("应仍有时间戳");
+    // 回拨 120s 再保存同一章：时间戳必须回到「现在」（>= first）。
+    // 换章绑定实现会保持回拨后的旧值（first - 120），这里会红。
+    assert!(
+        refreshed >= first,
+        "同一章保存也必须刷新最近阅读时间（60s 窗口外）：回拨后仍为 {refreshed}，首次为 {first}"
+    );
+
+    server.cleanup();
+}
+
 #[tokio::test]
 async fn delete_shelf_is_idempotent_and_keeps_registration() {
     let server = TestServer::start().await;
