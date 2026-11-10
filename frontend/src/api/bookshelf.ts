@@ -182,16 +182,51 @@ export function getShelfBook(bookId: string) {
 /**
  * 入架（v1，幂等）：201 新建 / 200 已在架。已在架时不重置进度与元数据，
  * 前端据此决定本地是追加还是原样保留。
+ *
+ * `display` 是调用方（搜索/发现结果）手里的展示字段：带上后服务端跳过
+ * 回源详情，发现页直接入架不再等最坏 3×10s 的详情重试。
  */
-export function addToShelf(bookId: string) {
+export function addToShelf(
+  bookId: string,
+  display?: {
+    name?: string
+    author?: string
+    coverUrl?: string
+    intro?: string
+    kind?: string
+  }
+) {
+  const body = display
+    ? {
+        ...(display.name ? { name: display.name } : {}),
+        ...(display.author ? { author: display.author } : {}),
+        ...(display.coverUrl ? { coverUrl: display.coverUrl } : {}),
+        ...(display.intro ? { intro: display.intro } : {}),
+        ...(display.kind ? { kind: display.kind } : {}),
+      }
+    : {}
   return http
-    .put<{ bookId?: string }>(`/me/shelf/${bookId}`, undefined, {
+    .put<{ bookId?: string }>(`/me/shelf/${bookId}`, body, {
       baseURL: API_V1_BASE,
     })
     .then((r) => ({
       bookId: r.data?.bookId ?? bookId,
       created: r.status === 201,
     }))
+}
+
+/**
+ * 批量移出（v1）：与单个 DELETE 同语义（登记行/书签/正文历史保留），
+ * 不存在的 id 忽略。整架全选也不会拆成 N 个请求。
+ */
+export function batchRemoveFromShelf(bookIds: string[]) {
+  return http
+    .post<{ deleted: number }>(
+      '/me/shelf:batchDelete',
+      { bookIds },
+      { baseURL: API_V1_BASE }
+    )
+    .then((r) => r.data)
 }
 
 /**

@@ -1,7 +1,13 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
 import { useBookshelfStore } from './bookshelf'
-import { getBookshelfWithCacheInfo, addToShelf, removeFromShelf } from '../api/bookshelf'
+import {
+  getBookshelfWithCacheInfo,
+  addToShelf,
+  removeFromShelf,
+  batchRemoveFromShelf,
+  getShelfBook,
+} from '../api/bookshelf'
 import { deleteBrowserBookCache, listBrowserCacheSummary } from '../utils/browserCache'
 
 vi.mock('../api/bookshelf', () => ({
@@ -9,6 +15,8 @@ vi.mock('../api/bookshelf', () => ({
   getBookGroups: vi.fn(),
   addToShelf: vi.fn(),
   removeFromShelf: vi.fn(),
+  batchRemoveFromShelf: vi.fn(),
+  getShelfBook: vi.fn(),
   saveBookGroupId: vi.fn(),
   saveBookGroup: vi.fn(),
   deleteBookGroup: vi.fn(),
@@ -77,6 +85,8 @@ describe('bookshelf shelf writes', () => {
     vi.mocked(listBrowserCacheSummary).mockResolvedValue([])
     vi.mocked(addToShelf).mockReset()
     vi.mocked(removeFromShelf).mockReset()
+    vi.mocked(batchRemoveFromShelf).mockReset()
+    vi.mocked(getShelfBook).mockReset()
     vi.mocked(deleteBrowserBookCache).mockReset()
     vi.mocked(deleteBrowserBookCache).mockResolvedValue(undefined)
     // 计数断言要隔离：清掉前面用例累积的调用记录（保留实现）
@@ -84,8 +94,16 @@ describe('bookshelf shelf writes', () => {
     vi.mocked(listBrowserCacheSummary).mockClear()
   })
 
-  it('新书入架：PUT 201 后就地追加，不整架重拉', async () => {
+  it('新书入架：PUT 201 后用服务端条目对齐，不整架重拉', async () => {
     vi.mocked(addToShelf).mockResolvedValue({ bookId: 'book_new', created: true })
+    vi.mocked(getShelfBook).mockResolvedValue({
+      bookId: 'book_new',
+      name: '新书',
+      author: '作者',
+      bookUrl: 'https://book.example/1',
+      origin: 'https://source.example',
+      coverUrl: '/reader3/image/abc',
+    } as never)
     const store = useBookshelfStore()
 
     const result = await store.addBook({
@@ -97,8 +115,15 @@ describe('bookshelf shelf writes', () => {
       origin: 'https://source.example',
     })
 
-    expect(addToShelf).toHaveBeenCalledWith('book_new')
+    // 展示字段随请求体上送（服务端据此跳过回源详情）
+    expect(addToShelf).toHaveBeenCalledWith(
+      'book_new',
+      expect.objectContaining({ name: '新书', author: '作者' })
+    )
+    expect(getShelfBook).toHaveBeenCalledWith('book_new')
     expect(result.bookId).toBe('book_new')
+    // 封面以服务端落库形态为准（图片管道 id）
+    expect(result.coverUrl).toBe('/reader3/image/abc')
     expect(store.books.map((book) => book.bookId)).toEqual(['book_new'])
     expect(store.books[0]).toMatchObject({
       name: '新书',
@@ -154,6 +179,7 @@ describe('bookshelf shelf writes', () => {
       origin: 'o',
     })
 
+    expect(getShelfBook).not.toHaveBeenCalled()
     expect(store.books.map((book) => book.bookId)).toEqual(['book_lost'])
   })
 
@@ -188,12 +214,12 @@ describe('bookshelf shelf writes', () => {
     expect(store.books).toEqual([])
   })
 
-  it('批量删除逐本调用 DELETE', async () => {
+  it('批量删除走批量端点', async () => {
     vi.mocked(getBookshelfWithCacheInfo).mockResolvedValue([
       { bookId: 'book_a', name: '甲', author: '', bookUrl: 'https://b.example/a', origin: 'o' },
       { bookId: 'book_b', name: '乙', author: '', bookUrl: 'https://b.example/b', origin: 'o' },
     ] as never)
-    vi.mocked(removeFromShelf).mockResolvedValue(undefined)
+    vi.mocked(batchRemoveFromShelf).mockResolvedValue({ deleted: 2 })
     const store = useBookshelfStore()
     await store.fetchBooks()
     store.toggleSelection('book_a')
@@ -201,7 +227,8 @@ describe('bookshelf shelf writes', () => {
 
     await store.bulkDelete()
 
-    expect(removeFromShelf).toHaveBeenCalledTimes(2)
+    expect(batchRemoveFromShelf).toHaveBeenCalledWith(['book_a', 'book_b'])
+    expect(removeFromShelf).not.toHaveBeenCalled()
     expect(store.books).toEqual([])
   })
 })

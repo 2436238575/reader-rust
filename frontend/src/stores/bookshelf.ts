@@ -5,6 +5,8 @@ import {
   getBookGroups,
   addToShelf,
   removeFromShelf,
+  batchRemoveFromShelf,
+  getShelfBook,
   saveBookGroupId as apiSaveBookGroupId,
   saveBookGroup as apiSaveBookGroup,
   deleteBookGroup as apiDeleteBookGroup,
@@ -180,24 +182,37 @@ export const useBookshelfStore = defineStore('bookshelf', () => {
   async function addBook(book: Partial<Book>): Promise<Book> {
     const bookId = book.bookId
     if (!bookId) throw new Error('书籍缺少 bookId，无法入架')
-    const { created } = await addToShelf(bookId)
+    // 展示字段随请求体带给服务端：跳过回源详情，发现页直接入架不再等
+    const { created } = await addToShelf(bookId, {
+      name: book.name,
+      author: book.author,
+      coverUrl: book.coverUrl,
+      intro: book.intro,
+      kind: book.kind,
+    })
     const index = books.value.findIndex((b) => b.bookId === bookId)
     const existing = index >= 0 ? books.value[index] : undefined
     // 已在架：PUT 是幂等的，服务端不重置进度/元数据，本地条目保持原样
     if (!created && existing) return existing
 
+    // 新入架：201 后用服务端条目对齐一次——封面统一成图片管道 id（搜索结果
+    // 里可能是会过期的签名直出地址），章节数等也以后端落库为准；拉不到
+    // （离线等）再用调用方传入的字段就地立起来
+    const saved = created ? await getShelfBook(bookId).catch(() => null) : null
     const next: ShelfBook = {
-      ...book,
+      ...(saved ?? book),
       bookId,
-      name: book.name ?? existing?.name ?? '',
-      author: book.author ?? existing?.author ?? '',
-      bookUrl: book.bookUrl ?? existing?.bookUrl ?? '',
-      origin: book.origin ?? existing?.origin ?? '',
-      durChapterIndex: book.durChapterIndex ?? existing?.durChapterIndex ?? 0,
-      durChapterPos: book.durChapterPos ?? existing?.durChapterPos ?? 0,
+      name: saved?.name ?? book.name ?? existing?.name ?? '',
+      author: saved?.author ?? book.author ?? existing?.author ?? '',
+      bookUrl: saved?.bookUrl ?? book.bookUrl ?? existing?.bookUrl ?? '',
+      origin: saved?.origin ?? book.origin ?? existing?.origin ?? '',
+      durChapterIndex:
+        saved?.durChapterIndex ?? book.durChapterIndex ?? existing?.durChapterIndex ?? 0,
+      durChapterPos:
+        saved?.durChapterPos ?? book.durChapterPos ?? existing?.durChapterPos ?? 0,
       // 书架列表注入的两个缓存章数字段：本地来源新书为 0，远程沿用旧值
       browserCachedChapterCount: existing?.browserCachedChapterCount ?? 0,
-      cachedChapterCount: existing?.cachedChapterCount,
+      cachedChapterCount: saved?.cachedChapterCount ?? existing?.cachedChapterCount,
     }
     if (index >= 0) {
       books.value[index] = next
@@ -302,10 +317,7 @@ export const useBookshelfStore = defineStore('bookshelf', () => {
       .map((b) => b.bookId!)
 
     if (toDelete.length === 0) return
-    // v1 没有批量移出端点：逐本 DELETE（幂等）；数量是用户勾选的子集，串行可控
-    for (const bookId of toDelete) {
-      await removeFromShelf(bookId)
-    }
+    await batchRemoveFromShelf(toDelete)
     await Promise.all(
       toDelete.map((bookId) => deleteBrowserBookCache(bookId).catch(() => undefined))
     )
