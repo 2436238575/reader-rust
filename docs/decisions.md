@@ -70,3 +70,19 @@ goal 执行中遇到「决策表与 spec 都沉默」的问题时，按 §5.4 �
 - **章节列表数据来源三分支**：本地书走本地服务（目录由文件确定性生成，不写登记表）；网络书登记表优先，空则走 `/reader3` 同一份抓取服务填充登记表（首屏分页 + 后台补全的「先回首页」优化随阅读器切换再引入，本片同步全量抓取，入站 120s 超时兜底）。
 - **URL 不出现在章节响应里**（红线 6）：身份是 `(bookId, index)`；标题覆盖层在出口叠加并显式给 `titleOverridden`。
 - 暂缓项：Book 详情端点（`GET /v1/books/{id}` 需定 getBookInfo 语义与封面形态）与 content 端点（版本 ETag 语义设计）随阅读器切换批次一起做。
+
+## 2026-11-10 P1 后端收官 + 阅读器切换方案
+
+- **批量正文 `POST /v1/books/{id}/chapters:batchContent`**：并发 4、逐项成败（`error={code,detail}`）、顺序按请求归位；单章/批量共用 `map_to_v1`。
+- **端点 spec 注册的流程教训**：批量端点首版提交漏了 `V1ApiDoc` 注册，漂移检查与清单断言都不报——生成物与锚文件一致缺失。以后每加端点必须同一提交内：`paths(...)` + `components(schemas(...))` + `REQUIRED_PATHS` + regen。
+
+### 阅读器前端切换方案（下一批的接线表）
+
+按依赖顺序（每条改动面单独提交，仍全绿）：
+
+1. **api 层**：`bookshelf.ts` 增 v1 函数——`listChaptersV1(bookId)`（游标拉全量）、`getContentV1(bookId, index)`（带 If-None-Match）、`batchContentV1(bookId, indices)`、`patchProgressV1(bookId, progress)`、`getBookV1(bookId)`；旧 `/reader3` 函数保留到切换点删除。
+2. **IndexedDB**：缓存条目从 `knownVersionId` 改存 `etag`（单章 content 响应头）；读时带 `If-None-Match`，304 用本地正文，200 落新正文 + 新 etag。
+3. **stores/readerContent**：章节列表走 v1（keyset 全量拉）；正文按 index 直读（不再拼 chapterUrl）；`refresh=1` → `refresh=true`；失败降级用本地缓存正文（同现状）。
+4. **stores/bookshelf + 进度写入**：`saveBookProgress` → `PATCH /v1/me/shelf/{id}`；入架/移出/删除走 v1 三端点；`getBookshelf` 留 `/reader3`（书架列表域另切）。
+5. **阅读器内评论/配图/编辑**继续走 `/reader3`（P3 批次）；目录/正文/进度切完即可删 `/reader3` 的 getChapterList/getBookContent/getBookContents/saveBookProgress。
+6. **验收**：阅读器 e2e（reader.spec.ts）保持绿；新增一条 v1 正文往返用例（编辑版/上游版、`304` 缓存命中）。
