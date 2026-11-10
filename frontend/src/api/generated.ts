@@ -494,6 +494,10 @@ export interface components {
             isRegex?: boolean | null;
             /** Format: int32 */
             order?: number | null;
+            /**
+             * @description 必填字段：`null` 与空串同语义（422），清空没有意义；双重 Option
+             *     只为与同结构其他可空字段保持一致的类型形态
+             */
             pattern?: string | null;
             replacement?: string | null;
             scope?: string | null;

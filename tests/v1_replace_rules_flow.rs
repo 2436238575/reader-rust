@@ -191,6 +191,26 @@ async fn replace_rules_crud_roundtrip() {
         "空匹配串指向 /pattern"
     );
 
+    // PATCH 的 pattern: null 与空串同语义（必填，不可清空）→ 422
+    for pattern_value in [json!(null), json!("")] {
+        let rejected = server
+            .client
+            .patch(server.url("/v1/me/replace-rules/去广告"))
+            .bearer_auth(&server.token)
+            .json(&json!({ "pattern": pattern_value }))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(
+            rejected.status(),
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "{pattern_value}"
+        );
+        let body: Value = rejected.json().await.unwrap();
+        assert_eq!(body["code"], json!("VALIDATION_FAILED"));
+        assert_eq!(body["errors"][0]["pointer"], json!("/pattern"));
+    }
+
     server.cleanup();
 }
 
@@ -258,7 +278,17 @@ async fn batch_upsert_and_delete() {
 async fn rule_name_with_url_unsafe_chars_is_rejected() {
     let server = TestServer::start().await;
 
-    for name in ["章节/广告", "带%号", "问号?", "井号#"] {
+    for name in [
+        "章节/广告",
+        "带%号",
+        "问号?",
+        "井号#",
+        "带 空格",
+        "带\t制表",
+        "带\n换行",
+        "带\u{7}控制符",
+        &"长".repeat(101),
+    ] {
         let resp = server
             .client
             .post(server.url("/v1/me/replace-rules"))

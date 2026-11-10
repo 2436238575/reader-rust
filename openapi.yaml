@@ -1174,6 +1174,9 @@ components:
           type:
           - string
           - 'null'
+          description: |-
+            必填字段：`null` 与空串同语义（422），清空没有意义；双重 Option
+            只为与同结构其他可空字段保持一致的类型形态
         replacement:
           type:
           - string

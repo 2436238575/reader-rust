@@ -102,6 +102,27 @@ fn validate_rule_name(name: &str) -> Result<(), Problem> {
                 detail: Some("不能包含 / % ? #".to_string()),
             }]));
     }
+    // 空白字符（含空格/制表/换行）与控制字符：路径身份要求 URI 安全，
+    // 且这类字符在日志与批量同步里都容易出意外
+    if name.chars().any(|c| c.is_whitespace() || c.is_control()) {
+        return Err(Problem::new(ErrorCode::ValidationFailed)
+            .detail("规则名不能包含空白或控制字符")
+            .errors(vec![crate::api::problem::FieldIssue {
+                pointer: "/name".to_string(),
+                code: "INVALID_FORMAT".to_string(),
+                detail: Some("不能包含空白或控制字符".to_string()),
+            }]));
+    }
+    // 长度上限：路径参数与展示都按短文本设计
+    if name.chars().count() > 100 {
+        return Err(Problem::new(ErrorCode::ValidationFailed)
+            .detail("规则名不能超过 100 个字符")
+            .errors(vec![crate::api::problem::FieldIssue {
+                pointer: "/name".to_string(),
+                code: "TOO_LONG".to_string(),
+                detail: Some("不能超过 100 个字符".to_string()),
+            }]));
+    }
     Ok(())
 }
 
@@ -142,7 +163,10 @@ impl ReplaceRuleWrite {
 pub struct ReplaceRulePatch {
     #[serde(default, deserialize_with = "deserialize_double_option")]
     pub group: Option<Option<String>>,
-    pub pattern: Option<String>,
+    /// 必填字段：`null` 与空串同语义（422），清空没有意义；双重 Option
+    /// 只为与同结构其他可空字段保持一致的类型形态
+    #[serde(default, deserialize_with = "deserialize_double_option")]
+    pub pattern: Option<Option<String>>,
     #[serde(default, deserialize_with = "deserialize_double_option")]
     pub replacement: Option<Option<String>>,
     #[serde(default, deserialize_with = "deserialize_double_option")]
@@ -269,7 +293,7 @@ pub async fn patch_replace_rule(
             if let Some(group) = &patch.group {
                 rule.group = group.clone();
             }
-            if let Some(pattern) = &patch.pattern {
+            if let Some(Some(pattern)) = &patch.pattern {
                 rule.pattern = pattern.clone();
             }
             if let Some(replacement) = &patch.replacement {
@@ -294,8 +318,10 @@ pub async fn patch_replace_rule(
     Ok(axum::Json(ReplaceRuleItem::from(updated)))
 }
 
-fn pattern_is_invalid(pattern: &Option<String>) -> bool {
-    pattern.as_deref().is_some_and(str::is_empty)
+/// `Some(None)`（显式 null）与 `Some(Some(""))` 同语义：匹配串必填，
+/// 没有「清空」的含义，直接 422。
+fn pattern_is_invalid(pattern: &Option<Option<String>>) -> bool {
+    matches!(pattern, Some(None)) || pattern.as_ref().is_some_and(|p| p.as_deref() == Some(""))
 }
 
 fn empty_pattern_problem() -> Problem {
