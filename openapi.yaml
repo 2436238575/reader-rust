@@ -209,6 +209,9 @@ paths:
       tags:
       - books
       summary: 章节列表。
+      description: |-
+        `refresh=true` 是用户显式刷新：上游失败直接 502，不回退旧登记表
+        （静默成功会掩盖书源已失效）；普通读才用旧目录兜底并标 `stale`。
       operationId: listChapters
       parameters:
       - name: bookId
@@ -237,6 +240,13 @@ paths:
         required: false
         schema:
           type: boolean
+      - name: tocVersion
+        in: query
+        description: 第一页的 tocVersion，续页回传用于检测目录快照已刷新
+        required: false
+        schema:
+          type: integer
+          format: int64
       responses:
         '200':
           description: 章节页（按 index 升序）
@@ -264,8 +274,20 @@ paths:
             application/problem+json:
               schema:
                 $ref: '#/components/schemas/Problem'
+        '409':
+          description: 目录已刷新（tocVersion 不匹配），客户端从第一页重拉
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
         '422':
           description: 游标无法解码
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '502':
+          description: 上游失败；refresh=true 时不回退旧目录，如实报错
           content:
             application/problem+json:
               schema:
@@ -1011,6 +1033,14 @@ components:
           description: |-
             登记表已过 TTL：本次先返回旧目录，后台正在刷新；上游失败时也会
             保持 true 继续服务旧数据（不再把「目录打不开」当过期代价）
+        tocVersion:
+          type:
+          - integer
+          - 'null'
+          format: int64
+          description: |-
+            目录快照令牌（`book_toc_state.fetched_at`）：续页回传用于发现
+            「翻页途中后台刷新整表替换」；本地书没有登记表，恒为 null
         total:
           type:
           - integer
@@ -1068,6 +1098,7 @@ components:
       - VALIDATION_FAILED
       - MALFORMED_REQUEST
       - INVALID_CURSOR
+      - STALE_CURSOR
       - INVALID_CREDENTIALS
       - AUTH_EXPIRED
       - AUTH_REFRESH_REPLAYED

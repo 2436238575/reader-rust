@@ -283,6 +283,51 @@ async fn cursor_pagination_walks_without_duplicates() {
 }
 
 #[tokio::test]
+async fn stale_cursor_detects_background_refresh() {
+    let server = TestServer::start().await;
+    let book_id = server
+        .seed_book_with_chapters("https://up.example.com", 5)
+        .await;
+
+    // 第一页：拿到游标与目录快照令牌
+    let body: Value = server
+        .get(&format!("/v1/books/{book_id}/chapters?limit=2"))
+        .await
+        .json()
+        .await
+        .unwrap();
+    let cursor = body["nextCursor"].as_str().unwrap().to_string();
+    let toc_version = body["tocVersion"].as_i64().expect("网络书应带 tocVersion");
+
+    // 模拟后台刷新落库：快照时间变化（目录内容与 index 体系可能已换）
+    sqlx::query("UPDATE book_toc_state SET fetched_at = fetched_at + 1 WHERE book_id = ?1")
+        .bind(book_id.trim_start_matches("book_").parse::<i64>().unwrap())
+        .execute(&server.pool)
+        .await
+        .unwrap();
+
+    // 旧快照的续页：409 STALE_CURSOR，客户端从第一页重拉
+    let resp = server
+        .get(&format!(
+            "/v1/books/{book_id}/chapters?limit=2&cursor={cursor}&tocVersion={toc_version}"
+        ))
+        .await;
+    assert_eq!(resp.status(), StatusCode::CONFLICT);
+    let body: Value = resp.json().await.unwrap();
+    assert_eq!(body["code"], json!("STALE_CURSOR"));
+
+    // 不回传 tocVersion（旧客户端）仍可继续翻页
+    let resp = server
+        .get(&format!(
+            "/v1/books/{book_id}/chapters?limit=2&cursor={cursor}"
+        ))
+        .await;
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    server.cleanup();
+}
+
+#[tokio::test]
 async fn title_override_is_flagged_and_changes_etag() {
     let server = TestServer::start().await;
     let book_id = server

@@ -33,12 +33,16 @@ pub fn router() -> Router<AppState> {
 }
 
 #[derive(Debug, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
 pub struct ListChaptersQuery {
     /// 上一页返回的 nextCursor；空表示第一页
     pub cursor: Option<String>,
     pub limit: Option<u32>,
     /// 同步重抓目录（等价 `/reader3` 的 refresh=1；只对第一页生效）
     pub refresh: Option<bool>,
+    /// 第一页响应里的 `tocVersion`：续页回传。目录在翻页途中被后台刷新
+    /// 整表替换时（index 可能重新编号）返回 409 `STALE_CURSOR`
+    pub toc_version: Option<i64>,
 }
 
 /// 章节条目：身份是 `index`（书籍内稳定序号，换源整表替换）。
@@ -72,6 +76,9 @@ pub struct ChapterPage {
     /// 目录是否抓全：false 表示只登记了部分章节（后台补全中/被截断），
     /// 客户端可稍后重取，不要把当前 `total` 当全书章节数
     pub complete: bool,
+    /// 目录快照令牌（`book_toc_state.fetched_at`）：续页回传用于发现
+    /// 「翻页途中后台刷新整表替换」；本地书没有登记表，恒为 null
+    pub toc_version: Option<i64>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -95,6 +102,9 @@ fn decode_cursor(raw: &str) -> Result<i32, Problem> {
 }
 
 /// 章节列表。
+///
+/// `refresh=true` 是用户显式刷新：上游失败直接 502，不回退旧登记表
+/// （静默成功会掩盖书源已失效）；普通读才用旧目录兜底并标 `stale`。
 #[utoipa::path(
     get,
     path = "/v1/books/{bookId}/chapters",
@@ -105,6 +115,7 @@ fn decode_cursor(raw: &str) -> Result<i32, Problem> {
         ("cursor" = Option<String>, Query, description = "上一页的 nextCursor"),
         ("limit" = Option<u32>, Query, description = "页大小，默认 50，上限 200"),
         ("refresh" = Option<bool>, Query, description = "同步重抓目录（只对第一页生效）"),
+        ("tocVersion" = Option<i64>, Query, description = "第一页的 tocVersion，续页回传用于检测目录快照已刷新"),
     ),
     security(("cookieAuth" = []), ("bearerAuth" = [])),
     responses(
@@ -113,7 +124,9 @@ fn decode_cursor(raw: &str) -> Result<i32, Problem> {
         (status = 400, description = "limit 超上限", body = Problem, content_type = "application/problem+json"),
         (status = 401, description = "未登录或令牌失效", body = Problem, content_type = "application/problem+json"),
         (status = 404, description = "书籍不存在", body = Problem, content_type = "application/problem+json"),
+        (status = 409, description = "目录已刷新（tocVersion 不匹配），客户端从第一页重拉", body = Problem, content_type = "application/problem+json"),
         (status = 422, description = "游标无法解码", body = Problem, content_type = "application/problem+json"),
+        (status = 502, description = "上游失败；refresh=true 时不回退旧目录，如实报错", body = Problem, content_type = "application/problem+json"),
     )
 )]
 pub async fn list_chapters(
@@ -151,6 +164,7 @@ pub async fn list_chapters(
         chapters,
         stale,
         complete,
+        toc_version,
     } = load_chapters(
         &state,
         &user.ns,
@@ -160,6 +174,18 @@ pub async fn list_chapters(
         after_index.is_none(),
     )
     .await?;
+
+    // 续页发现目录快照已被后台刷新替换：index 可能重新编号，继续按旧游标
+    // 切片会在接缝处重复/漏章。让客户端从第一页重拉一次。
+    if after_index.is_some() {
+        if let Some(sent_version) = query.toc_version {
+            if toc_version != Some(sent_version) {
+                return Err(
+                    Problem::new(ErrorCode::StaleCursor).detail("目录已刷新，请从第一页重新拉取")
+                );
+            }
+        }
+    }
 
     // 标题覆盖层：读取时叠加，titleOverridden 显式标注
     let override_map = match crate::storage::db::repo::parse_book_id(&book_id) {
@@ -202,6 +228,7 @@ pub async fn list_chapters(
         total: Some(total),
         stale,
         complete,
+        toc_version,
     };
     let body = serde_json::to_vec(&page).expect("chapter page serializes");
     let etag = crate::api::etag::strong_etag(&body);
@@ -218,13 +245,15 @@ pub async fn list_chapters(
     Ok(response)
 }
 
-/// 一次目录读取的结果：章节列表 + 新鲜度/完整性（随响应原样下发）。
+/// 一次目录读取的结果：章节列表 + 新鲜度/完整性/快照令牌（随响应原样下发）。
 struct ChapterList {
     chapters: Vec<BookChapter>,
     /// 登记表已过 TTL：本次用旧目录兜底，后台正在刷新
     stale: bool,
     /// 目录是否抓全（false = 只登记了部分章节）
     complete: bool,
+    /// 目录快照令牌（`book_toc_state.fetched_at`）；本地书为 None
+    toc_version: Option<i64>,
 }
 
 async fn load_chapters(
@@ -249,6 +278,7 @@ async fn load_chapters(
             chapters,
             stale: false,
             complete: true,
+            toc_version: None,
         });
     }
     if is_local_epub_url(&resolved.book_url) {
@@ -261,6 +291,7 @@ async fn load_chapters(
             chapters,
             stale: false,
             complete: true,
+            toc_version: None,
         });
     }
 
@@ -282,17 +313,18 @@ async fn load_chapters(
                     .get_toc_state(book_id)
                     .await
                     .map_err(Problem::from)?;
-                let (complete, fresh) = match toc_state {
+                let (complete, fresh, fetched_at) = match toc_state {
                     Some(row) => (
                         row.complete,
                         crate::service::book_service::BookService::toc_state_is_fresh(
                             row.complete,
                             row.fetched_at,
                         ),
+                        row.fetched_at,
                     ),
                     // 有登记行却没有状态行（移出书架/清缓存后）：按过期处理，
                     // 旧目录照常服务，后台重新抓取
-                    None => (false, false),
+                    None => (false, false, 0),
                 };
                 if !fresh && first_page {
                     spawn_toc_refresh(state, user_ns, book_id, resolved);
@@ -301,6 +333,7 @@ async fn load_chapters(
                     chapters: list,
                     stale: !fresh,
                     complete,
+                    toc_version: Some(fetched_at),
                 });
             }
         }
@@ -313,17 +346,18 @@ async fn load_chapters(
         .await
         .map_err(Problem::from)?;
     // 刚抓完的状态由 store_chapter_list 写入；截断/未完成会落 complete=false
-    let complete = state
+    let toc_state = state
         .book_service
         .get_toc_state(book_id)
         .await
-        .map_err(Problem::from)?
-        .map(|row| row.complete)
-        .unwrap_or(false);
+        .map_err(Problem::from)?;
+    let complete = toc_state.map(|row| row.complete).unwrap_or(false);
+    let toc_version = Some(toc_state.map(|row| row.fetched_at).unwrap_or(0));
     Ok(ChapterList {
         chapters,
         stale: false,
         complete,
+        toc_version,
     })
 }
 
@@ -382,12 +416,23 @@ fn spawn_toc_refresh(
                 return;
             }
         };
-        if let Err(error) = state
+        match state
             .book_service
-            .get_chapter_list_with_cache(&user_ns, &book_id, &resolved.source, &toc_url, true)
+            .refresh_chapter_list_if_current(
+                &user_ns,
+                &book_id,
+                &resolved.book_url,
+                &resolved.source,
+                &toc_url,
+            )
             .await
         {
-            tracing::warn!(%error, book_id, "目录后台刷新失败，继续服务旧登记表");
+            Ok(true) => {}
+            // 抓取期间换源/改绑：旧源的整表结果丢弃，不能覆盖新源目录
+            Ok(false) => tracing::warn!(book_id, "目录刷新期间书籍已换源，丢弃旧源结果"),
+            Err(error) => {
+                tracing::warn!(%error, book_id, "目录后台刷新失败，继续服务旧登记表")
+            }
         }
     });
 }

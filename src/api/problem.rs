@@ -27,6 +27,9 @@ pub enum ErrorCode {
     MalformedRequest,
     /// 游标无法解码或已失效
     InvalidCursor,
+    /// 目录在翻页途中被后台刷新整表替换（`tocVersion` 不匹配），
+    /// 客户端应从第一页重新拉取
+    StaleCursor,
     /// 用户名或密码错误（不区分两种情况）
     InvalidCredentials,
     /// 无凭据或 access token 过期/失效，客户端应静默刷新
@@ -112,6 +115,7 @@ impl ErrorCode {
             Self::BookNotInShelf
             | Self::SourceDisabled
             | Self::TaskAlreadyRunning
+            | Self::StaleCursor
             | Self::Conflict => StatusCode::CONFLICT,
             Self::VersionConflict => StatusCode::PRECONDITION_FAILED,
             Self::PayloadTooLarge => StatusCode::PAYLOAD_TOO_LARGE,
@@ -131,6 +135,7 @@ impl ErrorCode {
             Self::MalformedRequest => "Malformed Request",
             Self::UnknownField => "Unknown Field",
             Self::InvalidCursor => "Invalid Cursor",
+            Self::StaleCursor => "Stale Cursor",
             Self::InvalidCredentials => "Invalid Credentials",
             Self::AuthExpired => "Auth Expired",
             Self::AuthRefreshReplayed => "Auth Refresh Replayed",

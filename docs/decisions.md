@@ -102,3 +102,11 @@ goal 执行中遇到「决策表与 spec 都沉默」的问题时，按 §5.4 �
 - **目录 TTL 过期改 stale-while-revalidate**：有登记行时普通读始终先返回旧目录，过期只标 `stale:true` 并在后台单飞刷新（复用 `try_begin_toc_fill`）；`refresh=true` 才同步重抓。修掉「TTL 过期 = 串行抓全部分页」与「上游挂 = 目录打不开」两个问题。`ChapterPage` 新增 `stale` / `complete`；前端对 stale 结果用 10s 短会话缓存，尽快换新。
 - **首开仍同步抓全量**：登记表为空时没有旧目录可返回，只能同步抓（`/reader3` 的「首屏 + 后台补全」优化仍未引入，留待后续批次）。
 - 批量正文的生产调用方是阅读器预加载；整本浏览器缓存（`cacheBookToBrowser`）仍逐章请求，批量接入标注待做。
+
+## 2026-11-10 审阅返工：目录快照令牌与刷新竞态
+
+- **`ChapterPage.tocVersion`（= `book_toc_state.fetched_at`）**：续页回传，与当前快照不一致时返回 **409 `STALE_CURSOR`**，客户端从第一页重拉一次。覆盖「后台刷新在翻页途中整表替换、index 重新编号」的接缝问题；不回传的旧客户端维持原行为。前端 `fetchAllChaptersV1` 捕获 `STALE_CURSOR` 自动重拉（不带 refresh）。
+- **`complete` 仍参与客户端缓存策略**：`stale || !complete` 都按 10s 短会话缓存（未抓全的目录 60s 内会被补全覆盖，短 TTL 让读者尽快看到全量）。
+- **TTL 判定只留一份**：`load_fresh_chapter_list_cache` 直接调用 `toc_state_is_fresh`，不再各写一份分支。
+- **后台刷新写库前复核绑定**：`refresh_chapter_list_if_current` 在 replace 前比对登记行 `book_url` 是否仍是发起时的书；换源竞态下丢弃旧源结果。复核与 replace 之间仍有毫秒级窗口（已知取舍，写进方法注释）。
+- **`refresh=true` 上游失败直接 502**：显式刷新不回退旧目录，如实报错；普通读才用 stale 兜底。spec 的 502 描述写明。

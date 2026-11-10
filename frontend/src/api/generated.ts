@@ -116,7 +116,11 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** 章节列表。 */
+        /**
+         * 章节列表。
+         * @description `refresh=true` 是用户显式刷新：上游失败直接 502，不回退旧登记表
+         *     （静默成功会掩盖书源已失效）；普通读才用旧目录兜底并标 `stale`。
+         */
         get: operations["listChapters"];
         put?: never;
         post?: never;
@@ -440,6 +444,12 @@ export interface components {
              *     保持 true 继续服务旧数据（不再把「目录打不开」当过期代价）
              */
             stale: boolean;
+            /**
+             * Format: int64
+             * @description 目录快照令牌（`book_toc_state.fetched_at`）：续页回传用于发现
+             *     「翻页途中后台刷新整表替换」；本地书没有登记表，恒为 null
+             */
+            tocVersion?: number | null;
             /** Format: int32 */
             total?: number | null;
         };
@@ -463,7 +473,7 @@ export interface components {
          *     新增取值是兼容变更（客户端必须有 default 分支），改已有取值的语义是破坏变更。
          * @enum {string}
          */
-        ErrorCode: "VALIDATION_FAILED" | "MALFORMED_REQUEST" | "INVALID_CURSOR" | "INVALID_CREDENTIALS" | "AUTH_EXPIRED" | "AUTH_REFRESH_REPLAYED" | "SESSION_INVALID" | "CSRF_HEADER_MISSING" | "SCOPE_FORBIDDEN" | "BOOK_NOT_FOUND" | "CHAPTER_NOT_FOUND" | "SOURCE_NOT_FOUND" | "IMAGE_NOT_FOUND" | "TASK_NOT_FOUND" | "NOT_FOUND" | "REPLACE_RULE_NOT_FOUND" | "BOOK_NOT_IN_SHELF" | "SOURCE_DISABLED" | "TASK_ALREADY_RUNNING" | "CONFLICT" | "VERSION_CONFLICT" | "PAYLOAD_TOO_LARGE" | "UNSUPPORTED_MEDIA_TYPE" | "RATE_LIMITED" | "UPSTREAM_BLOCKED" | "UPSTREAM_FAILED" | "UPSTREAM_TIMEOUT" | "PROCESSING_TIMEOUT" | "TASK_LIMIT" | "API_REMOVED" | "UNKNOWN_FIELD" | "INTERNAL";
+        ErrorCode: "VALIDATION_FAILED" | "MALFORMED_REQUEST" | "INVALID_CURSOR" | "STALE_CURSOR" | "INVALID_CREDENTIALS" | "AUTH_EXPIRED" | "AUTH_REFRESH_REPLAYED" | "SESSION_INVALID" | "CSRF_HEADER_MISSING" | "SCOPE_FORBIDDEN" | "BOOK_NOT_FOUND" | "CHAPTER_NOT_FOUND" | "SOURCE_NOT_FOUND" | "IMAGE_NOT_FOUND" | "TASK_NOT_FOUND" | "NOT_FOUND" | "REPLACE_RULE_NOT_FOUND" | "BOOK_NOT_IN_SHELF" | "SOURCE_DISABLED" | "TASK_ALREADY_RUNNING" | "CONFLICT" | "VERSION_CONFLICT" | "PAYLOAD_TOO_LARGE" | "UNSUPPORTED_MEDIA_TYPE" | "RATE_LIMITED" | "UPSTREAM_BLOCKED" | "UPSTREAM_FAILED" | "UPSTREAM_TIMEOUT" | "PROCESSING_TIMEOUT" | "TASK_LIMIT" | "API_REMOVED" | "UNKNOWN_FIELD" | "INTERNAL";
         /** @description 422 校验失败的逐字段错误：`pointer` 是 JSON Pointer，前端直接映射表单控件。 */
         FieldIssue: {
             code: string;
@@ -884,6 +894,8 @@ export interface operations {
                 limit?: number;
                 /** @description 同步重抓目录（只对第一页生效） */
                 refresh?: boolean;
+                /** @description 第一页的 tocVersion，续页回传用于检测目录快照已刷新 */
+                tocVersion?: number;
             };
             header?: never;
             path: {
@@ -937,8 +949,26 @@ export interface operations {
                     "application/problem+json": components["schemas"]["Problem"];
                 };
             };
+            /** @description 目录已刷新（tocVersion 不匹配），客户端从第一页重拉 */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
             /** @description 游标无法解码 */
             422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description 上游失败；refresh=true 时不回退旧目录，如实报错 */
+            502: {
                 headers: {
                     [name: string]: unknown;
                 };

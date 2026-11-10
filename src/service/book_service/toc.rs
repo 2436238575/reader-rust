@@ -444,12 +444,7 @@ impl BookService {
         else {
             return Ok(None);
         };
-        let ttl = if state.complete {
-            CHAPTER_LIST_TTL
-        } else {
-            INCOMPLETE_TOC_TTL
-        };
-        if crate::util::time::now_ts() - state.fetched_at >= ttl.as_secs() as i64 {
+        if !Self::toc_state_is_fresh(state.complete, state.fetched_at) {
             return Ok(None);
         }
         self.load_chapter_list_cache(user_ns, book_id).await
@@ -534,6 +529,34 @@ impl BookService {
             .append_chapters(id, new_chapters, complete, crate::util::time::now_ts())
             .await
             .map_err(|e| AppError::Internal(e.into()))
+    }
+
+    /// 后台刷新（v1 stale-while-revalidate 专用）：抓全目录后、写库**之前**
+    /// 复核登记绑定仍是发起时那本书，避免刷新与换源几乎同时发生时，旧源的
+    /// 整表结果覆盖新源目录。复核与 replace 之间仍有毫秒级窗口（已知取舍）。
+    /// 返回 `false` 表示绑定已变、结果被丢弃。
+    pub async fn refresh_chapter_list_if_current(
+        &self,
+        user_ns: &str,
+        book_id: &str,
+        expected_book_url: &str,
+        source: &BookSource,
+        toc_url: &str,
+    ) -> Result<bool, AppError> {
+        let (chapters, _, complete) = self
+            .get_chapter_list_with_pagination(user_ns, source, toc_url)
+            .await?;
+        let still_bound = self
+            .book_repo
+            .get(user_ns, book_id)
+            .await?
+            .is_some_and(|row| row.book_url == expected_book_url);
+        if !still_bound {
+            return Ok(false);
+        }
+        self.store_chapter_list(user_ns, book_id, &chapters, complete)
+            .await?;
+        Ok(true)
     }
 
     /// 删除某本书的目录登记行与抓取状态（refresh=1、换源）。
