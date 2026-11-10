@@ -68,7 +68,17 @@ pub struct ChapterContent {
     pub format: String,
     pub body: String,
     pub version: Option<ChapterVersionInfo>,
+    /// 当前返回的是用户版本（编辑版/导入版）
+    pub edited: bool,
     pub latest_upstream_version_id: Option<String>,
+    /// 本次 diff 的基准版本（始终是最新上游）
+    pub diff_base_version_id: Option<String>,
+    pub latest_user_version_id: Option<String>,
+    /// 内联 diff（当前用户版本 vs 最新上游）：阅读器编辑视图消费；
+    /// 上游预览与无用户版本时缺省
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(nullable = false)]
+    pub diff: Option<Vec<DiffOp>>,
     /// 用户版本的基准上游之后，上游是否又变过
     pub upstream_changed_since_base: bool,
     /// `selected` / `edited` / `upstream` / `upstream_preview`
@@ -78,7 +88,18 @@ pub struct ChapterContent {
     /// 最近一次回源成功时间，RFC 3339 UTC
     #[schema(format = DateTime)]
     pub fetched_at: Option<String>,
+    /// 最近一次回源尝试时间（成功或失败），RFC 3339 UTC
+    #[schema(format = DateTime)]
+    pub last_attempt_at: Option<String>,
+    /// 最新上游版本的出现时间，RFC 3339 UTC
+    #[schema(format = DateTime)]
+    pub upstream_changed_at: Option<String>,
+    /// 当前用户版本的编辑时间，RFC 3339 UTC
+    #[schema(format = DateTime)]
+    pub edited_at: Option<String>,
 }
+
+use crate::service::chapter_diff_service::DiffOp;
 
 fn cv_id(version_id: i64) -> String {
     format!("cv_{version_id}")
@@ -502,11 +523,20 @@ fn map_to_v1(
             kind: data.version_kind.unwrap_or_else(|| "upstream".to_string()),
             based_on: data.base_version_id.map(cv_id),
         }),
+        edited: data.edited,
         latest_upstream_version_id: data.latest_upstream_version_id.map(cv_id),
+        diff_base_version_id: data.diff_base_version_id.map(cv_id),
+        latest_user_version_id: data.latest_user_version_id.map(cv_id),
+        diff: data.diff.map(|diff| diff.ops),
         upstream_changed_since_base: data.upstream_changed,
         selection_source: data.selection_source,
         stale: data.stale,
         fetched_at: data.last_success_at.map(crate::api::v1::me::rfc3339_secs),
+        last_attempt_at: data.last_attempt_at.map(crate::api::v1::me::rfc3339_secs),
+        upstream_changed_at: data
+            .upstream_changed_at
+            .map(crate::api::v1::me::rfc3339_secs),
+        edited_at: data.edited_at.map(crate::api::v1::me::rfc3339_secs),
     }
 }
 

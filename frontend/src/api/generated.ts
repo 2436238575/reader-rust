@@ -364,6 +364,20 @@ export interface components {
             body: string;
             bookId: string;
             /**
+             * @description 内联 diff（当前用户版本 vs 最新上游）：阅读器编辑视图消费；
+             *     上游预览与无用户版本时缺省
+             */
+            diff?: components["schemas"]["DiffOp"][];
+            /** @description 本次 diff 的基准版本（始终是最新上游） */
+            diffBaseVersionId?: string | null;
+            /** @description 当前返回的是用户版本（编辑版/导入版） */
+            edited: boolean;
+            /**
+             * Format: date-time
+             * @description 当前用户版本的编辑时间，RFC 3339 UTC
+             */
+            editedAt?: string | null;
+            /**
              * Format: date-time
              * @description 最近一次回源成功时间，RFC 3339 UTC
              */
@@ -372,11 +386,22 @@ export interface components {
             format: string;
             /** Format: int32 */
             index: number;
+            /**
+             * Format: date-time
+             * @description 最近一次回源尝试时间（成功或失败），RFC 3339 UTC
+             */
+            lastAttemptAt?: string | null;
             latestUpstreamVersionId?: string | null;
+            latestUserVersionId?: string | null;
             /** @description `selected` / `edited` / `upstream` / `upstream_preview` */
             selectionSource: string;
             /** @description 到期未回源或最近一次回源失败（旧数据，仍可读） */
             stale: boolean;
+            /**
+             * Format: date-time
+             * @description 最新上游版本的出现时间，RFC 3339 UTC
+             */
+            upstreamChangedAt?: string | null;
             /** @description 用户版本的基准上游之后，上游是否又变过 */
             upstreamChangedSinceBase: boolean;
             version?: components["schemas"]["ChapterVersionInfo"] | null;
@@ -391,6 +416,11 @@ export interface components {
             title: string;
             /** @description 用户改名覆盖生效中（改名走 `chapter_title_overrides`，不写回上游标题） */
             titleOverridden: boolean;
+            /**
+             * @description 只读诊断字段（红线 6 例外：仅出现在响应里）。过渡期阅读器仍靠它
+             *     调 /reader3 的评论/配图/编辑接口与 IndexedDB 缓存键；这些域迁走后删除
+             */
+            url: string;
             volume?: string | null;
             wordCount?: string | null;
         };
@@ -408,6 +438,13 @@ export interface components {
             id: string;
             /** @description `upstream` / `edited` / `imported` */
             kind: string;
+        };
+        DiffOp: {
+            baseIndex?: number | null;
+            baseText?: string | null;
+            editedIndex?: number | null;
+            editedText?: string | null;
+            type: string;
         };
         /**
          * @description 错误码：线上值是大写下划线（serde `SCREAMING_SNAKE_CASE`），稳定不变。
@@ -833,6 +870,8 @@ export interface operations {
                 cursor?: string;
                 /** @description 页大小，默认 50，上限 200 */
                 limit?: number;
+                /** @description 同步重抓目录（只对第一页生效） */
+                refresh?: boolean;
             };
             header?: never;
             path: {

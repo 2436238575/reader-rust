@@ -231,6 +231,12 @@ paths:
           type: integer
           format: int32
           minimum: 0
+      - name: refresh
+        in: query
+        description: 同步重抓目录（只对第一页生效）
+        required: false
+        schema:
+          type: boolean
       responses:
         '200':
           description: 章节页（按 index 升序）
@@ -862,6 +868,7 @@ components:
       - index
       - format
       - body
+      - edited
       - upstreamChangedSinceBase
       - selectionSource
       - stale
@@ -870,6 +877,27 @@ components:
           type: string
         bookId:
           type: string
+        diff:
+          type: array
+          items:
+            $ref: '#/components/schemas/DiffOp'
+          description: |-
+            内联 diff（当前用户版本 vs 最新上游）：阅读器编辑视图消费；
+            上游预览与无用户版本时缺省
+        diffBaseVersionId:
+          type:
+          - string
+          - 'null'
+          description: 本次 diff 的基准版本（始终是最新上游）
+        edited:
+          type: boolean
+          description: 当前返回的是用户版本（编辑版/导入版）
+        editedAt:
+          type:
+          - string
+          - 'null'
+          format: date-time
+          description: 当前用户版本的编辑时间，RFC 3339 UTC
         fetchedAt:
           type:
           - string
@@ -882,7 +910,17 @@ components:
         index:
           type: integer
           format: int32
+        lastAttemptAt:
+          type:
+          - string
+          - 'null'
+          format: date-time
+          description: 最近一次回源尝试时间（成功或失败），RFC 3339 UTC
         latestUpstreamVersionId:
+          type:
+          - string
+          - 'null'
+        latestUserVersionId:
           type:
           - string
           - 'null'
@@ -892,6 +930,12 @@ components:
         stale:
           type: boolean
           description: 到期未回源或最近一次回源失败（旧数据，仍可读）
+        upstreamChangedAt:
+          type:
+          - string
+          - 'null'
+          format: date-time
+          description: 最新上游版本的出现时间，RFC 3339 UTC
         upstreamChangedSinceBase:
           type: boolean
           description: 用户版本的基准上游之后，上游是否又变过
@@ -905,6 +949,7 @@ components:
       required:
       - index
       - title
+      - url
       - titleOverridden
       - isVip
       - isPay
@@ -924,6 +969,11 @@ components:
         titleOverridden:
           type: boolean
           description: 用户改名覆盖生效中（改名走 `chapter_title_overrides`，不写回上游标题）
+        url:
+          type: string
+          description: |-
+            只读诊断字段（红线 6 例外：仅出现在响应里）。过渡期阅读器仍靠它
+            调 /reader3 的评论/配图/编辑接口与 IndexedDB 缓存键；这些域迁走后删除
         volume:
           type:
           - string
@@ -969,6 +1019,31 @@ components:
         kind:
           type: string
           description: '`upstream` / `edited` / `imported`'
+    DiffOp:
+      type: object
+      required:
+      - type
+      properties:
+        baseIndex:
+          type:
+          - integer
+          - 'null'
+          minimum: 0
+        baseText:
+          type:
+          - string
+          - 'null'
+        editedIndex:
+          type:
+          - integer
+          - 'null'
+          minimum: 0
+        editedText:
+          type:
+          - string
+          - 'null'
+        type:
+          type: string
     ErrorCode:
       type: string
       description: |-

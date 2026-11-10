@@ -321,6 +321,7 @@ pub fn openapi_yaml() -> String {
         content::BatchContentResponse,
         content::BatchContentItem,
         content::BatchContentError,
+        crate::service::chapter_diff_service::DiffOp,
         shelf::ShelfWriteResult,
         shelf::ShelfPatch,
         shelf::ProgressPatch,

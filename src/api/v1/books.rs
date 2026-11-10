@@ -37,6 +37,8 @@ pub struct ListChaptersQuery {
     /// 上一页返回的 nextCursor；空表示第一页
     pub cursor: Option<String>,
     pub limit: Option<u32>,
+    /// 同步重抓目录（等价 `/reader3` 的 refresh=1；只对第一页生效）
+    pub refresh: Option<bool>,
 }
 
 /// 章节条目：身份是 `index`（书籍内稳定序号，换源整表替换）。
@@ -45,6 +47,9 @@ pub struct ListChaptersQuery {
 pub struct ChapterItem {
     pub index: i32,
     pub title: String,
+    /// 只读诊断字段（红线 6 例外：仅出现在响应里）。过渡期阅读器仍靠它
+    /// 调 /reader3 的评论/配图/编辑接口与 IndexedDB 缓存键；这些域迁走后删除
+    pub url: String,
     /// 用户改名覆盖生效中（改名走 `chapter_title_overrides`，不写回上游标题）
     pub title_overridden: bool,
     pub is_vip: bool,
@@ -93,6 +98,7 @@ fn decode_cursor(raw: &str) -> Result<i32, Problem> {
         ("bookId" = String, Path, description = "书籍 id（bk_<n>）"),
         ("cursor" = Option<String>, Query, description = "上一页的 nextCursor"),
         ("limit" = Option<u32>, Query, description = "页大小，默认 50，上限 200"),
+        ("refresh" = Option<bool>, Query, description = "同步重抓目录（只对第一页生效）"),
     ),
     security(("cookieAuth" = []), ("bearerAuth" = [])),
     responses(
@@ -131,7 +137,19 @@ pub async fn list_chapters(
             other => Problem::from(other),
         })?;
 
-    let chapters = load_chapters(&state, &user.ns, &book_id, &resolved).await?;
+    // refresh 与 /reader3 的 refresh=1 同语义：不读缓存，同步重抓后整表替换。
+    // 只对第一页生效——分页中途重抓会让后续页与已返回页错位；失败时旧登记行
+    // 保留（不做先删后抓），下一次普通读还能用。
+    let refresh = query.refresh.unwrap_or(false) && after_index.is_none();
+    let chapters = load_chapters(
+        &state,
+        &user.ns,
+        &book_id,
+        &resolved,
+        refresh,
+        after_index.is_none(),
+    )
+    .await?;
 
     // 标题覆盖层：读取时叠加，titleOverridden 显式标注
     let override_map = match crate::storage::db::repo::parse_book_id(&book_id) {
@@ -149,6 +167,7 @@ pub async fn list_chapters(
         items.push(ChapterItem {
             index: chapter.index,
             title: overridden.clone().unwrap_or_else(|| chapter.title.clone()),
+            url: chapter.url.clone(),
             title_overridden: overridden.is_some(),
             is_vip: chapter.is_vip,
             is_pay: chapter.is_pay,
@@ -192,6 +211,8 @@ async fn load_chapters(
     user_ns: &str,
     book_id: &str,
     resolved: &crate::api::handlers::book::ResolvedBook,
+    refresh: bool,
+    first_page: bool,
 ) -> Result<Vec<BookChapter>, Problem> {
     use crate::service::local_epub_book::is_local_epub_url;
     use crate::service::local_txt_book::is_local_txt_url;
@@ -213,15 +234,25 @@ async fn load_chapters(
     }
 
     // 网络书：登记表优先（P-1 的持久载体）；空则走抓取路径填充登记表——
-    // 与 /reader3/getChapterList 共用同一份服务层
-    let existing = state
-        .book_service
-        .load_chapter_list_cache(user_ns, book_id)
-        .await
-        .map_err(Problem::from)?;
-    if let Some(list) = existing {
-        if !list.is_empty() {
-            return Ok(list);
+    // 与 /reader3/getChapterList 共用同一份服务层。
+    // 第一页按 TTL 判定新鲜度（完整 1h / 未完成 60s），过期即重抓；分页续页
+    // 只读裸登记行，避免 TTL 在翻页途中触发重抓、把已返回页的 index 打乱。
+    if !refresh {
+        let existing = if first_page {
+            state
+                .book_service
+                .load_fresh_chapter_list_cache(user_ns, book_id)
+                .await
+        } else {
+            state
+                .book_service
+                .load_chapter_list_cache(user_ns, book_id)
+                .await
+        };
+        if let Some(list) = existing.map_err(Problem::from)? {
+            if !list.is_empty() {
+                return Ok(list);
+            }
         }
     }
     let toc_url = match resolved
@@ -247,7 +278,7 @@ async fn load_chapters(
     let toc_url = crate::util::text::repair_encoded_url(&toc_url);
     state
         .book_service
-        .get_chapter_list(user_ns, book_id, &resolved.source, &toc_url)
+        .get_chapter_list_with_cache(user_ns, book_id, &resolved.source, &toc_url, refresh)
         .await
         .map_err(Problem::from)
 }

@@ -25,7 +25,7 @@ const PAIRING_DP_MAX_CELLS: usize = 4096;
 /// 短段落要求完全相同才算同一段（「……」这类段落不能靠碎片重合乱配）。
 const MIN_SIMILARITY_CHARS: usize = 4;
 
-#[derive(Debug, Clone, Serialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, PartialEq, utoipa::ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct DiffOp {
     #[serde(rename = "type")]

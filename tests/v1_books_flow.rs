@@ -86,11 +86,16 @@ impl TestServer {
             .await
             .unwrap();
         }
-        sqlx::query("INSERT INTO book_toc_state (book_id, complete, fetched_at) VALUES (?1, 1, 0)")
-            .bind(book_id)
-            .execute(&self.pool)
-            .await
-            .unwrap();
+        sqlx::query(
+            "INSERT INTO book_toc_state (book_id, complete, fetched_at) VALUES (?1, 1, ?2)",
+        )
+        .bind(book_id)
+        // 新鲜状态：第一页读路径按 TTL 判定（完整目录 1h），过期会真的回源，
+        // 而这批用例只想验证登记表读链路
+        .bind(reader_rust::util::time::now_ts())
+        .execute(&self.pool)
+        .await
+        .unwrap();
         format!("book_{book_id}")
     }
 
@@ -201,9 +206,12 @@ async fn chapters_read_from_registry_with_index_identity() {
     assert_eq!(items[0]["index"], json!(0));
     assert_eq!(items[0]["title"], json!("第 0 章"));
     assert_eq!(items[0]["titleOverridden"], json!(false));
-    assert!(
-        items[0].get("url").is_none(),
-        "URL 不进 v1 响应（身份是 index）"
+    // 过渡期例外：url 只读出现在响应里，供阅读器调 /reader3 的评论/配图/编辑
+    // 与 IndexedDB 缓存键；这些域迁走 v1 后删除（契约红线 6 例外）
+    assert_eq!(
+        items[0]["url"],
+        json!("https://up.example.com/ch/0"),
+        "过渡期保留只读 url 诊断字段"
     );
     assert_eq!(body["total"], json!(5));
     assert!(body["nextCursor"].is_null());
@@ -761,8 +769,18 @@ async fn delete_shelf_is_idempotent_and_keeps_registration() {
         .await
         .unwrap();
     assert_eq!(again.status(), StatusCode::NO_CONTENT);
-    let chapters = server.get(&format!("/v1/books/{book_id}/chapters")).await;
-    assert_eq!(chapters.status(), StatusCode::OK);
+    // 登记行与章节登记表保留（目录状态被重置，下一次读目录按 TTL 语义回源，
+    // 与 /reader3 移出书架后一致）
+    let books: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM books")
+        .fetch_one(&server.pool)
+        .await
+        .unwrap();
+    let chapters: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM chapters")
+        .fetch_one(&server.pool)
+        .await
+        .unwrap();
+    assert_eq!(books, 1, "书籍登记行不随移出书架删除");
+    assert_eq!(chapters, 2, "章节登记行不随移出书架删除");
 
     server.cleanup();
 }

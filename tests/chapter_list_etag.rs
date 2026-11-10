@@ -59,6 +59,8 @@ struct TestServer {
     client: reqwest::Client,
     token: String,
     book_id: String,
+    /// 独立连接：直接用 SQL 改登记表状态（TTL 用例）
+    pool: sqlx::SqlitePool,
 }
 
 impl TestServer {
@@ -105,6 +107,12 @@ impl TestServer {
         let token = register(&client, &base_url).await;
         let book_source_id = save_source(&client, &base_url, &token, &upstream_url).await;
         let book_id = save_book(&client, &base_url, &token, &upstream_url, book_source_id).await;
+        let pool = sqlx::SqlitePool::connect(&format!(
+            "sqlite:{}?mode=rw",
+            temp_dir.join("reader.db").display()
+        ))
+        .await
+        .unwrap();
         Self {
             base_url,
             chapter_count,
@@ -112,6 +120,7 @@ impl TestServer {
             client,
             token,
             book_id,
+            pool,
         }
     }
 
@@ -129,6 +138,18 @@ impl TestServer {
             request = request.header("If-None-Match", value);
         }
         request.send().await.unwrap()
+    }
+    /// v1 目录接口（阅读器切换后走这条）。
+    async fn get_v1_chapters(&self, query: &str) -> reqwest::Response {
+        self.client
+            .get(format!(
+                "{}/v1/books/{}/chapters{query}",
+                self.base_url, self.book_id
+            ))
+            .bearer_auth(&self.token)
+            .send()
+            .await
+            .unwrap()
     }
 }
 
@@ -325,5 +346,70 @@ async fn etag_changes_when_toc_content_changes() {
         resp.status(),
         StatusCode::NOT_MODIFIED,
         "新目录的新 ETag 应命中"
+    );
+}
+
+/// v1 目录读链路的两条新鲜度规则：
+/// - 普通读按 TTL 判定（完整目录 1h），过期回源重抓；
+/// - `refresh=true` 无条件绕过登记表同步重抓，成功后整表替换（只对第一页生效）。
+#[tokio::test]
+async fn v1_chapters_ttl_and_refresh_follow_upstream() {
+    let server = TestServer::start().await;
+
+    // 先用 /reader3 目录接口灌好登记表（3 章、状态新鲜）
+    let resp = server
+        .get_chapter_list(&format!("bookId={}", server.book_id), None)
+        .await;
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    // v1 普通读命中新鲜登记表（不回源）
+    let body: Value = server.get_v1_chapters("").await.json().await.unwrap();
+    let items = body["items"].as_array().unwrap();
+    assert_eq!(items.len(), 3);
+    assert!(
+        items[0]["url"]
+            .as_str()
+            .unwrap()
+            .ends_with("/content?item_id=100"),
+        "过渡期章节响应带只读 url: {}",
+        items[0]["url"]
+    );
+
+    // 上游新增一章：refresh=true 绕过登记表，同步重抓
+    server.chapter_count.store(4, Ordering::SeqCst);
+    let body: Value = server
+        .get_v1_chapters("?refresh=true")
+        .await
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(
+        body["items"].as_array().unwrap().len(),
+        4,
+        "refresh=true 必须重抓"
+    );
+
+    // 重抓成功整表替换：普通读也看到 4 章
+    let body: Value = server.get_v1_chapters("").await.json().await.unwrap();
+    assert_eq!(body["items"].as_array().unwrap().len(), 4);
+
+    // TTL 过期：普通读也回源（不靠 refresh）
+    server.chapter_count.store(5, Ordering::SeqCst);
+    sqlx::query("UPDATE book_toc_state SET fetched_at = 0 WHERE book_id = ?1")
+        .bind(
+            server
+                .book_id
+                .trim_start_matches("book_")
+                .parse::<i64>()
+                .unwrap(),
+        )
+        .execute(&server.pool)
+        .await
+        .unwrap();
+    let body: Value = server.get_v1_chapters("").await.json().await.unwrap();
+    assert_eq!(
+        body["items"].as_array().unwrap().len(),
+        5,
+        "TTL 过期应回源重抓"
     );
 }

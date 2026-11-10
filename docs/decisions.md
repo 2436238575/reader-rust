@@ -86,3 +86,12 @@ goal 执行中遇到「决策表与 spec 都沉默」的问题时，按 §5.4 �
 4. **stores/bookshelf + 进度写入**：`saveBookProgress` → `PATCH /v1/me/shelf/{id}`；入架/移出/删除走 v1 三端点；`getBookshelf` 留 `/reader3`（书架列表域另切）。
 5. **阅读器内评论/配图/编辑**继续走 `/reader3`（P3 批次）；目录/正文/进度切完即可删 `/reader3` 的 getChapterList/getBookContent/getBookContents/saveBookProgress。
 6. **验收**：阅读器 e2e（reader.spec.ts）保持绿；新增一条 v1 正文往返用例（编辑版/上游版、`304` 缓存命中）。
+
+## 2026-11-10 阅读器目录/正文/进度切 v1（前端适配层）
+
+- **条件请求交给浏览器 HTTP 缓存，不在 IndexedDB 里存 etag**：单章 GET 响应带 `ETag + Cache-Control: private, no-cache`，XHR 对同一 URL 自动带 `If-None-Match` 并在 304 时透明复用缓存体；前端自管 etag 只是复制一层容易漂移的逻辑。`knownVersionId` 参数保留但服务端不再消费；批量接口的「unchanged」由客户端用 `version.id` 比对后等价化简（不重复写缓存）。
+- **章节响应过渡期带只读 `url`**（红线 6 例外）：阅读器内的评论/配图/改名与 IndexedDB 缓存键仍用上游 URL，这些域迁 v1 后删除该字段。
+- **目录第一页恢复 TTL 读**（完整 1h / 未完成 60s），与 `/reader3/getChapterList` 对齐；分页续页只读裸登记行，避免翻页途中重抓打乱 index。`refresh=true` 只对第一页生效，同步重抓后整表替换；失败保留旧登记行（不先删后抓）。
+- **正文响应补齐阅读器消费的字段**：`edited` / `diffBaseVersionId` / `latestUserVersionId` / `diff.ops` / `lastAttemptAt` / `upstreamChangedAt` / `editedAt`；时间一律 RFC 3339，前端适配层转回旧形状的秒级数字。
+- **进度写入统一走 v1**：`saveBookProgress` 与页面卸载的 keepalive 兜底都调用 `PATCH /v1/me/shelf/{id}`（keepalive 显式带 CSRF 头），`/reader3/saveBookProgress` 不再有前端调用。
+- **浏览器整本缓存按 index 传参**：`cacheBookToBrowser` 原先只传 `chapterUrl`，补 `index` 后单章 GET 才能定位章节。
