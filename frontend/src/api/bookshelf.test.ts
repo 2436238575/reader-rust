@@ -124,6 +124,8 @@ describe('getChapterList 会话内缓存（v1 游标分页）', () => {
         titleOverridden: false,
       })),
       nextCursor: null,
+      stale: false,
+      complete: true,
     },
   })
   const v1Get = (extra: Record<string, unknown> = {}) => ({
@@ -191,6 +193,24 @@ describe('getChapterList 会话内缓存（v1 游标分页）', () => {
     const after = await getChapterList({ bookId: 'refresh-book' })
     expect(after[0].title).toBe('第二版')
     expect(getMock).toHaveBeenCalledTimes(2)
+  })
+
+  it('stale 目录使用短 TTL：过期后的下一次读取会重新请求', async () => {
+    vi.useFakeTimers()
+    try {
+      getMock.mockResolvedValue({
+        data: { ...page([{ title: '旧目录' }]).data, stale: true },
+      })
+      await getChapterList({ bookId: 'stale-book' })
+      await getChapterList({ bookId: 'stale-book' })
+      expect(getMock).toHaveBeenCalledTimes(1)
+
+      vi.advanceTimersByTime(11_000)
+      await getChapterList({ bookId: 'stale-book' })
+      expect(getMock).toHaveBeenCalledTimes(2)
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('请求失败不缓存失败结果', async () => {

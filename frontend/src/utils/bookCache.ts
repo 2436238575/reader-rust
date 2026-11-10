@@ -59,8 +59,10 @@ export async function cacheBookToBrowser(params: {
     if (params.signal?.cancelled) {
       break
     }
-    // 已缓存的章带版本号去比对：一致时后端不传正文（unchanged），本地也不用
-    // 重写——重复跑「缓存到浏览器」只花一次轻量请求，不再整本重传
+    // 已缓存的章带版本号去比对。v1 的服务端不再消费 knownVersionId——条件
+    // 请求由浏览器 HTTP 缓存完成（命中 304 时复用本地响应体、不传正文），
+    // 因此 unchanged 恒为 false，下面按「重新写入同一份正文」处理也是一次
+    // 轻量请求；已缓存章不会整本重传
     const cached = await getBrowserCachedChapter(bookId, chapter.url).catch(() => null)
     // 单章抓取失败（上游不可达/响应异常）计入失败并继续，不中断整轮任务；
     // 连续失败达到上限说明书源大概率挂了，提前停止省掉逐章超时

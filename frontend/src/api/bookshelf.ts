@@ -37,10 +37,14 @@ function mapChapterItem(item: ApiChapterItem): BookChapter {
 }
 
 /** v1 游标分页拉全量目录（阅读器需要整本章节，200/页，百页以内）。 */
-async function fetchAllChaptersV1(bookId: string, refresh: boolean): Promise<BookChapter[]> {
+async function fetchAllChaptersV1(
+  bookId: string,
+  refresh: boolean
+): Promise<{ chapters: BookChapter[]; stale: boolean }> {
   const chapters: BookChapter[] = []
   let cursor: string | null = null
   let needRefresh = refresh
+  let stale = false
   do {
     const params: Record<string, unknown> = { limit: 200 }
     if (cursor) params.cursor = cursor
@@ -55,9 +59,10 @@ async function fetchAllChaptersV1(bookId: string, refresh: boolean): Promise<Boo
       })
       .then((r) => r.data)
     for (const item of page.items) chapters.push(mapChapterItem(item))
+    stale = stale || Boolean(page.stale)
     cursor = page.nextCursor ?? null
   } while (cursor)
-  return chapters
+  return { chapters, stale }
 }
 
 function mapContentToLegacy(data: ApiContent, variant?: ContentVariant): ChapterContentResponse {
@@ -79,6 +84,7 @@ function mapContentToLegacy(data: ApiContent, variant?: ContentVariant): Chapter
     upstreamChangedAt: parseSeconds(data.upstreamChangedAt),
     editedAt: parseSeconds(data.editedAt),
     diff: data.diff ? { ops: data.diff as ParagraphDiffOp[] } : null,
+    diffError: data.diffError ?? null,
     unchanged: false,
   }
 }
@@ -193,6 +199,9 @@ const CHAPTER_LIST_CACHE_MAX = 20
 // ETag 304 复用路径不受影响：条件请求命中时后端即时应答 304（不触发上游抓取），
 // 超时只在服务端完全不给响应字节时才生效。
 const CHAPTER_LIST_TIMEOUT_MS = 20_000
+// 服务端返回 stale=true 表示登记表已过 TTL、后台正在刷新：会话缓存改用
+// 短 TTL，让下一次目录读取（开书/翻目录）尽快拿到刷新后的结果
+const STALE_CHAPTER_LIST_TTL_MS = 10_000
 const chapterListCache = new Map<string, { data: BookChapter[]; expiresAt: number }>()
 const chapterListInFlight = new Map<string, Promise<BookChapter[]>>()
 
@@ -219,18 +228,22 @@ export function getChapterList(params: { bookId: string; refresh?: number }) {
   // v1：游标分页拉全量；响应带 ETag + Cache-Control: no-cache，浏览器对
   // 同一 URL 自动携 If-None-Match 重验证，命中 304 直接复用本地响应体
   const request = fetchAllChaptersV1(bookId, forceRefresh)
-    .then((data) => {
+    .then(({ chapters, stale }) => {
       // 只有仍是该书最新一次请求时才写缓存：force 请求可能已抢先写入更新的
       // 结果，慢到的旧请求不应把缓存盖回旧数据。失败不进缓存：回调只在成功时执行
       if (chapterListInFlight.get(bookId) === request) {
         // 上限 20 本，Map 按插入序淘汰最旧，避免会话内无限增长
-        chapterListCache.set(bookId, { data, expiresAt: Date.now() + CHAPTER_LIST_TTL_MS })
+        chapterListCache.set(bookId, {
+          data: chapters,
+          expiresAt:
+            Date.now() + (stale ? STALE_CHAPTER_LIST_TTL_MS : CHAPTER_LIST_TTL_MS),
+        })
         if (chapterListCache.size > CHAPTER_LIST_CACHE_MAX) {
           const oldest = chapterListCache.keys().next().value
           if (oldest !== undefined) chapterListCache.delete(oldest)
         }
       }
-      return data
+      return chapters
     })
     .finally(() => {
       if (chapterListInFlight.get(bookId) === request) {
@@ -279,6 +292,10 @@ export interface BatchChapterContentItem {
 /**
  * 批量读取章节正文（预加载用）：一次最多 10 章，与单章 getBookContent 同一条
  * 读取链路；每章独立成败。不做 refresh：预加载不需要强刷。
+ *
+ * 生产调用方：阅读器预加载（`readerContent.preloadChaptersBatch`）。
+ * 整本「缓存到浏览器」（`bookCache.cacheBookToBrowser`）仍是逐章请求，
+ * 批量接入待做。
  */
 export async function getBookContents(params: {
   bookId: string
