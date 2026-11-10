@@ -123,8 +123,29 @@ export function getShelfBook(bookId: string) {
   return http.post<Book>('/getShelfBook', { bookId }).then((r) => r.data)
 }
 
-export function saveBook(book: Partial<Book>) {
-  return http.post<Book>('/saveBook', book).then((r) => r.data)
+/**
+ * 入架（v1，幂等）：201 新建 / 200 已在架。已在架时不重置进度与元数据，
+ * 前端据此决定本地是追加还是原样保留。
+ */
+export function addToShelf(bookId: string) {
+  return http
+    .put<{ bookId?: string }>(`/me/shelf/${bookId}`, undefined, {
+      baseURL: API_V1_BASE,
+    })
+    .then((r) => ({
+      bookId: r.data?.bookId ?? bookId,
+      created: r.status === 201,
+    }))
+}
+
+/**
+ * 移出书架（v1，幂等 204）：登记行、书签与正文历史保留，重新加入接得上。
+ * 与旧 `/reader3/deleteBook` 的区别：不再顺带删书签/AI 记忆/图片/本地书文件。
+ */
+export function removeFromShelf(bookId: string) {
+  return http
+    .delete(`/me/shelf/${bookId}`, { baseURL: API_V1_BASE })
+    .then((r) => r.data)
 }
 
 export function saveBooks(books: Partial<Book>[]) {
@@ -156,10 +177,6 @@ export function uploadEpubBook(file: File) {
       timeout: UPLOAD_TIMEOUT_MS,
     })
     .then((r) => r.data)
-}
-
-export function deleteBook(bookId: string) {
-  return http.post<string>('/deleteBook', { bookId }).then((r) => r.data)
 }
 
 export function deleteBooks(bookIds: string[]) {

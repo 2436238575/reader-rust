@@ -1,15 +1,14 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
 import { useBookshelfStore } from './bookshelf'
-import { getBookshelfWithCacheInfo, saveBook } from '../api/bookshelf'
-import { listBrowserCacheSummary } from '../utils/browserCache'
+import { getBookshelfWithCacheInfo, addToShelf, removeFromShelf } from '../api/bookshelf'
+import { deleteBrowserBookCache, listBrowserCacheSummary } from '../utils/browserCache'
 
 vi.mock('../api/bookshelf', () => ({
   getBookshelfWithCacheInfo: vi.fn(),
   getBookGroups: vi.fn(),
-  deleteBook: vi.fn(),
-  deleteBooks: vi.fn(),
-  saveBook: vi.fn(),
+  addToShelf: vi.fn(),
+  removeFromShelf: vi.fn(),
   saveBookGroupId: vi.fn(),
   saveBookGroup: vi.fn(),
   deleteBookGroup: vi.fn(),
@@ -71,139 +70,139 @@ describe('bookshelf fetchBooks cache counts', () => {
   })
 })
 
-describe('bookshelf addBook upsert', () => {
+describe('bookshelf shelf writes', () => {
   beforeEach(() => {
     setActivePinia(createPinia())
     vi.mocked(getBookshelfWithCacheInfo).mockResolvedValue([])
     vi.mocked(listBrowserCacheSummary).mockResolvedValue([])
-    vi.mocked(saveBook).mockReset()
+    vi.mocked(addToShelf).mockReset()
+    vi.mocked(removeFromShelf).mockReset()
+    vi.mocked(deleteBrowserBookCache).mockReset()
+    vi.mocked(deleteBrowserBookCache).mockResolvedValue(undefined)
     // 计数断言要隔离：清掉前面用例累积的调用记录（保留实现）
     vi.mocked(getBookshelfWithCacheInfo).mockClear()
     vi.mocked(listBrowserCacheSummary).mockClear()
   })
 
-  it('新书入架：追加 saveBook 返回的书籍，不整架重拉', async () => {
-    const saved = {
+  it('新书入架：PUT 201 后就地追加，不整架重拉', async () => {
+    vi.mocked(addToShelf).mockResolvedValue({ bookId: 'book_new', created: true })
+    const store = useBookshelfStore()
+
+    const result = await store.addBook({
       bookId: 'book_new',
       bookSourceId: 7,
       name: '新书',
       author: '作者',
       bookUrl: 'https://book.example/1',
       origin: 'https://source.example',
-    }
-    vi.mocked(saveBook).mockResolvedValue(saved as never)
-    const store = useBookshelfStore()
+    })
 
-    const result = await store.addBook({ bookId: 'book_new', name: '新书' })
-
-    expect(result).toEqual(saved)
+    expect(addToShelf).toHaveBeenCalledWith('book_new')
+    expect(result.bookId).toBe('book_new')
     expect(store.books.map((book) => book.bookId)).toEqual(['book_new'])
-    expect(store.books[0].browserCachedChapterCount).toBe(0)
-    // saveBook 响应不含缓存章数，新书不伪造该字段
-    expect(store.books[0].cachedChapterCount).toBeUndefined()
-    // 单本 upsert 的意义就是不再触发整架 GET
+    expect(store.books[0]).toMatchObject({
+      name: '新书',
+      author: '作者',
+      bookUrl: 'https://book.example/1',
+      origin: 'https://source.example',
+      durChapterIndex: 0,
+      browserCachedChapterCount: 0,
+    })
     expect(getBookshelfWithCacheInfo).not.toHaveBeenCalled()
   })
 
-  it('已在架的书按 bookId 原位替换，保留前端注入的本地缓存章数', async () => {
+  it('已在架（PUT 200）：服务端不重置进度，本地条目原样保留', async () => {
     vi.mocked(getBookshelfWithCacheInfo).mockResolvedValue([
-      { bookId: 'book_a', name: '甲', author: '', bookUrl: 'https://b.example/a', origin: 'o' },
-      { bookId: 'book_b', name: '乙', author: '', bookUrl: 'https://b.example/b', origin: 'o' },
+      {
+        bookId: 'book_a',
+        name: '甲',
+        author: '',
+        bookUrl: 'https://b.example/a',
+        origin: 'o',
+        durChapterIndex: 12,
+        durChapterPos: 3456,
+        cachedChapterCount: 7,
+      },
     ] as never)
     vi.mocked(listBrowserCacheSummary).mockResolvedValue([
-      { bookId: 'book_b', cachedChapterCount: 5, bytes: 100, updatedAt: 1 },
+      { bookId: 'book_a', cachedChapterCount: 5, bytes: 100, updatedAt: 1 },
     ])
     const store = useBookshelfStore()
     await store.fetchBooks()
     vi.mocked(getBookshelfWithCacheInfo).mockClear()
 
-    const saved = {
-      bookId: 'book_b',
-      name: '乙（修订）',
-      author: '某人',
-      bookUrl: 'https://b.example/b',
-      origin: 'o',
-    }
-    vi.mocked(saveBook).mockResolvedValue(saved as never)
-    await store.addBook({ bookId: 'book_b' })
+    vi.mocked(addToShelf).mockResolvedValue({ bookId: 'book_a', created: false })
+    const result = await store.addBook({ bookId: 'book_a', name: '搜索结果名' })
 
-    // 原位替换：顺序不变、内容是 saveBook 的返回值
-    expect(store.books.map((book) => book.bookId)).toEqual(['book_a', 'book_b'])
-    const replaced = store.books.find((book) => book.bookId === 'book_b')
-    expect(replaced?.name).toBe('乙（修订）')
-    // saveBook 响应不带前端注入的本地缓存章数，替换时要留下旧值
-    expect(replaced?.browserCachedChapterCount).toBe(5)
+    expect(result.name).toBe('甲')
+    const kept = store.books.find((book) => book.bookId === 'book_a')
+    expect(kept?.durChapterIndex).toBe(12)
+    expect(kept?.cachedChapterCount).toBe(7)
+    expect(kept?.browserCachedChapterCount).toBe(5)
     expect(getBookshelfWithCacheInfo).not.toHaveBeenCalled()
   })
 
-  it('已在架的书替换时保留服务端注入的远程缓存章数', async () => {
-    vi.mocked(getBookshelfWithCacheInfo).mockResolvedValue([
-      {
-        bookId: 'book_a',
-        name: '甲',
-        author: '',
-        bookUrl: 'https://b.example/a',
-        origin: 'o',
-        cachedChapterCount: 7,
-      },
-    ] as never)
+  it('服务端已在架但本地缺条目（本地列表过期）：按传入字段补一条', async () => {
+    vi.mocked(addToShelf).mockResolvedValue({ bookId: 'book_lost', created: false })
     const store = useBookshelfStore()
-    await store.fetchBooks()
-    vi.mocked(getBookshelfWithCacheInfo).mockClear()
 
-    // saveBook 响应不含 getShelfBookWithCacheInfo 注入的 cachedChapterCount
-    const saved = {
-      bookId: 'book_a',
-      name: '甲（修订）',
-      author: '某人',
-      bookUrl: 'https://b.example/a',
+    await store.addBook({
+      bookId: 'book_lost',
+      name: '补登',
+      author: '作者',
+      bookUrl: 'https://b.example/lost',
       origin: 'o',
-    }
-    vi.mocked(saveBook).mockResolvedValue(saved as never)
-    await store.addBook({ bookId: 'book_a' })
+    })
 
-    const replaced = store.books.find((book) => book.bookId === 'book_a')
-    expect(replaced?.name).toBe('甲（修订）')
-    // 远程缓存章数 chip 不能在替换后消失
-    expect(replaced?.cachedChapterCount).toBe(7)
-    expect(getBookshelfWithCacheInfo).not.toHaveBeenCalled()
+    expect(store.books.map((book) => book.bookId)).toEqual(['book_lost'])
   })
 
-  it('saveBook 响应带上远程缓存章数时以新值为准', async () => {
-    vi.mocked(getBookshelfWithCacheInfo).mockResolvedValue([
-      {
-        bookId: 'book_a',
-        name: '甲',
-        author: '',
-        bookUrl: 'https://b.example/a',
-        origin: 'o',
-        cachedChapterCount: 7,
-      },
-    ] as never)
+  it('缺少 bookId 直接抛错，不发请求', async () => {
     const store = useBookshelfStore()
-    await store.fetchBooks()
-
-    vi.mocked(saveBook).mockResolvedValue({
-      bookId: 'book_a',
-      name: '甲',
-      author: '',
-      bookUrl: 'https://b.example/a',
-      origin: 'o',
-      cachedChapterCount: 9,
-    } as never)
-    await store.addBook({ bookId: 'book_a' })
-
-    expect(store.books.find((book) => book.bookId === 'book_a')?.cachedChapterCount).toBe(9)
+    await expect(store.addBook({ name: '无 id' })).rejects.toThrow('bookId')
+    expect(addToShelf).not.toHaveBeenCalled()
   })
 
-  it('saveBook 失败原样抛错，书架保持不变', async () => {
-    vi.mocked(saveBook).mockRejectedValue(new Error('书架已满'))
+  it('入架失败原样抛错，书架保持不变', async () => {
+    vi.mocked(addToShelf).mockRejectedValue(new Error('书架已满'))
     const store = useBookshelfStore()
 
     await expect(store.addBook({ bookId: 'book_x' })).rejects.toThrow('书架已满')
 
     expect(store.books).toEqual([])
     expect(getBookshelfWithCacheInfo).not.toHaveBeenCalled()
+  })
+
+  it('移出书架走 DELETE，并清理本地条目与浏览器缓存', async () => {
+    vi.mocked(getBookshelfWithCacheInfo).mockResolvedValue([
+      { bookId: 'book_a', name: '甲', author: '', bookUrl: 'https://b.example/a', origin: 'o' },
+    ] as never)
+    vi.mocked(removeFromShelf).mockResolvedValue(undefined)
+    const store = useBookshelfStore()
+    await store.fetchBooks()
+
+    await store.removeBook(store.books[0])
+
+    expect(removeFromShelf).toHaveBeenCalledWith('book_a')
+    expect(deleteBrowserBookCache).toHaveBeenCalledWith('book_a')
+    expect(store.books).toEqual([])
+  })
+
+  it('批量删除逐本调用 DELETE', async () => {
+    vi.mocked(getBookshelfWithCacheInfo).mockResolvedValue([
+      { bookId: 'book_a', name: '甲', author: '', bookUrl: 'https://b.example/a', origin: 'o' },
+      { bookId: 'book_b', name: '乙', author: '', bookUrl: 'https://b.example/b', origin: 'o' },
+    ] as never)
+    vi.mocked(removeFromShelf).mockResolvedValue(undefined)
+    const store = useBookshelfStore()
+    await store.fetchBooks()
+    store.toggleSelection('book_a')
+    store.toggleSelection('book_b')
+
+    await store.bulkDelete()
+
+    expect(removeFromShelf).toHaveBeenCalledTimes(2)
+    expect(store.books).toEqual([])
   })
 })
 

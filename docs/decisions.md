@@ -110,3 +110,9 @@ goal 执行中遇到「决策表与 spec 都沉默」的问题时，按 §5.4 �
 - **TTL 判定只留一份**：`load_fresh_chapter_list_cache` 直接调用 `toc_state_is_fresh`，不再各写一份分支。
 - **后台刷新写库前复核绑定**：`refresh_chapter_list_if_current` 在 replace 前比对登记行 `book_url` 是否仍是发起时的书；换源竞态下丢弃旧源结果。复核与 replace 之间仍有毫秒级窗口（已知取舍，写进方法注释）。
 - **`refresh=true` 上游失败直接 502**：显式刷新不回退旧目录，如实报错；普通读才用 stale 兜底。spec 的 502 描述写明。
+
+## 2026-11-10 书架写链路切 v1
+
+- **`addBook` → `PUT /v1/me/shelf/{bookId}`**：201 新建时用调用方传入的展示字段就地追加（不整架重拉）；200 已在架时服务端不重置进度/元数据，本地条目原样保留（避免用搜索结果覆盖本地的书名/进度）。缺 `bookId` 直接报错——搜索/发现产出即登记，正常路径必有。
+- **`removeBook` / `bulkDelete` → `DELETE /v1/me/shelf/{bookId}`**（批量逐本串行；v1 没有批量端点）。语义变化：不再顺带删书签、AI 记忆、图片与本地书文件，登记行与正文历史保留（重新加入接得上）。本地书文件因此不再随移出释放——这是「可恢复」语义的代价，彻底删除属于后续动作。
+- **仍在 `/reader3` 的书架读域**：`getBookshelf`、`getShelfBook`（单条带缓存计数）、WebDAV 备份的 `saveBooks`/`restoreBooks`/`deleteBooks`。旧 api 的 `saveBook`/`deleteBook` 已无调用方，随本批删除。
