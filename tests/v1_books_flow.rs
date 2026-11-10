@@ -711,6 +711,7 @@ async fn put_shelf_enrolls_then_is_idempotent() {
         .client
         .put(format!("{}/v1/me/shelf/{book_id}", server.base_url))
         .bearer_auth(&server.token)
+        .json(&json!({}))
         .send()
         .await
         .unwrap();
@@ -723,6 +724,7 @@ async fn put_shelf_enrolls_then_is_idempotent() {
         .client
         .put(format!("{}/v1/me/shelf/{book_id}", server.base_url))
         .bearer_auth(&server.token)
+        .json(&json!({}))
         .send()
         .await
         .unwrap();
@@ -733,6 +735,7 @@ async fn put_shelf_enrolls_then_is_idempotent() {
         .client
         .put(format!("{}/v1/me/shelf/book_999", server.base_url))
         .bearer_auth(&server.token)
+        .json(&json!({}))
         .send()
         .await
         .unwrap();
@@ -768,6 +771,7 @@ async fn patch_shelf_progress_updates_and_validates() {
         .client
         .put(format!("{}/v1/me/shelf/{book_id}", server.base_url))
         .bearer_auth(&server.token)
+        .json(&json!({}))
         .send()
         .await
         .unwrap();
@@ -841,6 +845,7 @@ async fn patch_shelf_progress_refreshes_last_read_time_with_throttle() {
         .client
         .put(format!("{}/v1/me/shelf/{book_id}", server.base_url))
         .bearer_auth(&server.token)
+        .json(&json!({}))
         .send()
         .await
         .unwrap();
@@ -923,6 +928,7 @@ async fn delete_shelf_is_idempotent_and_keeps_registration() {
         .client
         .put(format!("{}/v1/me/shelf/{book_id}", server.base_url))
         .bearer_auth(&server.token)
+        .json(&json!({}))
         .send()
         .await
         .unwrap();
@@ -1226,6 +1232,128 @@ async fn shelf_cached_chapters_reflects_content_pool() {
 
     let body: Value = server.get("/v1/me/shelf").await.json().await.unwrap();
     assert_eq!(body["items"][0]["cachedChapters"], json!(1));
+
+    server.cleanup();
+}
+
+// ─── 入架请求体与批量移出 ───
+
+#[tokio::test]
+async fn put_shelf_with_display_fields_skips_upstream_detail() {
+    let server = TestServer::start().await;
+    let book_id = server
+        .seed_book_with_chapters("https://up.example.com", 2)
+        .await;
+
+    // 带展示字段入架：不回源详情（上游不可达也能立即 201），条目以请求体为准
+    let resp = server
+        .client
+        .put(format!("{}/v1/me/shelf/{book_id}", server.base_url))
+        .bearer_auth(&server.token)
+        .json(&json!({
+            "name": "搜索结果名",
+            "author": "搜索作者",
+            "coverUrl": "https://img.example/cover.jpg?x-signature=1",
+            "intro": "搜索简介",
+            "kind": "玄幻"
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::CREATED);
+
+    let body: Value = server
+        .get(&format!("/v1/me/shelf/{book_id}"))
+        .await
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(body["name"], json!("搜索结果名"));
+    assert_eq!(body["author"], json!("搜索作者"));
+    assert_eq!(body["intro"], json!("搜索简介"));
+    assert_eq!(body["kind"], json!("玄幻"));
+    assert_eq!(
+        body["coverImageId"],
+        json!(
+            reader_rust::service::image_service::ImageService::image_key(
+                "https://img.example/cover.jpg?x-signature=1"
+            )
+        ),
+        "封面按去查询串地址派生图片 id"
+    );
+
+    // 空对象（全缺省）再入架：200 幂等，不重置条目
+    let resp = server
+        .client
+        .put(format!("{}/v1/me/shelf/{book_id}", server.base_url))
+        .bearer_auth(&server.token)
+        .json(&json!({}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    // 未知字段：422（body 在幂等早退之前解析）
+    let resp = server
+        .client
+        .put(format!("{}/v1/me/shelf/{book_id}", server.base_url))
+        .bearer_auth(&server.token)
+        .json(&json!({ "name": "x", "extra": 1 }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::UNPROCESSABLE_ENTITY);
+
+    server.cleanup();
+}
+
+#[tokio::test]
+async fn batch_remove_deletes_and_ignores_unknown_ids() {
+    let server = TestServer::start().await;
+    let mut book_ids = Vec::new();
+    for host in ["up1", "up2", "up3"] {
+        let book_id = server
+            .seed_book_with_chapters(&format!("https://{host}.example.com"), 1)
+            .await;
+        server
+            .client
+            .put(format!("{}/v1/me/shelf/{book_id}", server.base_url))
+            .bearer_auth(&server.token)
+            .json(&json!({ "name": "书" }))
+            .send()
+            .await
+            .unwrap();
+        book_ids.push(book_id);
+    }
+
+    let resp = server
+        .client
+        .post(format!("{}/v1/me/shelf:batchDelete", server.base_url))
+        .bearer_auth(&server.token)
+        .json(&json!({
+            "bookIds": [book_ids[0], book_ids[1], "book_99999999", "not-a-book-id"]
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body: Value = resp.json().await.unwrap();
+    assert_eq!(body["deleted"], json!(2), "不存在的 id 忽略、不计数");
+
+    let body: Value = server.get("/v1/me/shelf").await.json().await.unwrap();
+    assert_eq!(body["total"], json!(1));
+    assert_eq!(body["items"][0]["bookId"], json!(book_ids[2]));
+
+    // 空列表 → 400
+    let resp = server
+        .client
+        .post(format!("{}/v1/me/shelf:batchDelete", server.base_url))
+        .bearer_auth(&server.token)
+        .json(&json!({ "bookIds": [] }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
 
     server.cleanup();
 }

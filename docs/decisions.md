@@ -124,3 +124,13 @@ goal 执行中遇到「决策表与 spec 都沉默」的问题时，按 §5.4 �
 - **列表不做 `/reader3` 的目录后台预取**：缓存章数来自正文池计数，预取只预热目录、不影响计数；去掉它等于「打开书架不再扇出抓几百个目录」。需要目录时按书读目录自然会抓。
 - **不在架的单条读复用 `BOOK_NOT_IN_SHELF`（409，与 PATCH 同码）**；契约 §8.2 的 `?include=book,cache` 与 `?groupId/?q/?sort` 过滤未实现——前端仍本地过滤/排序，后续书架管理批次再下沉。
 - **`getBookshelf`（无计数版本）仍留 `/reader3`**：WebDAV 备份快照需要 `tocUrl`/`infoHtml` 等 v1 书架条目不暴露的字段，备份域切换时一并迁移。
+
+## 2026-11-11 书架批次返工
+
+- **三条读取路径的排序键统一为 `(position, book_id)`**：`shelf list()` 原来只 `ORDER BY position`，与 `list_ids()` 及 v1 游标的 tie-break 不一致——position 一旦重复，翻页边界会静默跳书。一行 SQL 对齐。
+- **空封面不派生图片 id**：`cover_url = Some("")` 会得出 `md5("")` 指向不存在的图；shelf 与 books 详情两处都加了空串过滤。
+- **PUT `/v1/me/shelf/{bookId}` 接受可选展示字段**（name/author/coverUrl/intro/kind，`{}` 全缺省）：带上即跳过回源详情，发现页直接入架、源已挂时不再等最坏 3×10s。本站取图地址传回时还原成上游地址落库（与 saveBook 的 restore_cover_urls 同语义）；空串不覆盖登记行真名。
+- **`POST /v1/me/shelf:batchDelete`**：批量移出，逐本 `delete_book`（各自清缓存）不做整体事务，不存在/非法 id 忽略不计数，上限 1000。前端 `bulkDelete` 从 N 次串行 DELETE 改为一次调用——原来中途失败会「服务端删了一半、本地一个没动」。
+- **前端 `addBook` 201 后补一次 `getShelfBook` 对齐**：封面统一成图片管道 id（搜索结果里可能是签名上游直出地址），只在新增时多一次请求。
+- **缓存章数从每条 2 次 COUNT 减到 1 次**：`chapter_list_cache_exists` 的预探测冗余（count==0 已涵盖），且会把「有缓存正文但登记行被清」的书写成 0——直接 COUNT 反而更准。
+- **待办（P4 前）**：本地书文件删除没有入口——移出书架不再删文件，磁盘只增不减。计划加 `DELETE /v1/local-books/{bookId}`（删文件 + 书架行 + 登记行 + 图片连带），与「移出书架可恢复」语义分开。

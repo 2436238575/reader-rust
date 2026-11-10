@@ -651,13 +651,14 @@ impl ShelfBookRepo {
         Self { pool }
     }
 
-    /// 书架全量（窄列），按 position 排序。
+    /// 书架全量（窄列），按 position 排序（同 position 按 book_id 定序，
+    /// 与 `list_ids` 及 v1 游标的 `(position, bookId)` 键序保持一致）。
     pub async fn list(&self, user_ns: &str) -> Result<Vec<ShelfEntry>, AppError> {
         let rows = sqlx::query(sqlx::AssertSqlSafe(format!(
             "SELECT {SHELF_LIST_COLS}, {SHELF_JOIN_COLS} FROM shelf_books s \
              JOIN books b ON b.book_id = s.book_id \
              LEFT JOIN book_sources bs ON bs.book_source_id = b.book_source_id \
-             WHERE s.user_ns = ?1 ORDER BY s.position"
+             WHERE s.user_ns = ?1 ORDER BY s.position, s.book_id"
         )))
         .bind(user_ns)
         .fetch_all(&self.pool)

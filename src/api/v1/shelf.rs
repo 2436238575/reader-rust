@@ -18,7 +18,7 @@ use crate::storage::db::repo::RegisterBook;
 use axum::extract::{Path, Query, State};
 use axum::http::{header, HeaderMap, HeaderValue, StatusCode};
 use axum::response::{IntoResponse, Response};
-use axum::routing::get;
+use axum::routing::{get, post};
 use axum::Router;
 use base64::Engine;
 use serde::{Deserialize, Serialize};
@@ -37,6 +37,7 @@ pub fn router() -> Router<AppState> {
                 .patch(patch_shelf_book)
                 .delete(remove_from_shelf),
         )
+        .route("/v1/me/shelf:batchDelete", post(batch_remove_from_shelf))
         .route("/v1/books/{bookId}", get(get_book).patch(patch_book))
 }
 
@@ -48,27 +49,45 @@ fn book_not_in_shelf() -> Problem {
     Problem::new(ErrorCode::BookNotInShelf).detail("这本书还没有加入书架")
 }
 
+/// 入架请求体：全部字段可选（`{}` 表示全部缺省）。调用方（搜索/发现结果）
+/// 已有展示字段时带上，服务端跳过回源详情——发现页直接入架、源已挂时，
+/// 不让「加入书架」干等最坏 3×10s 的详情重试。
+#[derive(Debug, Default, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase", default, deny_unknown_fields)]
+pub struct ShelfPutBody {
+    pub name: Option<String>,
+    pub author: Option<String>,
+    /// 封面：本站取图地址（`/reader3/image/<id>`）会还原成上游地址落库
+    pub cover_url: Option<String>,
+    pub intro: Option<String>,
+    pub kind: Option<String>,
+}
+
 /// 入架（幂等）：已登记的书籍确保在架。201 首次 / 200 已在架。
 ///
-/// 元数据用书籍详情（1h 缓存，详情页刚看过时命中）填充；冷缓存会回源一次
-/// 上游——与打开详情页的成本相同。
+/// 元数据优先用请求体里的展示字段；没带时打书籍详情（1h 缓存，详情页刚
+/// 看过时命中）填充，本地书走本地详情。详情拿不到（源挂了/离线）不阻塞
+/// 入架：回退登记行信息，条目先立起来。
 #[utoipa::path(
     put,
     path = "/v1/me/shelf/{bookId}",
     tag = "me",
     operation_id = "addToShelf",
     params(("bookId" = String, Path, description = "书籍 id（book_<n>）")),
+    request_body = ShelfPutBody,
     security(("cookieAuth" = []), ("bearerAuth" = [])),
     responses(
         (status = 201, description = "已入架", body = ShelfWriteResult),
         (status = 200, description = "已在架（幂等重复调用，不重置进度）", body = ShelfWriteResult),
         (status = 404, description = "书籍不存在", body = Problem, content_type = "application/problem+json"),
+        (status = 422, description = "请求体含未知字段", body = Problem, content_type = "application/problem+json"),
     )
 )]
 pub async fn add_to_shelf(
     State(state): State<AppState>,
     V1User(user): V1User,
     Path(book_id): Path<String>,
+    V1Json(body): V1Json<ShelfPutBody>,
 ) -> Result<(StatusCode, Response), Problem> {
     let resolved = crate::api::handlers::book::resolve_book(&state, &user.ns, &book_id)
         .await
@@ -92,8 +111,15 @@ pub async fn add_to_shelf(
         ));
     }
 
-    // 元数据用书籍详情（1h 缓存，详情页刚看过时命中）填充；本地书走本地详情。
-    // 详情拿不到（源挂了/离线）不阻塞入架：回退登记行信息，条目先立起来
+    let has_display_fields = body.name.is_some()
+        || body.author.is_some()
+        || body.cover_url.is_some()
+        || body.intro.is_some()
+        || body.kind.is_some();
+
+    // 元数据：本地书走本地详情；网络书在调用方带展示字段时跳过回源，
+    // 用登记行（bookUrl/origin/name/author）+ 传入字段拼条目；没带才打
+    // 书籍详情（可能回源）。详情拿不到不阻塞入架：回退登记行信息
     let mut book = if crate::service::local_txt_book::is_local_txt_url(&resolved.book_url) {
         state
             .local_txt_book_service
@@ -106,6 +132,16 @@ pub async fn add_to_shelf(
             .get_book_info(&user.ns, &resolved.book_url)
             .await
             .map_err(Problem::from)?
+    } else if has_display_fields {
+        Book {
+            book_url: resolved.book_url.clone(),
+            book_source_id: resolved.source.book_source_id,
+            origin: resolved.source.book_source_url.clone(),
+            origin_name: Some(resolved.source.book_source_name.clone()),
+            name: String::new(),
+            author: String::new(),
+            ..Book::default()
+        }
     } else {
         match state
             .book_service
@@ -133,6 +169,37 @@ pub async fn add_to_shelf(
             }
         }
     };
+
+    // 传入字段覆盖（空串不覆盖：登记行里可能有真名，与 touch_book_fields
+    // 的 CASE WHEN 保护同思路）
+    if let Some(name) = body
+        .name
+        .as_deref()
+        .filter(|value| !value.trim().is_empty())
+    {
+        book.name = name.to_string();
+    }
+    if let Some(author) = body
+        .author
+        .as_deref()
+        .filter(|value| !value.trim().is_empty())
+    {
+        book.author = author.to_string();
+    }
+    if let Some(cover) = body
+        .cover_url
+        .as_deref()
+        .filter(|value| !value.trim().is_empty())
+    {
+        book.cover_url = Some(restore_cover_url(&state, cover).await);
+    }
+    if let Some(intro) = &body.intro {
+        book.intro = Some(intro.clone());
+    }
+    if let Some(kind) = &body.kind {
+        book.kind = Some(kind.clone());
+    }
+
     book.book_id = Some(book_id.clone());
     let saved = state.book_service.save_book(&user.ns, book).await?;
 
@@ -143,6 +210,18 @@ pub async fn add_to_shelf(
         })
         .into_response(),
     ))
+}
+
+/// 前端传回的本站取图地址还原成上游地址落库（与 `/reader3/saveBook` 的
+/// restore_cover_urls 同语义）——直接存路由串，图片回源刷新就没了依据。
+async fn restore_cover_url(state: &AppState, url: &str) -> String {
+    use crate::service::image_service::ImageService;
+    if let Some(id) = ImageService::id_from_route(url) {
+        if let Some(record) = state.image_service.record(id).await {
+            return record.source_url;
+        }
+    }
+    url.to_string()
 }
 
 #[derive(Debug, Serialize, ToSchema)]
@@ -297,6 +376,65 @@ pub async fn remove_from_shelf(
     Ok(StatusCode::NO_CONTENT)
 }
 
+/// 批量移出上限：全选删除的现实规模是几百本，1000 留足余量。
+const MAX_SHELF_BATCH_DELETE: usize = 1000;
+
+#[derive(Debug, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ShelfBatchDeleteRequest {
+    pub book_ids: Vec<String>,
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct ShelfBatchDeleteResult {
+    pub deleted: u32,
+}
+
+/// 批量移出（幂等）：与单个 DELETE 同语义——只摘书架行，登记行、书签与
+/// 正文历史保留；不存在的 id 忽略。逐本调 `delete_book`（各自清缓存），
+/// 不做整体事务：批量移出不需要「要么全删要么全留」。
+#[utoipa::path(
+    post,
+    path = "/v1/me/shelf:batchDelete",
+    tag = "me",
+    operation_id = "batchRemoveFromShelf",
+    request_body = ShelfBatchDeleteRequest,
+    security(("cookieAuth" = []), ("bearerAuth" = [])),
+    responses(
+        (status = 200, description = "删除条数", body = ShelfBatchDeleteResult),
+        (status = 400, description = "book_ids 为空或超上限", body = Problem, content_type = "application/problem+json"),
+        (status = 401, description = "未登录或令牌失效", body = Problem, content_type = "application/problem+json"),
+    )
+)]
+pub async fn batch_remove_from_shelf(
+    State(state): State<AppState>,
+    V1User(user): V1User,
+    V1Json(request): V1Json<ShelfBatchDeleteRequest>,
+) -> Result<Json<ShelfBatchDeleteResult>, Problem> {
+    if request.book_ids.is_empty() || request.book_ids.len() > MAX_SHELF_BATCH_DELETE {
+        return Err(Problem::new(ErrorCode::MalformedRequest).detail(format!(
+            "book_ids 需要提供 1 到 {MAX_SHELF_BATCH_DELETE} 个"
+        )));
+    }
+    let mut deleted = 0u32;
+    for book_id in &request.book_ids {
+        // 非法 id 视同不存在（与单个 DELETE 的幂等口径一致），不送进文件路径
+        if crate::storage::db::repo::parse_book_id(book_id).is_none() {
+            continue;
+        }
+        let removed = state
+            .book_service
+            .delete_book(&user.ns, book_id)
+            .await
+            .map_err(Problem::from)?;
+        if removed {
+            deleted += 1;
+        }
+    }
+    Ok(Json(ShelfBatchDeleteResult { deleted }))
+}
+
 #[derive(Debug, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct BookPatch {
@@ -412,10 +550,12 @@ pub async fn get_book(
         }
     };
     // 封面走图片管道：coverImageId = md5(去查询串的上游地址)，同一张图
-    // 永远同一个 id——签名的上游直出地址会过期，不能给客户端
+    // 永远同一个 id——签名的上游直出地址会过期，不能给客户端。
+    // 空串封面按无封面处理（md5("") 指向不存在的图）
     let cover_image_id = info
         .cover_url
         .as_deref()
+        .filter(|value| !value.trim().is_empty())
         .map(crate::service::image_service::ImageService::image_key);
     let chapters = state
         .book_service
@@ -580,6 +720,10 @@ fn is_local_shelf_book(book: &Book) -> bool {
 
 fn shelf_cover_image_id(url: &str) -> Option<String> {
     use crate::service::image_service::ImageService;
+    // 空串封面对应的 md5("") 指向一张不存在的图，按无封面处理
+    if url.trim().is_empty() {
+        return None;
+    }
     ImageService::id_from_route(url)
         .map(str::to_string)
         .or_else(|| Some(ImageService::image_key(url)))
@@ -592,22 +736,17 @@ async fn build_shelf_item(
     position: i64,
 ) -> Result<ShelfItem, Problem> {
     let book_id = book.book_id.clone().unwrap_or_default();
-    // 与 /reader3 getShelfBookWithCacheInfo 同口径：本地书恒 0；没有目录
-    // 登记行的书也按 0（列表不做目录后台预取，见 decisions）
+    // 缓存章数 = 正文池里这本书的章节数：本地书恒 0；网络书直接 COUNT——
+    // 没有登记目录时 count 本来就是 0（r3 的 exists 预探测是冗余查询，还
+    // 会把「有缓存正文但登记行被清」的书写成 0）。列表不做目录后台预取
     let cached_chapters = if is_local_shelf_book(book) {
         0
-    } else if state
-        .book_service
-        .chapter_list_cache_exists(user_ns, &book_id)
-        .await
-    {
+    } else {
         state
             .book_service
             .cached_chapter_count(user_ns, &book_id)
             .await
             .map_err(Problem::from)? as u32
-    } else {
-        0
     };
     let offset = f64::from(book.dur_chapter_pos.unwrap_or(0).clamp(0, 10_000)) / 10_000.0;
     Ok(ShelfItem {

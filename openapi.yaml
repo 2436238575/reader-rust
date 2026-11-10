@@ -674,8 +674,9 @@ paths:
       - me
       summary: 入架（幂等）：已登记的书籍确保在架。201 首次 / 200 已在架。
       description: |-
-        元数据用书籍详情（1h 缓存，详情页刚看过时命中）填充；冷缓存会回源一次
-        上游——与打开详情页的成本相同。
+        元数据优先用请求体里的展示字段；没带时打书籍详情（1h 缓存，详情页刚
+        看过时命中）填充，本地书走本地详情。详情拿不到（源挂了/离线）不阻塞
+        入架：回退登记行信息，条目先立起来。
       operationId: addToShelf
       parameters:
       - name: bookId
@@ -684,6 +685,12 @@ paths:
         required: true
         schema:
           type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ShelfPutBody'
+        required: true
       responses:
         '200':
           description: 已在架（幂等重复调用，不重置进度）
@@ -699,6 +706,12 @@ paths:
                 $ref: '#/components/schemas/ShelfWriteResult'
         '404':
           description: 书籍不存在
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '422':
+          description: 请求体含未知字段
           content:
             application/problem+json:
               schema:
@@ -768,6 +781,43 @@ paths:
                 $ref: '#/components/schemas/Problem'
         '422':
           description: 未知字段或取值非法
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+      security:
+      - cookieAuth: []
+      - bearerAuth: []
+  /v1/me/shelf:batchDelete:
+    post:
+      tags:
+      - me
+      summary: |-
+        批量移出（幂等）：与单个 DELETE 同语义——只摘书架行，登记行、书签与
+        正文历史保留；不存在的 id 忽略。逐本调 `delete_book`（各自清缓存），
+        不做整体事务：批量移出不需要「要么全删要么全留」。
+      operationId: batchRemoveFromShelf
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ShelfBatchDeleteRequest'
+        required: true
+      responses:
+        '200':
+          description: 删除条数
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ShelfBatchDeleteResult'
+        '400':
+          description: book_ids 为空或超上限
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '401':
+          description: 未登录或令牌失效
           content:
             application/problem+json:
               schema:
@@ -1455,6 +1505,25 @@ components:
         username:
           type: string
           description: 登录用户名（hint 展示与 API 客户端识别；/v1/me 才是资料源）
+    ShelfBatchDeleteRequest:
+      type: object
+      required:
+      - bookIds
+      properties:
+        bookIds:
+          type: array
+          items:
+            type: string
+      additionalProperties: false
+    ShelfBatchDeleteResult:
+      type: object
+      required:
+      - deleted
+      properties:
+        deleted:
+          type: integer
+          format: int32
+          minimum: 0
     ShelfItem:
       type: object
       description: 书架条目：书的注册信息快照 + 我的进度/分组。
@@ -1599,6 +1668,40 @@ components:
           type: number
           format: double
           description: 章内进度 0..1（存储是万分比）
+    ShelfPutBody:
+      type: object
+      description: |-
+        入架请求体：全部字段可选（`{}` 表示全部缺省）。调用方（搜索/发现结果）
+        已有展示字段时带上，服务端跳过回源详情——发现页直接入架、源已挂时，
+        不让「加入书架」干等最坏 3×10s 的详情重试。
+      properties:
+        author:
+          type:
+          - string
+          - 'null'
+          default: null
+        coverUrl:
+          type:
+          - string
+          - 'null'
+          description: 封面：本站取图地址（`/reader3/image/<id>`）会还原成上游地址落库
+          default: null
+        intro:
+          type:
+          - string
+          - 'null'
+          default: null
+        kind:
+          type:
+          - string
+          - 'null'
+          default: null
+        name:
+          type:
+          - string
+          - 'null'
+          default: null
+      additionalProperties: false
     ShelfWriteResult:
       type: object
       required:
