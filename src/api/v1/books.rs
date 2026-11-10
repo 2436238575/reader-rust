@@ -66,6 +66,12 @@ pub struct ChapterPage {
     pub items: Vec<ChapterItem>,
     pub next_cursor: Option<String>,
     pub total: Option<u32>,
+    /// 登记表已过 TTL：本次先返回旧目录，后台正在刷新；上游失败时也会
+    /// 保持 true 继续服务旧数据（不再把「目录打不开」当过期代价）
+    pub stale: bool,
+    /// 目录是否抓全：false 表示只登记了部分章节（后台补全中/被截断），
+    /// 客户端可稍后重取，不要把当前 `total` 当全书章节数
+    pub complete: bool,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -95,7 +101,7 @@ fn decode_cursor(raw: &str) -> Result<i32, Problem> {
     tag = "books",
     operation_id = "listChapters",
     params(
-        ("bookId" = String, Path, description = "书籍 id（bk_<n>）"),
+        ("bookId" = String, Path, description = "书籍 id（book_<n>）"),
         ("cursor" = Option<String>, Query, description = "上一页的 nextCursor"),
         ("limit" = Option<u32>, Query, description = "页大小，默认 50，上限 200"),
         ("refresh" = Option<bool>, Query, description = "同步重抓目录（只对第一页生效）"),
@@ -141,7 +147,11 @@ pub async fn list_chapters(
     // 只对第一页生效——分页中途重抓会让后续页与已返回页错位；失败时旧登记行
     // 保留（不做先删后抓），下一次普通读还能用。
     let refresh = query.refresh.unwrap_or(false) && after_index.is_none();
-    let chapters = load_chapters(
+    let ChapterList {
+        chapters,
+        stale,
+        complete,
+    } = load_chapters(
         &state,
         &user.ns,
         &book_id,
@@ -190,6 +200,8 @@ pub async fn list_chapters(
         items,
         next_cursor,
         total: Some(total),
+        stale,
+        complete,
     };
     let body = serde_json::to_vec(&page).expect("chapter page serializes");
     let etag = crate::api::etag::strong_etag(&body);
@@ -206,6 +218,15 @@ pub async fn list_chapters(
     Ok(response)
 }
 
+/// 一次目录读取的结果：章节列表 + 新鲜度/完整性（随响应原样下发）。
+struct ChapterList {
+    chapters: Vec<BookChapter>,
+    /// 登记表已过 TTL：本次用旧目录兜底，后台正在刷新
+    stale: bool,
+    /// 目录是否抓全（false = 只登记了部分章节）
+    complete: bool,
+}
+
 async fn load_chapters(
     state: &AppState,
     user_ns: &str,
@@ -213,48 +234,106 @@ async fn load_chapters(
     resolved: &crate::api::handlers::book::ResolvedBook,
     refresh: bool,
     first_page: bool,
-) -> Result<Vec<BookChapter>, Problem> {
+) -> Result<ChapterList, Problem> {
     use crate::service::local_epub_book::is_local_epub_url;
     use crate::service::local_txt_book::is_local_txt_url;
 
     // 本地书：目录由文件确定性生成，直接经本地服务按 index 取章（不写登记表）
     if is_local_txt_url(&resolved.book_url) {
-        return state
+        let chapters = state
             .local_txt_book_service
             .get_chapter_list(user_ns, &resolved.book_url)
             .await
-            .map_err(Problem::from);
+            .map_err(Problem::from)?;
+        return Ok(ChapterList {
+            chapters,
+            stale: false,
+            complete: true,
+        });
     }
     if is_local_epub_url(&resolved.book_url) {
-        return state
+        let chapters = state
             .local_epub_book_service
             .get_chapter_list(user_ns, &resolved.book_url)
             .await
-            .map_err(Problem::from);
+            .map_err(Problem::from)?;
+        return Ok(ChapterList {
+            chapters,
+            stale: false,
+            complete: true,
+        });
     }
 
-    // 网络书：登记表优先（P-1 的持久载体）；空则走抓取路径填充登记表——
-    // 与 /reader3/getChapterList 共用同一份服务层。
-    // 第一页按 TTL 判定新鲜度（完整 1h / 未完成 60s），过期即重抓；分页续页
-    // 只读裸登记行，避免 TTL 在翻页途中触发重抓、把已返回页的 index 打乱。
+    // 网络书：登记表优先；**过期不阻塞**——先返回旧目录（stale=true）并拉起
+    // 后台刷新（stale-while-revalidate），只有 refresh=true 才同步重抓。
+    // 这样 TTL 过期不会把开书变成「串行抓全部分页」（慢源上开书要等上界未知
+    // 的往返），上游挂掉也还能读旧目录，而不是抱着上千章登记行报错。
+    // 分页续页只读裸登记行，避免翻页途中重抓把已返回页的 index 打乱。
     if !refresh {
-        let existing = if first_page {
-            state
-                .book_service
-                .load_fresh_chapter_list_cache(user_ns, book_id)
-                .await
-        } else {
-            state
-                .book_service
-                .load_chapter_list_cache(user_ns, book_id)
-                .await
-        };
-        if let Some(list) = existing.map_err(Problem::from)? {
+        // 裸登记行读取（不看 TTL）：TTL 过期由下面的 stale 标记 + 后台刷新处理
+        let cached = state
+            .book_service
+            .load_chapter_list_cache(user_ns, book_id)
+            .await;
+        if let Some(list) = cached.map_err(Problem::from)? {
             if !list.is_empty() {
-                return Ok(list);
+                let toc_state = state
+                    .book_service
+                    .get_toc_state(book_id)
+                    .await
+                    .map_err(Problem::from)?;
+                let (complete, fresh) = match toc_state {
+                    Some(row) => (
+                        row.complete,
+                        crate::service::book_service::BookService::toc_state_is_fresh(
+                            row.complete,
+                            row.fetched_at,
+                        ),
+                    ),
+                    // 有登记行却没有状态行（移出书架/清缓存后）：按过期处理，
+                    // 旧目录照常服务，后台重新抓取
+                    None => (false, false),
+                };
+                if !fresh && first_page {
+                    spawn_toc_refresh(state, user_ns, book_id, resolved);
+                }
+                return Ok(ChapterList {
+                    chapters: list,
+                    stale: !fresh,
+                    complete,
+                });
             }
         }
     }
+
+    let toc_url = resolve_toc_url(state, user_ns, book_id, resolved).await?;
+    let chapters = state
+        .book_service
+        .get_chapter_list_with_cache(user_ns, book_id, &resolved.source, &toc_url, refresh)
+        .await
+        .map_err(Problem::from)?;
+    // 刚抓完的状态由 store_chapter_list 写入；截断/未完成会落 complete=false
+    let complete = state
+        .book_service
+        .get_toc_state(book_id)
+        .await
+        .map_err(Problem::from)?
+        .map(|row| row.complete)
+        .unwrap_or(false);
+    Ok(ChapterList {
+        chapters,
+        stale: false,
+        complete,
+    })
+}
+
+/// 目录地址：登记表 > 书籍详情（详情缓存按 bookId，顺带回填 toc_url）> book_url。
+async fn resolve_toc_url(
+    state: &AppState,
+    user_ns: &str,
+    book_id: &str,
+    resolved: &crate::api::handlers::book::ResolvedBook,
+) -> Result<String, Problem> {
     let toc_url = match resolved
         .toc_url
         .as_deref()
@@ -275,10 +354,40 @@ async fn load_chapters(
             .toc_url
             .unwrap_or_else(|| resolved.book_url.clone()),
     };
-    let toc_url = crate::util::text::repair_encoded_url(&toc_url);
-    state
-        .book_service
-        .get_chapter_list_with_cache(user_ns, book_id, &resolved.source, &toc_url, refresh)
-        .await
-        .map_err(Problem::from)
+    Ok(crate::util::text::repair_encoded_url(&toc_url))
+}
+
+/// 过期登记表的后台刷新（single-flight）：与 `/reader3` 的后台补全共用
+/// `try_begin_toc_fill` 守卫，同一本书同一时刻只跑一个。失败只记日志——
+/// 请求已经拿到旧目录，下一次读取会在 TTL 仍过期时再次尝试。
+fn spawn_toc_refresh(
+    state: &AppState,
+    user_ns: &str,
+    book_id: &str,
+    resolved: &crate::api::handlers::book::ResolvedBook,
+) {
+    let Some(guard) = state.book_service.try_begin_toc_fill(user_ns, book_id) else {
+        return;
+    };
+    let state = state.clone();
+    let user_ns = user_ns.to_string();
+    let book_id = book_id.to_string();
+    let resolved = resolved.clone();
+    tokio::spawn(async move {
+        let _guard = guard;
+        let toc_url = match resolve_toc_url(&state, &user_ns, &book_id, &resolved).await {
+            Ok(toc_url) => toc_url,
+            Err(error) => {
+                tracing::warn!(?error, book_id, "目录后台刷新解析 tocUrl 失败");
+                return;
+            }
+        };
+        if let Err(error) = state
+            .book_service
+            .get_chapter_list_with_cache(&user_ns, &book_id, &resolved.source, &toc_url, true)
+            .await
+        {
+            tracing::warn!(%error, book_id, "目录后台刷新失败，继续服务旧登记表");
+        }
+    });
 }

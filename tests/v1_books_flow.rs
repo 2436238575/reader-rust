@@ -119,6 +119,41 @@ impl TestServer {
             .unwrap();
     }
 
+    /// 预置一份用户编辑版本（基于当前最新上游，设为当前版本）。
+    async fn seed_user_version(&self, book_id: &str, index: i32, url: &str, content: &str) {
+        use reader_rust::storage::db::content_repo::RecordOutcome;
+        let latest = self
+            .content
+            .latest(book_id, url)
+            .await
+            .unwrap()
+            .expect("种子顺序：先写上游版本");
+        let base = latest
+            .latest_upstream_version_id
+            .expect("种子顺序：先写上游版本");
+        let outcome = self
+            .content
+            .save_user_version(
+                "user_1",
+                book_id,
+                url,
+                "edited",
+                content,
+                Some(base),
+                index,
+                "",
+                "",
+                "",
+                true,
+                None,
+            )
+            .await
+            .unwrap();
+        match outcome {
+            RecordOutcome::Appended { .. } | RecordOutcome::Unchanged { .. } => {}
+        }
+    }
+
     async fn get(&self, path: &str) -> reqwest::Response {
         self.client
             .get(format!("{}{path}", self.base_url))
@@ -370,7 +405,10 @@ async fn content_reads_via_index_with_version_etag() {
         .await;
     assert_eq!(resp.status(), StatusCode::OK);
     let etag = resp.headers()["etag"].to_str().unwrap().to_string();
-    assert!(etag.starts_with("\"cv_"), "ETag 应是版本标签: {etag}");
+    assert!(
+        etag.len() == 34 && etag.starts_with('"') && etag.ends_with('"'),
+        "ETag 应是响应体的强 md5 标签: {etag}"
+    );
     let body: Value = resp.json().await.unwrap();
     assert!(
         body.get("isSuccess").is_none(),
@@ -398,6 +436,71 @@ async fn content_reads_via_index_with_version_etag() {
         .await
         .unwrap();
     assert_eq!(not_modified.status(), StatusCode::NOT_MODIFIED);
+
+    server.cleanup();
+}
+
+#[tokio::test]
+async fn content_etag_covers_diff_fields_not_only_version() {
+    let server = TestServer::start().await;
+    let book_id = server
+        .seed_book_with_chapters("https://up.example.com", 1)
+        .await;
+    let url = "https://up.example.com/ch/0";
+    server
+        .seed_upstream_content(&book_id, 0, url, "上游第一版正文。")
+        .await;
+    server
+        .seed_user_version(&book_id, 0, url, "用户编辑后的正文。")
+        .await;
+
+    // 第一次读：编辑版 + 内联 diff，基准是当前最新上游
+    let resp = server
+        .get(&format!("/v1/books/{book_id}/chapters/0/content"))
+        .await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let etag_v1 = resp.headers()["etag"].to_str().unwrap().to_string();
+    let body: Value = resp.json().await.unwrap();
+    assert_eq!(body["edited"], json!(true));
+    assert!(body["diff"].is_array(), "编辑版应带内联 diff: {body}");
+    let base_v1 = body["diffBaseVersionId"]
+        .as_str()
+        .expect("编辑版 diff 有基准版本")
+        .to_string();
+
+    // 上游推进一版：用户版本号不变（仍是 cv_x），但 diff 基准/差异内容变了
+    server
+        .seed_upstream_content(&book_id, 0, url, "上游第二版正文（新）。")
+        .await;
+
+    // 旧 ETag 必须失效——只盖版本号的 ETag 会在这里返回 304，把编辑视图
+    // 永久钉在首次读取时的上游版本上
+    let resp = server
+        .client
+        .get(format!(
+            "{}/v1/books/{book_id}/chapters/0/content",
+            server.base_url
+        ))
+        .bearer_auth(&server.token)
+        .header(header::IF_NONE_MATCH, &etag_v1)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(
+        resp.status(),
+        StatusCode::OK,
+        "diff 基准变了，旧 ETag 不能 304"
+    );
+    let etag_v2 = resp.headers()["etag"].to_str().unwrap().to_string();
+    assert_ne!(etag_v1, etag_v2, "响应体变化必须换 ETag");
+    let body: Value = resp.json().await.unwrap();
+    let base_v2 = body["diffBaseVersionId"].as_str().unwrap();
+    assert_ne!(base_v1, base_v2, "diffBaseVersionId 应跟到新的最新上游");
+    assert_eq!(
+        body["version"]["kind"],
+        json!("edited"),
+        "默认版本仍是用户编辑版"
+    );
 
     server.cleanup();
 }
@@ -769,8 +872,8 @@ async fn delete_shelf_is_idempotent_and_keeps_registration() {
         .await
         .unwrap();
     assert_eq!(again.status(), StatusCode::NO_CONTENT);
-    // 登记行与章节登记表保留（目录状态被重置，下一次读目录按 TTL 语义回源，
-    // 与 /reader3 移出书架后一致）
+    // 登记行与章节登记表保留——清缓存只重置目录抓取状态。旧目录因此仍可读：
+    // 上游地址不可达时也返回 200 + stale=true（后台刷新失败不影响本次读取）。
     let books: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM books")
         .fetch_one(&server.pool)
         .await
@@ -781,6 +884,11 @@ async fn delete_shelf_is_idempotent_and_keeps_registration() {
         .unwrap();
     assert_eq!(books, 1, "书籍登记行不随移出书架删除");
     assert_eq!(chapters, 2, "章节登记行不随移出书架删除");
+    let resp = server.get(&format!("/v1/books/{book_id}/chapters")).await;
+    assert_eq!(resp.status(), StatusCode::OK, "旧登记表应继续可读");
+    let body: Value = resp.json().await.unwrap();
+    assert_eq!(body["items"].as_array().unwrap().len(), 2);
+    assert_eq!(body["stale"], json!(true), "状态被重置的目录应标 stale");
 
     server.cleanup();
 }

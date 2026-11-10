@@ -91,7 +91,14 @@ goal 执行中遇到「决策表与 spec 都沉默」的问题时，按 §5.4 �
 
 - **条件请求交给浏览器 HTTP 缓存，不在 IndexedDB 里存 etag**：单章 GET 响应带 `ETag + Cache-Control: private, no-cache`，XHR 对同一 URL 自动带 `If-None-Match` 并在 304 时透明复用缓存体；前端自管 etag 只是复制一层容易漂移的逻辑。`knownVersionId` 参数保留但服务端不再消费；批量接口的「unchanged」由客户端用 `version.id` 比对后等价化简（不重复写缓存）。
 - **章节响应过渡期带只读 `url`**（红线 6 例外）：阅读器内的评论/配图/改名与 IndexedDB 缓存键仍用上游 URL，这些域迁 v1 后删除该字段。
-- **目录第一页恢复 TTL 读**（完整 1h / 未完成 60s），与 `/reader3/getChapterList` 对齐；分页续页只读裸登记行，避免翻页途中重抓打乱 index。`refresh=true` 只对第一页生效，同步重抓后整表替换；失败保留旧登记行（不先删后抓）。
+- **目录读路径保留 TTL 语义**（完整 1h / 未完成 60s），但过期改为 stale-while-revalidate：先返回旧登记表并标 `stale`，后台单飞刷新；`refresh=true` 才同步重抓。分页续页只读裸登记行，避免翻页途中重抓打乱 index；失败保留旧登记行（不先删后抓）。
 - **正文响应补齐阅读器消费的字段**：`edited` / `diffBaseVersionId` / `latestUserVersionId` / `diff.ops` / `lastAttemptAt` / `upstreamChangedAt` / `editedAt`；时间一律 RFC 3339，前端适配层转回旧形状的秒级数字。
 - **进度写入统一走 v1**：`saveBookProgress` 与页面卸载的 keepalive 兜底都调用 `PATCH /v1/me/shelf/{id}`（keepalive 显式带 CSRF 头），`/reader3/saveBookProgress` 不再有前端调用。
 - **浏览器整本缓存按 index 传参**：`cacheBookToBrowser` 原先只传 `chapterUrl`，补 `index` 后单章 GET 才能定位章节。
+
+## 2026-11-10 审阅返工：正文 ETag 与目录 stale-while-revalidate
+
+- **正文 ETag 改为整响应体 md5**：旧 `cv_<version_id>` 盖不住 `diff` / `diffBaseVersionId` / `upstreamChangedSinceBase` / `lastAttemptAt` / `stale`——上游推进时版本号不变，304 会让编辑视图永久停在旧 diff。body 哈希（强 ETag）一次算清；同时补回 `diffError`（服务端已有 `diff_error`，v1 之前漏发，阅读器 `chapterDiff.error` 消费）。
+- **目录 TTL 过期改 stale-while-revalidate**：有登记行时普通读始终先返回旧目录，过期只标 `stale:true` 并在后台单飞刷新（复用 `try_begin_toc_fill`）；`refresh=true` 才同步重抓。修掉「TTL 过期 = 串行抓全部分页」与「上游挂 = 目录打不开」两个问题。`ChapterPage` 新增 `stale` / `complete`；前端对 stale 结果用 10s 短会话缓存，尽快换新。
+- **首开仍同步抓全量**：登记表为空时没有旧目录可返回，只能同步抓（`/reader3` 的「首屏 + 后台补全」优化仍未引入，留待后续批次）。
+- 批量正文的生产调用方是阅读器预加载；整本浏览器缓存（`cacheBookToBrowser`）仍逐章请求，批量接入标注待做。

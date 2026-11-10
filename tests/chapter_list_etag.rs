@@ -17,19 +17,31 @@ use std::sync::Arc;
 /// 假上游目录的章节数：测试中途改动它来模拟「目录变了」。
 type ChapterCount = Arc<AtomicUsize>;
 
-async fn start_upstream(chapter_count: ChapterCount) -> String {
+/// 假上游状态：`chapter_count` 模拟目录变化，`fail` 模拟上游挂掉。
+#[derive(Clone)]
+struct UpstreamState {
+    chapter_count: Arc<AtomicUsize>,
+    fail: Arc<std::sync::atomic::AtomicBool>,
+}
+
+async fn start_upstream(state: UpstreamState) -> String {
     let app = Router::new()
         .route(
             "/catalog",
             get(
-                |State(chapter_count): State<ChapterCount>,
-                 headers: axum::http::HeaderMap| async move {
+                |State(state): State<UpstreamState>, headers: axum::http::HeaderMap| async move {
+                    if state.fail.load(Ordering::SeqCst) {
+                        return (
+                            StatusCode::INTERNAL_SERVER_ERROR,
+                            Json(json!({ "message": "upstream down" })),
+                        );
+                    }
                     let host = headers
                         .get("host")
                         .and_then(|v| v.to_str().ok())
                         .unwrap_or_default()
                         .to_string();
-                    let count = chapter_count.load(Ordering::SeqCst);
+                    let count = state.chapter_count.load(Ordering::SeqCst);
                     let items: Vec<Value> = (0..count)
                         .map(|i| {
                             json!({
@@ -38,11 +50,11 @@ async fn start_upstream(chapter_count: ChapterCount) -> String {
                             })
                         })
                         .collect();
-                    Json(json!({ "data": { "list": items } }))
+                    (StatusCode::OK, Json(json!({ "data": { "list": items } })))
                 },
             ),
         )
-        .with_state(chapter_count);
+        .with_state(state);
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
@@ -55,6 +67,7 @@ async fn start_upstream(chapter_count: ChapterCount) -> String {
 struct TestServer {
     base_url: String,
     chapter_count: ChapterCount,
+    upstream: UpstreamState,
     temp_dir: PathBuf,
     client: reqwest::Client,
     token: String,
@@ -66,7 +79,11 @@ struct TestServer {
 impl TestServer {
     async fn start() -> Self {
         let chapter_count: ChapterCount = Arc::new(AtomicUsize::new(3));
-        let upstream_url = start_upstream(chapter_count.clone()).await;
+        let upstream = UpstreamState {
+            chapter_count: chapter_count.clone(),
+            fail: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        };
+        let upstream_url = start_upstream(upstream.clone()).await;
 
         common::clean_stale_temp_dirs();
         let temp_dir =
@@ -116,6 +133,7 @@ impl TestServer {
         Self {
             base_url,
             chapter_count,
+            upstream,
             temp_dir,
             client,
             token,
@@ -349,12 +367,19 @@ async fn etag_changes_when_toc_content_changes() {
     );
 }
 
-/// v1 目录读链路的两条新鲜度规则：
-/// - 普通读按 TTL 判定（完整目录 1h），过期回源重抓；
-/// - `refresh=true` 无条件绕过登记表同步重抓，成功后整表替换（只对第一页生效）。
+/// v1 目录读链路的新鲜度规则：
+/// - TTL 内直接命中登记表（`stale=false` / `complete` 来自抓取状态）；
+/// - TTL 过期先返回旧目录（`stale=true`）并拉起后台刷新
+///   （stale-while-revalidate），刷新落库后下一次读到新目录；
+/// - `refresh=true` 无条件同步重抓，成功后整表替换（只对第一页生效）。
 #[tokio::test]
-async fn v1_chapters_ttl_and_refresh_follow_upstream() {
+async fn v1_chapters_ttl_is_stale_while_revalidate_and_refresh_syncs() {
     let server = TestServer::start().await;
+    let book_row_id = server
+        .book_id
+        .trim_start_matches("book_")
+        .parse::<i64>()
+        .unwrap();
 
     // 先用 /reader3 目录接口灌好登记表（3 章、状态新鲜）
     let resp = server
@@ -362,10 +387,12 @@ async fn v1_chapters_ttl_and_refresh_follow_upstream() {
         .await;
     assert_eq!(resp.status(), StatusCode::OK);
 
-    // v1 普通读命中新鲜登记表（不回源）
+    // v1 普通读：新鲜登记表直接命中（不回源）
     let body: Value = server.get_v1_chapters("").await.json().await.unwrap();
     let items = body["items"].as_array().unwrap();
     assert_eq!(items.len(), 3);
+    assert_eq!(body["stale"], json!(false));
+    assert_eq!(body["complete"], json!(true));
     assert!(
         items[0]["url"]
             .as_str()
@@ -386,30 +413,97 @@ async fn v1_chapters_ttl_and_refresh_follow_upstream() {
     assert_eq!(
         body["items"].as_array().unwrap().len(),
         4,
-        "refresh=true 必须重抓"
+        "refresh=true 必须同步重抓"
     );
+    assert_eq!(body["stale"], json!(false));
 
-    // 重抓成功整表替换：普通读也看到 4 章
-    let body: Value = server.get_v1_chapters("").await.json().await.unwrap();
-    assert_eq!(body["items"].as_array().unwrap().len(), 4);
-
-    // TTL 过期：普通读也回源（不靠 refresh）
+    // TTL 过期 + 上游又新增一章：普通读**先返回旧目录**（4 章、stale=true），
+    // 不在这里串行抓全部分页；后台刷新落库后下一次读到 5 章
     server.chapter_count.store(5, Ordering::SeqCst);
     sqlx::query("UPDATE book_toc_state SET fetched_at = 0 WHERE book_id = ?1")
-        .bind(
-            server
-                .book_id
-                .trim_start_matches("book_")
-                .parse::<i64>()
-                .unwrap(),
-        )
+        .bind(book_row_id)
         .execute(&server.pool)
         .await
         .unwrap();
     let body: Value = server.get_v1_chapters("").await.json().await.unwrap();
     assert_eq!(
         body["items"].as_array().unwrap().len(),
-        5,
-        "TTL 过期应回源重抓"
+        4,
+        "TTL 过期应先返回旧目录，而不是同步重抓"
     );
+    assert_eq!(body["stale"], json!(true), "过期目录应标 stale");
+
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(10);
+    loop {
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        let body: Value = server.get_v1_chapters("").await.json().await.unwrap();
+        if body["items"].as_array().unwrap().len() == 5 {
+            assert_eq!(body["stale"], json!(false), "后台刷新后 stale 应复位");
+            break;
+        }
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "后台刷新超时: {body}"
+        );
+    }
+}
+
+/// TTL 过期 + 上游挂掉：旧登记表照常可读（200 + `stale=true`），不会因为
+/// 刷新失败把「有上千章登记行」的目录变成打不开。
+#[tokio::test]
+async fn v1_chapters_serve_stale_registry_when_upstream_is_down() {
+    let server = TestServer::start().await;
+    let book_row_id = server
+        .book_id
+        .trim_start_matches("book_")
+        .parse::<i64>()
+        .unwrap();
+
+    let resp = server
+        .get_chapter_list(&format!("bookId={}", server.book_id), None)
+        .await;
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    // 上游挂掉 + TTL 过期：连续读取都靠旧登记表兜底
+    server.upstream.fail.store(true, Ordering::SeqCst);
+    sqlx::query("UPDATE book_toc_state SET fetched_at = 0 WHERE book_id = ?1")
+        .bind(book_row_id)
+        .execute(&server.pool)
+        .await
+        .unwrap();
+    for _ in 0..3 {
+        let resp = server.get_v1_chapters("").await;
+        assert_eq!(resp.status(), StatusCode::OK, "上游挂掉也应读到旧目录");
+        let body: Value = resp.json().await.unwrap();
+        assert_eq!(body["items"].as_array().unwrap().len(), 3);
+        assert_eq!(body["stale"], json!(true));
+        // 给后台刷新一点失败时间，再验证下一次读仍然可用
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    }
+}
+
+/// 未完成目录（首屏只落了部分章节/补全被截断）显式下发 `complete=false`。
+#[tokio::test]
+async fn v1_chapters_report_incomplete_registry() {
+    let server = TestServer::start().await;
+    let book_row_id = server
+        .book_id
+        .trim_start_matches("book_")
+        .parse::<i64>()
+        .unwrap();
+
+    let resp = server
+        .get_chapter_list(&format!("bookId={}", server.book_id), None)
+        .await;
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    sqlx::query("UPDATE book_toc_state SET complete = 0, fetched_at = ?2 WHERE book_id = ?1")
+        .bind(book_row_id)
+        .bind(reader_rust::util::time::now_ts())
+        .execute(&server.pool)
+        .await
+        .unwrap();
+    let body: Value = server.get_v1_chapters("").await.json().await.unwrap();
+    assert_eq!(body["complete"], json!(false), "未完成目录必须如实标注");
+    assert_eq!(body["stale"], json!(false), "刚抓到的未完成目录不算过期");
 }

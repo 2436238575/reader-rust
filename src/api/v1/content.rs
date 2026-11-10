@@ -4,14 +4,17 @@
 //! 后台回源、本地书分支）；差异在对外契约：
 //! - **身份是 `(bookId, index)`**：index 经章节登记表/本地目录解析出内部
 //!   chapterUrl（红线 6）；
-//! - **`If-None-Match` 取代 `knownVersionId`**：ETag 取当前解析版本的
-//!   `cv_<version_id>`（无版本时退回正文 md5），命中回 304，客户端用
-//!   本地缓存正文补上——浏览器/Service Worker 缓存自动生效；
+//! - **`If-None-Match` 取代 `knownVersionId`**：强 ETag 取**响应体的 md5**，
+//!   命中回 304，客户端用本地缓存正文补上——浏览器/Service Worker 缓存
+//!   自动生效。不能只拿 `cv_<version_id>` 当 ETag：diff / diffBaseVersionId /
+//!   upstreamChangedSinceBase / lastAttemptAt / stale 这些字段不由当前版本
+//!   决定（上游推进、后台回源尝试都会改），只盖版本号会让编辑视图永久
+//!   拿缓存里的旧 diff；
 //! - **`format` 由服务端统一判定**（D15）：沿用前端嗅探口径（块级标签
 //!   白名单 + 成对 b/i/u 补偿），各客户端不再各猜一遍。
 //!
-//! Draft-1 §9.5 的 `?include=blocks` 与内联 diff 暂未实现：blocks 的消费方
-//! （段评/编辑器）在 P3，diff 有独立端点（`versions/{v}/diff`）。
+//! Draft-1 §9.5 的 `?include=blocks` 暂未实现：blocks 的消费方（段评/编辑器）
+//! 在 P3；内联 diff 已随用户版本一起下发。
 
 use crate::api::etag::if_none_match_matches;
 use crate::api::problem::{ErrorCode, Problem};
@@ -21,9 +24,8 @@ use axum::extract::{Path, Query, State};
 use axum::http::{header, HeaderMap, HeaderValue, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
-use axum::{Json, Router};
+use axum::Router;
 use futures::StreamExt;
-use md5::{Digest, Md5};
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
@@ -79,6 +81,10 @@ pub struct ChapterContent {
     #[serde(skip_serializing_if = "Option::is_none")]
     #[schema(nullable = false)]
     pub diff: Option<Vec<DiffOp>>,
+    /// diff 算不出来的原因（正文仍可用）；diff 成功或没有用户版本时缺省
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(nullable = false)]
+    pub diff_error: Option<String>,
     /// 用户版本的基准上游之后，上游是否又变过
     pub upstream_changed_since_base: bool,
     /// `selected` / `edited` / `upstream` / `upstream_preview`
@@ -141,22 +147,6 @@ fn has_paired_inline_tag(body: &str) -> bool {
         }
     }
     false
-}
-
-fn etag_for(data: &crate::api::handlers::book::content::ChapterContentData) -> HeaderValue {
-    // 有版本走版本标签（If-None-Match 的实体）；无版本（本地书上游原文等）
-    // 退回正文 md5——内容寻址，同样稳定
-    match data.version_id {
-        Some(id) => {
-            HeaderValue::from_str(&format!("\"{}\"", cv_id(id))).expect("cv id 必为合法 header 值")
-        }
-        None => {
-            let mut hasher = Md5::new();
-            hasher.update(data.content.as_bytes());
-            HeaderValue::from_str(&format!("\"body-{}\"", hex::encode(hasher.finalize())))
-                .expect("md5 hex 必为合法 header 值")
-        }
-    }
 }
 
 /// index → 内部 chapterUrl：登记表/本地目录解析；URL 不出现在请求或响应里。
@@ -316,19 +306,17 @@ pub async fn get_chapter_content(
     .await
     .map_err(Problem::from)?;
 
-    let etag = etag_for(&data);
-    if if_none_match_matches(headers.get(header::IF_NONE_MATCH), &etag) {
-        let mut response = StatusCode::NOT_MODIFIED.into_response();
-        response.headers_mut().insert(header::ETAG, etag);
-        response.headers_mut().insert(
-            header::CACHE_CONTROL,
-            HeaderValue::from_static("private, no-cache"),
-        );
-        return Ok(response);
-    }
-
+    // ETag 必须覆盖完整响应体：diff / diffBaseVersionId / upstreamChangedSinceBase /
+    // lastAttemptAt / stale 都不由当前版本号决定（上游推进、后台回源尝试会改），
+    // 只盖 `cv_<n>` 会让客户端永久拿缓存里的旧 diff。body 级 md5 一次算清。
     let content = map_to_v1(&book_id, index, data);
-    let mut response = Json(content).into_response();
+    let body = serde_json::to_vec(&content).expect("chapter content serializes");
+    let etag = crate::api::etag::strong_etag(&body);
+    let mut response = if if_none_match_matches(headers.get(header::IF_NONE_MATCH), &etag) {
+        StatusCode::NOT_MODIFIED.into_response()
+    } else {
+        ([(header::CONTENT_TYPE, "application/json")], body).into_response()
+    };
     response.headers_mut().insert(header::ETAG, etag);
     response.headers_mut().insert(
         header::CACHE_CONTROL,
@@ -528,6 +516,7 @@ fn map_to_v1(
         diff_base_version_id: data.diff_base_version_id.map(cv_id),
         latest_user_version_id: data.latest_user_version_id.map(cv_id),
         diff: data.diff.map(|diff| diff.ops),
+        diff_error: data.diff_error,
         upstream_changed_since_base: data.upstream_changed,
         selection_source: data.selection_source,
         stale: data.stale,

@@ -11,6 +11,7 @@ use super::BookService;
 use crate::error::error::AppError;
 use crate::model::book_chapter::BookChapter;
 use crate::model::book_source::BookSource;
+use crate::storage::db::chapters_repo::TocState;
 use crate::storage::db::repo::parse_book_id;
 use std::collections::HashSet;
 use std::sync::{Arc, Mutex};
@@ -566,6 +567,29 @@ impl BookService {
             .reset_toc_state(id)
             .await
             .map_err(|e| AppError::Internal(e.into()))
+    }
+
+    /// 目录登记状态（`complete` + `fetched_at`）的只读入口：v1 读路径据此
+    /// 标注 `stale` / `complete`，过期时先返回旧登记表、后台再刷新。
+    pub async fn get_toc_state(&self, book_id: &str) -> Result<Option<TocState>, AppError> {
+        let Some(id) = Self::chapter_row_id(book_id) else {
+            return Ok(None);
+        };
+        self.chapters
+            .get_toc_state(id)
+            .await
+            .map_err(|e| AppError::Internal(e.into()))
+    }
+
+    /// 目录登记表是否仍在 TTL 内：完整目录 1 小时，未完成目录 60 秒。
+    /// 与 [`Self::load_fresh_chapter_list_cache`] 的判定保持同一口径。
+    pub fn toc_state_is_fresh(complete: bool, fetched_at: i64) -> bool {
+        let ttl = if complete {
+            CHAPTER_LIST_TTL
+        } else {
+            INCOMPLETE_TOC_TTL
+        };
+        crate::util::time::now_ts() - fetched_at < ttl.as_secs() as i64
     }
 
     /// index → 章节记录：目录登记表是 index 的唯一权威，对外 API 只凭

@@ -370,6 +370,8 @@ export interface components {
             diff?: components["schemas"]["DiffOp"][];
             /** @description 本次 diff 的基准版本（始终是最新上游） */
             diffBaseVersionId?: string | null;
+            /** @description diff 算不出来的原因（正文仍可用）；diff 成功或没有用户版本时缺省 */
+            diffError?: string;
             /** @description 当前返回的是用户版本（编辑版/导入版） */
             edited: boolean;
             /**
@@ -426,8 +428,18 @@ export interface components {
         };
         /** @description 游标分页容器（契约 §5.4）：`nextCursor: null` 表示到底。 */
         ChapterPage: {
+            /**
+             * @description 目录是否抓全：false 表示只登记了部分章节（后台补全中/被截断），
+             *     客户端可稍后重取，不要把当前 `total` 当全书章节数
+             */
+            complete: boolean;
             items: components["schemas"]["ChapterItem"][];
             nextCursor?: string | null;
+            /**
+             * @description 登记表已过 TTL：本次先返回旧目录，后台正在刷新；上游失败时也会
+             *     保持 true 继续服务旧数据（不再把「目录打不开」当过期代价）
+             */
+            stale: boolean;
             /** Format: int32 */
             total?: number | null;
         };
@@ -875,7 +887,7 @@ export interface operations {
             };
             header?: never;
             path: {
-                /** @description 书籍 id（bk_<n>） */
+                /** @description 书籍 id（book_<n>） */
                 bookId: string;
             };
             cookie?: never;

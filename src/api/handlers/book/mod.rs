@@ -67,6 +67,7 @@ pub(crate) async fn resolve_source(
 }
 
 /// 一本书的完整解析结果：登记表行 + 绑定书源。
+#[derive(Clone)]
 pub(crate) struct ResolvedBook {
     pub book_url: String,
     pub toc_url: Option<String>,
