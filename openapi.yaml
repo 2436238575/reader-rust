@@ -329,6 +329,55 @@ paths:
       security:
       - cookieAuth: []
       - bearerAuth: []
+  /v1/books/{bookId}/chapters:batchContent:
+    post:
+      tags:
+      - books
+      summary: |-
+        一次 1..=10 章，服务端并发 4，逐项成败：整体恒 200，每章 `data`/`error`
+        二选一（契约 §8.4）。`?refresh=true` 同步回源后逐项读取。
+      operationId: batchChapterContent
+      parameters:
+      - name: bookId
+        in: path
+        description: 书籍 id（book_<n>）
+        required: true
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BatchContentRequest'
+        required: true
+      responses:
+        '200':
+          description: 逐项结果
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BatchContentResponse'
+        '400':
+          description: indices 为空/超上限/重复/含负数
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '401':
+          description: 未登录或令牌失效
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '404':
+          description: 书籍不存在
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+      security:
+      - cookieAuth: []
+      - bearerAuth: []
   /v1/me:
     get:
       tags:
@@ -665,6 +714,49 @@ paths:
       - bearerAuth: []
 components:
   schemas:
+    BatchContentError:
+      type: object
+      required:
+      - code
+      properties:
+        code:
+          $ref: '#/components/schemas/ErrorCode'
+        detail:
+          type:
+          - string
+          - 'null'
+    BatchContentItem:
+      type: object
+      required:
+      - index
+      properties:
+        data:
+          $ref: '#/components/schemas/ChapterContent'
+        error:
+          $ref: '#/components/schemas/BatchContentError'
+        index:
+          type: integer
+          format: int32
+    BatchContentRequest:
+      type: object
+      required:
+      - indices
+      properties:
+        indices:
+          type: array
+          items:
+            type: integer
+            format: int32
+      additionalProperties: false
+    BatchContentResponse:
+      type: object
+      required:
+      - items
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/BatchContentItem'
     BatchDeleteRequest:
       type: object
       required:

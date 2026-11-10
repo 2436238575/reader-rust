@@ -820,3 +820,77 @@ async fn book_detail_gets_precise_404() {
 
     server.cleanup();
 }
+#[tokio::test]
+async fn batch_content_collects_per_chapter_outcomes() {
+    let server = TestServer::start().await;
+    let book_id = server
+        .seed_book_with_chapters("https://up.example.com", 4)
+        .await;
+    server
+        .seed_upstream_content(&book_id, 0, "https://up.example.com/ch/0", "第 0 章正文。")
+        .await;
+    server
+        .seed_upstream_content(
+            &book_id,
+            2,
+            "https://up.example.com/ch/2",
+            "<p>第二章富文本。</p>",
+        )
+        .await;
+
+    // 合法批量：0 有正文、1 未缓存、2 富文本——逐项成败
+    let resp = server
+        .client
+        .post(format!(
+            "{}/v1/books/{book_id}/chapters:batchContent",
+            server.base_url
+        ))
+        .bearer_auth(&server.token)
+        .json(&json!({"indices": [0, 1, 2]}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK, "整体恒 200");
+    let body: Value = resp.json().await.unwrap();
+    let items = body["items"].as_array().unwrap();
+    assert_eq!(items.len(), 3);
+    // 顺序按请求回排（buffer_unordered 之后按下标归位）
+    assert_eq!(items[0]["index"], json!(0));
+    assert_eq!(items[0]["data"]["body"], json!("第 0 章正文。"));
+    assert!(items[0]["data"]["version"]["id"]
+        .as_str()
+        .unwrap()
+        .starts_with("cv_"));
+    assert_eq!(items[1]["index"], json!(1));
+    assert!(
+        items[1]["error"]["code"].as_str().is_some(),
+        "未缓存章节应带 error: {}",
+        items[1]
+    );
+    assert_eq!(items[2]["data"]["format"], json!("html"));
+
+    // 校验：空 / 超上限 / 重复 / 负数 → 400
+    for payload in [
+        json!({"indices": []}),
+        json!({"indices": (0..11).collect::<Vec<i32>>()}),
+        json!({"indices": [0, 0]}),
+        json!({"indices": [-1]}),
+    ] {
+        let resp = server
+            .client
+            .post(format!(
+                "{}/v1/books/{book_id}/chapters:batchContent",
+                server.base_url
+            ))
+            .bearer_auth(&server.token)
+            .json(&payload)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST, "{payload}");
+        let body: Value = resp.json().await.unwrap();
+        assert_eq!(body["code"], json!("MALFORMED_REQUEST"));
+    }
+
+    server.cleanup();
+}

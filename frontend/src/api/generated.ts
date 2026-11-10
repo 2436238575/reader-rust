@@ -143,6 +143,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/books/{bookId}/chapters:batchContent": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * 一次 1..=10 章，服务端并发 4，逐项成败：整体恒 200，每章 `data`/`error`
+         *     二选一（契约 §8.4）。`?refresh=true` 同步回源后逐项读取。
+         */
+        post: operations["batchChapterContent"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/me": {
         parameters: {
             query?: never;
@@ -284,6 +304,22 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        BatchContentError: {
+            code: components["schemas"]["ErrorCode"];
+            detail?: string | null;
+        };
+        BatchContentItem: {
+            data?: components["schemas"]["ChapterContent"];
+            error?: components["schemas"]["BatchContentError"];
+            /** Format: int32 */
+            index: number;
+        };
+        BatchContentRequest: {
+            indices: number[];
+        };
+        BatchContentResponse: {
+            items: components["schemas"]["BatchContentItem"][];
+        };
         BatchDeleteRequest: {
             names: string[];
         };
@@ -908,6 +944,60 @@ export interface operations {
                 };
             };
             /** @description 书籍或章节不存在 */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    batchChapterContent: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description 书籍 id（book_<n>） */
+                bookId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["BatchContentRequest"];
+            };
+        };
+        responses: {
+            /** @description 逐项结果 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BatchContentResponse"];
+                };
+            };
+            /** @description indices 为空/超上限/重复/含负数 */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description 未登录或令牌失效 */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description 书籍不存在 */
             404: {
                 headers: {
                     [name: string]: unknown;

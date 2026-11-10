@@ -15,22 +15,28 @@
 
 use crate::api::etag::if_none_match_matches;
 use crate::api::problem::{ErrorCode, Problem};
-use crate::api::v1::V1User;
+use crate::api::v1::{V1Json, V1User};
 use crate::api::AppState;
 use axum::extract::{Path, Query, State};
 use axum::http::{header, HeaderMap, HeaderValue, StatusCode};
 use axum::response::{IntoResponse, Response};
-use axum::routing::get;
+use axum::routing::{get, post};
 use axum::{Json, Router};
+use futures::StreamExt;
 use md5::{Digest, Md5};
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
 pub fn router() -> Router<AppState> {
-    Router::new().route(
-        "/v1/books/{bookId}/chapters/{index}/content",
-        get(get_chapter_content),
-    )
+    Router::new()
+        .route(
+            "/v1/books/{bookId}/chapters/{index}/content",
+            get(get_chapter_content),
+        )
+        .route(
+            "/v1/books/{bookId}/chapters:batchContent",
+            post(batch_chapter_content),
+        )
 }
 
 #[derive(Debug, Deserialize, ToSchema)]
@@ -300,8 +306,194 @@ pub async fn get_chapter_content(
         return Ok(response);
     }
 
-    let content = ChapterContent {
-        book_id: book_id.clone(),
+    let content = map_to_v1(&book_id, index, data);
+    let mut response = Json(content).into_response();
+    response.headers_mut().insert(header::ETAG, etag);
+    response.headers_mut().insert(
+        header::CACHE_CONTROL,
+        HeaderValue::from_static("private, no-cache"),
+    );
+    Ok(response)
+}
+
+// ─── 批量正文（预加载用） ──────────────────────────────────────────────
+
+/// 一次 1..=10 章，服务端并发 4，逐项成败：整体恒 200，每章 `data`/`error`
+/// 二选一（契约 §8.4）。`?refresh=true` 同步回源后逐项读取。
+#[utoipa::path(
+    post,
+    path = "/v1/books/{bookId}/chapters:batchContent",
+    tag = "books",
+    operation_id = "batchChapterContent",
+    params(("bookId" = String, Path, description = "书籍 id（book_<n>）")),
+    request_body = BatchContentRequest,
+    security(("cookieAuth" = []), ("bearerAuth" = [])),
+    responses(
+        (status = 200, description = "逐项结果", body = BatchContentResponse),
+        (status = 400, description = "indices 为空/超上限/重复/含负数",
+         body = Problem, content_type = "application/problem+json"),
+        (status = 401, description = "未登录或令牌失效", body = Problem, content_type = "application/problem+json"),
+        (status = 404, description = "书籍不存在", body = Problem, content_type = "application/problem+json"),
+    )
+)]
+pub async fn batch_chapter_content(
+    State(state): State<AppState>,
+    V1User(user): V1User,
+    Path(book_id): Path<String>,
+    Query(query): Query<BatchContentQuery>,
+    V1Json(request): V1Json<BatchContentRequest>,
+) -> Result<axum::Json<BatchContentResponse>, Problem> {
+    if let Some(variant) = query.variant.as_deref() {
+        if !variant.trim().eq_ignore_ascii_case("default")
+            && !variant.trim().eq_ignore_ascii_case("upstream")
+        {
+            return Err(Problem::new(ErrorCode::MalformedRequest)
+                .detail("variant 只接受 default 或 upstream"));
+        }
+    }
+    let indices = &request.indices;
+    if indices.is_empty() || indices.len() > 10 {
+        return Err(Problem::new(ErrorCode::MalformedRequest).detail("indices 需要提供 1 到 10 个"));
+    }
+    if indices.iter().any(|index| *index < 0) {
+        return Err(Problem::new(ErrorCode::MalformedRequest).detail("index 不能为负数"));
+    }
+    if indices
+        .iter()
+        .collect::<std::collections::HashSet<_>>()
+        .len()
+        != indices.len()
+    {
+        return Err(Problem::new(ErrorCode::MalformedRequest).detail("indices 不能重复"));
+    }
+
+    // 书籍存在性与书源解析只做一次；各章再按 index 单独解析
+    let resolved = crate::api::handlers::book::resolve_book(&state, &user.ns, &book_id)
+        .await
+        .map_err(|error| match error {
+            crate::error::error::AppError::NotFound(_) => {
+                Problem::new(ErrorCode::BookNotFound).detail("书籍不存在")
+            }
+            other => Problem::from(other),
+        })?;
+
+    let variant =
+        crate::api::handlers::book::content::ContentVariant::parse(query.variant.as_deref());
+    let do_refresh = query.refresh.unwrap_or(false);
+    let indices = indices.clone();
+    let mut results: Vec<(usize, BatchContentItem)> =
+        futures::stream::iter(indices.into_iter().enumerate().map(|(position, index)| {
+            let state = state.clone();
+            let user_ns = user.ns.clone();
+            let book_id = book_id.clone();
+            let source = resolved.source.clone();
+            let book_url = resolved.book_url.clone();
+            let toc_url = resolved.toc_url.clone();
+            async move {
+                let resolved_for_chapter = crate::api::handlers::book::ResolvedBook {
+                    book_url,
+                    toc_url,
+                    source,
+                };
+                let outcome = async {
+                    let url = resolve_chapter_url(
+                        &state,
+                        &user_ns,
+                        &book_id,
+                        &resolved_for_chapter,
+                        index,
+                    )
+                    .await?;
+                    let data = crate::api::handlers::book::content::read_chapter_content(
+                        &state,
+                        &user_ns,
+                        Some(&book_id),
+                        Some(&url),
+                        crate::api::handlers::book::content::ChapterReadOptions {
+                            index: Some(index),
+                            variant,
+                            do_refresh,
+                            known_version_id: None,
+                        },
+                    )
+                    .await?;
+                    Ok::<_, Problem>((index, data))
+                }
+                .await;
+                let item = match outcome {
+                    Ok((index, data)) => BatchContentItem {
+                        index,
+                        data: Some(map_to_v1(&book_id, index, data)),
+                        error: None,
+                    },
+                    Err(problem) => BatchContentItem {
+                        index,
+                        data: None,
+                        error: Some(BatchContentError {
+                            code: problem.code(),
+                            detail: problem.detail_text().map(str::to_string),
+                        }),
+                    },
+                };
+                (position, item)
+            }
+        }))
+        .buffer_unordered(BATCH_CONTENT_CONCURRENCY)
+        .collect::<Vec<_>>()
+        .await;
+    results.sort_unstable_by_key(|(position, _)| *position);
+    let items = results.into_iter().map(|(_, item)| item).collect();
+    Ok(axum::Json(BatchContentResponse { items }))
+}
+
+/// 服务端并发上限：与 `/reader3` 批量正文同一口径。
+const BATCH_CONTENT_CONCURRENCY: usize = 4;
+
+#[derive(Debug, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct BatchContentRequest {
+    pub indices: Vec<i32>,
+}
+
+#[derive(Debug, Deserialize, ToSchema)]
+pub struct BatchContentQuery {
+    pub variant: Option<String>,
+    pub refresh: Option<bool>,
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct BatchContentResponse {
+    pub items: Vec<BatchContentItem>,
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct BatchContentItem {
+    pub index: i32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(nullable = false)]
+    pub data: Option<ChapterContent>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(nullable = false)]
+    pub error: Option<BatchContentError>,
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct BatchContentError {
+    pub code: ErrorCode,
+    pub detail: Option<String>,
+}
+
+/// ChapterContentData → v1 形状（单章与批量共用）。
+fn map_to_v1(
+    book_id: &str,
+    index: i32,
+    data: crate::api::handlers::book::content::ChapterContentData,
+) -> ChapterContent {
+    ChapterContent {
+        book_id: book_id.to_string(),
         index,
         format: detect_content_format(&data.content).to_string(),
         body: data.content,
@@ -315,14 +507,7 @@ pub async fn get_chapter_content(
         selection_source: data.selection_source,
         stale: data.stale,
         fetched_at: data.last_success_at.map(crate::api::v1::me::rfc3339_secs),
-    };
-    let mut response = Json(content).into_response();
-    response.headers_mut().insert(header::ETAG, etag);
-    response.headers_mut().insert(
-        header::CACHE_CONTROL,
-        HeaderValue::from_static("private, no-cache"),
-    );
-    Ok(response)
+    }
 }
 
 #[cfg(test)]

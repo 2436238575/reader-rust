@@ -242,6 +242,16 @@ impl Problem {
         self
     }
 
+    /// 只读访问：批量接口把逐项错误回表时用（`Problem` 本身是 HTTP 出口，
+    /// 逐项错误只需要 code + detail）
+    pub fn code(&self) -> ErrorCode {
+        self.code
+    }
+
+    pub fn detail_text(&self) -> Option<&str> {
+        self.detail.as_deref()
+    }
+
     /// 429 的 `Retry-After` 秒数（进响应头）。
     pub fn retry_after(mut self, secs: u64) -> Self {
         self.retry_after = Some(secs);
