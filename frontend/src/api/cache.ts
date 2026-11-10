@@ -1,4 +1,5 @@
 import http from './http'
+import { API_V1_BASE } from '../utils/appBase'
 import { createAuthedEventSource } from '../utils/authedEventSource'
 
 /**
@@ -46,17 +47,26 @@ export interface CachePurgeResult {
   purged: CachePurgeCounts
 }
 
-/** 各层缓存的当前占用（当前用户） */
+/** 各层缓存的当前占用（当前用户视角） */
 export function getCacheStats() {
-  return http.get<CacheStats>('/cacheStats').then((r) => r.data)
+  return http
+    .get<CacheStats>('/cache/stats', { baseURL: API_V1_BASE })
+    .then((r) => r.data)
 }
 
 /** 清理当前用户某一层缓存 */
 export function purgeCacheByKind(kind: ServerCacheKind) {
-  return http.post<CachePurgeResult>('/purgeCache', { scope: 'kind', kind }).then((r) => r.data)
+  return http
+    .delete<CachePurgeResult>('/cache', {
+      baseURL: API_V1_BASE,
+      params: { kind },
+    })
+    .then((r) => r.data)
 }
 
 /** 清理当前用户的全部缓存 */
 export function purgeAllUserCache() {
-  return http.post<CachePurgeResult>('/purgeCache', { scope: 'user' }).then((r) => r.data)
+  return http
+    .delete<CachePurgeResult>('/cache', { baseURL: API_V1_BASE })
+    .then((r) => r.data)
 }

@@ -506,7 +506,8 @@ export function saveBookProgress(params: { bookId: string; index: number; positi
 }
 
 export function deleteBookCache(bookId: string) {
-  return http.post('/deleteBookCache', { bookId }).then((r) => {
+  // v1：书籍级缓存清理 = 重置目录抓取状态 + 删换源候选（登记行与正文历史不动）
+  return http.delete(`/books/${bookId}/cache`, { baseURL: API_V1_BASE }).then((r) => {
     // 服务端已按书清掉目录等可再生缓存：本地目录缓存一并失效，
     // 避免 60 秒新鲜期内还返回清缓存前的旧目录
     invalidateChapterList(bookId)

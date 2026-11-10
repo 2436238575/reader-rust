@@ -18,12 +18,14 @@ vi.mock('./http', () => ({
   default: {
     get: vi.fn(),
     post: vi.fn(),
+    delete: vi.fn(),
   },
   UPLOAD_TIMEOUT_MS: 900_000,
 }))
 
 const getMock = http.get as unknown as Mock
 const postMock = http.post as unknown as Mock
+const deleteMock = http.delete as unknown as Mock
 
 describe('getCoverUrl', () => {
   it('后端取图地址直接可用，不再携带令牌（会话 Cookie 随 <img> 自动携带）', () => {
@@ -397,8 +399,9 @@ describe('getChapterList 会话内缓存（v1 游标分页）', () => {
   it('deleteBookCache 成功后失效该书的目录缓存', async () => {
     await getChapterList({ bookId: 'purge-book' })
     expect(getMock).toHaveBeenCalledTimes(1)
+    deleteMock.mockResolvedValue({ data: undefined })
     await deleteBookCache('purge-book')
-    expect(postMock).toHaveBeenCalledWith('/deleteBookCache', { bookId: 'purge-book' })
+    expect(deleteMock).toHaveBeenCalledWith('/books/purge-book/cache', { baseURL: API_V1_BASE })
 
     await getChapterList({ bookId: 'purge-book' })
     expect(getMock).toHaveBeenCalledTimes(2)
