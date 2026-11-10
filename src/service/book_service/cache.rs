@@ -12,7 +12,36 @@ use crate::storage::cache::file_cache::{
     remove_dir_counting_files, remove_file_counting, CacheUsage,
 };
 use crate::util::atomic_write::write_atomic;
-use serde_json::Value;
+use serde::Serialize;
+
+/// 单层缓存的占用统计（v1 与 /reader3 共用同一形状）。
+#[derive(Debug, Clone, Copy, Default, Serialize, utoipa::ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct CacheLayerUsage {
+    pub files: u64,
+    pub bytes: u64,
+}
+
+/// 正文历史（正文池 + 版本时间线）的只读统计：严格保留、不提供清理入口。
+#[derive(Debug, Clone, Copy, Default, Serialize, utoipa::ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct ContentCacheStats {
+    pub files: u64,
+    pub bytes: u64,
+    pub chapters: u64,
+    pub versions: u64,
+}
+
+/// 各层缓存的当前占用。正文历史整部署共享，不随 `user_ns` 变化。
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct CacheStatsSnapshot {
+    pub content: ContentCacheStats,
+    pub cover: CacheLayerUsage,
+    pub chapter_list: CacheLayerUsage,
+    pub search_results: CacheLayerUsage,
+    pub review: CacheLayerUsage,
+}
 use std::path::PathBuf;
 use tokio::fs;
 use tokio::time::Duration;
@@ -33,7 +62,7 @@ pub enum CacheKind {
 }
 
 /// 各层缓存被删除的文件数。
-#[derive(Debug, Clone, Copy, Default, serde::Serialize)]
+#[derive(Debug, Clone, Copy, Default, Serialize, utoipa::ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct CachePurgeResult {
     pub content: u64,
@@ -267,15 +296,15 @@ impl BookService {
     }
 
     /// 各层缓存的当前占用。正文历史整部署共享，不随 `user_ns` 变化。
-    pub async fn cache_stats(&self, user_ns: Option<&str>) -> Result<Value, AppError> {
+    pub async fn cache_stats(&self, user_ns: Option<&str>) -> Result<CacheStatsSnapshot, AppError> {
         use crate::storage::cache::file_cache::dir_usage;
         let (contents, versions, chapters, bytes) = self.content.stats().await?;
-        let content = serde_json::json!({
-            "files": contents,
-            "bytes": bytes,
-            "chapters": chapters,
-            "versions": versions,
-        });
+        let content = ContentCacheStats {
+            files: contents,
+            bytes,
+            chapters,
+            versions,
+        };
         // 封面现在由图片管道统一管理（`cache/image`，全局共享），
         // 旧封面目录（`cache/<ns>/cover`）可能还有历史文件，一并计入
         let image = dir_usage(
@@ -287,7 +316,7 @@ impl BookService {
             Some(ns) => dir_usage(&self.cover_cache_dir(ns), usize::MAX).await,
             None => dir_usage(&self.cover_cache_dir("public"), usize::MAX).await,
         };
-        let cover = CacheUsage {
+        let cover = CacheLayerUsage {
             files: image.files + legacy_cover.files,
             bytes: image.bytes + legacy_cover.bytes,
         };
@@ -303,13 +332,22 @@ impl BookService {
             Some(ns) => self.review_cache.user_usage(ns).await,
             None => self.review_cache.total_usage().await,
         };
-        Ok(serde_json::json!({
-            "content": content,
-            "cover": cover,
-            "chapterList": chapter_list,
-            "searchResults": search_results,
-            "review": review,
-        }))
+        Ok(CacheStatsSnapshot {
+            content,
+            cover,
+            chapter_list: CacheLayerUsage {
+                files: chapter_list.files,
+                bytes: chapter_list.bytes,
+            },
+            search_results: CacheLayerUsage {
+                files: search_results.files,
+                bytes: search_results.bytes,
+            },
+            review: CacheLayerUsage {
+                files: review.files,
+                bytes: review.bytes,
+            },
+        })
     }
 
     /// 汇总 `cache/*/<name>` 各用户子目录的占用。

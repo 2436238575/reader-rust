@@ -27,6 +27,7 @@ use utoipa::{Modify, OpenApi};
 
 mod auth;
 mod books;
+mod cache;
 
 mod content;
 mod me;
@@ -49,6 +50,7 @@ pub fn router(
         .merge(books::router())
         .merge(content::router())
         .merge(sources::router())
+        .merge(cache::router())
         .merge(auth::authed_router())
         .route_layer(axum::middleware::from_fn_with_state(
             state.clone(),
@@ -301,6 +303,9 @@ pub fn openapi_yaml() -> String {
         replace_rules::batch_upsert_replace_rules,
         replace_rules::batch_delete_replace_rules,
         shelf::patch_book,
+        cache::cache_stats,
+        cache::purge_cache,
+        cache::delete_book_cache,
         auth::login,
         auth::refresh,
         auth::logout,
@@ -325,6 +330,11 @@ pub fn openapi_yaml() -> String {
         content::BatchContentItem,
         content::BatchContentError,
         crate::service::chapter_diff_service::DiffOp,
+        crate::service::book_service::CacheStatsSnapshot,
+        crate::service::book_service::ContentCacheStats,
+        crate::service::book_service::CacheLayerUsage,
+        crate::service::book_service::CachePurgeResult,
+        cache::CachePurgeResponse,
         shelf::ShelfWriteResult,
         shelf::ShelfItem,
         shelf::ShelfPage,

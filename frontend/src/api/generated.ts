@@ -109,6 +109,26 @@ export interface paths {
         patch: operations["patchBook"];
         trace?: never;
     };
+    "/v1/books/{bookId}/cache": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * 书籍级清理：重置目录抓取状态并删除换源候选；登记行、章节登记表与正文
+         *     历史不动（离线阅读与重新入架都接得上）。幂等。
+         */
+        delete: operations["deleteBookCache"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/books/{bookId}/chapters": {
         parameters: {
             query?: never;
@@ -161,6 +181,43 @@ export interface paths {
          *     二选一（契约 §8.4）。`?refresh=true` 同步回源后逐项读取。
          */
         post: operations["batchChapterContent"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/cache": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * 显式清理当前用户的缓存：`?kind=` 按层，缺省全部层（含全局共享的图片
+         *     目录——单用户部署的「我的缓存」就是全部可再生缓存）。
+         */
+        delete: operations["purgeCache"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/cache/stats": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 各层缓存的当前占用（当前用户视角；图片目录全局共享，计入本用户统计）。 */
+        get: operations["getCacheStats"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -285,8 +342,9 @@ export interface paths {
         get: operations["getShelfItem"];
         /**
          * 入架（幂等）：已登记的书籍确保在架。201 首次 / 200 已在架。
-         * @description 元数据用书籍详情（1h 缓存，详情页刚看过时命中）填充；冷缓存会回源一次
-         *     上游——与打开详情页的成本相同。
+         * @description 元数据优先用请求体里的展示字段；没带时打书籍详情（1h 缓存，详情页刚
+         *     看过时命中）填充，本地书走本地详情。详情拿不到（源挂了/离线）不阻塞
+         *     入架：回退登记行信息，条目先立起来。
          */
         put: operations["addToShelf"];
         post?: never;
@@ -300,6 +358,27 @@ export interface paths {
          *     `lastReadAt` 服务端写——客户端时间不参与比较（契约 §5.2）。
          */
         patch: operations["patchShelfBook"];
+        trace?: never;
+    };
+    "/v1/me/shelf:batchDelete": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * 批量移出（幂等）：与单个 DELETE 同语义——只摘书架行，登记行、书签与
+         *     正文历史保留；不存在的 id 忽略。逐本调 `delete_book`（各自清缓存），
+         *     不做整体事务：批量移出不需要「要么全删要么全留」。
+         */
+        post: operations["batchRemoveFromShelf"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
         trace?: never;
     };
     "/v1/sources": {
@@ -376,6 +455,40 @@ export interface components {
         BookPatch: {
             author?: string | null;
             name?: string | null;
+        };
+        /** @description 单层缓存的占用统计（v1 与 /reader3 共用同一形状）。 */
+        CacheLayerUsage: {
+            /** Format: int64 */
+            bytes: number;
+            /** Format: int64 */
+            files: number;
+        };
+        /** @description 单层缓存清理的响应：各层被删除的文件数（正文历史恒 0——不可清理）。 */
+        CachePurgeResponse: {
+            purged: components["schemas"]["CachePurgeResult"];
+        };
+        /** @description 各层缓存被删除的文件数。 */
+        CachePurgeResult: {
+            /** Format: int64 */
+            chapterList: number;
+            /** Format: int64 */
+            content: number;
+            /** Format: int64 */
+            cover: number;
+            /** Format: int64 */
+            invalidSources: number;
+            /** Format: int64 */
+            review: number;
+            /** Format: int64 */
+            searchResults: number;
+        };
+        /** @description 各层缓存的当前占用。正文历史整部署共享，不随 `user_ns` 变化。 */
+        CacheStatsSnapshot: {
+            chapterList: components["schemas"]["CacheLayerUsage"];
+            content: components["schemas"]["ContentCacheStats"];
+            cover: components["schemas"]["CacheLayerUsage"];
+            review: components["schemas"]["CacheLayerUsage"];
+            searchResults: components["schemas"]["CacheLayerUsage"];
         };
         ChangePasswordRequest: {
             currentPassword?: string | null;
@@ -478,6 +591,17 @@ export interface components {
             id: string;
             /** @description `upstream` / `edited` / `imported` */
             kind: string;
+        };
+        /** @description 正文历史（正文池 + 版本时间线）的只读统计：严格保留、不提供清理入口。 */
+        ContentCacheStats: {
+            /** Format: int64 */
+            bytes: number;
+            /** Format: int64 */
+            chapters: number;
+            /** Format: int64 */
+            files: number;
+            /** Format: int64 */
+            versions: number;
         };
         DiffOp: {
             baseIndex?: number | null;
@@ -604,6 +728,13 @@ export interface components {
             /** @description 登录用户名（hint 展示与 API 客户端识别；/v1/me 才是资料源） */
             username: string;
         };
+        ShelfBatchDeleteRequest: {
+            bookIds: string[];
+        };
+        ShelfBatchDeleteResult: {
+            /** Format: int32 */
+            deleted: number;
+        };
         /** @description 书架条目：书的注册信息快照 + 我的进度/分组。 */
         ShelfItem: {
             author: string;
@@ -670,6 +801,27 @@ export interface components {
              * @description 章内进度 0..1（存储是万分比）
              */
             offset: number;
+        };
+        /**
+         * @description 入架请求体：全部字段可选（`{}` 表示全部缺省），**但请求体本身必填**——
+         *     无 body / 无 `Content-Type` 会 415/400，无字段的调用方也至少传 `{}`。
+         *     调用方（搜索/发现结果）已有展示字段时带上，服务端跳过回源详情——
+         *     发现页直接入架、源已挂时，不让「加入书架」干等最坏 3×10s 的详情重试。
+         */
+        ShelfPutBody: {
+            /** @default null */
+            author: string | null;
+            /**
+             * @description 封面：本站取图地址（`/reader3/image/<id>`）会还原成上游地址落库
+             * @default null
+             */
+            coverUrl: string | null;
+            /** @default null */
+            intro: string | null;
+            /** @default null */
+            kind: string | null;
+            /** @default null */
+            name: string | null;
         };
         ShelfWriteResult: {
             bookId: string;
@@ -967,6 +1119,45 @@ export interface operations {
             };
         };
     };
+    deleteBookCache: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description 书籍 id（book_<n>） */
+                bookId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 已清理（幂等） */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description 未登录或令牌失效 */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description 书籍不存在 */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
     listChapters: {
         parameters: {
             query?: {
@@ -1169,6 +1360,83 @@ export interface operations {
             };
             /** @description 书籍不存在 */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    purgeCache: {
+        parameters: {
+            query?: {
+                /** @description cover / chapterList / searchResults / review；缺省全部层 */
+                kind?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 各层被删除的文件数 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CachePurgeResponse"];
+                };
+            };
+            /** @description kind 取值非法 */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description 未登录或令牌失效 */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    getCacheStats: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 各层占用 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CacheStatsSnapshot"];
+                };
+            };
+            /** @description If-None-Match 命中，无 body */
+            304: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description 未登录或令牌失效 */
+            401: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -1475,6 +1743,15 @@ export interface operations {
                     "application/problem+json": components["schemas"]["Problem"];
                 };
             };
+            /** @description 书籍不存在（未登记） */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
             /** @description 书籍不在书架（BOOK_NOT_IN_SHELF） */
             409: {
                 headers: {
@@ -1496,7 +1773,11 @@ export interface operations {
             };
             cookie?: never;
         };
-        requestBody?: never;
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ShelfPutBody"];
+            };
+        };
         responses: {
             /** @description 已在架（幂等重复调用，不重置进度） */
             200: {
@@ -1518,6 +1799,15 @@ export interface operations {
             };
             /** @description 书籍不存在 */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description 请求体含未知字段 */
+            422: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -1600,6 +1890,48 @@ export interface operations {
             };
             /** @description 未知字段或取值非法 */
             422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    batchRemoveFromShelf: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ShelfBatchDeleteRequest"];
+            };
+        };
+        responses: {
+            /** @description 删除条数 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ShelfBatchDeleteResult"];
+                };
+            };
+            /** @description book_ids 为空或超上限 */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description 未登录或令牌失效 */
+            401: {
                 headers: {
                     [name: string]: unknown;
                 };

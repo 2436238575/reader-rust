@@ -95,7 +95,9 @@ pub async fn cache_stats(
         Some(target_ns(&user.0, q.username.as_deref())?)
     };
     let stats = state.book_service.cache_stats(scope.as_deref()).await?;
-    Ok(Json(ApiResponse::ok(stats)))
+    Ok(Json(ApiResponse::ok(
+        serde_json::to_value(stats).unwrap_or_default(),
+    )))
 }
 
 /// 解析目标命名空间：默认自己；显式指定时必须合法（ns 直接拼进 storage 路径）

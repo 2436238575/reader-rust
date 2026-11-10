@@ -204,6 +204,39 @@ paths:
       security:
       - cookieAuth: []
       - bearerAuth: []
+  /v1/books/{bookId}/cache:
+    delete:
+      tags:
+      - books
+      summary: |-
+        书籍级清理：重置目录抓取状态并删除换源候选；登记行、章节登记表与正文
+        历史不动（离线阅读与重新入架都接得上）。幂等。
+      operationId: deleteBookCache
+      parameters:
+      - name: bookId
+        in: path
+        description: 书籍 id（book_<n>）
+        required: true
+        schema:
+          type: string
+      responses:
+        '204':
+          description: 已清理（幂等）
+        '401':
+          description: 未登录或令牌失效
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '404':
+          description: 书籍不存在
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+      security:
+      - cookieAuth: []
+      - bearerAuth: []
   /v1/books/{bookId}/chapters:
     get:
       tags:
@@ -399,6 +432,67 @@ paths:
                 $ref: '#/components/schemas/Problem'
         '404':
           description: 书籍不存在
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+      security:
+      - cookieAuth: []
+      - bearerAuth: []
+  /v1/cache:
+    delete:
+      tags:
+      - cache
+      summary: |-
+        显式清理当前用户的缓存：`?kind=` 按层，缺省全部层（含全局共享的图片
+        目录——单用户部署的「我的缓存」就是全部可再生缓存）。
+      operationId: purgeCache
+      parameters:
+      - name: kind
+        in: query
+        description: cover / chapterList / searchResults / review；缺省全部层
+        required: false
+        schema:
+          type: string
+      responses:
+        '200':
+          description: 各层被删除的文件数
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CachePurgeResponse'
+        '400':
+          description: kind 取值非法
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '401':
+          description: 未登录或令牌失效
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+      security:
+      - cookieAuth: []
+      - bearerAuth: []
+  /v1/cache/stats:
+    get:
+      tags:
+      - cache
+      summary: 各层缓存的当前占用（当前用户视角；图片目录全局共享，计入本用户统计）。
+      operationId: getCacheStats
+      responses:
+        '200':
+          description: 各层占用
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CacheStatsSnapshot'
+        '304':
+          description: If-None-Match 命中，无 body
+        '401':
+          description: 未登录或令牌失效
           content:
             application/problem+json:
               schema:
@@ -1014,6 +1108,84 @@ components:
           - string
           - 'null'
       additionalProperties: false
+    CacheLayerUsage:
+      type: object
+      description: 单层缓存的占用统计（v1 与 /reader3 共用同一形状）。
+      required:
+      - files
+      - bytes
+      properties:
+        bytes:
+          type: integer
+          format: int64
+          minimum: 0
+        files:
+          type: integer
+          format: int64
+          minimum: 0
+    CachePurgeResponse:
+      type: object
+      description: 单层缓存清理的响应：各层被删除的文件数（正文历史恒 0——不可清理）。
+      required:
+      - purged
+      properties:
+        purged:
+          $ref: '#/components/schemas/CachePurgeResult'
+    CachePurgeResult:
+      type: object
+      description: 各层缓存被删除的文件数。
+      required:
+      - content
+      - cover
+      - chapterList
+      - searchResults
+      - review
+      - invalidSources
+      properties:
+        chapterList:
+          type: integer
+          format: int64
+          minimum: 0
+        content:
+          type: integer
+          format: int64
+          minimum: 0
+        cover:
+          type: integer
+          format: int64
+          minimum: 0
+        invalidSources:
+          type: integer
+          format: int64
+          minimum: 0
+        review:
+          type: integer
+          format: int64
+          minimum: 0
+        searchResults:
+          type: integer
+          format: int64
+          minimum: 0
+    CacheStatsSnapshot:
+      type: object
+      description: 各层缓存的当前占用。正文历史整部署共享，不随 `user_ns` 变化。
+      required:
+      - content
+      - cover
+      - chapterList
+      - searchResults
+      - review
+      properties:
+        chapterList:
+          $ref: '#/components/schemas/CacheLayerUsage'
+        content:
+          $ref: '#/components/schemas/ContentCacheStats'
+        cover:
+          $ref: '#/components/schemas/CacheLayerUsage'
+        review:
+          $ref: '#/components/schemas/CacheLayerUsage'
+        searchResults:
+          $ref: '#/components/schemas/CacheLayerUsage'
     ChangePasswordRequest:
       type: object
       properties:
@@ -1207,6 +1379,31 @@ components:
         kind:
           type: string
           description: '`upstream` / `edited` / `imported`'
+    ContentCacheStats:
+      type: object
+      description: 正文历史（正文池 + 版本时间线）的只读统计：严格保留、不提供清理入口。
+      required:
+      - files
+      - bytes
+      - chapters
+      - versions
+      properties:
+        bytes:
+          type: integer
+          format: int64
+          minimum: 0
+        chapters:
+          type: integer
+          format: int64
+          minimum: 0
+        files:
+          type: integer
+          format: int64
+          minimum: 0
+        versions:
+          type: integer
+          format: int64
+          minimum: 0
     DiffOp:
       type: object
       required:

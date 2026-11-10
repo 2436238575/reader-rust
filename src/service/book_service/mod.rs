@@ -34,7 +34,9 @@ mod review;
 mod shelf;
 mod toc;
 
-pub use cache::{CacheKind, CachePurgeResult};
+pub use cache::{
+    CacheKind, CacheLayerUsage, CachePurgeResult, CacheStatsSnapshot, ContentCacheStats,
+};
 pub use cached_search::{CachedSearchHit, CachedSearchOutcome};
 pub use content::ChapterContentRead;
 pub use explore::BookSourceAvailability;

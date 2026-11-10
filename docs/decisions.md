@@ -134,3 +134,9 @@ goal 执行中遇到「决策表与 spec 都沉默」的问题时，按 §5.4 �
 - **前端 `addBook` 201 后补一次 `getShelfBook` 对齐**：封面统一成图片管道 id（搜索结果里可能是签名上游直出地址），只在新增时多一次请求。
 - **缓存章数从每条 2 次 COUNT 减到 1 次**：`chapter_list_cache_exists` 的预探测冗余（count==0 已涵盖），且会把「有缓存正文但登记行被清」的书写成 0——直接 COUNT 反而更准。
 - **待办（P4 前）**：本地书文件删除没有入口——移出书架不再删文件，磁盘只增不减。计划加 `DELETE /v1/local-books/{bookId}`（删文件 + 书架行 + 登记行 + 图片连带），与「移出书架可恢复」语义分开。
+
+## 2026-11-11 缓存管理同步子集切 v1
+
+- **交付**：`GET /v1/cache/stats`（typed `CacheStatsSnapshot` + ETag/304）、`DELETE /v1/cache?kind=`（按层/全部，同步执行）、`DELETE /v1/books/{bookId}/cache`（= `/reader3/deleteBookCache` 语义：重置目录抓取状态 + 删换源候选；登记行/章节登记表/正文历史/图片不动，幂等）。`cache_stats` 服务层从 `Value` 收敛成 typed 快照，`/reader3` 用同一形状序列化，两边线缆不变。
+- **偏差（契约 §8.6）**：预下载（`POST /v1/books/{id}/cache`）与 policy 清理（`{policy: olderThan}`）按契约是 202 Task——任务子系统落地前不交付；`DELETE /v1/cache` 是同步按层/全部，不是 policy。r3 的 `username`/`all=true` 参数未带过来：v1 永远操作调用者自己的命名空间（单用户）。
+- **留项（待拍板）**：书籍级清理拆「重置目录/候选」与「清除已下载正文」两个动作——拍板前 v1 只有现状语义，不引入删除正文历史的入口。
