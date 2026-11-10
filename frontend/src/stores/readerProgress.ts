@@ -6,7 +6,7 @@
 // 搬走要用 8 个回调把结挪个地方而已），它留在 reader.ts。
 
 import { ref, type Ref } from 'vue'
-import { API_BASE } from '../utils/appBase'
+import { API_V1_BASE } from '../utils/appBase'
 import { safeLocalSet } from '../utils/storage'
 import { saveBookProgress } from '../api/bookshelf'
 import type { Book, BookChapter } from '../types'
@@ -172,14 +172,22 @@ export function createReaderProgress(deps: ReaderProgressDeps) {
     if (!force && !progressDirty.value && lastServerProgressKey.value === nextKey) return
 
     // 页面卸载时的最后一次上报走 keepalive：凭据靠同源 Cookie 自动携带，
-    // 不再往请求头塞令牌（显式 same-origin 与 fetch 默认一致，写明意图）
-    void fetch(`${API_BASE}/saveBookProgress`, {
-      method: 'POST',
+    // 不再往请求头塞令牌（显式 same-origin 与 fetch 默认一致，写明意图）。
+    // 地址与请求形状必须与 saveBookProgress 一致（v1 PATCH + CSRF 头），
+    // 否则卸载时那一次写会被 /v1 的 CSRF 或路由拒掉
+    void fetch(`${API_V1_BASE}/me/shelf/${encodeURIComponent(payload.bookId)}`, {
+      method: 'PATCH',
       headers: {
         'Content-Type': 'application/json',
+        'X-Requested-With': 'XMLHttpRequest',
       },
       credentials: 'same-origin',
-      body: JSON.stringify(payload),
+      body: JSON.stringify({
+        progress: {
+          chapterIndex: payload.index,
+          offset: Math.min(1, Math.max(0, payload.position / SERVER_PROGRESS_SCALE)),
+        },
+      }),
       keepalive: true,
     }).catch(() => undefined)
     progressDirty.value = false

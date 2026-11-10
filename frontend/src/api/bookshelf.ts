@@ -1,6 +1,87 @@
 import http, { UPLOAD_TIMEOUT_MS } from './http'
 import type { Book, BookChapter, BookGroup, ChapterImages } from '../types'
-import { withAppBase } from '../utils/appBase'
+import { API_V1_BASE, withAppBase } from '../utils/appBase'
+import type { components } from './generated'
+
+// v1 生成的具名 schema（契约 §3.1）
+type ApiChapterItem = components['schemas']['ChapterItem']
+type ApiChapterPage = components['schemas']['ChapterPage']
+type ApiContent = components['schemas']['ChapterContent']
+type ApiBatchContent = components['schemas']['BatchContentItem']
+
+/** `cv_<n>` → 数字版本号（旧响应形状消费方仍用数字；解析失败按缺省处理） */
+function parseVersionId(id: string | null | undefined): number | undefined {
+  if (!id) return undefined
+  const parsed = Number(id.replace(/^cv_/, ''))
+  return Number.isFinite(parsed) ? parsed : undefined
+}
+
+/** RFC 3339 → 秒级时间戳（旧响应形状里时间是数字秒） */
+function parseSeconds(iso: string | null | undefined): number | undefined {
+  if (!iso) return undefined
+  const ms = Date.parse(iso)
+  return Number.isFinite(ms) ? Math.floor(ms / 1000) : undefined
+}
+
+function mapChapterItem(item: ApiChapterItem): BookChapter {
+  return {
+    index: item.index,
+    title: item.title,
+    url: item.url,
+    isVip: item.isVip,
+    isPay: item.isPay,
+    isVolume: item.isVolume,
+    volume: item.volume,
+    wordCount: item.wordCount,
+  }
+}
+
+/** v1 游标分页拉全量目录（阅读器需要整本章节，200/页，百页以内）。 */
+async function fetchAllChaptersV1(bookId: string, refresh: boolean): Promise<BookChapter[]> {
+  const chapters: BookChapter[] = []
+  let cursor: string | null = null
+  let needRefresh = refresh
+  do {
+    const params: Record<string, unknown> = { limit: 200 }
+    if (cursor) params.cursor = cursor
+    // refresh 只随第一页发送：后端同步重抓后整表替换，续页沿用新目录
+    if (needRefresh) params.refresh = true
+    needRefresh = false
+    const page: ApiChapterPage = await http
+      .get<ApiChapterPage>(`/books/${bookId}/chapters`, {
+        baseURL: API_V1_BASE,
+        params,
+        timeout: CHAPTER_LIST_TIMEOUT_MS,
+      })
+      .then((r) => r.data)
+    for (const item of page.items) chapters.push(mapChapterItem(item))
+    cursor = page.nextCursor ?? null
+  } while (cursor)
+  return chapters
+}
+
+function mapContentToLegacy(data: ApiContent, variant?: ContentVariant): ChapterContentResponse {
+  return {
+    content: data.body,
+    edited: data.edited,
+    variant: data.selectionSource === 'upstream_preview' ? 'upstream' : (variant ?? 'default'),
+    versionId: parseVersionId(data.version?.id),
+    versionKind: data.version?.kind as ChapterVersionKind | undefined,
+    baseVersionId: parseVersionId(data.version?.basedOn),
+    diffBaseVersionId: parseVersionId(data.diffBaseVersionId),
+    latestUserVersionId: parseVersionId(data.latestUserVersionId),
+    latestUpstreamVersionId: parseVersionId(data.latestUpstreamVersionId),
+    upstreamChanged: data.upstreamChangedSinceBase,
+    selectionSource: data.selectionSource as ChapterContentResponse['selectionSource'],
+    stale: data.stale,
+    lastAttemptAt: parseSeconds(data.lastAttemptAt),
+    lastSuccessAt: parseSeconds(data.fetchedAt),
+    upstreamChangedAt: parseSeconds(data.upstreamChangedAt),
+    editedAt: parseSeconds(data.editedAt),
+    diff: data.diff ? { ops: data.diff as ParagraphDiffOp[] } : null,
+    unchanged: false,
+  }
+}
 
 export function getBookshelf() {
   return http.get<Book[]>('/getBookshelf').then((r) => r.data)
@@ -135,12 +216,10 @@ export function getChapterList(params: { bookId: string; refresh?: number }) {
     const inFlight = chapterListInFlight.get(bookId)
     if (inFlight) return inFlight
   }
-  // GET 而非 POST：响应带强 ETag 时浏览器会自动携 If-None-Match 重验证，
-  // 命中 304 直接复用本地缓存；POST 不进 HTTP 缓存，享受不到这层协商
-  const request = http
-    .get<BookChapter[]>('/getChapterList', { params, timeout: CHAPTER_LIST_TIMEOUT_MS })
-    .then((r) => {
-      const data = r.data
+  // v1：游标分页拉全量；响应带 ETag + Cache-Control: no-cache，浏览器对
+  // 同一 URL 自动携 If-None-Match 重验证，命中 304 直接复用本地响应体
+  const request = fetchAllChaptersV1(bookId, forceRefresh)
+    .then((data) => {
       // 只有仍是该书最新一次请求时才写缓存：force 请求可能已抢先写入更新的
       // 结果，慢到的旧请求不应把缓存盖回旧数据。失败不进缓存：回调只在成功时执行
       if (chapterListInFlight.get(bookId) === request) {
@@ -169,10 +248,25 @@ export function getBookContent(params: {
   refresh?: number
   /** `upstream` 只预览最新上游；缺省/default 按服务端选择解析 */
   variant?: ContentVariant
-  /** 浏览器缓存里的版本号：与当前版本一致时响应 unchanged、不传正文（省流） */
+  /**
+   * 旧协议的本地缓存版本号。v1 不再用它做服务端「unchanged」比对——
+   * 条件请求交给浏览器 HTTP 缓存（响应带 ETag + no-cache，客户端无需管理），
+   * 因此这里忽略该参数，保留签名只为调用方零改动。
+   */
   knownVersionId?: number
 }) {
-  return http.post<ChapterContentResponse>('/getBookContent', params).then((r) => r.data)
+  if (typeof params.index !== 'number') {
+    return Promise.reject(new Error('章节缺少 index（v1 以 index 定位章节）'))
+  }
+  const query: Record<string, unknown> = {}
+  if (params.refresh === 1) query.refresh = true
+  if (params.variant === 'upstream') query.variant = 'upstream'
+  return http
+    .get<ApiContent>(`/books/${params.bookId}/chapters/${params.index}/content`, {
+      baseURL: API_V1_BASE,
+      params: query,
+    })
+    .then((r) => mapContentToLegacy(r.data, params.variant))
 }
 
 /** 批量接口里单章的结果：某章失败只写 `error`，不影响其他章节（整体恒 200） */
@@ -186,13 +280,52 @@ export interface BatchChapterContentItem {
  * 批量读取章节正文（预加载用）：一次最多 10 章，与单章 getBookContent 同一条
  * 读取链路；每章独立成败。不做 refresh：预加载不需要强刷。
  */
-export function getBookContents(params: {
+export async function getBookContents(params: {
   bookId: string
   chapters: { index?: number; chapterUrl: string; knownVersionId?: number }[]
   /** `upstream` 只预览最新上游；缺省/default 按服务端选择解析 */
   variant?: ContentVariant
-}) {
-  return http.post<BatchChapterContentItem[]>('/getBookContents', params).then((r) => r.data)
+}): Promise<BatchChapterContentItem[]> {
+  // v1 以 index 定位；没有 index 的条目（不应出现）直接跳过，
+  // 调用方按「响应缺失」走逐章兜底
+  const indices: number[] = []
+  const knownVersionById = new Map<number, number | undefined>()
+  for (const chapter of params.chapters) {
+    if (typeof chapter.index !== 'number' || indices.includes(chapter.index)) continue
+    indices.push(chapter.index)
+    knownVersionById.set(chapter.index, chapter.knownVersionId)
+  }
+  if (indices.length === 0) return []
+  const query: Record<string, unknown> = {}
+  if (params.variant === 'upstream') query.variant = 'upstream'
+  const response = await http
+    .post<{ items: ApiBatchContent[] }>(
+      `/books/${params.bookId}/chapters:batchContent`,
+      { indices },
+      { baseURL: API_V1_BASE, params: query }
+    )
+    .then((r) => r.data)
+  const byIndex = new Map<number, ApiBatchContent>()
+  for (const item of response.items) byIndex.set(item.index, item)
+  return indices.map((index) => {
+    const item = byIndex.get(index)
+    if (!item?.data) {
+      const error = item?.error
+      return {
+        index,
+        data: null,
+        error: error ? `${error.detail ?? ''}`.trim() || String(error.code) : '批次缺失',
+      }
+    }
+    const data = mapContentToLegacy(item.data, params.variant)
+    // 批量接口不带条件请求：本地版本号一致时在客户端等价「unchanged」，
+    // 下游沿用「用浏览器缓存正文」的既有语义（不发多余写库）
+    const known = knownVersionById.get(index)
+    if (known !== undefined && data.versionId === known) {
+      return { index, data: { ...data, content: '', unchanged: true }, error: null }
+    }
+    return { index, data, error: null }
+  })
 }
 
 /** 本章配图；书源没声明配图规则时返回 `enabled: false` */
@@ -201,7 +334,17 @@ export function getChapterImages(params: { bookId: string; chapterUrl: string })
 }
 
 export function saveBookProgress(params: { bookId: string; index: number; position?: number }) {
-  return http.post<string>('/saveBookProgress', params).then((r) => r.data)
+  // 旧口诀：position 是万分比章内进度；v1 用 0..1 比例
+  const offset =
+    typeof params.position === 'number'
+      ? Math.min(1, Math.max(0, params.position / 10000))
+      : undefined
+  const body = {
+    progress: { chapterIndex: params.index, ...(offset !== undefined ? { offset } : {}) },
+  }
+  return http
+    .patch(`/me/shelf/${params.bookId}`, body, { baseURL: API_V1_BASE })
+    .then((r) => r.data)
 }
 
 export function deleteBookCache(bookId: string) {

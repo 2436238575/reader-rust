@@ -69,11 +69,16 @@ export async function cacheBookToBrowser(params: {
       chapterContent = await getBookContent({
         bookId,
         chapterUrl: chapter.url,
+        index: chapter.index,
         knownVersionId: cached?.versionId,
       })
       if (chapterContent.unchanged && !cached) {
         // 读到 unchanged 时缓存恰好被清了（并发清理）：重拉一次全文
-        chapterContent = await getBookContent({ bookId, chapterUrl: chapter.url })
+        chapterContent = await getBookContent({
+          bookId,
+          chapterUrl: chapter.url,
+          index: chapter.index,
+        })
       }
     } catch {
       failed += 1

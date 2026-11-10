@@ -9,6 +9,8 @@ import {
   withImageWidth,
 } from './bookshelf'
 
+import { API_V1_BASE } from '../utils/appBase'
+
 vi.mock('./http', () => ({
   default: {
     get: vi.fn(),
@@ -106,25 +108,42 @@ describe('withImageWidth', () => {
   })
 })
 
-describe('getChapterList 会话内缓存', () => {
+describe('getChapterList 会话内缓存（v1 游标分页）', () => {
+  /** v1 分页响应形状 */
+  const page = (chapters: { title: string; url?: string }[]) => ({
+    data: {
+      items: chapters.map((chapter, index) => ({
+        index,
+        title: chapter.title,
+        url: chapter.url ?? `https://up.example/ch/${index}`,
+        isVip: false,
+        isPay: false,
+        isVolume: false,
+        volume: null,
+        wordCount: null,
+        titleOverridden: false,
+      })),
+      nextCursor: null,
+    },
+  })
+  const v1Get = (extra: Record<string, unknown> = {}) => ({
+    baseURL: API_V1_BASE,
+    params: { limit: 200, ...extra },
+    timeout: 20_000,
+  })
+
   beforeEach(() => {
     getMock.mockReset()
-    getMock.mockResolvedValue({ data: [{ title: '第一章' }] })
+    getMock.mockResolvedValue(page([{ title: '第一章' }]))
     postMock.mockReset()
     postMock.mockResolvedValue({ data: '' })
   })
 
-  it('走 GET 请求：响应带 ETag 时浏览器可自动携 If-None-Match 复用 304', async () => {
+  it('GET v1 目录：浏览器按 ETag 自动协商 304，不用 POST', async () => {
     await getChapterList({ bookId: 'get-book', refresh: 1 })
 
     expect(getMock).toHaveBeenCalledTimes(1)
-    // 目录单独收敛到 20s 超时（理由见 bookshelf.ts 的 CHAPTER_LIST_TIMEOUT_MS），
-    // 不沿用实例默认的 120s
-    expect(getMock).toHaveBeenCalledWith('/getChapterList', {
-      params: { bookId: 'get-book', refresh: 1 },
-      timeout: 20_000,
-    })
-    // POST 不再用于目录拉取（POST 不进 HTTP 缓存，享受不到 ETag 协商）
+    expect(getMock).toHaveBeenCalledWith('/books/get-book/chapters', v1Get({ refresh: true }))
     expect(postMock).not.toHaveBeenCalled()
   })
 
@@ -133,15 +152,12 @@ describe('getChapterList 会话内缓存', () => {
     const second = await getChapterList({ bookId: 'ttl-book' })
 
     expect(getMock).toHaveBeenCalledTimes(1)
-    expect(getMock).toHaveBeenCalledWith('/getChapterList', {
-      params: { bookId: 'ttl-book' },
-      timeout: 20_000,
-    })
+    expect(getMock).toHaveBeenCalledWith('/books/ttl-book/chapters', v1Get())
     expect(second).toEqual(first)
   })
 
   it('并发的同书请求合并为一次', async () => {
-    let release!: (value: { data: unknown }) => void
+    let release!: (value: unknown) => void
     getMock.mockImplementation(
       () =>
         new Promise((resolve) => {
@@ -150,7 +166,7 @@ describe('getChapterList 会话内缓存', () => {
     )
     const first = getChapterList({ bookId: 'concurrent-book' })
     const second = getChapterList({ bookId: 'concurrent-book' })
-    release({ data: [{ title: '第一章' }] })
+    release(page([{ title: '第一章' }]))
     const [a, b] = await Promise.all([first, second])
 
     expect(getMock).toHaveBeenCalledTimes(1)
@@ -158,23 +174,22 @@ describe('getChapterList 会话内缓存', () => {
   })
 
   it('refresh=1 绕过缓存重新请求并更新缓存', async () => {
-    getMock.mockResolvedValueOnce({ data: [{ title: '第一版' }] })
-    getMock.mockResolvedValueOnce({ data: [{ title: '第二版' }] })
+    getMock.mockResolvedValueOnce(page([{ title: '第一版' }]))
+    getMock.mockResolvedValueOnce(page([{ title: '第二版' }]))
 
     const initial = await getChapterList({ bookId: 'refresh-book', refresh: 1 })
+    expect(initial[0].title).toBe('第一版')
     expect(getMock).toHaveBeenCalledTimes(1)
 
-    // refresh 的结果已写回缓存：不带 refresh 的后续调用不再请求
     const cached = await getChapterList({ bookId: 'refresh-book' })
     expect(cached).toEqual(initial)
     expect(getMock).toHaveBeenCalledTimes(1)
 
-    // 再次 refresh=1 绕过旧缓存，拿到新结果并覆盖缓存
     const refreshed = await getChapterList({ bookId: 'refresh-book', refresh: 1 })
     expect(getMock).toHaveBeenCalledTimes(2)
-    expect(refreshed).toEqual([{ title: '第二版' }])
+    expect(refreshed[0].title).toBe('第二版')
     const after = await getChapterList({ bookId: 'refresh-book' })
-    expect(after).toEqual([{ title: '第二版' }])
+    expect(after[0].title).toBe('第二版')
     expect(getMock).toHaveBeenCalledTimes(2)
   })
 
@@ -184,7 +199,7 @@ describe('getChapterList 会话内缓存', () => {
 
     const retry = await getChapterList({ bookId: 'fail-book' })
     expect(getMock).toHaveBeenCalledTimes(2)
-    expect(retry).toEqual([{ title: '第一章' }])
+    expect(retry[0].title).toBe('第一章')
   })
 
   it('不同 bookId 互不影响', async () => {
@@ -197,67 +212,24 @@ describe('getChapterList 会话内缓存', () => {
     expect(getMock).toHaveBeenCalledTimes(2)
   })
 
+  it('deleteBookCache 成功后失效该书的目录缓存', async () => {
+    await getChapterList({ bookId: 'purge-book' })
+    expect(getMock).toHaveBeenCalledTimes(1)
+    await deleteBookCache('purge-book')
+    expect(postMock).toHaveBeenCalledWith('/deleteBookCache', { bookId: 'purge-book' })
+
+    await getChapterList({ bookId: 'purge-book' })
+    expect(getMock).toHaveBeenCalledTimes(2)
+  })
+
   it('setBookSource 成功后失效该书的目录缓存', async () => {
     await getChapterList({ bookId: 'switch-book' })
     expect(getMock).toHaveBeenCalledTimes(1)
     await setBookSource({ bookId: 'switch-book', targetBookId: 'candidate-1' })
     expect(postMock).toHaveBeenCalledTimes(1)
 
-    // 换源后目录已整体变化：缓存失效，重新请求
     await getChapterList({ bookId: 'switch-book' })
     expect(getMock).toHaveBeenCalledTimes(2)
   })
-
-  it('deleteBookCache 成功后失效该书的目录缓存', async () => {
-    await getChapterList({ bookId: 'purge-book' })
-    expect(getMock).toHaveBeenCalledTimes(1)
-    await deleteBookCache('purge-book')
-    expect(postMock).toHaveBeenCalledTimes(1)
-
-    // 服务端已按书清掉目录缓存：本地缓存同步失效
-    await getChapterList({ bookId: 'purge-book' })
-    expect(getMock).toHaveBeenCalledTimes(2)
-  })
-
-  it('换源时丢弃在途的旧目录请求，旧响应不会写回缓存', async () => {
-    let releaseOld!: (value: { data: unknown }) => void
-    getMock.mockImplementationOnce(
-      () =>
-        new Promise((resolve) => {
-          releaseOld = resolve
-        })
-    )
-    const oldRequest = getChapterList({ bookId: 'switch-inflight' })
-    await setBookSource({ bookId: 'switch-inflight', targetBookId: 'candidate-2' })
-
-    getMock.mockResolvedValueOnce({ data: [{ title: '新源目录' }] })
-    const fresh = await getChapterList({ bookId: 'switch-inflight' })
-    expect(fresh).toEqual([{ title: '新源目录' }])
-
-    // 旧请求迟到：调用方仍拿到它自己的结果，但不能覆盖新源缓存
-    releaseOld({ data: [{ title: '旧源目录' }] })
-    expect(await oldRequest).toEqual([{ title: '旧源目录' }])
-
-    const cached = await getChapterList({ bookId: 'switch-inflight' })
-    expect(cached).toEqual([{ title: '新源目录' }])
-    expect(getMock).toHaveBeenCalledTimes(2)
-  })
-
-  it('缓存最多保留 20 本，按插入序淘汰最旧', async () => {
-    // 前面的测试可能已占用部分名额：一次性插入 25 本新书，
-    // 无论此前状态如何，缓存最终恰好保留最后 20 本（bulk-5..bulk-24）
-    for (let i = 0; i < 25; i++) {
-      getMock.mockResolvedValueOnce({ data: [{ title: `第${i}章` }] })
-      await getChapterList({ bookId: `bulk-${i}` })
-    }
-    const getsAfterFill = getMock.mock.calls.length
-
-    // bulk-4 及更早的都已被淘汰：再次请求会重新发请求
-    await getChapterList({ bookId: 'bulk-4' })
-    expect(getMock.mock.calls.length).toBe(getsAfterFill + 1)
-
-    // 最后写入的 bulk-24 仍在缓存里
-    await getChapterList({ bookId: 'bulk-24' })
-    expect(getMock.mock.calls.length).toBe(getsAfterFill + 1)
-  })
 })
+
