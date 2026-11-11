@@ -517,19 +517,26 @@ export function deleteBookCache(bookId: string) {
 
 // ─── Groups ───
 export function getBookGroups() {
-  return http.get<BookGroup[]>('/getBookGroups').then((r) => r.data)
+  return http.get<BookGroup[]>('/me/groups', { baseURL: API_V1_BASE }).then((r) => r.data)
 }
 
+/** 新建（groupId=0，服务端分配空位幂）或更新 */
 export function saveBookGroup(group: BookGroup) {
-  return http.post<string>('/saveBookGroup', group).then((r) => r.data)
+  return http.post('/me/groups', group, { baseURL: API_V1_BASE }).then(() => '')
 }
 
+/** 删组：组行与书籍位掩码里的对应位一起清 */
 export function deleteBookGroup(groupId: number) {
-  return http.post<string>('/deleteBookGroup', { groupId }).then((r) => r.data)
+  return http
+    .delete(`/me/groups/${groupId}`, { baseURL: API_V1_BASE })
+    .then(() => '')
 }
 
+/** 单本书的分组归属：走书架 PATCH 的 group 字段（0 = 移出全部分组） */
 export function saveBookGroupId(bookId: string, groupId: number) {
-  return http.post<string>('/saveBookGroupId', { bookId, groupId }).then((r) => r.data)
+  return http
+    .patch(`/me/shelf/${bookId}`, { group: groupId }, { baseURL: API_V1_BASE })
+    .then(() => '')
 }
 
 /** 换源：目标是换源候选（搜索结果）自己的 bookId，当前书的 bookId 不变 */
