@@ -142,7 +142,6 @@ impl TestServer {
             .await
             .unwrap()
     }
-
 }
 
 impl Drop for TestServer {
@@ -358,7 +357,10 @@ async fn shelf_group_patch_requires_shelf_entry() {
     let book_id = server.seed_registered_book("https://up.example.com").await;
     // 组先存在（否则先撞 422 分组不存在，轮不到书架校验）
     server
-        .post_json("/v1/me/groups", json!({ "groupId": 1, "groupName": "组一" }))
+        .post_json(
+            "/v1/me/groups",
+            json!({ "groupId": 1, "groupName": "组一" }),
+        )
         .await;
 
     // 已登记但不在书架：409 BOOK_NOT_IN_SHELF
@@ -368,6 +370,53 @@ async fn shelf_group_patch_requires_shelf_entry() {
     assert_eq!(resp.status(), StatusCode::CONFLICT);
     let body: Value = resp.json().await.unwrap();
     assert_eq!(body["code"], json!("BOOK_NOT_IN_SHELF"));
+
+    server.cleanup();
+}
+
+/// 批量保存的请求体上限真实可达：2000 条带选文的划线约 2MB，超过 /v1 默认
+/// 1MB——路由级 8MB 必须生效（否则 413，且 http.ts 的提示会把人引去查 nginx）。
+#[tokio::test]
+async fn marks_batch_accepts_over_default_body_limit() {
+    let server = TestServer::start().await;
+    let book_id = server.seed_shelf_book("https://up.example.com").await;
+
+    // 每条约 1.2KB（中文 3 字节/字）：2000 条 ≈ 2.4MB
+    let marks: Vec<Value> = (0..2000)
+        .map(|index| {
+            let mut mark = server.mark(&book_id, index % 10, index % 10_000, "underline");
+            mark["bookText"] = json!(format!("第 {index} 条选文：{}", "选文内容".repeat(60)));
+            mark["content"] = json!(format!("备注 {}", "备注内容".repeat(40)));
+            mark
+        })
+        .collect();
+    let payload = json!(marks);
+    assert!(
+        serde_json::to_vec(&payload).unwrap().len() > 1024 * 1024,
+        "用例必须超过 /v1 默认 1MB，否则锁不住路由级体限"
+    );
+
+    let resp = server.post_json("/v1/me/marks:batch", payload).await;
+    assert_eq!(resp.status(), StatusCode::OK, "路由级 8MB 体限应生效");
+    let body: Value = resp.json().await.unwrap();
+    assert_eq!(body["saved"], json!(2000));
+    assert_eq!(body["skipped"], json!(0));
+
+    // 超过声明上限（5001 条，最小字段）：400 而不是静默截断
+    let many: Vec<Value> = (0..5001)
+        .map(|index| {
+            json!({
+                "bookId": book_id,
+                "chapterIndex": index % 100,
+                "chapterPos": index,
+                "kind": "bookmark"
+            })
+        })
+        .collect();
+    let resp = server.post_json("/v1/me/marks:batch", json!(many)).await;
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    let body: Value = resp.json().await.unwrap();
+    assert_eq!(body["code"], json!("MALFORMED_REQUEST"));
 
     server.cleanup();
 }

@@ -20,8 +20,8 @@ use tower_http::trace::TraceLayer;
 /// 公开/可选鉴权组的请求体上限（1MB）：登录与令牌刷新只收小 JSON，
 /// 未登录就能触达的端点不值得按全局兜底值缓冲 100MB。
 pub(crate) const PUBLIC_BODY_LIMIT_BYTES: usize = 1024 * 1024;
-/// 登录后接口的默认请求体上限（8MB）。
-const PROTECTED_BODY_LIMIT_BYTES: usize = 8 * 1024 * 1024;
+/// 登录后接口的默认请求体上限（8MB；v1 marks:batch 的路由级覆盖同值）。
+pub(crate) const PROTECTED_BODY_LIMIT_BYTES: usize = 8 * 1024 * 1024;
 /// 批量导入书源（`/reader3/saveBookSources` 与 `POST /v1/sources:batchUpsert`）的请求体上限。
 pub(crate) const SAVE_SOURCES_BODY_LIMIT_BYTES: usize = 64 * 1024 * 1024;
 /// 大上传路由与最外层兜底共用的请求体上限。

@@ -335,13 +335,20 @@ pub async fn upsert_source(
 ) -> Result<(StatusCode, Json<SourceWriteResult>), Problem> {
     let source = source_from_raw(value)?;
     let url = source.book_source_url.clone();
+    // 新建/替换的判定：URL 命中（保号归并）**或**自带 id 命中（编辑改 URL 走
+    // update 分支）都算替换——只看 URL 会把「编辑已有书源改 URL」误报成 201
     let existed = state
         .book_source_service
         .list_summary(&user.ns)
         .await
         .map_err(Problem::from)?
         .iter()
-        .any(|summary| summary.book_source_url == url);
+        .any(|summary| {
+            summary.book_source_url == url
+                || source
+                    .book_source_id
+                    .is_some_and(|id| summary.book_source_id == Some(id))
+        });
     let id = state
         .book_source_service
         .save(&user.ns, source)

@@ -155,3 +155,10 @@ goal 执行中遇到「决策表与 spec 都沉默」的问题时，按 §5.4 �
 - **书架 PATCH 补 `group` 字段**：单本书的分组归属从 r3 `saveBookGroupId` 迁到 `PATCH /v1/me/shelf/{bookId}` 的 merge-patch（`group: 0` = 移出全部分组；非 0 必须是已存在的合法幂位，否则 422 带 `/group` pointer）。`group` 与 `progress` 相互独立，只传其一；仅改分组不刷新最近阅读时间。审计里的 `PUT /v1/me/groups/{id}/books`（整体替换成员）与 `:batchAssign` 未交付（前端无此调用）。
 - **userdata（getUserdataBatch/saveUserdataBatch）不迁**：契约把 userdata 文档替换为 `/v1/me/stats`（服务端从进度派生，D9 read_events）——那是产品语义重设计，不是端点翻译，单独批次拍板后再做。
 - `bookmarks` repo 的 `delete` 返回是否删行（v1 批量计数用），r3 调用点不受影响。
+
+## 2026-11-12 审阅返工：批量体限与书源 upsert 状态码
+
+- **marks:batch 的体限与声明上限对齐**：路由级 `DefaultBodyLimit` 提到 8MB（与 5000 条 × 真实划线约 1.5KB 匹配，挂在 MethodRouter 内层）；客户端 `saveBookmarks` 按 500 分片串行（与 batchRemoveFromShelf 同一模式）——否则 WebDAV 恢复一次全发会撞 /v1 默认 1MB，且 413 提示会把人引去查 nginx。新增 >1MB（2000 条带选文 ≈2.4MB）与 5001 条超限两条测试，把「上限可达」钉住。
+- **sources:batchUpsert 的 64MB 补测试**：2MB jsLib 的批量导入用例锁住「内层 layer 覆盖外层 1MB」的层序——这是全仓库唯一的该用法，没有测试兜底就靠运气。
+- **`POST /v1/sources` 的 201/200 判定修正**：自带 `bookSourceId` 命中（编辑改 URL 走 update 分支）也算替换，只有全新建才 201——只看 URL 会把改地址的编辑误报「已新建」。
+- **分组保留位掩码（决定，非延后待办）**：计划文档里写的「groups（关联表，废除位掩码）」**不执行**——位掩码是现状存储（`book_groups.group_id` 位域 + `shelf_books.group_bits`）与阅读3.0 的兼容口径，`group: 3` 这类直接赋值已被幂位校验挡住（saveBookGroupId 与书架 PATCH group 同一道闸）。关联表只在「单书需要归属任意多个组且各自独立管理」成为需求时再立项；在那之前 v1 与 /reader3 的分组语义保持逐字一致。

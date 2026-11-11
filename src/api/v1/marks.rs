@@ -19,11 +19,18 @@ use utoipa::ToSchema;
 pub fn router() -> Router<AppState> {
     Router::new()
         .route("/v1/me/marks", get(list_marks).post(save_mark))
-        .route("/v1/me/marks:batch", post(save_marks_batch))
+        .route(
+            "/v1/me/marks:batch",
+            post(save_marks_batch).layer(axum::extract::DefaultBodyLimit::max(
+                crate::api::router::PROTECTED_BODY_LIMIT_BYTES,
+            )),
+        )
         .route("/v1/me/marks:batchDelete", post(delete_marks_batch))
 }
 
-/// 单批上限：WebDAV 恢复是唯一的大批量场景，书签条目小，5000 留足余量。
+/// 单批上限：WebDAV 恢复是唯一的大批量场景。5000 条按真实划线
+/// （bookText 选文 + content 备注，约 1.5KB/条）约 8MB，与该路由的请求体
+/// 上限（PROTECTED_BODY_LIMIT_BYTES）匹配——两者必须一起调。
 const MAX_MARKS_BATCH: usize = 5000;
 
 #[derive(Debug, Deserialize)]

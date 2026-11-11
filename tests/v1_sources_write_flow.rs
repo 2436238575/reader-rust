@@ -115,6 +115,33 @@ async fn upsert_get_and_delete_roundtrip() {
     assert_eq!(body["bookSourceUrl"], json!("https://a.example.com"));
     assert_eq!(body["ruleSearch"]["bookList"], json!("$.data.list[*]"));
 
+    // 自带 id 改 URL：走 update 分支，也算替换（200）而不是 201 新建
+    let numeric_id = id.trim_start_matches("src_").parse::<i64>().unwrap();
+    let resp = server
+        .post_json(
+            "/v1/sources",
+            json!({
+                "bookSourceId": numeric_id,
+                "bookSourceName": "甲改并迁移地址",
+                "bookSourceUrl": "https://a-moved.example.com"
+            }),
+        )
+        .await;
+    assert_eq!(
+        resp.status(),
+        StatusCode::OK,
+        "id 命中的更新不能误报 201 新建"
+    );
+    let body: Value = resp.json().await.unwrap();
+    assert_eq!(body["id"], json!(id), "改 URL 保号");
+    let body: Value = server
+        .get(&format!("/v1/sources/{id}"))
+        .await
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(body["bookSourceUrl"], json!("https://a-moved.example.com"));
+
     // 缺 bookSourceUrl：400
     let resp = server
         .post_json("/v1/sources", json!({ "bookSourceName": "无地址" }))
@@ -224,6 +251,23 @@ async fn batch_upsert_deletes_and_delete_all() {
         .await;
     assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
 
+    // 请求体超过 /v1 默认 1MB：路由级 64MB 必须生效（内层 layer 覆盖外层）。
+    // 这里没有别的机制兜底，层序一旦被改会静默变回 1MB
+    let big_source = json!({
+        "bookSourceName": "大源",
+        "bookSourceUrl": "https://big.example.com",
+        "jsLib": "a".repeat(2_000_000)
+    });
+    let payload = json!({ "sources": [big_source] });
+    assert!(
+        serde_json::to_vec(&payload).unwrap().len() > 1024 * 1024,
+        "用例必须超过 /v1 默认 1MB，否则锁不住路由级体限"
+    );
+    let resp = server.post_json("/v1/sources:batchUpsert", payload).await;
+    assert_eq!(resp.status(), StatusCode::OK, "路由级 64MB 体限应生效");
+    let body: Value = resp.json().await.unwrap();
+    assert_eq!(body["count"], json!(1));
+
     let list: Value = server
         .get("/v1/sources?limit=200")
         .await
@@ -236,7 +280,7 @@ async fn batch_upsert_deletes_and_delete_all() {
         .iter()
         .map(|item| item["id"].as_str().unwrap().to_string())
         .collect();
-    assert_eq!(ids.len(), 2);
+    assert_eq!(ids.len(), 3, "两条正常导入 + 一条 2MB 大源");
 
     // 批量删除：存在的 1 个 + 不存在的 1 个 → deleted 1
     let resp = server
@@ -260,7 +304,7 @@ async fn batch_upsert_deletes_and_delete_all() {
         .await;
     assert_eq!(resp.status(), StatusCode::OK);
     let body: Value = resp.json().await.unwrap();
-    assert_eq!(body["deleted"], json!(1));
+    assert_eq!(body["deleted"], json!(2), "批量删除 1 条后剩 2 条");
 
     let list: Value = server.get("/v1/sources").await.json().await.unwrap();
     assert_eq!(list["total"], json!(0));
