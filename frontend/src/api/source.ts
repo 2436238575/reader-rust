@@ -18,6 +18,11 @@ export function parseSourceId(v1Id: string): number {
   return Number(v1Id.replace(/^src_/, ''))
 }
 
+/** 数字 id → `src_<n>`（写接口的路径/请求体身份） */
+function buildSourceId(bookSourceId: number): string {
+  return `src_${bookSourceId}`
+}
+
 function toLegacySummary(item: ApiSourceSummary): BookSourceSummary {
   const updatedMs = item.updatedAt ? Date.parse(item.updatedAt) : Number.NaN
   return {
@@ -56,10 +61,11 @@ export async function getBookSourceList(): Promise<BookSourceSummary[]> {
   return out
 }
 
-/** 单条全量：编辑器/启停翻转等「按整条 upsert 保存」的场景按需取 */
+/** 单条全量：编辑器/启停翻转等「按整条 upsert 保存」的场景按需取。
+ *  v1 详情是源材料透传（含数字 bookSourceId 字段），与旧形状一致，无需映射 */
 export function getBookSource(bookSourceId: number) {
   return http
-    .get<BookSource>('/getBookSource', { params: { bookSourceId } })
+    .get<BookSource>(`/sources/${buildSourceId(bookSourceId)}`, { baseURL: API_V1_BASE })
     .then((r) => r.data)
 }
 
@@ -83,28 +89,43 @@ export function mintBookSourceProxyToken(params: { bookSourceId: number }) {
     .then((r) => r.data)
 }
 
+/** 单条全量 upsert：按自带 id 更新，否则按 URL 保号归并（201 新建 / 200 替换） */
 export function saveBookSource(source: BookSource) {
   return http
-    .post<{ saved: boolean; bookSourceId: number }>('/saveBookSource', source)
-    .then((r) => r.data)
+    .post<{ id: string }>('/sources', source, { baseURL: API_V1_BASE })
+    .then((r) => ({ saved: true, bookSourceId: parseSourceId(r.data.id) }))
 }
 
+/** 批量导入/订阅/恢复：URL 去重优先（保本地 id），单事务提交 */
 export function saveBookSources(sources: BookSource[]) {
   return http
-    .post<{ saved: boolean; count: number }>('/saveBookSources', sources)
-    .then((r) => r.data)
+    .post<{ count: number }>('/sources:batchUpsert', { sources }, { baseURL: API_V1_BASE })
+    .then((r) => ({ saved: true, count: r.data.count }))
 }
 
+/** 单条删除（幂等 204） */
 export function deleteBookSource(bookSourceId: number) {
-  return http.post<{ deleted: boolean }>('/deleteBookSource', { bookSourceId }).then((r) => r.data)
+  return http
+    .delete(`/sources/${buildSourceId(bookSourceId)}`, { baseURL: API_V1_BASE })
+    .then(() => ({ deleted: true }))
 }
 
+/** 批量删除（幂等；不存在的 id 忽略） */
 export function deleteBookSources(sources: { bookSourceId: number }[]) {
-  return http.post<{ deleted: boolean }>('/deleteBookSources', sources).then((r) => r.data)
+  const ids = sources.map((source) => buildSourceId(source.bookSourceId))
+  return http
+    .post<{ deleted: number }>('/sources:batchDelete', { ids }, { baseURL: API_V1_BASE })
+    .then((r) => ({ deleted: r.data.deleted > 0 }))
 }
 
+/** 清空全部书源：confirm 体是毁灭性操作的门槛 */
 export function deleteAllBookSources() {
-  return http.post<{ deleted: boolean }>('/deleteAllBookSources').then((r) => r.data)
+  return http
+    .delete<{ deleted: number }>(
+      '/sources',
+      { baseURL: API_V1_BASE, data: { confirm: 'DELETE_ALL' } },
+    )
+    .then((r) => ({ deleted: r.data.deleted > 0 }))
 }
 
 export function testBookSources(params: {
@@ -119,8 +140,11 @@ export function testBookSources(params: {
   return http.post<BookSourceTestResponse>('/testBookSources', params).then((r) => r.data)
 }
 
+/** 删除失效书源（分组含「失效」标记），与后端同口径 */
 export function deleteInvalidBookSources() {
-  return http.post<{ deleted: number }>('/deleteInvalidBookSources').then((r) => r.data)
+  return http
+    .post<{ deleted: number }>('/sources:deleteInvalid', {}, { baseURL: API_V1_BASE })
+    .then((r) => r.data)
 }
 
 export function readRemoteSourceFile(url: string) {
