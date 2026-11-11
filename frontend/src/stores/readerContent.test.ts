@@ -756,7 +756,7 @@ describe('readerContent renameChapter（章节名覆盖层）', () => {
 
     expect(renameChapter).toHaveBeenCalledWith({
       bookId: 'book_1',
-      chapterUrl: 'u1',
+      index: 0,
       title: '第一章 新名',
     })
     expect(readerStore.chapters[0].title).toBe('第一章 新名')
@@ -781,7 +781,7 @@ describe('readerContent renameChapter（章节名覆盖层）', () => {
 
     expect(renameChapter).toHaveBeenCalledWith({
       bookId: 'book_1',
-      chapterUrl: 'u1',
+      index: 0,
       title: null,
     })
     expect(readerStore.chapters[0].title).toBe('第一章 原名')
@@ -800,7 +800,7 @@ describe('readerContent renameChapter（章节名覆盖层）', () => {
 
     expect(renameChapter).toHaveBeenCalledWith({
       bookId: 'book_1',
-      chapterUrl: 'u1',
+      index: 0,
       title: null,
     })
   })

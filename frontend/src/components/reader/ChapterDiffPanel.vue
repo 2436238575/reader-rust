@@ -178,7 +178,7 @@ async function discardEdit() {
   if (!chapter || !bookId) return
   if (!confirm('确定放弃本章的修改，恢复上游版本吗？')) return
   try {
-    await deleteChapterEdit(bookId, chapter.url)
+    await deleteChapterEdit(bookId, store.currentIndex)
     emit('update:modelValue', false)
     emit('changed')
     appStore.showToast('已恢复上游版本', 'success')

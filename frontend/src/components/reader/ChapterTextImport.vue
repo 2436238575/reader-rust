@@ -530,7 +530,7 @@ async function ensureDiff(item: ChapterImportPreviewChapter) {
   }
   setDiffState(item.sourceIndex, { loading: true, data: null, error: '' })
   try {
-    const data = await getChapterImportDiff(previewId, item.sourceIndex)
+    const data = await getChapterImportDiff(previewId, props.bookId ?? '', item.sourceIndex)
     setDiffState(item.sourceIndex, { loading: false, data, error: '' })
   } catch (e) {
     setDiffState(item.sourceIndex, {
@@ -624,7 +624,7 @@ async function runPreview() {
     if (params.file && params.file.size > CHAPTER_IMPORT_CHUNK_THRESHOLD) {
       uploadPercent.value = 0
       uploadId.value = null
-      const id = await uploadChapterImportFile(params.file, (uploaded, total) => {
+      const id = await uploadChapterImportFile(params.bookId, params.file, (uploaded, total) => {
         uploadPercent.value =
           total > 0 ? Math.min(100, Math.floor((uploaded / total) * 100)) : null
       })

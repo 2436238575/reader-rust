@@ -311,7 +311,7 @@ async function loadOverrideState() {
   const chapter = store.currentChapter
   if (!bookId || !chapter) return
   try {
-    overrideState.value = await getChapterTitleOverride(bookId, chapter.url)
+    overrideState.value = await getChapterTitleOverride(bookId, store.currentIndex)
   } catch {
     // 拿不到覆盖状态时只是少一个「恢复原名」入口，不阻塞面板
     overrideState.value = null
@@ -416,7 +416,7 @@ async function reload() {
   loading.value = true
   error.value = ''
   try {
-    timeline.value = await getChapterTimeline({ bookId, chapterUrl: chapter.url })
+    timeline.value = await getChapterTimeline({ bookId, index: store.currentIndex })
     if (preview.value) {
       const stillThere = timeline.value?.items?.some(
         (item) => item.versionId === preview.value?.versionId
@@ -438,7 +438,7 @@ async function previewVersion(item: ChapterTimelineItem) {
   showImport.value = false
   resetDiff()
   try {
-    preview.value = await getChapterVersion(bookId, chapter.url, item.versionId)
+    preview.value = await getChapterVersion(bookId, store.currentIndex, item.versionId)
   } catch (e) {
     appStore.showToast((e as Error).message || '读取版本失败', 'error')
   }
@@ -481,7 +481,7 @@ async function comparePreview() {
   try {
     const result = await getChapterVersionDiff({
       bookId,
-      chapterUrl: chapter.url,
+      index: store.currentIndex,
       // diff 里 from 是基准、to 是新状态：基准是被对比的那份（最新上游或当前
       // 显示版本），预览的版本站在新状态一侧；传反会让 + / - 正好标反。
       fromVersionId: target,

@@ -107,7 +107,7 @@ watch(
       draft.value = displayed
       baseVersionId.value = store.chapterVersions.get(store.currentIndex)?.versionId
       if (isUpstreamView.value && chapter && bookId) {
-        const edit = await getChapterEdit(bookId, chapter.url).catch(() => null)
+        const edit = await getChapterEdit(bookId, store.currentIndex).catch(() => null)
         // 等待期间用户可能已经动手改字，别覆盖
         if (props.modelValue && draft.value === displayed && edit?.content != null) {
           draft.value = edit.content
@@ -133,9 +133,7 @@ async function save() {
   try {
     await saveChapterEdit({
       bookId,
-      chapterUrl: chapter.url,
-      chapterIndex: store.currentIndex,
-      chapterTitle: chapter.title,
+      index: store.currentIndex,
       content: draft.value,
       baseVersionId: baseVersionId.value,
     })
@@ -164,7 +162,7 @@ async function restoreUpstream() {
   if (!confirm('确定放弃本章的修改，恢复上游版本吗？')) return
   saving.value = true
   try {
-    await deleteChapterEdit(bookId, chapter.url)
+    await deleteChapterEdit(bookId, store.currentIndex)
     emit('update:modelValue', false)
     emit('changed')
     appStore.showToast('已恢复上游版本', 'success')

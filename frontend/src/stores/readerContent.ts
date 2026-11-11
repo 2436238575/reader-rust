@@ -626,7 +626,7 @@ export const useReaderContentStore = defineStore('readerContent', () => {
     const chapter = readerStore.chapters[index]
     const bookId = readerStore.book?.bookId
     if (!chapter || !bookId) return
-    await selectChapterVersion(bookId, chapter.url, versionId)
+    await selectChapterVersion(bookId, index, versionId)
     readerStore.chapterVersions.delete(index)
     readerStore.preloadedContent.clear()
     await readerStore.refreshEditedChapterKeys()
@@ -654,7 +654,7 @@ export const useReaderContentStore = defineStore('readerContent', () => {
     try {
       const result = await apiRenameChapter({
         bookId,
-        chapterUrl: chapter.url,
+        index,
         title: trimmed || null,
       })
       // 响应带当前生效标题（恢复原名 = 目录原标题；空串兜底保持乐观值）

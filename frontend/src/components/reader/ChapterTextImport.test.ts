@@ -213,7 +213,8 @@ describe('ChapterTextImport 预览复用', () => {
     await flush()
 
     expect(uploadChapterImportFile).toHaveBeenCalledTimes(1)
-    expect(uploadChapterImportFile.mock.calls[0][0]).toBe(big)
+    expect(uploadChapterImportFile.mock.calls[0][0]).toBe('book_1')
+    expect(uploadChapterImportFile.mock.calls[0][1]).toBe(big)
     const params = previewChapterImport.mock.calls[0][0]
     expect(params.uploadId).toBe('u-1')
     expect(params.file).toBeNull()

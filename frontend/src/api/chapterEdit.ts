@@ -1,18 +1,30 @@
 import http, { UPLOAD_TIMEOUT_MS } from './http'
+import { API_V1_BASE } from '../utils/appBase'
 import type { ChapterVersionKind } from './bookshelf'
 import type { ParagraphDiffOp } from '../utils/chapterDiff'
 
 /**
- * 章节正文的用户版本、版本时间线与版本选择。
+ * 章节正文的用户版本、版本时间线与版本选择（v1）。
  *
- * 编辑版和手动导入都进正文池；删除当前用户版本只清指针，历史仍然保留。
+ * 身份是 `(bookId, index)`：index 经章节登记表解析出内部 chapterUrl，
+ * 客户端不再携带上游地址（红线 6）。版本号在线缆上是 `cv_<n>` 字符串，
+ * 适配层转回数字（调用方仍用数字比较）。
  */
+
+function cvId(versionId: number): string {
+  return `cv_${versionId}`
+}
+
+function parseVersionId(id: string | null | undefined): number | undefined {
+  if (!id) return undefined
+  const parsed = Number(id.replace(/^cv_/, ''))
+  return Number.isFinite(parsed) ? parsed : undefined
+}
 
 export interface SaveChapterEditParams {
   bookId: string
-  chapterUrl: string
-  chapterIndex: number
-  chapterTitle: string
+  /** 章节序号（登记表分配的稳定序号） */
+  index: number
   content: string
   /** 编辑时看到的上游版本；不传则后端取当前最新上游 */
   baseVersionId?: number
@@ -21,10 +33,8 @@ export interface SaveChapterEditParams {
 
 export interface ImportChapterVersionParams {
   bookId: string
-  chapterUrl: string
+  index: number
   content: string
-  chapterIndex?: number
-  chapterTitle?: string
   baseVersionId?: number
   note?: string
   /** 默认只进时间线，不改变当前显示 */
@@ -73,28 +83,52 @@ export interface ChapterVersionDetail {
   content: string
 }
 
+/** 保存编辑（生成新用户版本，设为当前显示） */
 export function saveChapterEdit(params: SaveChapterEditParams) {
   return http
-    .post<{ edited: boolean; versionId: number }>('/saveChapterEdit', params)
-    .then((r) => r.data)
-}
-
-export function getChapterEdit(bookId: string, chapterUrl: string) {
-  return http
-    .get<{ content: string; versionId: number; baseVersionId?: number; kind: string } | null>(
-      '/getChapterEdit',
-      { params: { bookId, chapterUrl } }
+    .put<{ edited: boolean; versionId: string }>(
+      `/books/${params.bookId}/chapters/${params.index}/content`,
+      {
+        content: params.content,
+        ...(params.baseVersionId != null
+          ? { baseVersionId: cvId(params.baseVersionId) }
+          : {}),
+        ...(params.note ? { note: params.note } : {}),
+      },
+      { baseURL: API_V1_BASE },
     )
-    .then((r) => r.data)
+    .then((r) => ({ edited: r.data.edited, versionId: parseVersionId(r.data.versionId) ?? 0 }))
 }
 
+/** 当前用户编辑版（编辑器预填用）；没有编辑版本时返回 null */
+export function getChapterEdit(bookId: string, index: number) {
+  return http
+    .get<{ content: string; versionId: string; baseVersionId?: string; kind: string } | null>(
+      `/books/${bookId}/chapters/${index}/content/edit`,
+      { baseURL: API_V1_BASE },
+    )
+    .then((r) => {
+      if (r.data == null || r.data.content == null) return null
+      return {
+        content: r.data.content,
+        versionId: parseVersionId(r.data.versionId) ?? 0,
+        baseVersionId: parseVersionId(r.data.baseVersionId),
+        kind: r.data.kind,
+      }
+    })
+    .catch(() => null)
+}
+
+/** 有用户版本的章节地址列表（过渡期诊断） */
 export function listChapterEdits(bookId: string) {
   return http
-    .get<{ urls: string[] }>('/listChapterEdits', { params: { bookId } })
-    .then((r) => r.data?.urls ?? [])
+    .get<{ marks: Record<string, unknown> }>(`/books/${bookId}/chapter-marks`, {
+      baseURL: API_V1_BASE,
+    })
+    .then((r) => ({ urls: Object.keys(r.data?.marks ?? {}) }))
 }
 
-/** 一章当前显示版本的标记（目录版本标签用）。 */
+/** 一章当前显示版本的标记（目录版本标签用） */
 export interface ChapterVersionMark {
   kind: ChapterVersionKind
   note: string
@@ -104,77 +138,128 @@ export interface ChapterVersionMark {
 
 /**
  * 每章当前显示版本的标记：chapterUrl → mark。只含有版本记录的章；
- * 没有的章调用方按「最新上游」处理。
+ * 没有的章调用方按「最新上游」处理。键沿用 chapterUrl（过渡期例外，
+ * 与 v1 章节列表的只读 url 字段一致）。
  */
 export function getChapterVersionMarks(bookId: string) {
   return http
-    .get<{ marks: Record<string, ChapterVersionMark> }>('/chapterVersionMarks', {
-      params: { bookId },
+    .get<{ marks: Record<string, ChapterVersionMark> }>(`/books/${bookId}/chapter-marks`, {
+      baseURL: API_V1_BASE,
     })
     .then((r) => r.data?.marks ?? {})
 }
 
-export function deleteChapterEdit(bookId: string, chapterUrl: string) {
+/** 取消当前编辑（清用户版本指针，历史保留），显示回落到最新上游 */
+export function deleteChapterEdit(bookId: string, index: number) {
   return http
-    .post<{ edited: boolean }>('/deleteChapterEdit', { bookId, chapterUrl })
-    .then((r) => r.data)
+    .delete(`/books/${bookId}/chapters/${index}/content`, { baseURL: API_V1_BASE })
+    .then(() => ({ edited: false }))
 }
 
+/** 版本时间线（倒序，元数据不含正文） */
 export function getChapterTimeline(params: {
   bookId: string
-  chapterUrl: string
+  index: number
   limit?: number
   beforeVersionId?: number
 }) {
-  return http.post<ChapterTimeline>('/getChapterTimeline', params).then((r) => r.data)
-}
-
-export function getChapterVersion(bookId: string, chapterUrl: string, versionId: number) {
   return http
-    .post<ChapterVersionDetail>('/getChapterVersion', { bookId, chapterUrl, versionId })
-    .then((r) => r.data)
+    .get<ChapterTimelineWire>(`/books/${params.bookId}/chapters/${params.index}/versions`, {
+      baseURL: API_V1_BASE,
+      params: {
+        ...(params.limit != null ? { limit: params.limit } : {}),
+        ...(params.beforeVersionId != null
+          ? { beforeVersionId: params.beforeVersionId }
+          : {}),
+      },
+    })
+    .then((r) => mapTimeline(r.data))
 }
 
+/** 单个版本的正文（预览用，不改变当前选择） */
+export function getChapterVersion(bookId: string, index: number, versionId: number) {
+  return http
+    .get<ChapterVersionDetailWire>(
+      `/books/${bookId}/chapters/${index}/versions/${cvId(versionId)}`,
+      { baseURL: API_V1_BASE },
+    )
+    .then((r) => mapVersionDetail(r.data))
+}
+
+/** 任意两个版本之间的 diff */
 export function getChapterVersionDiff(params: {
   bookId: string
-  chapterUrl: string
+  index: number
   fromVersionId: number
   toVersionId: number
 }) {
   return http
-    .post<{ fromVersionId: number; toVersionId: number; ops: ParagraphDiffOp[] }>(
-      '/getChapterVersionDiff',
-      params
+    .get<{ fromVersionId: string; toVersionId: string; ops: ParagraphDiffOp[] }>(
+      `/books/${params.bookId}/chapters/${params.index}/versions/${cvId(params.fromVersionId)}/diff`,
+      {
+        baseURL: API_V1_BASE,
+        params: { against: cvId(params.toVersionId) },
+      },
     )
-    .then((r) => r.data)
+    .then((r) => ({
+      fromVersionId: parseVersionId(r.data.fromVersionId) ?? 0,
+      toVersionId: parseVersionId(r.data.toVersionId) ?? 0,
+      ops: r.data.ops,
+    }))
 }
 
-/** `versionId` 为空表示跟随最新。 */
-export function selectChapterVersion(bookId: string, chapterUrl: string, versionId: number | null) {
+/** `versionId` 为空表示跟随最新 */
+export function selectChapterVersion(
+  bookId: string,
+  index: number,
+  versionId: number | null,
+) {
   return http
-    .post<{ selectedVersionId?: number; effectiveVersionId?: number }>('/selectChapterVersion', {
-      bookId,
-      chapterUrl,
-      versionId,
-    })
-    .then((r) => r.data)
+    .post<{ selectedVersionId?: string; effectiveVersionId?: string }>(
+      `/books/${bookId}/chapters/${index}/content:select`,
+      { versionId: versionId != null ? cvId(versionId) : null },
+      { baseURL: API_V1_BASE },
+    )
+    .then((r) => ({
+      selectedVersionId: parseVersionId(r.data.selectedVersionId),
+      effectiveVersionId: parseVersionId(r.data.effectiveVersionId),
+    }))
 }
 
 /**
  * 整书换回最新上游：清掉本书全部版本选择与用户版本指针，每章显示
- * 回落到最新上游（本地书回到原文）。历史版本保留。`cleared` 是摘掉
- * 用户版本指针的章节数。
+ * 回落到最新上游（本地书回到原文）。历史版本保留。
  */
 export function resetBookToUpstream(bookId: string) {
   return http
-    .post<{ cleared: number }>('/resetBookToUpstream', { bookId })
+    .post<{ cleared: number }>(
+      `/books/${bookId}/content:reset`,
+      {},
+      { baseURL: API_V1_BASE },
+    )
     .then((r) => r.data)
 }
 
+/** 手动导入一个历史版本。默认只进时间线，不改变当前显示 */
 export function importChapterVersion(params: ImportChapterVersionParams) {
   return http
-    .post<{ versionId: number; becameCurrent: boolean }>('/importChapterVersion', params)
-    .then((r) => r.data)
+    .post<{ versionId: string; becameCurrent: boolean }>(
+      `/books/${params.bookId}/chapters/${params.index}/content:import`,
+      {
+        content: params.content,
+        ...(params.baseVersionId != null
+          ? { baseVersionId: cvId(params.baseVersionId) }
+          : {}),
+        ...(params.note ? { note: params.note } : {}),
+        ...(params.makeCurrent != null ? { makeCurrent: params.makeCurrent } : {}),
+        ...(params.createdAt != null ? { createdAt: params.createdAt } : {}),
+      },
+      { baseURL: API_V1_BASE },
+    )
+    .then((r) => ({
+      versionId: parseVersionId(r.data.versionId) ?? 0,
+      becameCurrent: r.data.becameCurrent,
+    }))
 }
 
 export interface RenameChapterResult {
@@ -188,27 +273,66 @@ export interface RenameChapterResult {
 }
 
 /**
- * 改当前章节名：走持久覆盖层（读取时叠加在目录缓存之上，重抓不丢）。
- * `title` 传 null/空串 = 恢复原名（删覆盖行）。不写正文版本，时间线保留
- * 各版本抓取时的标题快照。
+ * 改当前章节名：走持久覆盖层。`title` 传 null/空串 = 恢复原名。
+ * 不写正文版本，时间线保留各版本抓取时的标题快照。
  */
 export function renameChapter(params: {
   bookId: string
-  chapterUrl: string
+  index: number
   title: string | null
 }) {
-  return http.post<RenameChapterResult>('/renameChapter', params).then((r) => r.data)
+  const rename = (title: string) =>
+    http
+      .patch<rename_wire.RenamePayload>(
+        `/books/${params.bookId}/chapters/${params.index}`,
+        { title },
+        { baseURL: API_V1_BASE },
+      )
+      .then((r) => r.data)
+  const restore = () =>
+    http
+      .delete<rename_wire.RenamePayload>(`/books/${params.bookId}/chapters/${params.index}/title`, {
+        baseURL: API_V1_BASE,
+      })
+      .then((r) => r.data)
+
+  const apply = (data: rename_wire.RenamePayload): RenameChapterResult => ({
+    renamed: data.renamed,
+    title: data.title,
+    originalTitle: data.originalTitle,
+    hasOverride: data.hasOverride,
+  })
+
+  if (params.title) {
+    return rename(params.title).then(apply)
+  }
+  return restore().then(apply)
 }
 
-/** 当前章的标题覆盖状态（改名输入框初始态）。 */
-export function getChapterTitleOverride(bookId: string, chapterUrl: string) {
-  return http
-    .get<{ title: string; originalTitle: string; hasOverride: boolean }>(
-      '/getChapterTitleOverride',
-      { params: { bookId, chapterUrl } }
-    )
-    .then((r) => r.data)
+/** rename 域的线缆形状（与 v1 handler 一致） */
+namespace rename_wire {
+  export interface RenamePayload {
+    renamed: boolean
+    title: string
+    originalTitle: string
+    hasOverride: boolean
+  }
 }
+
+/** 当前章的标题覆盖状态（改名输入框初始态） */
+export function getChapterTitleOverride(bookId: string, index: number) {
+  return http
+    .get<rename_wire.RenamePayload>(`/books/${bookId}/chapters/${index}/title`, {
+      baseURL: API_V1_BASE,
+    })
+    .then((r) => ({
+      title: r.data.title,
+      originalTitle: r.data.originalTitle,
+      hasOverride: r.data.hasOverride,
+    }))
+}
+
+// ─── 整本 TXT 导入链 ─────────────────────────────────────────────────
 
 export type ChapterImportMode = 'auto' | 'single' | 'book'
 
@@ -279,30 +403,16 @@ export interface ChapterImportParams {
   createdAt?: number
   /** 上传文件时优先使用文件，后端负责识别 UTF-8 / GB18030 / UTF-16。 */
   file?: File | null
-  /**
-   * 上传文件的原始字节数。后端用它核对实际收到的字节数——反向代理截断
-   * multipart 后请求仍可能是合法的，只能用这个值发现「只收到半本书」。
-   */
   fileSize?: number
-  /** 没有文件时使用粘贴的文本。 */
   text?: string
-  /**
-   * 自适应分片上传返回的令牌：正文已经全部到达服务端，预览/导入不再上传
-   * file/text。与 previewId 同时存在时优先用 previewId。
-   */
   uploadId?: string | null
-  /**
-   * 导入时带上预览令牌（previewChapterImport 返回的 previewId）：后端直接复用
-   * 预览暂存的切章/匹配结果，不再上传 file/text；预览过期或跨书会 400，需重新预览。
-   */
   previewId?: string | null
-  /** 导入后把 TXT 解析标题写进章节名覆盖层（默认 true） */
   applyTitles?: boolean
 }
 
 function buildChapterImportForm(
   params: ChapterImportParams,
-  selectedIndexes?: number[]
+  selectedIndexes?: number[],
 ): FormData {
   const form = new FormData()
   form.append('bookId', params.bookId)
@@ -316,14 +426,10 @@ function buildChapterImportForm(
   if (params.createdAt != null) form.append('createdAt', String(params.createdAt))
   if (params.applyTitles != null) form.append('applyTitles', String(params.applyTitles))
   if (params.previewId) {
-    // 复用预览暂存：正文不再二次上传
     form.append('previewId', params.previewId)
   } else if (params.uploadId) {
-    // 分片已经全部上传：预览/导入只带令牌
     form.append('uploadId', params.uploadId)
   } else if (params.file) {
-    // fileSize 必须排在 file 前面：代理截断正文时，小字段先到，后端才有
-    // 依据发现文件不完整。
     form.append('fileSize', String(params.fileSize ?? params.file.size))
     form.append('file', params.file, params.file.name)
   } else if (params.text != null) {
@@ -349,6 +455,7 @@ const CHUNK_RETRY_LIMIT = 4
 export const CHAPTER_IMPORT_CHUNK_THRESHOLD = CHUNK_INITIAL_BYTES
 
 function uploadChapterImportChunk(params: {
+  bookId: string
   uploadId: string | null
   offset: number
   fileSize: number
@@ -360,38 +467,42 @@ function uploadChapterImportChunk(params: {
   form.append('fileSize', String(params.fileSize))
   form.append('chunk', params.chunk, 'chunk.bin')
   return http
-    .post<ChunkUploadResult>('/uploadChapterImportChunk', form, {
-      headers: { 'Content-Type': 'multipart/form-data' },
-      timeout: UPLOAD_TIMEOUT_MS,
-    })
+    .post<ChunkUploadResult>(
+      `/books/${params.bookId}/chapters:upload-import-chunk`,
+      form,
+      {
+        headers: { 'Content-Type': 'multipart/form-data' },
+        timeout: UPLOAD_TIMEOUT_MS,
+        baseURL: API_V1_BASE,
+      },
+    )
     .then((r) => r.data)
 }
 
 /**
  * 自适应分片上传整本 TXT，返回预览/导入用的 `uploadId`。
  *
- * 反代/WAF 的单请求体积上限各不相同（nginx 默认 1m），这里不写死分片大小：
- * 从 512KB 起步，成功就温和放大，遇到 413/断连/5xx 就减半并把上限钉住，
- * 后续分片不再涨回去。这样既能绕开小的限制，又不会在宽松链路上拆得太碎。
+ * 反代/WAF 的单请求体积上限各不相同，这里不写死分片大小：
+ * 从 512KB 起步，成功就温和放大，遇到 413/断连/5xx 就减半并把上限钉住。
  */
 export async function uploadChapterImportFile(
+  bookId: string,
   file: File,
-  onProgress?: (uploaded: number, total: number) => void
+  onProgress?: (uploaded: number, total: number) => void,
 ): Promise<string> {
   let uploadId: string | null = null
   let offset = 0
   let chunkSize = CHUNK_INITIAL_BYTES
-  // 失败过的档位是硬上限：成功后再放大也不能超过它
   let ceiling = CHUNK_MAX_BYTES
 
   while (offset < file.size) {
     let attempt = 0
     for (;;) {
-      // 每次重试都按当前 chunkSize 重新切片：失败减半后必须真的变小
       const end = Math.min(offset + chunkSize, file.size)
       const chunk = file.slice(offset, end)
       try {
         const result = await uploadChapterImportChunk({
+          bookId,
           uploadId,
           offset,
           fileSize: file.size,
@@ -404,15 +515,13 @@ export async function uploadChapterImportFile(
         offset = result.received
         chunkSize = Math.min(
           ceiling,
-          Math.max(CHUNK_MIN_BYTES, Math.floor(chunkSize * 1.5))
+          Math.max(CHUNK_MIN_BYTES, Math.floor(chunkSize * 1.5)),
         )
         onProgress?.(offset, file.size)
         break
       } catch (error) {
         attempt += 1
         const status = (error as { status?: number }).status
-        // 413 是明确的体积上限；无状态码是断连/超时；5xx 也值得缩片重试。
-        // 其他 4xx（uploadId 过期、参数错误）缩片没有意义，直接抛出。
         const retriable =
           status == null || status === 413 || status === 408 || status >= 500
         if (!retriable || attempt >= CHUNK_RETRY_LIMIT || chunkSize <= CHUNK_MIN_BYTES) {
@@ -428,28 +537,105 @@ export async function uploadChapterImportFile(
   return uploadId
 }
 
+/** 预览单章 / 整本 TXT 的解析与匹配结果，不写库 */
 export function previewChapterImport(params: ChapterImportParams) {
   return http
-    .post<ChapterImportPreview>('/previewChapterImport', buildChapterImportForm(params), {
-      headers: { 'Content-Type': 'multipart/form-data' },
-      timeout: UPLOAD_TIMEOUT_MS,
-    })
+    .post<ChapterImportPreview>(
+      `/books/${params.bookId}/chapters:preview-import`,
+      buildChapterImportForm(params),
+      {
+        headers: { 'Content-Type': 'multipart/form-data' },
+        timeout: UPLOAD_TIMEOUT_MS,
+        baseURL: API_V1_BASE,
+      },
+    )
     .then((r) => r.data)
 }
 
-/** `selectedIndexes` 传入空数组表示一章都不导入；不传表示全部已匹配章节。 */
+/** 按预览结果批量导入。`selectedIndexes` 传入空数组表示一章都不导入 */
 export function importChapterText(params: ChapterImportParams, selectedIndexes?: number[]) {
   return http
-    .post<ChapterImportResult>('/importChapterText', buildChapterImportForm(params, selectedIndexes), {
-      headers: { 'Content-Type': 'multipart/form-data' },
-      timeout: UPLOAD_TIMEOUT_MS,
+    .post<ChapterImportResult>(
+      `/books/${params.bookId}/chapters:import`,
+      buildChapterImportForm(params, selectedIndexes),
+      {
+        headers: { 'Content-Type': 'multipart/form-data' },
+        timeout: UPLOAD_TIMEOUT_MS,
+        baseURL: API_V1_BASE,
+      },
+    )
+    .then((r) => r.data)
+}
+
+/** 预览里点开某章时按需取它与当前正文的差异 */
+export function getChapterImportDiff(previewId: string, bookId: string, sourceIndex: number) {
+  return http
+    .get<ChapterImportDiff>(`/books/${bookId}/chapters/import-diff`, {
+      baseURL: API_V1_BASE,
+      params: { previewId, sourceIndex },
     })
     .then((r) => r.data)
 }
 
-/** 预览里点开某章时按需取它与当前正文的差异。 */
-export function getChapterImportDiff(previewId: string, sourceIndex: number) {
-  return http
-    .post<ChapterImportDiff>('/getChapterImportDiff', { previewId, sourceIndex })
-    .then((r) => r.data)
+// ── typed 线缆形状映射 ───────────────────────────────────────────────
+
+interface ChapterTimelineWire {
+  items: {
+    versionId: string
+    kind: string
+    createdAt: number
+    rawSize: number
+    chars: number
+    chapterIndex: number
+    chapterTitle: string
+    note: string
+    bookSourceId?: number
+    bookSourceName: string
+    baseVersionId?: string
+    isCurrent: boolean
+    isLatestUpstream: boolean
+    isLatestUser: boolean
+  }[]
+  latestUpstreamVersionId?: string
+  latestUserVersionId?: string
+  selectedVersionId?: string
+  effectiveVersionId?: string
+}
+
+function mapTimeline(wire: ChapterTimelineWire): ChapterTimeline {
+  return {
+    items: wire.items.map((item) => ({
+      ...item,
+      versionId: parseVersionId(item.versionId) ?? 0,
+      kind: item.kind as ChapterVersionKind,
+      baseVersionId: parseVersionId(item.baseVersionId),
+    })),
+    latestUpstreamVersionId: parseVersionId(wire.latestUpstreamVersionId),
+    latestUserVersionId: parseVersionId(wire.latestUserVersionId),
+    selectedVersionId: parseVersionId(wire.selectedVersionId),
+    effectiveVersionId: parseVersionId(wire.effectiveVersionId),
+  }
+}
+
+interface ChapterVersionDetailWire {
+  versionId: string
+  kind: string
+  baseVersionId?: string
+  createdAt: number
+  rawSize: number
+  chars: number
+  note: string
+  bookSourceName: string
+  chapterIndex: number
+  chapterTitle: string
+  content: string
+}
+
+function mapVersionDetail(wire: ChapterVersionDetailWire): ChapterVersionDetail {
+  return {
+    ...wire,
+    versionId: parseVersionId(wire.versionId) ?? 0,
+    kind: wire.kind as ChapterVersionKind,
+    baseVersionId: parseVersionId(wire.baseVersionId),
+  }
 }
