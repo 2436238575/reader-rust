@@ -55,6 +55,45 @@ describe('bookmark api（v1 marks）', () => {
     expect(postMock).toHaveBeenCalledWith('/me/marks:batch', [mark], { baseURL: API_V1_BASE })
   })
 
+  it('saveBookmarks 超过 500 条时按分片串行发送，切片不重不漏', async () => {
+    postMock.mockResolvedValue({ data: { saved: 500, skipped: 0 }, status: 200 })
+    const bookmarks = Array.from({ length: 1200 }, (_, index) => ({
+      ...mark,
+      chapterPos: index,
+    }))
+
+    await saveBookmarks(bookmarks)
+
+    expect(postMock).toHaveBeenCalledTimes(3)
+    expect(postMock.mock.calls[0][1]).toHaveLength(500)
+    expect(postMock.mock.calls[1][1]).toHaveLength(500)
+    expect(postMock.mock.calls[2][1]).toHaveLength(200)
+    // 三片拼接必须与输入完全一致：分片循环的边界/越界在这里暴露
+    const sent = [
+      ...postMock.mock.calls[0][1],
+      ...postMock.mock.calls[1][1],
+      ...postMock.mock.calls[2][1],
+    ]
+    expect(sent).toEqual(bookmarks)
+    for (const call of postMock.mock.calls) {
+      expect(call[0]).toBe('/me/marks:batch')
+      expect(call[2]).toEqual({ baseURL: API_V1_BASE })
+    }
+  })
+
+  it('saveBookmarks 恰好 500 条只发一片（边界）', async () => {
+    postMock.mockResolvedValue({ data: undefined, status: 200 })
+    const bookmarks = Array.from({ length: 500 }, (_, index) => ({
+      ...mark,
+      chapterPos: index,
+    }))
+
+    await saveBookmarks(bookmarks)
+
+    expect(postMock).toHaveBeenCalledTimes(1)
+    expect(postMock.mock.calls[0][1]).toHaveLength(500)
+  })
+
   it('删除按身份五元组走批量端点（单条复用）', async () => {
     postMock.mockResolvedValue({ data: { deleted: 1 } })
     await deleteBookmark(mark)
