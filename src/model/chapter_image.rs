@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 ///
 /// 两种来源汇到同一个结构：书源的配图规则（独立接口）解析出来的，
 /// 以及正文 HTML 里的 `<img>`（由前端直接渲染，不走这里）。
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(utoipa::ToSchema, Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct ChapterImage {
     pub url: String,
@@ -22,7 +22,7 @@ pub struct ChapterImage {
 ///
 /// `enabled` 说明书源有没有声明配图规则，前端据此决定要不要去请求；
 /// 「这一章没有配图」是 `enabled: true` + 空列表，不是错误。
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(utoipa::ToSchema, Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct ChapterImages {
     pub enabled: bool,

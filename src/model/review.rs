@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 /// 一条评论（章评或段评）。
 ///
 /// 字段全部由书源的评论规则解析而来，缺规则就是缺字段，前端按缺省渲染。
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(utoipa::ToSchema, Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct ReviewItem {
     pub id: String,
@@ -26,7 +26,7 @@ pub struct ReviewItem {
 }
 
 /// 内联回复（评论下方直接展开的那几条）。
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(utoipa::ToSchema, Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct ReviewReply {
     pub name: String,
@@ -44,7 +44,7 @@ pub struct ReviewReply {
 }
 
 /// 一页评论。
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(utoipa::ToSchema, Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct ReviewPage {
     /// 总条数；规则没给或取不到时为 `0`。
@@ -64,7 +64,7 @@ impl ReviewPage {
 }
 
 /// 段评概览里的一段：哪一段、有多少条、段落原文是什么。
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(utoipa::ToSchema, Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct ParaReviewCount {
     /// 段号，等于正文按 `\n` 切分后的下标（从 0 开始）。
@@ -78,7 +78,7 @@ pub struct ParaReviewCount {
 }
 
 /// 段评概览。
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(utoipa::ToSchema, Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct ParaReviewIndex {
     pub paras: Vec<ParaReviewCount>,
@@ -86,7 +86,7 @@ pub struct ParaReviewIndex {
 
 /// 评论接口的响应体：把「书源支不支持」也告诉前端，
 /// 前端据此决定要不要渲染气泡与评论入口。
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(utoipa::ToSchema, Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ReviewResponse<T> {
     /// 当前书源是否声明了对应的评论规则。

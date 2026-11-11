@@ -34,6 +34,7 @@ mod groups;
 mod marks;
 mod me;
 mod replace_rules;
+mod reviews;
 mod shelf;
 mod sources;
 
@@ -55,6 +56,7 @@ pub fn router(
         .merge(cache::router())
         .merge(groups::router())
         .merge(marks::router())
+        .merge(reviews::router())
         .merge(auth::authed_router())
         .route_layer(axum::middleware::from_fn_with_state(
             state.clone(),
@@ -325,6 +327,9 @@ pub fn openapi_yaml() -> String {
         groups::save_group,
         groups::reorder_groups,
         groups::delete_group,
+        reviews::get_comments,
+        reviews::get_comment_index,
+        reviews::get_chapter_images,
         auth::login,
         auth::refresh,
         auth::logout,
@@ -367,6 +372,13 @@ pub fn openapi_yaml() -> String {
         crate::model::book_group::BookGroupOrderItem,
         marks::BatchSaveMarksResult,
         marks::BatchDeleteMarksResult,
+        crate::model::review::ReviewPage,
+        crate::model::review::ReviewItem,
+        crate::model::review::ReviewReply,
+        crate::model::review::ParaReviewIndex,
+        crate::model::review::ParaReviewCount,
+        crate::model::chapter_image::ChapterImages,
+        crate::model::chapter_image::ChapterImage,
         crate::model::rule::SearchRule,
         crate::model::rule::BookInfoRule,
         crate::model::rule::TocRule,

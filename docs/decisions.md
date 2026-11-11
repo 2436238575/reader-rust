@@ -162,3 +162,10 @@ goal 执行中遇到「决策表与 spec 都沉默」的问题时，按 §5.4 �
 - **sources:batchUpsert 的 64MB 补测试**：2MB jsLib 的批量导入用例锁住「内层 layer 覆盖外层 1MB」的层序——这是全仓库唯一的该用法，没有测试兜底就靠运气。
 - **`POST /v1/sources` 的 201/200 判定修正**：自带 `bookSourceId` 命中（编辑改 URL 走 update 分支）也算替换，只有全新建才 201——只看 URL 会把改地址的编辑误报「已新建」。
 - **分组保留位掩码（决定，非延后待办）**：计划文档里写的「groups（关联表，废除位掩码）」**不执行**——位掩码是现状存储（`book_groups.group_id` 位域 + `shelf_books.group_bits`）与阅读3.0 的兼容口径，`group: 3` 这类直接赋值已被幂位校验挡住（saveBookGroupId 与书架 PATCH group 同一道闸）。关联表只在「单书需要归属任意多个组且各自独立管理」成为需求时再立项；在那之前 v1 与 /reader3 的分组语义保持逐字一致。
+
+## 2026-11-12 评论/配图读链路切 v1（P3 前半）
+
+- **交付**：`GET /v1/books/{bookId}/chapters/{index}/comments`（章评与段评合并在同一路径：`?para=<段号>` 是段评，`?authorOnly=true` 忽略分页扫描作者评论）、`GET .../comments/index`（段评概览）、`GET .../images`（章节配图）。响应就是服务层的 typed 形状（`ReviewResponse<ReviewPage>` / `ReviewResponse<ParaReviewIndex>` / `ChapterImages`），评论解析、7 天缓存、空页不缓存、`serverSort`/`authorMarks` 全部复用 /reader3 同一套服务。
+- **红线 6 落地**：客户端不再携带 chapterUrl——v1 以 `(bookId, index)` 经章节登记表/本地目录解析出内部地址（复用 content 的 `resolve_chapter_url`）；前端 `ReviewParams` 与 `CommentPanel` 的 prop 同步从 `chapterUrl` 换成 `index`。
+- **配图收口 typed 化**：`ImageService::pick_image_route`（`rewrite_image_lists` 的单格语义）——同一张图的多个格式变体挑一张能渲染的，替换成单个 `/reader3/image/<id>`；挑不出/登记失败保留原数组（行为与 /reader3 一致）。评论项与回复都收口；章节配图逐张登记。
+- **偏差**：契约 §8.5 的 `anchor`（blockMap 对齐的评论锚点）随 mark-anchoring 批次再做；响应形状沿用现状（前端零映射），`Page<Comment>` 的理想分页形状（cursor）等编辑域一起收敛。

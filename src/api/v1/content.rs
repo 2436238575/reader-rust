@@ -150,7 +150,7 @@ fn has_paired_inline_tag(body: &str) -> bool {
 }
 
 /// index → 内部 chapterUrl：登记表/本地目录解析；URL 不出现在请求或响应里。
-async fn resolve_chapter_url(
+pub(crate) async fn resolve_chapter_url(
     state: &AppState,
     user_ns: &str,
     book_id: &str,

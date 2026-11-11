@@ -264,6 +264,20 @@ impl ImageService {
         }
     }
 
+    /// 评论配图变体收口（typed 版的 `rewrite_image_lists` 单格语义）：
+    /// 从同一张图的多个格式变体里挑一张能渲染的，登记后返回本站取图地址。
+    /// 挑不出/登记失败返回 None——调用方保留原数组（与 /reader3 行为一致）。
+    pub async fn pick_image_route(
+        &self,
+        urls: &[String],
+        kind: &str,
+        book_id: Option<&str>,
+    ) -> Option<String> {
+        let picked = pick_renderable(urls)?;
+        let id = self.register(kind, picked, book_id).await?;
+        Some(Self::route(&id))
+    }
+
     /// 按书删除其全部图片（记录 + 本体 + 派生图），返回删除的图片数。
     ///
     /// 目录即映射表：逐条读记录比对 book_id。只在删书/按书清缓存时调用，

@@ -328,6 +328,153 @@ paths:
       security:
       - cookieAuth: []
       - bearerAuth: []
+  /v1/books/{bookId}/chapters/{index}/comments:
+    get:
+      tags:
+      - books
+      summary: 章评 / 段评（`?para=`）；`?authorOnly=true` 忽略分页扫描作者评论。
+      operationId: getChapterComments
+      parameters:
+      - name: bookId
+        in: path
+        description: 书籍 id（book_<n>）
+        required: true
+        schema:
+          type: string
+      - name: index
+        in: path
+        description: 章节序号（登记表分配的稳定序号）
+        required: true
+        schema:
+          type: integer
+          format: int32
+      - name: para
+        in: query
+        description: 段号（>=0）：提供即查段评，缺省查章评
+        required: false
+        schema:
+          type: integer
+          format: int32
+      - name: page
+        in: query
+        description: 页码，从 1 起
+        required: false
+        schema:
+          type: integer
+          format: int32
+      - name: count
+        in: query
+        description: 每页条数，默认 20，上限 50
+        required: false
+        schema:
+          type: integer
+          format: int32
+      - name: sort
+        in: query
+        description: hot（默认）或 time
+        required: false
+        schema:
+          type: string
+      - name: authorOnly
+        in: query
+        description: 忽略分页扫描作者评论
+        required: false
+        schema:
+          type: boolean
+      - name: refresh
+        in: query
+        description: 忽略 7 天评论缓存重抓
+        required: false
+        schema:
+          type: boolean
+      - name: variant
+        in: query
+        description: edited（默认）或 upstream
+        required: false
+        schema:
+          type: string
+      responses:
+        '200':
+          description: 评论页（enabled=false 表示书源没声明评论规则）
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReviewResponse_ReviewPage'
+        '400':
+          description: para 取值非法
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '401':
+          description: 未登录或令牌失效
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '404':
+          description: 书籍或章节不存在
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+      security:
+      - cookieAuth: []
+      - bearerAuth: []
+  /v1/books/{bookId}/chapters/{index}/comments/index:
+    get:
+      tags:
+      - books
+      summary: 段评概览：本章哪些段落有段评、各有多少条。
+      operationId: getCommentIndex
+      parameters:
+      - name: bookId
+        in: path
+        description: 书籍 id（book_<n>）
+        required: true
+        schema:
+          type: string
+      - name: index
+        in: path
+        description: 章节序号
+        required: true
+        schema:
+          type: integer
+          format: int32
+      - name: refresh
+        in: query
+        description: 忽略缓存重抓
+        required: false
+        schema:
+          type: boolean
+      - name: variant
+        in: query
+        description: edited（默认）或 upstream
+        required: false
+        schema:
+          type: string
+      responses:
+        '200':
+          description: 段评概览
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReviewResponse_ParaReviewIndex'
+        '401':
+          description: 未登录或令牌失效
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '404':
+          description: 书籍或章节不存在
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+      security:
+      - cookieAuth: []
+      - bearerAuth: []
   /v1/books/{bookId}/chapters/{index}/content:
     get:
       tags:
@@ -375,6 +522,50 @@ paths:
             application/problem+json:
               schema:
                 $ref: '#/components/schemas/Problem'
+        '401':
+          description: 未登录或令牌失效
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '404':
+          description: 书籍或章节不存在
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+      security:
+      - cookieAuth: []
+      - bearerAuth: []
+  /v1/books/{bookId}/chapters/{index}/images:
+    get:
+      tags:
+      - books
+      summary: |-
+        本章配图（书源没声明配图规则时 `enabled: false`）；地址收口成单个
+        `/reader3/image/<id>`。
+      operationId: getChapterImages
+      parameters:
+      - name: bookId
+        in: path
+        description: 书籍 id（book_<n>）
+        required: true
+        schema:
+          type: string
+      - name: index
+        in: path
+        description: 章节序号
+        required: true
+        schema:
+          type: integer
+          format: int32
+      responses:
+        '200':
+          description: 配图列表
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ChapterImages'
         '401':
           description: 未登录或令牌失效
           content:
@@ -2153,6 +2344,55 @@ components:
           oneOf:
           - $ref: '#/components/schemas/ChapterVersionInfo'
           - type: 'null'
+    ChapterImage:
+      type: object
+      description: |-
+        章节里的一张配图。
+
+        两种来源汇到同一个结构：书源的配图规则（独立接口）解析出来的，
+        以及正文 HTML 里的 `<img>`（由前端直接渲染，不走这里）。
+      properties:
+        caption:
+          type: string
+          description: 图片下方的说明文字（番茄是「配图（画师：奈月Oo）」）。
+          default: ''
+        height:
+          type: integer
+          format: int32
+          default: 0
+        paraIndex:
+          type:
+          - integer
+          - 'null'
+          format: int32
+          description: |-
+            插入位置：正文按 `\n` 切分后的行号（从 0 开始，插在该行之前）。
+            取不到位置时为 `None`，前端排在章末。
+          default: null
+        url:
+          type: string
+          default: ''
+        width:
+          type: integer
+          format: int32
+          description: 原始宽高，给图片占位用；站点没给就是 0，前端按未知处理。
+          default: 0
+    ChapterImages:
+      type: object
+      description: |-
+        一章的配图列表。
+
+        `enabled` 说明书源有没有声明配图规则，前端据此决定要不要去请求；
+        「这一章没有配图」是 `enabled: true` + 空列表，不是错误。
+      properties:
+        enabled:
+          type: boolean
+          default: false
+        images:
+          type: array
+          items:
+            $ref: '#/components/schemas/ChapterImage'
+          default: []
     ChapterItem:
       type: object
       description: 章节条目：身份是 `index`（书籍内稳定序号，换源整表替换）。
@@ -2513,6 +2753,38 @@ components:
           type: string
         username:
           type: string
+    ParaReviewCount:
+      type: object
+      description: 段评概览里的一段：哪一段、有多少条、段落原文是什么。
+      properties:
+        authorCommented:
+          type: boolean
+          description: 该段有作者评论或点赞（概览接口的标记字段，书源没配规则时恒为 false）。
+          default: false
+        count:
+          type: integer
+          format: int64
+          default: 0
+        paraIndex:
+          type: integer
+          format: int32
+          description: 段号，等于正文按 `\n` 切分后的下标（从 0 开始）。
+          default: 0
+        text:
+          type: string
+          description: |-
+            段落原文（截断）。段号会因用户的书源替换规则、繁简转换而漂移，
+            前端拿它做兜底定位。
+          default: ''
+    ParaReviewIndex:
+      type: object
+      description: 段评概览。
+      properties:
+        paras:
+          type: array
+          items:
+            $ref: '#/components/schemas/ParaReviewCount'
+          default: []
     ParaReviewRule:
       type: object
       description: |-
@@ -2827,6 +3099,192 @@ components:
           - string
           - 'null'
       additionalProperties: false
+    ReviewItem:
+      type: object
+      description: |-
+        一条评论（章评或段评）。
+
+        字段全部由书源的评论规则解析而来，缺规则就是缺字段，前端按缺省渲染。
+      properties:
+        author:
+          type: boolean
+          description: 评论者是作者本人（书源没配规则时恒为 false）。
+          default: false
+        authorDigg:
+          type: boolean
+          description: 作者赞过这条评论（书源没配规则时恒为 false）。
+          default: false
+        avatar:
+          type: string
+          default: ''
+        content:
+          type: string
+          default: ''
+        digg:
+          type: integer
+          format: int64
+          default: 0
+        id:
+          type: string
+          default: ''
+        images:
+          type: array
+          items:
+            type: string
+          description: |-
+            评论配图。同一个图站点常给出多个变体（番茄会同时给 HEIC 与 JPEG），
+            顺序原样保留，由客户端挑自己能渲染的那一个。
+          default: []
+        name:
+          type: string
+          default: ''
+        replies:
+          type: array
+          items:
+            $ref: '#/components/schemas/ReviewReply'
+          default: []
+        replyCount:
+          type: integer
+          format: int64
+          default: 0
+        time:
+          type: string
+          description: |-
+            原始发布时间字符串。来源站点的格式五花八门，这里不做归一化，
+            前端只做展示；需要排序时用站点自己的顺序。
+          default: ''
+    ReviewPage:
+      type: object
+      description: 一页评论。
+      properties:
+        hasMore:
+          type: boolean
+          default: false
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/ReviewItem'
+          default: []
+        page:
+          type: integer
+          format: int32
+          default: 0
+        total:
+          type: integer
+          format: int64
+          description: 总条数；规则没给或取不到时为 `0`。
+          default: 0
+    ReviewReply:
+      type: object
+      description: 内联回复（评论下方直接展开的那几条）。
+      properties:
+        author:
+          type: boolean
+          description: 回复者是作者本人。
+          default: false
+        authorDigg:
+          type: boolean
+          description: 作者赞过这条回复。
+          default: false
+        content:
+          type: string
+          default: ''
+        images:
+          type: array
+          items:
+            type: string
+          description: |-
+            回复配图。同一张图站点常给多个格式变体，与评论配图同规则：
+            顺序保留，由客户端挑能渲染的。
+          default: []
+        name:
+          type: string
+          default: ''
+        replyTo:
+          type: string
+          description: 被回复者；为空表示直接回复评论本身。
+          default: ''
+        time:
+          type: string
+          default: ''
+    ReviewResponse_ParaReviewIndex:
+      type: object
+      description: |-
+        评论接口的响应体：把「书源支不支持」也告诉前端，
+        前端据此决定要不要渲染气泡与评论入口。
+      required:
+      - enabled
+      - serverSort
+      - authorMarks
+      - data
+      properties:
+        authorMarks:
+          type: boolean
+          description: |-
+            书源是否配了作者标记规则（`authorRule` 等四条之一）。
+            前端据此决定是否显示「只看作者」入口。
+        data:
+          type: object
+          description: 段评概览。
+          properties:
+            paras:
+              type: array
+              items:
+                $ref: '#/components/schemas/ParaReviewCount'
+              default: []
+        enabled:
+          type: boolean
+          description: 当前书源是否声明了对应的评论规则。
+        serverSort:
+          type: boolean
+          description: |-
+            书源的评论 URL 模板是否用到了 `{{sort}}`（即排序由站点自己做）。
+            为 `false` 时「最新」只能对已加载的条目重排，前端据此给出提示。
+    ReviewResponse_ReviewPage:
+      type: object
+      description: |-
+        评论接口的响应体：把「书源支不支持」也告诉前端，
+        前端据此决定要不要渲染气泡与评论入口。
+      required:
+      - enabled
+      - serverSort
+      - authorMarks
+      - data
+      properties:
+        authorMarks:
+          type: boolean
+          description: |-
+            书源是否配了作者标记规则（`authorRule` 等四条之一）。
+            前端据此决定是否显示「只看作者」入口。
+        data:
+          type: object
+          description: 一页评论。
+          properties:
+            hasMore:
+              type: boolean
+              default: false
+            items:
+              type: array
+              items:
+                $ref: '#/components/schemas/ReviewItem'
+              default: []
+            page:
+              type: integer
+              format: int32
+              default: 0
+            total:
+              type: integer
+              format: int64
+              description: 总条数；规则没给或取不到时为 `0`。
+              default: 0
+        enabled:
+          type: boolean
+          description: 当前书源是否声明了对应的评论规则。
+        serverSort:
+          type: boolean
+          description: |-
+            书源的评论 URL 模板是否用到了 `{{sort}}`（即排序由站点自己做）。
+            为 `false` 时「最新」只能对已加载的条目重排，前端据此给出提示。
     ReviewRule:
       type: object
       description: |-
