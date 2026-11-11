@@ -556,6 +556,7 @@ pub fn build_router(state: AppState) -> Router {
         .merge(super::v1::router(
             state.clone(),
             inbound_timeout,
+            upload_timeout,
             concurrency.clone(),
         ))
         .route("/reader3", any(handlers::api_not_found))

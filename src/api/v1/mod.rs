@@ -29,6 +29,8 @@ mod auth;
 mod books;
 mod cache;
 
+mod chapter_edits;
+mod chapter_imports;
 mod content;
 mod groups;
 mod marks;
@@ -44,6 +46,7 @@ mod sources;
 pub fn router(
     state: AppState,
     inbound_timeout: std::time::Duration,
+    upload_timeout: std::time::Duration,
     concurrency: Option<tower::limit::GlobalConcurrencyLimitLayer>,
 ) -> Router {
     let v1 = Router::new()
@@ -57,6 +60,7 @@ pub fn router(
         .merge(groups::router())
         .merge(marks::router())
         .merge(reviews::router())
+        .merge(chapter_edits::router())
         .merge(auth::authed_router())
         .route_layer(axum::middleware::from_fn_with_state(
             state.clone(),
@@ -75,15 +79,20 @@ pub fn router(
         Some(layer) => v1.layer(layer),
         None => v1,
     };
-    v1.layer(axum::middleware::from_fn(require_csrf))
-        .layer(axum::middleware::from_fn_with_state(
+    let v1 = v1.layer(axum::middleware::from_fn(require_csrf)).layer(
+        axum::middleware::from_fn_with_state(
             (
                 inbound_timeout,
                 crate::api::inbound_guard::TimeoutShape::Problem,
             ),
             crate::api::inbound_guard::timeout_middleware,
-        ))
-        .layer(axum::middleware::from_fn(attach_problem_trace))
+        ),
+    );
+    // 导入链（整本 TXT 预览/导入/分片上传）在 120s 超时与 1MB 体限之外
+    // merge：自带 900s 上传超时与 64MB 体限，鉴权与 CSRF 在子路由自含；
+    // trace 层在此之后挂，仍然包裹导入路由
+    let v1 = v1.merge(chapter_imports::router(state.clone(), upload_timeout));
+    v1.layer(axum::middleware::from_fn(attach_problem_trace))
         .with_state(state)
 }
 
@@ -96,7 +105,7 @@ pub async fn not_found() -> Problem {
 /// `/v1` 的强制鉴权：逻辑与 `auth::middleware::require_auth` 一致
 /// （同一套令牌校验与撤销检查），失败形态换成 problem+json。
 /// CSRF 头检查与 Cookie 语义调整随 auth 域切换落地，当前只挂 `/v1`。
-async fn require_auth(
+pub(crate) async fn require_auth(
     State(state): State<AppState>,
     mut request: Request,
     next: Next,
@@ -119,7 +128,7 @@ async fn require_auth(
 /// XMLHttpRequest`（跨站表单无法设置自定义头）。携带 `Authorization`
 /// 的请求豁免（Bearer 客户端不经 Cookie 会话，天然免疫 CSRF）。
 /// `SameSite=Lax` 挡掉跨站非 GET 的 Cookie 携带，这里补上第二道。
-async fn require_csrf(request: Request, next: Next) -> Response {
+pub(crate) async fn require_csrf(request: Request, next: Next) -> Response {
     let is_safe = matches!(
         *request.method(),
         axum::http::Method::GET | axum::http::Method::HEAD | axum::http::Method::OPTIONS
@@ -330,6 +339,23 @@ pub fn openapi_yaml() -> String {
         reviews::get_comments,
         reviews::get_comment_index,
         reviews::get_chapter_images,
+        chapter_edits::save_chapter_content,
+        chapter_edits::delete_chapter_content,
+        chapter_edits::get_chapter_edit,
+        chapter_edits::select_chapter_version,
+        chapter_edits::import_chapter_version,
+        chapter_edits::list_chapter_versions,
+        chapter_edits::get_chapter_version,
+        chapter_edits::get_chapter_version_diff,
+        chapter_edits::get_chapter_title,
+        chapter_edits::rename_chapter,
+        chapter_edits::restore_chapter_title,
+        chapter_edits::get_chapter_version_marks,
+        chapter_edits::reset_book_to_upstream,
+        chapter_imports::preview_chapter_import,
+        chapter_imports::import_chapter_text,
+        chapter_imports::upload_chapter_import_chunk,
+        chapter_imports::get_chapter_import_diff,
         auth::login,
         auth::refresh,
         auth::logout,
@@ -379,6 +405,24 @@ pub fn openapi_yaml() -> String {
         crate::model::review::ParaReviewCount,
         crate::model::chapter_image::ChapterImages,
         crate::model::chapter_image::ChapterImage,
+        chapter_edits::EditChapterRequest,
+        chapter_edits::ChapterWriteResult,
+        chapter_edits::ChapterTimelinePayload,
+        chapter_edits::ChapterTimelineItem,
+        chapter_edits::SelectChapterVersionRequest,
+        chapter_edits::ChapterSelectionPayload,
+        chapter_edits::ImportChapterRequest,
+        chapter_edits::ChapterImportResult,
+        chapter_edits::ChapterTitlePayload,
+        chapter_edits::RenameChapterRequest,
+        chapter_edits::ChapterVersionMarksPayload,
+        chapter_edits::ChapterVersionMarkEntry,
+        chapter_edits::ResetBookResult,
+        crate::api::handlers::chapter_edit::ChapterImportPreviewPayload,
+        crate::api::handlers::chapter_edit::ChapterImportPreviewItem,
+        crate::api::handlers::chapter_edit::ChapterImportOutcomePayload,
+        crate::api::handlers::chapter_edit::ChapterImportDiffPayload,
+        crate::api::handlers::chapter_import_upload::ChunkUploadPayload,
         crate::model::rule::SearchRule,
         crate::model::rule::BookInfoRule,
         crate::model::rule::TocRule,

@@ -17,7 +17,7 @@ use axum::{
 };
 use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
+use serde_json::Value;
 use std::io::SeekFrom;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -283,6 +283,28 @@ pub async fn upload_chapter_import_chunk(
     user: CurrentUser,
     multipart: Multipart,
 ) -> Result<Json<ApiResponse<Value>>, AppError> {
+    let payload = run_import_chunk_upload(&state, &user.0.ns, multipart).await?;
+    Ok(Json(ApiResponse::ok(
+        serde_json::to_value(payload).unwrap_or_default(),
+    )))
+}
+
+/// 分片上传结果（typed；线缆与 /reader3 逐字段一致）。
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct ChunkUploadPayload {
+    pub upload_id: String,
+    /// 服务端当前已收到的字节数（重发同一片时可能大于本次分片末尾）。
+    pub received: u64,
+    pub complete: bool,
+}
+
+/// 分片上传核心（v1 与 /reader3 共用）。
+pub(crate) async fn run_import_chunk_upload(
+    state: &AppState,
+    user_ns: &str,
+    multipart: Multipart,
+) -> Result<ChunkUploadPayload, AppError> {
     let req = read_chunk_request(multipart).await?;
     let chunk = req
         .chunk
@@ -291,7 +313,7 @@ pub async fn upload_chapter_import_chunk(
         return Err(AppError::BadRequest("分片不能为空".to_string()));
     }
     let offset = req.offset.unwrap_or(0);
-    let dir = user_dir(&state, &user.0.ns);
+    let dir = user_dir(state, user_ns);
     fs::create_dir_all(&dir)
         .await
         .map_err(|error| AppError::Internal(anyhow::anyhow!("创建上传目录失败: {error}")))?;
@@ -315,7 +337,7 @@ pub async fn upload_chapter_import_chunk(
             &dir,
             &upload_id,
             &UploadMeta {
-                user_ns: user.0.ns.clone(),
+                user_ns: user_ns.to_string(),
                 total,
                 created_at: now_millis(),
             },
@@ -335,11 +357,11 @@ pub async fn upload_chapter_import_chunk(
             .await
             .map_err(|error| AppError::Internal(anyhow::anyhow!("写入分片失败: {error}")))?;
         let received = chunk.len() as u64;
-        return Ok(Json(ApiResponse::ok(json!({
-            "uploadId": upload_id,
-            "received": received,
-            "complete": received == total,
-        }))));
+        return Ok(ChunkUploadPayload {
+            upload_id,
+            received,
+            complete: received == total,
+        });
     }
 
     let upload_id = req
@@ -351,15 +373,15 @@ pub async fn upload_chapter_import_chunk(
     let lock = UPLOAD_LOCKS.acquire(&upload_id);
     let result = {
         let _guard = lock.lock().await;
-        write_chunk(&dir, &user.0.ns, &upload_id, offset, &chunk, req.file_size).await
+        write_chunk(&dir, user_ns, &upload_id, offset, &chunk, req.file_size).await
     };
     UPLOAD_LOCKS.release(&upload_id, &lock);
     let (received, total) = result?;
-    Ok(Json(ApiResponse::ok(json!({
-        "uploadId": upload_id,
-        "received": received,
-        "complete": received == total,
-    }))))
+    Ok(ChunkUploadPayload {
+        upload_id,
+        received,
+        complete: received == total,
+    })
 }
 
 /// 读取 `uploadId` 对应的完整文件；预览/导入共用。

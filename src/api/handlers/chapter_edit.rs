@@ -241,7 +241,7 @@ pub struct ChapterTitleOverrideQuery {
 /// 目录原标题（不套覆盖；目录未缓存时为空串）。注意不走上层
 /// get_chapter_list：改名查询不应触发网络抓取。本地书没有目录缓存文件，
 /// 直接读本地章节表（纯本地数据，无网络请求）。
-async fn original_toc_title(
+pub(crate) async fn original_toc_title(
     state: &AppState,
     user_ns: &str,
     resolved: &super::book::ResolvedBook,
@@ -668,37 +668,37 @@ pub async fn import_chapter_version(
 // ── 单章 / 整本 TXT 导入 ──────────────────────────────────────────────
 
 #[derive(Debug, Default)]
-struct ChapterImportRequest {
-    book_id: String,
-    mode: ImportMode,
-    chapter_url: String,
-    chapter_index: i32,
-    chapter_title: String,
-    kind: String,
-    note: String,
-    make_current: bool,
-    created_at: Option<i64>,
+pub(crate) struct ChapterImportRequest {
+    pub(crate) book_id: String,
+    pub(crate) mode: ImportMode,
+    pub(crate) chapter_url: String,
+    pub(crate) chapter_index: i32,
+    pub(crate) chapter_title: String,
+    pub(crate) kind: String,
+    pub(crate) note: String,
+    pub(crate) make_current: bool,
+    pub(crate) created_at: Option<i64>,
     /// 为空表示「全选已匹配章节」；这个字段本身不出现时也是全选。
-    selected_indexes: Option<Vec<i32>>,
+    pub(crate) selected_indexes: Option<Vec<i32>>,
     /// 导入后是否把 TXT 解析出的章节名写进标题覆盖层（默认 true）。
-    apply_titles: Option<bool>,
+    pub(crate) apply_titles: Option<bool>,
     /// 导入时带上预览令牌：直接复用预览暂存的切章/匹配结果，不再上传正文。
-    preview_id: String,
+    pub(crate) preview_id: String,
     /// 自适应分片上传的令牌：服务端已把分片拼成完整文件，直接按文件读取。
-    upload_id: String,
-    text: String,
+    pub(crate) upload_id: String,
+    pub(crate) text: String,
     /// 前端声明的文件字节数（原始文件大小）。
     ///
     /// 反向代理把 multipart 重新拼装后，截断的正文仍然是「合法」的请求，
     /// 单看字段内容无法发现；用这个值核对实际收到的字节数，避免静默导入
     /// 半本书。
-    file_size: Option<u64>,
-    file_bytes: Option<Vec<u8>>,
+    pub(crate) file_size: Option<u64>,
+    pub(crate) file_bytes: Option<Vec<u8>>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize, utoipa::ToSchema)]
 #[serde(rename_all = "camelCase")]
-struct ChapterImportPreviewItem {
+pub(crate) struct ChapterImportPreviewItem {
     source_index: i32,
     title: String,
     chars: usize,
@@ -844,7 +844,7 @@ pub struct ChapterImportDiffQuery {
 /// 它只是索引列表，不是正文，不能套用小参数（8KB）或 TXT 的 50MB 上限。
 const MAX_SELECTED_INDEXES_BYTES: usize = 1024 * 1024;
 
-async fn read_chapter_import_request(
+pub(crate) async fn read_chapter_import_request(
     mut multipart: Multipart,
 ) -> Result<ChapterImportRequest, AppError> {
     let mut req = ChapterImportRequest {
@@ -1073,11 +1073,28 @@ fn preview_from_match(
     }
 }
 
-fn preview_response(
+/// 预览响应（typed；线缆与 /reader3 的 preview_response 逐字段一致）。
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct ChapterImportPreviewPayload {
+    pub mode: String,
+    pub total: usize,
+    pub matched: usize,
+    pub unmatched: usize,
+    pub empty: usize,
+    pub changed: usize,
+    pub cached: usize,
+    pub uncached: usize,
+    /// 正文过大时为空（此时导入需重新上传正文）
+    pub preview_id: Option<String>,
+    pub chapters: Vec<ChapterImportPreviewItem>,
+}
+
+fn preview_payload(
     mode: ImportMode,
     items: &[ChapterImportPreviewItem],
     preview_id: Option<String>,
-) -> Value {
+) -> ChapterImportPreviewPayload {
     let matched = items.iter().filter(|item| item.status == "matched").count();
     let empty = items.iter().filter(|item| item.status == "empty").count();
     let changed = items
@@ -1088,18 +1105,38 @@ fn preview_response(
         .iter()
         .filter(|item| item.status == "matched" && item.cached)
         .count();
-    json!({
-        "mode": mode.as_str(),
-        "total": items.len(),
-        "matched": matched,
-        "unmatched": items.len() - matched - empty,
-        "empty": empty,
-        "changed": changed,
-        "cached": cached,
-        "uncached": matched.saturating_sub(cached),
-        "previewId": preview_id,
-        "chapters": items,
-    })
+    ChapterImportPreviewPayload {
+        mode: mode.as_str().to_string(),
+        total: items.len(),
+        matched,
+        unmatched: items.len() - matched - empty,
+        empty,
+        changed,
+        cached,
+        uncached: matched.saturating_sub(cached),
+        preview_id,
+        chapters: items.to_vec(),
+    }
+}
+
+/// 导入结果（typed；线缆与 /reader3 逐字段一致）。
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct ChapterImportOutcomePayload {
+    pub mode: String,
+    pub selected: usize,
+    pub imported: usize,
+    pub unchanged: usize,
+    pub skipped: usize,
+    pub titled: usize,
+    pub failed: usize,
+    pub errors: Vec<String>,
+}
+
+/// 一次导入运行的产物：预览（commit=false）或导入结果（commit=true）。
+pub(crate) enum ChapterImportPayload {
+    Preview(ChapterImportPreviewPayload),
+    Outcome(ChapterImportOutcomePayload),
 }
 
 fn readable_error(error: &AppError) -> String {
@@ -1117,13 +1154,14 @@ fn readable_error(error: &AppError) -> String {
     }
 }
 
-async fn handle_chapter_import(
+/// 导入核心（v1 与 /reader3 共用）：解析 multipart 表单、切章匹配、
+/// （commit 时）批量写入。`req.book_id` 由调用方校验非空。
+pub(crate) async fn run_chapter_import(
     state: AppState,
-    user: CurrentUser,
-    multipart: Multipart,
+    user_ns: &str,
+    mut req: ChapterImportRequest,
     commit: bool,
-) -> Result<Json<ApiResponse<Value>>, AppError> {
-    let mut req = read_chapter_import_request(multipart).await?;
+) -> Result<ChapterImportPayload, AppError> {
     if req.book_id.trim().is_empty() {
         return Err(AppError::BadRequest("bookId required".to_string()));
     }
@@ -1137,16 +1175,12 @@ async fn handle_chapter_import(
             "版本备注过长（最多 2000 字节）".to_string(),
         ));
     }
-    let resolved = resolve_book_checked(&state, &user.0.ns, &req.book_id).await?;
+    let resolved = resolve_book_checked(&state, user_ns, &req.book_id).await?;
 
     // 导入带 previewId 时直接复用预览暂存的切章/匹配结果（含正文），
     // 不再要求 file/text；不带 previewId 的旧调用方式照旧重新解析文本。
     let reused = if commit && !req.preview_id.trim().is_empty() {
-        Some(load_import_preview(
-            &req.preview_id,
-            &user.0.ns,
-            &req.book_id,
-        )?)
+        Some(load_import_preview(&req.preview_id, user_ns, &req.book_id)?)
     } else {
         None
     };
@@ -1219,7 +1253,7 @@ async fn handle_chapter_import(
                 }
                 let bytes = super::chapter_import_upload::load_import_upload(
                     &state,
-                    &user.0.ns,
+                    user_ns,
                     req.upload_id.trim(),
                 )
                 .await?;
@@ -1245,7 +1279,7 @@ async fn handle_chapter_import(
             } else {
                 state
                     .chapter_content_service
-                    .effective_normalized_hashes(&user.0.ns, &req.book_id)
+                    .effective_normalized_hashes(user_ns, &req.book_id)
                     .await?
             };
 
@@ -1297,7 +1331,7 @@ async fn handle_chapter_import(
                 });
                 contents.push(source.content);
             } else {
-                let toc = load_book_chapters(&state, &user.0.ns, &req.book_id, &resolved).await?;
+                let toc = load_book_chapters(&state, user_ns, &req.book_id, &resolved).await?;
                 let matched = match_chapters(&parsed, &toc);
                 for item in &matched {
                     let current = item
@@ -1311,10 +1345,10 @@ async fn handle_chapter_import(
 
             if !commit {
                 let preview_id =
-                    store_import_preview(&user.0.ns, &req.book_id, mode, &items, contents);
-                return Ok(Json(ApiResponse::ok(preview_response(
+                    store_import_preview(user_ns, &req.book_id, mode, &items, contents);
+                return Ok(ChapterImportPayload::Preview(preview_payload(
                     mode, &items, preview_id,
-                ))));
+                )));
             }
             (mode, items, contents)
         }
@@ -1386,7 +1420,7 @@ async fn handle_chapter_import(
     let outcomes = state
         .chapter_content_service
         .save_user_versions_batch(
-            &user.0.ns,
+            user_ns,
             &req.book_id,
             &req.kind,
             &batch,
@@ -1412,16 +1446,16 @@ async fn handle_chapter_import(
             }
         }
     }
-    Ok(Json(ApiResponse::ok(json!({
-        "mode": mode.as_str(),
-        "selected": selected_total,
-        "imported": imported,
-        "unchanged": unchanged,
-        "skipped": skipped,
-        "titled": titled,
-        "failed": failed,
-        "errors": errors,
-    }))))
+    Ok(ChapterImportPayload::Outcome(ChapterImportOutcomePayload {
+        mode: mode.as_str().to_string(),
+        selected: selected_total,
+        imported,
+        unchanged,
+        skipped,
+        titled,
+        failed,
+        errors,
+    }))
 }
 
 /// 预览单章 / 整本 TXT 的解析与匹配结果，不写库。
@@ -1430,7 +1464,15 @@ pub async fn preview_chapter_import(
     user: CurrentUser,
     multipart: Multipart,
 ) -> Result<Json<ApiResponse<Value>>, AppError> {
-    handle_chapter_import(state, user, multipart, false).await
+    let req = read_chapter_import_request(multipart).await?;
+    match run_chapter_import(state, &user.0.ns, req, false).await? {
+        ChapterImportPayload::Preview(payload) => Ok(Json(ApiResponse::ok(
+            serde_json::to_value(payload).unwrap_or_default(),
+        ))),
+        ChapterImportPayload::Outcome(_) => {
+            unreachable!("preview 分支不会返回导入结果")
+        }
+    }
 }
 
 /// 按预览结果批量导入。`selectedIndexes` 为空表示导入全部已匹配章节。
@@ -1439,7 +1481,15 @@ pub async fn import_chapter_text(
     user: CurrentUser,
     multipart: Multipart,
 ) -> Result<Json<ApiResponse<Value>>, AppError> {
-    handle_chapter_import(state, user, multipart, true).await
+    let req = read_chapter_import_request(multipart).await?;
+    match run_chapter_import(state, &user.0.ns, req, true).await? {
+        ChapterImportPayload::Outcome(payload) => Ok(Json(ApiResponse::ok(
+            serde_json::to_value(payload).unwrap_or_default(),
+        ))),
+        ChapterImportPayload::Preview(_) => {
+            unreachable!("import 分支不会返回预览")
+        }
+    }
 }
 
 /// 预览里点开某一章时，按需算它和当前正文章节的差异。
@@ -1450,7 +1500,32 @@ pub async fn get_chapter_import_diff(
     user: CurrentUser,
     QueryOrBody(req): QueryOrBody<ChapterImportDiffQuery>,
 ) -> Result<Json<ApiResponse<Value>>, AppError> {
-    let preview_id = req.preview_id.trim();
+    let payload =
+        chapter_import_diff_payload(&state, &user.0.ns, &req.preview_id, req.source_index).await?;
+    Ok(Json(ApiResponse::ok(
+        serde_json::to_value(payload).unwrap_or_default(),
+    )))
+}
+
+/// 导入详情差异（typed；线缆与 /reader3 逐字段一致）。
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct ChapterImportDiffPayload {
+    pub changed: Option<bool>,
+    pub ops: Option<Vec<crate::service::chapter_diff_service::DiffOp>>,
+    pub diff_error: String,
+    pub current_excerpt: String,
+    pub current_chars: Option<usize>,
+    pub import_chars: usize,
+}
+
+pub(crate) async fn chapter_import_diff_payload(
+    state: &AppState,
+    user_ns: &str,
+    preview_id: &str,
+    source_index: i32,
+) -> Result<ChapterImportDiffPayload, AppError> {
+    let preview_id = preview_id.trim();
     if preview_id.is_empty() {
         return Err(AppError::BadRequest("previewId required".to_string()));
     }
@@ -1463,13 +1538,13 @@ pub async fn get_chapter_import_diff(
         let entry = cache
             .get(preview_id)
             .ok_or_else(|| AppError::NotFound("预览已过期，请重新解析".to_string()))?;
-        if entry.user_ns != user.0.ns {
+        if entry.user_ns != user_ns {
             return Err(AppError::NotFound("预览已过期，请重新解析".to_string()));
         }
         let chapter = entry
             .chapters
             .iter()
-            .find(|chapter| chapter.source_index == req.source_index)
+            .find(|chapter| chapter.source_index == source_index)
             .ok_or_else(|| AppError::BadRequest("章节不存在".to_string()))?;
         (
             entry.book_id.clone(),
@@ -1479,40 +1554,40 @@ pub async fn get_chapter_import_diff(
     };
     let import_chars = incoming.chars().count();
     let Some(chapter_url) = chapter_url else {
-        return Ok(Json(ApiResponse::ok(json!({
-            "changed": Value::Null,
-            "ops": Value::Null,
-            "diffError": "这一章没有匹配到目录，无法对比",
-            "currentExcerpt": "",
-            "currentChars": Value::Null,
-            "importChars": import_chars,
-        }))));
+        return Ok(ChapterImportDiffPayload {
+            changed: None,
+            ops: None,
+            diff_error: "这一章没有匹配到目录，无法对比".to_string(),
+            current_excerpt: String::new(),
+            current_chars: None,
+            import_chars,
+        });
     };
     let Some(current) = state
         .chapter_content_service
-        .resolve(&user.0.ns, &book_id, &chapter_url, false)
+        .resolve(user_ns, &book_id, &chapter_url, false)
         .await?
     else {
-        return Ok(Json(ApiResponse::ok(json!({
-            "changed": Value::Null,
-            "ops": Value::Null,
-            "diffError": "本章还没有缓存正文，无法对比；建议先缓存全书",
-            "currentExcerpt": "",
-            "currentChars": Value::Null,
-            "importChars": import_chars,
-        }))));
+        return Ok(ChapterImportDiffPayload {
+            changed: None,
+            ops: None,
+            diff_error: "本章还没有缓存正文，无法对比；建议先缓存全书".to_string(),
+            current_excerpt: String::new(),
+            current_chars: None,
+            import_chars,
+        });
     };
     let current_chars = current.content.chars().count();
     let current_excerpt = excerpt_of(&current.content);
     if normalized_content_hash(&current.content) == normalized_content_hash(&incoming) {
-        return Ok(Json(ApiResponse::ok(json!({
-            "changed": false,
-            "ops": [],
-            "diffError": "",
-            "currentExcerpt": current_excerpt,
-            "currentChars": current_chars,
-            "importChars": import_chars,
-        }))));
+        return Ok(ChapterImportDiffPayload {
+            changed: Some(false),
+            ops: Some(Vec::new()),
+            diff_error: String::new(),
+            current_excerpt,
+            current_chars: Some(current_chars),
+            import_chars,
+        });
     }
     let (ops, diff_error) = match state
         .chapter_diff_service
@@ -1523,12 +1598,12 @@ pub async fn get_chapter_import_diff(
         Ok(ops) => (Some(ops), String::new()),
         Err(reason) => (None, reason.to_string()),
     };
-    Ok(Json(ApiResponse::ok(json!({
-        "changed": true,
-        "ops": ops,
-        "diffError": diff_error,
-        "currentExcerpt": current_excerpt,
-        "currentChars": current_chars,
-        "importChars": import_chars,
-    }))))
+    Ok(ChapterImportDiffPayload {
+        changed: Some(true),
+        ops,
+        diff_error,
+        current_excerpt,
+        current_chars: Some(current_chars),
+        import_chars,
+    })
 }

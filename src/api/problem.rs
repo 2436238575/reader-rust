@@ -47,6 +47,8 @@ pub enum ErrorCode {
     BookNotFound,
     /// 章节不存在
     ChapterNotFound,
+    /// 本章没有编辑版本
+    ChapterEditNotFound,
     /// 书源不存在
     SourceNotFound,
     /// 图片不存在
@@ -107,6 +109,7 @@ impl ErrorCode {
             Self::CsrfHeaderMissing | Self::ScopeForbidden => StatusCode::FORBIDDEN,
             Self::BookNotFound
             | Self::ChapterNotFound
+            | Self::ChapterEditNotFound
             | Self::SourceNotFound
             | Self::ImageNotFound
             | Self::TaskNotFound
@@ -144,6 +147,7 @@ impl ErrorCode {
             Self::ScopeForbidden => "Scope Forbidden",
             Self::BookNotFound => "Book Not Found",
             Self::ChapterNotFound => "Chapter Not Found",
+            Self::ChapterEditNotFound => "Chapter Edit Not Found",
             Self::SourceNotFound => "Source Not Found",
             Self::ImageNotFound => "Image Not Found",
             Self::TaskNotFound => "Task Not Found",
