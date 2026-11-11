@@ -6,7 +6,7 @@ fn default_kind() -> String {
     "bookmark".to_string()
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(utoipa::ToSchema, Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(default, rename_all = "camelCase")]
 pub struct Bookmark {
     /// 所属书籍的 bookId（`book_<n>`）。书签身份 = (bookId, chapterIndex, chapterPos, kind)，

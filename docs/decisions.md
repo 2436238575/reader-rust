@@ -147,3 +147,11 @@ goal 执行中遇到「决策表与 spec 都沉默」的问题时，按 §5.4 �
 - **请求体是源材料**：走 `book_source_from_value` 的宽松迁移（legado 旧字段名 `enable`/`serialNumber` 等兼容），不做 strict——导入材料带附加字段是常态，这与 replace-rules 的 strict 是两个刻意的不同（D16 的例外，已记录）。
 - **偏差**：契约的 `POST /v1/sources` 带 `Idempotency-Key` + `Location`、`:import`/`:test`/`:login` 202 Task、`PUT /v1/sources/{id}`——任务子系统（P2）落地前不交付；前端编辑保存走 POST upsert（r3 语义）。`PATCH /v1/sources/{id}`（轻量启停）随启停域迁移。`parseSourceId`/`buildSourceId` 仍留在 api 适配层：列表/详情的旧消费组件还吃数字 id，全面换 v1 类型时删除。
 - **repo 语义补强**：`book_sources` 的 `delete_by_id`/`delete_all` 返回删除行数（v1 批量计数用），r3 调用点不受影响。
+
+## 2026-11-11 书签/分组域切 v1
+
+- **书签（marks）**：`GET /v1/me/marks?bookId=`、`POST /v1/me/marks`（同身份覆盖）、`POST /v1/me/marks:batch`（WebDAV 恢复，单事务；指向未登记书的条目跳过并计 `skipped`）、`POST /v1/me/marks:batchDelete`（按身份五元组，幂等计删除数）。**偏差**：审计里的 `DELETE /v1/me/marks/{id}` 没有可实现的自然 id——书签身份是五元组（无 id 列），单删并入 `:batchDelete` 单条复用。`POST /v1/me/marks` 对未登记书返回 404 BOOK_NOT_FOUND（r3 同义）。
+- **分组**：`GET /v1/me/groups`、`POST /v1/me/groups`（`groupId=0` 新建分配空位幂，非 0 合法幂位更新）、`PATCH /v1/me/groups:order`（只改顺序）、`DELETE /v1/me/groups/{groupId}`（组行 + 书籍位掩码清位，幂等）。分组语义与 `/reader3` 完全一致（save_group 的幂位分配与 reorder 的只改序都直接复用 service）。
+- **书架 PATCH 补 `group` 字段**：单本书的分组归属从 r3 `saveBookGroupId` 迁到 `PATCH /v1/me/shelf/{bookId}` 的 merge-patch（`group: 0` = 移出全部分组；非 0 必须是已存在的合法幂位，否则 422 带 `/group` pointer）。`group` 与 `progress` 相互独立，只传其一；仅改分组不刷新最近阅读时间。审计里的 `PUT /v1/me/groups/{id}/books`（整体替换成员）与 `:batchAssign` 未交付（前端无此调用）。
+- **userdata（getUserdataBatch/saveUserdataBatch）不迁**：契约把 userdata 文档替换为 `/v1/me/stats`（服务端从进度派生，D9 read_events）——那是产品语义重设计，不是端点翻译，单独批次拍板后再做。
+- `bookmarks` repo 的 `delete` 返回是否删行（v1 批量计数用），r3 调用点不受影响。

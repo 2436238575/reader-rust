@@ -1083,6 +1083,7 @@ impl BookmarkRepo {
         Ok(())
     }
 
+    /// 按身份五元组删除；返回是否真的删除了行（v1 批量删除的计数用）。
     pub async fn delete(
         &self,
         user_ns: &str,
@@ -1090,12 +1091,12 @@ impl BookmarkRepo {
         chapter_index: i32,
         chapter_pos: i32,
         kind: &str,
-    ) -> Result<(), AppError> {
+    ) -> Result<bool, AppError> {
         let Some(id) = parse_book_id(book_id) else {
-            return Ok(());
+            return Ok(false);
         };
         let kind = if kind.is_empty() { "bookmark" } else { kind };
-        sqlx::query(
+        let result = sqlx::query(
             "DELETE FROM bookmarks WHERE user_ns=?1 AND book_id=?2 AND chapter_index=?3 AND chapter_pos=?4 AND kind=?5",
         )
         .bind(user_ns)
@@ -1105,7 +1106,7 @@ impl BookmarkRepo {
         .bind(kind)
         .execute(&self.pool)
         .await?;
-        Ok(())
+        Ok(result.rows_affected() > 0)
     }
 
     /// 删书级联：一句 DELETE，不再加载整个文档过滤。

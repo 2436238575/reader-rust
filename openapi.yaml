@@ -529,6 +529,261 @@ paths:
       security:
       - cookieAuth: []
       - bearerAuth: []
+  /v1/me/groups:
+    get:
+      tags:
+      - me
+      summary: 全部分组（按 orderNo 排序）。
+      operationId: listBookGroups
+      responses:
+        '200':
+          description: 分组列表
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/BookGroup'
+        '401':
+          description: 未登录或令牌失效
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+      security:
+      - cookieAuth: []
+      - bearerAuth: []
+    post:
+      tags:
+      - me
+      summary: 新建（`groupId=0`，服务端分配空位幂）或更新（非 0 合法幂位）。
+      operationId: saveBookGroup
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BookGroup'
+        required: true
+      responses:
+        '204':
+          description: 已保存
+        '400':
+          description: groupId 非法或分组已达上限
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '401':
+          description: 未登录或令牌失效
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+      security:
+      - cookieAuth: []
+      - bearerAuth: []
+  /v1/me/groups/{groupId}:
+    delete:
+      tags:
+      - me
+      summary: 删组：组行与书籍位掩码里的对应位一起清（幂等）。
+      operationId: deleteBookGroup
+      parameters:
+      - name: groupId
+        in: path
+        description: 分组 id（2 的幂）
+        required: true
+        schema:
+          type: integer
+          format: int64
+      responses:
+        '204':
+          description: 已删除（幂等）
+        '400':
+          description: groupId 非法（非 2 的幂）
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '401':
+          description: 未登录或令牌失效
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+      security:
+      - cookieAuth: []
+      - bearerAuth: []
+  /v1/me/groups:order:
+    patch:
+      tags:
+      - me
+      summary: 分组排序：只改 orderNo，未提交的分组保持原值（不删组、不改名）。
+      operationId: reorderBookGroups
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: array
+              items:
+                $ref: '#/components/schemas/BookGroupOrderItem'
+        required: true
+      responses:
+        '204':
+          description: 已保存
+        '400':
+          description: 空数组 / 重复 groupId / 非法幂位 / 组不存在
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '401':
+          description: 未登录或令牌失效
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+      security:
+      - cookieAuth: []
+      - bearerAuth: []
+  /v1/me/marks:
+    get:
+      tags:
+      - me
+      summary: 全部书签与划线（按保存顺序）；`?bookId=` 过滤单本。
+      operationId: listMarks
+      parameters:
+      - name: bookId
+        in: query
+        description: 按书籍过滤；缺省全部
+        required: false
+        schema:
+          type: string
+      responses:
+        '200':
+          description: 书签列表
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Bookmark'
+        '401':
+          description: 未登录或令牌失效
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+      security:
+      - cookieAuth: []
+      - bearerAuth: []
+    post:
+      tags:
+      - me
+      summary: 保存单个书签/划线（同身份覆盖）。
+      operationId: saveMark
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Bookmark'
+        required: true
+      responses:
+        '204':
+          description: 已保存
+        '400':
+          description: bookId 缺失
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '401':
+          description: 未登录或令牌失效
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '404':
+          description: 书籍不存在
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+      security:
+      - cookieAuth: []
+      - bearerAuth: []
+  /v1/me/marks:batch:
+    post:
+      tags:
+      - me
+      summary: 批量保存（WebDAV 恢复）：单事务；指向未登记书籍的条目跳过并计数。
+      operationId: saveMarksBatch
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: array
+              items:
+                $ref: '#/components/schemas/Bookmark'
+        required: true
+      responses:
+        '200':
+          description: 保存/跳过条数
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BatchSaveMarksResult'
+        '400':
+          description: 批量为空或超上限
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '401':
+          description: 未登录或令牌失效
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+      security:
+      - cookieAuth: []
+      - bearerAuth: []
+  /v1/me/marks:batchDelete:
+    post:
+      tags:
+      - me
+      summary: 批量删除（按身份五元组；幂等，不存在的忽略）。单个删除也走这里。
+      operationId: deleteMarksBatch
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: array
+              items:
+                $ref: '#/components/schemas/Bookmark'
+        required: true
+      responses:
+        '200':
+          description: 删除条数
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BatchDeleteMarksResult'
+        '400':
+          description: 批量为空或超上限
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '401':
+          description: 未登录或令牌失效
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+      security:
+      - cookieAuth: []
+      - bearerAuth: []
   /v1/me/replace-rules:
     get:
       tags:
@@ -844,6 +1099,7 @@ paths:
       description: |-
         未提供 `chapterTitle` 且章节切换时，标题从章节登记表解析；
         `lastReadAt` 服务端写——客户端时间不参与比较（契约 §5.2）。
+        `group` 与 `progress` 相互独立，可只传其一。
       operationId: patchShelfBook
       parameters:
       - name: bookId
@@ -1255,6 +1511,15 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/BatchContentItem'
+    BatchDeleteMarksResult:
+      type: object
+      required:
+      - deleted
+      properties:
+        deleted:
+          type: integer
+          format: int32
+          minimum: 0
     BatchDeleteRequest:
       type: object
       required:
@@ -1283,6 +1548,21 @@ components:
         deleted:
           type: integer
           format: int32
+          minimum: 0
+    BatchSaveMarksResult:
+      type: object
+      required:
+      - saved
+      - skipped
+      properties:
+        saved:
+          type: integer
+          format: int32
+          minimum: 0
+        skipped:
+          type: integer
+          format: int32
+          description: 指向未登记书籍的条目被跳过（没有归属信息，存进去只会在 id 复用时串书）
           minimum: 0
     BatchUpsertRequest:
       type: object
@@ -1367,6 +1647,38 @@ components:
           format: int32
           description: 章节登记表的章节数（目录未抓时缺省）
           minimum: 0
+    BookGroup:
+      type: object
+      required:
+      - groupName
+      properties:
+        groupId:
+          type: integer
+          format: int64
+        groupName:
+          type: string
+        orderNo:
+          type: integer
+          format: int32
+    BookGroupOrderItem:
+      type: object
+      description: |-
+        分组排序的单条提交项（`POST /reader3/saveBookGroupOrder`）。
+
+        排序接口**只改顺序**：不带 `groupName`，因此调用方不可能借排序接口
+        改名/建组/删组——增删改的唯一入口是 `/saveBookGroup` 与
+        `/deleteBookGroup`。旧版用整表 `Vec<BookGroup>` 覆盖，不在数组里的组
+        会被删除并清掉书上的位，一个「上下移」的误提交就能丢掉分组。
+      required:
+      - groupId
+      - orderNo
+      properties:
+        groupId:
+          type: integer
+          format: int64
+        orderNo:
+          type: integer
+          format: int32
     BookInfoRule:
       type: object
       properties:
@@ -1625,6 +1937,47 @@ components:
           - 'null'
           format: int32
           default: null
+    Bookmark:
+      type: object
+      properties:
+        bookAuthor:
+          type: string
+          default: ''
+        bookId:
+          type: string
+          description: |-
+            所属书籍的 bookId（`book_<n>`）。书签身份 = (bookId, chapterIndex, chapterPos, kind)，
+            一本书可有多条；bookName/bookAuthor 只是展示快照，不参与判等。
+          default: ''
+        bookName:
+          type: string
+          default: ''
+        bookText:
+          type: string
+          default: ''
+        chapterIndex:
+          type: integer
+          format: int32
+          default: 0
+        chapterName:
+          type: string
+          default: ''
+        chapterPos:
+          type: integer
+          format: int32
+          description: 万分比章内进度（0–10000）：章书签恒 0，划线取收藏那一刻的章内进度。
+          default: 0
+        content:
+          type: string
+          default: ''
+        kind:
+          type: string
+          description: 类型：`bookmark` 章书签 / `underline` 划线（选文字收藏）。
+          default: ''
+        time:
+          type: integer
+          format: int64
+          default: 0
     CacheLayerUsage:
       type: object
       description: 单层缓存的占用统计（v1 与 /reader3 共用同一形状）。
@@ -2861,6 +3214,14 @@ components:
     ShelfPatch:
       type: object
       properties:
+        group:
+          type:
+          - integer
+          - 'null'
+          format: int64
+          description: |-
+            分组位掩码单值（2 的幂；0 = 移出全部分组）。对应 /reader3 的
+            saveBookGroupId；组本身的管理走 /v1/me/groups
         progress:
           oneOf:
           - $ref: '#/components/schemas/ProgressPatch'

@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(utoipa::ToSchema, Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct BookGroup {
     #[serde(default)]
@@ -16,7 +16,7 @@ pub struct BookGroup {
 /// 改名/建组/删组——增删改的唯一入口是 `/saveBookGroup` 与
 /// `/deleteBookGroup`。旧版用整表 `Vec<BookGroup>` 覆盖，不在数组里的组
 /// 会被删除并清掉书上的位，一个「上下移」的误提交就能丢掉分组。
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(utoipa::ToSchema, Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct BookGroupOrderItem {
     pub group_id: i64,

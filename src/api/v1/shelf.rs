@@ -235,6 +235,9 @@ pub struct ShelfWriteResult {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ShelfPatch {
     pub progress: Option<ProgressPatch>,
+    /// 分组位掩码单值（2 的幂；0 = 移出全部分组）。对应 /reader3 的
+    /// saveBookGroupId；组本身的管理走 /v1/me/groups
+    pub group: Option<i64>,
 }
 
 #[derive(Debug, Deserialize, ToSchema)]
@@ -250,6 +253,7 @@ pub struct ProgressPatch {
 ///
 /// 未提供 `chapterTitle` 且章节切换时，标题从章节登记表解析；
 /// `lastReadAt` 服务端写——客户端时间不参与比较（契约 §5.2）。
+/// `group` 与 `progress` 相互独立，可只传其一。
 #[utoipa::path(
     patch,
     path = "/v1/me/shelf/{bookId}",
@@ -271,9 +275,46 @@ pub async fn patch_shelf_book(
     Path(book_id): Path<String>,
     V1Json(patch): V1Json<ShelfPatch>,
 ) -> Result<StatusCode, Problem> {
-    let Some(progress) = patch.progress else {
+    if patch.progress.is_none() && patch.group.is_none() {
         // merge-patch 空体：合法但无事可做
         return Ok(StatusCode::NO_CONTENT);
+    }
+    // 分组字段：非 0 必须是已存在的合法幂位（0 = 移出全部分组）
+    if let Some(group) = patch.group.filter(|value| *value != 0) {
+        crate::service::book_group_service::validate_group_id(group).map_err(Problem::from)?;
+        if !state
+            .book_group_service
+            .group_exists(&user.ns, group)
+            .await
+            .map_err(Problem::from)?
+        {
+            return Err(Problem::new(ErrorCode::ValidationFailed)
+                .detail("分组不存在")
+                .errors(vec![crate::api::problem::FieldIssue {
+                    pointer: "/group".to_string(),
+                    code: "NOT_FOUND".to_string(),
+                    detail: None,
+                }]));
+        }
+    }
+    let progress = match patch.progress {
+        Some(progress) => progress,
+        None => {
+            // 只改分组：不动进度与最近阅读时间
+            let updated = state
+                .book_service
+                .update_shelf_book(&user.ns, &book_id, |book| {
+                    if let Some(group) = patch.group {
+                        book.group = Some(group);
+                    }
+                })
+                .await
+                .map_err(Problem::from)?;
+            if updated.is_none() {
+                return Err(book_not_in_shelf());
+            }
+            return Ok(StatusCode::NO_CONTENT);
+        }
     };
     // offset 越界是字段值非法（契约 422 VALIDATION_FAILED，带 pointer），
     // 不做静默 clamp——静默改写客户端给的值会掩盖调用方 bug
@@ -335,6 +376,9 @@ pub async fn patch_shelf_book(
                 .is_some_and(|last| now - last < PROGRESS_TIME_THROTTLE_SECS);
             if !throttled {
                 book.dur_chapter_time = Some(now);
+            }
+            if let Some(group) = patch.group {
+                book.group = Some(group);
             }
         })
         .await

@@ -30,6 +30,8 @@ mod books;
 mod cache;
 
 mod content;
+mod groups;
+mod marks;
 mod me;
 mod replace_rules;
 mod shelf;
@@ -51,6 +53,8 @@ pub fn router(
         .merge(content::router())
         .merge(sources::router())
         .merge(cache::router())
+        .merge(groups::router())
+        .merge(marks::router())
         .merge(auth::authed_router())
         .route_layer(axum::middleware::from_fn_with_state(
             state.clone(),
@@ -313,6 +317,14 @@ pub fn openapi_yaml() -> String {
         cache::cache_stats,
         cache::purge_cache,
         cache::delete_book_cache,
+        marks::list_marks,
+        marks::save_mark,
+        marks::save_marks_batch,
+        marks::delete_marks_batch,
+        groups::list_groups,
+        groups::save_group,
+        groups::reorder_groups,
+        groups::delete_group,
         auth::login,
         auth::refresh,
         auth::logout,
@@ -350,6 +362,11 @@ pub fn openapi_yaml() -> String {
         sources::DeleteAllSourcesRequest,
         sources::DeleteAllSourcesResult,
         crate::model::book_source::BookSource,
+        crate::model::bookmark::Bookmark,
+        crate::model::book_group::BookGroup,
+        crate::model::book_group::BookGroupOrderItem,
+        marks::BatchSaveMarksResult,
+        marks::BatchDeleteMarksResult,
         crate::model::rule::SearchRule,
         crate::model::rule::BookInfoRule,
         crate::model::rule::TocRule,
