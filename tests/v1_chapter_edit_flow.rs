@@ -267,7 +267,7 @@ async fn edit_save_cancel_and_version_flow() {
     let body: Value = resp.json().await.unwrap();
     assert_eq!(body["fromVersionId"], json!(edited_id));
     assert_eq!(body["toVersionId"], json!(imported_id));
-    assert!(body["ops"].as_array().unwrap().len() > 0);
+    assert!(!body["ops"].as_array().unwrap().is_empty());
 
     // 取消编辑：回落上游原文
     let resp = server.delete(&format!("{base}/content")).await;
@@ -295,7 +295,7 @@ async fn chapter_rename_and_marks() {
 
     // 改名：覆盖层写入
     let resp = server
-        .patch(&format!("{base}"), json!({ "title": "第二章（改）" }))
+        .patch(base.as_str(), json!({ "title": "第二章（改）" }))
         .await;
     assert_eq!(resp.status(), StatusCode::OK);
     let body: Value = resp.json().await.unwrap();
@@ -321,7 +321,7 @@ async fn chapter_rename_and_marks() {
 
     // 与目录原标题相同的名字：按恢复原名处理
     let resp = server
-        .patch(&format!("{base}"), json!({ "title": "第二章 继续" }))
+        .patch(base.as_str(), json!({ "title": "第二章 继续" }))
         .await;
     assert_eq!(resp.status(), StatusCode::OK);
     let body: Value = resp.json().await.unwrap();
@@ -329,7 +329,7 @@ async fn chapter_rename_and_marks() {
 
     // 恢复原名（DELETE title）
     let resp = server
-        .patch(&format!("{base}"), json!({ "title": "第二章（再改）" }))
+        .patch(base.as_str(), json!({ "title": "第二章（再改）" }))
         .await;
     assert_eq!(resp.status(), StatusCode::OK);
     let resp = server.delete(&format!("{base}/title")).await;
@@ -340,7 +340,7 @@ async fn chapter_rename_and_marks() {
 
     // 标题过长：400
     let resp = server
-        .patch(&format!("{base}"), json!({ "title": "长".repeat(101) }))
+        .patch(base.as_str(), json!({ "title": "长".repeat(101) }))
         .await;
     assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
 

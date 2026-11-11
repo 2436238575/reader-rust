@@ -25,7 +25,7 @@ pub(crate) const PROTECTED_BODY_LIMIT_BYTES: usize = 8 * 1024 * 1024;
 /// 批量导入书源（`/reader3/saveBookSources` 与 `POST /v1/sources:batchUpsert`）的请求体上限。
 pub(crate) const SAVE_SOURCES_BODY_LIMIT_BYTES: usize = 64 * 1024 * 1024;
 /// 大上传路由与最外层兜底共用的请求体上限。
-const MAX_BODY_LIMIT_BYTES: usize = 100 * 1024 * 1024;
+pub(crate) const MAX_BODY_LIMIT_BYTES: usize = 100 * 1024 * 1024;
 
 /// 构建 CORS 层。
 ///

@@ -169,3 +169,15 @@ goal 执行中遇到「决策表与 spec 都沉默」的问题时，按 §5.4 �
 - **红线 6 落地**：客户端不再携带 chapterUrl——v1 以 `(bookId, index)` 经章节登记表/本地目录解析出内部地址（复用 content 的 `resolve_chapter_url`）；前端 `ReviewParams` 与 `CommentPanel` 的 prop 同步从 `chapterUrl` 换成 `index`。
 - **配图收口 typed 化**：`ImageService::pick_image_route`（`rewrite_image_lists` 的单格语义）——同一张图的多个格式变体挑一张能渲染的，替换成单个 `/reader3/image/<id>`；挑不出/登记失败保留原数组（行为与 /reader3 一致）。评论项与回复都收口；章节配图逐张登记。
 - **偏差**：契约 §8.5 的 `anchor`（blockMap 对齐的评论锚点）随 mark-anchoring 批次再做；响应形状沿用现状（前端零映射），`Page<Comment>` 的理想分页形状（cursor）等编辑域一起收敛。
+
+## 2026-11-12 子 agent 审查返工（P3 评论/配图/编辑域）
+
+- **P0 修复**：`rename_chapter` 在 `title_context` 找不到章节时对空 `chapter_url` upsert 覆盖层——加守卫拒绝（400 ChapterNotFound）。触发面窄（换源竞态）但落库脏数据 + 谎报成功。
+- **P1 修复**：
+  - `get_chapter_edit` / `get_chapter_version` / `get_chapter_version_diff` 三个端点从 `serde_json::Value` 改为 typed schema（`ChapterEditViewPayload` / `ChapterVersionDetailPayload` / `ChapterDiffPayload`），红线 5 兑现。
+  - `PUT content` 与 `POST content:import` 挂路由级体限（8MB / 100MB）：富 HTML 章 / 单章导入大文本不再 413。
+  - `title_context` 对 `load_chapter_list_cache` 失败改回吞错误按空原标题继续（与 /reader3 口径一致）。
+  - 删除前端死代码 `listChapterEdits`（无调用方）；`parseVersionId` 加 `Number.isSafeInteger && > 0` 校验；清理测试 debug println。
+- **P1-3 不改（有意保留）**：编辑域端点在网络书登记表为空时走 `resolve_chapter_url` 触发目录抓取——与正文 GET `content` 同一行为，正常阅读路径会先经目录端点填表。是否改为「登记表 miss 即 404」随编辑域后续迭代决定。
+- **P1-4/P1-5 不改（已有覆盖）**：import-diff 端点的核心逻辑由 /reader3 的 `tests/chapter_edit_flow.rs` 间接覆盖（共享 `chapter_import_diff_payload`）；v1 评论测试的 authorOnly / refresh / variant 分支由 /reader3 `tests/review_flow.rs` 覆盖（共享同一服务调用）。v1 端点是薄包装（index→url + typed 映射），共享核心已有回归保护。
+- **分组保留位掩码（决定，非待办）**：计划写的「groups（关联表，废除位掩码）」不执行；关联表触发条件是「单书归属任意多组且独立管理」。

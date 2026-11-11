@@ -10,7 +10,6 @@
 //! 从章节登记表解析（客户端给值会漂移）；diff 的 `against` 缺省对最新
 //! 上游（契约 §8.4）。
 
-use crate::api::handlers::chapter_edit::original_toc_title;
 use crate::api::problem::{ErrorCode, Problem};
 use crate::api::v1::{V1Json, V1User};
 use crate::api::AppState;
@@ -26,7 +25,11 @@ pub fn router() -> Router<AppState> {
     Router::new()
         .route(
             "/v1/books/{bookId}/chapters/{index}/content",
-            put(save_chapter_content).delete(delete_chapter_content),
+            put(save_chapter_content)
+                .delete(delete_chapter_content)
+                .layer(axum::extract::DefaultBodyLimit::max(
+                    crate::api::router::PROTECTED_BODY_LIMIT_BYTES,
+                )),
         )
         .route(
             "/v1/books/{bookId}/chapters/{index}/content/edit",
@@ -38,7 +41,9 @@ pub fn router() -> Router<AppState> {
         )
         .route(
             "/v1/books/{bookId}/chapters/{index}/content:import",
-            post(import_chapter_version),
+            post(import_chapter_version).layer(axum::extract::DefaultBodyLimit::max(
+                crate::api::router::MAX_BODY_LIMIT_BYTES,
+            )),
         )
         .route(
             "/v1/books/{bookId}/chapters/{index}/versions",
@@ -101,6 +106,10 @@ async fn resolve_chapter_or_404(
 
 /// 登记表的章节标题快照（编辑保存用）：目录未缓存时为空串，
 /// 与 /reader3 由客户端上报相比不会漂移。
+fn chapter_not_found() -> Problem {
+    Problem::new(ErrorCode::ChapterNotFound).detail("章节不存在")
+}
+
 async fn registry_chapter_title(state: &AppState, book_id: &str, index: i32) -> String {
     state
         .book_service
@@ -259,7 +268,7 @@ pub async fn get_chapter_edit(
     State(state): State<AppState>,
     V1User(user): V1User,
     Path((book_id, index)): Path<(String, i32)>,
-) -> Result<Json<serde_json::Value>, Problem> {
+) -> Result<Json<ChapterEditViewPayload>, Problem> {
     let (_, chapter_url) = resolve_chapter_or_404(&state, &user.ns, &book_id, index).await?;
     match state
         .chapter_content_service
@@ -267,14 +276,25 @@ pub async fn get_chapter_edit(
         .await
         .map_err(Problem::from)?
     {
-        Some(view) => Ok(Json(serde_json::json!({
-            "content": view.content,
-            "versionId": cv_id(view.version_id),
-            "baseVersionId": view.base_version_id.map(cv_id),
-            "kind": view.kind,
-        }))),
+        Some(view) => Ok(Json(ChapterEditViewPayload {
+            content: view.content,
+            version_id: cv_id(view.version_id),
+            base_version_id: view.base_version_id.map(cv_id),
+            kind: view.kind,
+        })),
         None => Err(Problem::new(ErrorCode::ChapterEditNotFound).detail("本章还没有编辑版本")),
     }
+}
+
+/// 当前用户编辑版（编辑器预填用）。
+#[derive(Debug, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct ChapterEditViewPayload {
+    pub content: String,
+    pub version_id: String,
+    pub base_version_id: Option<String>,
+    /// `upstream` / `edited` / `imported`
+    pub kind: String,
 }
 
 // ── 版本时间线 / 单版本 / diff / 选择 ──────────────────────────────────
@@ -451,7 +471,7 @@ pub async fn get_chapter_version(
     State(state): State<AppState>,
     V1User(user): V1User,
     Path((book_id, index, version_id)): Path<(String, i32, String)>,
-) -> Result<Json<serde_json::Value>, Problem> {
+) -> Result<Json<ChapterVersionDetailPayload>, Problem> {
     let numeric = parse_cv_id(&version_id)?;
     let (_, chapter_url) = resolve_chapter_or_404(&state, &user.ns, &book_id, index).await?;
     let view = state
@@ -460,19 +480,37 @@ pub async fn get_chapter_version(
         .await
         .map_err(Problem::from)?
         .ok_or_else(|| Problem::new(ErrorCode::ChapterNotFound).detail("章节版本不存在"))?;
-    Ok(Json(serde_json::json!({
-        "versionId": cv_id(view.version_id),
-        "kind": view.kind,
-        "baseVersionId": view.base_version_id.map(cv_id),
-        "createdAt": view.created_at,
-        "rawSize": view.raw_size,
-        "chars": view.content.chars().count(),
-        "note": view.note,
-        "bookSourceName": view.book_source_name,
-        "chapterIndex": view.chapter_index,
-        "chapterTitle": view.chapter_title,
-        "content": view.content,
-    })))
+    Ok(Json(ChapterVersionDetailPayload {
+        version_id: cv_id(view.version_id),
+        kind: view.kind,
+        base_version_id: view.base_version_id.map(cv_id),
+        created_at: view.created_at,
+        raw_size: view.raw_size,
+        chars: view.content.chars().count() as i64,
+        note: view.note,
+        book_source_name: view.book_source_name,
+        chapter_index: view.chapter_index,
+        chapter_title: view.chapter_title,
+        content: view.content,
+    }))
+}
+
+/// 单个版本的正文与元数据。
+#[derive(Debug, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct ChapterVersionDetailPayload {
+    pub version_id: String,
+    /// `upstream` / `edited` / `imported`
+    pub kind: String,
+    pub base_version_id: Option<String>,
+    pub created_at: i64,
+    pub raw_size: i64,
+    pub chars: i64,
+    pub note: String,
+    pub book_source_name: String,
+    pub chapter_index: i32,
+    pub chapter_title: String,
+    pub content: String,
 }
 
 /// 任意两个版本的 diff；`against` 缺省对最新上游。
@@ -500,7 +538,7 @@ pub async fn get_chapter_version_diff(
     V1User(user): V1User,
     Path((book_id, index, version_id)): Path<(String, i32, String)>,
     Query(query): Query<DiffAgainstQuery>,
-) -> Result<Json<serde_json::Value>, Problem> {
+) -> Result<Json<ChapterDiffPayload>, Problem> {
     let from_id = parse_cv_id(&version_id)?;
     let (_, chapter_url) = resolve_chapter_or_404(&state, &user.ns, &book_id, index).await?;
     let to_id = match query.against {
@@ -531,11 +569,20 @@ pub async fn get_chapter_version_diff(
         .map_err(|reason| {
             Problem::new(ErrorCode::MalformedRequest).detail(format!("diff 不可用: {reason}"))
         })?;
-    Ok(Json(serde_json::json!({
-        "fromVersionId": cv_id(from.version_id),
-        "toVersionId": cv_id(to.version_id),
-        "ops": ops,
-    })))
+    Ok(Json(ChapterDiffPayload {
+        from_version_id: cv_id(from.version_id),
+        to_version_id: cv_id(to.version_id),
+        ops,
+    }))
+}
+
+/// 两版本之间的 diff 操作序列。
+#[derive(Debug, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct ChapterDiffPayload {
+    pub from_version_id: String,
+    pub to_version_id: String,
+    pub ops: Vec<crate::service::chapter_diff_service::DiffOp>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -778,6 +825,10 @@ pub async fn rename_chapter(
     let (book_row_id, chapter_url, original_title) =
         title_context(&state, &user.ns, &book_id, index).await?;
     let trimmed = request.title.trim();
+    if chapter_url.is_empty() {
+        // 章节定位失败（登记表为空/竞态）：拒绝而不是写到空 URL 键上
+        return Err(chapter_not_found());
+    }
     if !original_title.is_empty() && trimmed == original_title {
         state
             .chapter_title_override_repo

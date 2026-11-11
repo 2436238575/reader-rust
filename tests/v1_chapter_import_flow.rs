@@ -227,7 +227,7 @@ async fn chunked_upload_feeds_preview() {
     // 两片上传同一本 TXT（自适应分片的客户端把 file 切开）
     let full = IMPORT_TXT;
     let split_at = full.find("第二章 继续").unwrap();
-    let (first, second) = full.split_at(split_at);
+    let (first, _second) = full.split_at(split_at);
 
     // 手拼分片 multipart：uploadId 第一片缺省，第二片续传。
     // 分段字面量避免转义混乱；`CRLF` 是 `\r\n`。
@@ -286,17 +286,11 @@ async fn chunked_upload_feeds_preview() {
             "Content-Type",
             "multipart/form-data; boundary=----v1-import-test",
         )
-        .body({
-            let b = chunk_body(None, 0);
-            println!("CHUNK BODY LEN={}", b.len());
-            println!("CHUNK BODY: {:?}", b);
-            b
-        })
+        .body(chunk_body(None, 0))
         .send()
         .await
         .unwrap();
     let body_text = resp.text().await.unwrap_or_default();
-    println!("CHUNK RESP: {body_text}");
     let payload: Value = serde_json::from_str(&body_text)
         .unwrap_or_else(|e| panic!("chunk 1 响应解析失败: {e} — {body_text}"));
     let upload_id = payload["uploadId"].as_str().unwrap_or_default().to_string();
