@@ -487,8 +487,13 @@ export async function getBookContents(params: {
 }
 
 /** 本章配图；书源没声明配图规则时返回 `enabled: false` */
-export function getChapterImages(params: { bookId: string; chapterUrl: string }) {
-  return http.post<ChapterImages>('/getChapterImages', params).then((r) => r.data)
+/** 本章配图；书源没声明配图规则时返回 `enabled: false` */
+export function getChapterImages(params: { bookId: string; index: number }) {
+  return http
+    .get<ChapterImages>(`/books/${params.bookId}/chapters/${params.index}/images`, {
+      baseURL: API_V1_BASE,
+    })
+    .then((r) => r.data)
 }
 
 export function saveBookProgress(params: { bookId: string; index: number; position?: number }) {

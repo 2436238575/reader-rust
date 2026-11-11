@@ -117,7 +117,7 @@
       :theme="chromeTheme"
       :mode="commentMode"
       :book-id="store.book?.bookId || ''"
-      :chapter-url="store.currentChapter?.url || ''"
+      :chapter-index="store.currentIndex"
       :para-index="commentParaIndex"
       :para-text="commentParaText"
       :initial-page="extrasStore.chapterComments"

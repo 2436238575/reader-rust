@@ -107,7 +107,7 @@ describe('readerExtras 评论与配图', () => {
     await vi.waitFor(() =>
       expect(getChapterImages).toHaveBeenCalledWith({
         bookId: 'book_1',
-        chapterUrl: 'https://example.org/1',
+        index: 0,
       })
     )
   })

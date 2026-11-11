@@ -80,10 +80,10 @@ export const useReaderExtrasStore = defineStore('readerExtras', () => {
       const effectiveKind = readerStore.chapterVersions.get(index)?.kind
       const params = {
         bookId: currentBook.bookId,
-        chapterUrl: requestedChapterUrl,
+        index,
         // 手动刷新正文时让段评索引也重抓：两者必须来自同一版上游，
         // 否则段号会和刷新后的正文对不上
-        refresh: refresh ? 1 : 0,
+        refresh,
         // 段评定位看的是实际显示的版本：用户版本与上游版本的段号可能不同
         variant:
           effectiveKind === 'upstream'
@@ -161,7 +161,7 @@ export const useReaderExtrasStore = defineStore('readerExtras', () => {
       if (!currentBook.bookId) throw new Error('书籍缺少 bookId')
       const resp = await getChapterImages({
         bookId: currentBook.bookId,
-        chapterUrl: requestedChapterUrl,
+        index,
       })
       if (readerStore.chapters[readerStore.currentIndex]?.url !== requestedChapterUrl) return
       chapterImagesEnabled.value = resp?.enabled === true

@@ -226,7 +226,8 @@ const props = defineProps<{
   theme: ThemePreset | { popup: string; fontColor: string }
   mode: 'chapter' | 'para'
   bookId: string
-  chapterUrl: string
+  /** 章节序号（v1 评论接口以 index 定位章节） */
+  chapterIndex: number
   paraIndex?: number
   paraText?: string
   /** 章评第一页已由阅读页预取，打开面板时直接复用，避免重复请求 */
@@ -346,7 +347,7 @@ const clientSideSortOnly = computed(
 
 /** 每次打开都重新装载：评论会变，缓存里的旧数据不该拦住刷新 */
 watch(
-  () => [props.show, props.mode, props.paraIndex, props.chapterUrl] as const,
+  () => [props.show, props.mode, props.paraIndex, props.chapterIndex] as const,
   () => {
     if (!props.show) return
     void reload()
@@ -391,7 +392,7 @@ async function fetchPage(target: number) {
   try {
     const params = {
       bookId: props.bookId,
-      chapterUrl: props.chapterUrl,
+      index: props.chapterIndex,
       page: target,
       // 一次 50 条（后端 clamp 上限正好 50），少点两次「加载更多」
       count: 50,
