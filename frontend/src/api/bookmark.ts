@@ -20,13 +20,21 @@ export function saveBookmark(bookmark: Bookmark) {
     .then(() => '')
 }
 
+/** 批量保存的分片大小：服务端上限 5000 条，但 /v1 默认请求体 1MB 装不下
+ *  真实划线（bookText + content 约 1.5KB/条），按 500 分片串行（约 750KB/片） */
+const MARKS_SAVE_CHUNK = 500
+
 /**
- * 批量保存（WebDAV 恢复）：指向未登记书籍的条目被服务端跳过
+ * 批量保存（WebDAV 恢复）：指向未登记书籍的条目被服务端跳过；按 500 分片
+ * 串行发送，整本恢复不会撞请求体上限
  */
-export function saveBookmarks(bookmarks: Bookmark[]) {
-  return http
-    .post('/me/marks:batch', bookmarks, { baseURL: API_V1_BASE })
-    .then(() => '')
+export async function saveBookmarks(bookmarks: Bookmark[]) {
+  for (let i = 0; i < bookmarks.length; i += MARKS_SAVE_CHUNK) {
+    await http.post('/me/marks:batch', bookmarks.slice(i, i + MARKS_SAVE_CHUNK), {
+      baseURL: API_V1_BASE,
+    })
+  }
+  return ''
 }
 
 /**
