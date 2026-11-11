@@ -82,11 +82,13 @@ impl BookSourceService {
         Ok(out)
     }
 
-    pub async fn delete_by_id(&self, user_ns: &str, id: i64) -> Result<(), AppError> {
+    /// 返回是否真的删除了行（不存在的 id 忽略）。
+    pub async fn delete_by_id(&self, user_ns: &str, id: i64) -> Result<bool, AppError> {
         self.repo.delete_by_id(user_ns, id).await
     }
 
-    pub async fn delete_all(&self, user_ns: &str) -> Result<(), AppError> {
+    /// 清空全部书源，返回删除行数。
+    pub async fn delete_all(&self, user_ns: &str) -> Result<u64, AppError> {
         self.repo.delete_all(user_ns).await
     }
 }

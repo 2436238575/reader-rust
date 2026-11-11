@@ -472,19 +472,21 @@ impl BookSourceRepo {
         Ok(())
     }
 
-    pub async fn delete_by_id(&self, _user_ns: &str, id: i64) -> Result<(), AppError> {
-        sqlx::query("DELETE FROM book_sources WHERE book_source_id=?1")
+    /// 返回是否真的删除了行（v1 批量删除的计数用；不存在的 id 忽略）。
+    pub async fn delete_by_id(&self, _user_ns: &str, id: i64) -> Result<bool, AppError> {
+        let result = sqlx::query("DELETE FROM book_sources WHERE book_source_id=?1")
             .bind(id)
             .execute(&self.pool)
             .await?;
-        Ok(())
+        Ok(result.rows_affected() > 0)
     }
 
-    pub async fn delete_all(&self, _user_ns: &str) -> Result<(), AppError> {
-        sqlx::query("DELETE FROM book_sources")
+    /// 清空当前部署的全部书源，返回删除行数。
+    pub async fn delete_all(&self, _user_ns: &str) -> Result<u64, AppError> {
+        let result = sqlx::query("DELETE FROM book_sources")
             .execute(&self.pool)
             .await?;
-        Ok(())
+        Ok(result.rows_affected())
     }
 
     pub async fn get_by_id(

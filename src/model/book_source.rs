@@ -7,7 +7,7 @@ use crate::model::rule::{
     SearchRule, TocRule,
 };
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default, ts_rs::TS)]
+#[derive(utoipa::ToSchema, Debug, Clone, Serialize, Deserialize, Default, ts_rs::TS)]
 #[serde(default, rename_all = "camelCase")]
 #[ts(
     export,
@@ -66,6 +66,9 @@ pub struct BookSource {
     pub explore_screen: Option<String>,
     #[serde(deserialize_with = "deserialize_rule_option")]
     #[ts(optional)]
+    // ExploreRule 是 SearchRule 的类型别名：utoipa 按字段路径注册 schema 名，
+    // 这里显式指到 SearchRule，避免生成悬空引用
+    #[schema(value_type = SearchRule)]
     pub rule_explore: Option<ExploreRule>,
     #[ts(optional)]
     pub search_url: Option<String>,

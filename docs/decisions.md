@@ -140,3 +140,10 @@ goal 执行中遇到「决策表与 spec 都沉默」的问题时，按 §5.4 �
 - **交付**：`GET /v1/cache/stats`（typed `CacheStatsSnapshot` + ETag/304）、`DELETE /v1/cache?kind=`（按层/全部，同步执行）、`DELETE /v1/books/{bookId}/cache`（= `/reader3/deleteBookCache` 语义：重置目录抓取状态 + 删换源候选；登记行/章节登记表/正文历史/图片不动，幂等）。`cache_stats` 服务层从 `Value` 收敛成 typed 快照，`/reader3` 用同一形状序列化，两边线缆不变。
 - **偏差（契约 §8.6）**：预下载（`POST /v1/books/{id}/cache`）与 policy 清理（`{policy: olderThan}`）按契约是 202 Task——任务子系统落地前不交付；`DELETE /v1/cache` 是同步按层/全部，不是 policy。r3 的 `username`/`all=true` 参数未带过来：v1 永远操作调用者自己的命名空间（单用户）。
 - **留项（待拍板）**：书籍级清理拆「重置目录/候选」与「清除已下载正文」两个动作——拍板前 v1 只有现状语义，不引入删除正文历史的入口。
+
+## 2026-11-11 书源写链路同步子集切 v1
+
+- **交付**：`GET /v1/sources/{id}`（完整源材料透传，含数字 `bookSourceId` 字段——身份参数仍走 `src_<n>`；编辑器拿到的形状与 /reader3 一致，无需映射）、`POST /v1/sources`（整条 upsert：按自带 id 更新，否则按 URL 保号归并；201 新建 / 200 替换）、`POST /v1/sources:batchUpsert`（`{sources:[...]}`，URL 去重保号，单事务，上限 1000 条；该路由单独放宽请求体到 /reader3 同款 64MB——整站打包的导入文件远超 /v1 默认 1MB）、`DELETE /v1/sources/{id}`（幂等 204）、`POST /v1/sources:batchDelete`（忽略未知 id 不计数）、`DELETE /v1/sources`（body `{"confirm":"DELETE_ALL"}` 门槛，同步清空）、`POST /v1/sources:deleteInvalid`（分组含「失效」的整行删除）。
+- **请求体是源材料**：走 `book_source_from_value` 的宽松迁移（legado 旧字段名 `enable`/`serialNumber` 等兼容），不做 strict——导入材料带附加字段是常态，这与 replace-rules 的 strict 是两个刻意的不同（D16 的例外，已记录）。
+- **偏差**：契约的 `POST /v1/sources` 带 `Idempotency-Key` + `Location`、`:import`/`:test`/`:login` 202 Task、`PUT /v1/sources/{id}`——任务子系统（P2）落地前不交付；前端编辑保存走 POST upsert（r3 语义）。`PATCH /v1/sources/{id}`（轻量启停）随启停域迁移。`parseSourceId`/`buildSourceId` 仍留在 api 适配层：列表/详情的旧消费组件还吃数字 id，全面换 v1 类型时删除。
+- **repo 语义补强**：`book_sources` 的 `delete_by_id`/`delete_all` 返回删除行数（v1 批量计数用），r3 调用点不受影响。

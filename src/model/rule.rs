@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default, ts_rs::TS)]
+#[derive(utoipa::ToSchema, Debug, Clone, Serialize, Deserialize, Default, ts_rs::TS)]
 #[serde(default, rename_all = "camelCase")]
 #[ts(
     export,
@@ -34,7 +34,7 @@ pub struct SearchRule {
 
 pub type ExploreRule = SearchRule;
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default, ts_rs::TS)]
+#[derive(utoipa::ToSchema, Debug, Clone, Serialize, Deserialize, Default, ts_rs::TS)]
 #[serde(default, rename_all = "camelCase")]
 #[ts(
     export,
@@ -68,7 +68,7 @@ pub struct BookInfoRule {
     pub download_urls: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default, ts_rs::TS)]
+#[derive(utoipa::ToSchema, Debug, Clone, Serialize, Deserialize, Default, ts_rs::TS)]
 #[serde(default, rename_all = "camelCase")]
 #[ts(
     export,
@@ -107,7 +107,7 @@ pub struct TocRule {
     pub next_toc_url: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default, ts_rs::TS)]
+#[derive(utoipa::ToSchema, Debug, Clone, Serialize, Deserialize, Default, ts_rs::TS)]
 #[serde(default, rename_all = "camelCase")]
 #[ts(
     export,
@@ -144,7 +144,7 @@ pub struct ContentRule {
 ///
 /// 前四个字段沿用阅读3.0 的既有命名，后面的是本项目为「能真正渲染评论」
 /// 补的解析字段。
-#[derive(Debug, Clone, Serialize, Deserialize, Default, ts_rs::TS)]
+#[derive(utoipa::ToSchema, Debug, Clone, Serialize, Deserialize, Default, ts_rs::TS)]
 #[serde(default, rename_all = "camelCase")]
 #[ts(
     export,
@@ -234,7 +234,7 @@ pub struct ReviewRule {
 /// 段评分两步：先用 `indexUrl` 取「哪些段落有评论、各有多少条」的概览，
 /// 再用 `reviewUrl` 取某一段的评论列表。两个 URL 都对章节正文响应求值，
 /// 模板里可额外使用 `{{paraIndex}}`。
-#[derive(Debug, Clone, Serialize, Deserialize, Default, ts_rs::TS)]
+#[derive(utoipa::ToSchema, Debug, Clone, Serialize, Deserialize, Default, ts_rs::TS)]
 #[serde(default, rename_all = "camelCase")]
 #[ts(
     export,
@@ -315,7 +315,7 @@ pub struct ParaReviewRule {
 /// `imageUrl` 对**章节正文响应**求值（与 [`ReviewRule::review_url`] 同理），
 /// 所以模板里可以直接引用正文响应里的字段，例如
 /// `content/image?item_id={{$.data.data.novel_data.item_id}}`。
-#[derive(Debug, Clone, Serialize, Deserialize, Default, ts_rs::TS)]
+#[derive(utoipa::ToSchema, Debug, Clone, Serialize, Deserialize, Default, ts_rs::TS)]
 #[serde(default, rename_all = "camelCase")]
 #[ts(
     export,

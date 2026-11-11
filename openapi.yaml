@@ -977,6 +977,239 @@ paths:
       security:
       - cookieAuth: []
       - bearerAuth: []
+    post:
+      tags:
+      - sources
+      summary: |-
+        单条全量 upsert：优先按自带 `bookSourceId` 更新，否则按 URL 保号归并。
+        新建 201 / 更新 200。
+      operationId: upsertSource
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BookSource'
+        required: true
+      responses:
+        '200':
+          description: 已有同 URL / 同 id 书源，已替换
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SourceWriteResult'
+        '201':
+          description: 已新建
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SourceWriteResult'
+        '400':
+          description: 源材料无法解析或缺少 bookSourceUrl
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '401':
+          description: 未登录或令牌失效
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+      security:
+      - cookieAuth: []
+      - bearerAuth: []
+    delete:
+      tags:
+      - sources
+      summary: |-
+        清空全部书源（同步；契约的 202 Task 化随任务子系统）。绑定该部署书源的
+        书籍会失去书源，正文历史与登记行不受影响。
+      operationId: deleteAllSources
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DeleteAllSourcesRequest'
+        required: true
+      responses:
+        '200':
+          description: 删除行数
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeleteAllSourcesResult'
+        '400':
+          description: confirm 不是 DELETE_ALL
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '401':
+          description: 未登录或令牌失效
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+      security:
+      - cookieAuth: []
+      - bearerAuth: []
+  /v1/sources/{id}:
+    get:
+      tags:
+      - sources
+      summary: |-
+        完整书源（源材料透传）：编辑器按整条对象读写。身份参数是 `src_<n>`，
+        材料里的 `bookSourceId`（数字）是源材料字段，原样保留。
+      operationId: getSource
+      parameters:
+      - name: id
+        in: path
+        description: 书源 id（src_<n>）
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: 完整书源
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BookSource'
+        '401':
+          description: 未登录或令牌失效
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '404':
+          description: 书源不存在
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+      security:
+      - cookieAuth: []
+      - bearerAuth: []
+    delete:
+      tags:
+      - sources
+      summary: 单条删除（幂等）：书架里绑定该源的书籍会失去书源（与 /reader3 同语义）。
+      operationId: deleteSource
+      parameters:
+      - name: id
+        in: path
+        description: 书源 id（src_<n>）
+        required: true
+        schema:
+          type: string
+      responses:
+        '204':
+          description: 已删除（幂等）
+        '401':
+          description: 未登录或令牌失效
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+      security:
+      - cookieAuth: []
+      - bearerAuth: []
+  /v1/sources:batchDelete:
+    post:
+      tags:
+      - sources
+      summary: 批量删除（幂等）：不存在的 id 忽略、不计数。
+      operationId: batchDeleteSources
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BatchDeleteSourcesRequest'
+        required: true
+      responses:
+        '200':
+          description: 删除条数
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BatchDeleteSourcesResult'
+        '400':
+          description: ids 为空或超上限
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '401':
+          description: 未登录或令牌失效
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+      security:
+      - cookieAuth: []
+      - bearerAuth: []
+  /v1/sources:batchUpsert:
+    post:
+      tags:
+      - sources
+      summary: 批量导入/订阅/恢复：URL 去重优先（保本地 id），单事务提交。
+      operationId: batchUpsertSources
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BatchUpsertSourcesRequest'
+        required: true
+      responses:
+        '200':
+          description: 写入条数
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BatchUpsertSourcesResult'
+        '400':
+          description: sources 为空/超上限或单项无法解析
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '401':
+          description: 未登录或令牌失效
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '413':
+          description: 请求体超过批量导入上限
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+      security:
+      - cookieAuth: []
+      - bearerAuth: []
+  /v1/sources:deleteInvalid:
+    post:
+      tags:
+      - sources
+      summary: 删除失效书源：分组含「失效」标记的整行删除（与 `/reader3` 同口径）。
+      operationId: deleteInvalidSources
+      responses:
+        '200':
+          description: 删除条数
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BatchDeleteSourcesResult'
+        '401':
+          description: 未登录或令牌失效
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+      security:
+      - cookieAuth: []
+      - bearerAuth: []
 components:
   schemas:
     BatchContentError:
@@ -1032,6 +1265,25 @@ components:
           items:
             type: string
       additionalProperties: false
+    BatchDeleteSourcesRequest:
+      type: object
+      required:
+      - ids
+      properties:
+        ids:
+          type: array
+          items:
+            type: string
+      additionalProperties: false
+    BatchDeleteSourcesResult:
+      type: object
+      required:
+      - deleted
+      properties:
+        deleted:
+          type: integer
+          format: int32
+          minimum: 0
     BatchUpsertRequest:
       type: object
       required:
@@ -1042,6 +1294,25 @@ components:
           items:
             $ref: '#/components/schemas/ReplaceRuleWrite'
       additionalProperties: false
+    BatchUpsertSourcesRequest:
+      type: object
+      required:
+      - sources
+      properties:
+        sources:
+          type: array
+          items: {}
+          description: 源材料数组（宽松迁移；单项解析失败整批 400）
+      additionalProperties: false
+    BatchUpsertSourcesResult:
+      type: object
+      required:
+      - count
+      properties:
+        count:
+          type: integer
+          format: int32
+          minimum: 0
     BookDetail:
       type: object
       required:
@@ -1096,6 +1367,69 @@ components:
           format: int32
           description: 章节登记表的章节数（目录未抓时缺省）
           minimum: 0
+    BookInfoRule:
+      type: object
+      properties:
+        author:
+          type:
+          - string
+          - 'null'
+          default: null
+        canReName:
+          type:
+          - string
+          - 'null'
+          default: null
+        coverUrl:
+          type:
+          - string
+          - 'null'
+          default: null
+        downloadUrls:
+          type:
+          - string
+          - 'null'
+          default: null
+        init:
+          type:
+          - string
+          - 'null'
+          default: null
+        intro:
+          type:
+          - string
+          - 'null'
+          default: null
+        kind:
+          type:
+          - string
+          - 'null'
+          default: null
+        lastChapter:
+          type:
+          - string
+          - 'null'
+          default: null
+        name:
+          type:
+          - string
+          - 'null'
+          default: null
+        tocUrl:
+          type:
+          - string
+          - 'null'
+          default: null
+        updateTime:
+          type:
+          - string
+          - 'null'
+          default: null
+        wordCount:
+          type:
+          - string
+          - 'null'
+          default: null
     BookPatch:
       type: object
       properties:
@@ -1108,6 +1442,189 @@ components:
           - string
           - 'null'
       additionalProperties: false
+    BookSource:
+      type: object
+      properties:
+        bookSourceComment:
+          type:
+          - string
+          - 'null'
+          default: null
+        bookSourceGroup:
+          type:
+          - string
+          - 'null'
+          default: null
+        bookSourceId:
+          type:
+          - integer
+          - 'null'
+          format: int64
+          description: |-
+            后端分配的稳定自增 id，书源的身份键；URL 只是数据字段与导入去重键。
+            不落 json blob（由表列携带），装载/响应时注入。
+          default: null
+        bookSourceName:
+          type: string
+          default: ''
+        bookSourceType:
+          type:
+          - integer
+          - 'null'
+          format: int32
+          default: null
+        bookSourceUrl:
+          type: string
+          default: ''
+        bookUrlPattern:
+          type:
+          - string
+          - 'null'
+          default: null
+        concurrentRate:
+          type:
+          - string
+          - 'null'
+          default: null
+        coverDecodeJs:
+          type:
+          - string
+          - 'null'
+          default: null
+        customOrder:
+          type:
+          - integer
+          - 'null'
+          format: int32
+          default: null
+        enabled:
+          type:
+          - boolean
+          - 'null'
+          default: null
+        enabledCookieJar:
+          type:
+          - boolean
+          - 'null'
+          default: null
+        enabledExplore:
+          type:
+          - boolean
+          - 'null'
+          default: null
+        exploreScreen:
+          type:
+          - string
+          - 'null'
+          default: null
+        exploreUrl:
+          type:
+          - string
+          - 'null'
+          default: null
+        header:
+          type:
+          - string
+          - 'null'
+          default: null
+        jsLib:
+          type:
+          - string
+          - 'null'
+          default: null
+        lastUpdateTime:
+          type:
+          - integer
+          - 'null'
+          format: int64
+          default: null
+        loadWithBaseUrl:
+          type:
+          - boolean
+          - 'null'
+          default: null
+        loginCheckJs:
+          type:
+          - string
+          - 'null'
+          default: null
+        loginUi:
+          type:
+          - string
+          - 'null'
+          default: null
+        loginUrl:
+          type:
+          - string
+          - 'null'
+          default: null
+        respondTime:
+          type:
+          - integer
+          - 'null'
+          format: int64
+          default: null
+        ruleBookInfo:
+          oneOf:
+          - $ref: '#/components/schemas/BookInfoRule'
+          - type: 'null'
+          default: null
+        ruleContent:
+          oneOf:
+          - $ref: '#/components/schemas/ContentRule'
+          - type: 'null'
+          default: null
+        ruleContentImage:
+          oneOf:
+          - $ref: '#/components/schemas/ContentImageRule'
+            description: 章节配图规则（本项目扩展，阅读3.0 无此字段）。
+          - type: 'null'
+          default: null
+        ruleExplore:
+          $ref: '#/components/schemas/SearchRule'
+          default: null
+        ruleParaReview:
+          oneOf:
+          - $ref: '#/components/schemas/ParaReviewRule'
+            description: 段评规则（本项目扩展，阅读3.0 无此字段）。
+          - type: 'null'
+          default: null
+        ruleReview:
+          oneOf:
+          - $ref: '#/components/schemas/ReviewRule'
+          - type: 'null'
+          default: null
+        ruleSearch:
+          oneOf:
+          - $ref: '#/components/schemas/SearchRule'
+          - type: 'null'
+          default: null
+        ruleToc:
+          oneOf:
+          - $ref: '#/components/schemas/TocRule'
+          - type: 'null'
+          default: null
+        searchUrl:
+          type:
+          - string
+          - 'null'
+          default: null
+        singleUrl:
+          type:
+          - boolean
+          - 'null'
+          default: null
+        variableComment:
+          type:
+          - string
+          - 'null'
+          default: null
+        weight:
+          type:
+          - integer
+          - 'null'
+          format: int32
+          default: null
     CacheLayerUsage:
       type: object
       description: 单层缓存的占用统计（v1 与 /reader3 共用同一形状）。
@@ -1404,6 +1921,128 @@ components:
           type: integer
           format: int64
           minimum: 0
+    ContentImageRule:
+      type: object
+      description: |-
+        章节配图规则（本项目扩展，阅读3.0 无此字段）。
+
+        多数书源的配图就写在正文 HTML 里（`<img>`），渲染端直接显示，不需要规则；
+        这一组规则是给「配图另走一个接口」的站点用的：先用 `imageUrl` 拿配图接口
+        的地址，再用 `listRule` 取列表、用各字段规则取单张图的信息。
+
+        `imageUrl` 对**章节正文响应**求值（与 [`ReviewRule::review_url`] 同理），
+        所以模板里可以直接引用正文响应里的字段，例如
+        `content/image?item_id={{$.data.data.novel_data.item_id}}`。
+      properties:
+        captionRule:
+          type:
+          - string
+          - 'null'
+          description: 图片说明文字，默认 `caption`。
+          default: null
+        heightRule:
+          type:
+          - string
+          - 'null'
+          default: null
+        imageUrl:
+          type:
+          - string
+          - 'null'
+          description: 配图接口 URL 模板，对章节正文响应求值。
+          default: null
+        listRule:
+          type:
+          - string
+          - 'null'
+          description: 配图列表规则，如 `$.data.images[*]`（HTML 站点写 CSS 选择器）。
+          default: null
+        paraIndexRule:
+          type:
+          - string
+          - 'null'
+          description: |-
+            插入位置：正文按 `\n` 切分后的行号（从 0 开始，插在该行之前），
+            默认 `para_index`。取不到位置时图片排在章末。
+          default: null
+        urlRule:
+          type:
+          - string
+          - 'null'
+          description: 单张图的地址规则，默认 `url`（HTML 站点默认取 `img` 的 `src`）。
+          default: null
+        widthRule:
+          type:
+          - string
+          - 'null'
+          description: 原始宽高，用于给图片占位（避免加载时页面跳动），默认 `width` / `height`。
+          default: null
+    ContentRule:
+      type: object
+      properties:
+        content:
+          type:
+          - string
+          - 'null'
+          default: null
+        imageDecode:
+          type:
+          - string
+          - 'null'
+          default: null
+        imageStyle:
+          type:
+          - string
+          - 'null'
+          default: null
+        nextContentUrl:
+          type:
+          - string
+          - 'null'
+          default: null
+        payAction:
+          type:
+          - string
+          - 'null'
+          default: null
+        replaceRegex:
+          type:
+          - string
+          - 'null'
+          default: null
+        sourceRegex:
+          type:
+          - string
+          - 'null'
+          default: null
+        title:
+          type:
+          - string
+          - 'null'
+          default: null
+        webJs:
+          type:
+          - string
+          - 'null'
+          default: null
+    DeleteAllSourcesRequest:
+      type: object
+      required:
+      - confirm
+      properties:
+        confirm:
+          type: string
+          description: 必须逐字为 `DELETE_ALL`：清空全部书源是毁灭性操作，用确认体当门槛
+      additionalProperties: false
+    DeleteAllSourcesResult:
+      type: object
+      required:
+      - deleted
+      properties:
+        deleted:
+          type: integer
+          format: int64
+          minimum: 0
     DiffOp:
       type: object
       required:
@@ -1521,6 +2160,158 @@ components:
           type: string
         username:
           type: string
+    ParaReviewRule:
+      type: object
+      description: |-
+        段评（段落评论）规则。
+
+        阅读3.0 没有段评概念，这是本项目新增的扩展规则；字段命名与
+        [`ReviewRule`] 保持一致，便于书源作者套用。
+
+        段评分两步：先用 `indexUrl` 取「哪些段落有评论、各有多少条」的概览，
+        再用 `reviewUrl` 取某一段的评论列表。两个 URL 都对章节正文响应求值，
+        模板里可额外使用 `{{paraIndex}}`。
+      properties:
+        authorDiggRule:
+          type:
+          - string
+          - 'null'
+          default: null
+        authorRule:
+          type:
+          - string
+          - 'null'
+          description: 评论者/回复者是作者本人、作者赞过（同 [`ReviewRule`] 的四个字段）。
+          default: null
+        avatarRule:
+          type:
+          - string
+          - 'null'
+          default: null
+        contentRule:
+          type:
+          - string
+          - 'null'
+          default: null
+        diggRule:
+          type:
+          - string
+          - 'null'
+          default: null
+        hasMoreRule:
+          type:
+          - string
+          - 'null'
+          default: null
+        idRule:
+          type:
+          - string
+          - 'null'
+          default: null
+        imageRule:
+          type:
+          - string
+          - 'null'
+          description: 评论配图，同 [`ReviewRule::image_rule`]。
+          default: null
+        indexAuthorCommentedRule:
+          type:
+          - string
+          - 'null'
+          description: 从单段数据里取「作者评论/点赞过」标记；规则缺省时该标记恒为 false。
+          default: null
+        indexCountRule:
+          type:
+          - string
+          - 'null'
+          description: 从单段数据里取评论条数。
+          default: null
+        indexListRule:
+          type:
+          - string
+          - 'null'
+          description: 概览里的「段号 → 该段数据」映射，通常是一个对象。
+          default: null
+        indexUrl:
+          type:
+          - string
+          - 'null'
+          description: 段评概览 URL 模板，对章节正文响应求值。
+          default: null
+        listRule:
+          type:
+          - string
+          - 'null'
+          default: null
+        nameRule:
+          type:
+          - string
+          - 'null'
+          default: null
+        postTimeRule:
+          type:
+          - string
+          - 'null'
+          default: null
+        replyAuthorDiggRule:
+          type:
+          - string
+          - 'null'
+          default: null
+        replyAuthorRule:
+          type:
+          - string
+          - 'null'
+          default: null
+        replyContentRule:
+          type:
+          - string
+          - 'null'
+          default: null
+        replyCountRule:
+          type:
+          - string
+          - 'null'
+          description: 回复数。段评列表里通常没有内联回复，只有条数，用于「共 N 条回复」。
+          default: null
+        replyImageRule:
+          type:
+          - string
+          - 'null'
+          description: 回复配图，同 [`ReviewRule::reply_image_rule`]。
+          default: null
+        replyListRule:
+          type:
+          - string
+          - 'null'
+          description: 内联回复列表（有的站点段评也带 `reply_list`）。
+          default: null
+        replyNameRule:
+          type:
+          - string
+          - 'null'
+          default: null
+        replyPostTimeRule:
+          type:
+          - string
+          - 'null'
+          default: null
+        replyToRule:
+          type:
+          - string
+          - 'null'
+          default: null
+        reviewUrl:
+          type:
+          - string
+          - 'null'
+          description: 段评列表 URL 模板；模板里可用 `{{paraIndex}}`。
+          default: null
+        totalRule:
+          type:
+          - string
+          - 'null'
+          default: null
     Problem:
       type: object
       description: |-
@@ -1683,6 +2474,233 @@ components:
           - string
           - 'null'
       additionalProperties: false
+    ReviewRule:
+      type: object
+      description: |-
+        章评（章节评论）规则。
+
+        阅读3.0 里 `ruleReview` 是「预留字段」，官方实现从不执行（见
+        `docs/reference/book-source-rules.md` 第 17 节），因此这里把它接上：
+        `reviewUrl` 按**章节正文响应**求值，得到该章的评论列表地址，
+        其余字段描述如何从响应里取出一条评论。
+
+        前四个字段沿用阅读3.0 的既有命名，后面的是本项目为「能真正渲染评论」
+        补的解析字段。
+      properties:
+        authorDiggRule:
+          type:
+          - string
+          - 'null'
+          description: 作者赞过这条评论。
+          default: null
+        authorRule:
+          type:
+          - string
+          - 'null'
+          description: 评论者是作者本人（真值词表见规格 §15）。
+          default: null
+        avatarRule:
+          type:
+          - string
+          - 'null'
+          default: null
+        contentRule:
+          type:
+          - string
+          - 'null'
+          default: null
+        deleteUrl:
+          type:
+          - string
+          - 'null'
+          default: null
+        diggRule:
+          type:
+          - string
+          - 'null'
+          description: 点赞数。
+          default: null
+        hasMoreRule:
+          type:
+          - string
+          - 'null'
+          description: 是否还有下一页。
+          default: null
+        idRule:
+          type:
+          - string
+          - 'null'
+          description: 评论 ID，用于前端去重与「加载更多」拼接。
+          default: null
+        imageRule:
+          type:
+          - string
+          - 'null'
+          description: 评论配图。写成列表规则（如 `$.image_url[*]`）时取多个；JS 规则按行切分。
+          default: null
+        listRule:
+          type:
+          - string
+          - 'null'
+          description: 评论列表项的选择规则（JSONPath / CSS / XPath / 正则）。
+          default: null
+        nameRule:
+          type:
+          - string
+          - 'null'
+          description: 用户名。
+          default: null
+        postQuoteUrl:
+          type:
+          - string
+          - 'null'
+          default: null
+        postReviewUrl:
+          type:
+          - string
+          - 'null'
+          default: null
+        postTimeRule:
+          type:
+          - string
+          - 'null'
+          default: null
+        replyAuthorDiggRule:
+          type:
+          - string
+          - 'null'
+          description: 作者赞过这条回复。
+          default: null
+        replyAuthorRule:
+          type:
+          - string
+          - 'null'
+          description: 回复者是作者本人。
+          default: null
+        replyContentRule:
+          type:
+          - string
+          - 'null'
+          default: null
+        replyCountRule:
+          type:
+          - string
+          - 'null'
+          description: 回复数。
+          default: null
+        replyImageRule:
+          type:
+          - string
+          - 'null'
+          description: 回复配图（楼中楼里的图片）。缺省时回落到 [`ReviewRule::image_rule`]。
+          default: null
+        replyListRule:
+          type:
+          - string
+          - 'null'
+          description: 内联回复列表（`reply_list` 之类）的选择规则。
+          default: null
+        replyNameRule:
+          type:
+          - string
+          - 'null'
+          default: null
+        replyPostTimeRule:
+          type:
+          - string
+          - 'null'
+          default: null
+        replyToRule:
+          type:
+          - string
+          - 'null'
+          description: 回复的目标用户名（「回复 @某人」）。
+          default: null
+        reviewQuoteUrl:
+          type:
+          - string
+          - 'null'
+          default: null
+        reviewUrl:
+          type:
+          - string
+          - 'null'
+          description: 章评列表 URL 模板，对章节正文响应求值。
+          default: null
+        totalRule:
+          type:
+          - string
+          - 'null'
+          description: 评论总数，用于「本章评论 · N」。
+          default: null
+        voteDownUrl:
+          type:
+          - string
+          - 'null'
+          default: null
+        voteUpUrl:
+          type:
+          - string
+          - 'null'
+          default: null
+    SearchRule:
+      type: object
+      properties:
+        author:
+          type:
+          - string
+          - 'null'
+          default: null
+        bookList:
+          type:
+          - string
+          - 'null'
+          default: null
+        bookUrl:
+          type:
+          - string
+          - 'null'
+          default: null
+        checkKeyWord:
+          type:
+          - string
+          - 'null'
+          default: null
+        coverUrl:
+          type:
+          - string
+          - 'null'
+          default: null
+        intro:
+          type:
+          - string
+          - 'null'
+          default: null
+        kind:
+          type:
+          - string
+          - 'null'
+          default: null
+        lastChapter:
+          type:
+          - string
+          - 'null'
+          default: null
+        name:
+          type:
+          - string
+          - 'null'
+          default: null
+        updateTime:
+          type:
+          - string
+          - 'null'
+          default: null
+        wordCount:
+          type:
+          - string
+          - 'null'
+          default: null
     SessionTokens:
       type: object
       description: |-
@@ -1986,6 +3004,86 @@ components:
           - integer
           - 'null'
           format: int32
+    SourceWriteResult:
+      type: object
+      description: 单条写入结果：线缆身份 `src_<n>`。
+      required:
+      - id
+      properties:
+        id:
+          type: string
+    TocRule:
+      type: object
+      properties:
+        chapterList:
+          type:
+          - string
+          - 'null'
+          default: null
+        chapterName:
+          type:
+          - string
+          - 'null'
+          default: null
+        chapterUrl:
+          type:
+          - string
+          - 'null'
+          default: null
+        formatJs:
+          type:
+          - string
+          - 'null'
+          default: null
+        init:
+          type:
+          - string
+          - 'null'
+          default: null
+        isPay:
+          type:
+          - string
+          - 'null'
+          default: null
+        isVip:
+          type:
+          - string
+          - 'null'
+          default: null
+        isVolume:
+          type:
+          - string
+          - 'null'
+          default: null
+        nextTocUrl:
+          type:
+          - string
+          - 'null'
+          default: null
+        preUpdateJs:
+          type:
+          - string
+          - 'null'
+          default: null
+        updateTime:
+          type:
+          - string
+          - 'null'
+          default: null
+        volumeName:
+          type:
+          - string
+          - 'null'
+          description: |-
+            卷名（本项目扩展）：规则挂在每个章节条目上，
+            目录 UI 把卷名相同的连续章节归到同一个卷标题下
+          default: null
+        wordCount:
+          type:
+          - string
+          - 'null'
+          description: 字数（本项目扩展）：目录里随章节条目展示
+          default: null
   securitySchemes:
     bearerAuth:
       type: http

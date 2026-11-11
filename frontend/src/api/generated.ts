@@ -394,7 +394,87 @@ export interface paths {
          */
         get: operations["listSources"];
         put?: never;
+        /**
+         * 单条全量 upsert：优先按自带 `bookSourceId` 更新，否则按 URL 保号归并。
+         *     新建 201 / 更新 200。
+         */
+        post: operations["upsertSource"];
+        /**
+         * 清空全部书源（同步；契约的 202 Task 化随任务子系统）。绑定该部署书源的
+         *     书籍会失去书源，正文历史与登记行不受影响。
+         */
+        delete: operations["deleteAllSources"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/sources/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * 完整书源（源材料透传）：编辑器按整条对象读写。身份参数是 `src_<n>`，
+         *     材料里的 `bookSourceId`（数字）是源材料字段，原样保留。
+         */
+        get: operations["getSource"];
+        put?: never;
         post?: never;
+        /** 单条删除（幂等）：书架里绑定该源的书籍会失去书源（与 /reader3 同语义）。 */
+        delete: operations["deleteSource"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/sources:batchDelete": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 批量删除（幂等）：不存在的 id 忽略、不计数。 */
+        post: operations["batchDeleteSources"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/sources:batchUpsert": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 批量导入/订阅/恢复：URL 去重优先（保本地 id），单事务提交。 */
+        post: operations["batchUpsertSources"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/sources:deleteInvalid": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 删除失效书源：分组含「失效」标记的整行删除（与 `/reader3` 同口径）。 */
+        post: operations["deleteInvalidSources"];
         delete?: never;
         options?: never;
         head?: never;
@@ -424,8 +504,23 @@ export interface components {
         BatchDeleteRequest: {
             names: string[];
         };
+        BatchDeleteSourcesRequest: {
+            ids: string[];
+        };
+        BatchDeleteSourcesResult: {
+            /** Format: int32 */
+            deleted: number;
+        };
         BatchUpsertRequest: {
             rules: components["schemas"]["ReplaceRuleWrite"][];
+        };
+        BatchUpsertSourcesRequest: {
+            /** @description 源材料数组（宽松迁移；单项解析失败整批 400） */
+            sources: unknown[];
+        };
+        BatchUpsertSourcesResult: {
+            /** Format: int32 */
+            count: number;
         };
         BookDetail: {
             author?: string | null;
@@ -452,9 +547,127 @@ export interface components {
              */
             totalChapters?: number | null;
         };
+        BookInfoRule: {
+            /** @default null */
+            author: string | null;
+            /** @default null */
+            canReName: string | null;
+            /** @default null */
+            coverUrl: string | null;
+            /** @default null */
+            downloadUrls: string | null;
+            /** @default null */
+            init: string | null;
+            /** @default null */
+            intro: string | null;
+            /** @default null */
+            kind: string | null;
+            /** @default null */
+            lastChapter: string | null;
+            /** @default null */
+            name: string | null;
+            /** @default null */
+            tocUrl: string | null;
+            /** @default null */
+            updateTime: string | null;
+            /** @default null */
+            wordCount: string | null;
+        };
         BookPatch: {
             author?: string | null;
             name?: string | null;
+        };
+        BookSource: {
+            /** @default null */
+            bookSourceComment: string | null;
+            /** @default null */
+            bookSourceGroup: string | null;
+            /**
+             * Format: int64
+             * @description 后端分配的稳定自增 id，书源的身份键；URL 只是数据字段与导入去重键。
+             *     不落 json blob（由表列携带），装载/响应时注入。
+             * @default null
+             */
+            bookSourceId: number | null;
+            /** @default  */
+            bookSourceName: string;
+            /**
+             * Format: int32
+             * @default null
+             */
+            bookSourceType: number | null;
+            /** @default  */
+            bookSourceUrl: string;
+            /** @default null */
+            bookUrlPattern: string | null;
+            /** @default null */
+            concurrentRate: string | null;
+            /** @default null */
+            coverDecodeJs: string | null;
+            /**
+             * Format: int32
+             * @default null
+             */
+            customOrder: number | null;
+            /** @default null */
+            enabled: boolean | null;
+            /** @default null */
+            enabledCookieJar: boolean | null;
+            /** @default null */
+            enabledExplore: boolean | null;
+            /** @default null */
+            exploreScreen: string | null;
+            /** @default null */
+            exploreUrl: string | null;
+            /** @default null */
+            header: string | null;
+            /** @default null */
+            jsLib: string | null;
+            /**
+             * Format: int64
+             * @default null
+             */
+            lastUpdateTime: number | null;
+            /** @default null */
+            loadWithBaseUrl: boolean | null;
+            /** @default null */
+            loginCheckJs: string | null;
+            /** @default null */
+            loginUi: string | null;
+            /** @default null */
+            loginUrl: string | null;
+            /**
+             * Format: int64
+             * @default null
+             */
+            respondTime: number | null;
+            /** @default null */
+            ruleBookInfo: components["schemas"]["BookInfoRule"] | null;
+            /** @default null */
+            ruleContent: components["schemas"]["ContentRule"] | null;
+            /** @default null */
+            ruleContentImage: components["schemas"]["ContentImageRule"] | null;
+            /** @default null */
+            ruleExplore: components["schemas"]["SearchRule"];
+            /** @default null */
+            ruleParaReview: components["schemas"]["ParaReviewRule"] | null;
+            /** @default null */
+            ruleReview: components["schemas"]["ReviewRule"] | null;
+            /** @default null */
+            ruleSearch: components["schemas"]["SearchRule"] | null;
+            /** @default null */
+            ruleToc: components["schemas"]["TocRule"] | null;
+            /** @default null */
+            searchUrl: string | null;
+            /** @default null */
+            singleUrl: boolean | null;
+            /** @default null */
+            variableComment: string | null;
+            /**
+             * Format: int32
+             * @default null
+             */
+            weight: number | null;
         };
         /** @description 单层缓存的占用统计（v1 与 /reader3 共用同一形状）。 */
         CacheLayerUsage: {
@@ -603,6 +816,80 @@ export interface components {
             /** Format: int64 */
             versions: number;
         };
+        /**
+         * @description 章节配图规则（本项目扩展，阅读3.0 无此字段）。
+         *
+         *     多数书源的配图就写在正文 HTML 里（`<img>`），渲染端直接显示，不需要规则；
+         *     这一组规则是给「配图另走一个接口」的站点用的：先用 `imageUrl` 拿配图接口
+         *     的地址，再用 `listRule` 取列表、用各字段规则取单张图的信息。
+         *
+         *     `imageUrl` 对**章节正文响应**求值（与 [`ReviewRule::review_url`] 同理），
+         *     所以模板里可以直接引用正文响应里的字段，例如
+         *     `content/image?item_id={{$.data.data.novel_data.item_id}}`。
+         */
+        ContentImageRule: {
+            /**
+             * @description 图片说明文字，默认 `caption`。
+             * @default null
+             */
+            captionRule: string | null;
+            /** @default null */
+            heightRule: string | null;
+            /**
+             * @description 配图接口 URL 模板，对章节正文响应求值。
+             * @default null
+             */
+            imageUrl: string | null;
+            /**
+             * @description 配图列表规则，如 `$.data.images[*]`（HTML 站点写 CSS 选择器）。
+             * @default null
+             */
+            listRule: string | null;
+            /**
+             * @description 插入位置：正文按 `\n` 切分后的行号（从 0 开始，插在该行之前），
+             *     默认 `para_index`。取不到位置时图片排在章末。
+             * @default null
+             */
+            paraIndexRule: string | null;
+            /**
+             * @description 单张图的地址规则，默认 `url`（HTML 站点默认取 `img` 的 `src`）。
+             * @default null
+             */
+            urlRule: string | null;
+            /**
+             * @description 原始宽高，用于给图片占位（避免加载时页面跳动），默认 `width` / `height`。
+             * @default null
+             */
+            widthRule: string | null;
+        };
+        ContentRule: {
+            /** @default null */
+            content: string | null;
+            /** @default null */
+            imageDecode: string | null;
+            /** @default null */
+            imageStyle: string | null;
+            /** @default null */
+            nextContentUrl: string | null;
+            /** @default null */
+            payAction: string | null;
+            /** @default null */
+            replaceRegex: string | null;
+            /** @default null */
+            sourceRegex: string | null;
+            /** @default null */
+            title: string | null;
+            /** @default null */
+            webJs: string | null;
+        };
+        DeleteAllSourcesRequest: {
+            /** @description 必须逐字为 `DELETE_ALL`：清空全部书源是毁灭性操作，用确认体当门槛 */
+            confirm: string;
+        };
+        DeleteAllSourcesResult: {
+            /** Format: int64 */
+            deleted: number;
+        };
         DiffOp: {
             baseIndex?: number | null;
             baseText?: string | null;
@@ -643,6 +930,100 @@ export interface components {
             createdAt: string;
             id: string;
             username: string;
+        };
+        /**
+         * @description 段评（段落评论）规则。
+         *
+         *     阅读3.0 没有段评概念，这是本项目新增的扩展规则；字段命名与
+         *     [`ReviewRule`] 保持一致，便于书源作者套用。
+         *
+         *     段评分两步：先用 `indexUrl` 取「哪些段落有评论、各有多少条」的概览，
+         *     再用 `reviewUrl` 取某一段的评论列表。两个 URL 都对章节正文响应求值，
+         *     模板里可额外使用 `{{paraIndex}}`。
+         */
+        ParaReviewRule: {
+            /** @default null */
+            authorDiggRule: string | null;
+            /**
+             * @description 评论者/回复者是作者本人、作者赞过（同 [`ReviewRule`] 的四个字段）。
+             * @default null
+             */
+            authorRule: string | null;
+            /** @default null */
+            avatarRule: string | null;
+            /** @default null */
+            contentRule: string | null;
+            /** @default null */
+            diggRule: string | null;
+            /** @default null */
+            hasMoreRule: string | null;
+            /** @default null */
+            idRule: string | null;
+            /**
+             * @description 评论配图，同 [`ReviewRule::image_rule`]。
+             * @default null
+             */
+            imageRule: string | null;
+            /**
+             * @description 从单段数据里取「作者评论/点赞过」标记；规则缺省时该标记恒为 false。
+             * @default null
+             */
+            indexAuthorCommentedRule: string | null;
+            /**
+             * @description 从单段数据里取评论条数。
+             * @default null
+             */
+            indexCountRule: string | null;
+            /**
+             * @description 概览里的「段号 → 该段数据」映射，通常是一个对象。
+             * @default null
+             */
+            indexListRule: string | null;
+            /**
+             * @description 段评概览 URL 模板，对章节正文响应求值。
+             * @default null
+             */
+            indexUrl: string | null;
+            /** @default null */
+            listRule: string | null;
+            /** @default null */
+            nameRule: string | null;
+            /** @default null */
+            postTimeRule: string | null;
+            /** @default null */
+            replyAuthorDiggRule: string | null;
+            /** @default null */
+            replyAuthorRule: string | null;
+            /** @default null */
+            replyContentRule: string | null;
+            /**
+             * @description 回复数。段评列表里通常没有内联回复，只有条数，用于「共 N 条回复」。
+             * @default null
+             */
+            replyCountRule: string | null;
+            /**
+             * @description 回复配图，同 [`ReviewRule::reply_image_rule`]。
+             * @default null
+             */
+            replyImageRule: string | null;
+            /**
+             * @description 内联回复列表（有的站点段评也带 `reply_list`）。
+             * @default null
+             */
+            replyListRule: string | null;
+            /** @default null */
+            replyNameRule: string | null;
+            /** @default null */
+            replyPostTimeRule: string | null;
+            /** @default null */
+            replyToRule: string | null;
+            /**
+             * @description 段评列表 URL 模板；模板里可用 `{{paraIndex}}`。
+             * @default null
+             */
+            reviewUrl: string | null;
+            /** @default null */
+            totalRule: string | null;
         };
         /**
          * @description problem+json 响应体。`type` 固定 `about:blank`（RFC 9457 缺省类型，
@@ -713,6 +1094,147 @@ export interface components {
             pattern: string;
             replacement?: string | null;
             scope?: string | null;
+        };
+        /**
+         * @description 章评（章节评论）规则。
+         *
+         *     阅读3.0 里 `ruleReview` 是「预留字段」，官方实现从不执行（见
+         *     `docs/reference/book-source-rules.md` 第 17 节），因此这里把它接上：
+         *     `reviewUrl` 按**章节正文响应**求值，得到该章的评论列表地址，
+         *     其余字段描述如何从响应里取出一条评论。
+         *
+         *     前四个字段沿用阅读3.0 的既有命名，后面的是本项目为「能真正渲染评论」
+         *     补的解析字段。
+         */
+        ReviewRule: {
+            /**
+             * @description 作者赞过这条评论。
+             * @default null
+             */
+            authorDiggRule: string | null;
+            /**
+             * @description 评论者是作者本人（真值词表见规格 §15）。
+             * @default null
+             */
+            authorRule: string | null;
+            /** @default null */
+            avatarRule: string | null;
+            /** @default null */
+            contentRule: string | null;
+            /** @default null */
+            deleteUrl: string | null;
+            /**
+             * @description 点赞数。
+             * @default null
+             */
+            diggRule: string | null;
+            /**
+             * @description 是否还有下一页。
+             * @default null
+             */
+            hasMoreRule: string | null;
+            /**
+             * @description 评论 ID，用于前端去重与「加载更多」拼接。
+             * @default null
+             */
+            idRule: string | null;
+            /**
+             * @description 评论配图。写成列表规则（如 `$.image_url[*]`）时取多个；JS 规则按行切分。
+             * @default null
+             */
+            imageRule: string | null;
+            /**
+             * @description 评论列表项的选择规则（JSONPath / CSS / XPath / 正则）。
+             * @default null
+             */
+            listRule: string | null;
+            /**
+             * @description 用户名。
+             * @default null
+             */
+            nameRule: string | null;
+            /** @default null */
+            postQuoteUrl: string | null;
+            /** @default null */
+            postReviewUrl: string | null;
+            /** @default null */
+            postTimeRule: string | null;
+            /**
+             * @description 作者赞过这条回复。
+             * @default null
+             */
+            replyAuthorDiggRule: string | null;
+            /**
+             * @description 回复者是作者本人。
+             * @default null
+             */
+            replyAuthorRule: string | null;
+            /** @default null */
+            replyContentRule: string | null;
+            /**
+             * @description 回复数。
+             * @default null
+             */
+            replyCountRule: string | null;
+            /**
+             * @description 回复配图（楼中楼里的图片）。缺省时回落到 [`ReviewRule::image_rule`]。
+             * @default null
+             */
+            replyImageRule: string | null;
+            /**
+             * @description 内联回复列表（`reply_list` 之类）的选择规则。
+             * @default null
+             */
+            replyListRule: string | null;
+            /** @default null */
+            replyNameRule: string | null;
+            /** @default null */
+            replyPostTimeRule: string | null;
+            /**
+             * @description 回复的目标用户名（「回复 @某人」）。
+             * @default null
+             */
+            replyToRule: string | null;
+            /** @default null */
+            reviewQuoteUrl: string | null;
+            /**
+             * @description 章评列表 URL 模板，对章节正文响应求值。
+             * @default null
+             */
+            reviewUrl: string | null;
+            /**
+             * @description 评论总数，用于「本章评论 · N」。
+             * @default null
+             */
+            totalRule: string | null;
+            /** @default null */
+            voteDownUrl: string | null;
+            /** @default null */
+            voteUpUrl: string | null;
+        };
+        SearchRule: {
+            /** @default null */
+            author: string | null;
+            /** @default null */
+            bookList: string | null;
+            /** @default null */
+            bookUrl: string | null;
+            /** @default null */
+            checkKeyWord: string | null;
+            /** @default null */
+            coverUrl: string | null;
+            /** @default null */
+            intro: string | null;
+            /** @default null */
+            kind: string | null;
+            /** @default null */
+            lastChapter: string | null;
+            /** @default null */
+            name: string | null;
+            /** @default null */
+            updateTime: string | null;
+            /** @default null */
+            wordCount: string | null;
         };
         /**
          * @description 会话令牌对。`accessToken` 供非浏览器客户端走 `Authorization: Bearer`；
@@ -860,6 +1382,45 @@ export interface components {
             url: string;
             /** Format: int32 */
             weight?: number | null;
+        };
+        /** @description 单条写入结果：线缆身份 `src_<n>`。 */
+        SourceWriteResult: {
+            id: string;
+        };
+        TocRule: {
+            /** @default null */
+            chapterList: string | null;
+            /** @default null */
+            chapterName: string | null;
+            /** @default null */
+            chapterUrl: string | null;
+            /** @default null */
+            formatJs: string | null;
+            /** @default null */
+            init: string | null;
+            /** @default null */
+            isPay: string | null;
+            /** @default null */
+            isVip: string | null;
+            /** @default null */
+            isVolume: string | null;
+            /** @default null */
+            nextTocUrl: string | null;
+            /** @default null */
+            preUpdateJs: string | null;
+            /** @default null */
+            updateTime: string | null;
+            /**
+             * @description 卷名（本项目扩展）：规则挂在每个章节条目上，
+             *     目录 UI 把卷名相同的连续章节归到同一个卷标题下
+             * @default null
+             */
+            volumeName: string | null;
+            /**
+             * @description 字数（本项目扩展）：目录里随章节条目展示
+             * @default null
+             */
+            wordCount: string | null;
         };
     };
     responses: never;
@@ -1993,6 +2554,292 @@ export interface operations {
             };
             /** @description 游标无法解码 */
             422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    upsertSource: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["BookSource"];
+            };
+        };
+        responses: {
+            /** @description 已有同 URL / 同 id 书源，已替换 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SourceWriteResult"];
+                };
+            };
+            /** @description 已新建 */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SourceWriteResult"];
+                };
+            };
+            /** @description 源材料无法解析或缺少 bookSourceUrl */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description 未登录或令牌失效 */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    deleteAllSources: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DeleteAllSourcesRequest"];
+            };
+        };
+        responses: {
+            /** @description 删除行数 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DeleteAllSourcesResult"];
+                };
+            };
+            /** @description confirm 不是 DELETE_ALL */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description 未登录或令牌失效 */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    getSource: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description 书源 id（src_<n>） */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 完整书源 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BookSource"];
+                };
+            };
+            /** @description 未登录或令牌失效 */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description 书源不存在 */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    deleteSource: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description 书源 id（src_<n>） */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 已删除（幂等） */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description 未登录或令牌失效 */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    batchDeleteSources: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["BatchDeleteSourcesRequest"];
+            };
+        };
+        responses: {
+            /** @description 删除条数 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BatchDeleteSourcesResult"];
+                };
+            };
+            /** @description ids 为空或超上限 */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description 未登录或令牌失效 */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    batchUpsertSources: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["BatchUpsertSourcesRequest"];
+            };
+        };
+        responses: {
+            /** @description 写入条数 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BatchUpsertSourcesResult"];
+                };
+            };
+            /** @description sources 为空/超上限或单项无法解析 */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description 未登录或令牌失效 */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description 请求体超过批量导入上限 */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    deleteInvalidSources: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 删除条数 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BatchDeleteSourcesResult"];
+                };
+            };
+            /** @description 未登录或令牌失效 */
+            401: {
                 headers: {
                     [name: string]: unknown;
                 };
