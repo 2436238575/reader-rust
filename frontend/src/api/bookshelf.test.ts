@@ -2,6 +2,7 @@
 import { beforeEach, describe, expect, it, vi, type Mock } from 'vitest'
 import http from './http'
 import {
+  uploadLocalBook,
   batchRemoveFromShelf,
   deleteBookCache,
   getBookshelfWithCacheInfo,
@@ -418,3 +419,21 @@ describe('getChapterList 会话内缓存（v1 游标分页）', () => {
   })
 })
 
+
+describe('uploadLocalBook（v1 接线）', () => {
+  beforeEach(() => {
+    postMock.mockReset().mockResolvedValue({ data: {} })
+    getMock.mockReset().mockResolvedValue({ data: [] })
+  })
+
+  it('uploadLocalBook POST /v1/local-books（multipart file）', async () => {
+    const file = new File(['第一章\n正文'], 'test.txt', { type: 'text/plain' })
+    await uploadLocalBook(file)
+    expect(postMock).toHaveBeenCalledTimes(1)
+    const [url, form, config] = postMock.mock.calls[0]
+    expect(url).toBe('/local-books')
+    expect((form as FormData).get('file')).toBe(file)
+    expect(config.baseURL).toBe(API_V1_BASE)
+    expect(config.timeout).toBe(900_000)
+  })
+})
