@@ -16,7 +16,7 @@ type ApiShelfPage = components['schemas']['ShelfPage']
 function parseVersionId(id: string | null | undefined): number | undefined {
   if (!id) return undefined
   const parsed = Number(id.replace(/^cv_/, ''))
-  return Number.isFinite(parsed) ? parsed : undefined
+  return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : undefined
 }
 
 /** RFC 3339 → 秒级时间戳（旧响应形状里时间是数字秒） */

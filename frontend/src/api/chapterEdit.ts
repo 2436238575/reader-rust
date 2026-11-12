@@ -18,7 +18,7 @@ function cvId(versionId: number): string {
 function parseVersionId(id: string | null | undefined): number | undefined {
   if (!id) return undefined
   const parsed = Number(id.replace(/^cv_/, ''))
-  return Number.isFinite(parsed) ? parsed : undefined
+  return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : undefined
 }
 
 export interface SaveChapterEditParams {
@@ -117,15 +117,6 @@ export function getChapterEdit(bookId: string, index: number) {
       }
     })
     .catch(() => null)
-}
-
-/** 有用户版本的章节地址列表（过渡期诊断） */
-export function listChapterEdits(bookId: string) {
-  return http
-    .get<{ marks: Record<string, unknown> }>(`/books/${bookId}/chapter-marks`, {
-      baseURL: API_V1_BASE,
-    })
-    .then((r) => ({ urls: Object.keys(r.data?.marks ?? {}) }))
 }
 
 /** 一章当前显示版本的标记（目录版本标签用） */
