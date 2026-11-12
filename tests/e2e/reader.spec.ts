@@ -16,7 +16,7 @@ async function seedLocalTxtBook(page): Promise<{ bookId: string; name: string }>
       '第一章 开始\n第一章正文内容。\n第二章 中段\n第二章正文内容。\n第三章 收尾\n第三章正文内容。\n'
     const form = new FormData()
     form.append('file', new File([content], `阅读器冒烟-${Date.now()}.txt`, { type: 'text/plain' }))
-    const resp = await fetch('/reader3/uploadTxtBook', {
+    const resp = await fetch('/v1/local-books', {
       method: 'POST',
       body: form,
     })
@@ -48,7 +48,7 @@ async function seedLongBook(page, chapterCount: number, paragraphsPerChapter: nu
         'file',
         new File([chapters], `长文冒烟-${Date.now()}.txt`, { type: 'text/plain' })
       )
-      const resp = await fetch('/reader3/uploadTxtBook', {
+      const resp = await fetch('/v1/local-books', {
         method: 'POST',
         body: form,
       })
@@ -111,7 +111,7 @@ test.describe('Standard E2E: reader', () => {
       const content = '第一章 第二本\n第二本书的正文。\n'
       const form = new FormData()
       form.append('file', new File([content], `直链换书-${Date.now()}.txt`, { type: 'text/plain' }))
-      const resp = await fetch('/reader3/uploadTxtBook', { method: 'POST', body: form })
+      const resp = await fetch('/v1/local-books', { method: 'POST', body: form })
       if (!resp.ok) return null
       const payload = await resp.json()
       return { bookId: payload?.data?.bookId ?? null }

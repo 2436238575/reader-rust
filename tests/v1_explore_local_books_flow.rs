@@ -296,6 +296,36 @@ async fn local_book_upload_creates_book() {
         .unwrap();
     assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
 
+    // ?kind=epub + 51MB 假 body：走 EPUB 的 80MB 上限，应该报「解析失败」
+    // 而不是 413 体积超限（区分 TXT 50MB 与 EPUB 80MB 两条分支）
+    let big_content = vec![0x4eu8; 51 * 1024 * 1024]; // 51MB of 'N'
+    let boundary = "----v1-nonp2-test";
+    let mut body = format!(
+        "--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"big.epub\"\r\nContent-Type: application/epub+zip\r\n\r\n"
+    )
+    .into_bytes();
+    body.extend_from_slice(&big_content);
+    body.extend_from_slice(format!("\r\n--{boundary}--\r\n").as_bytes());
+    let resp = server
+        .client
+        .post(format!("{}/v1/local-books?kind=epub", server.base_url))
+        .bearer_auth(&server.token)
+        .header(
+            "Content-Type",
+            format!("multipart/form-data; boundary={boundary}"),
+        )
+        .body(body)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    let body: Value = resp.json().await.unwrap();
+    assert_eq!(
+        body["detail"],
+        json!("EPUB 文件损坏"),
+        "应走 EPUB 80MB 读体上限后在解析阶段失败，而不是被 TXT 50MB 读体上限 413"
+    );
+
     server.cleanup();
 }
 

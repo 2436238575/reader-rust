@@ -69,6 +69,10 @@ pub async fn upload_local_book(
 ) -> Result<Json<Book>, Problem> {
     let mut file_name = String::new();
     let mut bytes: Option<Vec<u8>> = None;
+    // EPUB 上限 80MB / TXT 上限 50MB：在读完字段内容之前先按文件名与
+    // `?kind=` 判定格式，选对读体上限——50–80MB 的 EPUB 才不会被 TXT
+    // 的 50MB 上限误杀。
+    let mut is_epub = query.kind.as_deref().map(str::trim) == Some("epub");
     let mut field_count = 0usize;
     while let Some(field) =
         crate::api::handlers::multipart::next_field_limited(&mut multipart, &mut field_count)
@@ -79,27 +83,29 @@ pub async fn upload_local_book(
             continue;
         }
         file_name = field.file_name().unwrap_or("book.txt").to_string();
-        bytes = Some(
-            crate::api::handlers::multipart::read_limited_multipart_field(
-                field,
+        if query.kind.is_none() {
+            is_epub = file_name.to_lowercase().ends_with(".epub");
+        }
+        let (limit, message) = if is_epub {
+            (
+                crate::service::local_epub_book::MAX_EPUB_UPLOAD_BYTES,
+                "EPUB 文件不能超过 80MB",
+            )
+        } else {
+            (
                 crate::service::local_txt_book::MAX_TXT_UPLOAD_BYTES,
                 "TXT 文件不能超过 50MB",
             )
-            .await
-            .map_err(Problem::from)?,
+        };
+        bytes = Some(
+            crate::api::handlers::multipart::read_limited_multipart_field(field, limit, message)
+                .await
+                .map_err(Problem::from)?,
         );
         break;
     }
     let bytes =
         bytes.ok_or_else(|| Problem::new(ErrorCode::MalformedRequest).detail("file required"))?;
-
-    let lower = file_name.to_lowercase();
-    // `?kind=` 显式覆盖扩展名分派（audit 缺口 #6/#7 的 kind 覆盖分支）
-    let is_epub = match query.kind.as_deref().map(str::trim) {
-        Some("epub") => true,
-        Some("txt") => false,
-        _ => lower.ends_with(".epub"),
-    };
 
     let book = if is_epub {
         state
