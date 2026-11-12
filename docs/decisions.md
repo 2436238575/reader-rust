@@ -181,3 +181,13 @@ goal 执行中遇到「决策表与 spec 都沉默」的问题时，按 §5.4 �
 - **P1-3 不改（有意保留）**：编辑域端点在网络书登记表为空时走 `resolve_chapter_url` 触发目录抓取——与正文 GET `content` 同一行为，正常阅读路径会先经目录端点填表。是否改为「登记表 miss 即 404」随编辑域后续迭代决定。
 - **P1-4/P1-5 不改（已有覆盖）**：import-diff 端点的核心逻辑由 /reader3 的 `tests/chapter_edit_flow.rs` 间接覆盖（共享 `chapter_import_diff_payload`）；v1 评论测试的 authorOnly / refresh / variant 分支由 /reader3 `tests/review_flow.rs` 覆盖（共享同一服务调用）。v1 端点是薄包装（index→url + typed 映射），共享核心已有回归保护。
 - **分组保留位掩码（决定，非待办）**：计划写的「groups（关联表，废除位掩码）」不执行；关联表触发条件是「单书归属任意多组且独立管理」。
+
+## 2026-11-12 章节编辑域切 v1（P3 收官）
+
+- **交付**：16 个端点——`PUT/DELETE .../content`（编辑保存/取消）、`GET .../content/edit`（编辑器预填）、`GET .../versions`（时间线）、`GET .../versions/{cv}`、`GET .../versions/{cv}/diff?against=`、`POST .../content:select`、`POST .../content:import`、`PATCH /v1/books/{id}/chapters/{index}`（改名）、`GET/DELETE .../title`、`GET /v1/books/{id}/chapter-marks`、`POST /v1/books/{id}/content:reset`，以及导入链 `chapters:preview-import` / `chapters:import` / `chapters:upload-import-chunk` / `chapters/import-diff`。服务调用全部复用 `chapter_content_service` / `chapter_diff_service` / 导入核心（r3 与 v1 共用的 typed payload）。
+- **写路径不做 `If-Match` / 412（有意）**：版本是追加式的、历史严格保留——两个客户端并发保存只会产生两个版本，晚到的成为当前版本，先前版本仍可在时间线里重新选中，不是不可逆覆盖。`baseVersionId` 只作 diff 基准，不承担并发令牌职责。契约 §8.4 的 `If-Match`/412 条目作废（Draft-2 §16.2 已记录；生成物 `openapi.yaml` 从未包含该参数）。
+- **`chapterUrl` 从线缆消失**：编辑域全部按 `(bookId, index)`，index 经章节登记表/本地目录解析出内部地址（红线 6），与评论/配图同一口径。`chapter-marks` 的键暂用内部 URL（与 `ChapterItem.url` 同生命周期，过渡期例外；URL 字段删除时一并改 index 键）。
+- **导入子路由在 120s 超时与 1MB 体限之外 merge**：整本 TXT 预览/导入/分片上传自带 900s 上传超时 + 64MB 体限 + 鉴权 + CSRF；与 `/reader3` big_body_routes 同一做法，避免大文件被常规超时误杀。
+- **`GET .../content/edit` 的 404 语义**：没有用户版本时返回 404 `CHAPTER_EDIT_NOT_FOUND`（新 ErrorCode），不是 200 + null——客户端据此区分「没有编辑」与「网络失败」。
+- **`reset` 只清指针**：整书回上游只摘版本选择与用户版本指针，历史版本严格保留；**没有 confirm 门槛**（与 `DELETE /v1/sources` 的 `DELETE_ALL` 不同：reset 可逆、风险可控）。
+- **`content:select` 校验版本归属**：跨章 select 返回 400（服务层统一闸，`/reader3` 一并受益）；前端版本面板已加入 `isBlockingOverlayOpen`，modal 打开时翻页键不再生效——两层防线缺一不可。

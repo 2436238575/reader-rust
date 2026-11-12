@@ -619,6 +619,7 @@ pub struct ChapterSelectionPayload {
     security(("cookieAuth" = []), ("bearerAuth" = [])),
     responses(
         (status = 200, description = "选择后的指针", body = ChapterSelectionPayload),
+        (status = 400, description = "版本不属于本章", body = Problem, content_type = "application/problem+json"),
         (status = 401, description = "未登录或令牌失效", body = Problem, content_type = "application/problem+json"),
         (status = 404, description = "书籍或章节不存在", body = Problem, content_type = "application/problem+json"),
     )

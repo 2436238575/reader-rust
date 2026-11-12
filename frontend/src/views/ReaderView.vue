@@ -1554,6 +1554,7 @@ const { handleKeydown } = useReaderKeyboard(
         store.activePanel ||
         showDiffPanel.value ||
         showChapterEditor.value ||
+        showVersionPanel.value ||
         showSearch.value ||
         showCommentPanel.value ||
         showBookInfo.value ||

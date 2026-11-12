@@ -409,3 +409,42 @@ async fn edit_endpoints_require_auth() {
     }
     server.cleanup();
 }
+
+/// 跨章选择版本必须 400：select 不校验归属会让第 N 章渲染别章的正文。
+#[tokio::test]
+async fn select_rejects_cross_chapter_version() {
+    let server = TestServer::start().await;
+
+    // 第 1 章存编辑版，拿到版本号
+    let resp = server
+        .put(
+            &format!("/v1/books/{}/chapters/1/content", server.book_id),
+            json!({ "content": "第二章编辑版。" }),
+        )
+        .await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body: Value = resp.json().await.unwrap();
+    let version_id = body["versionId"].as_str().unwrap().to_string();
+
+    // 选到第 0 章：400（版本不属于本章）
+    let resp = server
+        .post(
+            &format!("/v1/books/{}/chapters/0/content:select", server.book_id),
+            json!({ "versionId": version_id }),
+        )
+        .await;
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    let body: Value = resp.json().await.unwrap();
+    assert_eq!(body["code"], json!("MALFORMED_REQUEST"));
+
+    // 第 0 章未被污染：仍是上游原文
+    let resp = server
+        .get(&format!("/v1/books/{}/chapters/0/content", server.book_id))
+        .await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body: Value = resp.json().await.unwrap();
+    assert_eq!(body["body"], json!("原始正文第一句。"));
+    assert_eq!(body["selectionSource"], json!("upstream"));
+
+    server.cleanup();
+}

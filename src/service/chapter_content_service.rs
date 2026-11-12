@@ -336,6 +336,18 @@ impl ChapterContentService {
         chapter_url: &str,
         version_id: Option<i64>,
     ) -> Result<(), AppError> {
+        // 版本必须属于本章：跨章 select 会把别的章节正文挂到本章（手写客户端
+        // 同样能触发），静默写脏比报错更糟。与 put/import/diff 的
+        // baseVersionId 校验同一道闸。
+        if let Some(version_id) = version_id {
+            if self
+                .version(book_id, chapter_url, version_id)
+                .await?
+                .is_none()
+            {
+                return Err(AppError::BadRequest("版本不属于本章".to_string()));
+            }
+        }
         self.repo
             .set_view_state(user_ns, book_id, chapter_url, version_id)
             .await

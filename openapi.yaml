@@ -889,6 +889,12 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ChapterSelectionPayload'
+        '400':
+          description: 版本不属于本章
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
         '401':
           description: 未登录或令牌失效
           content:
