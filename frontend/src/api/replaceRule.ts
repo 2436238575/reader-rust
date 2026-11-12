@@ -75,17 +75,21 @@ export function saveReplaceRule(rule: ReplaceRule) {
     .then(() => '')
 }
 
+/** 批量操作的分片大小：服务端单批上限 100，按 100 串行分片 */
+const REPLACE_RULES_CHUNK = 100
+
 /**
- * 批量保存净化规则
+ * 批量保存净化规则（按 100 分片串行，整本恢复不撞上限）
  */
-export function saveReplaceRules(rules: ReplaceRule[]) {
-  return http
-    .post(
+export async function saveReplaceRules(rules: ReplaceRule[]) {
+  for (let i = 0; i < rules.length; i += REPLACE_RULES_CHUNK) {
+    await http.post(
       '/me/replace-rules:batch',
-      { rules: rules.map(toWire) },
+      { rules: rules.slice(i, i + REPLACE_RULES_CHUNK).map(toWire) },
       { baseURL: API_V1_BASE },
     )
-    .then(() => '')
+  }
+  return ''
 }
 
 /**
@@ -100,14 +104,15 @@ export function deleteReplaceRule(rule: ReplaceRule) {
 }
 
 /**
- * 批量删除净化规则（幂等；不存在的名字忽略）
+ * 批量删除净化规则（幂等；不存在的名字忽略；按 100 分片串行）
  */
-export function deleteReplaceRules(rules: ReplaceRule[]) {
-  return http
-    .post(
+export async function deleteReplaceRules(rules: ReplaceRule[]) {
+  for (let i = 0; i < rules.length; i += REPLACE_RULES_CHUNK) {
+    await http.post(
       '/me/replace-rules:batchDelete',
-      { names: rules.map((rule) => rule.name) },
+      { names: rules.slice(i, i + REPLACE_RULES_CHUNK).map((rule) => rule.name) },
       { baseURL: API_V1_BASE },
     )
-    .then(() => '')
+  }
+  return ''
 }

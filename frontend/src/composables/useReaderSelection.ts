@@ -235,7 +235,7 @@ export function useReaderSelection(
         mode === 'source' ? `source:${store.book.bookSourceId}` : `book:${store.book.bookId}`
       await saveReplaceRule({
         id: 0,
-        name: `${mode === 'source' ? '书源替换' : '本书替换'} ${configStore.replaceRules.length + 1}`,
+        name: `${mode === 'source' ? '书源替换' : '本书替换'}_${configStore.replaceRules.length + 1}`,
         pattern: text,
         replacement: '',
         scope,
@@ -289,7 +289,7 @@ export function useReaderSelection(
       mode === 'source' ? `source:${store.book.bookSourceId}` : `book:${store.book.bookId}`
     await saveReplaceRule({
       id: 0,
-      name: `${mode === 'source' ? '书源替换' : '本书替换'} ${configStore.replaceRules.length + 1}`,
+      name: `${mode === 'source' ? '书源替换' : '本书替换'}_${configStore.replaceRules.length + 1}`,
       pattern: text,
       replacement: '',
       scope,

@@ -21,7 +21,7 @@
       <div
         v-else
         v-for="rule in sortedRules"
-        :key="rule.id"
+        :key="rule.name"
         class="rule-item"
         :class="{ disabled: !rule.isEnabled }"
       >
