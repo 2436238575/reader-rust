@@ -285,8 +285,46 @@ export function deleteBooks(bookIds: string[]) {
   return http.post<{ deleted: number }>('/deleteBooks', { bookIds }).then((r) => r.data)
 }
 
+/**
+ * 获取书籍详情（v1）：ReaderSource 换源预览用。
+ * BookDetail 字段映射回旧 Book 形状（coverImageId → 图片管道地址）。
+ */
 export function getBookInfo(bookId: string) {
-  return http.post<Book>('/getBookInfo', { bookId }).then((r) => r.data)
+  return http
+    .get<{
+      id: string
+      name: string
+      author?: string | null
+      sourceId?: string | null
+      bookUrl: string
+      intro?: string | null
+      kind?: string | null
+      coverImageId?: string | null
+      totalChapters?: number | null
+      lastChapter?: { index: number; title: string } | null
+      stale: boolean
+    }>(`/books/${bookId}`, { baseURL: API_V1_BASE })
+    .then((r) => {
+      const d = r.data
+      const book: Book = {
+        bookId: d.id,
+        bookSourceId: d.sourceId
+          ? Number(d.sourceId.replace(/^src_/, ''))
+          : undefined,
+        name: d.name,
+        author: d.author ?? '',
+        bookUrl: d.bookUrl,
+        origin: '',
+        intro: d.intro ?? undefined,
+        kind: d.kind ?? undefined,
+        coverUrl: d.coverImageId
+          ? `/reader3/image/${d.coverImageId}`
+          : undefined,
+        latestChapterTitle: d.lastChapter?.title,
+        totalChapterNum: d.totalChapters ?? undefined,
+      }
+      return book
+    })
 }
 
 import type { ParagraphDiffOp } from '../utils/chapterDiff'
