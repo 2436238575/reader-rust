@@ -18,11 +18,13 @@ async function seedLocalTxtBook(page): Promise<{ bookId: string; name: string }>
     form.append('file', new File([content], `阅读器冒烟-${Date.now()}.txt`, { type: 'text/plain' }))
     const resp = await fetch('/v1/local-books', {
       method: 'POST',
+      headers: { 'X-Requested-With': 'XMLHttpRequest' },
+      credentials: 'same-origin',
       body: form,
     })
     if (!resp.ok) return null
     const payload = await resp.json()
-    return { bookId: payload?.data?.bookId ?? null, name: payload?.data?.name ?? '' }
+    return { bookId: payload?.bookId ?? null, name: payload?.name ?? '' }
   })
   expect(seed.bookId, 'TXT 上传应返回 bookId').toBeTruthy()
   return seed
@@ -50,11 +52,13 @@ async function seedLongBook(page, chapterCount: number, paragraphsPerChapter: nu
       )
       const resp = await fetch('/v1/local-books', {
         method: 'POST',
+        headers: { 'X-Requested-With': 'XMLHttpRequest' },
+        credentials: 'same-origin',
         body: form,
       })
       if (!resp.ok) return null
       const payload = await resp.json()
-      return { bookId: payload?.data?.bookId ?? null, name: payload?.data?.name ?? '' }
+      return { bookId: payload?.bookId ?? null, name: payload?.name ?? '' }
     },
     { chapterCount, paragraphsPerChapter }
   )
@@ -111,10 +115,15 @@ test.describe('Standard E2E: reader', () => {
       const content = '第一章 第二本\n第二本书的正文。\n'
       const form = new FormData()
       form.append('file', new File([content], `直链换书-${Date.now()}.txt`, { type: 'text/plain' }))
-      const resp = await fetch('/v1/local-books', { method: 'POST', body: form })
+      const resp = await fetch('/v1/local-books', {
+        method: 'POST',
+        headers: { 'X-Requested-With': 'XMLHttpRequest' },
+        credentials: 'same-origin',
+        body: form,
+      })
       if (!resp.ok) return null
       const payload = await resp.json()
-      return { bookId: payload?.data?.bookId ?? null }
+      return { bookId: payload?.bookId ?? null }
     })
     expect(second?.bookId, '第二本 TXT 上传应返回 bookId').toBeTruthy()
     await page.evaluate(
