@@ -198,3 +198,11 @@ goal 执行中遇到「决策表与 spec 都沉默」的问题时，按 §5.4 �
 - **`POST /v1/local-books`**：本地书上传（multipart `file`），TXT/EPUB 按扩展名分派（`?kind=` 显式覆盖扩展名，`kind=txt` + `.epub` 文件名由底层 TXT 扩展名校验拒绝）；读体上限按分派结果选对（EPUB 80MB / TXT 50MB），修复了「50–80MB EPUB 被 TXT 50MB 上限误杀」的回归。路由在 120s 超时与 1MB 体限之外 merge（子路由自带 900s 上传超时 + 100MB 体限 + 鉴权 + CSRF），与导入链同一层序。
 - **explore `url` 不限定在书源声明的 exploreUrl 内**（与 /reader3 一致，非回归）：认证用户可传任意地址让服务端用书源规则抓取；Cookie 按域隔离不会外泄。如需封路可加「url ∈ exploreUrl 候选」校验（`explore_kinds` 解析后比对），暂不做。
 - **e2e 种子数据切到 v1**：`reader.spec.ts` 的 `uploadTxtBook` fetch 路径改为 `/v1/local-books`，整套 e2e 顺带验证新端点。
+
+## 2026-11-13 非 P2 同步端点：探索发现与本地书上传
+
+- **`GET /v1/sources/{src_<n>}/explore?url=&page=`**：按书源 exploreUrl 分类地址拉书单；响应 `Vec<SearchBook>`（typed），封面统一收口为 `/reader3/image/<id>`；搜索/探索产出即登记（响应带 `bookId`）。
+- **`POST /v1/local-books`**：本地书上传（multipart `file`），TXT/EPUB 按扩展名分派；读体上限按分派结果选对（EPUB 80MB / TXT 50MB），修复了「50–80MB EPUB 被 TXT 50MB 上限误杀」的回归。路由在 120s 超时与 1MB 体限之外 merge（子路由自带 900s 上传超时 + 100MB 体限 + 鉴权 + CSRF），与导入链同一层序。
+- **`?kind=` 的覆盖语义**：`kind=epub` 或 `kind=txt` 显式覆盖扩展名分派（原来 OR 逻辑会把 `kind=txt` + `.epub` 文件名判成 EPUB）；`kind=garbage` 显式 400 不再静默回落扩展名。底层服务的扩展名校验不越权——`kind=txt` + `.epub` 文件名仍被 TXT 扩展名校验拒绝。
+- **explore `url` 不限定在书源声明的 exploreUrl 内**（与 /reader3 一致，非回归）：认证用户可传任意地址让服务端用书源规则抓取；Cookie 按域隔离不会外泄。如需封路可加「url ∈ exploreUrl 候选」校验，暂不做。
+- **e2e 种子数据切到 v1**：`reader.spec.ts` 的 `uploadTxtBook` fetch 路径改为 `/v1/local-books`，整套 e2e 顺带验证新端点。

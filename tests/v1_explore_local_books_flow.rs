@@ -375,6 +375,17 @@ async fn local_books_middleware_and_kind_override() {
     assert_eq!(status, StatusCode::BAD_REQUEST);
     assert_eq!(body["detail"], json!("仅支持上传 .txt 文件"));
 
+    // kind=garbage：显式 400，不再静默按扩展名回落
+    let (status, body) = server
+        .upload_local_with_kind("测试书.txt", "第一章\n正文".as_bytes(), Some("garbage"))
+        .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(
+        body["detail"],
+        json!("kind 只接受 txt 或 epub，收到 garbage"),
+        "非法 kind 应显式 400: {body}"
+    );
+
     server.cleanup();
 }
 

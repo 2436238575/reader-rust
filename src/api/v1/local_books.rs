@@ -72,7 +72,18 @@ pub async fn upload_local_book(
     // EPUB 上限 80MB / TXT 上限 50MB：在读完字段内容之前先按文件名与
     // `?kind=` 判定格式，选对读体上限——50–80MB 的 EPUB 才不会被 TXT
     // 的 50MB 上限误杀。
-    let mut is_epub = query.kind.as_deref().map(str::trim) == Some("epub");
+    // `?kind=` 显式覆盖扩展名分派；非法取值显式 400（静默回落扩展名会让
+    // `kind=garbage` + `.epub` 文件名得到「仅支持上传 .txt 文件」这种看不懂的错误）
+    let kind_override = match query.kind.as_deref().map(str::trim) {
+        None | Some("") => None,
+        Some("epub") => Some(true),
+        Some("txt") => Some(false),
+        Some(other) => {
+            return Err(Problem::new(ErrorCode::MalformedRequest)
+                .detail(format!("kind 只接受 txt 或 epub，收到 {other}")))
+        }
+    };
+    let mut is_epub = kind_override.unwrap_or(false);
     let mut field_count = 0usize;
     while let Some(field) =
         crate::api::handlers::multipart::next_field_limited(&mut multipart, &mut field_count)
@@ -83,7 +94,7 @@ pub async fn upload_local_book(
             continue;
         }
         file_name = field.file_name().unwrap_or("book.txt").to_string();
-        if query.kind.is_none() {
+        if kind_override.is_none() {
             is_epub = file_name.to_lowercase().ends_with(".epub");
         }
         let (limit, message) = if is_epub {
