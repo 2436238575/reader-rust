@@ -14,7 +14,7 @@ pub(crate) mod content;
 mod explore;
 mod local_upload;
 mod search;
-mod shelf;
+pub(crate) mod shelf;
 mod sse;
 mod toc;
 
