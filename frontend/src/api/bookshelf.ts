@@ -257,26 +257,28 @@ export function restoreBooks(books: Partial<Book>[]) {
   return http.post<Book[]>('/saveBooks', { books, restore: true }).then((r) => r.data)
 }
 
-export function uploadTxtBook(file: File) {
+/**
+ * 上传本地书（v1）：TXT/EPUB 按扩展名分派（`.epub` 走 EPUB，其余按 TXT），
+ * 响应是不带包装的 Book（已分配 bookId 且已在书架）。
+ */
+export function uploadLocalBook(file: File) {
   const formData = new FormData()
   formData.append('file', file)
   return http
-    .post<Book>('/uploadTxtBook', formData, {
+    .post<Book>('/local-books', formData, {
       headers: { 'Content-Type': 'multipart/form-data' },
       timeout: UPLOAD_TIMEOUT_MS,
+      baseURL: API_V1_BASE,
     })
     .then((r) => r.data)
 }
 
+export function uploadTxtBook(file: File) {
+  return uploadLocalBook(file)
+}
+
 export function uploadEpubBook(file: File) {
-  const formData = new FormData()
-  formData.append('file', file)
-  return http
-    .post<Book>('/uploadEpubBook', formData, {
-      headers: { 'Content-Type': 'multipart/form-data' },
-      timeout: UPLOAD_TIMEOUT_MS,
-    })
-    .then((r) => r.data)
+  return uploadLocalBook(file)
 }
 
 export function deleteBooks(bookIds: string[]) {
