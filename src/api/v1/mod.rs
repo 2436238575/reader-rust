@@ -33,6 +33,7 @@ mod chapter_edits;
 mod chapter_imports;
 mod content;
 mod groups;
+mod local_books;
 mod marks;
 mod me;
 mod replace_rules;
@@ -92,6 +93,7 @@ pub fn router(
     // merge：自带 900s 上传超时与 64MB 体限，鉴权与 CSRF 在子路由自含；
     // trace 层在此之后挂，仍然包裹导入路由
     let v1 = v1.merge(chapter_imports::router(state.clone(), upload_timeout));
+    let v1 = v1.merge(local_books::router(state.clone(), upload_timeout));
     v1.layer(axum::middleware::from_fn(attach_problem_trace))
         .with_state(state)
 }
@@ -311,6 +313,7 @@ pub fn openapi_yaml() -> String {
         sources::batch_delete_sources,
         sources::delete_all_sources,
         sources::delete_invalid_sources,
+        sources::explore_source,
         shelf::add_to_shelf,
         shelf::list_shelf,
         shelf::get_shelf_item,
@@ -356,6 +359,7 @@ pub fn openapi_yaml() -> String {
         chapter_imports::import_chapter_text,
         chapter_imports::upload_chapter_import_chunk,
         chapter_imports::get_chapter_import_diff,
+        local_books::upload_local_book,
         auth::login,
         auth::refresh,
         auth::logout,

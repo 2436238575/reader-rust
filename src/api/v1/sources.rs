@@ -18,6 +18,7 @@ use crate::api::problem::{ErrorCode, Problem};
 use crate::api::v1::{V1Json, V1User};
 use crate::api::AppState;
 use crate::model::book_source::{book_source_from_value, BookSource};
+use crate::model::search::SearchBook;
 use crate::service::book_source_service::{book_source_has_group, INVALID_BOOK_SOURCE_GROUP};
 use axum::extract::{Path, Query, State};
 use axum::http::{header, HeaderMap, HeaderValue, StatusCode};
@@ -47,6 +48,7 @@ pub fn router() -> Router<AppState> {
         .route("/v1/sources/{id}", get(get_source).delete(delete_source))
         .route("/v1/sources:batchDelete", post(batch_delete_sources))
         .route("/v1/sources:deleteInvalid", post(delete_invalid_sources))
+        .route("/v1/sources/{sourceId}/explore", get(explore_source))
         // 批量导入的请求体放宽：整站打包的源文件远超 /v1 默认 1MB。
         // 挂在 MethodRouter 上（内层），晚于 v1 mod 的外层 1MB 生效
         .route(
@@ -250,6 +252,70 @@ pub async fn list_sources(
         HeaderValue::from_static("private, no-cache"),
     );
     Ok(response)
+}
+
+/// 探索发现（按书源的 `exploreUrl` 分类地址拉书单）。
+#[utoipa::path(
+    get,
+    path = "/v1/sources/{sourceId}/explore",
+    tag = "sources",
+    operation_id = "exploreSource",
+    params(
+        ("sourceId" = String, Path, description = "书源 id（src_<n>）"),
+        ("url" = String, Query, description = "分类地址（书源 exploreUrl 的候选值）"),
+        ("page" = Option<i32>, Query, description = "页码，从 1 起"),
+    ),
+    security(("cookieAuth" = []), ("bearerAuth" = [])),
+    responses(
+        (status = 200, description = "书单（封面已收口为图片管道地址）", body = [SearchBook]),
+        (status = 400, description = "url 缺失", body = Problem, content_type = "application/problem+json"),
+        (status = 401, description = "未登录或令牌失效", body = Problem, content_type = "application/problem+json"),
+        (status = 404, description = "书源不存在", body = Problem, content_type = "application/problem+json"),
+    )
+)]
+pub async fn explore_source(
+    State(state): State<AppState>,
+    V1User(user): V1User,
+    Path(source_id): Path<String>,
+    Query(query): Query<ExploreQuery>,
+) -> Result<Json<Vec<SearchBook>>, Problem> {
+    let numeric = parse_source_path_id(&source_id)?;
+    let source = state
+        .book_source_service
+        .get_by_id(&user.ns, numeric)
+        .await
+        .map_err(Problem::from)?
+        .ok_or_else(|| Problem::new(ErrorCode::SourceNotFound).detail("书源不存在"))?;
+    let url = query
+        .url
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| Problem::new(ErrorCode::MalformedRequest).detail("url required"))?;
+    let page = query.page.unwrap_or(1).max(1);
+    let mut items = state
+        .book_service
+        .explore_book(&user.ns, &source, url, page)
+        .await
+        .map_err(Problem::from)?;
+    // 封面收口：源站地址过期快，统一换成图片管道地址
+    for item in items.iter_mut() {
+        if let Some(cover) = item.cover_url.as_deref().filter(|value| !value.is_empty()) {
+            if let Some(id) = state.image_service.register("cover", cover, None).await {
+                item.cover_url = Some(crate::service::image_service::ImageService::route(&id));
+            }
+        }
+    }
+    Ok(Json(items))
+}
+
+/// 探索查询参数。
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ExploreQuery {
+    /// 分类地址（书源 exploreUrl 的候选值）
+    pub url: Option<String>,
+    pub page: Option<i32>,
 }
 
 // ─── 写链路（同步子集） ────────────────────────────────────────────────

@@ -47,7 +47,7 @@ pub async fn get_bookshelf(
     Ok(ok_with_cover_routes(&state, serde_json::to_value(list).unwrap_or_default()).await)
 }
 
-pub(super) async fn ensure_user_local_book_limit(
+pub(crate) async fn ensure_user_local_book_limit(
     state: &AppState,
     user_ns: &str,
     incoming_book_url: &str,

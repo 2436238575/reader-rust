@@ -11,7 +11,7 @@ pub(crate) mod chapter_edit;
 mod chapter_image;
 pub(crate) mod chapter_import_upload;
 mod image;
-mod multipart;
+pub(crate) mod multipart;
 mod replace_rule;
 mod review;
 mod search_cache;

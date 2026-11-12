@@ -522,6 +522,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/local-books": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * 上传本地书（multipart `file` 字段）：按扩展名分派 TXT/EPUB 导入服务，
+         *     响应是不带包装的 Book（`bookId` 已分配，且已在书架）。
+         */
+        post: operations["uploadLocalBook"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/me": {
         parameters: {
             query?: never;
@@ -833,6 +853,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/sources/{sourceId}/explore": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 探索发现（按书源的 `exploreUrl` 分类地址拉书单）。 */
+        get: operations["exploreSource"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/sources:batchDelete": {
         parameters: {
             query?: never;
@@ -937,6 +974,94 @@ export interface components {
         BatchUpsertSourcesResult: {
             /** Format: int32 */
             count: number;
+        };
+        Book: {
+            /** @default  */
+            author: string;
+            /**
+             * @description 后端分配的稳定身份（`book_<n>`），不随换源变化；请求身份参数一律用它。
+             * @default null
+             */
+            bookId: string | null;
+            /**
+             * Format: int64
+             * @description 当前绑定的书源 id；与 `origin`（书源 URL，数据字段）并行保存。
+             * @default null
+             */
+            bookSourceId: number | null;
+            /** @default  */
+            bookUrl: string;
+            /** @default null */
+            canReName: string | null;
+            /** @default null */
+            canUpdate: boolean | null;
+            /** @default null */
+            charset: string | null;
+            /** @default null */
+            coverUrl: string | null;
+            /** @default null */
+            customCoverUrl: string | null;
+            /** @default null */
+            downloadUrls: string | null;
+            /**
+             * Format: int32
+             * @default null
+             */
+            durChapterIndex: number | null;
+            /**
+             * Format: int32
+             * @default null
+             */
+            durChapterPos: number | null;
+            /**
+             * Format: int64
+             * @default null
+             */
+            durChapterTime: number | null;
+            /** @default null */
+            durChapterTitle: string | null;
+            /**
+             * Format: int64
+             * @default null
+             */
+            group: number | null;
+            /** @default null */
+            infoHtml: string | null;
+            /** @default null */
+            intro: string | null;
+            /** @default null */
+            kind: string | null;
+            /**
+             * Format: int64
+             * @default null
+             */
+            lastCheckTime: number | null;
+            /** @default null */
+            latestChapterTitle: string | null;
+            /** @default  */
+            name: string;
+            /** @default  */
+            origin: string;
+            /** @default null */
+            originName: string | null;
+            /** @default null */
+            tocHtml: string | null;
+            /** @default null */
+            tocUrl: string | null;
+            /**
+             * Format: int32
+             * @default null
+             */
+            totalChapterNum: number | null;
+            /**
+             * Format: int32
+             * @default null
+             */
+            type: number | null;
+            /** @default null */
+            updateTime: string | null;
+            /** @default null */
+            wordCount: string | null;
         };
         BookDetail: {
             author?: string | null;
@@ -2088,6 +2213,44 @@ export interface components {
             voteDownUrl: string | null;
             /** @default null */
             voteUpUrl: string | null;
+        };
+        SearchBook: {
+            /** @default  */
+            author: string;
+            /**
+             * @description 登记分配的 `book_<n>`：搜索结果产出即登记，后续详情/目录/正文请求只用它
+             * @default null
+             */
+            bookId: string | null;
+            /**
+             * Format: int64
+             * @description 该书当前命中的书源 id
+             * @default null
+             */
+            bookSourceId: number | null;
+            /**
+             * @description 同一本书在各书源的命中（聚合结果用），值是 bookSourceId
+             * @default null
+             */
+            bookSourceIds: number[] | null;
+            /** @default  */
+            bookUrl: string;
+            /** @default null */
+            coverUrl: string | null;
+            /** @default null */
+            intro: string | null;
+            /** @default null */
+            kind: string | null;
+            /** @default null */
+            lastChapter: string | null;
+            /** @default  */
+            name: string;
+            /** @default  */
+            origin: string;
+            /** @default null */
+            updateTime: string | null;
+            /** @default null */
+            wordCount: string | null;
         };
         SearchRule: {
             /** @default null */
@@ -3869,6 +4032,56 @@ export interface operations {
             };
         };
     };
+    uploadLocalBook: {
+        parameters: {
+            query?: {
+                /** @description 显式声明格式（txt / epub）；缺省按扩展名分派 */
+                kind?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 已创建并入架 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Book"];
+                };
+            };
+            /** @description file 缺失 / 解析失败 / 超出本地书数量上限 */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description 未登录或令牌失效 */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description TXT 上限 50MB、EPUB 上限 80MB */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
     getMe: {
         parameters: {
             query?: never;
@@ -4893,6 +5106,61 @@ export interface operations {
             };
             /** @description 未登录或令牌失效 */
             401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    exploreSource: {
+        parameters: {
+            query: {
+                /** @description 分类地址（书源 exploreUrl 的候选值） */
+                url: string;
+                /** @description 页码，从 1 起 */
+                page?: number;
+            };
+            header?: never;
+            path: {
+                /** @description 书源 id（src_<n>） */
+                sourceId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 书单（封面已收口为图片管道地址） */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SearchBook"][];
+                };
+            };
+            /** @description url 缺失 */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description 未登录或令牌失效 */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description 书源不存在 */
+            404: {
                 headers: {
                     [name: string]: unknown;
                 };

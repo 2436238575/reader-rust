@@ -1,0 +1,264 @@
+//! `/v1/sources/{id}/explore` 与 `POST /v1/local-books`：非 P2 依赖的同步端点。
+
+mod common;
+use axum::http::StatusCode;
+use serde_json::{json, Value};
+use std::path::PathBuf;
+
+use axum::Json;
+use reader_rust::api::router::build_router;
+use reader_rust::app::bootstrap::build_state;
+use reader_rust::app::config::AppConfig;
+
+struct TestServer {
+    base_url: String,
+    temp_dir: PathBuf,
+    client: reqwest::Client,
+    token: String,
+    source_id: String,
+}
+
+async fn start_explore_server() -> (String, String) {
+    // 假上游：探索分类 + 书单（封面走图片管道收口）
+    let app = axum::Router::new().route(
+        "/discover",
+        axum::routing::get(|| async {
+            Json(json!({
+                "data": { "list": [
+                    {
+                        "name": "探索书一",
+                        "author": "作者甲",
+                        "bookUrl": "http://up.example/book/1",
+                        "coverUrl": "/cover/1.jpeg",
+                        "intro": "简介一",
+                        "kind": "玄幻"
+                    },
+                    {
+                        "name": "探索书二",
+                        "author": "作者乙",
+                        "bookUrl": "http://up.example/book/2"
+                    }
+                ]}
+            }))
+        }),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        let _ = axum::serve(listener, app).await;
+    });
+    (format!("http://{addr}"), "/cover/1.jpeg".to_string())
+}
+
+async fn boot(upstream_url: &str) -> TestServer {
+    common::clean_stale_temp_dirs();
+    let temp_dir =
+        std::env::temp_dir().join(format!("reader-rust-v1-nonp2-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&temp_dir).unwrap();
+    let cfg = AppConfig {
+        server_host: "127.0.0.1".to_string(),
+        server_port: 0,
+        database_url: format!("sqlite:{}?mode=rwc", temp_dir.join("reader.db").display()),
+        storage_dir: temp_dir.to_string_lossy().to_string(),
+        web_root: temp_dir.to_string_lossy().to_string(),
+        assets_dir: temp_dir.join("assets").to_string_lossy().to_string(),
+        jwt_secret: "v1-nonp2-secret".to_string(),
+        request_timeout_secs: 10,
+        admin_username: "reader1".to_string(),
+        admin_password: "password123".to_string(),
+        rate_limit_disabled: true,
+        allow_private_network: true,
+        ..AppConfig::default()
+    };
+    let state = build_state(cfg).await.unwrap();
+    let app = build_router(state);
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        let _ = axum::serve(
+            listener,
+            app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+        )
+        .await;
+    });
+
+    let client = reqwest::Client::new();
+    let base_url = format!("http://{addr}");
+    let token = common::login(&client, &base_url).await;
+
+    // 假书源：exploreUrl 指向假上游的分类地址
+    let resp = client
+        .post(format!("{base_url}/v1/sources"))
+        .bearer_auth(&token)
+        .json(&json!({
+            "bookSourceName": "假源",
+            "bookSourceUrl": upstream_url,
+            "enabled": true,
+            "ruleExplore": {
+                "bookList": "$.data.list[*]",
+                "name": "$.name",
+                "author": "$.author",
+                "bookUrl": "$.bookUrl",
+                "coverUrl": "$.coverUrl",
+                "intro": "$.intro",
+                "kind": "$.kind"
+            },
+            "exploreUrl": format!("{upstream_url}/discover")
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::CREATED);
+    let payload: Value = resp.json().await.unwrap();
+    let source_id = payload["id"].as_str().unwrap().to_string();
+
+    TestServer {
+        base_url,
+        temp_dir,
+        client,
+        token,
+        source_id,
+    }
+}
+
+impl TestServer {
+    fn cleanup(&self) {
+        let _ = std::fs::remove_dir_all(&self.temp_dir);
+    }
+
+    async fn get(&self, path: &str) -> (StatusCode, Value) {
+        let resp = self
+            .client
+            .get(format!("{}{path}", self.base_url))
+            .bearer_auth(&self.token)
+            .send()
+            .await
+            .unwrap();
+        let status = resp.status();
+        let payload: Value = resp.json().await.unwrap();
+        (status, payload)
+    }
+
+    /// 手拼 multipart 上传本地书到 v1。
+    async fn upload_local(&self, filename: &str, content: &[u8]) -> (StatusCode, Value) {
+        let boundary = "----v1-nonp2-test";
+        let mut body = format!(
+            "--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"{filename}\"\r\nContent-Type: text/plain\r\n\r\n"
+        )
+        .into_bytes();
+        body.extend_from_slice(content);
+        body.extend_from_slice(format!("\r\n--{boundary}--\r\n").as_bytes());
+        let resp = self
+            .client
+            .post(format!("{}/v1/local-books", self.base_url))
+            .bearer_auth(&self.token)
+            .header(
+                "Content-Type",
+                format!("multipart/form-data; boundary={boundary}"),
+            )
+            .body(body)
+            .send()
+            .await
+            .unwrap();
+        let status = resp.status();
+        let payload: Value = resp.json().await.unwrap();
+        (status, payload)
+    }
+}
+
+impl Drop for TestServer {
+    fn drop(&mut self) {
+        common::remove_dir_retried(&self.temp_dir);
+    }
+}
+
+#[tokio::test]
+async fn explore_returns_items_with_pipeline_covers() {
+    let (upstream_url, _) = start_explore_server().await;
+    let server = boot(&upstream_url).await;
+    let path = format!("/v1/sources/{}/explore", server.source_id);
+
+    let (status, body) = server
+        .get(&format!("{path}?url={}/discover&page=1", upstream_url))
+        .await;
+    assert_eq!(status, StatusCode::OK);
+    let items = body.as_array().unwrap();
+    assert_eq!(items.len(), 2);
+    assert_eq!(items[0]["name"], json!("探索书一"));
+    assert_eq!(items[0]["bookId"], json!("book_1"), "搜索/探索产出即登记");
+    // 封面收口：有封面的条目换成 /reader3/image/<id>，没有的原样缺失
+    let cover = items[0]["coverUrl"].as_str().unwrap();
+    assert!(cover.starts_with("/reader3/image/"), "封面收口: {cover}");
+    assert!(items[1]["coverUrl"].is_null());
+
+    server.cleanup();
+}
+
+#[tokio::test]
+async fn explore_validates_params_and_unknown_source() {
+    let (upstream_url, _) = start_explore_server().await;
+    let server = boot(&upstream_url).await;
+
+    // url 缺失：400
+    let (status, body) = server
+        .get(&format!("/v1/sources/{}/explore", server.source_id))
+        .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(body["code"], json!("MALFORMED_REQUEST"));
+
+    // 未知书源：404 精确码
+    let (status, body) = server
+        .get(&format!(
+            "/v1/sources/src_999999/explore?url={}/discover",
+            upstream_url
+        ))
+        .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    assert_eq!(body["code"], json!("SOURCE_NOT_FOUND"));
+
+    server.cleanup();
+}
+
+#[tokio::test]
+async fn local_book_upload_creates_book() {
+    let server = boot("http://unused.example").await;
+
+    let (status, body) = server
+        .upload_local(
+            "测试书.txt",
+            "第一章 开始\n上传正文一。\n第二章 继续\n上传正文二。\n".as_bytes(),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let book_id = body["bookId"].as_str().unwrap().to_string();
+    assert!(book_id.starts_with("book_"));
+
+    // 本地书内容可从 v1 读到
+    let (status, content) = server
+        .get(&format!("/v1/books/{book_id}/chapters/0/content"))
+        .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(content["body"], json!("上传正文一。"));
+
+    // EPUB 扩展名分派（无效 EPUB 内容 → 400 解析失败）
+    let (epub_status, _body) = server.upload_local("测试书.epub", b"not an epub").await;
+    assert_eq!(epub_status, StatusCode::BAD_REQUEST);
+
+    // file 缺失：400
+    let boundary = "----v1-nonp2-test";
+    let resp = server
+        .client
+        .post(format!("{}/v1/local-books", server.base_url))
+        .bearer_auth(&server.token)
+        .header(
+            "Content-Type",
+            format!("multipart/form-data; boundary={boundary}"),
+        )
+        .body(format!("--{boundary}--\r\n"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+
+    server.cleanup();
+}

@@ -1471,6 +1471,49 @@ paths:
       security:
       - cookieAuth: []
       - bearerAuth: []
+  /v1/local-books:
+    post:
+      tags:
+      - books
+      summary: |-
+        上传本地书（multipart `file` 字段）：按扩展名分派 TXT/EPUB 导入服务，
+        响应是不带包装的 Book（`bookId` 已分配，且已在书架）。
+      operationId: uploadLocalBook
+      parameters:
+      - name: kind
+        in: query
+        description: 显式声明格式（txt / epub）；缺省按扩展名分派
+        required: false
+        schema:
+          type: string
+      responses:
+        '200':
+          description: 已创建并入架
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Book'
+        '400':
+          description: file 缺失 / 解析失败 / 超出本地书数量上限
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '401':
+          description: 未登录或令牌失效
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '413':
+          description: TXT 上限 50MB、EPUB 上限 80MB
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+      security:
+      - cookieAuth: []
+      - bearerAuth: []
   /v1/me:
     get:
       tags:
@@ -2341,6 +2384,62 @@ paths:
       security:
       - cookieAuth: []
       - bearerAuth: []
+  /v1/sources/{sourceId}/explore:
+    get:
+      tags:
+      - sources
+      summary: 探索发现（按书源的 `exploreUrl` 分类地址拉书单）。
+      operationId: exploreSource
+      parameters:
+      - name: sourceId
+        in: path
+        description: 书源 id（src_<n>）
+        required: true
+        schema:
+          type: string
+      - name: url
+        in: query
+        description: 分类地址（书源 exploreUrl 的候选值）
+        required: true
+        schema:
+          type: string
+      - name: page
+        in: query
+        description: 页码，从 1 起
+        required: false
+        schema:
+          type: integer
+          format: int32
+      responses:
+        '200':
+          description: 书单（封面已收口为图片管道地址）
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/SearchBook'
+        '400':
+          description: url 缺失
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '401':
+          description: 未登录或令牌失效
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '404':
+          description: 书源不存在
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+      security:
+      - cookieAuth: []
+      - bearerAuth: []
   /v1/sources:batchDelete:
     post:
       tags:
@@ -2564,6 +2663,156 @@ components:
           type: integer
           format: int32
           minimum: 0
+    Book:
+      type: object
+      properties:
+        author:
+          type: string
+          default: ''
+        bookId:
+          type:
+          - string
+          - 'null'
+          description: 后端分配的稳定身份（`book_<n>`），不随换源变化；请求身份参数一律用它。
+          default: null
+        bookSourceId:
+          type:
+          - integer
+          - 'null'
+          format: int64
+          description: 当前绑定的书源 id；与 `origin`（书源 URL，数据字段）并行保存。
+          default: null
+        bookUrl:
+          type: string
+          default: ''
+        canReName:
+          type:
+          - string
+          - 'null'
+          default: null
+        canUpdate:
+          type:
+          - boolean
+          - 'null'
+          default: null
+        charset:
+          type:
+          - string
+          - 'null'
+          default: null
+        coverUrl:
+          type:
+          - string
+          - 'null'
+          default: null
+        customCoverUrl:
+          type:
+          - string
+          - 'null'
+          default: null
+        downloadUrls:
+          type:
+          - string
+          - 'null'
+          default: null
+        durChapterIndex:
+          type:
+          - integer
+          - 'null'
+          format: int32
+          default: null
+        durChapterPos:
+          type:
+          - integer
+          - 'null'
+          format: int32
+          default: null
+        durChapterTime:
+          type:
+          - integer
+          - 'null'
+          format: int64
+          default: null
+        durChapterTitle:
+          type:
+          - string
+          - 'null'
+          default: null
+        group:
+          type:
+          - integer
+          - 'null'
+          format: int64
+          default: null
+        infoHtml:
+          type:
+          - string
+          - 'null'
+          default: null
+        intro:
+          type:
+          - string
+          - 'null'
+          default: null
+        kind:
+          type:
+          - string
+          - 'null'
+          default: null
+        lastCheckTime:
+          type:
+          - integer
+          - 'null'
+          format: int64
+          default: null
+        latestChapterTitle:
+          type:
+          - string
+          - 'null'
+          default: null
+        name:
+          type: string
+          default: ''
+        origin:
+          type: string
+          default: ''
+        originName:
+          type:
+          - string
+          - 'null'
+          default: null
+        tocHtml:
+          type:
+          - string
+          - 'null'
+          default: null
+        tocUrl:
+          type:
+          - string
+          - 'null'
+          default: null
+        totalChapterNum:
+          type:
+          - integer
+          - 'null'
+          format: int32
+          default: null
+        type:
+          type:
+          - integer
+          - 'null'
+          format: int32
+          default: null
+        updateTime:
+          type:
+          - string
+          - 'null'
+          default: null
+        wordCount:
+          type:
+          - string
+          - 'null'
+          default: null
     BookDetail:
       type: object
       required:
@@ -4644,6 +4893,73 @@ components:
           - 'null'
           default: null
         voteUpUrl:
+          type:
+          - string
+          - 'null'
+          default: null
+    SearchBook:
+      type: object
+      properties:
+        author:
+          type: string
+          default: ''
+        bookId:
+          type:
+          - string
+          - 'null'
+          description: 登记分配的 `book_<n>`：搜索结果产出即登记，后续详情/目录/正文请求只用它
+          default: null
+        bookSourceId:
+          type:
+          - integer
+          - 'null'
+          format: int64
+          description: 该书当前命中的书源 id
+          default: null
+        bookSourceIds:
+          type:
+          - array
+          - 'null'
+          items:
+            type: integer
+            format: int64
+          description: 同一本书在各书源的命中（聚合结果用），值是 bookSourceId
+          default: null
+        bookUrl:
+          type: string
+          default: ''
+        coverUrl:
+          type:
+          - string
+          - 'null'
+          default: null
+        intro:
+          type:
+          - string
+          - 'null'
+          default: null
+        kind:
+          type:
+          - string
+          - 'null'
+          default: null
+        lastChapter:
+          type:
+          - string
+          - 'null'
+          default: null
+        name:
+          type: string
+          default: ''
+        origin:
+          type: string
+          default: ''
+        updateTime:
+          type:
+          - string
+          - 'null'
+          default: null
+        wordCount:
           type:
           - string
           - 'null'
