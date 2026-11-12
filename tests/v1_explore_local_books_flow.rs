@@ -164,6 +164,42 @@ impl TestServer {
         let payload: Value = resp.json().await.unwrap();
         (status, payload)
     }
+
+    /// 带 `?kind=` 查询参数的上传（显式格式覆盖分支）。
+    async fn upload_local_with_kind(
+        &self,
+        filename: &str,
+        content: &[u8],
+        kind: Option<&str>,
+    ) -> (StatusCode, Value) {
+        let boundary = "----v1-nonp2-test";
+        let kind_param = kind.unwrap_or_default();
+        let mut body = format!(
+            "--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"{filename}\"\r\nContent-Type: text/plain\r\n\r\n"
+        )
+        .into_bytes();
+        body.extend_from_slice(content);
+        body.extend_from_slice(format!("\r\n--{boundary}--\r\n").as_bytes());
+        let mut url = format!("{}/v1/local-books", self.base_url);
+        if !kind_param.is_empty() {
+            url.push_str(&format!("?kind={kind_param}"));
+        }
+        let resp = self
+            .client
+            .post(&url)
+            .bearer_auth(&self.token)
+            .header(
+                "Content-Type",
+                format!("multipart/form-data; boundary={boundary}"),
+            )
+            .body(body)
+            .send()
+            .await
+            .unwrap();
+        let status = resp.status();
+        let payload: Value = resp.json().await.unwrap();
+        (status, payload)
+    }
 }
 
 impl Drop for TestServer {
@@ -261,4 +297,165 @@ async fn local_book_upload_creates_book() {
     assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
 
     server.cleanup();
+}
+
+/// 上传路由的自挂中间件（CSRF/鉴权）与 `?kind=` 显式覆盖。
+#[tokio::test]
+async fn local_books_middleware_and_kind_override() {
+    let server = boot("http://unused.example").await;
+
+    // 无 Bearer 也无 CSRF 头 → 403（CSRF 层先于鉴权层可见）
+    let resp = server
+        .client
+        .post(format!("{}/v1/local-books", server.base_url))
+        .header("Content-Type", "multipart/form-data; boundary=x")
+        .body("--x--\r\n")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+
+    // 有 CSRF 头无 Bearer → 401（鉴权层）
+    let resp = server
+        .client
+        .post(format!("{}/v1/local-books", server.base_url))
+        .header("x-requested-with", "XMLHttpRequest")
+        .header("Content-Type", "multipart/form-data; boundary=x")
+        .body("--x--\r\n")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+
+    // kind=epub 显式覆盖 .txt 文件名：坏 EPUB 内容 → 400（分派到了 EPUB）
+    let (status, _) = server
+        .upload_local_with_kind("测试书.txt", b"not an epub", Some("epub"))
+        .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "kind=epub 应分派到 EPUB");
+
+    // kind=txt 显式覆盖 .epub 文件名：分派到 TXT 后由 TXT 扩展名校验拒绝
+    // （底层服务仍校验自己的扩展名——kind 覆盖的是路由层分派，不越权改服务）
+    let (status, body) = server
+        .upload_local_with_kind(
+            "测试书.epub",
+            "第一章 开始\n上传正文。\n".as_bytes(),
+            Some("txt"),
+        )
+        .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(body["detail"], json!("仅支持上传 .txt 文件"));
+
+    server.cleanup();
+}
+
+/// 本地书数量上限：第 N+1 本 → 400，且已落盘文件被清理（不留半本书）。
+#[tokio::test]
+async fn local_books_enforce_count_limit() {
+    // 上限 1 本：第二本 → 400
+    common::clean_stale_temp_dirs();
+    let temp_dir = std::env::temp_dir().join(format!(
+        "reader-rust-v1-nonp2-limit-{}",
+        uuid::Uuid::new_v4()
+    ));
+    std::fs::create_dir_all(&temp_dir).unwrap();
+    let cfg = AppConfig {
+        server_host: "127.0.0.1".to_string(),
+        server_port: 0,
+        database_url: format!("sqlite:{}?mode=rwc", temp_dir.join("reader.db").display()),
+        storage_dir: temp_dir.to_string_lossy().to_string(),
+        web_root: temp_dir.to_string_lossy().to_string(),
+        assets_dir: temp_dir.join("assets").to_string_lossy().to_string(),
+        jwt_secret: "v1-nonp2-limit-secret".to_string(),
+        request_timeout_secs: 10,
+        admin_username: "reader1".to_string(),
+        admin_password: "password123".to_string(),
+        rate_limit_disabled: true,
+        allow_private_network: true,
+        user_local_book_limit: 1,
+        ..AppConfig::default()
+    };
+    let state = build_state(cfg).await.unwrap();
+    let app = build_router(state);
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        let _ = axum::serve(
+            listener,
+            app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+        )
+        .await;
+    });
+    let client = reqwest::Client::new();
+    let base_url = format!("http://{addr}");
+    let resp = client
+        .post(format!("{base_url}/v1/auth/login"))
+        .header("x-requested-with", "XMLHttpRequest")
+        .json(&json!({ "username": "reader1", "password": "password123" }))
+        .send()
+        .await
+        .unwrap();
+    let token = resp.json::<Value>().await.unwrap()["accessToken"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    let upload = |name: &str| {
+        let boundary = "----v1-nonp2-test";
+        let mut body = format!(
+            "--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"{name}\"\r\nContent-Type: text/plain\r\n\r\n第一章 开始\n正文。\r\n--{boundary}--\r\n"
+        )
+        .into_bytes();
+        let _ = &mut body;
+        client
+            .post(format!("{base_url}/v1/local-books"))
+            .bearer_auth(&token)
+            .header(
+                "Content-Type",
+                format!("multipart/form-data; boundary={boundary}"),
+            )
+            .body(body)
+            .send()
+    };
+    let _ = &upload;
+
+    let resp = client
+        .post(format!("{base_url}/v1/local-books"))
+        .bearer_auth(&token)
+        .header(
+            "Content-Type",
+            "multipart/form-data; boundary=----v1-nonp2-test",
+        )
+        .body(
+            "------v1-nonp2-test\r\nContent-Disposition: form-data; name=\"file\"; filename=\"a.txt\"\r\nContent-Type: text/plain\r\n\r\n第一章 开始\n正文一。\r\n------v1-nonp2-test--\r\n",
+        )
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    let resp = client
+        .post(format!("{base_url}/v1/local-books"))
+        .bearer_auth(&token)
+        .header(
+            "Content-Type",
+            "multipart/form-data; boundary=----v1-nonp2-test",
+        )
+        .body(
+            "------v1-nonp2-test\r\nContent-Disposition: form-data; name=\"file\"; filename=\"b.txt\"\r\nContent-Type: text/plain\r\n\r\n第一章 开始\n正文二。\r\n------v1-nonp2-test--\r\n",
+        )
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST, "超限应 400");
+
+    // 超限被拒的书的落盘文件已被清理：data/user_1/local_books 下只有第一本的目录
+    let local_dir = temp_dir.join("data").join("user_1").join("local_books");
+    let entries: Vec<String> = std::fs::read_dir(&local_dir)
+        .unwrap()
+        .flatten()
+        .map(|entry| entry.file_name().to_string_lossy().to_string())
+        .collect();
+    assert_eq!(entries.len(), 1, "超限书的落盘文件应被清理: {entries:?}");
+
+    let _ = std::fs::remove_dir_all(&temp_dir);
 }

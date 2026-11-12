@@ -94,7 +94,12 @@ pub async fn upload_local_book(
         bytes.ok_or_else(|| Problem::new(ErrorCode::MalformedRequest).detail("file required"))?;
 
     let lower = file_name.to_lowercase();
-    let is_epub = query.kind.as_deref() == Some("epub") || lower.ends_with(".epub");
+    // `?kind=` 显式覆盖扩展名分派（audit 缺口 #6/#7 的 kind 覆盖分支）
+    let is_epub = match query.kind.as_deref().map(str::trim) {
+        Some("epub") => true,
+        Some("txt") => false,
+        _ => lower.ends_with(".epub"),
+    };
 
     let book = if is_epub {
         state
