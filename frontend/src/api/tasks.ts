@@ -1,11 +1,17 @@
 import http from './http'
 import { API_V1_BASE } from '../utils/appBase'
+import { parseSourceId } from './source'
+import type { BookSourceTestResponse } from '../types'
 import type { components } from './generated'
 
 /** v1 任务资源（字段见 openapi.yaml 的 TaskView）。 */
 export type ApiTask = components['schemas']['TaskView']
 export type ApiTaskState = components['schemas']['TaskState']
 type ApiSearchBook = components['schemas']['SearchBook']
+type ApiSourceTestItem = components['schemas']['SourceTestItem']
+
+/** 书源测试任务单次上限（后端 MAX_SOURCE_TASK_ITEMS）。 */
+export const MAX_SOURCE_TEST_TASK_SIZE = 1000
 
 export interface TaskProgress {
   done: number
@@ -85,8 +91,56 @@ export function createPrefetchTask(
     .then((r) => r.data)
 }
 
-export function getTask(taskId: string): Promise<ApiTask> {
-  return http.get<ApiTask>(`/tasks/${taskId}`, { baseURL: API_V1_BASE }).then((r) => r.data)
+/** 创建书源测试任务（ids 是 `src_<n>`；markInvalid 默认 false）。 */
+export function createSourceTestTask(params: {
+  ids: string[]
+  keyword?: string
+  markInvalid?: boolean
+}): Promise<ApiTask> {
+  return http
+    .post<ApiTask>(
+      '/sources:test',
+      {
+        ids: params.ids,
+        ...(params.keyword ? { keyword: params.keyword } : {}),
+      },
+      {
+        baseURL: API_V1_BASE,
+        params: params.markInvalid ? { markInvalid: true } : undefined,
+      }
+    )
+    .then((r) => r.data)
+}
+
+/** 书源测试结果 → 旧 UI 形状（SourcesView 的合并/提示逻辑零改动）。 */
+export function asSourceTestResult(value: unknown): BookSourceTestResponse | null {
+  const result = value as
+    | { total?: number; valid?: number; invalid?: number; markedInvalid?: number; results?: unknown }
+    | null
+  if (!result || !Array.isArray(result.results)) return null
+  const results = (result.results as ApiSourceTestItem[]).map((item) => ({
+    bookSourceId: item.sourceId ? parseSourceId(item.sourceId) : undefined,
+    bookSourceName: item.name,
+    bookSourceUrl: '',
+    valid: item.valid,
+    searchOk: item.searchOk,
+    exploreOk: item.exploreOk,
+    keyword: item.keyword,
+    searchError: item.searchError ?? undefined,
+    exploreError: item.exploreError ?? undefined,
+    markedInvalid: item.markedInvalid,
+    group: item.group ?? undefined,
+  }))
+  return {
+    total: result.total ?? results.length,
+    valid: result.valid ?? 0,
+    invalid: result.invalid ?? 0,
+    markedInvalid: result.markedInvalid ?? 0,
+    results,
+  }
+}
+
+export function getTask(taskId: string): Promise<ApiTask> {  return http.get<ApiTask>(`/tasks/${taskId}`, { baseURL: API_V1_BASE }).then((r) => r.data)
 }
 
 export function cancelTask(taskId: string): Promise<void> {
@@ -117,7 +171,8 @@ export interface TaskRunHandlers {
   onProgress?: (progress: TaskProgress) => void
   onItem?: (items: ApiSearchBook[], event: TaskItemEvent) => void
   onError?: (problem: TaskProblem) => void
-  onTransportError?: () => void
+  /** `reconnecting=false` 表示 EventSource 已进入 CLOSED（4xx 不会自动重连） */
+  onTransportError?: (reconnecting: boolean) => void
   /** 终态；result 已按 `resultHref` 拉取（失败时为 undefined） */
   onDone?: (state: ApiTaskState, result: unknown) => void
 }
@@ -169,6 +224,25 @@ export function runTask(task: ApiTask, handlers: TaskRunHandlers): TaskRunHandle
     handlers.onDone?.(state, result)
   }
 
+  /** 任务已从注册表消失/会话失效：没有终态事件可等，直接收敛并让 UI 提示重试。 */
+  const taskGone = () => {
+    if (settled) return
+    settled = true
+    cleanup()
+    handlers.onError?.({ detail: '任务已失效，请重新搜索' })
+    handlers.onDone?.('failed', undefined)
+  }
+
+  const statusOf = (error: unknown): number | undefined => {
+    const value = error as { status?: unknown } | null
+    return typeof value?.status === 'number' ? value.status : undefined
+  }
+
+  const treatIfGone = (error: unknown) => {
+    const status = statusOf(error)
+    if (status === 404 || status === 401) taskGone()
+  }
+
   source.addEventListener('progress', (event) => {
     const data = parse(event as MessageEvent) as TaskProgress | null
     if (data) handlers.onProgress?.(data)
@@ -182,8 +256,21 @@ export function runTask(task: ApiTask, handlers: TaskRunHandlers): TaskRunHandle
     if (event instanceof MessageEvent) {
       const data = parse(event) as TaskProblem | null
       if (data) handlers.onError?.(data)
-    } else {
-      handlers.onTransportError?.()
+      return
+    }
+    // 4xx（401/404）会让 EventSource 进入 CLOSED 且不再自动重连；网络错误
+    // 则是 CONNECTING，由浏览器原生重连带 Last-Event-ID。
+    const reconnecting = source.readyState !== 2
+    handlers.onTransportError?.(reconnecting)
+    if (!reconnecting) {
+      void getTask(task.id)
+        .then((fresh) => {
+          if (settled) return
+          if (isTerminalTaskState(fresh.state)) {
+            void finalize(fresh.state, fresh.resultHref)
+          }
+        })
+        .catch(treatIfGone)
     }
   })
   source.addEventListener('done', (event) => {
@@ -200,7 +287,7 @@ export function runTask(task: ApiTask, handlers: TaskRunHandlers): TaskRunHandle
           void finalize(fresh.state, fresh.resultHref)
         }
       })
-      .catch(() => undefined)
+      .catch(treatIfGone)
   }, 2000)
 
   return {

@@ -186,6 +186,10 @@ pub async fn delete_book_cache(
 
 // ─── POST /v1/books/{bookId}/cache：预下载任务 ─────────────────────────
 
+/// 预下载 worker 的章内并发：与旧 SSE 路径前端传的 8 一致；全局出站预算
+/// （默认 32）兜住「多个后台任务叠加」的总量。
+const PREFETCH_CONCURRENCY: usize = 8;
+
 /// 预下载范围：`from` 是章节下标（缺省 0），`count` 是章数（缺省 50，1..=1000）。
 #[derive(Debug, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -362,7 +366,7 @@ fn spawn_prefetch_worker(
             ..PrefetchSummary::default()
         };
         let mut done = 0u32;
-        let semaphore = Arc::new(tokio::sync::Semaphore::new(4));
+        let semaphore = Arc::new(tokio::sync::Semaphore::new(PREFETCH_CONCURRENCY));
         let mut in_flight: tokio::task::JoinSet<Result<(), crate::error::error::AppError>> =
             tokio::task::JoinSet::new();
         let mut index = 0usize;

@@ -1,6 +1,5 @@
 import http from './http'
-import type { BookSource, BookSourceSummary, BookSourceTestResponse } from '../types'
-import { MAX_SOURCE_TEST_BATCH_SIZE } from '../utils/sourceTesting'
+import type { BookSource, BookSourceSummary } from '../types'
 import { API_V1_BASE } from '../utils/appBase'
 import type { components } from './generated'
 
@@ -126,18 +125,6 @@ export function deleteAllBookSources() {
       { baseURL: API_V1_BASE, data: { confirm: 'DELETE_ALL' } },
     )
     .then((r) => ({ deleted: r.data.deleted > 0 }))
-}
-
-export function testBookSources(params: {
-  bookSourceIds?: number[]
-  keyword?: string
-  markInvalid?: boolean
-  concurrent?: number
-}) {
-  if ((params.bookSourceIds?.length || 0) > MAX_SOURCE_TEST_BATCH_SIZE) {
-    throw new Error(`单次最多测试 ${MAX_SOURCE_TEST_BATCH_SIZE} 个书源`)
-  }
-  return http.post<BookSourceTestResponse>('/testBookSources', params).then((r) => r.data)
 }
 
 /** 删除失效书源（分组含「失效」标记），与后端同口径 */

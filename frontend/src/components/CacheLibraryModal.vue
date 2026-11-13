@@ -365,45 +365,68 @@ function cacheServer(book: Book) {
     await refreshData()
   }
 
-  // 「全本」按书架条目里的章节总数换算；后端单任务上限 1000 章
-  const count = cacheCount.value === 0 ? (book.totalChapterNum ?? 1000) : cacheCount.value
-  const countParam = Math.min(Math.max(count, 1), 1000)
-  createPrefetchTask(bookId, { from: 0, count: countParam })
-    .then((task) => {
-      handle = runTask(task, {
-        onDone: (state, result) => {
-          void (async () => {
-            if (state === 'cancelled') {
-              await finish(`"${book.name}" 服务端缓存已取消`, 'warning')
-              return
-            }
-            const summary = asPrefetchSummary(result)
-            if (state === 'failed' || !summary) {
-              await finish(`"${book.name}" 服务端缓存失败`, 'error')
-              return
-            }
-            const added = summary.cached
-            const skipped = summary.skipped
-            const failed = summary.failed
-            if (failed > 0) {
-              await finish(
-                `"${book.name}" 服务端缓存完成：新增 ${added} 章，失败 ${failed} 章`,
-                added > 0 ? 'warning' : 'error'
-              )
-            } else {
-              await finish(
-                `"${book.name}" 已缓存到服务器（新增 ${added} 章${skipped > 0 ? `，跳过 ${skipped} 章` : ''}）`,
-                'success'
-              )
-            }
-          })()
-        },
+  // 「全本」按书架条目里的章节总数换算；单任务上限 1000 章，超出时串行续排
+  const available = book.totalChapterNum ?? null
+  const target =
+    cacheCount.value === 0
+      ? (available ?? 1000)
+      : available
+        ? Math.min(cacheCount.value, available)
+        : cacheCount.value
+  const total = Math.max(target, 1)
+  let processed = 0
+  let cachedTotal = 0
+  let skippedTotal = 0
+  let failedTotal = 0
+
+  const runChunk = (from: number, remaining: number) => {
+    const countParam = Math.min(remaining, 1000)
+    createPrefetchTask(bookId, { from, count: countParam })
+      .then((task) => {
+        handle = runTask(task, {
+          onDone: (state, result) => {
+            void (async () => {
+              if (state === 'cancelled') {
+                await finish(`"${book.name}" 服务端缓存已取消`, 'warning')
+                return
+              }
+              const summary = asPrefetchSummary(result)
+              if (state === 'failed' || !summary) {
+                await finish(`"${book.name}" 服务端缓存失败`, 'error')
+                return
+              }
+              processed += summary.requested
+              cachedTotal += summary.cached
+              skippedTotal += summary.skipped
+              failedTotal += summary.failed
+              // 上游目录比书架条目短时 requested 会小于请求数：已到末尾，不再续排
+              const left = summary.requested < countParam ? 0 : total - processed
+              if (left > 0) {
+                runChunk(from + summary.requested, left)
+                return
+              }
+              if (failedTotal > 0) {
+                await finish(
+                  `"${book.name}" 服务端缓存完成：新增 ${cachedTotal} 章，失败 ${failedTotal} 章`,
+                  cachedTotal > 0 ? 'warning' : 'error'
+                )
+              } else {
+                await finish(
+                  `"${book.name}" 已缓存到服务器（新增 ${cachedTotal} 章${skippedTotal > 0 ? `，跳过 ${skippedTotal} 章` : ''}）`,
+                  'success'
+                )
+              }
+            })()
+          },
+        })
       })
-    })
-    .catch((error: unknown) => {
-      cachingUrls.value.delete(bookId)
-      appStore.showToast((error as Error)?.message || '服务端缓存失败', 'error')
-    })
+      .catch((error: unknown) => {
+        cachingUrls.value.delete(bookId)
+        appStore.showToast((error as Error)?.message || '服务端缓存失败', 'error')
+      })
+  }
+
+  runChunk(0, total)
 }
 
 async function cacheBrowser(book: Book) {

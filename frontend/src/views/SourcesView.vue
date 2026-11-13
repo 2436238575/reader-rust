@@ -135,25 +135,31 @@ import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 import { onBeforeRouteLeave, useRouter } from 'vue-router'
 import { API_BASE } from '../utils/appBase'
 import {
+  buildSourceId,
   getBookSource,
   getBookSources,
   loginBookSource,
   mintBookSourceProxyToken,
-  testBookSources,
   readRemoteSourceFile,
   readSourceFile,
 } from '../api/source'
+import {
+  asSourceTestResult,
+  createSourceTestTask,
+  MAX_SOURCE_TEST_TASK_SIZE,
+  runTask,
+} from '../api/tasks'
 import { storeToRefs } from 'pinia'
 import { useAppStore } from '../stores/app'
 import { useSourceStore } from '../stores/source'
-import type { BookSource } from '../types'
+import type { BookSource, BookSourceTestResponse } from '../types'
 import {
   filterBookSources,
   getBookSourceGroups,
   getBookSourceStats,
   splitBookSourceGroups,
 } from '../utils/sourceSelection'
-import { MAX_SOURCE_TEST_BATCH_SIZE, mergeBookSourceTestResponses } from '../utils/sourceTesting'
+import { mergeBookSourceTestResponses } from '../utils/sourceTesting'
 import SourceEditorPanel from '../components/source-manager/SourceEditorPanel.vue'
 import SourceFilterBar from '../components/source-manager/SourceFilterBar.vue'
 import SourceList from '../components/source-manager/SourceList.vue'
@@ -333,6 +339,36 @@ async function removeSelectedSources() {
   }
 }
 
+/** 跑一个书源测试任务并等它结束（无增量 UI，只等结果摘要）。 */
+function runSourceTestTask(ids: string[]): Promise<BookSourceTestResponse> {
+  return new Promise((resolve, reject) => {
+    let problem = ''
+    createSourceTestTask({ ids, markInvalid: true })
+      .then((task) => {
+        runTask(task, {
+          onError: (payload) => {
+            problem = payload.detail || payload.title || '书源测试失败'
+          },
+          onDone: (state, result) => {
+            if (state === 'succeeded') {
+              const summary = asSourceTestResult(result)
+              if (summary) {
+                resolve(summary)
+              } else {
+                reject(new Error('书源测试结果缺失'))
+              }
+              return
+            }
+            reject(
+              new Error(problem || (state === 'cancelled' ? '书源测试已取消' : '书源测试失败'))
+            )
+          },
+        })
+      })
+      .catch(reject)
+  })
+}
+
 async function testSources() {
   const targets = selectedFilteredSources.value.length
     ? selectedFilteredSources.value
@@ -352,14 +388,12 @@ async function testSources() {
     const ids = targets
       .map((source) => source.bookSourceId)
       .filter((id): id is number => id != null)
-    const responses = []
-    for (let index = 0; index < ids.length; index += MAX_SOURCE_TEST_BATCH_SIZE) {
+    const responses: BookSourceTestResponse[] = []
+    for (let index = 0; index < ids.length; index += MAX_SOURCE_TEST_TASK_SIZE) {
       responses.push(
-        await testBookSources({
-          bookSourceIds: ids.slice(index, index + MAX_SOURCE_TEST_BATCH_SIZE),
-          markInvalid: true,
-          concurrent: 12,
-        })
+        await runSourceTestTask(
+          ids.slice(index, index + MAX_SOURCE_TEST_TASK_SIZE).map(buildSourceId)
+        )
       )
     }
     const result = mergeBookSourceTestResponses(responses)

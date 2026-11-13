@@ -3,9 +3,11 @@ import http from './http'
 import {
   asPrefetchSummary,
   asSearchResult,
+  asSourceTestResult,
   cancelTask,
   createPrefetchTask,
   createSearchTask,
+  createSourceTestTask,
   getTask,
   getTaskResult,
   runTask,
@@ -165,5 +167,72 @@ describe('tasks API（v1 任务模型）', () => {
     const handle = runTask(task, {})
     handle.close()
     expect(deleteMock).toHaveBeenCalledWith('/tasks/tsk_1', { baseURL: API_V1_BASE })
+  })
+
+  it('任务 404/401 时收敛为 failed，不会永远停在重连中', async () => {
+    vi.useFakeTimers()
+    try {
+      getMock.mockRejectedValue({ status: 404 })
+      const onDone = vi.fn()
+      const onError = vi.fn()
+      const handle = runTask(task, { onDone, onError })
+
+      await vi.advanceTimersByTimeAsync(2100)
+
+      expect(onError).toHaveBeenCalledWith(
+        expect.objectContaining({ detail: '任务已失效，请重新搜索' })
+      )
+      expect(onDone).toHaveBeenCalledWith('failed', undefined)
+      // 已收敛：close 不再触发取消
+      deleteMock.mockClear()
+      handle.close()
+      expect(deleteMock).not.toHaveBeenCalled()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('createSourceTestTask 用 src_ id 建任务，结果映射回旧 UI 形状', async () => {
+    postMock.mockResolvedValue({ data: task })
+    await createSourceTestTask({ ids: ['src_1'], markInvalid: true })
+    expect(postMock).toHaveBeenCalledWith(
+      '/sources:test',
+      { ids: ['src_1'] },
+      { baseURL: API_V1_BASE, params: { markInvalid: true } }
+    )
+
+    const summary = asSourceTestResult({
+      total: 1,
+      valid: 0,
+      invalid: 1,
+      markedInvalid: 1,
+      results: [
+        {
+          sourceId: 'src_1',
+          name: '坏源',
+          valid: false,
+          searchOk: false,
+          exploreOk: false,
+          keyword: '测试',
+          searchError: 'boom',
+          exploreError: null,
+          markedInvalid: true,
+          group: '失效',
+        },
+      ],
+    })
+    expect(summary).toMatchObject({
+      total: 1,
+      invalid: 1,
+      results: [
+        {
+          bookSourceId: 1,
+          bookSourceName: '坏源',
+          bookSourceUrl: '',
+          searchError: 'boom',
+          group: '失效',
+        },
+      ],
+    })
   })
 })

@@ -334,10 +334,13 @@ function doSearch(key: string, force = false) {
           searchFailed.value = true
           appStore.showToast(problem.detail || problem.title || '搜索失败', 'error')
         },
-        onTransportError: () => {
+        onTransportError: (reconnecting) => {
           if (seq !== searchSeq) return
-          // 浏览器 EventSource 会自动重连；先让 UI 说明状态，别直接判失败
-          searchStatus.value = '连接中断，正在重连...'
+          // 网络层失败由浏览器自动重连；4xx 时 EventSource 已 CLOSED，等
+          // 轮询确认任务状态（404/401 会走 onDone('failed') 收敛）
+          searchStatus.value = reconnecting
+            ? '连接中断，正在重连...'
+            : '连接已断开，正在确认任务状态...'
         },
         onDone: (state, result) => {
           if (seq !== searchSeq) return
@@ -348,8 +351,11 @@ function doSearch(key: string, force = false) {
           const page = asSearchResult(result)
           if (page?.items?.length) appendBooks(page.items as unknown as SearchBook[])
           if (state === 'failed') {
+            const alreadyReported = searchFailed.value
             searchFailed.value = true
-            appStore.showToast('搜索失败，请稍后重试', 'error')
+            if (!alreadyReported) {
+              appStore.showToast('搜索失败，请稍后重试', 'error')
+            }
           }
         },
       })
