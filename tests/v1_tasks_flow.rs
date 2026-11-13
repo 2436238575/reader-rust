@@ -82,6 +82,38 @@ async fn start_upstream() -> (String, Arc<AtomicUsize>, Arc<AtomicUsize>) {
             }),
         )
         .route(
+            "/search/prefetch",
+            get(|| async {
+                Json(json!({
+                    "data": { "list": [{
+                        "name": "预下载书",
+                        "author": "作者",
+                        "bookUrl": "/book/pf"
+                    }] }
+                }))
+            }),
+        )
+        .route(
+            "/book/pf",
+            get(|| async {
+                let list: Vec<Value> = (1..=5)
+                    .map(|index| {
+                        json!({
+                            "name": format!("第{index}章"),
+                            "url": format!("/chapter/{index}"),
+                        })
+                    })
+                    .collect();
+                Json(json!({ "data": { "list": list } }))
+            }),
+        )
+        .route(
+            "/chapter/{n}",
+            get(|Path(n): Path<u32>| async move {
+                Json(json!({ "content": format!("第{n}章正文。") }))
+            }),
+        )
+        .route(
             "/slow/{n}",
             get(
                 |State(state): State<UpstreamState>, Path(_n): Path<u32>| async move {
@@ -185,6 +217,38 @@ impl TestServer {
             .send()
             .await
             .unwrap()
+    }
+
+    /// 预下载用的书源：搜索 → 目录 → 正文三段规则都指向假上游。
+    async fn create_prefetch_source(&self) -> String {
+        let response = self
+            .client
+            .post(format!("{}/v1/sources", self.base_url))
+            .bearer_auth(&self.token)
+            .json(&json!({
+                "bookSourceName": "预下载源",
+                "bookSourceUrl": format!("{}/source/prefetch", self.upstream),
+                "enabled": true,
+                "searchUrl": format!("{}/search/prefetch?q={{key}}", self.upstream),
+                "ruleSearch": {
+                    "bookList": "$.data.list[*]",
+                    "name": "$.name",
+                    "author": "$.author",
+                    "bookUrl": "$.bookUrl"
+                },
+                "ruleToc": {
+                    "chapterList": "$.data.list[*]",
+                    "chapterName": "$.name",
+                    "chapterUrl": "$.url"
+                },
+                "ruleContent": { "content": "$.content" }
+            }))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::CREATED);
+        let body: Value = response.json().await.unwrap();
+        body["id"].as_str().unwrap().to_string()
     }
 
     async fn get_task(&self, id: &str) -> (StatusCode, Value) {
@@ -952,6 +1016,126 @@ async fn searches_are_idempotent_by_header() {
         .unwrap()
         .to_string();
     assert_ne!(id3, id1);
+
+    server.cleanup();
+}
+
+#[tokio::test]
+async fn prefetch_cache_task_reports_summary_and_skips_cached() {
+    let (server, _started, _active) = boot().await;
+    let source = server.create_prefetch_source().await;
+
+    // 先用搜索把书登记出来（预下载按 bookId 工作）
+    let response = server
+        .create_search(json!({ "q": "预下载", "sourceIds": [source] }))
+        .await;
+    assert_eq!(response.status(), StatusCode::ACCEPTED);
+    let search_task: String = response.json::<Value>().await.unwrap()["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let search_task = server
+        .wait_terminal(&search_task, Duration::from_secs(10))
+        .await;
+    assert_eq!(search_task["state"], json!("succeeded"), "{search_task}");
+    let search_task_id = search_task["id"].as_str().unwrap();
+    let result: Value = server
+        .client
+        .get(format!(
+            "{}/v1/tasks/{search_task_id}/result",
+            server.base_url
+        ))
+        .bearer_auth(&server.token)
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let book_id = result["items"][0]["bookId"].as_str().unwrap().to_string();
+
+    // 预下载 2 章
+    let response = server
+        .client
+        .post(format!("{}/v1/books/{book_id}/cache", server.base_url))
+        .bearer_auth(&server.token)
+        .json(&json!({ "from": 0, "count": 2 }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::ACCEPTED);
+    let task: Value = response.json().await.unwrap();
+    assert_eq!(task["kind"], json!("prefetch-cache"));
+    assert_eq!(task["progress"]["unit"], json!("chapter"));
+    assert_eq!(task["progress"]["total"], json!(2));
+    let task_id = task["id"].as_str().unwrap().to_string();
+
+    let task = server
+        .wait_terminal(&task_id, Duration::from_secs(10))
+        .await;
+    assert_eq!(task["state"], json!("succeeded"), "{task}");
+    let summary: Value = server
+        .client
+        .get(format!("{}/v1/tasks/{task_id}/result", server.base_url))
+        .bearer_auth(&server.token)
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(
+        summary,
+        json!({ "requested": 2, "cached": 2, "skipped": 0, "failed": 0 }),
+        "{summary}"
+    );
+
+    // 同一范围再来一次：全部跳过（正文池已有）
+    let response = server
+        .client
+        .post(format!("{}/v1/books/{book_id}/cache", server.base_url))
+        .bearer_auth(&server.token)
+        .json(&json!({ "from": 0, "count": 2 }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::ACCEPTED);
+    let task_id: String = response.json::<Value>().await.unwrap()["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let task = server
+        .wait_terminal(&task_id, Duration::from_secs(10))
+        .await;
+    assert_eq!(task["state"], json!("succeeded"), "{task}");
+    let summary: Value = server
+        .client
+        .get(format!("{}/v1/tasks/{task_id}/result", server.base_url))
+        .bearer_auth(&server.token)
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(
+        summary,
+        json!({ "requested": 2, "cached": 0, "skipped": 2, "failed": 0 }),
+        "{summary}"
+    );
+
+    // from 越界：422 + pointer
+    let response = server
+        .client
+        .post(format!("{}/v1/books/{book_id}/cache", server.base_url))
+        .bearer_auth(&server.token)
+        .json(&json!({ "from": 99, "count": 2 }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    let body: Value = response.json().await.unwrap();
+    assert_eq!(body["errors"][0]["pointer"], json!("/from"));
 
     server.cleanup();
 }

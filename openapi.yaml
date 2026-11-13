@@ -205,6 +205,71 @@ paths:
       - cookieAuth: []
       - bearerAuth: []
   /v1/books/{bookId}/cache:
+    post:
+      tags:
+      - cache
+      summary: '预下载章节到正文池：202 + `Location: /v1/tasks/{id}`。'
+      operationId: prefetchBookCache
+      parameters:
+      - name: bookId
+        in: path
+        description: 书籍 id（book_<n>）
+        required: true
+        schema:
+          type: string
+      - name: Idempotency-Key
+        in: header
+        description: 幂等键（≤200 字符）
+        required: false
+        schema:
+          type:
+          - string
+          - 'null'
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PrefetchRequest'
+        required: true
+      responses:
+        '202':
+          description: 任务已入队
+          headers:
+            Location:
+              schema:
+                type: string
+              description: 任务资源地址
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TaskView'
+        '400':
+          description: count 越界
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '404':
+          description: 书籍不存在
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '422':
+          description: 本地书 / 目录为空 / from 越界
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '429':
+          description: 并发任务超限，带 Retry-After
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+      security:
+      - cookieAuth: []
+      - bearerAuth: []
     delete:
       tags:
       - books
@@ -2799,7 +2864,7 @@ paths:
     get:
       tags:
       - tasks
-      summary: 任务结果分页（去重后；`truncated` 表示 10MB 上限丢弃了后续条目）。
+      summary: 任务结果（按 kind 解释；search 去重后分页，prefetch-cache 返回摘要）。
       operationId: getTaskResult
       parameters:
       - name: taskId
@@ -2825,11 +2890,11 @@ paths:
           minimum: 1
       responses:
         '200':
-          description: 结果分页
+          description: 任务结果（search：TaskResultPage；prefetch-cache：PrefetchSummary）
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/TaskResultPage'
+                $ref: '#/components/schemas/TaskResultResponse'
         '304':
           description: If-None-Match 命中，结果页未变
         '400':
@@ -4686,6 +4751,51 @@ components:
           - string
           - 'null'
           default: null
+    PrefetchRequest:
+      type: object
+      description: 预下载范围：`from` 是章节下标（缺省 0），`count` 是章数（缺省 50，1..=1000）。
+      properties:
+        count:
+          type:
+          - integer
+          - 'null'
+          format: int32
+          maximum: 1000
+          minimum: 1
+        from:
+          type:
+          - integer
+          - 'null'
+          format: int32
+          minimum: 0
+      additionalProperties: false
+    PrefetchSummary:
+      type: object
+      description: '`kind=prefetch-cache` 的结果摘要（按章计数）。'
+      required:
+      - requested
+      - cached
+      - skipped
+      - failed
+      properties:
+        cached:
+          type: integer
+          format: int32
+          description: 本次真正写入正文池的章数
+          minimum: 0
+        failed:
+          type: integer
+          format: int32
+          minimum: 0
+        requested:
+          type: integer
+          format: int32
+          minimum: 0
+        skipped:
+          type: integer
+          format: int32
+          description: 已在缓存中跳过的章数
+          minimum: 0
     Problem:
       type: object
       description: |-
@@ -5853,6 +5963,11 @@ components:
         truncated:
           type: boolean
           description: 结果集超过 10MB / 全局预算，后续条目已丢弃
+    TaskResultResponse:
+      oneOf:
+      - $ref: '#/components/schemas/TaskResultPage'
+      - $ref: '#/components/schemas/PrefetchSummary'
+      description: 任务结果：search 是结果分页，prefetch-cache 是章节计数摘要。
     TaskState:
       type: string
       enum:

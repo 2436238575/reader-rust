@@ -389,6 +389,7 @@ pub fn openapi_yaml() -> String {
         cache::cache_stats,
         cache::purge_cache,
         cache::delete_book_cache,
+        cache::start_prefetch,
         marks::list_marks,
         marks::save_mark,
         marks::save_marks_batch,
@@ -528,6 +529,9 @@ pub fn openapi_yaml() -> String {
         tasks::SearchCreateRequest,
         tasks::SseTicketRequest,
         tasks::SseTicketResponse,
+        tasks::TaskResultResponse,
+        cache::PrefetchRequest,
+        crate::service::task_service::PrefetchSummary,
     )),
     tags(
         (name = "me", description = "当前账号"),

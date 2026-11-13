@@ -118,7 +118,8 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        post?: never;
+        /** 预下载章节到正文池：202 + `Location: /v1/tasks/{id}`。 */
+        post: operations["prefetchBookCache"];
         /**
          * 书籍级清理：重置目录抓取状态并删除换源候选；登记行、章节登记表与正文
          *     历史不动（离线阅读与重新入架都接得上）。幂等。
@@ -1023,7 +1024,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** 任务结果分页（去重后；`truncated` 表示 10MB 上限丢弃了后续条目）。 */
+        /** 任务结果（按 kind 解释；search 去重后分页，prefetch-cache 返回摘要）。 */
         get: operations["getTaskResult"];
         put?: never;
         post?: never;
@@ -1978,6 +1979,30 @@ export interface components {
             /** @default null */
             totalRule: string | null;
         };
+        /** @description 预下载范围：`from` 是章节下标（缺省 0），`count` 是章数（缺省 50，1..=1000）。 */
+        PrefetchRequest: {
+            /** Format: int32 */
+            count?: number | null;
+            /** Format: int32 */
+            from?: number | null;
+        };
+        /** @description `kind=prefetch-cache` 的结果摘要（按章计数）。 */
+        PrefetchSummary: {
+            /**
+             * Format: int32
+             * @description 本次真正写入正文池的章数
+             */
+            cached: number;
+            /** Format: int32 */
+            failed: number;
+            /** Format: int32 */
+            requested: number;
+            /**
+             * Format: int32
+             * @description 已在缓存中跳过的章数
+             */
+            skipped: number;
+        };
         /**
          * @description problem+json 响应体。`type` 固定 `about:blank`（RFC 9457 缺省类型，
          *     语义由 `code` 承载，不要求维护错误文档页）。
@@ -2629,6 +2654,8 @@ export interface components {
             /** @description 结果集超过 10MB / 全局预算，后续条目已丢弃 */
             truncated: boolean;
         };
+        /** @description 任务结果：search 是结果分页，prefetch-cache 是章节计数摘要。 */
+        TaskResultResponse: components["schemas"]["TaskResultPage"] | components["schemas"]["PrefetchSummary"];
         /** @enum {string} */
         TaskState: "queued" | "running" | "cancelling" | "succeeded" | "failed" | "cancelled";
         /** @description 任务资源（`GET /v1/tasks/{id}` 的响应）。 */
@@ -2931,6 +2958,74 @@ export interface operations {
             };
             /** @description 未知字段（本端点只收 name/author） */
             422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    prefetchBookCache: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description 幂等键（≤200 字符） */
+                "Idempotency-Key"?: string | null;
+            };
+            path: {
+                /** @description 书籍 id（book_<n>） */
+                bookId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PrefetchRequest"];
+            };
+        };
+        responses: {
+            /** @description 任务已入队 */
+            202: {
+                headers: {
+                    /** @description 任务资源地址 */
+                    Location?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TaskView"];
+                };
+            };
+            /** @description count 越界 */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description 书籍不存在 */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description 本地书 / 目录为空 / from 越界 */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description 并发任务超限，带 Retry-After */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -5802,13 +5897,13 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description 结果分页 */
+            /** @description 任务结果（search：TaskResultPage；prefetch-cache：PrefetchSummary） */
             200: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["TaskResultPage"];
+                    "application/json": components["schemas"]["TaskResultResponse"];
                 };
             };
             /** @description If-None-Match 命中，结果页未变 */

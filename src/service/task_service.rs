@@ -93,7 +93,7 @@ pub struct TaskProgress {
 }
 
 impl TaskProgress {
-    fn new(total: u32, unit: &str) -> Self {
+    pub fn new(total: u32, unit: &str) -> Self {
         Self {
             done: 0,
             total,
@@ -101,6 +101,26 @@ impl TaskProgress {
             message: None,
         }
     }
+}
+
+/// `kind=prefetch-cache` 的结果摘要（按章计数）。
+#[derive(Debug, Clone, Copy, Default, Serialize, utoipa::ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct PrefetchSummary {
+    pub requested: u32,
+    /// 本次真正写入正文池的章数
+    pub cached: u32,
+    /// 已在缓存中跳过的章数
+    pub skipped: u32,
+    pub failed: u32,
+}
+
+/// 任务结果：按任务 kind 解释（`GET /v1/tasks/{id}/result` 的响应体）。
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+#[serde(untagged)]
+pub enum TaskResultPayload {
+    Search(TaskResultPage),
+    Prefetch(PrefetchSummary),
 }
 
 /// 任务资源（`GET /v1/tasks/{id}` 的响应）。
@@ -184,6 +204,8 @@ struct Entry {
     dedupe_index: HashMap<String, usize>,
     result_bytes: usize,
     truncated: bool,
+    /// prefetch-cache 的摘要结果（其他 kind 为 None）
+    prefetch_summary: Option<PrefetchSummary>,
     finished_epoch: Option<i64>,
 }
 
@@ -284,15 +306,10 @@ impl TaskService {
         &self,
         owner_ns: &str,
         kind: TaskKind,
-        total: u32,
+        progress: TaskProgress,
         idempotency_key: Option<&str>,
     ) -> Result<(TaskView, bool), Problem> {
-        self.create_inner(
-            owner_ns,
-            kind,
-            TaskProgress::new(total, "source"),
-            idempotency_key,
-        )
+        self.create_inner(owner_ns, kind, progress, idempotency_key)
     }
 
     fn create_inner(
@@ -361,6 +378,7 @@ impl TaskService {
                 dedupe_index: HashMap::new(),
                 result_bytes: 0,
                 truncated: false,
+                prefetch_summary: None,
                 finished_epoch: None,
             },
         );
@@ -684,6 +702,52 @@ impl TaskService {
             total: total as u32,
             truncated: entry.truncated,
         }))
+    }
+
+    /// 写入 prefetch-cache 的摘要结果（worker 结束时调用）。
+    pub fn set_prefetch_summary(&self, id: &str, summary: PrefetchSummary) {
+        let mut inner = self.lock();
+        let Some(entry) = inner.tasks.get_mut(id) else {
+            return;
+        };
+        entry.view.result_href = Some(format!("/v1/tasks/{id}/result"));
+        entry.prefetch_summary = Some(summary);
+    }
+
+    /// 结果分页（按任务 kind 解释）：search 走结果集游标，prefetch-cache 返回摘要。
+    pub fn result_payload(
+        &self,
+        owner_ns: &str,
+        id: &str,
+        cursor: Option<&str>,
+        limit: u32,
+    ) -> Option<Result<TaskResultPayload, Problem>> {
+        let kind = {
+            let mut inner = self.lock();
+            prune(&mut inner, now_ts(), self.ttl_secs);
+            inner
+                .tasks
+                .get(id)
+                .filter(|entry| entry.owner_ns == owner_ns)
+                .map(|entry| entry.view.kind)?
+        };
+        match kind {
+            TaskKind::PrefetchCache => {
+                let mut inner = self.lock();
+                prune(&mut inner, now_ts(), self.ttl_secs);
+                let entry = inner
+                    .tasks
+                    .get(id)
+                    .filter(|entry| entry.owner_ns == owner_ns)?;
+                Some(Ok(TaskResultPayload::Prefetch(
+                    entry.prefetch_summary.unwrap_or_default(),
+                )))
+            }
+            // 其余 kind 暂时沿用搜索结果分页；铺开新 kind 时在这里分支
+            _ => self
+                .result_page(owner_ns, id, cursor, limit)
+                .map(|result| result.map(TaskResultPayload::Search)),
+        }
     }
 
     /// 建立事件订阅：先 `subscribe` 再读环形缓冲，避免两段之间漏事件；

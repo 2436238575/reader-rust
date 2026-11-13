@@ -14,14 +14,17 @@ use crate::api::v1::{V1Json, V1Query, V1User};
 use crate::api::AppState;
 use crate::model::book_source::BookSource;
 use crate::model::search::SearchBook;
-use crate::service::task_service::{TaskKind, TaskPage, TaskResultPage, TaskState, TaskView};
+use crate::service::task_service::{
+    PrefetchSummary, TaskKind, TaskPage, TaskProgress, TaskResultPage, TaskResultPayload,
+    TaskState, TaskView,
+};
 use axum::extract::{Path, State};
 use axum::http::{header, HeaderMap, HeaderValue, StatusCode};
 use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::convert::Infallible;
 use std::sync::atomic::Ordering;
@@ -188,7 +191,7 @@ pub async fn create_search(
     let (task, replayed) = state.task_service.create_with_idempotency(
         &user.ns,
         TaskKind::Search,
-        sources.len() as u32,
+        TaskProgress::new(sources.len() as u32, "source"),
         idempotency_key,
     )?;
     if !replayed {
@@ -633,7 +636,15 @@ pub struct TaskResultQuery {
     pub limit: Option<u32>,
 }
 
-/// 任务结果分页（去重后；`truncated` 表示 10MB 上限丢弃了后续条目）。
+/// 任务结果：search 是结果分页，prefetch-cache 是章节计数摘要。
+#[derive(Debug, Serialize, ToSchema)]
+#[serde(untagged)]
+pub enum TaskResultResponse {
+    Search(TaskResultPage),
+    Prefetch(PrefetchSummary),
+}
+
+/// 任务结果（按 kind 解释；search 去重后分页，prefetch-cache 返回摘要）。
 #[utoipa::path(
     get,
     path = "/v1/tasks/{taskId}/result",
@@ -645,7 +656,7 @@ pub struct TaskResultQuery {
     ),
     security(("cookieAuth" = []), ("bearerAuth" = [])),
     responses(
-        (status = 200, description = "结果分页", body = TaskResultPage),
+        (status = 200, description = "任务结果（search：TaskResultPage；prefetch-cache：PrefetchSummary）", body = TaskResultResponse),
         (status = 304, description = "If-None-Match 命中，结果页未变"),
         (status = 400, description = "limit 越界", body = Problem, content_type = "application/problem+json"),
         (status = 404, description = "任务不存在或已过期", body = Problem, content_type = "application/problem+json"),
@@ -663,11 +674,15 @@ pub async fn get_task_result(
     if limit == 0 || limit > MAX_RESULT_LIMIT {
         return Err(malformed(&format!("limit 需在 1..={MAX_RESULT_LIMIT}")));
     }
-    let page = state
+    let payload = state
         .task_service
-        .result_page(&user.ns, &task_id, query.cursor.as_deref(), limit)
+        .result_payload(&user.ns, &task_id, query.cursor.as_deref(), limit)
         .ok_or_else(task_not_found)??;
-    json_with_etag(&page, &headers)
+    let response = match payload {
+        TaskResultPayload::Search(page) => TaskResultResponse::Search(page),
+        TaskResultPayload::Prefetch(summary) => TaskResultResponse::Prefetch(summary),
+    };
+    json_with_etag(&response, &headers)
 }
 
 // ─── GET /v1/tasks/{taskId}/events（SSE） ───────────────────────────────

@@ -211,7 +211,8 @@ goal 执行中遇到「决策表与 spec 都沉默」的问题时，按 §5.4 �
 
 ## 2026-11-13 任务子系统首批：kind=search 全链路（P2）
 
-- **范围（D13）**：先只打通 `kind=search`——注册（`POST /v1/searches` 202 + `Location`）→ 状态（`GET /v1/tasks/{id}`、`GET /v1/tasks?state=&cursor=&limit=`）→ 事件（`GET /v1/tasks/{id}/events`，`Last-Event-ID` 续传）→ 取消（`DELETE /v1/tasks/{id}`）→ 结果分页（`GET /v1/tasks/{id}/result`）。其余 kind 复用同一注册表/事件/结果机制，工作器逐个接入（prefetch-cache / source-test / source-import 待接）。
+- **范围（D13）**：先打通 `kind=search`——注册（`POST /v1/searches` 202 + `Location`）→ 状态（`GET /v1/tasks/{id}`、`GET /v1/tasks?state=&cursor=&limit=`）→ 事件（`GET /v1/tasks/{id}/events`，`Last-Event-ID` 续传）→ 取消（`DELETE /v1/tasks/{id}`）→ 结果分页（`GET /v1/tasks/{id}/result`）。随后接入 `kind=prefetch-cache`；其余 kind 复用同一注册表/事件/结果机制，工作器逐个接入（source-test / source-import 待接）。
+- **prefetch-cache（`POST /v1/books/{bookId}/cache`）**：body `{from, count}`（from 起始章下标缺省 0，count 1..=1000 缺省 50）→ 202 Task；本地书直接 422（内容本来就在本地）。worker 先查正文池跳过已缓存章节，再以并发 4 调 `cache_chapter`；每章一个取消检查点（派发前后与 `select!`），取消落地即 abort 在飞抓取。结果按章计数 `{requested, cached, skipped, failed}`；全部失败 → 任务 failed，部分失败保留摘要。`GET /v1/tasks/{id}/result` 按 kind 返回 `search` 分页或 prefetch 摘要（OpenAPI oneOf `TaskResultResponse`）。
 - **注册表是单进程内存表**：进程重启丢任务（客户端按 404 重发）。任务 id 序号以随机 64 位基数起算，重启后旧 id 不会指向新任务。任务与结果保留 24h，但容量压力下会**提前驱逐已结束任务**（GET 变 404）：注册表最多 64 个任务、每任务结果 10MB、全局结果预算 128MB、每任务事件环 256 条且 256KB。`item` 事件按 32KB 分块（单本超大结果不发 SSE，客户端走 result 分页），保证每条事件都能留在环里被 `Last-Event-ID` 重放；合并补齐字段同样受结果预算约束（不许后续书源补超大字段顶穿上限）。
 - **并发上限**：全局 8、每用户 4；超限 429 `TASK_LIMIT` + `Retry-After: 5`。取消中（`cancelling`）仍占名额，工作器落地 `cancelled` 后释放。
 - **取消是协作式的**：`DELETE` 置位并唤醒工作器（状态先变 `cancelling`），工作器在调度循环的 `select!` 里立即察觉，abort 在飞任务后落 `cancelled`；派发循环每轮 spawn 前与子任务真正发请求前各查一次标志位，取消后不再发起新上游请求。封面收口（逐个 await）与取消通知竞争，取消落地即 abort 其余书源；子任务用 `JoinSet` 持有（析构自动 abort，panic 不会留下孤儿请求）。`finish` 尊重已发出的取消（`cancelling` + 非 `cancelled` 终态 → 强制 `cancelled`）；worker 有 Drop guard 落 Failed，DELETE 另挂 5 秒 watchdog 兜底（重复 DELETE 不重复挂；超时 abort 工作器，JoinSet 连带终止在飞请求），避免卡死任务永久占名额。未知任务 404 `TASK_NOT_FOUND`（已结束任务仍 204）。
@@ -224,7 +225,7 @@ goal 执行中遇到「决策表与 spec 都沉默」的问题时，按 §5.4 �
 - **SSE 票据（D11/契约 §6.4）**：`POST /v1/sse-tickets {path}` → 201 `{ticket, expiresAt}` + `Cache-Control: no-store`；60 秒、一次性、绑定单个资源路径，只对 `/v1/tasks/{id}/events` 生效。鉴权顺序：Authorization → Cookie → `?ticket=`（仅事件流 GET），票据校验通过即消费；路径不匹配不烧票；消费后复核 `users.token_version`（改密码/登出后旧票立即失效）。每用户最多 8 张未消费票据、全局 1024 张，超限 429 + `Retry-After: 60`。`POST /v1/searches` 返回 202 而不是 SSE，搜索 UI 仍走 `/reader3/searchBookMultiSSE`，前端接线随下一片完成。
 - **`Idempotency-Key`（契约 §5.6）**：`POST /v1/searches` 接受 `Idempotency-Key`（≤200 字符），查找与注册在同一把锁内完成，弱网并发重试返回原任务（不同 body 也返回原任务）；映射随任务 TTL/容量驱逐清理。
 - **spec 精度**：`q`/`path` 用 `Option` + handler 校验以返回 422 + pointer，同时用 `#[schema(required = true)]` 把必填性写回 spec；任务资源的 nullable 字段（`startedAt`/`finishedAt`/`resultHref`/`error`/`nextCursor` 等）标 required（值可为 null），`limit`/`limitPerSource` 写入 min/max，`sourceIds`/`q` 写入 maxItems/maxLength。`tests/openapi_drift.rs` 对这些回归点有定点断言。
-- **待办（P2 后续片）**：`prefetch-cache`/`source-test`/`source-import` 四个工作器、任务级 `traceId` 与失败源清单（目前部分源失败只记日志）、前端搜索页切换、其他 `/v1` 查询参数迁移到 `V1Query`（目前 axum 的纯文本 400 还可能在非任务端点泄漏）。
+- **待办（P2 后续片）**：`source-test`/`source-import` 工作器（书源批量测试/导入）、任务级 `traceId` 与失败源清单（目前部分源失败只记日志）、前端搜索页与缓存管理切换、其他 `/v1` 查询参数迁移到 `V1Query`（目前 axum 的纯文本 400 还可能在非任务端点泄漏）。
 - **新依赖**：`zhhz = 0.8`（繁简折叠）。选它而不是 `zhconv`：Apache-2.0（zhconv 是 GPL-2.0-or-later），纯 Rust 数据内嵌、无 C 依赖。
 
 
