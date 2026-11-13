@@ -32,8 +32,8 @@ cargo fmt                      # 格式化
 
 - 必须在**仓库根目录**运行：`storage/` 与 `.env` 都按相对路径解析。
 - 首次 `cargo build` 约需 10 分钟以上，耗时集中在 `rquickjs`（JS 引擎）、`ring`、`libsqlite3-sys` 的 C 代码编译；之后增量构建只需数秒。
-- `.cargo/config.toml` 把并行编译限制为 4 路：单个 `rustc` 约占 1.8GB 内存，默认的 12 路并行会把 32GB 机器的提交内存推到上限。内存充足时用 `CARGO_BUILD_JOBS` 覆盖。
-- 改任意一个源文件后 `cargo test` 都要重新编译整个 crate 两次（lib rlib 与 lib 测试 harness）并重链全部集成测试，一到两分钟；`cargo run` 的增量构建才是秒级。
+- `.cargo/config.toml` 把并行编译限制为 6 路：单个 `rustc` 约占 1.8GB 内存，默认的 12 路并行会把 32GB 机器的提交内存推到上限。内存充足时用 `CARGO_BUILD_JOBS` 覆盖。
+- 改任意一个源文件后 `cargo test` 都要重新编译整个 crate 两次（lib rlib 与 lib 测试 harness）并重链全部集成测试。测试构建默认不生成调试信息（`[profile.test] debug = 0`，`cargo run` 仍保留 `debug = 1`），Windows 下用 rustup 自带的 rust-lld 链接（`.cargo/rust-lld.cmd`）；需要调试测试崩溃时用 `CARGO_PROFILE_TEST_DEBUG=2 cargo test` 覆盖。`cargo run` 的增量构建才是秒级。
 - `cargo run` 运行时锁着 `target/debug/reader-rust.exe`，此时 `cargo test` 会在最后链接 bin 时失败（os error 5）。跑测试前先停掉开发服，或给测试单独指定 `--target-dir`。
 
 ### 前端（Vue 3 + Vite）

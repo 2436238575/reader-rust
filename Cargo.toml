@@ -96,3 +96,12 @@ utoipa = { version = "6.0.0", features = ["yaml"] }
 # 测试里用 ServiceExt::oneshot 驱动 Router（src/api/inbound_guard.rs 内联测试）；
 # cargo 会在测试构建时把它与主依赖的 limit 特性合并
 tower = { version = "0.5", features = ["util"] }
+
+[profile.dev]
+debug = 1
+
+[profile.dev.package."*"]
+debug = 0
+
+[profile.test]
+debug = 0
