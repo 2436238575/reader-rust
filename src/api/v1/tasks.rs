@@ -58,15 +58,17 @@ pub fn router() -> Router<AppState> {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct SearchCreateRequest {
     /// 搜索关键字（必填，≤200 字符）
-    #[schema(required = true, nullable = false)]
+    #[schema(required = true, nullable = false, max_length = 200)]
     pub q: Option<String>,
     /// 与 `groupId` 二选一；省略则搜索全部启用书源（最多 64 个）
+    #[schema(max_items = 64)]
     pub source_ids: Option<Vec<String>>,
     /// 书源分组名（契约 §8.6 字段名是 `groupId`；值仍是字符串形式的分组名，
     /// 不是实体 id——Draft-2 §16.2 记偏差）。`group` 兼容旧调用方。
     #[serde(alias = "group")]
     pub group_id: Option<String>,
     /// 每个书源最多保留多少条结果（默认 20，1..=100）
+    #[schema(minimum = 1, maximum = 100)]
     pub limit_per_source: Option<u32>,
     /// 去重模式；目前只支持 `name-author`
     pub dedupe: Option<String>,
@@ -323,7 +325,9 @@ fn spawn_search_worker(
     sources: Vec<BookSource>,
     limit_per_source: usize,
 ) {
-    tokio::spawn(async move {
+    let handle_registry = state.task_service.clone();
+    let worker_task_id = task_id.clone();
+    let worker = tokio::spawn(async move {
         let service = state.task_service.clone();
         service.mark_running(&task_id);
         let Some((cancel_flag, cancel_notify)) = service.cancellation(&task_id) else {
@@ -483,6 +487,7 @@ fn spawn_search_worker(
         }
         guard.done = true;
     });
+    handle_registry.register_worker(&worker_task_id, worker.abort_handle());
 }
 
 fn abort_all(tasks: &mut tokio::task::JoinSet<SearchTaskResult>) {
@@ -502,6 +507,7 @@ pub struct ListTasksQuery {
     /// 上一页的 nextCursor；空表示第一页
     pub cursor: Option<String>,
     /// 页大小，默认 50，上限 200
+    #[param(minimum = 1, maximum = 200)]
     pub limit: Option<u32>,
 }
 
@@ -623,6 +629,7 @@ pub struct TaskResultQuery {
     /// 上一页的 nextCursor；空表示第一页
     pub cursor: Option<String>,
     /// 页大小，默认 50，上限 200
+    #[param(minimum = 1, maximum = 200)]
     pub limit: Option<u32>,
 }
 
@@ -769,7 +776,7 @@ fn to_sse_event(id: u64, name: &str, data: &str) -> Event {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct SseTicketRequest {
     /// 要访问的事件流路径，如 `/v1/tasks/tsk_1/events`
-    #[schema(required = true, nullable = false)]
+    #[schema(required = true, nullable = false, max_length = 256)]
     pub path: Option<String>,
 }
 

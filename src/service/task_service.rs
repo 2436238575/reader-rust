@@ -88,6 +88,7 @@ pub struct TaskProgress {
     pub total: u32,
     /// 进度单位：`source`（搜索书源数）等
     pub unit: String,
+    #[schema(required = true)]
     pub message: Option<String>,
 }
 
@@ -112,13 +113,15 @@ pub struct TaskView {
     pub progress: TaskProgress,
     #[schema(format = DateTime)]
     pub created_at: String,
-    #[schema(format = DateTime)]
+    #[schema(format = DateTime, required = true)]
     pub started_at: Option<String>,
-    #[schema(format = DateTime)]
+    #[schema(format = DateTime, required = true)]
     pub finished_at: Option<String>,
     /// 结果分页地址；没有结果时为 null
+    #[schema(required = true)]
     pub result_href: Option<String>,
     /// 失败时的完整 problem+json 对象
+    #[schema(required = true)]
     pub error: Option<Problem>,
 }
 
@@ -127,6 +130,7 @@ pub struct TaskView {
 #[serde(rename_all = "camelCase")]
 pub struct TaskPage {
     pub items: Vec<TaskView>,
+    #[schema(required = true)]
     pub next_cursor: Option<String>,
     pub total: u32,
 }
@@ -136,6 +140,7 @@ pub struct TaskPage {
 #[serde(rename_all = "camelCase")]
 pub struct TaskResultPage {
     pub items: Vec<SearchBook>,
+    #[schema(required = true)]
     pub next_cursor: Option<String>,
     /// 当前结果集条数（去重后；截断后只算保留部分）
     pub total: u32,
@@ -168,6 +173,9 @@ struct Entry {
     view: TaskView,
     cancel: Arc<AtomicBool>,
     cancel_notify: Arc<Notify>,
+    /// 工作器自身的 abort 句柄：watchdog 超时后强制终止工作器（JoinSet 随之
+    /// abort 全部在飞子任务）
+    worker_abort: Option<tokio::task::AbortHandle>,
     events: VecDeque<TaskEvent>,
     event_bytes: usize,
     next_event_id: u64,
@@ -344,6 +352,7 @@ impl TaskService {
                 view: view.clone(),
                 cancel: Arc::new(AtomicBool::new(false)),
                 cancel_notify: Arc::new(Notify::new()),
+                worker_abort: None,
                 events: VecDeque::new(),
                 event_bytes: 0,
                 next_event_id: 0,
@@ -576,22 +585,39 @@ impl TaskService {
         );
     }
 
-    /// 取消 watchdog 兜底：5 秒后仍停在 `cancelling` 就强制落 `cancelled`。
+    /// 取消 watchdog 兜底：5 秒后仍停在 `cancelling` 就终止工作器（JoinSet
+    /// 随之 abort 全部在飞子任务）并强制落 `cancelled`。
     pub fn force_cancel_timeout(&self, id: &str) {
         let mut inner = self.lock();
-        let is_cancelling = inner
-            .tasks
-            .get(id)
-            .is_some_and(|entry| entry.view.state == TaskState::Cancelling);
-        if is_cancelling {
-            finish_locked(
-                &mut inner,
-                id,
-                TaskState::Cancelled,
-                None,
-                self.event_capacity,
-                self.event_max_bytes,
-            );
+        let Some(entry) = inner.tasks.get_mut(id) else {
+            return;
+        };
+        if entry.view.state != TaskState::Cancelling {
+            return;
+        }
+        if let Some(handle) = entry.worker_abort.take() {
+            handle.abort();
+        }
+        finish_locked(
+            &mut inner,
+            id,
+            TaskState::Cancelled,
+            None,
+            self.event_capacity,
+            self.event_max_bytes,
+        );
+    }
+
+    /// 登记工作器的 abort 句柄（watchdog 用）。工作器可能已在取消中结束，
+    /// 此时直接 abort 也无副作用。
+    pub fn register_worker(&self, id: &str, handle: tokio::task::AbortHandle) {
+        let mut inner = self.lock();
+        if let Some(entry) = inner.tasks.get_mut(id) {
+            if entry.view.state.is_terminal() {
+                handle.abort();
+            } else {
+                entry.worker_abort = Some(handle);
+            }
         }
     }
 
@@ -717,6 +743,7 @@ impl TaskService {
 pub struct TaskItemEvent {
     pub items: Vec<SearchBook>,
     /// 结果集当前游标（可交给 `GET /v1/tasks/{id}/result?cursor=`）
+    #[schema(required = true)]
     pub cursor: Option<String>,
 }
 
@@ -724,6 +751,7 @@ pub struct TaskItemEvent {
 #[serde(rename_all = "camelCase")]
 pub struct TaskDoneEvent {
     pub state: TaskState,
+    #[schema(required = true)]
     pub result_href: Option<String>,
 }
 

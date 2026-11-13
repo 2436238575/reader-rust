@@ -844,6 +844,62 @@ async fn disabled_sources_and_group_matching_follow_source_semantics() {
 }
 
 #[tokio::test]
+async fn task_event_stream_has_subscriber_limit() {
+    let (server, _started, _active) = boot().await;
+    let source = server.create_source("慢源", "/slow/1").await;
+    let response = server
+        .create_search(json!({ "q": "订阅", "sourceIds": [source] }))
+        .await;
+    assert_eq!(response.status(), StatusCode::ACCEPTED);
+    let task_id: String = response.json::<Value>().await.unwrap()["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let deadline = Instant::now();
+    loop {
+        let page: Value = server
+            .client
+            .get(format!("{}/v1/tasks?state=running", server.base_url))
+            .bearer_auth(&server.token)
+            .send()
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        if page["items"].as_array().unwrap().len() == 1 {
+            break;
+        }
+        assert!(deadline.elapsed() < Duration::from_secs(3), "{page}");
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+
+    // 占满 4 个订阅者；响应体不消费，保持连接活到流自然结束
+    let mut streams = Vec::new();
+    for _ in 0..4 {
+        let response = server.events(&task_id, None).await;
+        assert_eq!(response.status(), StatusCode::OK);
+        streams.push(response);
+    }
+    let fifth = server.events(&task_id, None).await;
+    assert_eq!(fifth.status(), StatusCode::TOO_MANY_REQUESTS);
+    let body: Value = fifth.json().await.unwrap();
+    assert_eq!(body["code"], json!("TASK_LIMIT"));
+    drop(streams);
+
+    let response = server
+        .client
+        .delete(format!("{}/v1/tasks/{task_id}", server.base_url))
+        .bearer_auth(&server.token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::NO_CONTENT);
+
+    server.cleanup();
+}
+
+#[tokio::test]
 async fn searches_are_idempotent_by_header() {
     let (server, _started, _active) = boot().await;
     let source = server.create_source("甲", "/search/a").await;

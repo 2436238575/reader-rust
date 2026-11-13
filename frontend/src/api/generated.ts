@@ -2590,13 +2590,13 @@ export interface components {
             ticket: string;
         };
         TaskDoneEvent: {
-            resultHref?: string | null;
+            resultHref: string | null;
             state: components["schemas"]["TaskState"];
         };
         /** @description `item` 事件的数据体：新增/被合并更新的结果 + 结果集当前游标。 */
         TaskItemEvent: {
             /** @description 结果集当前游标（可交给 `GET /v1/tasks/{id}/result?cursor=`） */
-            cursor?: string | null;
+            cursor: string | null;
             items: components["schemas"]["SearchBook"][];
         };
         /** @enum {string} */
@@ -2604,14 +2604,14 @@ export interface components {
         /** @description 任务列表（`GET /v1/tasks`）。 */
         TaskPage: {
             items: components["schemas"]["TaskView"][];
-            nextCursor?: string | null;
+            nextCursor: string | null;
             /** Format: int32 */
             total: number;
         };
         TaskProgress: {
             /** Format: int32 */
             done: number;
-            message?: string | null;
+            message: string | null;
             /** Format: int32 */
             total: number;
             /** @description 进度单位：`source`（搜索书源数）等 */
@@ -2620,7 +2620,7 @@ export interface components {
         /** @description 搜索结果分页（`GET /v1/tasks/{id}/result`）。 */
         TaskResultPage: {
             items: components["schemas"]["SearchBook"][];
-            nextCursor?: string | null;
+            nextCursor: string | null;
             /**
              * Format: int32
              * @description 当前结果集条数（去重后；截断后只算保留部分）
@@ -2635,16 +2635,16 @@ export interface components {
         TaskView: {
             /** Format: date-time */
             createdAt: string;
-            error?: components["schemas"]["Problem"] | null;
+            error: components["schemas"]["Problem"] | null;
             /** Format: date-time */
-            finishedAt?: string | null;
+            finishedAt: string | null;
             id: string;
             kind: components["schemas"]["TaskKind"];
             progress: components["schemas"]["TaskProgress"];
             /** @description 结果分页地址；没有结果时为 null */
-            resultHref?: string | null;
+            resultHref: string | null;
             /** Format: date-time */
-            startedAt?: string | null;
+            startedAt: string | null;
             state: components["schemas"]["TaskState"];
         };
         TocRule: {

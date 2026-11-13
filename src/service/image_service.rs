@@ -1468,4 +1468,55 @@ mod tests {
             "缺少 IDAT 的截断 PNG 应当返回 Err"
         );
     }
+
+    /// 搜索结果封面收口不能把「绝对 URL 里包含 /reader3/image/」当成站内
+    /// 地址原样留下（客户端会直接请求上游），协议相对地址也要清空。
+    #[tokio::test]
+    async fn search_cover_rewrite_never_leaks_non_route_urls() {
+        let dir = std::env::temp_dir().join(format!(
+            "reader-rust-img-search-cover-{}-{}",
+            std::process::id(),
+            crate::util::crypto::random_string(6)
+        ));
+        let service = ImageService::new(
+            crate::crawler::http_client::HttpClient::new(5, None).unwrap(),
+            dir.to_str().unwrap(),
+            0,
+        );
+        let mut books = vec![
+            crate::model::search::SearchBook {
+                name: "绝对地址伪装".into(),
+                book_url: "https://src.example/1".into(),
+                cover_url: Some("https://evil.example/reader3/image/x".into()),
+                ..Default::default()
+            },
+            crate::model::search::SearchBook {
+                name: "协议相对".into(),
+                book_url: "https://src.example/2".into(),
+                cover_url: Some("//evil.example/reader3/image/x".into()),
+                ..Default::default()
+            },
+            crate::model::search::SearchBook {
+                name: "正常上游".into(),
+                book_url: "https://src.example/3".into(),
+                cover_url: Some("https://img.example/ok.jpg".into()),
+                ..Default::default()
+            },
+        ];
+
+        service.rewrite_search_book_covers(&mut books).await;
+
+        let first = books[0].cover_url.as_deref().unwrap();
+        assert!(
+            first.starts_with("/reader3/image/"),
+            "绝对地址应走图片管道而不是原样下发: {first}"
+        );
+        assert_eq!(books[1].cover_url, None, "协议相对地址应清空");
+        assert!(books[2]
+            .cover_url
+            .as_deref()
+            .unwrap()
+            .starts_with("/reader3/image/"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }

@@ -2662,7 +2662,8 @@ paths:
         schema:
           type: integer
           format: int32
-          minimum: 0
+          maximum: 200
+          minimum: 1
       responses:
         '200':
           description: 任务列表
@@ -2820,7 +2821,8 @@ paths:
         schema:
           type: integer
           format: int32
-          minimum: 0
+          maximum: 200
+          minimum: 1
       responses:
         '200':
           description: 结果分页
@@ -5317,10 +5319,12 @@ components:
           - 'null'
           format: int32
           description: 每个书源最多保留多少条结果（默认 20，1..=100）
-          minimum: 0
+          maximum: 100
+          minimum: 1
         q:
           type: string
           description: 搜索关键字（必填，≤200 字符）
+          maxLength: 200
         sourceIds:
           type:
           - array
@@ -5328,6 +5332,7 @@ components:
           items:
             type: string
           description: 与 `groupId` 二选一；省略则搜索全部启用书源（最多 64 个）
+          maxItems: 64
       additionalProperties: false
     SearchRule:
       type: object
@@ -5728,6 +5733,7 @@ components:
         path:
           type: string
           description: 要访问的事件流路径，如 `/v1/tasks/tsk_1/events`
+          maxLength: 256
       additionalProperties: false
     SseTicketResponse:
       type: object
@@ -5744,6 +5750,7 @@ components:
       type: object
       required:
       - state
+      - resultHref
       properties:
         resultHref:
           type:
@@ -5756,6 +5763,7 @@ components:
       description: '`item` 事件的数据体：新增/被合并更新的结果 + 结果集当前游标。'
       required:
       - items
+      - cursor
       properties:
         cursor:
           type:
@@ -5782,6 +5790,7 @@ components:
       description: 任务列表（`GET /v1/tasks`）。
       required:
       - items
+      - nextCursor
       - total
       properties:
         items:
@@ -5802,6 +5811,7 @@ components:
       - done
       - total
       - unit
+      - message
       properties:
         done:
           type: integer
@@ -5823,6 +5833,7 @@ components:
       description: 搜索结果分页（`GET /v1/tasks/{id}/result`）。
       required:
       - items
+      - nextCursor
       - total
       - truncated
       properties:
@@ -5860,6 +5871,10 @@ components:
       - state
       - progress
       - createdAt
+      - startedAt
+      - finishedAt
+      - resultHref
+      - error
       properties:
         createdAt:
           type: string
