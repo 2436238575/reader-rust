@@ -40,6 +40,7 @@ mod replace_rules;
 mod reviews;
 mod shelf;
 mod sources;
+mod tasks;
 
 /// `/v1` 路由。并发层与 `/reader3` 的受保护组共享同一份许可
 /// （`GlobalConcurrencyLimitLayer` clone 共享内部信号量），两个命名空间
@@ -62,6 +63,7 @@ pub fn router(
         .merge(marks::router())
         .merge(reviews::router())
         .merge(chapter_edits::router())
+        .merge(tasks::router())
         .merge(auth::authed_router())
         .route_layer(axum::middleware::from_fn_with_state(
             state.clone(),
@@ -106,18 +108,51 @@ pub async fn not_found() -> Problem {
 
 /// `/v1` 的强制鉴权：逻辑与 `auth::middleware::require_auth` 一致
 /// （同一套令牌校验与撤销检查），失败形态换成 problem+json。
-/// CSRF 头检查与 Cookie 语义调整随 auth 域切换落地，当前只挂 `/v1`。
+///
+/// SSE 事件流额外接受 `?ticket=`（契约 §6.4）：Cookie/Bearer 都缺席时，
+/// 一次性票据（60 秒、绑定路径）可以兑换一个身份；票据只对
+/// `/v1/tasks/{id}/events` 生效，且校验通过后即消费。
 pub(crate) async fn require_auth(
     State(state): State<AppState>,
     mut request: Request,
     next: Next,
 ) -> Result<Response, Problem> {
     use crate::auth::middleware::{authenticate, extract_token};
-    let token = extract_token(&request)
-        .ok_or_else(|| Problem::new(ErrorCode::AuthExpired).detail("未登录或令牌已过期"))?;
-    let user = authenticate(&state.auth, token)
-        .await
-        .map_err(Problem::from)?;
+    let user = if let Some(token) = extract_token(&request) {
+        authenticate(&state.auth, token)
+            .await
+            .map_err(Problem::from)?
+    } else {
+        let path = request.uri().path().to_string();
+        let ticket = (request.method() == axum::http::Method::GET
+            && tasks::is_task_events_path(&path))
+        .then(|| {
+            request.uri().query().and_then(|query| {
+                url::form_urlencoded::parse(query.as_bytes())
+                    .find(|(key, _)| key == "ticket")
+                    .map(|(_, value)| value.into_owned())
+                    .filter(|value| !value.trim().is_empty())
+            })
+        })
+        .flatten();
+        match ticket.and_then(|ticket| state.sse_ticket_service.consume(&ticket, &path)) {
+            Some(user) => {
+                // 票据存的是签发时的身份快照：改密码/登出会自增 token_version，
+                // 60 秒窗口内也要让旧票据失效
+                let current = state
+                    .auth
+                    .load_token_version(user.uid)
+                    .await
+                    .map_err(crate::error::error::AppError::from)
+                    .map_err(Problem::from)?;
+                if current != Some(user.ver) {
+                    return Err(Problem::new(ErrorCode::AuthExpired).detail("未登录或令牌已过期"));
+                }
+                user
+            }
+            None => return Err(Problem::new(ErrorCode::AuthExpired).detail("未登录或令牌已过期")),
+        }
+    };
     // 限定用途令牌（书源登录代理）只服务 /reader3 代理路径，不进 /v1
     if user.scope.is_some() {
         return Err(Problem::new(ErrorCode::ScopeForbidden).detail("限定令牌不能访问 /v1 接口"));
@@ -204,7 +239,9 @@ async fn attach_problem_trace(request: Request, next: Next) -> Response {
 /// axum 的 `Json<T>` 默认 rejection 是纯文本（400/413/415），前端拿不到
 /// `code` 只能退回通用文案；`/v1` 的每一个 body 解析失败都应是可派发的
 /// problem。映射：413 → PAYLOAD_TOO_LARGE、415 → UNSUPPORTED_MEDIA_TYPE、
-/// 其余（语法错误/类型不匹配）→ MALFORMED_REQUEST 400。
+/// 未知字段 → 422 UNKNOWN_FIELD、其余字段缺失/类型不符 → 400 MALFORMED_REQUEST
+/// （契约 §5.5：400 是语法/结构错误，422 是「语法合法但字段值非法」——
+/// 值级校验由 handler 自己做，带 JSON Pointer）。
 #[derive(Debug, Clone, Copy, Default)]
 pub struct V1Json<T>(pub T);
 
@@ -231,19 +268,40 @@ where
                     }
                     // deny_unknown_fields 的未知字段：契约要求 422 UNKNOWN_FIELD
                     // （book-fields §4），从错误文本识别（serde 无结构化变体）
-                    ref other
-                        if other.status() == axum::http::StatusCode::UNPROCESSABLE_ENTITY
-                            || text.contains("unknown field") =>
-                    {
+                    _ if text.contains("unknown field") => {
                         (ErrorCode::UnknownField, "请求包含未知或不可写的字段")
                     }
                     _ => (
                         ErrorCode::MalformedRequest,
-                        "请求体不是合法 JSON 或字段类型不符",
+                        "请求体字段缺失、类型不符或不是合法 JSON",
                     ),
                 };
                 Err(Problem::new(code).detail(detail))
             }
+        }
+    }
+}
+
+/// `/v1` 的查询参数提取器：rejection 统一成 problem+json 400，
+/// 不让 axum 的 `QueryRejection` 以 `text/plain` 泄漏到 `/v1`。
+#[derive(Debug, Clone, Copy, Default)]
+pub struct V1Query<T>(pub T);
+
+impl<T, S> axum::extract::FromRequestParts<S> for V1Query<T>
+where
+    T: serde::de::DeserializeOwned,
+    S: Send + Sync,
+{
+    type Rejection = Problem;
+
+    async fn from_request_parts(
+        parts: &mut axum::http::request::Parts,
+        state: &S,
+    ) -> Result<Self, Self::Rejection> {
+        match axum::extract::Query::<T>::from_request_parts(parts, state).await {
+            Ok(axum::extract::Query(value)) => Ok(V1Query(value)),
+            Err(rejection) => Err(Problem::new(ErrorCode::MalformedRequest)
+                .detail(format!("查询参数不合法：{}", rejection.body_text()))),
         }
     }
 }
@@ -360,6 +418,13 @@ pub fn openapi_yaml() -> String {
         chapter_imports::upload_chapter_import_chunk,
         chapter_imports::get_chapter_import_diff,
         local_books::upload_local_book,
+        tasks::create_search,
+        tasks::list_tasks,
+        tasks::get_task,
+        tasks::cancel_task,
+        tasks::get_task_result,
+        tasks::task_events,
+        tasks::create_sse_ticket,
         auth::login,
         auth::refresh,
         auth::logout,
@@ -451,12 +516,25 @@ pub fn openapi_yaml() -> String {
         replace_rules::BatchDeleteRequest,
         shelf::BookDetail,
         shelf::LastChapter,
+        crate::service::task_service::TaskView,
+        crate::service::task_service::TaskProgress,
+        crate::service::task_service::TaskKind,
+        crate::service::task_service::TaskState,
+        crate::service::task_service::TaskPage,
+        crate::service::task_service::TaskResultPage,
+        crate::service::task_service::TaskItemEvent,
+        crate::service::task_service::TaskDoneEvent,
+        crate::model::search::SearchBook,
+        tasks::SearchCreateRequest,
+        tasks::SseTicketRequest,
+        tasks::SseTicketResponse,
     )),
     tags(
         (name = "me", description = "当前账号"),
         (name = "auth", description = "会话认证"),
         (name = "sources", description = "书源"),
         (name = "books", description = "书籍与章节"),
+        (name = "tasks", description = "任务、搜索与 SSE 事件流"),
     ),
     modifiers(&SecurityAddon)
 )]

@@ -22,6 +22,10 @@ pub struct SearchBook {
     /// 同一本书在各书源的命中（聚合结果用），值是 bookSourceId
     #[serde(skip_serializing_if = "Option::is_none")]
     pub book_source_ids: Option<Vec<i64>>,
+    /// 服务端归一化去重键（JSON 数组 `[归一化书名, 归一化作者]`，
+    /// 全角/空白/繁简/书名后缀已折叠）。任务结果（kind=search）必填；legacy 搜索不填。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub dedupe_key: Option<String>,
 }
 
 impl SearchBook {

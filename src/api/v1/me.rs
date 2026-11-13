@@ -70,10 +70,7 @@ pub(crate) fn rfc3339_from_millis(millis: i64) -> String {
 
 /// Unix 秒 → RFC 3339 UTC（秒级精度）。
 pub(crate) fn rfc3339_secs(secs: i64) -> String {
-    chrono::DateTime::from_timestamp(secs, 0)
-        .unwrap_or_else(|| chrono::DateTime::from_timestamp(0, 0).expect("epoch is valid"))
-        .format("%Y-%m-%dT%H:%M:%SZ")
-        .to_string()
+    crate::util::time::rfc3339_secs(secs)
 }
 
 #[cfg(test)]

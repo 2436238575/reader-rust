@@ -804,6 +804,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/searches": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 创建搜索任务：202 + `Location: /v1/tasks/{id}`。 */
+        post: operations["createSearch"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/sources": {
         parameters: {
             query?: never;
@@ -915,6 +932,101 @@ export interface paths {
         put?: never;
         /** 删除失效书源：分组含「失效」标记的整行删除（与 `/reader3` 同口径）。 */
         post: operations["deleteInvalidSources"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/sse-tickets": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 签发一次性 SSE 票据（60 秒有效、绑定单个事件流路径）。 */
+        post: operations["createSseTicket"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/tasks": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 我的任务列表（最新在前）。刷新页面后据此恢复还在跑的任务。 */
+        get: operations["listTasks"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/tasks/{taskId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 任务状态（事件流断开后先用它拿全量状态，再用 Last-Event-ID 补增量）。 */
+        get: operations["getTask"];
+        put?: never;
+        post?: never;
+        /**
+         * 请求取消（204；已结束的任务同样 204）。取消是「请求」：状态先变
+         *     `cancelling`，工作器察觉后落到 `cancelled`。5 秒 watchdog 兜底：
+         *     工作器卡死/异常退出时强制落终态，不让名额被永久占用。
+         */
+        delete: operations["cancelTask"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/tasks/{taskId}/events": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * 任务事件流（text/event-stream）。
+         * @description 事件名固定四种：`progress` / `item` / `error` / `done`，每条都有 `id:`；
+         *     断线重连时带 `Last-Event-ID` 从缓冲重放。非浏览器客户端可先
+         *     `POST /v1/sse-tickets` 再以 `?ticket=` 连接（60 秒、一次性、绑定本路径）。
+         */
+        get: operations["taskEvents"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/tasks/{taskId}/result": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 任务结果分页（去重后；`truncated` 表示 10MB 上限丢弃了后续条目）。 */
+        get: operations["getTaskResult"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -2242,6 +2354,12 @@ export interface components {
             bookUrl: string;
             /** @default null */
             coverUrl: string | null;
+            /**
+             * @description 服务端归一化去重键（JSON 数组 `[归一化书名, 归一化作者]`，
+             *     全角/空白/繁简/书名后缀已折叠）。任务结果（kind=search）必填；legacy 搜索不填。
+             * @default null
+             */
+            dedupeKey: string | null;
             /** @default null */
             intro: string | null;
             /** @default null */
@@ -2256,6 +2374,24 @@ export interface components {
             updateTime: string | null;
             /** @default null */
             wordCount: string | null;
+        };
+        SearchCreateRequest: {
+            /** @description 去重模式；目前只支持 `name-author` */
+            dedupe?: string | null;
+            /**
+             * @description 书源分组名（契约 §8.6 字段名是 `groupId`；值仍是字符串形式的分组名，
+             *     不是实体 id——Draft-2 §16.2 记偏差）。`group` 兼容旧调用方。
+             */
+            groupId?: string | null;
+            /**
+             * Format: int32
+             * @description 每个书源最多保留多少条结果（默认 20，1..=100）
+             */
+            limitPerSource?: number | null;
+            /** @description 搜索关键字（必填，≤200 字符） */
+            q: string;
+            /** @description 与 `groupId` 二选一；省略则搜索全部启用书源（最多 64 个） */
+            sourceIds?: string[] | null;
         };
         SearchRule: {
             /** @default null */
@@ -2443,6 +2579,73 @@ export interface components {
         /** @description 单条写入结果：线缆身份 `src_<n>`。 */
         SourceWriteResult: {
             id: string;
+        };
+        SseTicketRequest: {
+            /** @description 要访问的事件流路径，如 `/v1/tasks/tsk_1/events` */
+            path: string;
+        };
+        SseTicketResponse: {
+            /** Format: date-time */
+            expiresAt: string;
+            ticket: string;
+        };
+        TaskDoneEvent: {
+            resultHref?: string | null;
+            state: components["schemas"]["TaskState"];
+        };
+        /** @description `item` 事件的数据体：新增/被合并更新的结果 + 结果集当前游标。 */
+        TaskItemEvent: {
+            /** @description 结果集当前游标（可交给 `GET /v1/tasks/{id}/result?cursor=`） */
+            cursor?: string | null;
+            items: components["schemas"]["SearchBook"][];
+        };
+        /** @enum {string} */
+        TaskKind: "search" | "explore" | "source-test" | "source-import" | "prefetch-cache" | "chapter-import" | "ai-generate" | "ai-chat";
+        /** @description 任务列表（`GET /v1/tasks`）。 */
+        TaskPage: {
+            items: components["schemas"]["TaskView"][];
+            nextCursor?: string | null;
+            /** Format: int32 */
+            total: number;
+        };
+        TaskProgress: {
+            /** Format: int32 */
+            done: number;
+            message?: string | null;
+            /** Format: int32 */
+            total: number;
+            /** @description 进度单位：`source`（搜索书源数）等 */
+            unit: string;
+        };
+        /** @description 搜索结果分页（`GET /v1/tasks/{id}/result`）。 */
+        TaskResultPage: {
+            items: components["schemas"]["SearchBook"][];
+            nextCursor?: string | null;
+            /**
+             * Format: int32
+             * @description 当前结果集条数（去重后；截断后只算保留部分）
+             */
+            total: number;
+            /** @description 结果集超过 10MB / 全局预算，后续条目已丢弃 */
+            truncated: boolean;
+        };
+        /** @enum {string} */
+        TaskState: "queued" | "running" | "cancelling" | "succeeded" | "failed" | "cancelled";
+        /** @description 任务资源（`GET /v1/tasks/{id}` 的响应）。 */
+        TaskView: {
+            /** Format: date-time */
+            createdAt: string;
+            error?: components["schemas"]["Problem"] | null;
+            /** Format: date-time */
+            finishedAt?: string | null;
+            id: string;
+            kind: components["schemas"]["TaskKind"];
+            progress: components["schemas"]["TaskProgress"];
+            /** @description 结果分页地址；没有结果时为 null */
+            resultHref?: string | null;
+            /** Format: date-time */
+            startedAt?: string | null;
+            state: components["schemas"]["TaskState"];
         };
         TocRule: {
             /** @default null */
@@ -4897,6 +5100,80 @@ export interface operations {
             };
         };
     };
+    createSearch: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description 幂等键（≤200 字符）：弱网重试返回同一个任务 */
+                "Idempotency-Key"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SearchCreateRequest"];
+            };
+        };
+        responses: {
+            /** @description 任务已入队；`Location` 指向 `/v1/tasks/{id}`；同 Idempotency-Key 重放返回原任务 */
+            202: {
+                headers: {
+                    /** @description 任务资源地址 */
+                    Location?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TaskView"];
+                };
+            };
+            /** @description dedupe 取值不支持 */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description sourceIds 里的书源不存在 */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description sourceIds 里的书源已停用 */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description 参数校验失败（q/sourceIds/groupId/limitPerSource） */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description 并发任务超限，带 Retry-After */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
     listSources: {
         parameters: {
             query?: {
@@ -5290,6 +5567,277 @@ export interface operations {
             };
             /** @description 未登录或令牌失效 */
             401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    createSseTicket: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SseTicketRequest"];
+            };
+        };
+        responses: {
+            /** @description 已签发（响应 `Cache-Control: no-store`） */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SseTicketResponse"];
+                };
+            };
+            /** @description path 缺失或不是事件流路径 */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description 未消费票据过多，带 Retry-After */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    listTasks: {
+        parameters: {
+            query?: {
+                /** @description 按状态过滤：queued/running/cancelling/succeeded/failed/cancelled */
+                state?: string;
+                /** @description 上一页的 nextCursor；空表示第一页 */
+                cursor?: string;
+                /** @description 页大小，默认 50，上限 200 */
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 任务列表 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TaskPage"];
+                };
+            };
+            /** @description limit 越界或未知 state */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description 游标无法解码 */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    getTask: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description 任务 id（tsk_<n>） */
+                taskId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 任务状态 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TaskView"];
+                };
+            };
+            /** @description If-None-Match 命中，任务状态未变 */
+            304: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description 任务不存在或已过期 */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    cancelTask: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description 任务 id（tsk_<n>） */
+                taskId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 已请求取消（幂等） */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description 任务不存在或已过期 */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    taskEvents: {
+        parameters: {
+            query?: {
+                /** @description SSE 票据（非浏览器客户端/离线导出；60 秒一次性） */
+                ticket?: string;
+            };
+            header?: never;
+            path: {
+                /** @description 任务 id（tsk_<n>） */
+                taskId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description SSE 事件流（text/event-stream）。`progress` 数据体为 TaskProgress，`item` 为 TaskItemEvent，`error` 为 Problem，`done` 为 TaskDoneEvent。 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/event-stream": string;
+                };
+            };
+            /** @description 票无效/过期，或未登录 */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description 任务不存在或已过期 */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description 同一任务的事件流订阅者过多 */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    getTaskResult: {
+        parameters: {
+            query?: {
+                /** @description 上一页的 nextCursor；空表示第一页 */
+                cursor?: string;
+                /** @description 页大小，默认 50，上限 200 */
+                limit?: number;
+            };
+            header?: never;
+            path: {
+                /** @description 任务 id（tsk_<n>） */
+                taskId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 结果分页 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TaskResultPage"];
+                };
+            };
+            /** @description If-None-Match 命中，结果页未变 */
+            304: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description limit 越界 */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description 任务不存在或已过期 */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description 结果游标无效 */
+            422: {
                 headers: {
                     [name: string]: unknown;
                 };

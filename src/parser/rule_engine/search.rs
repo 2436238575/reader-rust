@@ -38,6 +38,7 @@ fn search_book_from_book(book: Book) -> Option<SearchBook> {
         book_id: None,
         book_source_id: None,
         book_source_ids: None,
+        dedupe_key: None,
     })
 }
 
@@ -114,6 +115,7 @@ fn build_search_book_from_json(
         book_id: None,
         book_source_id: None,
         book_source_ids: None,
+        dedupe_key: None,
     })
 }
 
@@ -317,6 +319,7 @@ impl RuleEngine {
                 book_id: None,
                 book_source_id: None,
                 book_source_ids: None,
+                dedupe_key: None,
             });
         }
         out
@@ -365,6 +368,7 @@ impl RuleEngine {
                 book_id: None,
                 book_source_id: None,
                 book_source_ids: None,
+                dedupe_key: None,
             });
         }
         out
@@ -438,6 +442,7 @@ impl RuleEngine {
                 book_id: None,
                 book_source_id: None,
                 book_source_ids: None,
+                dedupe_key: None,
             });
         }
         out
@@ -490,6 +495,7 @@ impl RuleEngine {
                 book_id: None,
                 book_source_id: None,
                 book_source_ids: None,
+                dedupe_key: None,
             });
         }
 
@@ -540,6 +546,7 @@ impl RuleEngine {
                 book_id: None,
                 book_source_id: None,
                 book_source_ids: None,
+                dedupe_key: None,
             });
         }
         out

@@ -12,4 +12,7 @@ pub mod json_document_service;
 pub mod local_epub_book;
 pub mod local_txt_book;
 pub mod refresh_token_service;
+pub mod search_merge;
+pub mod sse_ticket_service;
+pub mod task_service;
 pub mod user_service;

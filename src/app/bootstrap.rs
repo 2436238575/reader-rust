@@ -302,6 +302,8 @@ pub async fn build_state(cfg: AppConfig) -> anyhow::Result<AppState> {
         ai_book_service,
         ai_model_service,
         agent_sidecar_service,
+        task_service: Arc::new(crate::service::task_service::TaskService::new()),
+        sse_ticket_service: Arc::new(crate::service::sse_ticket_service::SseTicketService::new()),
     })
 }
 

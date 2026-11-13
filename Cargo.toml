@@ -90,6 +90,8 @@ dav-server = { version = "0.11", default-features = false, features = ["localfs"
 http-body-util = "0.1"
 ts-rs = { version = "12", features = ["no-serde-warnings"] }
 imara-diff = "0.2"
+# 搜索结果归一化去重：繁→简折叠（纯 Rust、数据内嵌、Apache-2.0）
+zhhz = "0.8"
 utoipa = { version = "6.0.0", features = ["yaml"] }
 
 [dev-dependencies]

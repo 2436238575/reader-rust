@@ -234,16 +234,16 @@ async fn batch_upsert_deletes_and_delete_all() {
     let body: Value = resp.json().await.unwrap();
     assert_eq!(body["count"], json!(2));
 
-    // 裸数组不是合法请求体（契约是 {sources}）：形状不符 → 422 UNKNOWN_FIELD
+    // 裸数组不是合法请求体（契约是 {sources}）：结构错误 → 400 MALFORMED_REQUEST
     let resp = server
         .post_json(
             "/v1/sources:batchUpsert",
             json!([source_json("https://x.example.com", "X")]),
         )
         .await;
-    assert_eq!(resp.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
     let body: Value = resp.json().await.unwrap();
-    assert_eq!(body["code"], json!("UNKNOWN_FIELD"));
+    assert_eq!(body["code"], json!("MALFORMED_REQUEST"));
 
     // 空列表 → 400
     let resp = server

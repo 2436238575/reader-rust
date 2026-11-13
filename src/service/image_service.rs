@@ -243,6 +243,31 @@ impl ImageService {
         }
     }
 
+    /// typed 版封面收口：搜索结果逐条改写 `cover_url`。
+    ///
+    /// 只有 http(s) 能进图片管道；已经是本站取图地址的保留；其余地址
+    /// （相对地址、协议相对地址等）**直接清空**——红线 6 要求客户端不接触
+    /// 上游地址，宁可没有封面也不下发一个客户端解析不了/会绕过管道的地址。
+    pub async fn rewrite_search_book_covers(&self, books: &mut [crate::model::search::SearchBook]) {
+        for book in books {
+            let Some(url) = book
+                .cover_url
+                .as_deref()
+                .map(str::trim)
+                .filter(|url| !url.is_empty())
+            else {
+                continue;
+            };
+            if url.starts_with("/reader3/image/") {
+                continue;
+            }
+            match self.register("cover", url, book.book_id.as_deref()).await {
+                Some(id) => book.cover_url = Some(Self::route(&id)),
+                None => book.cover_url = None,
+            }
+        }
+    }
+
     /// 把响应里评论配图（`images` 字符串数组）收口成单张本站取图地址。
     ///
     /// 站点常为同一张图给多个格式变体（番茄同时给 HEIC 与 JPEG），这里替客户端

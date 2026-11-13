@@ -92,6 +92,13 @@ const REQUIRED_PATHS: &[&str] = &[
     "/v1/sources:batchDelete",
     "/v1/sources:deleteInvalid",
     "/v1/local-books",
+    // tasks / searches / SSE tickets（P2）
+    "/v1/searches",
+    "/v1/tasks",
+    "/v1/tasks/{taskId}",
+    "/v1/tasks/{taskId}/result",
+    "/v1/tasks/{taskId}/events",
+    "/v1/sse-tickets",
 ];
 
 /// YAML 里 `paths` 的键固定是两空格缩进、以冒号结尾的一行。逐行精确
@@ -111,6 +118,51 @@ fn every_delivered_endpoint_is_registered_in_the_doc() {
             "OpenAPI 缺少已交付端点 {path}——检查 V1ApiDoc 的 paths(...) 注册"
         );
     }
+}
+
+/// 查询参数必须是 `in: query`：`IntoParams` 默认生成 Path，`/v1/tasks` 的
+/// `state`/`cursor`/`limit` 曾因此被写成 path 参数（路径模板里根本没有它们），
+/// 前端生成的类型不可用。这里按路径段定点断言，防止再次回归。
+#[test]
+fn task_query_params_are_declared_as_query() {
+    let yaml = generated_yaml();
+    let tasks = yaml
+        .split("  /v1/tasks:\n")
+        .nth(1)
+        .expect("/v1/tasks 段存在");
+    for name in ["state", "cursor", "limit"] {
+        let needle = format!("- name: {name}\n        in: query");
+        assert!(tasks.contains(&needle), "{name} 必须是 in: query");
+    }
+    let result = yaml
+        .split("  /v1/tasks/{taskId}/result:\n")
+        .nth(1)
+        .expect("result 段存在");
+    for name in ["cursor", "limit"] {
+        let needle = format!("- name: {name}\n        in: query");
+        assert!(result.contains(&needle), "result.{name} 必须是 in: query");
+    }
+}
+
+/// 请求体的必填字段必须进入 schema：`q`/`path` 用 `Option<String>` 是为了
+/// 运行时返回 422 + JSON Pointer，若忘了 `#[schema(required = true)]`，
+/// 生成客户端会把必填字段当成可选。
+#[test]
+fn task_request_required_fields_are_in_spec() {
+    let yaml = generated_yaml();
+    let search = yaml
+        .split("    SearchCreateRequest:\n")
+        .nth(1)
+        .expect("SearchCreateRequest schema 存在");
+    assert!(search.contains("required:\n      - q"), "q 必须是必填");
+    let ticket = yaml
+        .split("    SseTicketRequest:\n")
+        .nth(1)
+        .expect("SseTicketRequest schema 存在");
+    assert!(
+        ticket.contains("required:\n      - path"),
+        "path 必须是必填"
+    );
 }
 
 /// 生成的文档必须是合法 OpenAPI：版本字段、paths 与 components 齐全。

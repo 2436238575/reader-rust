@@ -321,7 +321,7 @@ pub struct ExploreQuery {
 // ─── 写链路（同步子集） ────────────────────────────────────────────────
 
 /// 路径里的书源 id：`src_<n>`，解析不了按不存在处理。
-fn parse_source_path_id(raw: &str) -> Result<i64, Problem> {
+pub(crate) fn parse_source_path_id(raw: &str) -> Result<i64, Problem> {
     raw.strip_prefix("src_")
         .and_then(|value| value.parse::<i64>().ok())
         .filter(|id| *id > 0)

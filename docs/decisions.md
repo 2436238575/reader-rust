@@ -209,3 +209,21 @@ goal 执行中遇到「决策表与 spec 都沉默」的问题时，按 §5.4 �
 - **漂移门禁改精确匹配**：`REQUIRED_PATHS` 写完整路径、断言按 YAML `paths` 的两空格缩进键整行比较。`contains("/…/content:")` 会把 `…/content:select:` 也命中——一个端点消失能被另一个顶包（`content` / `content:select` / `content:import` 三者前缀重叠）。清单同步补全到全部已交付路径。
 - **替换规则管理弹窗标题**：v1 按 `name` 做身份、线缆无 `id`（适配层统一补 0），「编辑/新增」标题改用打开弹窗时的 `isNewRule` 判断，不再看恒 0 的 `id`。
 
+## 2026-11-13 任务子系统首批：kind=search 全链路（P2）
+
+- **范围（D13）**：先只打通 `kind=search`——注册（`POST /v1/searches` 202 + `Location`）→ 状态（`GET /v1/tasks/{id}`、`GET /v1/tasks?state=&cursor=&limit=`）→ 事件（`GET /v1/tasks/{id}/events`，`Last-Event-ID` 续传）→ 取消（`DELETE /v1/tasks/{id}`）→ 结果分页（`GET /v1/tasks/{id}/result`）。其余 kind 复用同一注册表/事件/结果机制，工作器逐个接入（prefetch-cache / source-test / source-import 待接）。
+- **注册表是单进程内存表**：进程重启丢任务（客户端按 404 重发）。任务 id 序号以随机 64 位基数起算，重启后旧 id 不会指向新任务。任务与结果保留 24h，但容量压力下会**提前驱逐已结束任务**（GET 变 404）：注册表最多 64 个任务、每任务结果 10MB、全局结果预算 128MB、每任务事件环 256 条且 256KB。`item` 事件按 32KB 分块（单本超大结果不发 SSE，客户端走 result 分页），保证每条事件都能留在环里被 `Last-Event-ID` 重放；合并补齐字段同样受结果预算约束（不许后续书源补超大字段顶穿上限）。
+- **并发上限**：全局 8、每用户 4；超限 429 `TASK_LIMIT` + `Retry-After: 5`。取消中（`cancelling`）仍占名额，工作器落地 `cancelled` 后释放。
+- **取消是协作式的**：`DELETE` 置位并唤醒工作器（状态先变 `cancelling`），工作器在调度循环的 `select!` 里立即察觉，abort 在飞任务后落 `cancelled`；派发循环每轮 spawn 前与子任务真正发请求前各查一次标志位，取消后不再发起新上游请求。封面收口（逐个 await）与取消通知竞争，取消落地即 abort 其余书源；子任务用 `JoinSet` 持有（析构自动 abort，panic 不会留下孤儿请求）。`finish` 尊重已发出的取消（`cancelling` + 非 `cancelled` 终态 → 强制 `cancelled`）；worker 有 Drop guard 落 Failed，DELETE 另挂 5 秒 watchdog 兜底（重复 DELETE 不重复挂），避免卡死任务永久占名额。未知任务 404 `TASK_NOT_FOUND`（已结束任务仍 204）。
+- **事件 id 与续传**：每个任务内事件 id 单调递增，重连带 `Last-Event-ID` 只重放之后的条目；`done` 是最后一条事件（终态任务的 replay 必含它），**不合成重复 done**；`Last-Event-ID` 早于缓冲起点时只重放保留后缀（`TaskSubscription::gap` 记日志），客户端用任务状态/结果分页对账——事件流不是唯一真相。订阅者落后于 broadcast 时直接关流，让 EventSource 带 `Last-Event-ID` 重连补齐；每任务最多 4 个并发订阅者。
+- **结果 total 语义**：`total` = 去重后**实际保留**的条数（截断后只算保留部分），`truncated` 单独标记「还有条目被丢弃」；结果顺序是到达顺序，不是最终排序。结果游标绑定任务序号，跨任务使用返回 422 `INVALID_CURSOR`。
+- **`dedupeKey` 归一化规则**：全角→半角、去空白、ASCII 小写、繁→简（`zhhz`，Apache-2.0 纯 Rust）、剥**已知**书名后缀（完结/全本/全集/无弹窗/txt下载 等，含 `(完结)` 这类装饰括号）。带语义/版本含义的括号与词（`三体（纪念版）`、`精校版`、`未删节`）不剥——宁可不合并，也不误并。`dedupeKey` 是 `["书名","作者"]` 的 JSON 编码（避免 `|` 碰撞）；缺书名时退化为按 `bookUrl` 唯一；剥完为空时回退到未剥文本。
+- **搜索源的选择**：`sourceIds` 与 `groupId` 二选一（`group` 作为兼容别名）；缺省搜全部**启用**书源。显式指定停用源 → 409 `SOURCE_DISABLED`；分组按 `split_source_groups` 的权威口径拆分后精确相等（`"玄幻"` 不命中 `"玄幻小说"`）。参数上限：`q` ≤200 字符、`sourceIds` ≤64 个、`limitPerSource` 1..=100。
+- **偏差（Draft-2 §16.2 候选）**：契约 §8.6 的 `groupId` 值仍是**字符串分组名**（书源分组不是实体 id）；`dedupe` 目前只接受 `name-author`。搜索结果仍用 legacy `SearchBook` 形状（数字 `bookSourceId`、字符串 `lastChapter`、`bookUrl`/`origin` 直出）——与契约 §9.2 的 `BookSummary` 差异待搜索域产品收敛时统一；`bookUrl`/`origin` 与 explore 的 `ChapterItem.url` 同属红线 6 过渡例外。
+- **状态码口径**：值级校验（缺 q、limitPerSource 越界）→ 422 `VALIDATION_FAILED` + pointer；未知枚举值（`dedupe`/`state`）与 query `limit` 越界 → 400 `MALFORMED_REQUEST`（契约 §5.5）。`V1Json` 的未知字段仍 422 `UNKNOWN_FIELD`，其余字段缺失/类型不符改为 400（此前一律 422 UNKNOWN_FIELD，会把「少传字段」误报成「未知字段」）。任务相关 query 参数统一走新的 `V1Query` 提取器，避免 axum 的纯文本 400 泄漏。
+- **SSE 票据（D11/契约 §6.4）**：`POST /v1/sse-tickets {path}` → 201 `{ticket, expiresAt}` + `Cache-Control: no-store`；60 秒、一次性、绑定单个资源路径，只对 `/v1/tasks/{id}/events` 生效。鉴权顺序：Authorization → Cookie → `?ticket=`（仅事件流 GET），票据校验通过即消费；路径不匹配不烧票；消费后复核 `users.token_version`（改密码/登出后旧票立即失效）。每用户最多 8 张未消费票据、全局 1024 张，超限 429 + `Retry-After: 60`。`POST /v1/searches` 返回 202 而不是 SSE，搜索 UI 仍走 `/reader3/searchBookMultiSSE`，前端接线随下一片完成。
+- **`Idempotency-Key`（契约 §5.6）**：`POST /v1/searches` 接受 `Idempotency-Key`（≤200 字符），查找与注册在同一把锁内完成，弱网并发重试返回原任务（不同 body 也返回原任务）；映射随任务 TTL/容量驱逐清理。
+- **待办（P2 后续片）**：`prefetch-cache`/`source-test`/`source-import` 四个工作器、任务级 `traceId` 与失败源清单（目前部分源失败只记日志）、前端搜索页切换。
+- **新依赖**：`zhhz = 0.8`（繁简折叠）。选它而不是 `zhconv`：Apache-2.0（zhconv 是 GPL-2.0-or-later），纯 Rust 数据内嵌、无 C 依赖。
+
+

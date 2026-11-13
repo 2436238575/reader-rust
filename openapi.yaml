@@ -2189,6 +2189,72 @@ paths:
       security:
       - cookieAuth: []
       - bearerAuth: []
+  /v1/searches:
+    post:
+      tags:
+      - tasks
+      summary: '创建搜索任务：202 + `Location: /v1/tasks/{id}`。'
+      operationId: createSearch
+      parameters:
+      - name: Idempotency-Key
+        in: header
+        description: 幂等键（≤200 字符）：弱网重试返回同一个任务
+        required: false
+        schema:
+          type:
+          - string
+          - 'null'
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SearchCreateRequest'
+        required: true
+      responses:
+        '202':
+          description: 任务已入队；`Location` 指向 `/v1/tasks/{id}`；同 Idempotency-Key 重放返回原任务
+          headers:
+            Location:
+              schema:
+                type: string
+              description: 任务资源地址
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TaskView'
+        '400':
+          description: dedupe 取值不支持
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '404':
+          description: sourceIds 里的书源不存在
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '409':
+          description: sourceIds 里的书源已停用
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '422':
+          description: 参数校验失败（q/sourceIds/groupId/limitPerSource）
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '429':
+          description: 并发任务超限，带 Retry-After
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+      security:
+      - cookieAuth: []
+      - bearerAuth: []
   /v1/sources:
     get:
       tags:
@@ -2529,6 +2595,255 @@ paths:
                 $ref: '#/components/schemas/BatchDeleteSourcesResult'
         '401':
           description: 未登录或令牌失效
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+      security:
+      - cookieAuth: []
+      - bearerAuth: []
+  /v1/sse-tickets:
+    post:
+      tags:
+      - tasks
+      summary: 签发一次性 SSE 票据（60 秒有效、绑定单个事件流路径）。
+      operationId: createSseTicket
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SseTicketRequest'
+        required: true
+      responses:
+        '201':
+          description: '已签发（响应 `Cache-Control: no-store`）'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SseTicketResponse'
+        '422':
+          description: path 缺失或不是事件流路径
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '429':
+          description: 未消费票据过多，带 Retry-After
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+      security:
+      - cookieAuth: []
+      - bearerAuth: []
+  /v1/tasks:
+    get:
+      tags:
+      - tasks
+      summary: 我的任务列表（最新在前）。刷新页面后据此恢复还在跑的任务。
+      operationId: listTasks
+      parameters:
+      - name: state
+        in: query
+        description: 按状态过滤：queued/running/cancelling/succeeded/failed/cancelled
+        required: false
+        schema:
+          type: string
+      - name: cursor
+        in: query
+        description: 上一页的 nextCursor；空表示第一页
+        required: false
+        schema:
+          type: string
+      - name: limit
+        in: query
+        description: 页大小，默认 50，上限 200
+        required: false
+        schema:
+          type: integer
+          format: int32
+          minimum: 0
+      responses:
+        '200':
+          description: 任务列表
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TaskPage'
+        '400':
+          description: limit 越界或未知 state
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '422':
+          description: 游标无法解码
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+      security:
+      - cookieAuth: []
+      - bearerAuth: []
+  /v1/tasks/{taskId}:
+    get:
+      tags:
+      - tasks
+      summary: 任务状态（事件流断开后先用它拿全量状态，再用 Last-Event-ID 补增量）。
+      operationId: getTask
+      parameters:
+      - name: taskId
+        in: path
+        description: 任务 id（tsk_<n>）
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: 任务状态
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TaskView'
+        '304':
+          description: If-None-Match 命中，任务状态未变
+        '404':
+          description: 任务不存在或已过期
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+      security:
+      - cookieAuth: []
+      - bearerAuth: []
+    delete:
+      tags:
+      - tasks
+      summary: |-
+        请求取消（204；已结束的任务同样 204）。取消是「请求」：状态先变
+        `cancelling`，工作器察觉后落到 `cancelled`。5 秒 watchdog 兜底：
+        工作器卡死/异常退出时强制落终态，不让名额被永久占用。
+      operationId: cancelTask
+      parameters:
+      - name: taskId
+        in: path
+        description: 任务 id（tsk_<n>）
+        required: true
+        schema:
+          type: string
+      responses:
+        '204':
+          description: 已请求取消（幂等）
+        '404':
+          description: 任务不存在或已过期
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+      security:
+      - cookieAuth: []
+      - bearerAuth: []
+  /v1/tasks/{taskId}/events:
+    get:
+      tags:
+      - tasks
+      summary: 任务事件流（text/event-stream）。
+      description: |-
+        事件名固定四种：`progress` / `item` / `error` / `done`，每条都有 `id:`；
+        断线重连时带 `Last-Event-ID` 从缓冲重放。非浏览器客户端可先
+        `POST /v1/sse-tickets` 再以 `?ticket=` 连接（60 秒、一次性、绑定本路径）。
+      operationId: taskEvents
+      parameters:
+      - name: taskId
+        in: path
+        description: 任务 id（tsk_<n>）
+        required: true
+        schema:
+          type: string
+      - name: ticket
+        in: query
+        description: SSE 票据（非浏览器客户端/离线导出；60 秒一次性）
+        required: false
+        schema:
+          type: string
+      responses:
+        '200':
+          description: SSE 事件流（text/event-stream）。`progress` 数据体为 TaskProgress，`item` 为 TaskItemEvent，`error` 为 Problem，`done` 为 TaskDoneEvent。
+          content:
+            text/event-stream:
+              schema:
+                type: string
+        '401':
+          description: 票无效/过期，或未登录
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '404':
+          description: 任务不存在或已过期
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '429':
+          description: 同一任务的事件流订阅者过多
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+      security:
+      - cookieAuth: []
+      - bearerAuth: []
+  /v1/tasks/{taskId}/result:
+    get:
+      tags:
+      - tasks
+      summary: 任务结果分页（去重后；`truncated` 表示 10MB 上限丢弃了后续条目）。
+      operationId: getTaskResult
+      parameters:
+      - name: taskId
+        in: path
+        description: 任务 id（tsk_<n>）
+        required: true
+        schema:
+          type: string
+      - name: cursor
+        in: query
+        description: 上一页的 nextCursor；空表示第一页
+        required: false
+        schema:
+          type: string
+      - name: limit
+        in: query
+        description: 页大小，默认 50，上限 200
+        required: false
+        schema:
+          type: integer
+          format: int32
+          minimum: 0
+      responses:
+        '200':
+          description: 结果分页
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TaskResultPage'
+        '304':
+          description: If-None-Match 命中，结果页未变
+        '400':
+          description: limit 越界
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '404':
+          description: 任务不存在或已过期
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '422':
+          description: 结果游标无效
           content:
             application/problem+json:
               schema:
@@ -4940,6 +5255,14 @@ components:
           - string
           - 'null'
           default: null
+        dedupeKey:
+          type:
+          - string
+          - 'null'
+          description: |-
+            服务端归一化去重键（JSON 数组 `[归一化书名, 归一化作者]`，
+            全角/空白/繁简/书名后缀已折叠）。任务结果（kind=search）必填；legacy 搜索不填。
+          default: null
         intro:
           type:
           - string
@@ -4971,6 +5294,41 @@ components:
           - string
           - 'null'
           default: null
+    SearchCreateRequest:
+      type: object
+      required:
+      - q
+      properties:
+        dedupe:
+          type:
+          - string
+          - 'null'
+          description: 去重模式；目前只支持 `name-author`
+        groupId:
+          type:
+          - string
+          - 'null'
+          description: |-
+            书源分组名（契约 §8.6 字段名是 `groupId`；值仍是字符串形式的分组名，
+            不是实体 id——Draft-2 §16.2 记偏差）。`group` 兼容旧调用方。
+        limitPerSource:
+          type:
+          - integer
+          - 'null'
+          format: int32
+          description: 每个书源最多保留多少条结果（默认 20，1..=100）
+          minimum: 0
+        q:
+          type: string
+          description: 搜索关键字（必填，≤200 字符）
+        sourceIds:
+          type:
+          - array
+          - 'null'
+          items:
+            type: string
+          description: 与 `groupId` 二选一；省略则搜索全部启用书源（最多 64 个）
+      additionalProperties: false
     SearchRule:
       type: object
       properties:
@@ -5362,6 +5720,178 @@ components:
       properties:
         id:
           type: string
+    SseTicketRequest:
+      type: object
+      required:
+      - path
+      properties:
+        path:
+          type: string
+          description: 要访问的事件流路径，如 `/v1/tasks/tsk_1/events`
+      additionalProperties: false
+    SseTicketResponse:
+      type: object
+      required:
+      - ticket
+      - expiresAt
+      properties:
+        expiresAt:
+          type: string
+          format: date-time
+        ticket:
+          type: string
+    TaskDoneEvent:
+      type: object
+      required:
+      - state
+      properties:
+        resultHref:
+          type:
+          - string
+          - 'null'
+        state:
+          $ref: '#/components/schemas/TaskState'
+    TaskItemEvent:
+      type: object
+      description: '`item` 事件的数据体：新增/被合并更新的结果 + 结果集当前游标。'
+      required:
+      - items
+      properties:
+        cursor:
+          type:
+          - string
+          - 'null'
+          description: 结果集当前游标（可交给 `GET /v1/tasks/{id}/result?cursor=`）
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/SearchBook'
+    TaskKind:
+      type: string
+      enum:
+      - search
+      - explore
+      - source-test
+      - source-import
+      - prefetch-cache
+      - chapter-import
+      - ai-generate
+      - ai-chat
+    TaskPage:
+      type: object
+      description: 任务列表（`GET /v1/tasks`）。
+      required:
+      - items
+      - total
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/TaskView'
+        nextCursor:
+          type:
+          - string
+          - 'null'
+        total:
+          type: integer
+          format: int32
+          minimum: 0
+    TaskProgress:
+      type: object
+      required:
+      - done
+      - total
+      - unit
+      properties:
+        done:
+          type: integer
+          format: int32
+          minimum: 0
+        message:
+          type:
+          - string
+          - 'null'
+        total:
+          type: integer
+          format: int32
+          minimum: 0
+        unit:
+          type: string
+          description: 进度单位：`source`（搜索书源数）等
+    TaskResultPage:
+      type: object
+      description: 搜索结果分页（`GET /v1/tasks/{id}/result`）。
+      required:
+      - items
+      - total
+      - truncated
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/SearchBook'
+        nextCursor:
+          type:
+          - string
+          - 'null'
+        total:
+          type: integer
+          format: int32
+          description: 当前结果集条数（去重后；截断后只算保留部分）
+          minimum: 0
+        truncated:
+          type: boolean
+          description: 结果集超过 10MB / 全局预算，后续条目已丢弃
+    TaskState:
+      type: string
+      enum:
+      - queued
+      - running
+      - cancelling
+      - succeeded
+      - failed
+      - cancelled
+    TaskView:
+      type: object
+      description: 任务资源（`GET /v1/tasks/{id}` 的响应）。
+      required:
+      - id
+      - kind
+      - state
+      - progress
+      - createdAt
+      properties:
+        createdAt:
+          type: string
+          format: date-time
+        error:
+          oneOf:
+          - $ref: '#/components/schemas/Problem'
+            description: 失败时的完整 problem+json 对象
+          - type: 'null'
+        finishedAt:
+          type:
+          - string
+          - 'null'
+          format: date-time
+        id:
+          type: string
+        kind:
+          $ref: '#/components/schemas/TaskKind'
+        progress:
+          $ref: '#/components/schemas/TaskProgress'
+        resultHref:
+          type:
+          - string
+          - 'null'
+          description: 结果分页地址；没有结果时为 null
+        startedAt:
+          type:
+          - string
+          - 'null'
+          format: date-time
+        state:
+          $ref: '#/components/schemas/TaskState'
     TocRule:
       type: object
       properties:
@@ -5452,3 +5982,5 @@ tags:
   description: 书源
 - name: books
   description: 书籍与章节
+- name: tasks
+  description: 任务、搜索与 SSE 事件流

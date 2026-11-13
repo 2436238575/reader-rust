@@ -42,4 +42,8 @@ pub struct AppState {
     pub ai_book_service: Arc<AiBookService>,
     pub ai_model_service: Arc<AiModelService>,
     pub agent_sidecar_service: Arc<AgentSidecarService>,
+    /// 任务注册表（P2）：单进程内存，进程重启丢任务
+    pub task_service: Arc<crate::service::task_service::TaskService>,
+    /// SSE 一次性票据（`?ticket=`，非浏览器客户端/导出用）
+    pub sse_ticket_service: Arc<crate::service::sse_ticket_service::SseTicketService>,
 }

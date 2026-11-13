@@ -153,7 +153,7 @@ pub fn set_invalid_book_source_group(source: &mut BookSource, invalid: bool) -> 
     true
 }
 
-fn split_source_groups(raw: &str) -> Vec<String> {
+pub(crate) fn split_source_groups(raw: &str) -> Vec<String> {
     raw.split([',', ';', '；', '、'])
         .map(str::trim)
         .filter(|group| !group.is_empty())
