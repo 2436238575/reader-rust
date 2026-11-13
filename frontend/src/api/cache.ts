@@ -1,25 +1,5 @@
 import http from './http'
 import { API_V1_BASE } from '../utils/appBase'
-import { createAuthedEventSource } from '../utils/authedEventSource'
-
-/**
- * SSE-based book caching. Returns an EventSource.
- */
-export function cacheBookSSE(params: {
-  bookId: string
-  tocUrl?: string
-  count?: number
-  refresh?: number
-  concurrentCount?: number
-}) {
-  return createAuthedEventSource('/cacheBookSSE', {
-    bookId: params.bookId,
-    tocUrl: params.tocUrl,
-    count: params.count,
-    refresh: params.refresh,
-    concurrentCount: params.concurrentCount,
-  })
-}
 
 /** 可清理的服务端缓存层，与后端 `CacheKind`（camelCase）一一对应 */
 export type ServerCacheKind = 'cover' | 'chapterList' | 'searchResults' | 'review'

@@ -138,7 +138,6 @@
 </template>
 
 <script setup lang="ts">
-import { consumeSSE } from '../utils/sse'
 import { computed, nextTick, ref, watch, toRef } from 'vue'
 import ListPager from './common/ListPager.vue'
 import { pageCountOf } from '../utils/listPager'
@@ -154,7 +153,12 @@ import {
 } from '../utils/browserCache'
 import { cacheBookToBrowser, cacheStopReasonText } from '../utils/bookCache'
 import {
-  cacheBookSSE,
+  asPrefetchSummary,
+  createPrefetchTask,
+  runTask,
+  type TaskRunHandle,
+} from '../api/tasks'
+import {
   getCacheStats,
   purgeAllUserCache,
   purgeCacheByKind,
@@ -350,33 +354,56 @@ function cacheServer(book: Book) {
   const bookId = book.bookId
   if (!bookId || cachingUrls.value.has(bookId)) return
   cachingUrls.value.add(bookId)
-  const sse = cacheBookSSE({ bookId, count: cacheCount.value, concurrentCount: 8 })
+  let handle: TaskRunHandle | null = null
   const finish = async (message: string, kind: 'success' | 'error' | 'warning') => {
-    sse.close()
-    cachingUrls.value.delete(book.bookId || '')
+    handle?.close()
+    handle = null
+    cachingUrls.value.delete(bookId)
     appStore.showToast(message, kind)
     // 远程缓存章数（书架卡片「远程 N 章」）变了：完成/失败都可能已缓存部分章节
     shelfStore.markShelfDirty()
     await refreshData()
   }
-  // end 帧带 successCount/failedCount：部分失败（上游不可达等）要如实上报，不能只报「已缓存」
-  consumeSSE<unknown, { successCount?: number; failedCount?: number }>(sse, {
-    onEnd: (data) => {
-      const added = data?.successCount || 0
-      const failed = data?.failedCount || 0
-      if (failed > 0) {
-        finish(
-          `"${book.name}" 服务端缓存完成：新增 ${added} 章，失败 ${failed} 章`,
-          added > 0 ? 'warning' : 'error'
-        )
-      } else {
-        finish(`"${book.name}" 已缓存到服务器（新增 ${added} 章）`, 'success')
-      }
-    },
-    // 后端 error 帧带用户可读 errorMsg；传输层失败才是「中断」
-    onErrorMessage: (msg) => finish(`"${book.name}" 服务端缓存失败：${msg}`, 'error'),
-    onTransportError: () => finish(`"${book.name}" 服务端缓存失败`, 'error'),
-  })
+
+  // 「全本」按书架条目里的章节总数换算；后端单任务上限 1000 章
+  const count = cacheCount.value === 0 ? (book.totalChapterNum ?? 1000) : cacheCount.value
+  const countParam = Math.min(Math.max(count, 1), 1000)
+  createPrefetchTask(bookId, { from: 0, count: countParam })
+    .then((task) => {
+      handle = runTask(task, {
+        onDone: (state, result) => {
+          void (async () => {
+            if (state === 'cancelled') {
+              await finish(`"${book.name}" 服务端缓存已取消`, 'warning')
+              return
+            }
+            const summary = asPrefetchSummary(result)
+            if (state === 'failed' || !summary) {
+              await finish(`"${book.name}" 服务端缓存失败`, 'error')
+              return
+            }
+            const added = summary.cached
+            const skipped = summary.skipped
+            const failed = summary.failed
+            if (failed > 0) {
+              await finish(
+                `"${book.name}" 服务端缓存完成：新增 ${added} 章，失败 ${failed} 章`,
+                added > 0 ? 'warning' : 'error'
+              )
+            } else {
+              await finish(
+                `"${book.name}" 已缓存到服务器（新增 ${added} 章${skipped > 0 ? `，跳过 ${skipped} 章` : ''}）`,
+                'success'
+              )
+            }
+          })()
+        },
+      })
+    })
+    .catch((error: unknown) => {
+      cachingUrls.value.delete(bookId)
+      appStore.showToast((error as Error)?.message || '服务端缓存失败', 'error')
+    })
 }
 
 async function cacheBrowser(book: Book) {

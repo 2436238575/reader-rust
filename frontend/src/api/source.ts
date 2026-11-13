@@ -19,7 +19,7 @@ export function parseSourceId(v1Id: string): number {
 }
 
 /** 数字 id → `src_<n>`（写接口的路径/请求体身份） */
-function buildSourceId(bookSourceId: number): string {
+export function buildSourceId(bookSourceId: number): string {
   return `src_${bookSourceId}`
 }
 

@@ -39,6 +39,7 @@ mod me;
 mod replace_rules;
 mod reviews;
 mod shelf;
+mod source_tasks;
 mod sources;
 mod tasks;
 
@@ -64,6 +65,7 @@ pub fn router(
         .merge(reviews::router())
         .merge(chapter_edits::router())
         .merge(tasks::router())
+        .merge(source_tasks::router())
         .merge(auth::authed_router())
         .route_layer(axum::middleware::from_fn_with_state(
             state.clone(),
@@ -426,6 +428,9 @@ pub fn openapi_yaml() -> String {
         tasks::get_task_result,
         tasks::task_events,
         tasks::create_sse_ticket,
+        source_tasks::start_test_sources,
+        source_tasks::start_test_source,
+        source_tasks::import_sources,
         auth::login,
         auth::refresh,
         auth::logout,
@@ -532,6 +537,12 @@ pub fn openapi_yaml() -> String {
         tasks::TaskResultResponse,
         cache::PrefetchRequest,
         crate::service::task_service::PrefetchSummary,
+        crate::service::task_service::SourceTestResult,
+        crate::service::task_service::SourceTestItem,
+        crate::service::task_service::SourceImportResult,
+        crate::service::task_service::SourceImportError,
+        source_tasks::SourceTestRequest,
+        source_tasks::SourceImportRequest,
     )),
     tags(
         (name = "me", description = "当前账号"),

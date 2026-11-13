@@ -888,6 +888,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/sources/{sourceId}:test": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 测试单个书源 → 202 Task（`?markInvalid=false` 默认 false）。 */
+        post: operations["testSource"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/sources:batchDelete": {
         parameters: {
             query?: never;
@@ -933,6 +950,40 @@ export interface paths {
         put?: never;
         /** 删除失效书源：分组含「失效」标记的整行删除（与 `/reader3` 同口径）。 */
         post: operations["deleteInvalidSources"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/sources:import": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 导入书源（JSON `{sources: []}` 或 multipart JSON 文件）→ 202 Task。 */
+        post: operations["importSources"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/sources:test": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 批量测试书源 → 202 Task。 */
+        post: operations["testSources"];
         delete?: never;
         options?: never;
         head?: never;
@@ -2566,6 +2617,30 @@ export interface components {
         ShelfWriteResult: {
             bookId: string;
         };
+        /** @description `kind=source-import` 的单条失败。 */
+        SourceImportError: {
+            error: string;
+            /**
+             * Format: int32
+             * @description 在导入材料中的下标（从 0 开始）
+             */
+            index: number;
+        };
+        /** @description 仅用于 OpenAPI 的请求体形状；实际解析走原始 JSON（兼容数组/旧字段名）或多文件。 */
+        SourceImportRequest: {
+            /** @description 源材料数组（宽松迁移，允许 legado 旧字段） */
+            sources: unknown[];
+        };
+        /** @description `kind=source-import` 的结果摘要。 */
+        SourceImportResult: {
+            errors: components["schemas"]["SourceImportError"][];
+            /** Format: int32 */
+            failed: number;
+            /** Format: int32 */
+            imported: number;
+            /** Format: int32 */
+            total: number;
+        };
         /** @description 游标分页容器（契约 §5.4）：`nextCursor: null` 表示到底。 */
         SourcePage: {
             items: components["schemas"]["SourceSummary"][];
@@ -2600,6 +2675,39 @@ export interface components {
             url: string;
             /** Format: int32 */
             weight?: number | null;
+        };
+        /** @description `kind=source-test` 的单源结果。 */
+        SourceTestItem: {
+            exploreError?: string | null;
+            exploreOk: boolean;
+            group?: string | null;
+            keyword: string;
+            /** @description 本次测试是否把源写入「失效」分组（markInvalid=true 时） */
+            markedInvalid: boolean;
+            name: string;
+            searchError?: string | null;
+            searchOk: boolean;
+            /** @description `src_<n>`（不稳定 id 的源为空串） */
+            sourceId: string;
+            valid: boolean;
+        };
+        SourceTestRequest: {
+            /** @description `src_<n>` 列表；省略表示测试全部书源（最多 1000 个） */
+            ids?: string[] | null;
+            /** @description 测试搜索时使用的关键字；省略用书源自带 checkKeyWord */
+            keyword?: string | null;
+        };
+        /** @description `kind=source-test` 的结果摘要。 */
+        SourceTestResult: {
+            /** Format: int32 */
+            invalid: number;
+            /** Format: int32 */
+            markedInvalid: number;
+            results: components["schemas"]["SourceTestItem"][];
+            /** Format: int32 */
+            total: number;
+            /** Format: int32 */
+            valid: number;
         };
         /** @description 单条写入结果：线缆身份 `src_<n>`。 */
         SourceWriteResult: {
@@ -2654,8 +2762,8 @@ export interface components {
             /** @description 结果集超过 10MB / 全局预算，后续条目已丢弃 */
             truncated: boolean;
         };
-        /** @description 任务结果：search 是结果分页，prefetch-cache 是章节计数摘要。 */
-        TaskResultResponse: components["schemas"]["TaskResultPage"] | components["schemas"]["PrefetchSummary"];
+        /** @description 任务结果：search 是结果分页，其余 kind 是各自的摘要。 */
+        TaskResultResponse: components["schemas"]["TaskResultPage"] | components["schemas"]["PrefetchSummary"] | components["schemas"]["SourceTestResult"] | components["schemas"]["SourceImportResult"];
         /** @enum {string} */
         TaskState: "queued" | "running" | "cancelling" | "succeeded" | "failed" | "cancelled";
         /** @description 任务资源（`GET /v1/tasks/{id}` 的响应）。 */
@@ -5549,6 +5657,52 @@ export interface operations {
             };
         };
     };
+    testSource: {
+        parameters: {
+            query?: {
+                /** @description 是否把无效源写入「失效」分组；默认 false（测试是读操作） */
+                markInvalid?: boolean;
+            };
+            header?: never;
+            path: {
+                /** @description 书源 id（src_<n>） */
+                sourceId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 任务已入队 */
+            202: {
+                headers: {
+                    /** @description 任务资源地址 */
+                    Location?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TaskView"];
+                };
+            };
+            /** @description 书源不存在 */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description 并发任务超限，带 Retry-After */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
     batchDeleteSources: {
         parameters: {
             query?: never;
@@ -5662,6 +5816,124 @@ export interface operations {
             };
             /** @description 未登录或令牌失效 */
             401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    importSources: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SourceImportRequest"];
+            };
+        };
+        responses: {
+            /** @description 任务已入队 */
+            202: {
+                headers: {
+                    /** @description 任务资源地址 */
+                    Location?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TaskView"];
+                };
+            };
+            /** @description 请求体不是合法的书源 JSON */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Content-Type 必须是 application/json 或 multipart/form-data */
+            415: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description sources 为空或超过上限 */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description 并发任务超限，带 Retry-After */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    testSources: {
+        parameters: {
+            query?: {
+                /** @description 是否把无效源写入「失效」分组；默认 false（测试是读操作） */
+                markInvalid?: boolean;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SourceTestRequest"];
+            };
+        };
+        responses: {
+            /** @description 任务已入队 */
+            202: {
+                headers: {
+                    /** @description 任务资源地址 */
+                    Location?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TaskView"];
+                };
+            };
+            /** @description ids 中的书源不存在 */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description ids 超过上限或没有可测试的书源 */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description 并发任务超限，带 Retry-After */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };

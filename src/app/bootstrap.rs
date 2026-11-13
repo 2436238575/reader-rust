@@ -281,7 +281,7 @@ pub async fn build_state(cfg: AppConfig) -> anyhow::Result<AppState> {
         probe_service.probe().await;
     });
 
-    let task_outbound = cfg.task_outbound_concurrency.max(1) as usize;
+    let task_outbound = cfg.task_outbound_concurrency as usize;
     Ok(AppState {
         config: cfg,
         image_service,

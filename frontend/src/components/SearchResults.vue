@@ -5,7 +5,7 @@
         搜索 "{{ searchKey }}"
         <span v-if="isSearching" class="searching-indicator">
           <span class="dot-pulse"></span>
-          搜索中...
+          {{ searchStatus || '搜索中...' }}
         </span>
         <span v-else class="result-count">({{ displayResults.length }} 个结果)</span>
       </h2>
@@ -105,11 +105,17 @@ import { useBookshelfStore } from '../stores/bookshelf'
 import { useSearchStore } from '../stores/search'
 import { useAppStore } from '../stores/app'
 import { useSourceStore } from '../stores/source'
-import { searchBookMultiSSE } from '../api/search'
+import { buildSourceId } from '../api/source'
+import {
+  asSearchResult,
+  cancelTask,
+  createSearchTask,
+  runTask,
+  type TaskProgress,
+  type TaskRunHandle,
+} from '../api/tasks'
 import { useOpenBook } from '../composables/useOpenBook'
 import { splitBookSourceGroups } from '../utils/sourceSelection'
-import { consumeSSE } from '../utils/sse'
-import type { SseConnection } from '../utils/authedEventSource'
 import BookGrid from './BookGrid.vue'
 import BookDetailModal from './BookDetailModal.vue'
 import type { Book, SearchBook, SearchBookDisplay } from '../types'
@@ -131,8 +137,10 @@ const {
   searchSourceId: selectedSourceId,
 } = storeToRefs(searchStore)
 
-let eventSource: SseConnection | null = null
-// 跨 SSE 消息维护的去重集合；每次发起新搜索时重建
+let taskHandle: TaskRunHandle | null = null
+// 搜索代际：新搜索/清空/卸载时递增，迟到的建任务响应直接取消，避免旧任务回写
+let searchSeq = 0
+// 跨 item 事件维护的去重集合；每次发起新搜索时重建
 let searchSeen: Set<string> | null = null
 // 上一次实际发起的搜索的签名（搜索词 + 有效范围 + 分组/书源 id）。
 // 用于抑制 ensureSearchSelection 自动校正引起的同参数重搜（见 doSearch 内注释）；
@@ -149,6 +157,8 @@ const shelfIds = computed(
 const addingIds = ref(new Set<string>())
 // SSE 连接失败/中断：此前只置 isSearching=false，用户看到误导性的「未找到相关书籍」
 const searchFailed = ref(false)
+// 任务 progress 事件的展示文案（无进度时回落到「搜索中...」）
+const searchStatus = ref('')
 
 // 保活恢复时 Chromium 已丢失内部滚动位置，手动回填
 const searchScrollRef = ref<HTMLElement>()
@@ -192,11 +202,13 @@ const displayResults = computed<SearchBookDisplay[]>(() => {
   })
 })
 
-function closeEventSource() {
-  if (eventSource) {
-    eventSource.close()
-    eventSource = null
+function closeActiveSearch() {
+  searchSeq += 1
+  if (taskHandle) {
+    taskHandle.close()
+    taskHandle = null
   }
+  searchStatus.value = ''
 }
 
 function ensureSearchSelection() {
@@ -224,7 +236,7 @@ function doSearch(key: string, force = false) {
 
   if (effectiveScope === 'group' && !selectedGroup.value) {
     // 条件暂不完整时也要停掉上一轮 SSE：否则旧搜索还在往已清空的结果里写
-    closeEventSource()
+    closeActiveSearch()
     searchSeen = new Set()
     searchFailed.value = false
     searchStore.searchResults = []
@@ -233,7 +245,7 @@ function doSearch(key: string, force = false) {
   }
 
   if (effectiveScope === 'source' && selectedSourceId.value == null) {
-    closeEventSource()
+    closeActiveSearch()
     searchSeen = new Set()
     searchFailed.value = false
     searchStore.searchResults = []
@@ -255,77 +267,99 @@ function doSearch(key: string, force = false) {
         : `${key}|all`
   if (!force && signature === lastSearchSignature) return
 
-  closeEventSource()
+  closeActiveSearch()
   searchSeen = new Set()
   searchFailed.value = false
 
   searchStore.searchResults = []
   searchStore.isSearching = true
+  searchStatus.value = ''
 
-  eventSource = searchBookMultiSSE({
-    key,
-    concurrentCount: 24,
-    bookSourceGroup: effectiveScope === 'group' ? selectedGroup.value : undefined,
-    bookSourceId: effectiveScope === 'source' ? (selectedSourceId.value ?? undefined) : undefined,
-  })
-
-  // 只有真正创建了 EventSource 才记录签名；上面参数校验失败的提前返回
-  // 不会走到这里，条件补全后（如分组列表加载出来）仍能正常发起搜索
-  lastSearchSignature = signature
-
-  eventSource.onmessage = (event) => {
-    try {
-      const data = JSON.parse(event.data)
-      if (data.data && Array.isArray(data.data)) {
-        // 去重集合跨消息维护：此前每条 SSE 消息都重建一次全量 Set（O(已到条数)）
-        if (!searchSeen) searchSeen = new Set()
-        // originName/originGroup 是前端按命中书源就地合成的展示字段
-        //（后端 SearchBook 里没有），合成后即 SearchBookDisplay
-        const annotate = (b: SearchBook): SearchBookDisplay => {
-          const source = sourceById.value.get(b.bookSourceId)
-          return {
-            ...b,
-            originName: source?.bookSourceName || b.origin,
-            originGroup: source?.bookSourceGroup,
-          }
-        }
-        const newBooks: SearchBookDisplay[] = []
-        for (const b of data.data as SearchBook[]) {
-          // 产出即登记：bookId 已按 bookUrl 去重
-          const dedupeKey = b.bookId || `${b.origin}::${b.bookUrl}`
-          if (searchSeen.has(dedupeKey)) continue
-          searchSeen.add(dedupeKey)
-          newBooks.push(annotate(b))
-        }
-        if (newBooks.length) {
-          searchStore.searchResults = searchStore.searchResults.concat(newBooks)
-        }
+  // 去重集合跨 item 事件维护；后端已按 dedupeKey 合并，这里只防事件重放/结果页回填重复
+  const seen = (searchSeen ||= new Set<string>())
+  const appendBooks = (books: SearchBook[]) => {
+    const annotate = (b: SearchBook): SearchBookDisplay => {
+      const source = sourceById.value.get(b.bookSourceId)
+      return {
+        ...b,
+        originName: source?.bookSourceName || b.origin,
+        originGroup: source?.bookSourceGroup,
       }
-    } catch {
-      /* skip */
+    }
+    const newBooks: SearchBookDisplay[] = []
+    for (const book of books) {
+      const key = book.bookId || `${book.origin}::${book.bookUrl}`
+      if (seen.has(key)) continue
+      seen.add(key)
+      newBooks.push(annotate(book))
+    }
+    if (newBooks.length) {
+      searchStore.searchResults = searchStore.searchResults.concat(newBooks)
     }
   }
 
-  // error/end/传输层失败统一走 consumeSSE：后端 error 帧的 errorMsg 直接 toast，
-  // 不再让用户只看到「搜索失败」（此前 addEventListener('error') 与 onerror
-  // 双注册干同一件事且都不读 event.data）
-  consumeSSE(eventSource, {
-    onEnd: () => {
-      searchStore.isSearching = false
-      closeEventSource()
-    },
-    onErrorMessage: (msg) => {
+  const seq = searchSeq
+  const params = {
+    q: key,
+    ...(effectiveScope === 'group' && selectedGroup.value
+      ? { groupId: selectedGroup.value }
+      : {}),
+    ...(effectiveScope === 'source' && selectedSourceId.value != null
+      ? { sourceIds: [buildSourceId(selectedSourceId.value)] }
+      : {}),
+  }
+  // 先记签名：建任务期间同参数的自动校正不应再发一次
+  lastSearchSignature = signature
+
+  createSearchTask(params)
+    .then((task) => {
+      if (seq !== searchSeq) {
+        // 已经换了搜索/清空了：把刚建出来的任务取消，避免后台白跑
+        void cancelTask(task.id).catch(() => undefined)
+        return
+      }
+      taskHandle = runTask(task, {
+        onProgress: (progress: TaskProgress) => {
+          if (seq !== searchSeq) return
+          searchStatus.value =
+            progress.message ||
+            (progress.total > 0 ? `${progress.done}/${progress.total} 个书源` : '')
+        },
+        onItem: (items) => {
+          if (seq !== searchSeq) return
+          appendBooks(items as unknown as SearchBook[])
+        },
+        onError: (problem) => {
+          if (seq !== searchSeq) return
+          searchFailed.value = true
+          appStore.showToast(problem.detail || problem.title || '搜索失败', 'error')
+        },
+        onTransportError: () => {
+          if (seq !== searchSeq) return
+          // 浏览器 EventSource 会自动重连；先让 UI 说明状态，别直接判失败
+          searchStatus.value = '连接中断，正在重连...'
+        },
+        onDone: (state, result) => {
+          if (seq !== searchSeq) return
+          taskHandle = null
+          searchStore.isSearching = false
+          searchStatus.value = ''
+          // 事件可能丢包：用结果页补齐（按 bookId 去重，已收到的不会重复）
+          const page = asSearchResult(result)
+          if (page?.items?.length) appendBooks(page.items as unknown as SearchBook[])
+          if (state === 'failed') {
+            searchFailed.value = true
+            appStore.showToast('搜索失败，请稍后重试', 'error')
+          }
+        },
+      })
+    })
+    .catch((error: unknown) => {
+      if (seq !== searchSeq) return
       searchStore.isSearching = false
       searchFailed.value = true
-      appStore.showToast(msg, 'error')
-      closeEventSource()
-    },
-    onTransportError: () => {
-      searchStore.isSearching = false
-      searchFailed.value = true
-      closeEventSource()
-    },
-  })
+      appStore.showToast((error as Error)?.message || '搜索失败', 'error')
+    })
 }
 
 function retrySearch() {
@@ -341,7 +375,7 @@ watch(
     if (key) {
       doSearch(key)
     } else {
-      closeEventSource()
+      closeActiveSearch()
       searchStore.searchResults = []
       searchStore.isSearching = false
       // 清空搜索后重置签名：结果已清空，同一关键词再次输入时应重新搜索
@@ -367,7 +401,7 @@ onMounted(async () => {
 })
 
 onUnmounted(() => {
-  closeEventSource()
+  closeActiveSearch()
 })
 
 async function handleBookClick(book: Book | SearchBook) {

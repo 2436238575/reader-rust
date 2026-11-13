@@ -2571,6 +2571,52 @@ paths:
       security:
       - cookieAuth: []
       - bearerAuth: []
+  /v1/sources/{sourceId}:test:
+    post:
+      tags:
+      - sources
+      summary: 测试单个书源 → 202 Task（`?markInvalid=false` 默认 false）。
+      operationId: testSource
+      parameters:
+      - name: sourceId
+        in: path
+        description: 书源 id（src_<n>）
+        required: true
+        schema:
+          type: string
+      - name: markInvalid
+        in: query
+        description: 是否把无效源写入「失效」分组；默认 false（测试是读操作）
+        required: false
+        schema:
+          type: boolean
+      responses:
+        '202':
+          description: 任务已入队
+          headers:
+            Location:
+              schema:
+                type: string
+              description: 任务资源地址
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TaskView'
+        '404':
+          description: 书源不存在
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '429':
+          description: 并发任务超限，带 Retry-After
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+      security:
+      - cookieAuth: []
+      - bearerAuth: []
   /v1/sources:batchDelete:
     post:
       tags:
@@ -2660,6 +2706,109 @@ paths:
                 $ref: '#/components/schemas/BatchDeleteSourcesResult'
         '401':
           description: 未登录或令牌失效
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+      security:
+      - cookieAuth: []
+      - bearerAuth: []
+  /v1/sources:import:
+    post:
+      tags:
+      - sources
+      summary: '导入书源（JSON `{sources: []}` 或 multipart JSON 文件）→ 202 Task。'
+      operationId: importSources
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SourceImportRequest'
+        required: true
+      responses:
+        '202':
+          description: 任务已入队
+          headers:
+            Location:
+              schema:
+                type: string
+              description: 任务资源地址
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TaskView'
+        '400':
+          description: 请求体不是合法的书源 JSON
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '415':
+          description: Content-Type 必须是 application/json 或 multipart/form-data
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '422':
+          description: sources 为空或超过上限
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '429':
+          description: 并发任务超限，带 Retry-After
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+      security:
+      - cookieAuth: []
+      - bearerAuth: []
+  /v1/sources:test:
+    post:
+      tags:
+      - sources
+      summary: 批量测试书源 → 202 Task。
+      operationId: testSources
+      parameters:
+      - name: markInvalid
+        in: query
+        description: 是否把无效源写入「失效」分组；默认 false（测试是读操作）
+        required: false
+        schema:
+          type: boolean
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SourceTestRequest'
+        required: true
+      responses:
+        '202':
+          description: 任务已入队
+          headers:
+            Location:
+              schema:
+                type: string
+              description: 任务资源地址
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TaskView'
+        '404':
+          description: ids 中的书源不存在
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '422':
+          description: ids 超过上限或没有可测试的书源
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '429':
+          description: 并发任务超限，带 Retry-After
           content:
             application/problem+json:
               schema:
@@ -5748,6 +5897,56 @@ components:
       properties:
         bookId:
           type: string
+    SourceImportError:
+      type: object
+      description: '`kind=source-import` 的单条失败。'
+      required:
+      - index
+      - error
+      properties:
+        error:
+          type: string
+        index:
+          type: integer
+          format: int32
+          description: 在导入材料中的下标（从 0 开始）
+          minimum: 0
+    SourceImportRequest:
+      type: object
+      description: 仅用于 OpenAPI 的请求体形状；实际解析走原始 JSON（兼容数组/旧字段名）或多文件。
+      required:
+      - sources
+      properties:
+        sources:
+          type: array
+          items: {}
+          description: 源材料数组（宽松迁移，允许 legado 旧字段）
+      additionalProperties: false
+    SourceImportResult:
+      type: object
+      description: '`kind=source-import` 的结果摘要。'
+      required:
+      - total
+      - imported
+      - failed
+      - errors
+      properties:
+        errors:
+          type: array
+          items:
+            $ref: '#/components/schemas/SourceImportError'
+        failed:
+          type: integer
+          format: int32
+          minimum: 0
+        imported:
+          type: integer
+          format: int32
+          minimum: 0
+        total:
+          type: integer
+          format: int32
+          minimum: 0
     SourcePage:
       type: object
       description: '游标分页容器（契约 §5.4）：`nextCursor: null` 表示到底。'
@@ -5827,6 +6026,92 @@ components:
           - integer
           - 'null'
           format: int32
+    SourceTestItem:
+      type: object
+      description: '`kind=source-test` 的单源结果。'
+      required:
+      - sourceId
+      - name
+      - valid
+      - searchOk
+      - exploreOk
+      - keyword
+      - markedInvalid
+      properties:
+        exploreError:
+          type:
+          - string
+          - 'null'
+        exploreOk:
+          type: boolean
+        group:
+          type:
+          - string
+          - 'null'
+        keyword:
+          type: string
+        markedInvalid:
+          type: boolean
+          description: 本次测试是否把源写入「失效」分组（markInvalid=true 时）
+        name:
+          type: string
+        searchError:
+          type:
+          - string
+          - 'null'
+        searchOk:
+          type: boolean
+        sourceId:
+          type: string
+          description: '`src_<n>`（不稳定 id 的源为空串）'
+        valid:
+          type: boolean
+    SourceTestRequest:
+      type: object
+      properties:
+        ids:
+          type:
+          - array
+          - 'null'
+          items:
+            type: string
+          description: '`src_<n>` 列表；省略表示测试全部书源（最多 1000 个）'
+        keyword:
+          type:
+          - string
+          - 'null'
+          description: 测试搜索时使用的关键字；省略用书源自带 checkKeyWord
+      additionalProperties: false
+    SourceTestResult:
+      type: object
+      description: '`kind=source-test` 的结果摘要。'
+      required:
+      - total
+      - valid
+      - invalid
+      - markedInvalid
+      - results
+      properties:
+        invalid:
+          type: integer
+          format: int32
+          minimum: 0
+        markedInvalid:
+          type: integer
+          format: int32
+          minimum: 0
+        results:
+          type: array
+          items:
+            $ref: '#/components/schemas/SourceTestItem'
+        total:
+          type: integer
+          format: int32
+          minimum: 0
+        valid:
+          type: integer
+          format: int32
+          minimum: 0
     SourceWriteResult:
       type: object
       description: 单条写入结果：线缆身份 `src_<n>`。
@@ -5967,7 +6252,9 @@ components:
       oneOf:
       - $ref: '#/components/schemas/TaskResultPage'
       - $ref: '#/components/schemas/PrefetchSummary'
-      description: 任务结果：search 是结果分页，prefetch-cache 是章节计数摘要。
+      - $ref: '#/components/schemas/SourceTestResult'
+      - $ref: '#/components/schemas/SourceImportResult'
+      description: 任务结果：search 是结果分页，其余 kind 是各自的摘要。
     TaskState:
       type: string
       enum:

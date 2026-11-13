@@ -94,6 +94,10 @@ async fn start_upstream() -> (String, Arc<AtomicUsize>, Arc<AtomicUsize>) {
             }),
         )
         .route(
+            "/search/empty",
+            get(|| async { Json(json!({ "data": { "list": [] } })) }),
+        )
+        .route(
             "/book/pf",
             get(|| async {
                 let list: Vec<Value> = (1..=5)
@@ -1196,6 +1200,247 @@ async fn outbound_budget_caps_parallel_upstream_fetches() {
         .await
         .unwrap();
     assert_eq!(response.status(), StatusCode::NO_CONTENT);
+
+    server.cleanup();
+}
+
+fn importable_source(name: &str, url: &str) -> Value {
+    json!({
+        "bookSourceName": name,
+        "bookSourceUrl": url,
+        "enabled": true,
+        "searchUrl": format!("{url}/search?q={{key}}"),
+        "ruleSearch": { "bookList": ".item" }
+    })
+}
+
+#[tokio::test]
+async fn source_test_task_reports_availability_and_marks_invalid() {
+    let (server, _started, _active) = boot().await;
+    let good = server.create_source("好源", "/search/a").await;
+    let bad = server
+        .create_source_opts("坏源", "/search/empty", Some("自用"), true)
+        .await;
+
+    // 默认 markInvalid=false：测试是读操作，不改分组
+    let response = server
+        .client
+        .post(format!("{}/v1/sources:test", server.base_url))
+        .bearer_auth(&server.token)
+        .json(&json!({ "ids": [good, bad] }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::ACCEPTED);
+    let task_id: String = response.json::<Value>().await.unwrap()["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let task = server
+        .wait_terminal(&task_id, Duration::from_secs(10))
+        .await;
+    assert_eq!(task["state"], json!("succeeded"), "{task}");
+    let summary: Value = server
+        .client
+        .get(format!("{}/v1/tasks/{task_id}/result", server.base_url))
+        .bearer_auth(&server.token)
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(summary["total"], json!(2), "{summary}");
+    assert_eq!(summary["valid"], json!(1));
+    assert_eq!(summary["invalid"], json!(1));
+    assert_eq!(summary["markedInvalid"], json!(0), "默认不写库");
+    let bad_entry = summary["results"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|item| item["name"] == json!("坏源"))
+        .expect("结果里应有坏源");
+    assert_eq!(bad_entry["valid"], json!(false));
+    assert_eq!(bad_entry["searchOk"], json!(false));
+    assert_eq!(bad_entry["sourceId"], json!(bad));
+
+    // markInvalid=true：写回「失效」分组
+    let response = server
+        .client
+        .post(format!(
+            "{}/v1/sources:test?markInvalid=true",
+            server.base_url
+        ))
+        .bearer_auth(&server.token)
+        .json(&json!({ "ids": [bad] }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::ACCEPTED);
+    let task_id: String = response.json::<Value>().await.unwrap()["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let task = server
+        .wait_terminal(&task_id, Duration::from_secs(10))
+        .await;
+    assert_eq!(task["state"], json!("succeeded"));
+    let summary: Value = server
+        .client
+        .get(format!("{}/v1/tasks/{task_id}/result", server.base_url))
+        .bearer_auth(&server.token)
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(summary["markedInvalid"], json!(1), "{summary}");
+    let detail: Value = server
+        .client
+        .get(format!("{}/v1/sources/{bad}", server.base_url))
+        .bearer_auth(&server.token)
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert!(
+        detail["bookSourceGroup"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("失效"),
+        "{detail}"
+    );
+
+    // 单源端点
+    let response = server
+        .client
+        .post(format!("{}/v1/sources/{good}:test", server.base_url))
+        .bearer_auth(&server.token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::ACCEPTED);
+
+    server.cleanup();
+}
+
+#[tokio::test]
+async fn source_import_task_imports_json_and_multipart() {
+    let (server, _started, _active) = boot().await;
+
+    // JSON：一条合法 + 一条缺规则（宽松迁移后保存失败）
+    let response = server
+        .client
+        .post(format!("{}/v1/sources:import", server.base_url))
+        .bearer_auth(&server.token)
+        .json(&json!({
+            "sources": [
+                importable_source("导入甲", "https://import-a.example"),
+                "not-a-source"
+            ]
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::ACCEPTED);
+    let task_id: String = response.json::<Value>().await.unwrap()["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let task = server
+        .wait_terminal(&task_id, Duration::from_secs(10))
+        .await;
+    assert_eq!(task["state"], json!("succeeded"), "{task}");
+    let summary: Value = server
+        .client
+        .get(format!("{}/v1/tasks/{task_id}/result", server.base_url))
+        .bearer_auth(&server.token)
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(summary["total"], json!(2), "{summary}");
+    assert_eq!(summary["imported"], json!(1));
+    assert_eq!(summary["failed"], json!(1));
+    assert_eq!(summary["errors"][0]["index"], json!(1));
+    let list: Value = server
+        .client
+        .get(format!("{}/v1/sources?limit=200", server.base_url))
+        .bearer_auth(&server.token)
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert!(
+        list["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|item| item["name"] == json!("导入甲")),
+        "{list}"
+    );
+
+    // multipart 文件：同一份 JSON 走文件上传
+    let boundary = "----tasks-source-import";
+    let file = serde_json::to_string(&json!([importable_source(
+        "文件导入",
+        "https://import-file.example"
+    )]))
+    .unwrap();
+    let body = format!(
+        "--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"sources.json\"\r\nContent-Type: application/json\r\n\r\n{file}\r\n--{boundary}--\r\n"
+    );
+    let response = server
+        .client
+        .post(format!("{}/v1/sources:import", server.base_url))
+        .bearer_auth(&server.token)
+        .header(
+            "Content-Type",
+            format!("multipart/form-data; boundary={boundary}"),
+        )
+        .body(body)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::ACCEPTED);
+    let task_id: String = response.json::<Value>().await.unwrap()["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let task = server
+        .wait_terminal(&task_id, Duration::from_secs(10))
+        .await;
+    assert_eq!(task["state"], json!("succeeded"), "{task}");
+    let summary: Value = server
+        .client
+        .get(format!("{}/v1/tasks/{task_id}/result", server.base_url))
+        .bearer_auth(&server.token)
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(summary["imported"], json!(1), "{summary}");
+
+    // 非 JSON body：400
+    let response = server
+        .client
+        .post(format!("{}/v1/sources:import", server.base_url))
+        .bearer_auth(&server.token)
+        .header("Content-Type", "application/json")
+        .body("not json")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
 
     server.cleanup();
 }

@@ -7,8 +7,8 @@
 //!
 //! 请求体是**源材料**：走 `book_source_from_value` 的宽松迁移（legado 旧
 //! 字段名兼容），不做 `deny_unknown_fields`——导入材料带附加字段是常态。
-//! `:import`/`:test`/`:login` 按契约是 202 Task，任务子系统（P2）落地前
-//! 继续 `/reader3`；`PATCH /v1/sources/{id}` 随启停域一起迁。
+//! `:import`/`:test` 已是 202 Task（见 `source_tasks.rs`）；`:login` 仍走
+//! `/reader3` 代理页；`PATCH /v1/sources/{id}` 随启停域一起迁。
 //!
 //! 排序由服务端固定为 `id` 升序（不可变、keyset 稳定）：`updated_at` 会随
 //! 编辑变化，做游标会漏行/重行；展示排序各端自行处理。
@@ -45,7 +45,12 @@ pub fn router() -> Router<AppState> {
                 .post(upsert_source)
                 .delete(delete_all_sources),
         )
-        .route("/v1/sources/{id}", get(get_source).delete(delete_source))
+        .route(
+            "/v1/sources/{id}",
+            get(get_source)
+                .delete(delete_source)
+                .post(super::source_tasks::start_test_source),
+        )
         .route("/v1/sources:batchDelete", post(batch_delete_sources))
         .route("/v1/sources:deleteInvalid", post(delete_invalid_sources))
         .route("/v1/sources/{sourceId}/explore", get(explore_source))

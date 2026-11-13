@@ -128,12 +128,62 @@ pub struct PrefetchSummary {
     pub failed: u32,
 }
 
+/// `kind=source-test` 的单源结果。
+#[derive(Debug, Clone, Serialize, utoipa::ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct SourceTestItem {
+    /// `src_<n>`（不稳定 id 的源为空串）
+    pub source_id: String,
+    pub name: String,
+    pub valid: bool,
+    pub search_ok: bool,
+    pub explore_ok: bool,
+    pub keyword: String,
+    pub search_error: Option<String>,
+    pub explore_error: Option<String>,
+    /// 本次测试是否把源写入「失效」分组（markInvalid=true 时）
+    pub marked_invalid: bool,
+    pub group: Option<String>,
+}
+
+/// `kind=source-test` 的结果摘要。
+#[derive(Debug, Clone, Default, Serialize, utoipa::ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct SourceTestResult {
+    pub total: u32,
+    pub valid: u32,
+    pub invalid: u32,
+    pub marked_invalid: u32,
+    pub results: Vec<SourceTestItem>,
+}
+
+/// `kind=source-import` 的单条失败。
+#[derive(Debug, Clone, Serialize, utoipa::ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct SourceImportError {
+    /// 在导入材料中的下标（从 0 开始）
+    pub index: u32,
+    pub error: String,
+}
+
+/// `kind=source-import` 的结果摘要。
+#[derive(Debug, Clone, Default, Serialize, utoipa::ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct SourceImportResult {
+    pub total: u32,
+    pub imported: u32,
+    pub failed: u32,
+    pub errors: Vec<SourceImportError>,
+}
+
 /// 任务结果：按任务 kind 解释（`GET /v1/tasks/{id}/result` 的响应体）。
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 #[serde(untagged)]
 pub enum TaskResultPayload {
     Search(TaskResultPage),
     Prefetch(PrefetchSummary),
+    SourceTest(SourceTestResult),
+    SourceImport(SourceImportResult),
 }
 
 /// 任务资源（`GET /v1/tasks/{id}` 的响应）。
@@ -219,6 +269,9 @@ struct Entry {
     truncated: bool,
     /// prefetch-cache 的摘要结果（其他 kind 为 None）
     prefetch_summary: Option<PrefetchSummary>,
+    /// source-test / source-import 的摘要结果
+    source_test_result: Option<SourceTestResult>,
+    source_import_result: Option<SourceImportResult>,
     finished_epoch: Option<i64>,
 }
 
@@ -296,8 +349,14 @@ impl TaskService {
     }
 
     /// 覆盖全局出站并发（启动时按 `TASK_OUTBOUND_CONCURRENCY` 配置）。
+    /// `0` 与文档一致地回落到默认值 `TASK_OUTBOUND_LIMIT`。
     pub fn with_outbound_limit(mut self, limit: usize) -> Self {
-        self.outbound = Arc::new(tokio::sync::Semaphore::new(limit.max(1)));
+        let limit = if limit == 0 {
+            TASK_OUTBOUND_LIMIT
+        } else {
+            limit
+        };
+        self.outbound = Arc::new(tokio::sync::Semaphore::new(limit));
         self
     }
 
@@ -407,6 +466,8 @@ impl TaskService {
                 result_bytes: 0,
                 truncated: false,
                 prefetch_summary: None,
+                source_test_result: None,
+                source_import_result: None,
                 finished_epoch: None,
             },
         );
@@ -791,7 +852,25 @@ impl TaskService {
         entry.prefetch_summary = Some(summary);
     }
 
-    /// 结果分页（按任务 kind 解释）：search 走结果集游标，prefetch-cache 返回摘要。
+    pub fn set_source_test_result(&self, id: &str, result: SourceTestResult) {
+        let mut inner = self.lock();
+        let Some(entry) = inner.tasks.get_mut(id) else {
+            return;
+        };
+        entry.view.result_href = Some(format!("/v1/tasks/{id}/result"));
+        entry.source_test_result = Some(result);
+    }
+
+    pub fn set_source_import_result(&self, id: &str, result: SourceImportResult) {
+        let mut inner = self.lock();
+        let Some(entry) = inner.tasks.get_mut(id) else {
+            return;
+        };
+        entry.view.result_href = Some(format!("/v1/tasks/{id}/result"));
+        entry.source_import_result = Some(result);
+    }
+
+    /// 结果分页（按任务 kind 解释）：search 走结果集游标，其余 kind 返回摘要。
     pub fn result_payload(
         &self,
         owner_ns: &str,
@@ -818,6 +897,28 @@ impl TaskService {
                     .filter(|entry| entry.owner_ns == owner_ns)?;
                 Some(Ok(TaskResultPayload::Prefetch(
                     entry.prefetch_summary.unwrap_or_default(),
+                )))
+            }
+            TaskKind::SourceTest => {
+                let mut inner = self.lock();
+                prune(&mut inner, now_ts(), self.ttl_secs);
+                let entry = inner
+                    .tasks
+                    .get(id)
+                    .filter(|entry| entry.owner_ns == owner_ns)?;
+                Some(Ok(TaskResultPayload::SourceTest(
+                    entry.source_test_result.clone().unwrap_or_default(),
+                )))
+            }
+            TaskKind::SourceImport => {
+                let mut inner = self.lock();
+                prune(&mut inner, now_ts(), self.ttl_secs);
+                let entry = inner
+                    .tasks
+                    .get(id)
+                    .filter(|entry| entry.owner_ns == owner_ns)?;
+                Some(Ok(TaskResultPayload::SourceImport(
+                    entry.source_import_result.clone().unwrap_or_default(),
                 )))
             }
             // 其余 kind 暂时沿用搜索结果分页；铺开新 kind 时在这里分支
@@ -1313,6 +1414,16 @@ mod tests {
         );
         // 环没有被超大事件清空：最早事件仍可重放
         assert!(!subscription.gap);
+    }
+
+    #[test]
+    fn zero_outbound_limit_uses_default() {
+        let service = TaskService::new().with_outbound_limit(0);
+        assert_eq!(
+            service.outbound_semaphore().available_permits(),
+            TASK_OUTBOUND_LIMIT,
+            "0 应与文档一致回落到默认值"
+        );
     }
 
     #[test]

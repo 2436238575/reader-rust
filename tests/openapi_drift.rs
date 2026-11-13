@@ -91,6 +91,9 @@ const REQUIRED_PATHS: &[&str] = &[
     "/v1/sources:batchUpsert",
     "/v1/sources:batchDelete",
     "/v1/sources:deleteInvalid",
+    "/v1/sources:test",
+    "/v1/sources:import",
+    "/v1/sources/{sourceId}:test",
     "/v1/local-books",
     // tasks / searches / SSE tickets（P2）
     "/v1/searches",

@@ -117,14 +117,18 @@
 </template>
 
 <script setup lang="ts">
-import { consumeSSE } from '../../utils/sse'
-import type { SseConnection } from '../../utils/authedEventSource'
 import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useReaderStore } from '../../stores/reader'
 import { useReaderConfigStore } from '../../stores/readerConfig'
 import { useAppStore } from '../../stores/app'
 import { useBookshelfStore } from '../../stores/bookshelf'
-import { cacheBookSSE } from '../../api/cache'
+import {
+  asPrefetchSummary,
+  cancelTask,
+  createPrefetchTask,
+  runTask,
+  type TaskRunHandle,
+} from '../../api/tasks'
 import { getShelfBook, deleteBookCache } from '../../api/bookshelf'
 import { countBrowserBookCache, deleteBrowserBookCache } from '../../utils/browserCache'
 import { cacheBookToBrowser, cacheStopReasonText, resolveBookChapters } from '../../utils/bookCache'
@@ -143,7 +147,9 @@ const currentChapterName = ref('')
 const serverCachedCount = ref(0)
 const browserCachedCount = ref(0)
 const isLocalBookInServer = computed(() => isLocalBook(store.book))
-let sse: SseConnection | null = null
+let taskHandle: TaskRunHandle | null = null
+// 缓存任务代际：停止/重开时递增，迟到的建任务响应直接取消
+let serverRun = 0
 let browserSignal = { cancelled: false }
 
 onMounted(() => {
@@ -171,7 +177,7 @@ async function refreshStats() {
   browserCachedCount.value = browserCount
 }
 
-function startServerCaching(count: number) {
+async function startServerCaching(count: number) {
   if (!store.book || isLocalBookInServer.value) return
   stopWorking()
   working.value = true
@@ -183,33 +189,6 @@ function startServerCaching(count: number) {
     count === 0
       ? Math.max(0, store.chapters.length - store.currentIndex)
       : Math.min(count, Math.max(0, store.chapters.length - store.currentIndex))
-
-  if (!store.book.bookId) return
-  sse = cacheBookSSE({
-    bookId: store.book.bookId,
-    tocUrl: store.currentChapter?.url,
-    count,
-    concurrentCount: 8,
-  })
-
-  sse.onmessage = (event) => {
-    try {
-      const data = JSON.parse(event.data)
-      // cachedCount 是范围内已缓存总数（已含本次新增）；失败章节本次不会再重试，
-      // 一并计入已处理，进度条才会到 100%
-      const completed = (data.cachedCount || 0) + (data.failedCount || 0)
-      if (total > 0) {
-        progress.value = Math.min(100, Math.round((Math.max(0, completed) / total) * 100))
-      }
-      const failed = data.failedCount || 0
-      currentStatus.value =
-        failed > 0
-          ? `服务端缓存中 (${data.cachedCount || 0} 已缓存 / ${data.successCount || 0} 新增 / ${failed} 失败)`
-          : `服务端缓存中 (${data.cachedCount || 0} 已缓存 / ${data.successCount || 0} 新增)`
-    } catch {
-      currentStatus.value = '服务端缓存处理中...'
-    }
-  }
 
   const finish = async (status: string, done: boolean) => {
     currentStatus.value = status
@@ -226,34 +205,84 @@ function startServerCaching(count: number) {
     )
   }
 
-  // end 帧带 successCount/failedCount：部分失败（上游不可达/响应异常）要如实上报，
-  // 不能只报「完成」；面板状态文字停留不到 1 秒，toast 才是可靠的完成提示
-  consumeSSE<unknown, { cachedCount?: number; successCount?: number; failedCount?: number }>(
-    sse,
-    {
-      onEnd: async (data) => {
-        const added = data?.successCount || 0
-        const failed = data?.failedCount || 0
-        if (failed > 0) {
-          appStore.showToast(
-            `服务端缓存完成：新增 ${added} 章，失败 ${failed} 章`,
-            added > 0 ? 'warning' : 'error'
-          )
-          await finish(`服务端缓存完成：新增 ${added} 章，${failed} 章失败`, false)
-        } else {
-          appStore.showToast(`服务端缓存完成，新增 ${added} 章`, 'success')
-          await finish(`服务端缓存完成，累计 ${data?.cachedCount || 0} 章`, true)
-        }
-      },
-      // 后端 error 帧带用户可读 errorMsg；传输层失败才是「中断」
-      onErrorMessage: async (msg) => {
-        await finish(`服务端缓存失败：${msg}`, false)
-      },
-      onTransportError: async () => {
-        await finish('服务端缓存已中断', false)
-      },
-    }
-  )
+  const bookId = store.book.bookId
+  if (!bookId) {
+    working.value = false
+    return
+  }
+  if (total <= 0) {
+    await finish('没有需要缓存的章节', true)
+    return
+  }
+  // 单任务上限 1000 章；「全本」按剩余章节数换算成具体 count
+  const countParam = Math.min(total, 1000)
+  const run = serverRun
+
+  createPrefetchTask(bookId, { from: store.currentIndex, count: countParam })
+    .then((task) => {
+      if (run !== serverRun || !working.value) {
+        void cancelTask(task.id).catch(() => undefined)
+        return
+      }
+      taskHandle = runTask(task, {
+        onProgress: (progressEvent) => {
+          if (run !== serverRun) return
+          if (progressEvent.total > 0) {
+            progress.value = Math.min(
+              100,
+              Math.round((progressEvent.done / progressEvent.total) * 100)
+            )
+          }
+          currentStatus.value = `服务端缓存中 (${progressEvent.done}/${progressEvent.total} 章)`
+        },
+        onError: (problem) => {
+          if (run !== serverRun) return
+          appStore.showToast(problem.detail || '服务端缓存失败', 'error')
+        },
+        onTransportError: () => {
+          if (run !== serverRun) return
+          // EventSource 会自动重连带 Last-Event-ID；轮询兜底仍在跑
+          currentStatus.value = '连接中断，正在重连...'
+        },
+        onDone: (state, result) => {
+          if (run !== serverRun) return
+          taskHandle = null
+          void (async () => {
+            if (state === 'cancelled') {
+              await finish('服务端缓存已取消', false)
+              return
+            }
+            const summary = asPrefetchSummary(result)
+            if (state === 'failed' || !summary) {
+              appStore.showToast('服务端缓存失败', 'error')
+              await finish('服务端缓存失败', false)
+              return
+            }
+            const added = summary.cached
+            const skipped = summary.skipped
+            const failed = summary.failed
+            if (failed > 0) {
+              appStore.showToast(
+                `服务端缓存完成：新增 ${added} 章，跳过 ${skipped} 章，失败 ${failed} 章`,
+                added > 0 ? 'warning' : 'error'
+              )
+              await finish(`服务端缓存完成：新增 ${added} 章，${failed} 章失败`, false)
+            } else {
+              appStore.showToast(`服务端缓存完成，新增 ${added} 章`, 'success')
+              await finish(
+                `服务端缓存完成：新增 ${added} 章${skipped > 0 ? `，跳过 ${skipped} 章` : ''}`,
+                true
+              )
+            }
+          })()
+        },
+      })
+    })
+    .catch((error: unknown) => {
+      if (run !== serverRun) return
+      appStore.showToast((error as Error)?.message || '服务端缓存失败', 'error')
+      void finish('服务端缓存失败', false)
+    })
 }
 
 async function startBrowserCaching(count: number) {
@@ -342,9 +371,10 @@ async function clearBrowserCache() {
 }
 
 function closeSSE() {
-  if (sse) {
-    sse.close()
-    sse = null
+  serverRun += 1
+  if (taskHandle) {
+    taskHandle.close()
+    taskHandle = null
   }
 }
 

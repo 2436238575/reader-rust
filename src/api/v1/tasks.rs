@@ -15,8 +15,8 @@ use crate::api::AppState;
 use crate::model::book_source::BookSource;
 use crate::model::search::SearchBook;
 use crate::service::task_service::{
-    PrefetchSummary, TaskKind, TaskPage, TaskProgress, TaskResultPage, TaskResultPayload,
-    TaskState, TaskView,
+    PrefetchSummary, SourceImportResult, SourceTestResult, TaskKind, TaskPage, TaskProgress,
+    TaskResultPage, TaskResultPayload, TaskState, TaskView,
 };
 use axum::extract::{Path, State};
 use axum::http::{header, HeaderMap, HeaderValue, StatusCode};
@@ -643,12 +643,14 @@ pub struct TaskResultQuery {
     pub limit: Option<u32>,
 }
 
-/// 任务结果：search 是结果分页，prefetch-cache 是章节计数摘要。
+/// 任务结果：search 是结果分页，其余 kind 是各自的摘要。
 #[derive(Debug, Serialize, ToSchema)]
 #[serde(untagged)]
 pub enum TaskResultResponse {
     Search(TaskResultPage),
     Prefetch(PrefetchSummary),
+    SourceTest(SourceTestResult),
+    SourceImport(SourceImportResult),
 }
 
 /// 任务结果（按 kind 解释；search 去重后分页，prefetch-cache 返回摘要）。
@@ -688,6 +690,8 @@ pub async fn get_task_result(
     let response = match payload {
         TaskResultPayload::Search(page) => TaskResultResponse::Search(page),
         TaskResultPayload::Prefetch(summary) => TaskResultResponse::Prefetch(summary),
+        TaskResultPayload::SourceTest(summary) => TaskResultResponse::SourceTest(summary),
+        TaskResultPayload::SourceImport(summary) => TaskResultResponse::SourceImport(summary),
     };
     json_with_etag(&response, &headers)
 }
