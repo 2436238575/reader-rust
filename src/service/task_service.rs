@@ -34,6 +34,8 @@ use tokio::sync::{broadcast, Notify};
 pub const GLOBAL_TASK_LIMIT: usize = 8;
 /// 每用户并发任务上限（契约 §7：4）。
 pub const PER_USER_TASK_LIMIT: usize = 4;
+/// 任务工作器的全局出站并发上限（与入站并发层分离；任务在后台 task 里跑）。
+pub const TASK_OUTBOUND_LIMIT: usize = 32;
 /// 每任务事件环形缓冲条数上限。
 pub const EVENT_RING_CAPACITY: usize = 256;
 /// 每任务事件环形缓冲字节上限（约容纳 8 个 32KB 的结果块）。
@@ -62,6 +64,17 @@ pub enum TaskKind {
     ChapterImport,
     AiGenerate,
     AiChat,
+}
+
+impl TaskKind {
+    /// 后台长任务：与搜索/发现等交互任务共享并发上限时，为交互任务保留
+    /// 至少 1 个全局与 1 个每用户名额（预下载可能跑几十分钟）。
+    pub fn is_background(self) -> bool {
+        matches!(
+            self,
+            Self::PrefetchCache | Self::ChapterImport | Self::SourceImport
+        )
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
@@ -226,6 +239,8 @@ pub struct TaskService {
     result_max_bytes: usize,
     global_result_budget: usize,
     ttl_secs: i64,
+    /// 全局出站并发：任务工作器在发起上游请求前 acquire，限制跨任务的总连接数。
+    outbound: Arc<tokio::sync::Semaphore>,
 }
 
 impl Default for TaskService {
@@ -250,6 +265,7 @@ impl TaskService {
             result_max_bytes: RESULT_MAX_BYTES,
             global_result_budget: GLOBAL_RESULT_BUDGET,
             ttl_secs: RESULT_TTL_SECS,
+            outbound: Arc::new(tokio::sync::Semaphore::new(TASK_OUTBOUND_LIMIT)),
         }
     }
 
@@ -275,14 +291,26 @@ impl TaskService {
             result_max_bytes,
             global_result_budget: GLOBAL_RESULT_BUDGET,
             ttl_secs,
+            outbound: Arc::new(tokio::sync::Semaphore::new(TASK_OUTBOUND_LIMIT)),
         }
     }
 
+    /// 覆盖全局出站并发（启动时按 `TASK_OUTBOUND_CONCURRENCY` 配置）。
+    pub fn with_outbound_limit(mut self, limit: usize) -> Self {
+        self.outbound = Arc::new(tokio::sync::Semaphore::new(limit.max(1)));
+        self
+    }
+
+    /// 工作器在发起上游请求前 acquire；跨任务共享同一份许可。
+    pub fn outbound_semaphore(&self) -> Arc<tokio::sync::Semaphore> {
+        self.outbound.clone()
+    }
+
     /// 只检查并发名额，不注册任务（参数解析/书源解析之前先挡一刀）。
-    pub fn check_capacity(&self, owner_ns: &str) -> Result<(), Problem> {
+    pub fn check_capacity(&self, owner_ns: &str, kind: TaskKind) -> Result<(), Problem> {
         let mut inner = self.lock();
         prune(&mut inner, now_ts(), self.ttl_secs);
-        self.check_active_capacity(&inner, owner_ns)
+        self.check_active_capacity(&inner, owner_ns, kind)
     }
 
     /// 注册任务（queued）。并发超限 → 429 `TASK_LIMIT` + `Retry-After`。
@@ -331,7 +359,7 @@ impl TaskService {
                 inner.idempotency.remove(&map_key);
             }
         }
-        self.check_active_capacity(&inner, owner_ns)?;
+        self.check_active_capacity(&inner, owner_ns, kind)?;
 
         // 注册表容量：先驱逐最老的已结束任务；全是活跃任务才拒绝
         while inner.tasks.len() >= REGISTRY_MAX_TASKS {
@@ -390,7 +418,12 @@ impl TaskService {
         Ok((view, false))
     }
 
-    fn check_active_capacity(&self, inner: &Inner, owner_ns: &str) -> Result<(), Problem> {
+    fn check_active_capacity(
+        &self,
+        inner: &Inner,
+        owner_ns: &str,
+        kind: TaskKind,
+    ) -> Result<(), Problem> {
         let active = inner
             .tasks
             .values()
@@ -401,13 +434,57 @@ impl TaskService {
             .values()
             .filter(|entry| entry.owner_ns == owner_ns && !entry.view.state.is_terminal())
             .count();
+        let background_active = inner
+            .tasks
+            .values()
+            .filter(|entry| !entry.view.state.is_terminal() && entry.view.kind.is_background())
+            .count();
+        let background_user_active = inner
+            .tasks
+            .values()
+            .filter(|entry| {
+                entry.owner_ns == owner_ns
+                    && !entry.view.state.is_terminal()
+                    && entry.view.kind.is_background()
+            })
+            .count();
+
+        if kind.is_background() {
+            // 后台任务最多占「上限 - 1」，给搜索/发现留一个即时名额
+            let bg_global_limit = self.global_limit.saturating_sub(1).max(1);
+            let bg_user_limit = self.per_user_limit.saturating_sub(1).max(1);
+            if active >= self.global_limit
+                || user_active >= self.per_user_limit
+                || background_active >= bg_global_limit
+                || background_user_active >= bg_user_limit
+            {
+                return Err(Problem::new(ErrorCode::TaskLimit)
+                    .detail(format!(
+                        "后台任务并发已满（为交互任务保留名额：全局最多 {bg_global_limit} 个、每用户最多 {bg_user_limit} 个）"
+                    ))
+                    .retry_after(TASK_LIMIT_RETRY_AFTER_SECS * 12));
+            }
+            return Ok(());
+        }
+
         if active >= self.global_limit || user_active >= self.per_user_limit {
+            // 有后台长任务在跑时，5 秒重试没有意义，给一个更接近实际的间隔
+            let retry_after = if background_active > 0 {
+                TASK_LIMIT_RETRY_AFTER_SECS * 12
+            } else {
+                TASK_LIMIT_RETRY_AFTER_SECS
+            };
+            let detail = if background_active > 0 {
+                "并发任务已满（后台长任务仍在运行，请稍后重试）"
+            } else {
+                "同时运行的任务已达上限"
+            };
             return Err(Problem::new(ErrorCode::TaskLimit)
                 .detail(format!(
-                    "同时运行的任务已达上限（每用户 {} 个、全局 {} 个）",
+                    "{detail}（每用户 {} 个、全局 {} 个）",
                     self.per_user_limit, self.global_limit
                 ))
-                .retry_after(TASK_LIMIT_RETRY_AFTER_SECS));
+                .retry_after(retry_after));
         }
         Ok(())
     }
@@ -1236,5 +1313,30 @@ mod tests {
         );
         // 环没有被超大事件清空：最早事件仍可重放
         assert!(!subscription.gap);
+    }
+
+    #[test]
+    fn background_tasks_reserve_a_slot_for_interactive_tasks() {
+        let service = TaskService::with_limits(8, 4, 32, 10_000, 3600);
+        for index in 0..3 {
+            service
+                .create("user_1", TaskKind::PrefetchCache, 1)
+                .unwrap_or_else(|error| panic!("第 {index} 个后台任务应可创建: {error:?}"));
+        }
+        let rejected = service
+            .create("user_1", TaskKind::PrefetchCache, 1)
+            .expect_err("第 4 个后台任务应被拒（为交互任务保留 1 个名额）");
+        assert_eq!(rejected.code(), ErrorCode::TaskLimit);
+        assert!(
+            rejected
+                .detail_text()
+                .is_some_and(|detail| detail.contains("后台任务")),
+            "{rejected:?}"
+        );
+
+        // 后台占满 3 个后，搜索仍能拿到保留的第 4 个名额
+        service
+            .create("user_1", TaskKind::Search, 1)
+            .expect("交互任务应保留名额");
     }
 }

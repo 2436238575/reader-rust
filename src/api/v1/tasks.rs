@@ -174,7 +174,9 @@ pub async fn create_search(
     }
 
     // 配额先挡一刀：超限用户不必再为解析书源付出反序列化成本
-    state.task_service.check_capacity(&user.ns)?;
+    state
+        .task_service
+        .check_capacity(&user.ns, TaskKind::Search)?;
     let sources = resolve_search_sources(&state, &user.ns, request.source_ids, group).await?;
     if sources.is_empty() {
         let pointer = if group.is_some() {
@@ -377,6 +379,7 @@ fn spawn_search_worker(
                 let key = q.clone();
                 let ns = user_ns.clone();
                 let task_cancel = cancel_flag.clone();
+                let outbound = state.task_service.outbound_semaphore();
                 in_flight.spawn(async move {
                     let _permit = permit;
                     // 检查与 spawn 之间仍有微窗口：进任务后再查一次，
@@ -384,6 +387,10 @@ fn spawn_search_worker(
                     if task_cancel.load(Ordering::SeqCst) {
                         return (source, Ok(Vec::new()));
                     }
+                    // 全局出站预算：多个任务叠加时限制总上游连接数
+                    let Ok(_outbound_permit) = outbound.acquire_owned().await else {
+                        return (source, Ok(Vec::new()));
+                    };
                     let result = book_service.search_book(&ns, &source, &key, 1).await;
                     (source, result)
                 });

@@ -281,6 +281,7 @@ pub async fn build_state(cfg: AppConfig) -> anyhow::Result<AppState> {
         probe_service.probe().await;
     });
 
+    let task_outbound = cfg.task_outbound_concurrency.max(1) as usize;
     Ok(AppState {
         config: cfg,
         image_service,
@@ -302,7 +303,9 @@ pub async fn build_state(cfg: AppConfig) -> anyhow::Result<AppState> {
         ai_book_service,
         ai_model_service,
         agent_sidecar_service,
-        task_service: Arc::new(crate::service::task_service::TaskService::new()),
+        task_service: Arc::new(
+            crate::service::task_service::TaskService::new().with_outbound_limit(task_outbound),
+        ),
         sse_ticket_service: Arc::new(crate::service::sse_ticket_service::SseTicketService::new()),
     })
 }

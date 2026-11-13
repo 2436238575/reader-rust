@@ -147,6 +147,8 @@ async fn boot() -> (TestServer, Arc<AtomicUsize>, Arc<AtomicUsize>) {
     std::fs::create_dir_all(&temp_dir).unwrap();
     let mut cfg = common::base_config(&temp_dir, "v1-tasks-secret");
     cfg.allow_private_network = true;
+    // 小预算便于验证「全局出站并发 ≤ 4」；生产默认 32
+    cfg.task_outbound_concurrency = 4;
     let state = reader_rust::app::bootstrap::build_state(cfg).await.unwrap();
     let app = reader_rust::api::router::build_router(state);
     let (base_url, _handle) = common::spawn_app(app).await;
@@ -1136,6 +1138,64 @@ async fn prefetch_cache_task_reports_summary_and_skips_cached() {
     assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
     let body: Value = response.json().await.unwrap();
     assert_eq!(body["errors"][0]["pointer"], json!("/from"));
+
+    server.cleanup();
+}
+
+#[tokio::test]
+async fn outbound_budget_caps_parallel_upstream_fetches() {
+    let (server, _started, active) = boot().await;
+    let mut source_ids = Vec::new();
+    for index in 0..8 {
+        source_ids.push(
+            server
+                .create_source(&format!("出站源{index}"), &format!("/slow/{index}"))
+                .await,
+        );
+    }
+    let response = server
+        .create_search(json!({ "q": "出站", "sourceIds": source_ids }))
+        .await;
+    assert_eq!(response.status(), StatusCode::ACCEPTED);
+    let task_id: String = response.json::<Value>().await.unwrap()["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    // 任务内并发 8，但全局出站预算设为 4：同时在上游的请求最多 4 条
+    let deadline = Instant::now();
+    let mut observed_max = 0usize;
+    while deadline.elapsed() < Duration::from_secs(2) {
+        let current = active.load(Ordering::SeqCst);
+        observed_max = observed_max.max(current);
+        if observed_max >= 4 {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    assert_eq!(
+        observed_max, 4,
+        "全局出站预算应允许 4 路并行（任务内并发是 8）"
+    );
+    // 再采样一段时间，确认没有超过预算
+    let sample_until = Instant::now() + Duration::from_millis(300);
+    while Instant::now() < sample_until {
+        assert!(
+            active.load(Ordering::SeqCst) <= 4,
+            "出站并发超过全局预算: {}",
+            active.load(Ordering::SeqCst)
+        );
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+
+    let response = server
+        .client
+        .delete(format!("{}/v1/tasks/{task_id}", server.base_url))
+        .bearer_auth(&server.token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::NO_CONTENT);
 
     server.cleanup();
 }

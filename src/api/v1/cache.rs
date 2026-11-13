@@ -408,8 +408,12 @@ fn spawn_prefetch_worker(
                 let source = source.clone();
                 let ns = user_ns.clone();
                 let b_id = book_id.clone();
+                let outbound = state.task_service.outbound_semaphore();
                 in_flight.spawn(async move {
                     let _permit = permit;
+                    let Ok(_outbound_permit) = outbound.acquire_owned().await else {
+                        return Ok(());
+                    };
                     book_service
                         .cache_chapter(&ns, &b_id, &source, &url, false)
                         .await

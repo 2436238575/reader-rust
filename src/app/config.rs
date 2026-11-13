@@ -66,6 +66,11 @@ pub struct AppConfig {
     pub user_book_limit: u32,
     /// 全局本地上传上限，`0` 表示不限制。
     pub user_local_book_limit: u32,
+    /// 任务工作器（搜索/预下载等）的全局出站并发上限，默认 32；`0` 按默认值处理。
+    ///
+    /// 任务跑在后台 tokio task 里，不经过入站并发层；多个任务叠加时用一个
+    /// 全局信号量兜住上游连接数，避免 8 任务 × 每任务 8 路把书源打爆。
+    pub task_outbound_concurrency: u32,
     /// 正文回源间隔（秒），默认 24 小时。
     ///
     /// 读取某章时，如果距离上次回源尝试已经超过这个时长，就回源一次；
@@ -174,6 +179,7 @@ impl Default for AppConfig {
             admin_password: String::new(),
             user_book_limit: 2000,
             user_local_book_limit: 0,
+            task_outbound_concurrency: 32,
             content_revalidate_ttl_secs: 24 * 3600,
             cache_cover_limit_bytes: 256 * 1024 * 1024,
             review_cache_ttl_secs: 7 * 24 * 3600,
@@ -242,6 +248,10 @@ pub fn load() -> anyhow::Result<AppConfig> {
         .set_default(
             "user_local_book_limit",
             defaults.user_local_book_limit as i64,
+        )?
+        .set_default(
+            "task_outbound_concurrency",
+            defaults.task_outbound_concurrency as i64,
         )?
         .set_default(
             "content_revalidate_ttl_secs",
