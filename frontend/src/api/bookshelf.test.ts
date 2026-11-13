@@ -8,6 +8,7 @@ import {
   getBookshelfWithCacheInfo,
   getChapterList,
   getCoverUrl,
+  getBookInfo,
   getShelfBook,
   setBookSource,
   withImageWidth,
@@ -164,6 +165,22 @@ describe('书架读取（v1 ShelfItem）', () => {
       totalChapterNum: 100,
       latestChapterTitle: '最新章',
     })
+  })
+
+  it('本地 EPUB 的站内封面地址直接透传（不走图片管道）', async () => {
+    getMock.mockResolvedValue({
+      data: shelfItem({
+        sourceId: null,
+        coverImageId: null,
+        coverUrl: '/reader3/localEpubAsset?bookUrl=local-epub%3Aabc&path=cover.jpg',
+      }),
+    })
+
+    const book = await getShelfBook('book_1')
+
+    expect(book.coverUrl).toBe(
+      '/reader3/localEpubAsset?bookUrl=local-epub%3Aabc&path=cover.jpg',
+    )
   })
 
   it('getBookshelfWithCacheInfo 按游标拉全量并映射', async () => {
@@ -419,6 +436,69 @@ describe('getChapterList 会话内缓存（v1 游标分页）', () => {
   })
 })
 
+
+describe('getBookInfo（v1 详情覆盖层）', () => {
+  beforeEach(() => {
+    getMock.mockReset()
+  })
+
+  it('映射 BookDetail，且不产出 origin/originName（保留书架条目的真值）', async () => {
+    getMock.mockResolvedValue({
+      data: {
+        id: 'book_1',
+        name: '书',
+        author: '作者',
+        sourceId: 'src_7',
+        bookUrl: 'https://up.example/book',
+        intro: '简介',
+        kind: '玄幻',
+        coverImageId: 'abc123',
+        totalChapters: 100,
+        lastChapter: { index: 99, title: '最新章' },
+        stale: false,
+      },
+    })
+
+    const book = await getBookInfo('book_1')
+
+    expect(getMock).toHaveBeenCalledWith('/books/book_1', { baseURL: API_V1_BASE })
+    expect(book).toMatchObject({
+      bookId: 'book_1',
+      name: '书',
+      bookSourceId: 7,
+      coverUrl: '/reader3/image/abc123',
+      totalChapterNum: 100,
+      latestChapterTitle: '最新章',
+    })
+    // 关键：这两个键不存在，详情弹窗的 spread 合并才会保留书架条目的值
+    expect('origin' in book).toBe(false)
+    expect('originName' in book).toBe(false)
+  })
+
+  it('本地 EPUB 的 coverUrl 原样给，缺省字段不落 undefined 键', async () => {
+    const localCover = '/reader3/localEpubAsset?bookUrl=local-epub%3Aabc&path=cover.jpg'
+    getMock.mockResolvedValue({
+      data: {
+        id: 'book_2',
+        name: '本地书',
+        sourceId: null,
+        bookUrl: 'local-epub:abc',
+        coverImageId: null,
+        coverUrl: localCover,
+        totalChapters: 3,
+        lastChapter: null,
+        stale: false,
+      },
+    })
+
+    const book = await getBookInfo('book_2')
+
+    expect(book.coverUrl).toBe(localCover)
+    expect('author' in book).toBe(false)
+    expect('intro' in book).toBe(false)
+    expect('latestChapterTitle' in book).toBe(false)
+  })
+})
 
 describe('uploadLocalBook（v1 接线）', () => {
   beforeEach(() => {

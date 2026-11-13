@@ -33,58 +33,81 @@ fn openapi_yaml_matches_code() {
 /// 已交付端点的清单断言：新增域时（如 auth→me→sources）在这里补路径。
 /// 这比「路径总数」稳——漏注册 path 时生成物与锚文件会同样缺失，
 /// 漂移检查天然抓不到，只有清单断言能兜住（2026-11-09 审阅发现的问题）。
+///
+/// 条目写**完整路径**（不带尾冒号）。断言按 YAML 里 `paths` 的两空格缩进
+/// 键整行精确匹配：`contains("/…/content:")` 会把 `/…/content:select:` 也
+/// 算命中，一个端点消失能被另一个顶包（2026-11-12 审阅发现）。
 const REQUIRED_PATHS: &[&str] = &[
-    "/v1/me:",
-    "/v1/me/shelf:",
-    "/v1/me/shelf/{bookId}:",
+    // auth
+    "/v1/auth/login",
+    "/v1/auth/refresh",
+    "/v1/auth/logout",
+    "/v1/auth/password",
+    // me / shelf
+    "/v1/me",
+    "/v1/me/shelf",
+    "/v1/me/shelf/{bookId}",
     "/v1/me/shelf:batchDelete",
-    "/v1/cache:",
-    "/v1/cache/stats:",
-    "/v1/books/{bookId}/cache:",
-    "/v1/me/marks:",
+    "/v1/me/marks",
     "/v1/me/marks:batch",
     "/v1/me/marks:batchDelete",
-    "/v1/me/groups:",
+    "/v1/me/groups",
     "/v1/me/groups:order",
-    "/v1/me/groups/{groupId}:",
-    "/v1/books/{bookId}/chapters/{index}/comments:",
-    "/v1/books/{bookId}/chapters/{index}/comments/index:",
-    "/v1/books/{bookId}/chapters/{index}/images:",
-    "/v1/books/{bookId}/chapters/{index}/content:",
-    "/v1/books/{bookId}/chapters/{index}/content/edit:",
-    "/v1/books/{bookId}/chapters/{index}/versions:",
-    "/v1/books/{bookId}/chapters/{index}/versions/{versionId}:",
-    "/v1/books/{bookId}/chapters/{index}/versions/{versionId}/diff:",
-    "/v1/books/{bookId}/chapters/{index}/title:",
-    "/v1/books/{bookId}/chapter-marks:",
-    "/v1/books/{bookId}/content:reset",
+    "/v1/me/groups/{groupId}",
+    "/v1/me/replace-rules",
+    "/v1/me/replace-rules/{name}",
+    "/v1/me/replace-rules:batch",
+    "/v1/me/replace-rules:batchDelete",
+    // cache
+    "/v1/cache",
+    "/v1/cache/stats",
+    // books / chapters
+    "/v1/books/{bookId}",
+    "/v1/books/{bookId}/cache",
+    "/v1/books/{bookId}/chapter-marks",
+    "/v1/books/{bookId}/chapters",
+    "/v1/books/{bookId}/chapters:batchContent",
     "/v1/books/{bookId}/chapters:preview-import",
     "/v1/books/{bookId}/chapters:import",
     "/v1/books/{bookId}/chapters:upload-import-chunk",
-    "/v1/books/{bookId}/chapters/import-diff:",
-    "/v1/sources/{id}:",
+    "/v1/books/{bookId}/chapters/import-diff",
+    "/v1/books/{bookId}/chapters/{index}",
+    "/v1/books/{bookId}/chapters/{index}/title",
+    "/v1/books/{bookId}/chapters/{index}/content",
+    "/v1/books/{bookId}/chapters/{index}/content/edit",
+    "/v1/books/{bookId}/chapters/{index}/content:select",
+    "/v1/books/{bookId}/chapters/{index}/content:import",
+    "/v1/books/{bookId}/chapters/{index}/versions",
+    "/v1/books/{bookId}/chapters/{index}/versions/{versionId}",
+    "/v1/books/{bookId}/chapters/{index}/versions/{versionId}/diff",
+    "/v1/books/{bookId}/chapters/{index}/comments",
+    "/v1/books/{bookId}/chapters/{index}/comments/index",
+    "/v1/books/{bookId}/chapters/{index}/images",
+    "/v1/books/{bookId}/content:reset",
+    // sources / explore / local books
+    "/v1/sources",
+    "/v1/sources/{id}",
+    "/v1/sources/{sourceId}/explore",
     "/v1/sources:batchUpsert",
     "/v1/sources:batchDelete",
     "/v1/sources:deleteInvalid",
-    "/v1/me/replace-rules:",
-    "/v1/sources:",
-    "/v1/books/{bookId}:",
-    "/v1/books/{bookId}/chapters:",
-    "/v1/books/{bookId}/chapters:batchContent",
-    "/v1/sources/{sourceId}/explore:",
-    "/v1/local-books:",
-    "/v1/auth/login:",
-    "/v1/auth/refresh:",
-    "/v1/auth/logout:",
-    "/v1/auth/password:",
+    "/v1/local-books",
 ];
+
+/// YAML 里 `paths` 的键固定是两空格缩进、以冒号结尾的一行。逐行精确
+/// 比较而不是 `contains`：路径之间存在前缀关系（`…/content` 与
+/// `…/content:select`），宽松匹配会让两个端点互相顶包。
+fn has_path(yaml: &str, path: &str) -> bool {
+    let expected = format!("  {path}:");
+    yaml.lines().any(|line| line == expected)
+}
 
 #[test]
 fn every_delivered_endpoint_is_registered_in_the_doc() {
     let yaml = generated_yaml();
     for path in REQUIRED_PATHS {
         assert!(
-            yaml.contains(path),
+            has_path(yaml, path),
             "OpenAPI 缺少已交付端点 {path}——检查 V1ApiDoc 的 paths(...) 注册"
         );
     }

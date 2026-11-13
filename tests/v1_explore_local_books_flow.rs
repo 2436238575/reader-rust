@@ -276,6 +276,19 @@ async fn local_book_upload_creates_book() {
     assert_eq!(status, StatusCode::OK);
     assert_eq!(content["body"], json!("上传正文一。"));
 
+    // 本地书详情：走本地索引（不走上游、不 stale），目录统计/kind 齐全
+    let (status, detail) = server.get(&format!("/v1/books/{book_id}")).await;
+    assert_eq!(status, StatusCode::OK, "{detail}");
+    assert_eq!(detail["name"], json!("测试书"));
+    assert_eq!(detail["sourceId"], Value::Null, "本地书不绑定书源");
+    assert_eq!(detail["kind"], json!("本地TXT"));
+    assert_eq!(detail["totalChapters"], json!(2));
+    assert_eq!(detail["lastChapter"]["index"], json!(1));
+    assert_eq!(detail["lastChapter"]["title"], json!("第二章 继续"));
+    assert_eq!(detail["stale"], json!(false), "本地书恒不 stale");
+    assert_eq!(detail["coverImageId"], Value::Null);
+    assert_eq!(detail["coverUrl"], Value::Null, "TXT 本地书没有封面");
+
     // EPUB 扩展名分派（无效 EPUB 内容 → 400 解析失败）
     let (epub_status, _body) = server.upload_local("测试书.epub", b"not an epub").await;
     assert_eq!(epub_status, StatusCode::BAD_REQUEST);

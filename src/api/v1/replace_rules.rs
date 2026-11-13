@@ -81,8 +81,10 @@ pub struct ReplaceRuleWrite {
 }
 
 /// 规则名是资源身份（路径参数），含 URL 保留字符会让 PATCH/DELETE 永远
-/// 打不中（`/`）或语义漂移（`% ? #`）——创建时直接拒绝。旧规则（/reader3
-/// 时代导入）可能已含这些字符，唯一的清理途径是批量接口（名字在 body 里）。
+/// 打不中（`/`）或语义漂移（`% ? #`）——创建时直接拒绝。空白**放行**：
+/// 旧版自动命名（`书源替换 3`）已经落库，路径经 `encodeURIComponent`
+/// 编码后 axum 能解回空格；控制字符（含制表/换行）仍然拒绝，日志与
+/// 终端里不可见。旧规则若含保留字符，唯一清理途径是批量接口（名字在 body 里）。
 fn validate_rule_name(name: &str) -> Result<(), Problem> {
     if name.trim().is_empty() {
         return Err(Problem::new(ErrorCode::ValidationFailed)
@@ -102,15 +104,13 @@ fn validate_rule_name(name: &str) -> Result<(), Problem> {
                 detail: Some("不能包含 / % ? #".to_string()),
             }]));
     }
-    // 空白字符（含空格/制表/换行）与控制字符：路径身份要求 URI 安全，
-    // 且这类字符在日志与批量同步里都容易出意外
-    if name.chars().any(|c| c.is_whitespace() || c.is_control()) {
+    if name.chars().any(char::is_control) {
         return Err(Problem::new(ErrorCode::ValidationFailed)
-            .detail("规则名不能包含空白或控制字符")
+            .detail("规则名不能包含控制字符")
             .errors(vec![crate::api::problem::FieldIssue {
                 pointer: "/name".to_string(),
                 code: "INVALID_FORMAT".to_string(),
-                detail: Some("不能包含空白或控制字符".to_string()),
+                detail: Some("不能包含控制字符".to_string()),
             }]));
     }
     // 长度上限：路径参数与展示都按短文本设计

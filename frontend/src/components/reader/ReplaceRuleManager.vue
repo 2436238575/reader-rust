@@ -49,7 +49,7 @@
     <Transition name="fade">
       <div v-if="editingRule" class="edit-overlay" :style="{ background: theme.popup }">
         <div class="edit-header">
-          <h4>{{ editingRule.id ? '编辑规则' : '新增规则' }}</h4>
+          <h4>{{ isNewRule ? '新增规则' : '编辑规则' }}</h4>
         </div>
         <div class="edit-body">
           <div class="form-item">
@@ -124,6 +124,9 @@ const appStore = useAppStore()
 const theme = computed(() => configStore.currentTheme)
 const loading = ref(false)
 const editingRule = ref<ReplaceRule | null>(null)
+// v1 按 `name` 做资源身份，线缆上没有 id（映射统一补 0），标题不能用
+// `editingRule.id` 判断「编辑/新增」——用打开弹窗时是否已有规则来区分
+const isNewRule = ref(false)
 
 const sortedRules = computed(() => {
   return [...configStore.replaceRules].sort((a, b) => a.order - b.order)
@@ -154,6 +157,7 @@ onMounted(async () => {
 })
 
 function openEditModal(rule?: ReplaceRule) {
+  isNewRule.value = !rule
   if (rule) {
     editingRule.value = { ...rule }
   } else {

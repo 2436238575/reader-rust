@@ -124,8 +124,11 @@ function mapShelfItem(item: ApiShelfItem): ShelfBook {
     bookUrl: item.bookUrl,
     origin: item.origin,
     originName: item.originName ?? undefined,
-    // 后端只给图片管道 id；本站取图地址仍走 /reader3/image/<id>（图片域未迁）
-    coverUrl: item.coverImageId ? `/reader3/image/${item.coverImageId}` : undefined,
+    // 后端只给图片管道 id 或站内资源地址（本地 EPUB 封面）；
+    // 本站取图地址仍走 /reader3/image/<id>（图片域未迁）
+    coverUrl:
+      item.coverUrl ??
+      (item.coverImageId ? `/reader3/image/${item.coverImageId}` : undefined),
     customCoverUrl: item.customCoverUrl ?? undefined,
     intro: item.intro ?? undefined,
     kind: item.kind ?? undefined,
@@ -286,10 +289,22 @@ export function deleteBooks(bookIds: string[]) {
 }
 
 /**
- * 获取书籍详情（v1）：ReaderSource 换源预览用。
- * BookDetail 字段映射回旧 Book 形状（coverImageId → 图片管道地址）。
+ * v1 书籍详情映射成的覆盖层：字段都是「服务端确实给出」的，调用方按
+ * `{ ...store.book, ...latest }` 合并。`origin`/`originName` v1 不提供，
+ * 由书架条目保留——绝不能在这里补空串。
  */
-export function getBookInfo(bookId: string) {
+export type BookInfoOverlay = {
+  bookId: string
+  name: string
+  bookUrl: string
+} & Partial<Book>
+
+/**
+ * 获取书籍详情（v1）：ReaderSource 换源预览用。
+ * 返回覆盖层（见 `BookInfoOverlay`）：网络书封面走 `coverImageId`，
+ * 本地 EPUB 封面原样给 `coverUrl`。
+ */
+export function getBookInfo(bookId: string): Promise<BookInfoOverlay> {
   return http
     .get<{
       id: string
@@ -300,28 +315,38 @@ export function getBookInfo(bookId: string) {
       intro?: string | null
       kind?: string | null
       coverImageId?: string | null
+      /** 站内资源地址（本地 EPUB 封面）；网络书封面只给 coverImageId */
+      coverUrl?: string | null
       totalChapters?: number | null
       lastChapter?: { index: number; title: string } | null
       stale: boolean
     }>(`/books/${bookId}`, { baseURL: API_V1_BASE })
     .then((r) => {
       const d = r.data
-      const book: Book = {
+      // 只覆盖服务端确实给出的字段：详情弹窗按 `{ ...store.book, ...latest }`
+      // 合并，这里塞 `undefined`/空串会把书架条目的真值（尤其 origin/originName）
+      // 抹掉——v1 BookDetail 本来就没有这两个字段，合并时必须保留旧值。
+      const book: BookInfoOverlay = {
         bookId: d.id,
-        bookSourceId: d.sourceId
-          ? Number(d.sourceId.replace(/^src_/, ''))
-          : undefined,
         name: d.name,
-        author: d.author ?? '',
         bookUrl: d.bookUrl,
-        origin: '',
-        intro: d.intro ?? undefined,
-        kind: d.kind ?? undefined,
-        coverUrl: d.coverImageId
-          ? `/reader3/image/${d.coverImageId}`
-          : undefined,
-        latestChapterTitle: d.lastChapter?.title,
-        totalChapterNum: d.totalChapters ?? undefined,
+        ...(d.sourceId
+          ? { bookSourceId: Number(d.sourceId.replace(/^src_/, '')) }
+          : {}),
+        ...(d.author ? { author: d.author } : {}),
+        ...(d.intro ? { intro: d.intro } : {}),
+        ...(d.kind ? { kind: d.kind } : {}),
+        ...(d.coverUrl
+          ? { coverUrl: d.coverUrl }
+          : d.coverImageId
+            ? { coverUrl: `/reader3/image/${d.coverImageId}` }
+            : {}),
+        ...(d.lastChapter?.title
+          ? { latestChapterTitle: d.lastChapter.title }
+          : {}),
+        ...(d.totalChapters != null
+          ? { totalChapterNum: d.totalChapters }
+          : {}),
       }
       return book
     })

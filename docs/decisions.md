@@ -192,13 +192,6 @@ goal 执行中遇到「决策表与 spec 都沉默」的问题时，按 §5.4 �
 - **`reset` 只清指针**：整书回上游只摘版本选择与用户版本指针，历史版本严格保留；**没有 confirm 门槛**（与 `DELETE /v1/sources` 的 `DELETE_ALL` 不同：reset 可逆、风险可控）。
 - **`content:select` 校验版本归属**：跨章 select 返回 400（服务层统一闸，`/reader3` 一并受益）；前端版本面板已加入 `isBlockingOverlayOpen`，modal 打开时翻页键不再生效——两层防线缺一不可。
 
-## 2026-11-12 非 P2 同步端点：探索发现与本地书上传
-
-- **`GET /v1/sources/{src_<n>}/explore?url=&page=`**：按书源 exploreUrl 分类地址拉书单；响应 `Vec<SearchBook>`（typed），封面统一收口为 `/reader3/image/<id>`；搜索/探索产出即登记（响应带 `bookId`）。
-- **`POST /v1/local-books`**：本地书上传（multipart `file`），TXT/EPUB 按扩展名分派（`?kind=` 显式覆盖扩展名，`kind=txt` + `.epub` 文件名由底层 TXT 扩展名校验拒绝）；读体上限按分派结果选对（EPUB 80MB / TXT 50MB），修复了「50–80MB EPUB 被 TXT 50MB 上限误杀」的回归。路由在 120s 超时与 1MB 体限之外 merge（子路由自带 900s 上传超时 + 100MB 体限 + 鉴权 + CSRF），与导入链同一层序。
-- **explore `url` 不限定在书源声明的 exploreUrl 内**（与 /reader3 一致，非回归）：认证用户可传任意地址让服务端用书源规则抓取；Cookie 按域隔离不会外泄。如需封路可加「url ∈ exploreUrl 候选」校验（`explore_kinds` 解析后比对），暂不做。
-- **e2e 种子数据切到 v1**：`reader.spec.ts` 的 `uploadTxtBook` fetch 路径改为 `/v1/local-books`，整套 e2e 顺带验证新端点。
-
 ## 2026-11-13 非 P2 同步端点：探索发现与本地书上传
 
 - **`GET /v1/sources/{src_<n>}/explore?url=&page=`**：按书源 exploreUrl 分类地址拉书单；响应 `Vec<SearchBook>`（typed），封面统一收口为 `/reader3/image/<id>`；搜索/探索产出即登记（响应带 `bookId`）。
@@ -206,3 +199,13 @@ goal 执行中遇到「决策表与 spec 都沉默」的问题时，按 §5.4 �
 - **`?kind=` 的覆盖语义**：`kind=epub` 或 `kind=txt` 显式覆盖扩展名分派（原来 OR 逻辑会把 `kind=txt` + `.epub` 文件名判成 EPUB）；`kind=garbage` 显式 400 不再静默回落扩展名。底层服务的扩展名校验不越权——`kind=txt` + `.epub` 文件名仍被 TXT 扩展名校验拒绝。
 - **explore `url` 不限定在书源声明的 exploreUrl 内**（与 /reader3 一致，非回归）：认证用户可传任意地址让服务端用书源规则抓取；Cookie 按域隔离不会外泄。如需封路可加「url ∈ exploreUrl 候选」校验，暂不做。
 - **e2e 种子数据切到 v1**：`reader.spec.ts` 的 `uploadTxtBook` fetch 路径改为 `/v1/local-books`，整套 e2e 顺带验证新端点。
+
+## 2026-11-13 审阅返工：详情覆盖层、本地书详情与门禁收紧
+
+- **v1 详情是覆盖层，不是完整 Book**：`getBookInfo` 映射成 `BookInfoOverlay`（`BookDetail` 确实给出的字段），**不补 `origin: ''`**——旧实现把空串塞进合并结果，`{ ...store.book, ...latest }` 会覆盖书架条目里的书源 URL/名称，详情弹窗的「书源」行整块消失。`useBookInfoModal` 合并前再过滤一遍 `undefined` 键（双保险）。
+- **替换规则名：空白放行**：上一版自动命名（`书源替换 3`）已经落库，路径经 `encodeURIComponent` 编码后 axum 能解回空格；校验收窄为「拒 `/ % ? #` + 控制字符」，历史规则改文案/删除不再 422。制表/换行属 Unicode Cc，仍拒绝。
+- **`GET /v1/books/{bookId}` 补本地书分支**：TXT/EPUB 走本地索引（不触碰上游），`totalChapters`/`lastChapter`/`kind` 与 legacy `/reader3/getBookInfo` 对齐，`stale` 恒 false。
+- **本地 EPUB 封面给 `coverUrl`**：封面是站内资源地址（`/reader3/localEpubAsset?...`），图片管道只收 http(s)（`ImageService::register` 的守卫），`coverImageId` 表达不了。`BookDetail` 与 `ShelfItem` 新增 `coverUrl`（与 `coverImageId` 二选一，仅站内资源；http(s) 上游地址仍只给 id，不破坏红线 6）。`split_cover` 是唯一拆分点，书架与详情共用。
+- **漂移门禁改精确匹配**：`REQUIRED_PATHS` 写完整路径、断言按 YAML `paths` 的两空格缩进键整行比较。`contains("/…/content:")` 会把 `…/content:select:` 也命中——一个端点消失能被另一个顶包（`content` / `content:select` / `content:import` 三者前缀重叠）。清单同步补全到全部已交付路径。
+- **替换规则管理弹窗标题**：v1 按 `name` 做身份、线缆无 `id`（适配层统一补 0），「编辑/新增」标题改用打开弹窗时的 `isNewRule` 判断，不再看恒 0 的 `id`。
+

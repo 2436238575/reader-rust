@@ -554,65 +554,104 @@ pub async fn get_book(
     V1User(user): V1User,
     Path(book_id): Path<String>,
 ) -> Result<axum::Json<BookDetail>, Problem> {
+    use crate::service::local_epub_book::is_local_epub_url;
+    use crate::service::local_txt_book::is_local_txt_url;
+
     let resolved = crate::api::handlers::book::resolve_book(&state, &user.ns, &book_id)
         .await
         .map_err(|error| match error {
             crate::error::error::AppError::NotFound(_) => book_not_found(),
             other => Problem::from(other),
         })?;
+    let is_local = is_local_txt_url(&resolved.book_url) || is_local_epub_url(&resolved.book_url);
     // 详情拿不到（源挂了/离线）不阻塞读取：回退登记行信息并标 stale，
-    // 详情页永远能打开（比 /reader3 的 502 行为更好）
-    let (info, stale) = match state
-        .book_service
-        .get_book_info(
-            &user.ns,
-            &book_id,
-            &resolved.source,
-            &resolved.book_url,
+    // 详情页永远能打开（比 /reader3 的 502 行为更好）。本地书没有上游，
+    // 走本地详情（目录统计/kind/EPUB 封面都由它给出），恒不 stale。
+    let (info, stale) = if is_local_txt_url(&resolved.book_url) {
+        (
+            state
+                .local_txt_book_service
+                .get_book_info(&user.ns, &resolved.book_url)
+                .await
+                .map_err(Problem::from)?,
             false,
         )
-        .await
-    {
-        Ok(info) => (info, false),
-        Err(error) => {
-            tracing::warn!(%error, book_id, "书籍详情获取失败，回退登记行信息");
-            let row = state
-                .book_service
-                .book_repo()
-                .get(&user.ns, &book_id)
-                .await?
-                .ok_or_else(book_not_found)?;
-            (
-                crate::model::book::Book {
-                    book_url: row.book_url,
-                    book_source_id: row.book_source_id,
-                    name: row.name,
-                    author: row.author,
-                    ..crate::model::book::Book::default()
-                },
-                true,
+    } else if is_local_epub_url(&resolved.book_url) {
+        (
+            state
+                .local_epub_book_service
+                .get_book_info(&user.ns, &resolved.book_url)
+                .await
+                .map_err(Problem::from)?,
+            false,
+        )
+    } else {
+        match state
+            .book_service
+            .get_book_info(
+                &user.ns,
+                &book_id,
+                &resolved.source,
+                &resolved.book_url,
+                false,
             )
+            .await
+        {
+            Ok(info) => (info, false),
+            Err(error) => {
+                tracing::warn!(%error, book_id, "书籍详情获取失败，回退登记行信息");
+                let row = state
+                    .book_service
+                    .book_repo()
+                    .get(&user.ns, &book_id)
+                    .await?
+                    .ok_or_else(book_not_found)?;
+                (
+                    crate::model::book::Book {
+                        book_url: row.book_url,
+                        book_source_id: row.book_source_id,
+                        name: row.name,
+                        author: row.author,
+                        ..crate::model::book::Book::default()
+                    },
+                    true,
+                )
+            }
         }
     };
-    // 封面走图片管道：coverImageId = md5(去查询串的上游地址)，同一张图
-    // 永远同一个 id——签名的上游直出地址会过期，不能给客户端。
-    // 空串封面按无封面处理（md5("") 指向不存在的图）
-    let cover_image_id = info
-        .cover_url
-        .as_deref()
-        .filter(|value| !value.trim().is_empty())
-        .map(crate::service::image_service::ImageService::image_key);
-    let chapters = state
-        .book_service
-        .load_chapter_list_cache(&user.ns, &book_id)
-        .await
-        .map_err(Problem::from)?
-        .unwrap_or_default();
-    let total_chapters = (!chapters.is_empty()).then_some(chapters.len() as u32);
-    let last_chapter = chapters.last().map(|chapter| LastChapter {
-        index: chapter.index,
-        title: chapter.title.clone(),
-    });
+    // 封面出口：http(s) 进图片管道只给 id（签名的上游直出地址会过期，
+    // 不能给客户端）；本地 EPUB 封面是站内资源地址（/reader3/localEpubAsset），
+    // 进不了只收 http(s) 的图片管道，原样给 coverUrl
+    let (cover_image_id, cover_url) = split_cover(info.cover_url.as_deref());
+    // 本地书的目录不在章节登记表里，统计切片取自本地索引（Book 快照）
+    let chapters = if is_local {
+        Vec::new()
+    } else {
+        state
+            .book_service
+            .load_chapter_list_cache(&user.ns, &book_id)
+            .await
+            .map_err(Problem::from)?
+            .unwrap_or_default()
+    };
+    let total_chapters = if is_local {
+        info.total_chapter_num
+            .and_then(|count| u32::try_from(count).ok())
+            .filter(|count| *count > 0)
+    } else {
+        (!chapters.is_empty()).then_some(chapters.len() as u32)
+    };
+    let last_chapter = if is_local {
+        info.latest_chapter_title.as_ref().map(|title| LastChapter {
+            index: info.total_chapter_num.unwrap_or(1).saturating_sub(1),
+            title: title.clone(),
+        })
+    } else {
+        chapters.last().map(|chapter| LastChapter {
+            index: chapter.index,
+            title: chapter.title.clone(),
+        })
+    };
 
     Ok(axum::Json(BookDetail {
         id: book_id.clone(),
@@ -623,10 +662,32 @@ pub async fn get_book(
         intro: info.intro,
         kind: info.kind,
         cover_image_id,
+        cover_url,
         total_chapters,
         last_chapter,
         stale,
     }))
+}
+
+/// 封面出口的唯一拆分点：
+/// - 已是本站取图地址（`/reader3/image/<id>`）：取回 id；
+/// - http(s) 上游地址：图片管道 id（`md5(去查询串地址)`），同一张图恒定；
+/// - 其余站内资源地址（本地 EPUB 的 `/reader3/localEpubAsset?...`）：管道不收，
+///   原样走 `coverUrl`，客户端照常直接渲染；
+/// - 空串：无封面（md5("") 会指向一张不存在的图）。
+fn split_cover(cover_url: Option<&str>) -> (Option<String>, Option<String>) {
+    use crate::service::image_service::ImageService;
+    let Some(url) = cover_url.map(str::trim).filter(|url| !url.is_empty()) else {
+        return (None, None);
+    };
+    if let Some(id) = ImageService::id_from_route(url) {
+        return (Some(id.to_string()), None);
+    }
+    if url.starts_with("http://") || url.starts_with("https://") {
+        (Some(ImageService::image_key(url)), None)
+    } else {
+        (None, Some(url.to_string()))
+    }
 }
 
 #[derive(Debug, Serialize, ToSchema)]
@@ -645,6 +706,9 @@ pub struct BookDetail {
     /// 封面在图片管道中的 id（md5(去查询串地址)）；取图地址随 images 域
     /// 切换迁移（当前 /reader3/image/<id>）
     pub cover_image_id: Option<String>,
+    /// 站内资源封面地址（本地 EPUB 的 `/reader3/localEpubAsset?...`）；
+    /// 与 `coverImageId` 二选一，客户端直接渲染
+    pub cover_url: Option<String>,
     /// 章节登记表的章节数（目录未抓时缺省）
     pub total_chapters: Option<u32>,
     pub last_chapter: Option<LastChapter>,
@@ -698,6 +762,8 @@ pub struct ShelfItem {
     pub origin_name: Option<String>,
     /// 封面在图片管道中的 id；客户端取图走 `/reader3/image/<id>`
     pub cover_image_id: Option<String>,
+    /// 站内资源封面地址（本地 EPUB）；与 `coverImageId` 二选一
+    pub cover_url: Option<String>,
     /// 用户自设封面（任意地址，原样透传）
     pub custom_cover_url: Option<String>,
     pub intro: Option<String>,
@@ -763,17 +829,6 @@ fn is_local_shelf_book(book: &Book) -> bool {
     is_local_txt_url(&book.book_url) || is_local_epub_url(&book.book_url)
 }
 
-fn shelf_cover_image_id(url: &str) -> Option<String> {
-    use crate::service::image_service::ImageService;
-    // 空串封面对应的 md5("") 指向一张不存在的图，按无封面处理
-    if url.trim().is_empty() {
-        return None;
-    }
-    ImageService::id_from_route(url)
-        .map(str::to_string)
-        .or_else(|| Some(ImageService::image_key(url)))
-}
-
 async fn build_shelf_item(
     state: &AppState,
     user_ns: &str,
@@ -794,6 +849,7 @@ async fn build_shelf_item(
             .map_err(Problem::from)? as u32
     };
     let offset = f64::from(book.dur_chapter_pos.unwrap_or(0).clamp(0, 10_000)) / 10_000.0;
+    let (cover_image_id, cover_url) = split_cover(book.cover_url.as_deref());
     Ok(ShelfItem {
         book_id,
         source_id: book.book_source_id.map(|id| format!("src_{id}")),
@@ -802,7 +858,8 @@ async fn build_shelf_item(
         book_url: book.book_url.clone(),
         origin: book.origin.clone(),
         origin_name: book.origin_name.clone(),
-        cover_image_id: book.cover_url.as_deref().and_then(shelf_cover_image_id),
+        cover_image_id,
+        cover_url,
         custom_cover_url: book.custom_cover_url.clone(),
         intro: book.intro.clone(),
         kind: book.kind.clone(),
@@ -969,4 +1026,38 @@ pub async fn get_shelf_item(
         HeaderValue::from_static("private, no-cache"),
     );
     Ok(response)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::split_cover;
+
+    #[test]
+    fn cover_split_routes_upstream_and_local_asset() {
+        // 上游 http(s) 封面：只给图片管道 id（md5 恒定，不泄露会过期的地址）
+        let upstream = "https://up.example/cover/1.jpeg?sign=abc";
+        let (id, route) = split_cover(Some(upstream));
+        assert_eq!(route, None);
+        assert_eq!(
+            id.as_deref(),
+            Some(crate::service::image_service::ImageService::image_key(upstream).as_str())
+        );
+
+        // 已是本站取图地址：还原 id，不再二次哈希
+        let id = "0123456789abcdef0123456789abcdef";
+        let (parsed, route) = split_cover(Some(&format!("/reader3/image/{id}")));
+        assert_eq!(parsed.as_deref(), Some(id));
+        assert_eq!(route, None);
+
+        // 本地 EPUB 封面：站内资源地址进不了图片管道，原样透传
+        let local = "/reader3/localEpubAsset?bookUrl=local-epub%3Aabc&path=OEBPS%2Fcover.jpg";
+        let (id, route) = split_cover(Some(local));
+        assert_eq!(id, None);
+        assert_eq!(route.as_deref(), Some(local));
+
+        // 空串/空白：无封面（md5("") 会指向不存在的图）
+        assert_eq!(split_cover(Some("")), (None, None));
+        assert_eq!(split_cover(Some("   ")), (None, None));
+        assert_eq!(split_cover(None), (None, None));
+    }
 }

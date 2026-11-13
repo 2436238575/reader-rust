@@ -283,7 +283,7 @@ async fn rule_name_with_url_unsafe_chars_is_rejected() {
         "带%号",
         "问号?",
         "井号#",
-        "带 空格",
+        // 制表/换行属控制字符（Unicode Cc），路径里不可见，仍然拒绝
         "带\t制表",
         "带\n换行",
         "带\u{7}控制符",
@@ -302,6 +302,57 @@ async fn rule_name_with_url_unsafe_chars_is_rejected() {
         assert_eq!(body["code"], json!("VALIDATION_FAILED"));
         assert_eq!(body["errors"][0]["pointer"], json!("/name"));
     }
+
+    // 普通空格**放行**：旧版自动命名（`书源替换 3`）已经落库，路径经
+    // percent-encoding 后 axum 能解回空格，必须可编辑/可删除
+    let created = server
+        .client
+        .post(server.url("/v1/me/replace-rules"))
+        .bearer_auth(&server.token)
+        .json(&json!({ "name": "书源替换 3", "pattern": "x" }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(created.status(), StatusCode::CREATED);
+
+    let patched = server
+        .client
+        .patch(server.url("/v1/me/replace-rules/书源替换 3"))
+        .bearer_auth(&server.token)
+        .json(&json!({ "replacement": "改好了" }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(
+        patched.status(),
+        StatusCode::OK,
+        "带空格的规则名必须能 PATCH"
+    );
+    let body: Value = patched.json().await.unwrap();
+    assert_eq!(body["replacement"], json!("改好了"));
+
+    let deleted = server
+        .client
+        .delete(server.url("/v1/me/replace-rules/书源替换 3"))
+        .bearer_auth(&server.token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(deleted.status(), StatusCode::NO_CONTENT);
+    let list: Value = server
+        .client
+        .get(server.url("/v1/me/replace-rules"))
+        .bearer_auth(&server.token)
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert!(
+        list.as_array().unwrap().is_empty(),
+        "空格名应已删除: {list}"
+    );
 
     // 批量 upsert 同样拒绝（否则会创建出路径打不中的规则）
     let batch = server

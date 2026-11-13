@@ -2835,6 +2835,13 @@ components:
           description: |-
             封面在图片管道中的 id（md5(去查询串地址)）；取图地址随 images 域
             切换迁移（当前 /reader3/image/<id>）
+        coverUrl:
+          type:
+          - string
+          - 'null'
+          description: |-
+            站内资源封面地址（本地 EPUB 的 `/reader3/localEpubAsset?...`）；
+            与 `coverImageId` 二选一，客户端直接渲染
         id:
           type: string
           description: 不透明 id（`book_<n>`）
@@ -5108,6 +5115,11 @@ components:
           - string
           - 'null'
           description: 封面在图片管道中的 id；客户端取图走 `/reader3/image/<id>`
+        coverUrl:
+          type:
+          - string
+          - 'null'
+          description: 站内资源封面地址（本地 EPUB）；与 `coverImageId` 二选一
         customCoverUrl:
           type:
           - string

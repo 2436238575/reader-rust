@@ -158,13 +158,13 @@ import { useReaderStore } from '../../stores/reader'
 import { useReaderContentStore } from '../../stores/readerContent'
 import { useReaderConfigStore } from '../../stores/readerConfig'
 import { useAppStore } from '../../stores/app'
-import { getBookInfo, getCoverUrl } from '../../api/bookshelf'
+import { getBookInfo, getCoverUrl, type BookInfoOverlay } from '../../api/bookshelf'
 import {
   useAvailableSources,
   useSourceNameResolver,
   type AvailableSourceCandidate,
 } from '../../composables/useAvailableSources'
-import type { Book, SearchBook } from '../../types'
+import type { SearchBook } from '../../types'
 
 const store = useReaderStore()
 const contentStore = useReaderContentStore()
@@ -175,7 +175,7 @@ const theme = computed(() => configStore.currentTheme)
 /// 列表小图按 320 宽取派生图（只降不升），配合 webp 协商省流
 const coverSrc = computed(() => getCoverUrl(store.book?.coverUrl, 320))
 const selectedCandidate = ref<AvailableSourceCandidate | null>(null)
-const candidatePreview = ref<Book | null>(null)
+const candidatePreview = ref<BookInfoOverlay | null>(null)
 const resolveSourceName = useSourceNameResolver()
 
 // 换源候选搜索/打分/SSE 管线在 useAvailableSources（与详情弹窗换源共用）

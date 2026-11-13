@@ -1072,6 +1072,11 @@ export interface components {
              *     切换迁移（当前 /reader3/image/<id>）
              */
             coverImageId?: string | null;
+            /**
+             * @description 站内资源封面地址（本地 EPUB 的 `/reader3/localEpubAsset?...`）；
+             *     与 `coverImageId` 二选一，客户端直接渲染
+             */
+            coverUrl?: string | null;
             /** @description 不透明 id（`book_<n>`） */
             id: string;
             intro?: string | null;
@@ -2316,6 +2321,8 @@ export interface components {
             charset?: string | null;
             /** @description 封面在图片管道中的 id；客户端取图走 `/reader3/image/<id>` */
             coverImageId?: string | null;
+            /** @description 站内资源封面地址（本地 EPUB）；与 `coverImageId` 二选一 */
+            coverUrl?: string | null;
             /** @description 用户自设封面（任意地址，原样透传） */
             customCoverUrl?: string | null;
             /**

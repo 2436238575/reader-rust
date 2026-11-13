@@ -32,12 +32,17 @@ export function useBookInfoModal(
     try {
       if (!store.book.bookId) return
       const latest = await getBookInfo(store.book.bookId)
+      // 服务端没给的字段不能以 undefined 覆盖书架条目的真值（origin/originName
+      // 等）——v1 BookDetail 不提供书源名/URL，合并时保留 store.book 的旧值
+      const defined = Object.fromEntries(
+        Object.entries(latest).filter(([, value]) => value !== undefined)
+      ) as Partial<Book>
       bookInfoBook.value = {
         ...store.book,
-        ...latest,
+        ...defined,
         durChapterIndex: store.currentIndex,
         durChapterTitle:
-          store.currentChapter?.title || latest.durChapterTitle || store.book.durChapterTitle,
+          store.currentChapter?.title || store.book.durChapterTitle,
       }
     } catch {
       appStore.showToast('获取书籍详情失败，已显示当前缓存信息', 'warning')
