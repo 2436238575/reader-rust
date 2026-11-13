@@ -145,9 +145,11 @@ import {
 } from '../api/source'
 import {
   asSourceTestResult,
+  cancelTask,
   createSourceTestTask,
   MAX_SOURCE_TEST_TASK_SIZE,
   runTask,
+  type TaskRunHandle,
 } from '../api/tasks'
 import { storeToRefs } from 'pinia'
 import { useAppStore } from '../stores/app'
@@ -182,6 +184,11 @@ const router = useRouter()
 const { isMobileLayout } = useMobileLayout()
 
 const testingSources = ref(false)
+// 当前书源测试任务的事件流；离开页面时 close() 取消任务，避免 SSE/轮询空跑
+let sourceTestHandle: TaskRunHandle | null = null
+// 离开页面时让等待中的 runSourceTestTask 收敛（close() 不会触发 onDone）
+let sourceTestReject: ((error: Error) => void) | null = null
+let sourcesDisposed = false
 const filterText = ref('')
 const filterGroup = ref('')
 // 书源列表分页：当前页码与每页数量（筛选或换每页数量时归回第 1 页）
@@ -342,14 +349,23 @@ async function removeSelectedSources() {
 /** 跑一个书源测试任务并等它结束（无增量 UI，只等结果摘要）。 */
 function runSourceTestTask(ids: string[]): Promise<BookSourceTestResponse> {
   return new Promise((resolve, reject) => {
+    sourceTestReject = reject
     let problem = ''
     createSourceTestTask({ ids, markInvalid: true })
       .then((task) => {
-        runTask(task, {
+        if (sourcesDisposed) {
+          sourceTestReject = null
+          void cancelTask(task.id).catch(() => undefined)
+          reject(new Error('书源测试已取消'))
+          return
+        }
+        sourceTestHandle = runTask(task, {
           onError: (payload) => {
             problem = payload.detail || payload.title || '书源测试失败'
           },
           onDone: (state, result) => {
+            sourceTestHandle = null
+            sourceTestReject = null
             if (state === 'succeeded') {
               const summary = asSourceTestResult(result)
               if (summary) {
@@ -365,7 +381,10 @@ function runSourceTestTask(ids: string[]): Promise<BookSourceTestResponse> {
           },
         })
       })
-      .catch(reject)
+      .catch((error: unknown) => {
+        sourceTestReject = null
+        reject(error)
+      })
   })
 }
 
@@ -406,7 +425,10 @@ async function testSources() {
       result.invalid > 0 ? 'warning' : 'success'
     )
   } catch (e: unknown) {
-    appStore.showToast((e as Error).message || '书源测试失败', 'error')
+    // 离开页面时 onUnmounted 会取消任务并 reject；不要在已卸载的页面弹失败提示
+    if (!sourcesDisposed) {
+      appStore.showToast((e as Error).message || '书源测试失败', 'error')
+    }
   } finally {
     testingSources.value = false
   }
@@ -724,6 +746,11 @@ onMounted(() => {
 })
 
 onUnmounted(() => {
+  sourcesDisposed = true
+  sourceTestReject?.(new Error('书源测试已取消'))
+  sourceTestReject = null
+  sourceTestHandle?.close()
+  sourceTestHandle = null
   window.removeEventListener('beforeunload', handleBeforeUnload)
 })
 </script>

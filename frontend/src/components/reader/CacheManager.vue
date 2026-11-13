@@ -274,7 +274,9 @@ async function startServerCaching(count: number) {
               failedTotal += summary.failed
               progress.value = Math.min(100, Math.round((processed / total) * 100))
 
-              const left = total - processed
+              // 服务端目录可能比前端 store 短（换源/重抓/旧目录）：本批
+              // requested 少于请求数说明已到末尾，不再续排越过目录的下一批
+              const left = summary.requested < countParam ? 0 : total - processed
               if (left > 0) {
                 currentStatus.value = `服务端缓存中 (${processed}/${total} 章，继续下一批)...`
                 runChunk(from + summary.requested, left)
