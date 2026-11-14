@@ -41,7 +41,8 @@ const MAX_RECONNECT_ATTEMPTS = 3
 
 class AuthedEventSource implements SseConnection {
   private readonly path: string
-  private readonly params: Record<string, string | number | undefined>
+  private readonly params: Record<string, string | number | boolean | undefined>
+  private readonly baseUrl: string
   private current: EventSource | null = null
   private readonly listeners: ListenerEntry[] = []
   private messageHandler: ((this: EventSource, ev: MessageEvent) => unknown) | null = null
@@ -53,10 +54,12 @@ class AuthedEventSource implements SseConnection {
 
   constructor(
     path: string,
-    params: Record<string, string | number | undefined>
+    params: Record<string, string | number | boolean | undefined>,
+    baseUrl: string = API_BASE
   ) {
     this.path = path
     this.params = params
+    this.baseUrl = baseUrl
     this.connect()
   }
 
@@ -123,7 +126,7 @@ class AuthedEventSource implements SseConnection {
     }
     // 会话凭据在 HttpOnly Cookie 里，由浏览器自动携带；URL 不携带任何令牌
 
-    const source = new EventSource(`${API_BASE}${this.path}?${query.toString()}`)
+    const source = new EventSource(`${this.baseUrl}${this.path}?${query.toString()}`)
     this.current = source
     source.onmessage = this.messageHandler as
       | ((this: EventSource, ev: MessageEvent) => unknown)
@@ -206,7 +209,8 @@ class AuthedEventSource implements SseConnection {
 /** 构造依赖会话 Cookie 的 SSE 连接；传输失败且会话临近过期时自动刷新后重连。 */
 export function createAuthedEventSource(
   path: string,
-  params: Record<string, string | number | undefined>
+  params: Record<string, string | number | boolean | undefined>,
+  baseUrl: string = API_BASE
 ): SseConnection {
-  return new AuthedEventSource(path, params)
+  return new AuthedEventSource(path, params, baseUrl)
 }

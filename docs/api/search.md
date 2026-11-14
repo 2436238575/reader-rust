@@ -65,6 +65,8 @@ GET /reader3/searchBookMulti
 
 ## 缓存内全文搜索
 
+> **v1**：`GET /v1/books/{bookId}/cache-search?q=&limit=`（problem+json；`q` 1..=100 字符、`limit` 1..=200 缺省 50；响应不含 `chapterUrl`，前端只消费 `chapterIndex`）。旧 `/reader3` 路径继续兼容。
+
 ```text
 GET /reader3/searchCachedContent
 ```
@@ -315,6 +317,8 @@ POST /reader3/saveBooks
 
 ## 保存书架顺序
 
+> **v1**：`PATCH /v1/me/shelf:order`，请求体与校验语义相同，成功返回 204；值级非法（空/重复/非法 id/集合不一致）返回 422 + `/bookIds` pointer。前端拖拽/置顶已切该端点。
+
 ```text
 POST /reader3/saveBookOrder
 ```
@@ -423,6 +427,8 @@ GET /reader3/getAvailableBookSource
 也可使用 `POST /reader3/getAvailableBookSource`。
 
 ## 查找可用书源（流式）
+
+> **v1**：`GET /v1/books/{bookId}/source-candidates/events?refresh=&lastIndex=&concurrentCount=`，事件帧不变（`message {lastIndex,hasMore,data}` + `end`）；`concurrentCount` 1..=20，越界 422；前端 EventSource 已切 v1。
 
 ```text
 GET /reader3/getAvailableBookSourceSSE

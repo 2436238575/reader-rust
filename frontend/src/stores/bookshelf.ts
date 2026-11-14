@@ -10,7 +10,7 @@ import {
   saveBookGroupId as apiSaveBookGroupId,
   saveBookGroup as apiSaveBookGroup,
   deleteBookGroup as apiDeleteBookGroup,
-  saveBooks as apiSaveBooks,
+  saveShelfOrder as apiSaveShelfOrder,
 } from '../api/bookshelf'
 import type { Book, BookGroup, ShelfBook } from '../types'
 import { deleteBrowserBookCache, listBrowserCacheSummary } from '../utils/browserCache'
@@ -347,12 +347,20 @@ export const useBookshelfStore = defineStore('bookshelf', () => {
     const [moved] = next.splice(fromIndex, 1)
     next.splice(toIndex, 0, moved)
 
+    const ids = next.map((book) => book.bookId).filter((id): id is string => Boolean(id))
+    if (ids.length !== next.length) {
+      // 本地条目缺 bookId：不发送注定被服务端拒绝的不完整集合
+      await fetchBooks().catch(() => undefined)
+      return
+    }
     books.value = next
     sorting.value = true
     try {
-      await apiSaveBooks(next)
+      await apiSaveShelfOrder(ids)
     } catch (error) {
       books.value = snapshot
+      // 视图过期（另一标签页加删书）时服务端会持续 400；拉一次最新书架自愈
+      await fetchBooks().catch(() => undefined)
       throw error
     } finally {
       sorting.value = false
@@ -370,12 +378,18 @@ export const useBookshelfStore = defineStore('bookshelf', () => {
     const [moved] = next.splice(fromIndex, 1)
     next.unshift(moved)
 
+    const ids = next.map((book) => book.bookId).filter((id): id is string => Boolean(id))
+    if (ids.length !== next.length) {
+      await fetchBooks().catch(() => undefined)
+      return
+    }
     books.value = next
     sorting.value = true
     try {
-      await apiSaveBooks(next)
+      await apiSaveShelfOrder(ids)
     } catch (error) {
       books.value = snapshot
+      await fetchBooks().catch(() => undefined)
       throw error
     } finally {
       sorting.value = false

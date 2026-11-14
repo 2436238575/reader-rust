@@ -2,7 +2,7 @@ import { getUserdataBatch, saveUserdataBatch } from '../api/userdata'
 import { queueUserdataSave } from './userdataQueue'
 import { READING_STATS } from './userdataDocs'
 
-// 后端 userdata 文档名（/reader3/getUserdataBatch・saveUserdataBatch），跨浏览器同步用
+// 后端 userdata 文档名（读 /reader3/getUserdataBatch；写 PUT /v1/me/userdata:batch）
 export const READING_STATS_DOC_NAME = READING_STATS
 // readChapters 的保留条数上限（只作累计计数用，超出裁掉最旧的）
 export const MAX_READ_CHAPTER_ENTRIES = 5000

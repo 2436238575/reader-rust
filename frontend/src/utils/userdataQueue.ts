@@ -3,7 +3,7 @@
  *
  * 阅读统计、最近阅读、已读标记等模块各自把整文档推给后端；这里把同一
  * 窗口内的写按文档名合并（同名后写覆盖前写），200ms 防抖后合成一次
- * /reader3/saveUserdataBatch，并保持单飞（同一时刻只有一个批量在途）。
+ * /v1/me/userdata:batch，并保持单飞（同一时刻只有一个批量在途）。
  * 失败时未发送成功的文档留在队列里，按退避间隔自动重试（至多 3 次，
  * 不无限重试；下一次写入会重开一轮重试预算）。
  * 成功清理按版本号判断是否被新写覆盖：每次入队分配递增版本，发送时
@@ -12,10 +12,11 @@
  *
  * 页面卸载（pagehide）或切入后台（visibilitychange=hidden）时用裸
  * fetch + keepalive 补发最后一次批量写——axios 不支持 keepalive，卸载
- * 阶段普通请求会被浏览器取消。URL 经 API_BASE 拼接，跟随子路径部署。
+ * 阶段普通请求会被浏览器取消。URL 经 API_V1_BASE 拼接，跟随子路径部署；
+ * PUT 是非安全方法，需带 CSRF 自定义头。
  */
 import { invalidateUserdataPrefetch, saveUserdataBatch } from '../api/userdata'
-import { API_BASE } from './appBase'
+import { API_V1_BASE } from './appBase'
 
 const DEBOUNCE_MS = 200
 // 失败后的退避重试间隔；用完即放弃，等下一次写入再试
@@ -132,6 +133,9 @@ export function cancelUserdataQueue() {
 /**
  * 卸载/切后台时的最后一搏：发完即清，不等结果。这几类文档本地都有镜像
  * （localStorage），即使丢失也会在下次同步时补回；重复写是同值覆盖，无副作用。
+ *
+ * 浏览器对 keepalive 请求体有配额（约 64KB）：只适合首屏这几份小文档，
+ * 超大文档的补发可能被浏览器直接丢弃——本地镜像兜底，不影响正常防抖路径。
  */
 function flushWithKeepalive() {
   if (pending.size === 0) return
@@ -149,11 +153,14 @@ function flushWithKeepalive() {
     retryTimer = null
   }
   try {
-    void fetch(`${API_BASE}/saveUserdataBatch`, {
-      method: 'POST',
+    void fetch(`${API_V1_BASE}/me/userdata:batch`, {
+      method: 'PUT',
       keepalive: true,
       credentials: 'same-origin',
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Requested-With': 'XMLHttpRequest',
+      },
       body: JSON.stringify({ docs: docs.map(({ name, value }) => ({ name, value })) }),
     })
     // 直发绕过了 saveUserdataBatch 的封装，写后失效要在这里补齐：按发送的

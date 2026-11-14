@@ -15,7 +15,7 @@ pub(crate) mod multipart;
 mod replace_rule;
 mod review;
 mod search_cache;
-mod user;
+pub(crate) mod user;
 pub(crate) mod webdav;
 
 pub use agent::*;

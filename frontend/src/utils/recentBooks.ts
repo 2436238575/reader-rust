@@ -5,7 +5,7 @@ import { queueUserdataSave } from './userdataQueue'
 import { RECENT_BOOKS } from './userdataDocs'
 
 const RECENT_BOOKS_KEY = 'reader-recent-books'
-// 后端 userdata 文档名（/reader3/getUserdataBatch・saveUserdataBatch），跨浏览器同步用
+// 后端 userdata 文档名（读 /reader3/getUserdataBatch；写 PUT /v1/me/userdata:batch），跨浏览器同步用
 const BACKEND_DOC_NAME = RECENT_BOOKS
 const MAX_RECENT_BOOKS = 100
 // 连续保存（快速开书/切章）合并为一次后端写入

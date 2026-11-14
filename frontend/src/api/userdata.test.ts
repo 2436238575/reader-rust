@@ -1,16 +1,17 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-const { httpGet, httpPost } = vi.hoisted(() => ({
+const { httpGet, httpPut } = vi.hoisted(() => ({
   httpGet: vi.fn(),
-  httpPost: vi.fn(),
+  httpPut: vi.fn(),
 }))
 
 // http 实例的响应拦截器已把 ApiResponse 解包：这里直接模拟解包后的 { data }
 vi.mock('./http', () => ({
-  default: { get: httpGet, post: httpPost },
+  default: { get: httpGet, put: httpPut },
 }))
 
+import { API_V1_BASE } from '../utils/appBase'
 import {
   clearUserdataPrefetch,
   getUserdataBatch,
@@ -26,7 +27,7 @@ function mockBatchOnce(docs: Record<string, unknown>) {
 beforeEach(() => {
   vi.useFakeTimers()
   httpGet.mockReset()
-  httpPost.mockReset().mockResolvedValue({ data: undefined })
+  httpPut.mockReset().mockResolvedValue({ data: undefined })
   // 预读缓存是模块级状态，跨用例清空
   clearUserdataPrefetch()
 })
@@ -143,6 +144,11 @@ describe('写后缓存失效', () => {
     await prefetchUserdata(['reading-stats', 'recent-books'])
 
     await saveUserdataBatch([{ name: 'reading-stats', value: 2 }])
+    expect(httpPut).toHaveBeenCalledWith(
+      '/me/userdata:batch',
+      { docs: [{ name: 'reading-stats', value: 2 }] },
+      { baseURL: API_V1_BASE }
+    )
 
     // 被写的文档失效；未被写的文档仍命中缓存
     mockBatchOnce({ 'reading-stats': 3 })
@@ -157,7 +163,7 @@ describe('写后缓存失效', () => {
     mockBatchOnce({ 'reading-stats': 1 })
     await prefetchUserdata(['reading-stats'])
 
-    httpPost.mockRejectedValueOnce(new Error('offline'))
+    httpPut.mockRejectedValueOnce(new Error('offline'))
     await expect(saveUserdataBatch([{ name: 'reading-stats', value: 2 }])).rejects.toThrow(
       'offline'
     )

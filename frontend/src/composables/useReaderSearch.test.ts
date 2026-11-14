@@ -32,8 +32,8 @@ describe('useReaderSearch 全书搜索', () => {
   it('全书模式走后端检索，按章聚合的 snippets 展平成逐条结果', async () => {
     vi.mocked(searchCachedContent).mockResolvedValue({
       results: [
-        { chapterIndex: 2, chapterTitle: '第三章', chapterUrl: 'u3', snippets: ['…甲锚乙…', '…丙锚丁…'] },
-        { chapterIndex: 5, chapterTitle: '第六章', chapterUrl: 'u6', snippets: ['…戊锚己…'] },
+        { chapterIndex: 2, chapterTitle: '第三章', snippets: ['…甲锚乙…', '…丙锚丁…'], edited: false },
+        { chapterIndex: 5, chapterTitle: '第六章', snippets: ['…戊锚己…'], edited: false },
       ],
       cachedChapters: 12,
       totalChapters: 120,

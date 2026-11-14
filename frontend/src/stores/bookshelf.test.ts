@@ -7,6 +7,7 @@ import {
   removeFromShelf,
   batchRemoveFromShelf,
   getShelfBook,
+  saveShelfOrder,
 } from '../api/bookshelf'
 import { deleteBrowserBookCache, listBrowserCacheSummary } from '../utils/browserCache'
 
@@ -20,7 +21,7 @@ vi.mock('../api/bookshelf', () => ({
   saveBookGroupId: vi.fn(),
   saveBookGroup: vi.fn(),
   deleteBookGroup: vi.fn(),
-  saveBooks: vi.fn(),
+  saveShelfOrder: vi.fn(),
 }))
 
 vi.mock('../utils/browserCache', () => ({
@@ -305,5 +306,49 @@ describe('bookshelf dirty flag and fetch dedup', () => {
     // 这次失败必须重新标脏，否则返回书架时 onActivated 会跳过，
     // 新增/变更的书要等到下一次其他标脏操作才出现
     expect(store.shelfDirty).toBe(true)
+  })
+})
+
+describe('书架排序', () => {
+  const makeBook = (bookId: string | undefined, name: string) => ({
+    bookId,
+    name,
+    author: '',
+    bookUrl: `https://sort.example/${name}`,
+  })
+
+  beforeEach(() => {
+    setActivePinia(createPinia())
+    vi.mocked(listBrowserCacheSummary).mockResolvedValue([])
+    vi.mocked(saveShelfOrder).mockReset().mockResolvedValue(undefined)
+  })
+
+  it('缺 bookId 时不发送不完整列表，先刷新书架', async () => {
+    const store = useBookshelfStore()
+    store.books = [
+      makeBook('book_1', 'A'),
+      makeBook('book_2', 'B'),
+      makeBook(undefined, 'C'),
+    ] as never
+    vi.mocked(getBookshelfWithCacheInfo).mockResolvedValue(store.books)
+
+    await store.reorderBooks('book_1', 'book_2')
+
+    expect(saveShelfOrder).not.toHaveBeenCalled()
+    expect(getBookshelfWithCacheInfo).toHaveBeenCalledTimes(1)
+  })
+
+  it('排序失败回滚并刷新书架', async () => {
+    const store = useBookshelfStore()
+    const books = [makeBook('book_1', 'A'), makeBook('book_2', 'B')]
+    store.books = books as never
+    vi.mocked(getBookshelfWithCacheInfo).mockResolvedValue(books as never)
+    vi.mocked(saveShelfOrder).mockRejectedValueOnce(new Error('书架已变化'))
+
+    await expect(store.reorderBooks('book_1', 'book_2')).rejects.toThrow('书架已变化')
+
+    expect(store.books.map((book) => book.bookId)).toEqual(['book_1', 'book_2'])
+    expect(getBookshelfWithCacheInfo).toHaveBeenCalledTimes(1)
+    expect(store.sorting).toBe(false)
   })
 })

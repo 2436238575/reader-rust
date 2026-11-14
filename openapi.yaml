@@ -302,6 +302,65 @@ paths:
       security:
       - cookieAuth: []
       - bearerAuth: []
+  /v1/books/{bookId}/cache-search:
+    get:
+      tags:
+      - books
+      summary: |-
+        缓存内全文检索：只扫本书已缓存的章节正文，不触发任何上游请求。
+        与远程搜书（`POST /v1/searches`）无关；本地书不在检索范围。
+      operationId: searchCachedContent
+      parameters:
+      - name: bookId
+        in: path
+        description: 书籍 id（book_<n>）
+        required: true
+        schema:
+          type: string
+      - name: q
+        in: query
+        description: 检索词，1..=100 字符
+        required: true
+        schema:
+          type: string
+          maxLength: 100
+      - name: limit
+        in: query
+        description: 命中章节上限 1..=200，缺省 50
+        required: false
+        schema:
+          type: integer
+          format: int32
+          maximum: 200
+          minimum: 1
+      responses:
+        '200':
+          description: 按章聚合的命中与检索覆盖度
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CachedSearchResponse'
+        '400':
+          description: 查询参数类型非法
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '404':
+          description: 书籍不存在
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '422':
+          description: q 为空/超长或 limit 越界
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+      security:
+      - cookieAuth: []
+      - bearerAuth: []
   /v1/books/{bookId}/chapter-marks:
     get:
       tags:
@@ -1475,6 +1534,70 @@ paths:
       security:
       - cookieAuth: []
       - bearerAuth: []
+  /v1/books/{bookId}/source-candidates/events:
+    get:
+      tags:
+      - books
+      summary: 换源候选 SSE：逐源搜索同名/同作者的书，命中即推送，`end` 收尾。
+      operationId: sourceCandidateEvents
+      parameters:
+      - name: bookId
+        in: path
+        description: 书籍 id（book_<n>）
+        required: true
+        schema:
+          type: string
+      - name: refresh
+        in: query
+        description: 忽略新鲜缓存，缺省 false
+        required: false
+        schema:
+          type: boolean
+      - name: lastIndex
+        in: query
+        description: 续扫游标，缺省 -1
+        required: false
+        schema:
+          type: integer
+          format: int32
+          minimum: -1
+      - name: concurrentCount
+        in: query
+        description: 单批并发源数 1..=20，缺省 8
+        required: false
+        schema:
+          type: integer
+          format: int32
+          maximum: 20
+          minimum: 1
+      responses:
+        '200':
+          description: SSE：message {lastIndex,hasMore,data:[SearchBook]}，end {lastIndex,hasMore}
+          content:
+            text/event-stream:
+              schema:
+                type: string
+        '400':
+          description: 查询参数类型非法
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '404':
+          description: 书籍不存在
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '422':
+          description: lastIndex/concurrentCount 越界
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+      security:
+      - cookieAuth: []
+      - bearerAuth: []
   /v1/cache:
     delete:
       tags:
@@ -2601,6 +2724,91 @@ paths:
                 $ref: '#/components/schemas/Problem'
         '401':
           description: 未登录或令牌失效
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+      security:
+      - cookieAuth: []
+      - bearerAuth: []
+  /v1/me/shelf:order:
+    patch:
+      tags:
+      - me
+      summary: 只改书架顺序（只写 position 一列，其余字段原样保留）。
+      description: |-
+        必须提交当前书架的**完整集合**：缺书/多书说明客户端视图已过期，整批
+        拒绝（422「书架已变化，请刷新后重试」），避免部分提交把顺序写乱。
+      operationId: reorderShelf
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ShelfOrderRequest'
+        required: true
+      responses:
+        '204':
+          description: 已保存
+        '400':
+          description: 请求体不是合法 JSON 或字段类型不符
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '401':
+          description: 未登录或令牌失效
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '422':
+          description: 空数组 / 重复 id / 非法 id / 集合与当前书架不一致
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+      security:
+      - cookieAuth: []
+      - bearerAuth: []
+  /v1/me/userdata:batch:
+    put:
+      tags:
+      - me
+      summary: 批量保存当前用户的 JSON 文档（各自整文档覆盖写）。
+      operationId: saveUserdataBatch
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UserdataBatchSaveRequest'
+        required: true
+      responses:
+        '200':
+          description: 实际写入的文档数
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserdataBatchSaveResult'
+        '400':
+          description: 请求体不是合法 JSON 或字段类型不符
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '401':
+          description: 未登录或令牌失效
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '413':
+          description: 请求体超过 8MB 或单个文档超过 4MB
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '422':
+          description: 文档列表为空/超上限、文档名非法、缺少 value 或含未知字段
           content:
             application/problem+json:
               schema:
@@ -4228,6 +4436,49 @@ components:
           $ref: '#/components/schemas/CacheLayerUsage'
         searchResults:
           $ref: '#/components/schemas/CacheLayerUsage'
+    CachedSearchHitItem:
+      type: object
+      required:
+      - chapterIndex
+      - chapterTitle
+      - snippets
+      - edited
+      properties:
+        chapterIndex:
+          type: integer
+          format: int32
+        chapterTitle:
+          type: string
+        edited:
+          type: boolean
+          description: 命中内容来自编辑版（而非上游缓存）
+        snippets:
+          type: array
+          items:
+            type: string
+          description: 命中处前后各约 40 字符，单章最多 3 条
+    CachedSearchResponse:
+      type: object
+      required:
+      - results
+      - cachedChapters
+      - totalChapters
+      - truncated
+      properties:
+        cachedChapters:
+          type: integer
+          format: int32
+          minimum: 0
+        results:
+          type: array
+          items:
+            $ref: '#/components/schemas/CachedSearchHitItem'
+        totalChapters:
+          type: integer
+          format: int32
+          minimum: 0
+        truncated:
+          type: boolean
     ChangePasswordRequest:
       type: object
       properties:
@@ -6262,6 +6513,17 @@ components:
           type:
           - string
           - 'null'
+    ShelfOrderRequest:
+      type: object
+      required:
+      - bookIds
+      properties:
+        bookIds:
+          type: array
+          items:
+            type: string
+          description: 当前书架的完整 bookId 列表，按目标顺序排列
+      additionalProperties: false
     ShelfPage:
       type: object
       description: 书架页（按 position 升序）。
@@ -6840,6 +7102,36 @@ components:
           - 'null'
           description: 字数（本项目扩展）：目录里随章节条目展示
           default: null
+    UserdataBatchDoc:
+      type: object
+      required:
+      - name
+      - value
+      properties:
+        name:
+          type: string
+        value:
+          description: 整文档新值；缺失 422（不能把「忘传内容」当成删文档）
+      additionalProperties: false
+    UserdataBatchSaveRequest:
+      type: object
+      required:
+      - docs
+      properties:
+        docs:
+          type: array
+          items:
+            $ref: '#/components/schemas/UserdataBatchDoc'
+      additionalProperties: false
+    UserdataBatchSaveResult:
+      type: object
+      required:
+      - saved
+      properties:
+        saved:
+          type: integer
+          format: int32
+          minimum: 0
     WebdavBackupBookmark:
       type: object
       description: |-

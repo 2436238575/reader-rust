@@ -100,6 +100,31 @@ impl TestServer {
         assert_eq!(resp.status(), StatusCode::OK, "{path} 应返回 200");
         resp.json().await.unwrap()
     }
+
+    async fn v1(
+        &self,
+        method: reqwest::Method,
+        path: &str,
+        body: Option<Value>,
+    ) -> (StatusCode, Value) {
+        let mut request = self
+            .client
+            .request(method, format!("{}/v1{path}", self.base_url))
+            .bearer_auth(&self.token)
+            .header("x-requested-with", "XMLHttpRequest");
+        if let Some(body) = body {
+            request = request.json(&body);
+        }
+        let response = request.send().await.unwrap();
+        let status = response.status();
+        let text = response.text().await.unwrap_or_default();
+        let value = if text.trim().is_empty() {
+            Value::Null
+        } else {
+            serde_json::from_str(&text).unwrap_or(Value::String(text))
+        };
+        (status, value)
+    }
 }
 
 #[tokio::test]
@@ -158,4 +183,106 @@ async fn legacy_save_books_ignores_client_book_id() {
         serde_json::json!("uuid-123"),
         "非恢复语义应忽略客户端 bookId"
     );
+}
+
+#[tokio::test]
+async fn v1_shelf_order_only_rewrites_positions_and_requires_full_set() {
+    let server = boot().await;
+    let book = |url: &str, name: &str| {
+        json!({
+            "name": name,
+            "author": "作者",
+            "bookUrl": url
+        })
+    };
+    let a = server
+        .post(
+            "saveBook",
+            book("https://shelf-slim.example/order-a", "排序甲"),
+        )
+        .await["data"]["bookId"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let b = server
+        .post(
+            "saveBook",
+            book("https://shelf-slim.example/order-b", "排序乙"),
+        )
+        .await["data"]["bookId"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    let (status, problem) = server
+        .v1(
+            reqwest::Method::PATCH,
+            "/me/shelf:order",
+            Some(json!({ "bookIds": [b.clone(), a.clone()] })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::NO_CONTENT, "{problem}");
+
+    let (status, page) = server
+        .v1(reqwest::Method::GET, "/me/shelf?limit=100", None)
+        .await;
+    assert_eq!(status, StatusCode::OK);
+    let ids: Vec<&str> = page["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|item| item["bookId"].as_str().unwrap())
+        .collect();
+    assert_eq!(ids, vec![b.as_str(), a.as_str()]);
+    assert_eq!(page["items"][0]["position"], json!(1));
+    assert_eq!(page["items"][1]["position"], json!(2));
+
+    // 客户端视图过期（缺一本）→ 整批拒绝，顺序不动
+    let (status, problem) = server
+        .v1(
+            reqwest::Method::PATCH,
+            "/me/shelf:order",
+            Some(json!({ "bookIds": [b.clone()] })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{problem}");
+    assert!(
+        problem["detail"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("书架已变化"),
+        "{problem}"
+    );
+    assert_eq!(problem["errors"][0]["pointer"], json!("/bookIds"));
+
+    let (status, problem) = server
+        .v1(
+            reqwest::Method::PATCH,
+            "/me/shelf:order",
+            Some(json!({ "bookIds": [] })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+    assert_eq!(problem["errors"][0]["pointer"], json!("/bookIds"));
+
+    for body in [
+        json!({ "bookIds": [a.clone(), a.clone()] }),
+        json!({ "bookIds": ["book_bad"] }),
+    ] {
+        let (status, problem) = server
+            .v1(reqwest::Method::PATCH, "/me/shelf:order", Some(body))
+            .await;
+        assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{problem}");
+        assert_eq!(problem["errors"][0]["pointer"], json!("/bookIds"));
+    }
+
+    let (status, problem) = server
+        .v1(
+            reqwest::Method::PATCH,
+            "/me/shelf:order",
+            Some(json!({ "bookIds": [a.clone()], "extra": 1 })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{problem}");
+    assert_eq!(problem["code"], json!("UNKNOWN_FIELD"));
 }

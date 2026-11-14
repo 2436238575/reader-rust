@@ -1357,3 +1357,80 @@ async fn batch_remove_deletes_and_ignores_unknown_ids() {
 
     server.cleanup();
 }
+
+#[tokio::test]
+async fn cached_search_scans_only_cached_chapters_and_validates_query() {
+    let server = TestServer::start().await;
+    let book_id = server
+        .seed_book_with_chapters("https://up.example.com", 2)
+        .await;
+    server
+        .seed_upstream_content(
+            &book_id,
+            0,
+            "https://up.example.com/ch/0",
+            "第一章正文里藏着暗号，还有更多上下文。",
+        )
+        .await;
+    server
+        .seed_upstream_content(
+            &book_id,
+            1,
+            "https://up.example.com/ch/1",
+            "第二章没有那个词。",
+        )
+        .await;
+
+    let resp = server
+        .get(&format!(
+            "/v1/books/{book_id}/cache-search?q=%E6%9A%97%E5%8F%B7"
+        ))
+        .await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body: Value = resp.json().await.unwrap();
+    assert_eq!(body["results"].as_array().map(Vec::len), Some(1));
+    assert_eq!(body["results"][0]["chapterIndex"], json!(0));
+    assert_eq!(body["results"][0]["edited"], json!(false));
+    assert!(
+        body["results"][0]["snippets"][0]
+            .as_str()
+            .unwrap_or_default()
+            .contains("暗号"),
+        "{body}"
+    );
+    assert_eq!(body["cachedChapters"], json!(2));
+    assert_eq!(body["totalChapters"], json!(2));
+    assert_eq!(body["truncated"], json!(false));
+    // 红线 6：章节 URL 不进入 v1 响应
+    assert!(body["results"][0].get("chapterUrl").is_none());
+
+    // 参数校验：q 缺失 / 超长 / limit 越界 → 422 + JSON Pointer
+    for (path, pointer) in [
+        (format!("/v1/books/{book_id}/cache-search"), "/q"),
+        (
+            format!("/v1/books/{book_id}/cache-search?q={}", "x".repeat(101)),
+            "/q",
+        ),
+        (
+            format!("/v1/books/{book_id}/cache-search?q=x&limit=0"),
+            "/limit",
+        ),
+        (
+            format!("/v1/books/{book_id}/cache-search?q=x&limit=201"),
+            "/limit",
+        ),
+    ] {
+        let resp = server.get(&path).await;
+        assert_eq!(resp.status(), StatusCode::UNPROCESSABLE_ENTITY, "{path}");
+        let problem: Value = resp.json().await.unwrap();
+        assert_eq!(problem["code"], json!("VALIDATION_FAILED"));
+        assert_eq!(problem["errors"][0]["pointer"], json!(pointer), "{problem}");
+    }
+
+    let resp = server.get("/v1/books/book_999999/cache-search?q=x").await;
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+    let problem: Value = resp.json().await.unwrap();
+    assert_eq!(problem["code"], json!("BOOK_NOT_FOUND"));
+
+    server.cleanup();
+}

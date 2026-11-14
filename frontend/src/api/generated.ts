@@ -130,6 +130,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/books/{bookId}/cache-search": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * 缓存内全文检索：只扫本书已缓存的章节正文，不触发任何上游请求。
+         *     与远程搜书（`POST /v1/searches`）无关；本地书不在检索范围。
+         */
+        get: operations["searchCachedContent"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/books/{bookId}/chapter-marks": {
         parameters: {
             query?: never;
@@ -480,6 +500,23 @@ export interface paths {
         put?: never;
         /** 整书换回最新上游：清掉全部版本选择与用户版本指针（历史保留）。 */
         post: operations["resetBookToUpstream"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/books/{bookId}/source-candidates/events": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 换源候选 SSE：逐源搜索同名/同作者的书，命中即推送，`end` 收尾。 */
+        get: operations["sourceCandidateEvents"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -924,6 +961,44 @@ export interface paths {
          *     不做整体事务：批量移出不需要「要么全删要么全留」。
          */
         post: operations["batchRemoveFromShelf"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/me/shelf:order": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /**
+         * 只改书架顺序（只写 position 一列，其余字段原样保留）。
+         * @description 必须提交当前书架的**完整集合**：缺书/多书说明客户端视图已过期，整批
+         *     拒绝（422「书架已变化，请刷新后重试」），避免部分提交把顺序写乱。
+         */
+        patch: operations["reorderShelf"];
+        trace?: never;
+    };
+    "/v1/me/userdata:batch": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** 批量保存当前用户的 JSON 文档（各自整文档覆盖写）。 */
+        put: operations["saveUserdataBatch"];
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -1629,6 +1704,23 @@ export interface components {
             cover: components["schemas"]["CacheLayerUsage"];
             review: components["schemas"]["CacheLayerUsage"];
             searchResults: components["schemas"]["CacheLayerUsage"];
+        };
+        CachedSearchHitItem: {
+            /** Format: int32 */
+            chapterIndex: number;
+            chapterTitle: string;
+            /** @description 命中内容来自编辑版（而非上游缓存） */
+            edited: boolean;
+            /** @description 命中处前后各约 40 字符，单章最多 3 条 */
+            snippets: string[];
+        };
+        CachedSearchResponse: {
+            /** Format: int32 */
+            cachedChapters: number;
+            results: components["schemas"]["CachedSearchHitItem"][];
+            /** Format: int32 */
+            totalChapters: number;
+            truncated: boolean;
         };
         ChangePasswordRequest: {
             currentPassword?: string | null;
@@ -2754,6 +2846,10 @@ export interface components {
             totalChapters?: number | null;
             wordCount?: string | null;
         };
+        ShelfOrderRequest: {
+            /** @description 当前书架的完整 bookId 列表，按目标顺序排列 */
+            bookIds: string[];
+        };
         /** @description 书架页（按 position 升序）。 */
         ShelfPage: {
             items: components["schemas"]["ShelfItem"][];
@@ -3003,6 +3099,18 @@ export interface components {
              * @default null
              */
             wordCount: string | null;
+        };
+        UserdataBatchDoc: {
+            name: string;
+            /** @description 整文档新值；缺失 422（不能把「忘传内容」当成删文档） */
+            value: unknown;
+        };
+        UserdataBatchSaveRequest: {
+            docs: components["schemas"]["UserdataBatchDoc"][];
+        };
+        UserdataBatchSaveResult: {
+            /** Format: int32 */
+            saved: number;
         };
         /**
          * @description 备份里的书签。与 `Bookmark` 的唯一差别是多一个 `bookUrl`：书架外的书签
@@ -3484,6 +3592,61 @@ export interface operations {
             };
             /** @description 书籍不存在 */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    searchCachedContent: {
+        parameters: {
+            query: {
+                /** @description 检索词，1..=100 字符 */
+                q: string;
+                /** @description 命中章节上限 1..=200，缺省 50 */
+                limit?: number;
+            };
+            header?: never;
+            path: {
+                /** @description 书籍 id（book_<n>） */
+                bookId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 按章聚合的命中与检索覆盖度 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CachedSearchResponse"];
+                };
+            };
+            /** @description 查询参数类型非法 */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description 书籍不存在 */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description q 为空/超长或 limit 越界 */
+            422: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -4670,6 +4833,63 @@ export interface operations {
             };
             /** @description 书籍不存在 */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    sourceCandidateEvents: {
+        parameters: {
+            query?: {
+                /** @description 忽略新鲜缓存，缺省 false */
+                refresh?: boolean;
+                /** @description 续扫游标，缺省 -1 */
+                lastIndex?: number;
+                /** @description 单批并发源数 1..=20，缺省 8 */
+                concurrentCount?: number;
+            };
+            header?: never;
+            path: {
+                /** @description 书籍 id（book_<n>） */
+                bookId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description SSE：message {lastIndex,hasMore,data:[SearchBook]}，end {lastIndex,hasMore} */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/event-stream": string;
+                };
+            };
+            /** @description 查询参数类型非法 */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description 书籍不存在 */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description lastIndex/concurrentCount 越界 */
+            422: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -6041,6 +6261,115 @@ export interface operations {
             };
             /** @description 未登录或令牌失效 */
             401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    reorderShelf: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ShelfOrderRequest"];
+            };
+        };
+        responses: {
+            /** @description 已保存 */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description 请求体不是合法 JSON 或字段类型不符 */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description 未登录或令牌失效 */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description 空数组 / 重复 id / 非法 id / 集合与当前书架不一致 */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    saveUserdataBatch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UserdataBatchSaveRequest"];
+            };
+        };
+        responses: {
+            /** @description 实际写入的文档数 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UserdataBatchSaveResult"];
+                };
+            };
+            /** @description 请求体不是合法 JSON 或字段类型不符 */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description 未登录或令牌失效 */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description 请求体超过 8MB 或单个文档超过 4MB */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description 文档列表为空/超上限、文档名非法、缺少 value 或含未知字段 */
+            422: {
                 headers: {
                     [name: string]: unknown;
                 };

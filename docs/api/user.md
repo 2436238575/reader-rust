@@ -240,6 +240,8 @@ GET /reader3/getUserdataBatch?names=<名称1>,<名称2>,...
 
 ## 批量保存用户数据文档
 
+> **v1**：`PUT /v1/me/userdata:batch`，请求体相同；文档级非法→422 + JSON Pointer，单文档超 4MB→413；前端写队列与 pagehide keepalive 已切。批量读 `GET /reader3/getUserdataBatch` 仍留 legacy（随 userdata 产品语义重设计迁移）。
+
 ```text
 POST /reader3/saveUserdataBatch
 ```

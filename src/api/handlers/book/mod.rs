@@ -9,7 +9,7 @@ use crate::model::{book::Book, book_source::BookSource};
 use crate::service::local_epub_book::{is_local_epub_origin, is_local_epub_url, LOCAL_EPUB_ORIGIN};
 use crate::service::local_txt_book::{is_local_txt_origin, is_local_txt_url, LOCAL_TXT_ORIGIN};
 
-mod available_source;
+pub(crate) mod available_source;
 pub(crate) mod content;
 mod explore;
 mod local_upload;

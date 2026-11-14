@@ -39,9 +39,11 @@ mod me;
 mod replace_rules;
 mod reviews;
 mod shelf;
+mod source_candidates;
 mod source_tasks;
 mod sources;
 mod tasks;
+mod userdata;
 mod webdav;
 
 /// `/v1` 路由。并发层与 `/reader3` 的受保护组共享同一份许可
@@ -63,9 +65,11 @@ pub fn router(
         .merge(cache::router())
         .merge(groups::router())
         .merge(marks::router())
+        .merge(userdata::router())
         .merge(reviews::router())
         .merge(chapter_edits::router())
         .merge(tasks::router())
+        .merge(source_candidates::router())
         .merge(source_tasks::router())
         .merge(auth::authed_router())
         .route_layer(axum::middleware::from_fn_with_state(
@@ -115,6 +119,28 @@ pub async fn not_found() -> Problem {
 /// `/v1` 的强制鉴权：逻辑与 `auth::middleware::require_auth` 一致
 /// （同一套令牌校验与撤销检查），失败形态换成 problem+json。
 ///
+/// 只校验「书籍已登记」，不要求绑定书源仍可解析。
+///
+/// 缓存内检索与换源候选都不需要当前书源：书源被删除后书架行仍保留悬空
+/// `bookSourceId`，用 `resolve_book` 会误报 404——而这正是最需要换源的
+/// 场景。需要真正访问上游的接口继续用 `resolve_book`。
+pub(crate) async fn ensure_book_registered(
+    state: &AppState,
+    user_ns: &str,
+    book_id: &str,
+) -> Result<(), Problem> {
+    let row = state
+        .book_service
+        .book_repo()
+        .get(user_ns, book_id)
+        .await
+        .map_err(Problem::from)?;
+    if row.is_none() {
+        return Err(Problem::new(ErrorCode::BookNotFound).detail("书籍不存在"));
+    }
+    Ok(())
+}
+
 /// SSE 事件流额外接受 `?ticket=`（契约 §6.4）：Cookie/Bearer 都缺席时，
 /// 一次性票据（60 秒、绑定路径）可以兑换一个身份；票据只对
 /// `/v1/tasks/{id}/events` 生效，且校验通过后即消费。
@@ -395,6 +421,8 @@ pub fn openapi_yaml() -> String {
     paths(
         me::get_me,
         books::list_chapters,
+        books::search_cached_content,
+        source_candidates::source_candidate_events,
         content::get_chapter_content,
         content::batch_chapter_content,
         sources::list_sources,
@@ -410,6 +438,7 @@ pub fn openapi_yaml() -> String {
         shelf::list_shelf,
         shelf::get_shelf_item,
         shelf::batch_remove_from_shelf,
+        shelf::reorder_shelf,
         shelf::patch_shelf_book,
         shelf::remove_from_shelf,
         shelf::get_book,
@@ -428,6 +457,7 @@ pub fn openapi_yaml() -> String {
         marks::save_mark,
         marks::save_marks_batch,
         marks::delete_marks_batch,
+        userdata::save_userdata_batch,
         groups::list_groups,
         groups::save_group,
         groups::reorder_groups,
@@ -488,6 +518,8 @@ pub fn openapi_yaml() -> String {
         sources::SourcePage,
         books::ChapterItem,
         books::ChapterPage,
+        books::CachedSearchHitItem,
+        books::CachedSearchResponse,
         content::ChapterContent,
         content::ChapterVersionInfo,
         content::BatchContentRequest,
@@ -513,6 +545,9 @@ pub fn openapi_yaml() -> String {
         crate::model::book_group::BookGroupOrderItem,
         marks::BatchSaveMarksResult,
         marks::BatchDeleteMarksResult,
+        userdata::UserdataBatchDoc,
+        userdata::UserdataBatchSaveRequest,
+        userdata::UserdataBatchSaveResult,
         crate::model::review::ReviewPage,
         crate::model::review::ReviewItem,
         crate::model::review::ReviewReply,
@@ -552,6 +587,7 @@ pub fn openapi_yaml() -> String {
         shelf::ShelfPutBody,
         shelf::ShelfBatchDeleteRequest,
         shelf::ShelfBatchDeleteResult,
+        shelf::ShelfOrderRequest,
         shelf::ShelfPatch,
         shelf::ProgressPatch,
         shelf::BookPatch,

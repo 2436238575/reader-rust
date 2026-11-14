@@ -251,8 +251,11 @@ export function removeFromShelf(bookId: string) {
     .then((r) => r.data)
 }
 
-export function saveBooks(books: Partial<Book>[]) {
-  return http.post<Book[]>('/saveBooks', books).then((r) => r.data)
+/** 书架排序：只提交完整 bookId 列表，服务端只改 position 列。 */
+export function saveShelfOrder(bookIds: string[]) {
+  return http
+    .patch('/me/shelf:order', { bookIds }, { baseURL: API_V1_BASE })
+    .then(() => undefined)
 }
 
 /**
@@ -277,10 +280,6 @@ export function uploadTxtBook(file: File) {
 
 export function uploadEpubBook(file: File) {
   return uploadLocalBook(file)
-}
-
-export function deleteBooks(bookIds: string[]) {
-  return http.post<{ deleted: number }>('/deleteBooks', { bookIds }).then((r) => r.data)
 }
 
 /**

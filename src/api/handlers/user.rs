@@ -20,7 +20,7 @@ const MAX_UPLOAD_FILE_BYTES: usize = 32 * 1024 * 1024;
 
 /// 用户 JSON 文档（userdata / userConfig）的大小上限：两者都整文档写进
 /// json_documents，超限时明确 400，而不是任由全局请求体上限当缓冲配额。
-const MAX_USER_DOCUMENT_BYTES: usize = 4 * 1024 * 1024;
+pub(crate) const MAX_USER_DOCUMENT_BYTES: usize = 4 * 1024 * 1024;
 
 /// 序列化后的文档超过上限时给出用户可读错误。
 fn ensure_document_within_limit(serialized: &[u8]) -> Result<(), AppError> {
@@ -72,7 +72,7 @@ pub struct SaveUserdataRequest {
 /// 破坏性升级移除，见 `JsonDocumentService` 注释），约束保留下来：首字符
 /// 限定字母数字，天然排除 `.` / `..` 与路径分隔符，让文档名保持
 /// URL/日志安全且与存量键形态一致。
-fn validate_userdata_name(name: &str) -> bool {
+pub(crate) fn validate_userdata_name(name: &str) -> bool {
     let mut chars = name.chars();
     match chars.next() {
         Some(first) if first.is_ascii_alphanumeric() => {}
@@ -87,7 +87,7 @@ fn validate_userdata_name(name: &str) -> bool {
 /// 批量 userdata 接口的文档数上限：一次首屏所需的全部 userdata 文档
 /// （最近阅读、阅读统计、已读标记等）远低于 20；上限用来防拼接失控的
 /// 客户端把批量接口当无限通道。
-const MAX_USERDATA_BATCH: usize = 20;
+pub(crate) const MAX_USERDATA_BATCH: usize = 20;
 
 /// 读取当前用户的 JSON 文档（如最近阅读、阅读统计）。不存在时返回 null。
 pub async fn get_userdata(

@@ -1,4 +1,5 @@
 import http from './http'
+import { API_V1_BASE } from '../utils/appBase'
 
 // ─── 首屏批量预读缓存 ───
 // 登录后由 stores/app.ts 调 prefetchUserdata 一次性批量拉取首屏文档（文档名常量
@@ -79,11 +80,14 @@ export function getUserdataBatch<T = unknown>(names: string[]) {
 /**
  * 批量整文档覆盖写当前用户的 JSON 文档（一次 ≤20 个）：
  * 任一条目非法整批不落库；同名文档按最后一次为准。
- * 对应后端 /reader3/saveUserdataBatch；前端写入统一经 utils/userdataQueue 收口到这里。
+ * 对应后端 PUT /v1/me/userdata:batch；前端写入统一经 utils/userdataQueue
+ * 收口到这里。
  */
 export function saveUserdataBatch(docs: { name: string; value: unknown }[]) {
-  return http.post('/saveUserdataBatch', { docs }).then(() => {
-    // 写成功后预读缓存已陈旧，删除之；写失败保留缓存（值仍有效）
-    invalidateUserdataPrefetch(docs.map((doc) => doc.name))
-  })
+  return http
+    .put('/me/userdata:batch', { docs }, { baseURL: API_V1_BASE })
+    .then(() => {
+      // 写成功后预读缓存已陈旧，删除之；写失败保留缓存（值仍有效）
+      invalidateUserdataPrefetch(docs.map((doc) => doc.name))
+    })
 }

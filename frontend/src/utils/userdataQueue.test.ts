@@ -248,11 +248,12 @@ describe('页面卸载补发', () => {
 
     expect(fetchMock).toHaveBeenCalledTimes(1)
     const [url, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit]
-    // URL 经 API_BASE 拼接，不写死路径；凭据走同源 Cookie
-    expect(url).toBe('/reader3/saveUserdataBatch')
-    expect(init.method).toBe('POST')
+    // URL 经 API_V1_BASE 拼接；PUT 需带 CSRF 自定义头，凭据走同源 Cookie
+    expect(url).toBe('/v1/me/userdata:batch')
+    expect(init.method).toBe('PUT')
     expect(init.keepalive).toBe(true)
     expect(init.credentials).toBe('same-origin')
+    expect((init.headers as Record<string, string>)['X-Requested-With']).toBe('XMLHttpRequest')
     expect(JSON.parse(init.body as string)).toEqual({
       docs: [
         { name: 'reading-stats', value: { totalSeconds: 7 } },
@@ -304,7 +305,7 @@ describe('页面卸载补发', () => {
 
     expect(fetchMock).toHaveBeenCalledTimes(1)
     const [url, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit]
-    expect(url).toBe('/reader3/saveUserdataBatch')
+    expect(url).toBe('/v1/me/userdata:batch')
     expect(init.keepalive).toBe(true)
   })
 

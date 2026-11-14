@@ -144,6 +144,8 @@ pub async fn get_available_book_source(
     let mut result: Vec<SearchBook> = Vec::new();
     let mut cursor = (req.last_index.unwrap_or(-1) + 1).max(0) as usize;
     let mut last_index = req.last_index.unwrap_or(-1);
+    // 换源候选同样计入任务级全局出站预算（与搜索/预下载共用一份信号量）
+    let outbound = state.task_service.outbound_semaphore();
 
     while cursor < sources.len() {
         let batch_end = (cursor + concurrent_count).min(sources.len());
@@ -159,7 +161,9 @@ pub async fn get_available_book_source(
             let name = book_name.clone();
             let author = book_author.clone();
             let user_ns_value = user_ns.clone();
+            let outbound = outbound.clone();
             tasks.push(tokio::spawn(async move {
+                let _permit = outbound.acquire().await.ok();
                 let res = svc.search_book(&user_ns_value, &source, &name, 1).await;
                 (source_index as i32, res, name, author)
             }));
@@ -240,7 +244,27 @@ pub async fn get_available_book_source_sse(
         .book_id
         .filter(|v| !v.trim().is_empty())
         .ok_or_else(|| AppError::BadRequest("bookId required".to_string()))?;
+    build_available_source_sse(
+        state,
+        user_ns,
+        book_id,
+        refresh,
+        last_index_start,
+        concurrent_count,
+    )
+    .await
+}
 
+/// 换源候选 SSE 的共用实现（legacy `/reader3` 与 v1 路由共用）。调用方完成
+/// 鉴权、参数解析与取值校验后传入；返回的流在 body 里继续跑上游搜索。
+pub(crate) async fn build_available_source_sse(
+    state: AppState,
+    user_ns: String,
+    book_id: String,
+    refresh: bool,
+    last_index_start: i32,
+    concurrent_count: usize,
+) -> Result<Sse<impl futures::Stream<Item = Result<Event, Infallible>>>, AppError> {
     // 在架书取书架条目（带当前书源），未在架书用登记表行的书名/作者
     let shelf_book = state
         .book_service
@@ -329,7 +353,10 @@ pub async fn get_available_book_source_sse(
         let mut emitted = 0usize;
         let mut all_results: Vec<SearchBook> = Vec::new();
         let mut seen = std::collections::HashSet::<String>::new();
+        let mut completed = std::collections::HashSet::<usize>::new();
         let mut tasks = JoinSet::new();
+        // 与搜索/预下载共用任务级全局出站预算
+        let outbound = state_clone.task_service.outbound_semaphore();
 
         while next_index < sources.len() || !tasks.is_empty() {
             while tasks.len() < concurrent_count
@@ -342,7 +369,9 @@ pub async fn get_available_book_source_sse(
                 let target_name = book_name.clone();
                 let target_author = book_author.clone();
                 let user_ns_value = user_ns.clone();
+                let outbound = outbound.clone();
                 tasks.spawn(async move {
+                    let _permit = outbound.acquire().await.ok();
                     let res = svc
                         .search_book(&user_ns_value, &source, &target_name, 1)
                         .await;
@@ -357,6 +386,7 @@ pub async fn get_available_book_source_sse(
 
             match tasks.join_next().await {
                 Some(Ok((source_index, search_result, target_name, target_author))) => {
+                    completed.insert(source_index as usize);
                     last_idx = last_idx.max(source_index);
                     match search_result {
                         Ok(list) => {
@@ -413,8 +443,11 @@ pub async fn get_available_book_source_sse(
         if has_more {
             tasks.abort_all();
         }
+        // 续扫游标取「本轮尚未完成的最小源下标 - 1」：abort 的在飞源不能被
+        // 跳过（命中限额触发时并发窗口里可能还有没 join 的结果）。前端按
+        // bookSourceId 去重，回退重扫少量已完成源是安全的。
         let final_last_idx = if has_more {
-            last_idx.max(next_index as i32 - 1)
+            resume_last_index(last_index_start, next_index, &completed)
         } else {
             last_idx
         };
@@ -434,6 +467,22 @@ pub async fn get_available_book_source_sse(
     });
 
     Ok(Sse::new(ReceiverStream::new(rx).map(Ok)).keep_alive(KeepAlive::default()))
+}
+
+/// 续扫游标：从 `start+1` 起找第一个本轮未完成的源下标，返回它的前一个；
+/// 全部完成则返回 `next_index - 1`。`start = -1` 时从 0 开始。
+fn resume_last_index(
+    start: i32,
+    next_index: usize,
+    completed: &std::collections::HashSet<usize>,
+) -> i32 {
+    let begin = (start + 1).max(0) as usize;
+    for index in begin..next_index {
+        if !completed.contains(&index) {
+            return index as i32 - 1;
+        }
+    }
+    next_index as i32 - 1
 }
 
 fn effective_available_result_limit(result_limit: Option<i32>) -> usize {
@@ -566,8 +615,9 @@ fn take_available_source_sse_matches(
 #[cfg(test)]
 mod tests {
     use super::{
-        build_available_book_source_response, clamp_concurrency, should_use_available_source_cache,
-        take_available_source_cached_matches, take_available_source_sse_matches,
+        build_available_book_source_response, clamp_concurrency, resume_last_index,
+        should_use_available_source_cache, take_available_source_cached_matches,
+        take_available_source_sse_matches,
     };
     use crate::model::search::SearchBook;
     use std::collections::HashSet;
@@ -660,5 +710,17 @@ mod tests {
         assert_eq!(matches[1].book_source_id, Some(3));
         assert_eq!(matches[4].book_source_id, Some(6));
         assert_eq!(seen.len(), 5);
+    }
+
+    #[test]
+    fn resume_cursor_backtracks_to_first_unfinished_source() {
+        let completed = HashSet::from([0usize, 1, 3, 4]);
+        // 2 号在飞时被 abort：续扫从 1 开始，回退重扫 0/1（前端去重）
+        assert_eq!(resume_last_index(-1, 5, &completed), 1);
+        // 即使起点已经越过 0/1，2 号仍未完成 → 仍返回 1，下一轮从 2 重扫
+        assert_eq!(resume_last_index(1, 5, &completed), 1);
+        // 全部完成 → next_index - 1
+        let all = HashSet::from([0usize, 1, 2]);
+        assert_eq!(resume_last_index(-1, 3, &all), 2);
     }
 }

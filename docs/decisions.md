@@ -246,4 +246,11 @@ goal 执行中遇到「决策表与 spec 都沉默」的问题时，按 §5.4 �
 - **前端接线**：`api/webdav.ts` 全部切到 `/v1`；`WebdavView` 的「备份」直接调服务端快照，「恢复」调服务端恢复后只应用 `localState`。旧的 `utils/webdavBackup.ts`（前端拼装备份/恢复编排）与其单测删除，白名单逻辑迁到 `utils/webdavLocalState.ts` 并有单测。
 - **兼容面**：`/reader3` 的 JSON 文件接口与协议入口继续可用；前端已无调用方，保留给第三方脚本与已配置的 DAV 客户端。
 
+## 2026-11-14 书架排序 / 缓存内检索 / 换源候选 SSE / userdata 批量写
+
+- **书架排序用 `PATCH /v1/me/shelf:order`**：body `{bookIds}` 必须是当前书架完整集合；服务端只写 `position` 一列（`save_book_order` 既有语义），空/重复/非法 id/集合不一致 → **422 + `/bookIds` pointer**「书架已变化，请刷新后重试」。前端拖拽/置顶从 legacy `saveBooks`（整架 DELETE+重插，会覆盖未提交列）切到该端点；失败会回滚并拉一次最新书架。`saveBooks` 只保留给旧客户端与恢复兼容。
+- **缓存内全文检索用 `GET /v1/books/{bookId}/cache-search?q=&limit=`**：只扫已缓存正文、不触发上游；`q` 1..=100 字符、`limit` 1..=200（缺省 50），值级非法 → 422 + `/q`/`/limit` pointer。响应去掉 `chapterUrl`（红线 6），前端只消费 `chapterIndex`；本地书不在检索范围。耗时/内存预算仍由服务层 5000 章/50MB/10s 与并发 2 控制。
+- **换源候选 SSE 用 `GET /v1/books/{bookId}/source-candidates/events`**：复用 legacy `build_available_source_sse`（只换入口/鉴权/typed query），事件帧仍是 `message {lastIndex, hasMore, data:[SearchBook]}` + `end`。`refresh` 改 bool、`lastIndex >= -1`、`concurrentCount 1..=20`，越界 422；书籍不存在收敛为 404 `BOOK_NOT_FOUND`。**候选逐源搜索也 acquire 任务的全局出站信号量**（`TASK_OUTBOUND_CONCURRENCY`），与搜索/预下载共用同一份预算，不再是 32+20 的例外。前端 `authedEventSource` 增加可选 baseUrl，EventSource 从 `/reader3` 切到 `/v1`；`/reader3/getAvailableBookSourceSSE` 保留。
+- **userdata 批量写用 `PUT /v1/me/userdata:batch`**：body `{docs:[{name,value}]}`，最多 20 个文档、单文档序列化 ≤4MB、请求体 8MB；文档名白名单与 legacy 同口径，空批次/超限/非法名/缺 value → 422 + pointer，单个文档超 4MB → 413；同名最后写入为准，全部校验后单事务落库。前端 `api/userdata.saveUserdataBatch` 与 `userdataQueue` 的 pagehide keepalive（PUT + CSRF 头）切到 v1。**批量读 `getUserdataBatch` 仍留 `/reader3`**：契约的 `/v1/me/stats` 派生设计未拍板，本次只迁写入；读接口切换随 userdata 产品语义重设计一起做。
+
 

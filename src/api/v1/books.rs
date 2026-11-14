@@ -10,11 +10,11 @@
 //! 标题覆盖层（用户改名）在响应出口叠加，`titleOverridden` 显式标注；
 //! ETag 基于最终序列化字节，覆盖变化自然改变 ETag。
 
-use crate::api::problem::{ErrorCode, Problem};
-use crate::api::v1::V1User;
+use crate::api::problem::{ErrorCode, FieldIssue, Problem};
+use crate::api::v1::{V1Query, V1User};
 use crate::api::AppState;
 use crate::model::book_chapter::BookChapter;
-use axum::extract::{Path, Query, State};
+use axum::extract::{Path, State};
 use axum::http::{header, HeaderMap, HeaderValue, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::routing::get;
@@ -25,11 +25,20 @@ use utoipa::ToSchema;
 
 const DEFAULT_LIMIT: u32 = 50;
 const MAX_LIMIT: u32 = 200;
+/// 缓存内检索词上限（与 /reader3 一致）。
+const MAX_SEARCH_QUERY_CHARS: usize = 100;
+const DEFAULT_CACHED_SEARCH_LIMIT: u32 = 50;
+const MAX_CACHED_SEARCH_LIMIT: u32 = 200;
 
 use crate::api::etag::if_none_match_matches;
 
 pub fn router() -> Router<AppState> {
-    Router::new().route("/v1/books/{bookId}/chapters", get(list_chapters))
+    Router::new()
+        .route("/v1/books/{bookId}/chapters", get(list_chapters))
+        .route(
+            "/v1/books/{bookId}/cache-search",
+            get(search_cached_content),
+        )
 }
 
 #[derive(Debug, Deserialize, ToSchema)]
@@ -101,6 +110,130 @@ fn decode_cursor(raw: &str) -> Result<i32, Problem> {
     Ok(payload.index)
 }
 
+/// 缓存内全文检索查询：`q` 必填（≤100 字符），`limit` 1..=200 默认 50。
+#[derive(Debug, Default, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct CachedSearchQuery {
+    pub q: Option<String>,
+    pub limit: Option<u32>,
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct CachedSearchHitItem {
+    pub chapter_index: i32,
+    pub chapter_title: String,
+    /// 命中处前后各约 40 字符，单章最多 3 条
+    pub snippets: Vec<String>,
+    /// 命中内容来自编辑版（而非上游缓存）
+    pub edited: bool,
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct CachedSearchResponse {
+    pub results: Vec<CachedSearchHitItem>,
+    pub cached_chapters: u32,
+    pub total_chapters: u32,
+    pub truncated: bool,
+}
+
+fn search_field_error(pointer: &str, code: &str, detail: &str) -> Problem {
+    Problem::new(ErrorCode::ValidationFailed)
+        .detail(detail)
+        .errors(vec![FieldIssue {
+            pointer: pointer.to_string(),
+            code: code.to_string(),
+            detail: Some(detail.to_string()),
+        }])
+}
+
+/// 缓存内全文检索：只扫本书已缓存的章节正文，不触发任何上游请求。
+/// 与远程搜书（`POST /v1/searches`）无关；本地书不在检索范围。
+#[utoipa::path(
+    get,
+    path = "/v1/books/{bookId}/cache-search",
+    tag = "books",
+    operation_id = "searchCachedContent",
+    params(
+        ("bookId" = String, Path, description = "书籍 id（book_<n>）"),
+        ("q" = String, Query, description = "检索词，1..=100 字符", max_length = 100),
+        ("limit" = Option<u32>, Query, description = "命中章节上限 1..=200，缺省 50", minimum = 1, maximum = 200),
+    ),
+    security(("cookieAuth" = []), ("bearerAuth" = [])),
+    responses(
+        (status = 200, description = "按章聚合的命中与检索覆盖度", body = CachedSearchResponse),
+        (status = 400, description = "查询参数类型非法", body = Problem, content_type = "application/problem+json"),
+        (status = 404, description = "书籍不存在", body = Problem, content_type = "application/problem+json"),
+        (status = 422, description = "q 为空/超长或 limit 越界", body = Problem, content_type = "application/problem+json"),
+    )
+)]
+pub async fn search_cached_content(
+    State(state): State<AppState>,
+    V1User(user): V1User,
+    Path(book_id): Path<String>,
+    V1Query(query): V1Query<CachedSearchQuery>,
+) -> Result<Response, Problem> {
+    let raw_query = query.q.unwrap_or_default();
+    let term = raw_query.trim();
+    if term.is_empty() {
+        return Err(search_field_error("/q", "REQUIRED", "检索词不能为空"));
+    }
+    if term.chars().count() > MAX_SEARCH_QUERY_CHARS {
+        return Err(search_field_error(
+            "/q",
+            "TOO_LONG",
+            "检索词最长 100 个字符",
+        ));
+    }
+    let limit = query.limit.unwrap_or(DEFAULT_CACHED_SEARCH_LIMIT);
+    if limit == 0 || limit > MAX_CACHED_SEARCH_LIMIT {
+        return Err(search_field_error(
+            "/limit",
+            "RANGE",
+            "limit 必须在 1..=200 之间",
+        ));
+    }
+    crate::api::v1::ensure_book_registered(&state, &user.ns, &book_id).await?;
+    let title_overrides = match crate::storage::db::repo::parse_book_id(&book_id) {
+        Some(id) => state
+            .chapter_title_override_repo
+            .get_map(id)
+            .await
+            .map_err(Problem::from)?,
+        None => Default::default(),
+    };
+    let outcome = state
+        .book_service
+        .search_cached_content(&user.ns, &book_id, term, limit as usize, &title_overrides)
+        .await
+        .map_err(Problem::from)?;
+    let response = CachedSearchResponse {
+        results: outcome
+            .results
+            .into_iter()
+            .map(|hit| CachedSearchHitItem {
+                chapter_index: hit.chapter_index,
+                chapter_title: hit.chapter_title,
+                snippets: hit.snippets,
+                edited: hit.edited,
+            })
+            .collect(),
+        cached_chapters: outcome.cached_chapters as u32,
+        total_chapters: outcome.total_chapters as u32,
+        truncated: outcome.truncated,
+    };
+    let body = serde_json::to_vec(&response).expect("cached search response serializes");
+    Ok((
+        [
+            (header::CONTENT_TYPE, "application/json"),
+            (header::CACHE_CONTROL, "private, no-cache"),
+        ],
+        body,
+    )
+        .into_response())
+}
+
 /// 章节列表。
 ///
 /// `refresh=true` 是用户显式刷新：上游失败直接 502，不回退旧登记表
@@ -133,7 +266,7 @@ pub async fn list_chapters(
     State(state): State<AppState>,
     V1User(user): V1User,
     Path(book_id): Path<String>,
-    Query(query): Query<ListChaptersQuery>,
+    V1Query(query): V1Query<ListChaptersQuery>,
     headers: HeaderMap,
 ) -> Result<Response, Problem> {
     let limit = query.limit.unwrap_or(DEFAULT_LIMIT);

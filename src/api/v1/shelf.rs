@@ -10,7 +10,7 @@
 //! 进度语义（契约 §8.2）：`offset` 是 0..1 比例（存万分比）；不传时间，
 //! `lastReadAt` 由服务端写入——这是唯一可信的时钟。
 
-use crate::api::problem::{ErrorCode, Problem};
+use crate::api::problem::{ErrorCode, FieldIssue, Problem};
 use crate::api::v1::{V1Json, V1User};
 use crate::api::AppState;
 use crate::model::book::Book;
@@ -18,7 +18,7 @@ use crate::storage::db::repo::RegisterBook;
 use axum::extract::{Path, Query, State};
 use axum::http::{header, HeaderMap, HeaderValue, StatusCode};
 use axum::response::{IntoResponse, Response};
-use axum::routing::{get, post};
+use axum::routing::{get, patch, post};
 use axum::Router;
 use base64::Engine;
 use serde::{Deserialize, Serialize};
@@ -38,6 +38,7 @@ pub fn router() -> Router<AppState> {
                 .delete(remove_from_shelf),
         )
         .route("/v1/me/shelf:batchDelete", post(batch_remove_from_shelf))
+        .route("/v1/me/shelf:order", patch(reorder_shelf))
         .route("/v1/books/{bookId}", get(get_book).patch(patch_book))
 }
 
@@ -478,6 +479,55 @@ pub async fn batch_remove_from_shelf(
         }
     }
     Ok(Json(ShelfBatchDeleteResult { deleted }))
+}
+
+#[derive(Debug, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ShelfOrderRequest {
+    /// 当前书架的完整 bookId 列表，按目标顺序排列
+    pub book_ids: Vec<String>,
+}
+
+/// 只改书架顺序（只写 position 一列，其余字段原样保留）。
+///
+/// 必须提交当前书架的**完整集合**：缺书/多书说明客户端视图已过期，整批
+/// 拒绝（422「书架已变化，请刷新后重试」），避免部分提交把顺序写乱。
+#[utoipa::path(
+    patch,
+    path = "/v1/me/shelf:order",
+    tag = "me",
+    operation_id = "reorderShelf",
+    request_body = ShelfOrderRequest,
+    security(("cookieAuth" = []), ("bearerAuth" = [])),
+    responses(
+        (status = 204, description = "已保存"),
+        (status = 400, description = "请求体不是合法 JSON 或字段类型不符", body = Problem, content_type = "application/problem+json"),
+        (status = 401, description = "未登录或令牌失效", body = Problem, content_type = "application/problem+json"),
+        (status = 422, description = "空数组 / 重复 id / 非法 id / 集合与当前书架不一致", body = Problem, content_type = "application/problem+json"),
+    )
+)]
+pub async fn reorder_shelf(
+    State(state): State<AppState>,
+    V1User(user): V1User,
+    V1Json(request): V1Json<ShelfOrderRequest>,
+) -> Result<StatusCode, Problem> {
+    state
+        .book_service
+        .save_book_order(&user.ns, &request.book_ids)
+        .await
+        .map_err(|error| match error {
+            crate::error::error::AppError::BadRequest(detail) => {
+                Problem::new(ErrorCode::ValidationFailed)
+                    .detail(detail.clone())
+                    .errors(vec![FieldIssue {
+                        pointer: "/bookIds".to_string(),
+                        code: "INVALID".to_string(),
+                        detail: Some(detail),
+                    }])
+            }
+            other => Problem::from(other),
+        })?;
+    Ok(StatusCode::NO_CONTENT)
 }
 
 #[derive(Debug, Deserialize, ToSchema)]
