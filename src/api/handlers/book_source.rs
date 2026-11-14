@@ -785,10 +785,11 @@ fn should_forward_request_header(name: &str) -> bool {
     )
 }
 
-/// 本站会话 Cookie 名称：代理页与主站同源，浏览器请求头一定带着它们。
-const APP_SESSION_COOKIES: &[&str] = &["reader_access", "reader_refresh"];
+/// 本站 Cookie 前缀约定：新增任何本站 Cookie 一律用 `reader_` 前缀（登录会
+/// 话、CSRF、设备标识等），代理转发时按前缀统一剔除，不需要再维护名单。
+const APP_COOKIE_PREFIX: &str = "reader_";
 
-/// 过滤掉本站会话 Cookie，只把上游站点自己的 Cookie 转发/持久化。
+/// 过滤掉本站 Cookie，只把上游站点自己的 Cookie 转发/持久化。
 fn sanitize_upstream_cookie(raw: &str) -> Option<String> {
     let kept: Vec<&str> = raw
         .split(';')
@@ -796,9 +797,7 @@ fn sanitize_upstream_cookie(raw: &str) -> Option<String> {
         .filter(|pair| !pair.is_empty())
         .filter(|pair| {
             let name = pair.split('=').next().unwrap_or("").trim();
-            !APP_SESSION_COOKIES
-                .iter()
-                .any(|app| name.eq_ignore_ascii_case(app))
+            !name.to_ascii_lowercase().starts_with(APP_COOKIE_PREFIX)
         })
         .collect();
     if kept.is_empty() {
@@ -1267,7 +1266,9 @@ mod tests {
     #[test]
     fn sanitize_cookie_drops_reader_session_cookies() {
         assert_eq!(
-            sanitize_upstream_cookie("reader_access=main-jwt; reader_refresh=rt; sid=upstream"),
+            sanitize_upstream_cookie(
+                "reader_access=main-jwt; reader_refresh=rt; reader_csrf=future; sid=upstream"
+            ),
             Some("sid=upstream".to_string())
         );
         // 只有本站会话 Cookie 时整条丢弃，不向上游发空 Cookie 头

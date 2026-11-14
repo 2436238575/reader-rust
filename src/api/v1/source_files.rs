@@ -160,8 +160,14 @@ pub async fn fetch_source_file(
         crate::crawler::url_guard::ensure_public_outbound_url_str_allowed(raw),
     )
     .await
-    .map_err(|_| Problem::new(ErrorCode::UpstreamTimeout).detail("解析远端书源地址超时"))?
-    .map_err(|error| Problem::new(ErrorCode::UpstreamBlocked).detail(error))?;
+    .map_err(|_| {
+        Problem::new(ErrorCode::UpstreamTimeout).detail("远程导入只允许公网地址：解析超时")
+    })?
+    .map_err(|error| {
+        Problem::new(ErrorCode::UpstreamBlocked).detail(format!(
+            "远程导入只允许公网地址（不受私网白名单影响）：{error}"
+        ))
+    })?;
     let client = crate::crawler::url_guard::public_only_client_builder(
         Duration::from_secs(FETCH_TIMEOUT_SECS),
         crate::crawler::http_client::DEFAULT_USER_AGENT,

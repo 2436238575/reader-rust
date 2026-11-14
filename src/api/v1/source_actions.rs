@@ -18,10 +18,16 @@ use axum::routing::post;
 use axum::{Json, Router};
 use serde::Serialize;
 use serde_json::Value;
+use std::time::Duration;
 use utoipa::ToSchema;
 
 /// v1 代理令牌 TTL：契约要求 ≤10 分钟。
 const PROXY_TOKEN_TTL_SECS: i64 = 10 * 60;
+
+/// 登录总超时：登录请求（`request_timeout_secs`，默认 15s）+ loginCheckJs
+/// 的 JS 预算（同 30s 量级）叠加后的硬上限。放宽任一子预算时必须同步调大，
+/// 否则这里会把正常的长登录误杀。
+const LOGIN_TOTAL_TIMEOUT_SECS: u64 = 65;
 
 pub fn router() -> Router<AppState> {
     Router::new()
@@ -86,24 +92,28 @@ pub async fn login_source(
         .await
         .map_err(Problem::from)?
         .ok_or_else(|| Problem::new(ErrorCode::SourceNotFound).detail("书源不存在"))?;
-    let result = state
-        .book_service
-        .login_book_source(&user.ns, &source)
-        .await
-        .map_err(|error| {
-            // 不拼接 Cookie/响应体；5xx/Internal 给可读的上游失败文案，
-            // 不直接透出 "internal error"。
-            let detail = match &error {
-                AppError::Upstream { status, .. } => {
-                    format!("登录执行失败：上游 HTTP {status}")
-                }
-                AppError::Blocked(message) | AppError::BadRequest(message) => {
-                    format!("登录执行失败：{message}")
-                }
-                _ => "登录执行失败：上游请求失败".to_string(),
-            };
-            Problem::new(ErrorCode::SourceLoginFailed).detail(detail)
-        })?;
+    let result = tokio::time::timeout(
+        Duration::from_secs(LOGIN_TOTAL_TIMEOUT_SECS),
+        state.book_service.login_book_source(&user.ns, &source),
+    )
+    .await
+    .map_err(|_| {
+        Problem::new(ErrorCode::SourceLoginFailed).detail("登录执行超时，请检查书源登录地址")
+    })?
+    .map_err(|error| {
+        // 不拼接 Cookie/响应体；5xx/Internal 给可读的上游失败文案，
+        // 不直接透出 "internal error"。
+        let detail = match &error {
+            AppError::Upstream { status, .. } => {
+                format!("登录执行失败：上游 HTTP {status}")
+            }
+            AppError::Blocked(message) | AppError::BadRequest(message) => {
+                format!("登录执行失败：{message}")
+            }
+            _ => "登录执行失败：上游请求失败".to_string(),
+        };
+        Problem::new(ErrorCode::SourceLoginFailed).detail(detail)
+    })?;
     let status = result["status"].as_u64().unwrap_or(0);
     let http_ok = result["isSuccessful"].as_bool().unwrap_or(false);
     let cookie_count = result["cookieCount"].as_u64().unwrap_or(0) as u32;
