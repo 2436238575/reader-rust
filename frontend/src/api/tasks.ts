@@ -18,6 +18,10 @@ export interface TaskProgress {
   total: number
   unit: string
   message?: string | null
+  /** 任务作用的资源 id（AI 资料任务为 bookId） */
+  subjectId?: string | null
+  /** 当前阶段（AI 资料等长流程用） */
+  phase?: string | null
 }
 
 export interface TaskItemEvent {

@@ -7236,6 +7236,8 @@ components:
       - total
       - unit
       - message
+      - subjectId
+      - phase
       properties:
         done:
           type: integer
@@ -7245,6 +7247,16 @@ components:
           type:
           - string
           - 'null'
+        phase:
+          type:
+          - string
+          - 'null'
+          description: 当前阶段（AI 资料等长流程用）；其他任务为 null
+        subjectId:
+          type:
+          - string
+          - 'null'
+          description: 任务作用的资源 id（AI 资料任务为 bookId）；其他任务为 null
         total:
           type: integer
           format: int32

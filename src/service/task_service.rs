@@ -103,6 +103,12 @@ pub struct TaskProgress {
     pub unit: String,
     #[schema(required = true)]
     pub message: Option<String>,
+    /// 任务作用的资源 id（AI 资料任务为 bookId）；其他任务为 null
+    #[schema(required = true)]
+    pub subject_id: Option<String>,
+    /// 当前阶段（AI 资料等长流程用）；其他任务为 null
+    #[schema(required = true)]
+    pub phase: Option<String>,
 }
 
 impl TaskProgress {
@@ -112,6 +118,8 @@ impl TaskProgress {
             total,
             unit: unit.to_string(),
             message: None,
+            subject_id: None,
+            phase: None,
         }
     }
 }
@@ -655,6 +663,53 @@ impl TaskService {
         entry.view.progress.message = message;
         let progress = entry.view.progress.clone();
         push_event(entry, capacity, max_bytes, "progress", &progress);
+    }
+
+    /// 更新进度与阶段（AI 资料等需要展示 loading/text/map/saving 的任务）。
+    pub fn emit_progress_with_phase(
+        &self,
+        id: &str,
+        done: u32,
+        total: u32,
+        message: Option<String>,
+        phase: Option<String>,
+    ) {
+        let mut inner = self.lock();
+        let capacity = self.event_capacity;
+        let max_bytes = self.event_max_bytes;
+        let Some(entry) = inner.tasks.get_mut(id) else {
+            return;
+        };
+        if entry.view.state.is_terminal() {
+            return;
+        }
+        entry.view.progress.done = done;
+        entry.view.progress.total = total;
+        entry.view.progress.message = message;
+        entry.view.progress.phase = phase;
+        let progress = entry.view.progress.clone();
+        push_event(entry, capacity, max_bytes, "progress", &progress);
+    }
+
+    /// 某个资源（bookId）上最新的一条指定类型任务（含已结束；刷新页面恢复显示用）。
+    pub fn latest_for_subject(
+        &self,
+        owner_ns: &str,
+        kind: TaskKind,
+        subject_id: &str,
+    ) -> Option<TaskView> {
+        let mut inner = self.lock();
+        prune(&mut inner, now_ts(), self.ttl_secs);
+        inner
+            .tasks
+            .values()
+            .filter(|entry| {
+                entry.owner_ns == owner_ns
+                    && entry.view.kind == kind
+                    && entry.view.progress.subject_id.as_deref() == Some(subject_id)
+            })
+            .max_by_key(|entry| entry.seq)
+            .map(|entry| entry.view.clone())
     }
 
     /// 追加一批搜索结果：按 `dedupeKey` 合并，返回新增与被合并更新的条目。

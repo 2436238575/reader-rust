@@ -3159,6 +3159,10 @@ export interface components {
             /** Format: int32 */
             done: number;
             message: string | null;
+            /** @description 当前阶段（AI 资料等长流程用）；其他任务为 null */
+            phase: string | null;
+            /** @description 任务作用的资源 id（AI 资料任务为 bookId）；其他任务为 null */
+            subjectId: string | null;
             /** Format: int32 */
             total: number;
             /** @description 进度单位：`source`（搜索书源数）等 */
