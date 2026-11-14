@@ -60,6 +60,8 @@ GET /reader3/getBookSource
 
 ## 登录书源
 
+> **v1**：`POST /v1/sources/{sourceId}/login`，返回 `{ok, message, cookieCount, previewUrl?}`；失败 422 `SOURCE_LOGIN_FAILED`，不回显 Cookie 值。前端登录预览已切 v1。
+
 ```text
 POST /reader3/loginBookSource
 ```
@@ -182,6 +184,8 @@ POST /reader3/testBookSources
 
 ## 远程读取书源文件
 
+> **v1**：`POST /v1/sources:fetch`，body `{url}`；严格公网 SSRF（忽略 `ALLOW_PRIVATE_NETWORK`，只允许 http/https，DNS/重定向逐跳拒绝私网/环回/保留地址），15 秒超时、响应 ≤32MB；私网目标 400 `UPSTREAM_BLOCKED`。
+
 ```text
 POST /reader3/readRemoteSourceFile
 ```
@@ -190,6 +194,8 @@ POST /reader3/readRemoteSourceFile
 
 ## 本地读取书源文件
 
+> **v1**：`POST /v1/sources:parse`（multipart `file`，`.json/.txt`，≤32MB），只解析不落库；非法 JSON/源材料 422，超限 413。前端导入已切 v1。
+
 ```text
 POST /reader3/readSourceFile
 ```
@@ -197,6 +203,8 @@ POST /reader3/readSourceFile
 上传 `multipart/form-data` 文件（`.json` 或 `.txt`），返回解析出的书源对象数组。单文件上限 32MB；单请求 multipart 字段数上限 20 个（超限 400）。
 
 ## 书源代理限定令牌
+
+> **v1**：`POST /v1/sources/{sourceId}/proxy-token`，TTL 600 秒、scope=`bookSourceProxy`、bsid 绑定单一源，只能访问 `/reader3/bookSourceProxy` 前缀；legacy 端点仍为 30 分钟。
 
 ```text
 POST /reader3/mintBookSourceProxyToken
@@ -265,8 +273,10 @@ POST /reader3/importBookSources
 
 ## 导出书源
 
+> **v1**：`GET /v1/sources:export` 返回全量 `[BookSource]`（含规则），`Content-Disposition: attachment; filename="reader-sources-<UTC>.json"`。前端导出已切该端点。
+
 ```text
 POST /reader3/exportBookSources
 ```
 
-> **未实现**：书源导出接口，代码中无此路由。当前没有专门的导出接口，可由 `GET/POST /reader3/getBookSource`（单条）或 `GET/POST /reader3/getBookSources`（全部）取回书源 JSON 后自行保存为文件（依据：`src/api/router.rs`（无 export 路由））。
+> **未实现**：`/reader3/exportBookSources` 路由不存在；导出请用上面的 `GET /v1/sources:export`（依据：`src/api/router.rs` 无该路由，`src/api/v1/source_files.rs` 为 v1 实现）。

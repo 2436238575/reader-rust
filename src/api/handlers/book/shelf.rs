@@ -255,21 +255,35 @@ pub async fn set_book_source(
     if target_id == book_id {
         return Err(AppError::BadRequest("换源目标与当前书相同".to_string()));
     }
+    let saved = change_book_source(&state, &user_ns, &book_id, &target_id).await?;
+    Ok(ok_with_cover_routes(&state, serde_json::to_value(saved).unwrap_or_default()).await)
+}
 
+/// 换源落地的共用实现：改绑登记行、清旧源缓存、回填候选元数据、刷新详情。
+/// 调用方负责参数存在性/同源校验；v1 端点额外做预检以返回精确状态码。
+pub(crate) async fn change_book_source(
+    state: &AppState,
+    user_ns: &str,
+    book_id: &str,
+    target_id: &str,
+) -> Result<Book, AppError> {
+    // 内部统一持有 String：后续多处调用同时接受 &str/&String，避免逐处
+    // needless_borrow；函数出口不依赖所有权。
+    let user_ns = user_ns.to_string();
     let shelf_book = state
         .book_service
-        .get_shelf_book(&user_ns, &book_id)
+        .get_shelf_book(&user_ns, book_id)
         .await?
         .ok_or_else(|| AppError::BadRequest("书籍未加入书架".to_string()))?;
     let repo = state.book_service.book_repo();
     let target = repo
-        .get(&user_ns, &target_id)
+        .get(&user_ns, target_id)
         .await?
         .ok_or_else(|| AppError::BadRequest("目标书籍不存在".to_string()))?;
     // 目标是另一本在架书：合并会让两本书共享 bookId，明确拒绝
     if state
         .book_service
-        .get_shelf_book(&user_ns, &target_id)
+        .get_shelf_book(&user_ns, target_id)
         .await?
         .is_some()
     {
@@ -288,7 +302,7 @@ pub async fn set_book_source(
     // 超过 1h TTL 的旧候选不再用于回填元数据（随后 get_book_info 强刷兜底）
     let candidates = state
         .book_service
-        .load_fresh_book_sources_cache(&user_ns, &book_id)
+        .load_fresh_book_sources_cache(&user_ns, book_id)
         .await?
         .unwrap_or_default();
 
@@ -296,19 +310,19 @@ pub async fn set_book_source(
     // 有一行，所以先删目标登记行再改绑，两步放在同一个事务里。
     // 目标行之前预览过的正文历史会变成没有书指向的记录，仍然保留在库中。
     let mut tx = repo.begin().await?;
-    repo.delete_on(&mut tx, &target_id).await?;
-    repo.rebind_on(&mut tx, &book_id, &target.book_url, target.book_source_id)
+    repo.delete_on(&mut tx, target_id).await?;
+    repo.rebind_on(&mut tx, book_id, &target.book_url, target.book_source_id)
         .await?;
     tx.commit().await?;
     let _ = state
         .book_service
-        .purge_book_cache(&user_ns, &target_id)
+        .purge_book_cache(&user_ns, target_id)
         .await;
-    state.image_service.remove_by_book_id(&target_id).await;
+    state.image_service.remove_by_book_id(target_id).await;
     // 当前书的目录/详情/评论缓存随源失效，候选清单与正文历史保留
     let _ = state
         .book_service
-        .purge_book_reading_cache(&user_ns, &book_id)
+        .purge_book_reading_cache(&user_ns, book_id)
         .await;
 
     let mut updated = shelf_book.clone();
@@ -320,7 +334,7 @@ pub async fn set_book_source(
 
     if let Some(candidate) = candidates
         .into_iter()
-        .find(|item| item.book_id.as_deref() == Some(target_id.as_str()))
+        .find(|item| item.book_id.as_deref() == Some(target_id))
     {
         if !candidate.name.trim().is_empty() {
             updated.name = candidate.name;
@@ -336,7 +350,7 @@ pub async fn set_book_source(
 
     match state
         .book_service
-        .get_book_info(&user_ns, &book_id, &new_source, &target.book_url, true)
+        .get_book_info(&user_ns, book_id, &new_source, &target.book_url, true)
         .await
     {
         Ok(info) => merge_book(&mut updated, info),
@@ -352,7 +366,7 @@ pub async fn set_book_source(
 
     // save_book 按 bookId 匹配原条目：进度/分组等字段随条目保留
     let saved = state.book_service.save_book(&user_ns, updated).await?;
-    Ok(ok_with_cover_routes(&state, serde_json::to_value(saved).unwrap_or_default()).await)
+    Ok(saved)
 }
 
 #[derive(Debug, Deserialize)]

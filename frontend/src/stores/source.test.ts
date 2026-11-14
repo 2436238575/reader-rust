@@ -17,7 +17,6 @@ import {
 import type { BookSource, BookSourceSummary } from '../types'
 
 vi.mock('../api/source', () => ({
-  getBookSources: vi.fn(),
   getBookSourceList: vi.fn(),
   getBookSource: vi.fn(),
   saveBookSource: vi.fn(),

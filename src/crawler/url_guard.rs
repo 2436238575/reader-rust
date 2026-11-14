@@ -259,6 +259,7 @@ fn is_forbidden_v4(ip: &Ipv4Addr) -> bool {
         || (o[0] == 100 && (o[1] & 0xC0) == 64)        // 100.64/10 CGNAT
         || (o[0] == 192 && o[1] == 0 && o[2] == 0)     // 192.0.0.0/24
         || (o[0] == 192 && o[1] == 0 && o[2] == 2)     // 192.0.2.0/24 TEST-NET-1
+        || (o[0] == 192 && o[1] == 88 && o[2] == 99)    // 192.88.99.0/24 6to4 relay
         || (o[0] == 198 && (o[1] & 0xFE) == 18)        // 198.18/15 基准测试
         || (o[0] == 198 && o[1] == 51 && o[2] == 100)  // 198.51.100.0/24 TEST-NET-2
         || (o[0] == 203 && o[1] == 0 && o[2] == 113)   // 203.0.113.0/24 TEST-NET-3
@@ -272,6 +273,10 @@ fn is_forbidden_v6(ip: &Ipv6Addr) -> bool {
         || ip.is_multicast()
         || (s[0] & 0xFFC0) == 0xFE80  // fe80::/10 链路本地
         || (s[0] & 0xFE00) == 0xFC00  // fc00::/7 唯一本地地址
+        || (s[0] == 0x2001 && s[1] == 0x0DB8) // 2001:db8::/32 文档
+        || (s[0] == 0x0100 && s[1] == 0 && s[2] == 0 && s[3] == 0) // 100::/64 丢弃
+        || (s[0] == 0x2001 && s[1] == 0x0002) // 2001:2::/48 基准测试
+        || (s[0] == 0x0064 && s[1] == 0xFF9B && s[2] == 0x0001) // 64:ff9b:1::/48 本地 NAT64
         || (s[0] & 0xFFC0) == 0xFEC0 // fec0::/10 站点本地（已废弃但仍是内网语义）
         // 6to4（2002::/16，RFC 3056）：地址写作 2002:V4HI:V4LO::/48，
         // 内嵌 IPv4 占第 2-3 个 16 位段（s[1]、s[2]）。
@@ -517,6 +522,71 @@ pub fn guarded_client_builder(timeout: Duration, user_agent: &str) -> reqwest::C
         .redirect(guarded_redirect_policy())
         .dns_resolver(guarded_dns_resolver())
         .tls_backend_preconfigured(crate::crawler::tls::shared_client_config())
+}
+
+/// 严格公网解析器：**不读取** `ALLOW_PRIVATE_NETWORK` / 白名单，任何解析出
+/// 私网/环回/链路本地/保留地址的主机都直接拒绝。供 `POST /v1/sources:fetch`
+/// 这类「客户端给任意 URL，服务端只应访问公网」的端点使用。
+#[derive(Debug)]
+pub struct PublicOnlyResolver;
+
+impl reqwest::dns::Resolve for PublicOnlyResolver {
+    fn resolve(&self, name: reqwest::dns::Name) -> reqwest::dns::Resolving {
+        Box::pin(async move {
+            let host = name.as_str().trim_end_matches('.');
+            let addrs: Vec<std::net::SocketAddr> =
+                tokio::net::lookup_host((host, 0)).await?.collect();
+            check_resolved_ips(addrs.iter().map(|addr| addr.ip())).map_err(OutboundBlocked)?;
+            let addrs: reqwest::dns::Addrs = Box::new(addrs.into_iter());
+            Ok(addrs)
+        })
+    }
+}
+
+fn public_only_redirect_policy() -> Policy {
+    Policy::custom(|attempt| {
+        if attempt.previous().len() >= MAX_REDIRECTS {
+            return attempt.error("too many redirects");
+        }
+        if is_obviously_internal_url(attempt.url()) {
+            return attempt.error("redirect target is an internal address");
+        }
+        attempt.follow()
+    })
+}
+
+/// 严格公网 client builder：15 秒级超时由调用方传入；重定向逐跳拒绝内网
+/// 字面地址，域名跳转由 [`PublicOnlyResolver`] 在解析期复核。
+pub fn public_only_client_builder(timeout: Duration, user_agent: &str) -> reqwest::ClientBuilder {
+    reqwest::Client::builder()
+        .timeout(timeout)
+        .user_agent(user_agent.to_string())
+        // 代理会用自己的 DNS 解析连接目标，绕过本地解析期守卫；严格模式
+        // 直接禁用出站代理
+        .no_proxy()
+        .redirect(public_only_redirect_policy())
+        .dns_resolver(std::sync::Arc::new(PublicOnlyResolver))
+        .tls_backend_preconfigured(crate::crawler::tls::shared_client_config())
+}
+
+/// 严格公网 URL 预检：协议 + 主机名 + 解析出的全部 IP，忽略部署级私网白名单。
+pub async fn ensure_public_outbound_url_allowed(url: &Url) -> Result<(), String> {
+    if !matches!(url.scheme(), "http" | "https") {
+        return Err(format!("不支持的协议: {}", url.scheme()));
+    }
+    let host = outbound_lookup_host(url)?;
+    let port = url.port_or_known_default().unwrap_or(80);
+    let addrs = tokio::net::lookup_host((host.as_str(), port))
+        .await
+        .map_err(|e| format!("无法解析主机 {host}: {e}"))?;
+    check_resolved_ips(addrs.map(|addr| addr.ip()))
+}
+
+/// 便捷入口：解析字符串后做严格公网校验。
+pub async fn ensure_public_outbound_url_str_allowed(raw: &str) -> Result<Url, String> {
+    let url = Url::parse(raw.trim()).map_err(|e| format!("URL 解析失败: {e}"))?;
+    ensure_public_outbound_url_allowed(&url).await?;
+    Ok(url)
 }
 
 /// 改全局守卫状态的测试互斥：并行测试里 allow/whitelist 互相踩会偶发失败。
@@ -839,5 +909,28 @@ mod tests {
         restore_guard_defaults();
         // 守卫开启时同样拒绝（不依赖 DNS/内网判定）
         assert!(ensure_outbound_url_str_allowed_blocking("file:///etc/passwd").is_err());
+    }
+
+    #[tokio::test]
+    #[allow(clippy::await_holding_lock)] // 测试串行锁必须跨 await 持有
+    async fn strict_public_guard_ignores_allow_private_and_whitelist() {
+        let _lock = TEST_SERIALIZER.lock().unwrap();
+        set_allow_private_network(true);
+        set_private_network_whitelist(Vec::new());
+        for raw in [
+            "http://127.0.0.1/",
+            "http://10.0.0.1/",
+            "http://192.168.1.1/",
+            "http://169.254.169.254/latest/meta-data/",
+            "http://[::1]/",
+            "http://localhost/",
+            "file:///etc/passwd",
+        ] {
+            assert!(
+                ensure_public_outbound_url_str_allowed(raw).await.is_err(),
+                "{raw} 在严格公网模式下必须拒绝"
+            );
+        }
+        restore_guard_defaults();
     }
 }

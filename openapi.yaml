@@ -1534,6 +1534,67 @@ paths:
       security:
       - cookieAuth: []
       - bearerAuth: []
+  /v1/books/{bookId}/source:
+    put:
+      tags:
+      - books
+      summary: |-
+        换源落地：把当前书的绑定改到 targetBookId 的书源/地址，bookId 与阅读
+        进度/分组/书签/正文历史全部保留。
+      operationId: changeBookSource
+      parameters:
+      - name: bookId
+        in: path
+        description: 当前书 id（book_<n>）
+        required: true
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ChangeSourceRequest'
+        required: true
+      responses:
+        '200':
+          description: 换源后的书籍（bookId 不变）
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Book'
+        '400':
+          description: 请求体不是合法 JSON 或字段类型不符
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '401':
+          description: 未登录或令牌失效
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '404':
+          description: 当前书/目标书/目标书源不存在
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '409':
+          description: 当前书不在书架，或目标书已在书架
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '422':
+          description: 目标与当前书相同
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+      security:
+      - cookieAuth: []
+      - bearerAuth: []
   /v1/books/{bookId}/source-candidates/events:
     get:
       tags:
@@ -3133,6 +3194,84 @@ paths:
       security:
       - cookieAuth: []
       - bearerAuth: []
+  /v1/sources/{sourceId}/login:
+    post:
+      tags:
+      - sources
+      summary: |-
+        执行书源登录规则（loginUrl / loginCheckJs），成功时 Cookie 已写入用户
+        的独立 Cookie jar。失败返回 422，不泄露 Cookie 值或响应体。
+      operationId: loginSource
+      parameters:
+      - name: sourceId
+        in: path
+        description: 书源 id（src_<n>）
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: 登录成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SourceLoginResult'
+        '401':
+          description: 未登录或令牌失效
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '404':
+          description: 书源不存在
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '422':
+          description: 登录请求失败或 loginCheckJs 判定失败
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+      security:
+      - cookieAuth: []
+      - bearerAuth: []
+  /v1/sources/{sourceId}/proxy-token:
+    post:
+      tags:
+      - sources
+      summary: 签发书源代理限定令牌：10 分钟、scope=代理、绑定单一 bookSourceId。
+      operationId: mintSourceProxyToken
+      parameters:
+      - name: sourceId
+        in: path
+        description: 书源 id（src_<n>）
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: 限定令牌
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SourceProxyTokenResult'
+        '401':
+          description: 未登录或令牌失效
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '404':
+          description: 书源不存在
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+      security:
+      - cookieAuth: []
+      - bearerAuth: []
   /v1/sources/{sourceId}:test:
     post:
       tags:
@@ -3275,6 +3414,84 @@ paths:
       security:
       - cookieAuth: []
       - bearerAuth: []
+  /v1/sources:export:
+    get:
+      tags:
+      - sources
+      summary: '全量导出书源材料（含全部规则字段），带 `Content-Disposition: attachment`。'
+      operationId: exportSources
+      responses:
+        '200':
+          description: 全量书源 JSON 数组（attachment）
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/BookSource'
+        '401':
+          description: 未登录或令牌失效
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+      security:
+      - cookieAuth: []
+      - bearerAuth: []
+  /v1/sources:fetch:
+    post:
+      tags:
+      - sources
+      summary: 从远端 URL 拉取书源 JSON 并解析（严格公网 SSRF 策略）。
+      operationId: fetchSourceFile
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/FetchSourcesRequest'
+        required: true
+      responses:
+        '200':
+          description: 解析出的书源（未落库）
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/BookSource'
+        '400':
+          description: URL 非法或指向私网/环回/保留地址
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '401':
+          description: 未登录或令牌失效
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '413':
+          description: 远端响应超过 32MB
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '422':
+          description: JSON 或源材料非法
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '502':
+          description: 远端请求失败或返回非 2xx
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+      security:
+      - cookieAuth: []
+      - bearerAuth: []
   /v1/sources:import:
     post:
       tags:
@@ -3319,6 +3536,49 @@ paths:
                 $ref: '#/components/schemas/Problem'
         '429':
           description: 并发任务超限，带 Retry-After
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+      security:
+      - cookieAuth: []
+      - bearerAuth: []
+  /v1/sources:parse:
+    post:
+      tags:
+      - sources
+      summary: 解析上传的书源文件：只解析、不落库，返回 `Vec<BookSource>` 供预览。
+      operationId: parseSourceFile
+      requestBody:
+        description: file 字段：.json / .txt（≤32MB）
+        content:
+          multipart/form-data:
+            schema:
+              type: string
+        required: true
+      responses:
+        '200':
+          description: 解析出的书源（未落库）
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/BookSource'
+        '401':
+          description: 未登录或令牌失效
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '413':
+          description: 文件超过 32MB
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '422':
+          description: 缺少文件 / 扩展名不支持 / JSON 或源材料非法
           content:
             application/problem+json:
               schema:
@@ -4490,6 +4750,15 @@ components:
           type:
           - string
           - 'null'
+    ChangeSourceRequest:
+      type: object
+      required:
+      - targetBookId
+      properties:
+        targetBookId:
+          type: string
+          description: 换源候选的 bookId（必须是已登记、但不在书架上的书）
+      additionalProperties: false
     ChapterContent:
       type: object
       description: 章节正文（v1 形状）。`format` 由服务端统一判定并下发（契约 §9.5）。
@@ -5286,6 +5555,7 @@ components:
       - REPLACE_RULE_NOT_FOUND
       - BOOK_NOT_IN_SHELF
       - SOURCE_DISABLED
+      - SOURCE_LOGIN_FAILED
       - TASK_ALREADY_RUNNING
       - CONFLICT
       - VERSION_CONFLICT
@@ -5300,6 +5570,14 @@ components:
       - API_REMOVED
       - UNKNOWN_FIELD
       - INTERNAL
+    FetchSourcesRequest:
+      type: object
+      required:
+      - url
+      properties:
+        url:
+          type: string
+      additionalProperties: false
     FieldIssue:
       type: object
       description: 422 校验失败的逐字段错误：`pointer` 是 JSON Pointer，前端直接映射表单控件。
@@ -6668,6 +6946,25 @@ components:
           type: integer
           format: int32
           minimum: 0
+    SourceLoginResult:
+      type: object
+      required:
+      - ok
+      - message
+      - cookieCount
+      properties:
+        cookieCount:
+          type: integer
+          format: int32
+          description: 本次最终响应 `Set-Cookie` 的条数（不返回 Cookie 值）
+          minimum: 0
+        message:
+          type: string
+        ok:
+          type: boolean
+        previewUrl:
+          type: string
+          description: 登录请求的最终页面地址，前端用它打开代理预览（可选）
     SourcePage:
       type: object
       description: '游标分页容器（契约 §5.4）：`nextCursor: null` 表示到底。'
@@ -6689,6 +6986,17 @@ components:
           format: int32
           description: 过滤后的总数（小表直接算，不做惰性统计）
           minimum: 0
+    SourceProxyTokenResult:
+      type: object
+      required:
+      - token
+      - expiresIn
+      properties:
+        expiresIn:
+          type: integer
+          format: int64
+        token:
+          type: string
     SourceSummary:
       type: object
       description: 书源摘要：展示字段 + `exploreUrl`，不含规则 JSON。

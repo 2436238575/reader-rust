@@ -65,6 +65,7 @@ const REQUIRED_PATHS: &[&str] = &[
     "/v1/cache/stats",
     // books / chapters
     "/v1/books/{bookId}",
+    "/v1/books/{bookId}/source",
     "/v1/books/{bookId}/cache",
     "/v1/books/{bookId}/chapter-marks",
     "/v1/books/{bookId}/chapters",
@@ -97,7 +98,12 @@ const REQUIRED_PATHS: &[&str] = &[
     "/v1/sources:deleteInvalid",
     "/v1/sources:test",
     "/v1/sources:import",
+    "/v1/sources:parse",
+    "/v1/sources:fetch",
+    "/v1/sources:export",
     "/v1/sources/{sourceId}:test",
+    "/v1/sources/{sourceId}/login",
+    "/v1/sources/{sourceId}/proxy-token",
     "/v1/local-books",
     // tasks / searches / SSE tickets（P2）
     "/v1/searches",

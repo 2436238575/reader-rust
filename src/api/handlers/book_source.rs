@@ -28,7 +28,7 @@ use url::Url;
 const MAX_TEST_SOURCE_BATCH_SIZE: usize = 100;
 
 /// `readSourceFile` 上传的书源文件上限：书源是 JSON 文本，32MB 已远超正常体积。
-const MAX_SOURCE_FILE_BYTES: usize = 32 * 1024 * 1024;
+pub(crate) const MAX_SOURCE_FILE_BYTES: usize = 32 * 1024 * 1024;
 
 #[derive(Debug, Deserialize)]
 pub struct BookSourceIdParam {
@@ -401,8 +401,14 @@ pub async fn book_source_proxy(
         .map_err(AppError::BadRequest)?;
     let upstream_referer = extract_upstream_referer(&headers);
 
-    // 校验通过：把请求里的 Cookie 写进该书源的会话存储（首个副作用）
-    if let Some(cookie) = headers.get(header::COOKIE).and_then(|v| v.to_str().ok()) {
+    // 校验通过：把请求里的 Cookie 写进该书源的会话存储（首个副作用）。
+    // 必须先剔除本站会话 Cookie：代理页与主站同源，浏览器请求会带上
+    // reader_access/reader_refresh，原样转发/持久化等于把主 JWT 交给书源。
+    let upstream_cookie = headers
+        .get(header::COOKIE)
+        .and_then(|value| value.to_str().ok())
+        .and_then(sanitize_upstream_cookie);
+    if let Some(cookie) = &upstream_cookie {
         state
             .book_service
             .set_source_cookie(&user_ns, &source.book_source_url, cookie)
@@ -438,12 +444,22 @@ fn mint_proxy_token(
     user: &crate::auth::extractor::AuthUser,
     book_source_id: i64,
 ) -> Result<String, AppError> {
+    mint_proxy_token_with_ttl(state, user, book_source_id, PROXY_TOKEN_TTL_SECS)
+}
+
+/// 签发指定 TTL 的限定代理令牌（v1 端点要求 ≤10 分钟）。
+pub(crate) fn mint_proxy_token_with_ttl(
+    state: &AppState,
+    user: &crate::auth::extractor::AuthUser,
+    book_source_id: i64,
+    ttl_secs: i64,
+) -> Result<String, AppError> {
     let now = chrono::Utc::now().timestamp();
     let claims = crate::auth::jwt::Claims {
         sub: user.username.clone(),
         uid: user.uid,
         iat: now,
-        exp: now + PROXY_TOKEN_TTL_SECS,
+        exp: now + ttl_secs,
         ver: user.ver,
         scope: Some(crate::auth::jwt::PROXY_TOKEN_SCOPE.to_string()),
         bsid: Some(book_source_id),
@@ -635,8 +651,12 @@ async fn forward_book_source_request(
         }
     }
 
-    if let Some(cookie) = headers.get(header::COOKIE) {
-        builder = builder.header(header::COOKIE, cookie.clone());
+    if let Some(cookie) = headers
+        .get(header::COOKIE)
+        .and_then(|value| value.to_str().ok())
+        .and_then(sanitize_upstream_cookie)
+    {
+        builder = builder.header(header::COOKIE, cookie);
     }
 
     let referer_value = upstream_referer.unwrap_or(target_url);
@@ -755,8 +775,37 @@ async fn forward_book_source_request(
 fn should_forward_request_header(name: &str) -> bool {
     !matches!(
         name.to_ascii_lowercase().as_str(),
-        "host" | "content-length" | "authorization" | "referer" | "origin" | "connection"
+        "host"
+            | "content-length"
+            | "authorization"
+            | "cookie"
+            | "referer"
+            | "origin"
+            | "connection"
     )
+}
+
+/// 本站会话 Cookie 名称：代理页与主站同源，浏览器请求头一定带着它们。
+const APP_SESSION_COOKIES: &[&str] = &["reader_access", "reader_refresh"];
+
+/// 过滤掉本站会话 Cookie，只把上游站点自己的 Cookie 转发/持久化。
+fn sanitize_upstream_cookie(raw: &str) -> Option<String> {
+    let kept: Vec<&str> = raw
+        .split(';')
+        .map(str::trim)
+        .filter(|pair| !pair.is_empty())
+        .filter(|pair| {
+            let name = pair.split('=').next().unwrap_or("").trim();
+            !APP_SESSION_COOKIES
+                .iter()
+                .any(|app| name.eq_ignore_ascii_case(app))
+        })
+        .collect();
+    if kept.is_empty() {
+        None
+    } else {
+        Some(kept.join("; "))
+    }
 }
 
 fn is_ajax_api_target(target_url: &str) -> bool {
@@ -1090,7 +1139,7 @@ pub async fn delete_all_book_sources(
     Ok(Json(ApiResponse::ok(serde_json::json!({"deleted": true}))))
 }
 
-fn extract_sources(payload: serde_json::Value) -> Result<Vec<BookSource>, AppError> {
+pub(crate) fn extract_sources(payload: serde_json::Value) -> Result<Vec<BookSource>, AppError> {
     if let Some(items) = payload.as_array() {
         return items
             .iter()
@@ -1213,5 +1262,19 @@ mod tests {
         let err = validate_requested_source_ids(Some(&ids)).unwrap_err();
 
         assert!(matches!(err, AppError::BadRequest(message) if message.contains("100")));
+    }
+
+    #[test]
+    fn sanitize_cookie_drops_reader_session_cookies() {
+        assert_eq!(
+            sanitize_upstream_cookie("reader_access=main-jwt; reader_refresh=rt; sid=upstream"),
+            Some("sid=upstream".to_string())
+        );
+        // 只有本站会话 Cookie 时整条丢弃，不向上游发空 Cookie 头
+        assert_eq!(
+            sanitize_upstream_cookie("reader_access=main-jwt; reader_refresh=rt"),
+            None
+        );
+        assert_eq!(sanitize_upstream_cookie(""), None);
     }
 }

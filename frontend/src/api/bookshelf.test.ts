@@ -20,6 +20,7 @@ vi.mock('./http', () => ({
   default: {
     get: vi.fn(),
     post: vi.fn(),
+    put: vi.fn(),
     delete: vi.fn(),
   },
   UPLOAD_TIMEOUT_MS: 900_000,
@@ -27,6 +28,7 @@ vi.mock('./http', () => ({
 
 const getMock = http.get as unknown as Mock
 const postMock = http.post as unknown as Mock
+const putMock = http.put as unknown as Mock
 const deleteMock = http.delete as unknown as Mock
 
 describe('getCoverUrl', () => {
@@ -428,8 +430,13 @@ describe('getChapterList 会话内缓存（v1 游标分页）', () => {
   it('setBookSource 成功后失效该书的目录缓存', async () => {
     await getChapterList({ bookId: 'switch-book' })
     expect(getMock).toHaveBeenCalledTimes(1)
+    putMock.mockResolvedValue({ data: { bookId: 'switch-book' } })
     await setBookSource({ bookId: 'switch-book', targetBookId: 'candidate-1' })
-    expect(postMock).toHaveBeenCalledTimes(1)
+    expect(putMock).toHaveBeenCalledWith(
+      '/books/switch-book/source',
+      { targetBookId: 'candidate-1' },
+      { baseURL: API_V1_BASE }
+    )
 
     await getChapterList({ bookId: 'switch-book' })
     expect(getMock).toHaveBeenCalledTimes(2)

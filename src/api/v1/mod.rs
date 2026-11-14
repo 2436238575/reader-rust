@@ -39,7 +39,9 @@ mod me;
 mod replace_rules;
 mod reviews;
 mod shelf;
+mod source_actions;
 mod source_candidates;
+mod source_files;
 mod source_tasks;
 mod sources;
 mod tasks;
@@ -71,6 +73,8 @@ pub fn router(
         .merge(tasks::router())
         .merge(source_candidates::router())
         .merge(source_tasks::router())
+        .merge(source_actions::router())
+        .merge(source_files::router())
         .merge(auth::authed_router())
         .route_layer(axum::middleware::from_fn_with_state(
             state.clone(),
@@ -103,6 +107,8 @@ pub fn router(
     // trace 层在此之后挂，仍然包裹导入路由
     let v1 = v1.merge(chapter_imports::router(state.clone(), upload_timeout));
     let v1 = v1.merge(local_books::router(state.clone(), upload_timeout));
+    // 书源文件解析（≤32MB multipart）同样在常规超时/1MB 体限之外
+    let v1 = v1.merge(source_files::upload_router(state.clone(), upload_timeout));
     // WebDAV 文件浏览/备份恢复同样是大文件域：自带 900s 超时与 100MB 体限，
     // 鉴权与 CSRF 在子路由自含（与 local-books 同模式）
     let v1 = v1.merge(webdav::router(state.clone(), upload_timeout));
@@ -434,6 +440,11 @@ pub fn openapi_yaml() -> String {
         sources::delete_all_sources,
         sources::delete_invalid_sources,
         sources::explore_source,
+        source_files::parse_source_file,
+        source_files::fetch_source_file,
+        source_files::export_sources,
+        source_actions::login_source,
+        source_actions::mint_proxy_token,
         shelf::add_to_shelf,
         shelf::list_shelf,
         shelf::get_shelf_item,
@@ -449,6 +460,7 @@ pub fn openapi_yaml() -> String {
         replace_rules::batch_upsert_replace_rules,
         replace_rules::batch_delete_replace_rules,
         shelf::patch_book,
+        shelf::change_source,
         cache::cache_stats,
         cache::purge_cache,
         cache::delete_book_cache,
@@ -539,6 +551,10 @@ pub fn openapi_yaml() -> String {
         sources::BatchDeleteSourcesResult,
         sources::DeleteAllSourcesRequest,
         sources::DeleteAllSourcesResult,
+        source_files::FetchSourcesRequest,
+        source_actions::SourceLoginResult,
+        source_actions::SourceProxyTokenResult,
+        shelf::ChangeSourceRequest,
         crate::model::book_source::BookSource,
         crate::model::bookmark::Bookmark,
         crate::model::book_group::BookGroup,

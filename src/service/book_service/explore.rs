@@ -248,13 +248,23 @@ impl BookService {
             None
         };
 
+        // 只统计本次最终响应的 Set-Cookie 条数，不回传 Cookie 值；跳转中间
+        // 响应写入的 Cookie 已在共享 jar 里，但无法通过 reqwest 公开 API 枚举
+        let cookie_count = res
+            .headers
+            .iter()
+            .filter(|(name, _)| name.eq_ignore_ascii_case("set-cookie"))
+            .count();
+
         Ok(serde_json::json!({
             "success": true,
+            "isSuccessful": res.is_successful,
             "status": res.status,
             "url": res.url,
             "checkResult": check_result,
             "bodyPreview": res.body.chars().take(500).collect::<String>(),
-            "bodyHtml": res.body
+            "bodyHtml": res.body,
+            "cookieCount": cookie_count
         }))
     }
 

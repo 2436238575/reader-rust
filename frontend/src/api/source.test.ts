@@ -7,6 +7,11 @@ import {
   deleteInvalidBookSources,
   getBookSource,
   parseSourceId,
+  exportBookSources,
+  loginBookSource,
+  mintBookSourceProxyToken,
+  readRemoteSourceFile,
+  readSourceFile,
   saveBookSource,
   saveBookSources,
 } from './source'
@@ -19,6 +24,7 @@ vi.mock('./http', () => ({
     put: vi.fn(),
     delete: vi.fn(),
   },
+  UPLOAD_TIMEOUT_MS: 900_000,
 }))
 
 const getMock = http.get as unknown as Mock
@@ -95,5 +101,58 @@ describe('source 写链路（v1）', () => {
     const result = await deleteInvalidBookSources()
     expect(postMock).toHaveBeenCalledWith('/sources:deleteInvalid', {}, { baseURL: API_V1_BASE })
     expect(result).toEqual({ deleted: 1 })
+  })
+})
+
+describe('source 收尾端点（v1）', () => {
+  beforeEach(() => {
+    getMock.mockReset()
+    postMock.mockReset()
+  })
+
+  it('登录走 /v1/sources/{id}/login', async () => {
+    postMock.mockResolvedValue({ data: { ok: true } })
+    await loginBookSource(12)
+    expect(postMock).toHaveBeenCalledWith('/sources/src_12/login', undefined, {
+      baseURL: API_V1_BASE,
+    })
+  })
+
+  it('代理票据走 /v1/sources/{id}/proxy-token', async () => {
+    postMock.mockResolvedValue({ data: { token: 't', expiresIn: 600 } })
+    await mintBookSourceProxyToken({ bookSourceId: 12 })
+    expect(postMock).toHaveBeenCalledWith('/sources/src_12/proxy-token', undefined, {
+      baseURL: API_V1_BASE,
+    })
+  })
+
+  it('本地文件解析走 /v1/sources:parse', async () => {
+    postMock.mockResolvedValue({ data: [] })
+    await readSourceFile(new File(['[]'], 'sources.json'))
+    const [url, body, config] = postMock.mock.calls[0]
+    expect(url).toBe('/sources:parse')
+    expect(body).toBeInstanceOf(FormData)
+    expect(config).toEqual(
+      expect.objectContaining({ baseURL: API_V1_BASE, timeout: 900_000 })
+    )
+  })
+
+  it('远端拉取走 /v1/sources:fetch', async () => {
+    postMock.mockResolvedValue({ data: [] })
+    await readRemoteSourceFile('https://example.com/sources.json')
+    expect(postMock).toHaveBeenCalledWith(
+      '/sources:fetch',
+      { url: 'https://example.com/sources.json' },
+      { baseURL: API_V1_BASE }
+    )
+  })
+
+  it('导出走 /v1/sources:export（blob）', async () => {
+    getMock.mockResolvedValue({ data: new Blob() })
+    await exportBookSources()
+    expect(getMock).toHaveBeenCalledWith('/sources:export', {
+      baseURL: API_V1_BASE,
+      responseType: 'blob',
+    })
   })
 })

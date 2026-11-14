@@ -4,7 +4,7 @@ mod ai_model;
 mod ai_proxy;
 pub(crate) mod book;
 mod book_group;
-mod book_source;
+pub(crate) mod book_source;
 mod bookmark;
 mod cache;
 pub(crate) mod chapter_edit;

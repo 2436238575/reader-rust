@@ -8,7 +8,6 @@ import { exploreBook } from '../api/explore'
 import type { BookSource, SearchBook } from '../types'
 
 vi.mock('../api/source', () => ({
-  getBookSources: vi.fn(),
   getBookSourceList: vi.fn(),
   saveBookSource: vi.fn(),
   saveBookSources: vi.fn(),

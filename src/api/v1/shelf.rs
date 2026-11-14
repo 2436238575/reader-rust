@@ -18,7 +18,7 @@ use crate::storage::db::repo::RegisterBook;
 use axum::extract::{Path, Query, State};
 use axum::http::{header, HeaderMap, HeaderValue, StatusCode};
 use axum::response::{IntoResponse, Response};
-use axum::routing::{get, patch, post};
+use axum::routing::{get, patch, post, put};
 use axum::Router;
 use base64::Engine;
 use serde::{Deserialize, Serialize};
@@ -39,6 +39,7 @@ pub fn router() -> Router<AppState> {
         )
         .route("/v1/me/shelf:batchDelete", post(batch_remove_from_shelf))
         .route("/v1/me/shelf:order", patch(reorder_shelf))
+        .route("/v1/books/{bookId}/source", put(change_source))
         .route("/v1/books/{bookId}", get(get_book).patch(patch_book))
 }
 
@@ -528,6 +529,128 @@ pub async fn reorder_shelf(
             other => Problem::from(other),
         })?;
     Ok(StatusCode::NO_CONTENT)
+}
+
+#[derive(Debug, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ChangeSourceRequest {
+    /// 换源候选的 bookId（必须是已登记、但不在书架上的书）
+    pub target_book_id: String,
+}
+
+/// 换源落地：把当前书的绑定改到 targetBookId 的书源/地址，bookId 与阅读
+/// 进度/分组/书签/正文历史全部保留。
+#[utoipa::path(
+    put,
+    path = "/v1/books/{bookId}/source",
+    tag = "books",
+    operation_id = "changeBookSource",
+    params(("bookId" = String, Path, description = "当前书 id（book_<n>）")),
+    request_body = ChangeSourceRequest,
+    security(("cookieAuth" = []), ("bearerAuth" = [])),
+    responses(
+        (status = 200, description = "换源后的书籍（bookId 不变）", body = Book),
+        (status = 400, description = "请求体不是合法 JSON 或字段类型不符", body = Problem, content_type = "application/problem+json"),
+        (status = 401, description = "未登录或令牌失效", body = Problem, content_type = "application/problem+json"),
+        (status = 404, description = "当前书/目标书/目标书源不存在", body = Problem, content_type = "application/problem+json"),
+        (status = 409, description = "当前书不在书架，或目标书已在书架", body = Problem, content_type = "application/problem+json"),
+        (status = 422, description = "目标与当前书相同", body = Problem, content_type = "application/problem+json"),
+    )
+)]
+pub async fn change_source(
+    State(state): State<AppState>,
+    V1User(user): V1User,
+    Path(book_id): Path<String>,
+    V1Json(request): V1Json<ChangeSourceRequest>,
+) -> Result<Json<Book>, Problem> {
+    let target_id = request.target_book_id.trim();
+    if target_id.is_empty() {
+        return Err(Problem::new(ErrorCode::ValidationFailed)
+            .detail("targetBookId 不能为空")
+            .errors(vec![FieldIssue {
+                pointer: "/targetBookId".to_string(),
+                code: "REQUIRED".to_string(),
+                detail: None,
+            }]));
+    }
+    if target_id == book_id {
+        return Err(Problem::new(ErrorCode::ValidationFailed)
+            .detail("换源目标与当前书相同")
+            .errors(vec![FieldIssue {
+                pointer: "/targetBookId".to_string(),
+                code: "SAME_AS_CURRENT".to_string(),
+                detail: None,
+            }]));
+    }
+    let repo = state.book_service.book_repo();
+    if repo
+        .get(&user.ns, &book_id)
+        .await
+        .map_err(Problem::from)?
+        .is_none()
+    {
+        return Err(Problem::new(ErrorCode::BookNotFound).detail("书籍不存在"));
+    }
+    if state
+        .book_service
+        .get_shelf_book(&user.ns, &book_id)
+        .await
+        .map_err(Problem::from)?
+        .is_none()
+    {
+        return Err(Problem::new(ErrorCode::BookNotInShelf).detail("这本书还没有加入书架"));
+    }
+    let target = repo
+        .get(&user.ns, target_id)
+        .await
+        .map_err(Problem::from)?
+        .ok_or_else(|| Problem::new(ErrorCode::BookNotFound).detail("目标书籍不存在"))?;
+    if state
+        .book_service
+        .get_shelf_book(&user.ns, target_id)
+        .await
+        .map_err(Problem::from)?
+        .is_some()
+    {
+        return Err(Problem::new(ErrorCode::Conflict).detail("目标书籍已在书架"));
+    }
+    let source_id = target
+        .book_source_id
+        .ok_or_else(|| Problem::new(ErrorCode::SourceNotFound).detail("目标书籍没有书源"))?;
+    if state
+        .book_source_service
+        .get_by_id(&user.ns, source_id)
+        .await
+        .map_err(Problem::from)?
+        .is_none()
+    {
+        return Err(Problem::new(ErrorCode::SourceNotFound).detail("目标书籍的书源不存在"));
+    }
+    let saved = crate::api::handlers::book::shelf::change_book_source(
+        &state, &user.ns, &book_id, target_id,
+    )
+    .await
+    .map_err(|error| match error {
+        crate::error::error::AppError::Conflict(message) => {
+            Problem::new(ErrorCode::Conflict).detail(message)
+        }
+        // 预检与改绑之间的竞态：共享实现返回的旧语义 400 按文案收敛回
+        // v1 的精确码（目标/当前被并发删、目标被并发入架）。
+        crate::error::error::AppError::BadRequest(message) => {
+            let code = if message.contains("未加入书架") {
+                ErrorCode::BookNotInShelf
+            } else if message.contains("目标书籍不存在") {
+                ErrorCode::BookNotFound
+            } else if message.contains("书源不存在") {
+                ErrorCode::SourceNotFound
+            } else {
+                ErrorCode::MalformedRequest
+            };
+            Problem::new(code).detail(message)
+        }
+        other => Problem::from(other),
+    })?;
+    Ok(Json(saved))
 }
 
 #[derive(Debug, Deserialize, ToSchema)]

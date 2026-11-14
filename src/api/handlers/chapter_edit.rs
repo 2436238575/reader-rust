@@ -1145,7 +1145,8 @@ fn readable_error(error: &AppError) -> String {
         | AppError::NotFound(message)
         | AppError::Unauthorized(message)
         | AppError::Blocked(message)
-        | AppError::Conflict(message) => message.clone(),
+        | AppError::Conflict(message)
+        | AppError::PayloadTooLarge(message) => message.clone(),
         AppError::Upstream { message, .. } => message.clone(),
         AppError::TooManyRequests { message, .. } => message.clone(),
         AppError::Internal(_) => "服务端内部错误".to_string(),

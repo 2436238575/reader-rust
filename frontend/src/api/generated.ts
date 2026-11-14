@@ -506,6 +506,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/books/{bookId}/source": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * 换源落地：把当前书的绑定改到 targetBookId 的书源/地址，bookId 与阅读
+         *     进度/分组/书签/正文历史全部保留。
+         */
+        put: operations["changeBookSource"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/books/{bookId}/source-candidates/events": {
         parameters: {
             query?: never;
@@ -1088,6 +1108,43 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/sources/{sourceId}/login": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * 执行书源登录规则（loginUrl / loginCheckJs），成功时 Cookie 已写入用户
+         *     的独立 Cookie jar。失败返回 422，不泄露 Cookie 值或响应体。
+         */
+        post: operations["loginSource"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/sources/{sourceId}/proxy-token": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 签发书源代理限定令牌：10 分钟、scope=代理、绑定单一 bookSourceId。 */
+        post: operations["mintSourceProxyToken"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/sources/{sourceId}:test": {
         parameters: {
             query?: never;
@@ -1156,6 +1213,40 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/sources:export": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 全量导出书源材料（含全部规则字段），带 `Content-Disposition: attachment`。 */
+        get: operations["exportSources"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/sources:fetch": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 从远端 URL 拉取书源 JSON 并解析（严格公网 SSRF 策略）。 */
+        post: operations["fetchSourceFile"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/sources:import": {
         parameters: {
             query?: never;
@@ -1167,6 +1258,23 @@ export interface paths {
         put?: never;
         /** 导入书源（JSON `{sources: []}` 或 multipart JSON 文件）→ 202 Task。 */
         post: operations["importSources"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/sources:parse": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 解析上传的书源文件：只解析、不落库，返回 `Vec<BookSource>` 供预览。 */
+        post: operations["parseSourceFile"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1726,6 +1834,10 @@ export interface components {
             currentPassword?: string | null;
             newPassword?: string | null;
         };
+        ChangeSourceRequest: {
+            /** @description 换源候选的 bookId（必须是已登记、但不在书架上的书） */
+            targetBookId: string;
+        };
         /** @description 章节正文（v1 形状）。`format` 由服务端统一判定并下发（契约 §9.5）。 */
         ChapterContent: {
             body: string;
@@ -2113,7 +2225,10 @@ export interface components {
          *     新增取值是兼容变更（客户端必须有 default 分支），改已有取值的语义是破坏变更。
          * @enum {string}
          */
-        ErrorCode: "VALIDATION_FAILED" | "MALFORMED_REQUEST" | "INVALID_CURSOR" | "STALE_CURSOR" | "INVALID_CREDENTIALS" | "AUTH_EXPIRED" | "AUTH_REFRESH_REPLAYED" | "SESSION_INVALID" | "CSRF_HEADER_MISSING" | "SCOPE_FORBIDDEN" | "BOOK_NOT_FOUND" | "CHAPTER_NOT_FOUND" | "CHAPTER_EDIT_NOT_FOUND" | "SOURCE_NOT_FOUND" | "IMAGE_NOT_FOUND" | "TASK_NOT_FOUND" | "NOT_FOUND" | "REPLACE_RULE_NOT_FOUND" | "BOOK_NOT_IN_SHELF" | "SOURCE_DISABLED" | "TASK_ALREADY_RUNNING" | "CONFLICT" | "VERSION_CONFLICT" | "PAYLOAD_TOO_LARGE" | "UNSUPPORTED_MEDIA_TYPE" | "RATE_LIMITED" | "UPSTREAM_BLOCKED" | "UPSTREAM_FAILED" | "UPSTREAM_TIMEOUT" | "PROCESSING_TIMEOUT" | "TASK_LIMIT" | "API_REMOVED" | "UNKNOWN_FIELD" | "INTERNAL";
+        ErrorCode: "VALIDATION_FAILED" | "MALFORMED_REQUEST" | "INVALID_CURSOR" | "STALE_CURSOR" | "INVALID_CREDENTIALS" | "AUTH_EXPIRED" | "AUTH_REFRESH_REPLAYED" | "SESSION_INVALID" | "CSRF_HEADER_MISSING" | "SCOPE_FORBIDDEN" | "BOOK_NOT_FOUND" | "CHAPTER_NOT_FOUND" | "CHAPTER_EDIT_NOT_FOUND" | "SOURCE_NOT_FOUND" | "IMAGE_NOT_FOUND" | "TASK_NOT_FOUND" | "NOT_FOUND" | "REPLACE_RULE_NOT_FOUND" | "BOOK_NOT_IN_SHELF" | "SOURCE_DISABLED" | "SOURCE_LOGIN_FAILED" | "TASK_ALREADY_RUNNING" | "CONFLICT" | "VERSION_CONFLICT" | "PAYLOAD_TOO_LARGE" | "UNSUPPORTED_MEDIA_TYPE" | "RATE_LIMITED" | "UPSTREAM_BLOCKED" | "UPSTREAM_FAILED" | "UPSTREAM_TIMEOUT" | "PROCESSING_TIMEOUT" | "TASK_LIMIT" | "API_REMOVED" | "UNKNOWN_FIELD" | "INTERNAL";
+        FetchSourcesRequest: {
+            url: string;
+        };
         /** @description 422 校验失败的逐字段错误：`pointer` 是 JSON Pointer，前端直接映射表单控件。 */
         FieldIssue: {
             code: string;
@@ -2924,6 +3039,17 @@ export interface components {
             /** Format: int32 */
             total: number;
         };
+        SourceLoginResult: {
+            /**
+             * Format: int32
+             * @description 本次最终响应 `Set-Cookie` 的条数（不返回 Cookie 值）
+             */
+            cookieCount: number;
+            message: string;
+            ok: boolean;
+            /** @description 登录请求的最终页面地址，前端用它打开代理预览（可选） */
+            previewUrl?: string;
+        };
         /** @description 游标分页容器（契约 §5.4）：`nextCursor: null` 表示到底。 */
         SourcePage: {
             items: components["schemas"]["SourceSummary"][];
@@ -2933,6 +3059,11 @@ export interface components {
              * @description 过滤后的总数（小表直接算，不做惰性统计）
              */
             total?: number | null;
+        };
+        SourceProxyTokenResult: {
+            /** Format: int64 */
+            expiresIn: number;
+            token: string;
         };
         /** @description 书源摘要：展示字段 + `exploreUrl`，不含规则 JSON。 */
         SourceSummary: {
@@ -4842,6 +4973,78 @@ export interface operations {
             };
         };
     };
+    changeBookSource: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description 当前书 id（book_<n>） */
+                bookId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ChangeSourceRequest"];
+            };
+        };
+        responses: {
+            /** @description 换源后的书籍（bookId 不变） */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Book"];
+                };
+            };
+            /** @description 请求体不是合法 JSON 或字段类型不符 */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description 未登录或令牌失效 */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description 当前书/目标书/目标书源不存在 */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description 当前书不在书架，或目标书已在书架 */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description 目标与当前书相同 */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
     sourceCandidateEvents: {
         parameters: {
             query?: {
@@ -6733,6 +6936,97 @@ export interface operations {
             };
         };
     };
+    loginSource: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description 书源 id（src_<n>） */
+                sourceId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 登录成功 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SourceLoginResult"];
+                };
+            };
+            /** @description 未登录或令牌失效 */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description 书源不存在 */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description 登录请求失败或 loginCheckJs 判定失败 */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    mintSourceProxyToken: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description 书源 id（src_<n>） */
+                sourceId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 限定令牌 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SourceProxyTokenResult"];
+                };
+            };
+            /** @description 未登录或令牌失效 */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description 书源不存在 */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
     testSource: {
         parameters: {
             query?: {
@@ -6901,6 +7195,104 @@ export interface operations {
             };
         };
     };
+    exportSources: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 全量书源 JSON 数组（attachment） */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BookSource"][];
+                };
+            };
+            /** @description 未登录或令牌失效 */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    fetchSourceFile: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["FetchSourcesRequest"];
+            };
+        };
+        responses: {
+            /** @description 解析出的书源（未落库） */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BookSource"][];
+                };
+            };
+            /** @description URL 非法或指向私网/环回/保留地址 */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description 未登录或令牌失效 */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description 远端响应超过 32MB */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description JSON 或源材料非法 */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description 远端请求失败或返回非 2xx */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
     importSources: {
         parameters: {
             query?: never;
@@ -6954,6 +7346,58 @@ export interface operations {
             };
             /** @description 并发任务超限，带 Retry-After */
             429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    parseSourceFile: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description file 字段：.json / .txt（≤32MB） */
+        requestBody: {
+            content: {
+                "multipart/form-data": string;
+            };
+        };
+        responses: {
+            /** @description 解析出的书源（未落库） */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BookSource"][];
+                };
+            };
+            /** @description 未登录或令牌失效 */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description 文件超过 32MB */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description 缺少文件 / 扩展名不支持 / JSON 或源材料非法 */
+            422: {
                 headers: {
                     [name: string]: unknown;
                 };

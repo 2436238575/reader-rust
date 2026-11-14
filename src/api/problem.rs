@@ -63,6 +63,8 @@ pub enum ErrorCode {
     BookNotInShelf,
     /// 书源已禁用
     SourceDisabled,
+    /// 书源登录执行失败（请求失败或 loginCheckJs 判定失败）
+    SourceLoginFailed,
     /// 同类任务已在执行
     TaskAlreadyRunning,
     /// 通用 409 兜底（领域 handler 应使用带语义的精确码）
@@ -99,9 +101,10 @@ impl ErrorCode {
         match self {
             Self::MalformedRequest | Self::UpstreamBlocked => StatusCode::BAD_REQUEST,
             // 契约口径：语法合法但字段值非法 → 422（cursor 无法解码同属此类）
-            Self::ValidationFailed | Self::InvalidCursor | Self::UnknownField => {
-                StatusCode::UNPROCESSABLE_ENTITY
-            }
+            Self::ValidationFailed
+            | Self::InvalidCursor
+            | Self::UnknownField
+            | Self::SourceLoginFailed => StatusCode::UNPROCESSABLE_ENTITY,
             Self::InvalidCredentials
             | Self::AuthExpired
             | Self::AuthRefreshReplayed
@@ -155,6 +158,7 @@ impl ErrorCode {
             Self::NotFound => "Not Found",
             Self::BookNotInShelf => "Book Not In Shelf",
             Self::SourceDisabled => "Source Disabled",
+            Self::SourceLoginFailed => "Source Login Failed",
             Self::TaskAlreadyRunning => "Task Already Running",
             Self::Conflict => "Conflict",
             Self::VersionConflict => "Version Conflict",
@@ -303,6 +307,9 @@ impl From<crate::error::error::AppError> for Problem {
             AppError::Blocked(message) => Self::new(ErrorCode::UpstreamBlocked).detail(message),
             AppError::NotFound(_) => Self::new(ErrorCode::NotFound),
             AppError::Conflict(message) => Self::new(ErrorCode::Conflict).detail(message),
+            AppError::PayloadTooLarge(message) => {
+                Self::new(ErrorCode::PayloadTooLarge).detail(message)
+            }
             AppError::TooManyRequests {
                 message,
                 retry_after_secs,

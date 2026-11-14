@@ -1,4 +1,4 @@
-import http from './http'
+import http, { UPLOAD_TIMEOUT_MS } from './http'
 import type { BookSource, BookSourceSummary } from '../types'
 import { API_V1_BASE } from '../utils/appBase'
 import type { components } from './generated'
@@ -7,9 +7,14 @@ import type { components } from './generated'
 type ApiSourceSummary = components['schemas']['SourceSummary']
 type ApiSourcePage = components['schemas']['SourcePage']
 
-/** 全量列表（含规则 JSON，可达 MB 级）：只给导出/WebDAV 备份等真正需要全量的低频场景 */
-export function getBookSources() {
-  return http.get<BookSource[]>('/getBookSources').then((r) => r.data)
+/** 全量导出（含规则 JSON）：服务端生成 attachment，前端直接落文件 */
+export function exportBookSources() {
+  return http
+    .get<Blob>('/sources:export', {
+      baseURL: API_V1_BASE,
+      responseType: 'blob',
+    })
+    .then((r) => r.data)
 }
 
 /** `src_<n>` → 数字 id（过渡期适配：现有组件仍消费数字 id，全面切 v1 类型时删除） */
@@ -71,20 +76,24 @@ export function getBookSource(bookSourceId: number) {
 export function loginBookSource(bookSourceId: number) {
   return http
     .post<{
-      success: boolean
-      status: number
-      url: string
-      checkResult?: string | null
-      bodyPreview?: string
-      bodyHtml?: string
-    }>('/loginBookSource', { bookSourceId })
+      ok: boolean
+      message: string
+      cookieCount: number
+      previewUrl?: string | null
+    }>(`/sources/${buildSourceId(bookSourceId)}/login`, undefined, {
+      baseURL: API_V1_BASE,
+    })
     .then((r) => r.data)
 }
 
-/** 换取书源代理限定令牌：绑定单个书源、30 分钟有效，只能访问代理路径；主 JWT 不进 URL。 */
+/** 换取书源代理限定令牌：绑定单个书源、10 分钟有效，只能访问代理路径；主 JWT 不进 URL。 */
 export function mintBookSourceProxyToken(params: { bookSourceId: number }) {
   return http
-    .post<{ token: string; expiresIn: number }>('/mintBookSourceProxyToken', params)
+    .post<{ token: string; expiresIn: number }>(
+      `/sources/${buildSourceId(params.bookSourceId)}/proxy-token`,
+      undefined,
+      { baseURL: API_V1_BASE }
+    )
     .then((r) => r.data)
 }
 
@@ -135,14 +144,18 @@ export function deleteInvalidBookSources() {
 }
 
 export function readRemoteSourceFile(url: string) {
-  return http.post<BookSource[]>('/readRemoteSourceFile', { url }).then((r) => r.data)
+  return http
+    .post<BookSource[]>('/sources:fetch', { url }, { baseURL: API_V1_BASE })
+    .then((r) => r.data)
 }
 
 export function readSourceFile(file: File) {
   const formData = new FormData()
   formData.append('file', file)
   return http
-    .post<BookSource[]>('/readSourceFile', formData, {
+    .post<BookSource[]>('/sources:parse', formData, {
+      baseURL: API_V1_BASE,
+      timeout: UPLOAD_TIMEOUT_MS,
       headers: {
         'Content-Type': 'multipart/form-data',
       },

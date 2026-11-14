@@ -67,6 +67,32 @@ impl BookSourceService {
         }
     }
 
+    /// 导出用：保留存储的原始 JSON（未知字段不丢），只注入表列里的
+    /// `bookSourceId`。解析失败的行记 warn 后跳过，不让一条坏行毁掉整次导出。
+    pub async fn export_values(&self, user_ns: &str) -> Result<Vec<serde_json::Value>, AppError> {
+        let rows = self.repo.list(user_ns).await?;
+        let mut out = Vec::with_capacity(rows.len());
+        for (id, raw) in rows {
+            match serde_json::from_str::<serde_json::Value>(&raw) {
+                Ok(serde_json::Value::Object(mut object)) => {
+                    object.insert("bookSourceId".to_string(), serde_json::json!(id));
+                    out.push(serde_json::Value::Object(object));
+                }
+                Ok(other) => {
+                    tracing::warn!(
+                        id,
+                        kind = ?other,
+                        "导出书源：存储行不是 JSON 对象，跳过"
+                    );
+                }
+                Err(error) => {
+                    tracing::warn!(id, error = %error, "导出书源：存储 JSON 无法解析，跳过");
+                }
+            }
+        }
+        Ok(out)
+    }
+
     pub async fn list(&self, user_ns: &str) -> Result<Vec<BookSource>, AppError> {
         let rows = self.repo.list(user_ns).await?;
         let mut out = Vec::with_capacity(rows.len());

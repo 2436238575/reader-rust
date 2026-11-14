@@ -350,6 +350,8 @@ POST /reader3/saveBookOrder
 
 ## 更换书籍的书源
 
+> **v1**：`PUT /v1/books/{bookId}/source`，body `{targetBookId}`；目标与当前相同 422，目标已在书架 409，目标/当前未登记或目标无书源 404。前端详情弹窗已切 v1。
+
 ```text
 POST /reader3/setBookSource
 ```

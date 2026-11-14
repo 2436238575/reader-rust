@@ -136,8 +136,8 @@ import { onBeforeRouteLeave, useRouter } from 'vue-router'
 import { API_BASE } from '../utils/appBase'
 import {
   buildSourceId,
+  exportBookSources,
   getBookSource,
-  getBookSources,
   loginBookSource,
   mintBookSourceProxyToken,
   readRemoteSourceFile,
@@ -571,6 +571,8 @@ async function handleSourceLogin() {
     }
 
     sourceLoginLoading.value = true
+    // 新一次登录先关闭上一次预览，失败时不会残留旧 iframe
+    loginPreviewVisible.value = false
     // 编辑器内容相对已加载书源有改动（或新建）时先落盘，登录走保存后返回的 id
     let sourceId = parsed.bookSourceId ?? null
     if (!editingSource.value || editingSource.value.bookSourceUrl !== parsed.bookSourceUrl) {
@@ -583,20 +585,20 @@ async function handleSourceLogin() {
     }
 
     const result = await loginBookSource(sourceId)
-    const check =
-      typeof result.checkResult === 'string' && result.checkResult.trim()
-        ? `，校验结果：${result.checkResult}`
-        : ''
-    if (result.url?.trim()) {
+    if (result.previewUrl?.trim()) {
       // 预览 iframe 走 /reader3/bookSourceProxy：先领取绑定该书源的限定令牌，
       // 失败就 toast 并保持预览关闭；主 JWT 任何情况下都不进 iframe URL
       const minted = await mintBookSourceProxyToken({ bookSourceId: sourceId })
       loginPreviewToken.value = minted.token
-      loginPreviewUrl.value = result.url
-      loginPreviewFrameUrl.value = buildLoginProxyUrl(sourceId, result.url, minted.token)
+      loginPreviewUrl.value = result.previewUrl
+      loginPreviewFrameUrl.value = buildLoginProxyUrl(
+        sourceId,
+        result.previewUrl,
+        minted.token
+      )
       loginPreviewVisible.value = true
     }
-    appStore.showToast(`书源登录请求已完成，状态 ${result.status}${check}`, 'success')
+    appStore.showToast(result.message, 'success')
   } catch (e: unknown) {
     appStore.showToast((e as Error).message || '书源登录失败', 'error')
   } finally {
@@ -694,18 +696,14 @@ function touchSubscription(url: string) {
 
 async function exportSources() {
   try {
-    // 导出必须带全量规则：单独走全量接口（低频操作），
-    // 本地列表只是摘要，导出摘要文件等于导出残源
-    const all = await getBookSources()
-    const blob = new Blob([JSON.stringify(all, null, 2)], {
-      type: 'application/json;charset=utf-8',
-    })
+    // 导出必须带全量规则：走服务端 export（低频操作），本地列表只是摘要
+    const blob = await exportBookSources()
     const url = URL.createObjectURL(blob)
     const anchor = document.createElement('a')
     anchor.href = url
     anchor.download = `reader-book-sources-${formatDateForFile()}.json`
     anchor.click()
-    URL.revokeObjectURL(url)
+    window.setTimeout(() => URL.revokeObjectURL(url), 0)
   } catch (e: unknown) {
     appStore.showToast((e as Error).message || '导出书源失败', 'error')
   }

@@ -29,6 +29,9 @@ pub enum AppError {
     /// 409：已有同类任务进行中（AI 资料批量更新为单任务串行）。
     #[error("conflict: {0}")]
     Conflict(String),
+    /// 413：请求体/文件超过端点声明的大小上限。
+    #[error("payload too large: {0}")]
+    PayloadTooLarge(String),
     /// 429：登录限速命中。`retry_after_secs` 供 `Retry-After` 头与 problem 体。
     #[error("too many requests: {message}")]
     TooManyRequests {
@@ -166,7 +169,8 @@ impl AppError {
             | AppError::NotFound(msg)
             | AppError::BadRequest(msg)
             | AppError::Blocked(msg)
-            | AppError::Conflict(msg) => msg.clone(),
+            | AppError::Conflict(msg)
+            | AppError::PayloadTooLarge(msg) => msg.clone(),
             AppError::TooManyRequests { message, .. } => message.clone(),
             AppError::Upstream { message, .. } => message.clone(),
             AppError::Db(_) => "database error".to_string(),
@@ -183,6 +187,7 @@ impl IntoResponse for AppError {
             AppError::NotFound(_) => StatusCode::NOT_FOUND,
             AppError::BadRequest(_) | AppError::Blocked(_) => StatusCode::BAD_REQUEST,
             AppError::Conflict(_) => StatusCode::CONFLICT,
+            AppError::PayloadTooLarge(_) => StatusCode::PAYLOAD_TOO_LARGE,
             AppError::TooManyRequests { .. } => StatusCode::TOO_MANY_REQUESTS,
             AppError::Upstream { .. } => StatusCode::BAD_GATEWAY,
             AppError::Db(_) | AppError::Internal(_) => StatusCode::INTERNAL_SERVER_ERROR,

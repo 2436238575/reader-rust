@@ -605,12 +605,14 @@ export function saveBookGroupId(bookId: string, groupId: number) {
 
 /** 换源：目标是换源候选（搜索结果）自己的 bookId，当前书的 bookId 不变 */
 export function setBookSource(params: { bookId: string; targetBookId: string }) {
-  return http.post<Book>('/setBookSource', params).then((r) => {
-    // 换源只改 bookId 的书源绑定，目录会整体变化：立即失效本地目录缓存，
-    // 详情弹窗换源后的重拉（不带 refresh）也能拿到新源目录
-    invalidateChapterList(params.bookId)
-    return r.data
-  })
+  return http
+    .put<Book>(`/books/${params.bookId}/source`, { targetBookId: params.targetBookId }, { baseURL: API_V1_BASE })
+    .then((r) => {
+      // 换源只改 bookId 的书源绑定，目录会整体变化：立即失效本地目录缓存，
+      // 详情弹窗换源后的重拉（不带 refresh）也能拿到新源目录
+      invalidateChapterList(params.bookId)
+      return r.data
+    })
 }
 
 // ─── Cover helper ───
