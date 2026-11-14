@@ -49,6 +49,8 @@ pub enum ErrorCode {
     ChapterNotFound,
     /// 本章没有编辑版本
     ChapterEditNotFound,
+    /// 该书尚未生成 AI 资料
+    AiMemoryNotFound,
     /// 书源不存在
     SourceNotFound,
     /// 图片不存在
@@ -113,6 +115,7 @@ impl ErrorCode {
             Self::BookNotFound
             | Self::ChapterNotFound
             | Self::ChapterEditNotFound
+            | Self::AiMemoryNotFound
             | Self::SourceNotFound
             | Self::ImageNotFound
             | Self::TaskNotFound
@@ -151,6 +154,7 @@ impl ErrorCode {
             Self::BookNotFound => "Book Not Found",
             Self::ChapterNotFound => "Chapter Not Found",
             Self::ChapterEditNotFound => "Chapter Edit Not Found",
+            Self::AiMemoryNotFound => "AI Memory Not Found",
             Self::SourceNotFound => "Source Not Found",
             Self::ImageNotFound => "Image Not Found",
             Self::TaskNotFound => "Task Not Found",

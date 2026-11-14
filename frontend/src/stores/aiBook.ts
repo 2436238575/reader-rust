@@ -59,6 +59,12 @@ export const useAiBookStore = defineStore('aiBook', () => {
     loading.value = true
     try {
       if (!book.bookId) return null
+      if (currentBookId.value !== book.bookId) {
+        // 换书：旧书的快照/跳变状态不能带到新书页
+        task.value = null
+        wasRunning.value = false
+      }
+      currentBookId.value = book.bookId
       const saved = await getAiBookMemory(book.bookId)
       memory.value = saved || emptyMemory(book)
       return memory.value
@@ -97,6 +103,8 @@ export const useAiBookStore = defineStore('aiBook', () => {
 
   const task = ref<AgentTaskSnapshot | null>(null)
   const wasRunning = ref(false)
+  // v1 任务按书查询：轮询目标就是当前资料页/阅读器正在看的书
+  const currentBookId = ref<string | null>(null)
   let pollTimer: ReturnType<typeof setTimeout> | null = null
   let polling = false
 
@@ -110,20 +118,30 @@ export const useAiBookStore = defineStore('aiBook', () => {
   }
 
   async function pollOnce() {
-    let snapshot: AgentTaskSnapshot | null = null
+    const requestedBookId = currentBookId.value
+    if (!requestedBookId) {
+      task.value = null
+      return
+    }
     try {
-      snapshot = await getAgentTaskStatus()
+      const snapshot = await getAgentTaskStatus(requestedBookId)
+      // 等待期间切了书：旧书的响应直接丢弃
+      if (currentBookId.value !== requestedBookId) return
       task.value = snapshot
     } catch {
-      // 网络抖动：保持旧快照，按隐藏态间隔重试
+      // 网络抖动/切书后的失败：不把旧书的跳变状态续到新书上
+      if (currentBookId.value !== requestedBookId) return
+      if (task.value?.running) scheduleNextPoll()
+      return
     }
 
     const current = task.value
     const running = current?.running ?? false
     if (wasRunning.value && !running) {
-      // 任务刚好结束：刷新资料（错误也已由服务端写入 lastError / 地图兜底）
+      // 任务刚好结束：刷新资料（错误也已由服务端写入 lastError / 地图兜底）。
+      // 任务恰好被注册表驱逐（404 → null）时也按当前书刷新一次。
       wasRunning.value = running
-      await refreshMemoryOf(current?.bookId)
+      await refreshMemoryOf(current?.bookId ?? requestedBookId)
       return
     }
     wasRunning.value = running
@@ -155,7 +173,12 @@ export const useAiBookStore = defineStore('aiBook', () => {
 
   /** 开始轮询（幂等）。onMounted 与任务提交后都会调用。 */
   function startPolling() {
-    if (polling) return
+    if (polling) {
+      // 上一个任务已结束时 pollOnce 不会再排定时器：这里补一次即时刷新，
+      // 否则重开资料页不会恢复最新任务状态。
+      if (pollTimer == null) void pollOnce()
+      return
+    }
     polling = true
     void pollOnce()
   }
@@ -174,16 +197,14 @@ export const useAiBookStore = defineStore('aiBook', () => {
 
   async function startTask(
     book: Book,
-    kind: 'update_to_current' | 'redraw_map',
+    kind: 'update-to-current' | 'redraw-map',
     targetChapterIndex?: number
   ) {
-    try {
-      if (!book.bookId) throw new Error('书籍缺少 bookId')
-      await runAgentTask({ bookId: book.bookId, kind, targetChapterIndex })
-    } catch (error) {
-      // 409：已有任务进行中（可能是别的书）——切到轮询展示即可
-      if (!isConflict(error)) throw error
-    }
+    if (!book.bookId) throw new Error('书籍缺少 bookId')
+    currentBookId.value = book.bookId
+    // 409（已有 AI 任务进行中）直接上抛：调用方需要 toast 真实原因。
+    // 页面级 `maybeAutoUpdate` 会自己吞掉错误，不影响翻章自动更新。
+    await runAgentTask({ bookId: book.bookId, kind, targetChapterIndex })
     wasRunning.value = false // 强制下一次 poll 走「刚启动」分支
     startPolling()
     await pollOnce()
@@ -195,7 +216,7 @@ export const useAiBookStore = defineStore('aiBook', () => {
   }
 
   function startUpdateToCurrent(book: Book, targetChapterIndex?: number) {
-    return startTask(book, 'update_to_current', targetChapterIndex)
+    return startTask(book, 'update-to-current', targetChapterIndex)
   }
 
   /// 翻章自动触发：保留「开关开启 + 进度未到」的前置门槛（与旧版一致）；
@@ -210,18 +231,22 @@ export const useAiBookStore = defineStore('aiBook', () => {
         memory.value?.bookId === book.bookId ? memory.value : await load(book)
       if (!current?.enabled) return
       if ((current.processedChapterIndex ?? -1) >= completedChapterIndex) return
-      await startTask(book, 'update_to_current', completedChapterIndex)
+      await startTask(book, 'update-to-current', completedChapterIndex)
     } catch {
       /* 静默 */
     }
   }
 
   function startRedrawMap(book: Book) {
-    return startTask(book, 'redraw_map')
+    return startTask(book, 'redraw-map')
   }
 
   async function cancelCurrentTask() {
-    await cancelAgentTask()
+    // 只取消当前查看/轮询的书：task 可能还是上一本书的旧快照，
+    // 不能拿它当取消目标（服务端书级 DELETE 只作用于路径里的 bookId）。
+    const bookId = currentBookId.value
+    if (!bookId) return
+    await cancelAgentTask(bookId)
     await pollOnce()
   }
 
@@ -271,13 +296,4 @@ function emptyMemory(book: Book): AiBookMemory {
     map: null,
     mapDirty: false,
   }
-}
-
-function isConflict(error: unknown) {
-  return Boolean(
-    error &&
-    typeof error === 'object' &&
-    'status' in error &&
-    (error as { status?: number }).status === 409
-  )
 }

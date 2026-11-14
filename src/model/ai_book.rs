@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, utoipa::ToSchema)]
 #[serde(default, rename_all = "camelCase")]
 pub struct AiBookMemory {
     /// 所属书籍的 bookId（`book_<n>`），存储主键；bookUrl 只是冗余数据
@@ -23,7 +23,7 @@ pub struct AiBookMemory {
     pub last_error: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, utoipa::ToSchema)]
 #[serde(default, rename_all = "camelCase")]
 pub struct AiBookNote {
     pub title: String,
@@ -33,7 +33,7 @@ pub struct AiBookNote {
     pub importance: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, utoipa::ToSchema)]
 #[serde(default, rename_all = "camelCase")]
 pub struct AiBookCharacter {
     pub name: String,
@@ -46,7 +46,7 @@ pub struct AiBookCharacter {
     pub importance: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, utoipa::ToSchema)]
 #[serde(default, rename_all = "camelCase")]
 pub struct AiBookRelationship {
     pub source: String,
@@ -57,7 +57,7 @@ pub struct AiBookRelationship {
     pub importance: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, utoipa::ToSchema)]
 #[serde(default, rename_all = "camelCase")]
 pub struct AiBookLocation {
     pub name: String,
@@ -70,7 +70,7 @@ pub struct AiBookLocation {
     pub importance: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, utoipa::ToSchema)]
 #[serde(default, rename_all = "camelCase")]
 pub struct AiBookMap {
     pub image_url: Option<String>,

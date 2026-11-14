@@ -263,4 +263,16 @@ goal 执行中遇到「决策表与 spec 都沉默」的问题时，按 §5.4 �
 - **换源落地 `PUT /v1/books/{bookId}/source`**：body `{targetBookId}`；只改绑登记行（bookId 不变），进度/分组/书签/正文历史保留，清旧源目录/详情/评论缓存并回填候选元数据。目标与当前相同 422；当前书未登记 404；当前书不在书架 409 `BOOK_NOT_IN_SHELF`；目标书不存在/无源 404；目标已在书架 409 `CONFLICT`。legacy `/reader3/setBookSource` 保留，内部共用 `change_book_source`。
 - **前端接线**：`api/source.ts` 的登录、票据、文件解析、远端拉取、导出全部切 v1；`SourcesView` 登录 toast 使用服务端 message、预览用 `previewUrl`；`api/bookshelf.setBookSource` 切 PUT。`getBookSources` 全量读取封装删除，导出走 `exportBookSources` blob。
 
+## 2026-11-14 AI 域纳入 /v1（资料、模型状态、编排任务接任务注册表、模型代理）
+
+- **资料读写改 REST**：`GET/PUT/DELETE /v1/books/{bookId}/ai-memory`。GET 尚未生成时 404 `AI_MEMORY_NOT_FOUND`（新增精确错误码），前端收敛成 `null` 用空骨架渲染；PUT 是整体替换，1MB 上限返回 413；DELETE 幂等 204。只要求书籍已登记、不要求仍在书架——移出书架（v1 不再连带删 AI 资料）后仍有清理入口；`bookUrl` 以 `books` 登记表当前绑定为准。
+- **模型状态 `GET /v1/me/ai/model-status`**：与 legacy 同为五个布尔值；配置本体仍只在服务端 env。
+- **编排任务接任务注册表（复用 P2）**：`POST /v1/books/{bookId}/agent-tasks` → 202 `TaskView` + `Location: /v1/tasks/{id}`，`kind=ai-generate`，`progress.subjectId=bookId`、`progress.phase` 映射 sidecar 阶段（loading/text/map/saving），`done/total` 是已处理/目标章数（1 起）。状态、SSE 事件、取消、并发名额全部走 `/v1/tasks` 既有机制；`GET /v1/books/{bookId}/agent-task` 取该书最近一次任务（服务重启随内存注册表消失，404），`DELETE` 取消（幂等 204）。
+- **`TaskProgress` 增加 `subjectId`/`phase`**：两者对所有任务都显式输出（其他任务为 null），用于「按资源找最近任务」与长流程阶段展示；`latest_for_subject(ownerNs, kind, subjectId)` 是恢复页面进度的查询入口。
+- **单任务槽与防误杀**：sidecar 仍是单用户单任务；**提交阶段先让 sidecar 原子占位再登记任务**，正在跑 → 同步 409 `TASK_ALREADY_RUNNING`（并发双击不会出现「先 202 再异步失败」）。登记失败（容量竞态）会立即取消刚占位的 sidecar，不留孤儿。sidecar job id 带进程内递增序号（时间戳只到秒，同秒同书两次任务不能撞 id）。书级 DELETE 与通用 `DELETE /v1/tasks/{id}` 都只在该书确实是当前 sidecar 任务时杀进程，再对注册表发取消（5 秒 watchdog + abort 工作器兜底）；排队中取消不会误杀别的书。
+- **worker 只做快照映射**：sidecar 自己 spawn 执行任务；注册表 worker 每 200ms 轮询进程内快照，仅在 done/total/message/phase 变化时发 `progress` 事件，结束时把终态阶段写回 progress（成功 `idle` / 失败 `error`）再落 succeeded/failed；取消标志置位时先确认快照仍属于本 job 才调 sidecar cancel。注册表只剩「最新一条快照」：发现 job id 已被后续任务取代时，worker 主动以 failed 收尾（避免永久占用名额），不会去杀新任务。工作器 abort 句柄登记到注册表，panic 由 Drop guard 落 failed。
+- **代理端点**：`POST /v1/ai/proxy`、`POST /v1/ai/proxy-image` 复用 legacy 转发实现（`ProxyErrorStyle` 切换错误形态）。成功响应仍是流式透传；失败统一 problem+json：上游非 2xx → 502 `UPSTREAM_FAILED` + `upstreamCode`，不再把上游状态码直接当本站响应码。子路由在 v1 常规 120s/1MB 之外 merge，自带 900s 超时、8MB 体限、鉴权/CSRF 与共享并发信号量。
+- **前端接线**：`api/aiBook.ts`、`api/aiModel.ts`、`api/agentTask.ts` 全部切 v1；`stores/aiBook.ts` 按当前 bookId 轮询 `GET /v1/books/{id}/agent-task` 并映射成既有 `AgentTaskSnapshot` 形状（视图层不改）；听书服务端 TTS 的裸 fetch 切 `/v1/ai/proxy`，补 CSRF 头并从 problem `detail` 取错误文案。
+- **兼容面**：`/reader3` 的 AI 端点全部保留，legacy 快照与 v1 注册表各自保留状态；前端已无调用方。
+
 

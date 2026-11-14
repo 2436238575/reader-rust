@@ -105,6 +105,18 @@ describe('aiBook store maybeAutoUpdate memory reuse', () => {
     expect(store.memory).toBeNull()
     expect(runAgentTaskMock).not.toHaveBeenCalled()
   })
+
+  it('409 冲突上抛给调用方（不再静默当成已启动）', async () => {
+    runAgentTaskMock.mockRejectedValue(
+      Object.assign(new Error('已有 AI 资料任务进行中'), { status: 409 })
+    )
+    const store = useAiBookStore()
+
+    await expect(store.startUpdateToCurrent(createBook())).rejects.toThrow(
+      '已有 AI 资料任务进行中'
+    )
+    expect(getAgentTaskStatusMock).not.toHaveBeenCalled()
+  })
 })
 
 function createBook(): Book {

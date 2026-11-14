@@ -11,7 +11,7 @@ const ALLOWED_PROXY_PATHS: [&str; 3] = [
     "/v1/audio/speech",
 ];
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct AiProxyRequest {
     #[serde(default)]
@@ -23,10 +23,12 @@ pub struct AiProxyRequest {
     #[serde(default)]
     pub use_server_config: bool,
     pub kind: Option<AiModelKind>,
+    /// 透传给上游的请求体（结构随模型接口而定）
+    #[schema(value_type = Object)]
     pub body: Value,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct AiProxyImageRequest {
     pub url: String,
 }

@@ -6,6 +6,7 @@ use axum::{
 };
 use serde_json::Value;
 
+use crate::api::problem::{ErrorCode, Problem};
 use crate::api::AppState;
 use crate::auth::CurrentUser;
 use crate::error::error::{ApiResponse, AppError};
@@ -20,12 +21,28 @@ const MAX_PROXY_IMAGE_BYTES: u64 = 20 * 1024 * 1024;
 /// 通用 AI 代理响应体上限。
 const MAX_PROXY_RESPONSE_BYTES: u64 = 32 * 1024 * 1024;
 
+/// 代理失败响应形态：`/reader3` 用 `ApiResponse`，`/v1` 用 problem+json。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ProxyErrorStyle {
+    Legacy,
+    Problem,
+}
+
 pub async fn ai_proxy(
     State(state): State<AppState>,
-    user: CurrentUser,
+    _user: CurrentUser,
     Json(req): Json<AiProxyRequest>,
 ) -> Result<Response, AppError> {
-    let (endpoint, kind, path, mut body) = resolve_ai_proxy_target(&state, &user, req).await?;
+    proxy_request(&state, req, ProxyErrorStyle::Legacy).await
+}
+
+/// `/v1` 入口：成功响应形态不变（流式透传），错误统一 problem+json。
+pub(crate) async fn proxy_request(
+    state: &AppState,
+    req: AiProxyRequest,
+    style: ProxyErrorStyle,
+) -> Result<Response, AppError> {
+    let (endpoint, kind, path, mut body) = resolve_ai_proxy_target(state, req).await?;
     if let Some(kind) = kind {
         apply_server_model_body_defaults(&endpoint, kind, &mut body);
     }
@@ -34,7 +51,7 @@ pub async fn ai_proxy(
     if kind == Some(AiModelKind::Speech)
         && endpoint.speech_protocol.as_deref() == Some(AI_SPEECH_PROTOCOL_MIMO_CHAT)
     {
-        return ai_proxy_mimo_speech(endpoint, body).await;
+        return ai_proxy_mimo_speech(endpoint, body, style).await;
     }
     let target = build_ai_proxy_url(&endpoint.base_url, &path, endpoint.use_full_url)
         .map_err(AppError::BadRequest)?;
@@ -52,13 +69,15 @@ pub async fn ai_proxy(
         builder = builder.bearer_auth(api_key);
     }
 
-    let upstream = builder.send().await.map_err(map_ai_proxy_http_error)?;
-    response_from_upstream(upstream).await
+    let upstream = builder
+        .send()
+        .await
+        .map_err(|error| map_ai_proxy_http_error(error, style))?;
+    response_from_upstream(upstream, style).await
 }
 
 async fn resolve_ai_proxy_target(
     state: &AppState,
-    _user: &CurrentUser,
     req: AiProxyRequest,
 ) -> Result<(ResolvedAiModelEndpoint, Option<AiModelKind>, String, Value), AppError> {
     if req.use_server_config {
@@ -164,6 +183,7 @@ fn apply_server_model_body_defaults(
 async fn ai_proxy_mimo_speech(
     endpoint: ResolvedAiModelEndpoint,
     body: Value,
+    style: ProxyErrorStyle,
 ) -> Result<Response, AppError> {
     let payload =
         build_mimo_speech_request(&endpoint.model, &body).map_err(AppError::BadRequest)?;
@@ -185,8 +205,11 @@ async fn ai_proxy_mimo_speech(
     if let Some(api_key) = Some(str::trim(endpoint.api_key.as_str())).filter(|v| !v.is_empty()) {
         builder = builder.bearer_auth(api_key);
     }
-    let upstream = builder.send().await.map_err(map_ai_proxy_http_error)?;
-    mimo_speech_response(upstream).await
+    let upstream = builder
+        .send()
+        .await
+        .map_err(|error| map_ai_proxy_http_error(error, style))?;
+    mimo_speech_response(upstream, style).await
 }
 
 /// 构造 mimo chat 协议请求体。
@@ -210,14 +233,17 @@ fn build_mimo_speech_request(model: &str, client_body: &Value) -> Result<Value, 
 }
 
 /// mimo chat 协议的响应处理：整包读 JSON 后解出 WAV 字节。
-async fn mimo_speech_response(upstream: reqwest::Response) -> Result<Response, AppError> {
+async fn mimo_speech_response(
+    upstream: reqwest::Response,
+    style: ProxyErrorStyle,
+) -> Result<Response, AppError> {
     let status = upstream.status();
     // 音频 base64 藏在 JSON 里，必须整包读完才能解码；限量与通用分支一致
     let body = crate::crawler::fetcher::read_body_limited(upstream, MAX_PROXY_RESPONSE_BYTES)
         .await
         .map_err(|e| AppError::BadRequest(e.to_string()))?;
     if !status.is_success() {
-        return Ok(build_upstream_error_response(status, &body));
+        return Ok(build_upstream_error_response(status, &body, style));
     }
     match decode_mimo_speech_audio(&body) {
         Some(wav) => Ok(build_response(
@@ -226,7 +252,7 @@ async fn mimo_speech_response(upstream: reqwest::Response) -> Result<Response, A
             wav,
         )),
         // 上游 200 但拿不到音频：按网关错误回 502，文案带上游响应片段
-        None => Ok(build_mimo_speech_decode_error(&body)),
+        None => Ok(build_mimo_speech_decode_error(&body, style)),
     }
 }
 
@@ -247,15 +273,29 @@ fn decode_mimo_speech_audio(body: &[u8]) -> Option<bytes::Bytes> {
 }
 
 /// 上游 200 但解析不出音频时的 502 响应（文案风格与通用上游错误一致）。
-fn build_mimo_speech_decode_error(body: &bytes::Bytes) -> Response {
+fn build_mimo_speech_decode_error(body: &bytes::Bytes, style: ProxyErrorStyle) -> Response {
     let body_text = std::str::from_utf8(body).unwrap_or("");
     let message = format_ai_proxy_speech_decode_error(body_text);
-    let mut response = Json(ApiResponse::<Value>::err(message)).into_response();
-    *response.status_mut() = StatusCode::BAD_GATEWAY;
-    response
+    match style {
+        ProxyErrorStyle::Legacy => {
+            let mut response = Json(ApiResponse::<Value>::err(message)).into_response();
+            *response.status_mut() = StatusCode::BAD_GATEWAY;
+            response
+        }
+        ProxyErrorStyle::Problem => Problem::new(ErrorCode::UpstreamFailed)
+            .detail(message)
+            .into_response(),
+    }
 }
 
 pub async fn ai_proxy_image(Json(req): Json<AiProxyImageRequest>) -> Result<Response, AppError> {
+    proxy_image_request(req, ProxyErrorStyle::Legacy).await
+}
+
+pub(crate) async fn proxy_image_request(
+    req: AiProxyImageRequest,
+    style: ProxyErrorStyle,
+) -> Result<Response, AppError> {
     let target = validate_ai_proxy_image_url(&req.url).map_err(AppError::BadRequest)?;
     // 出站守卫：url 由客户端提供
     crate::crawler::url_guard::ensure_outbound_url_allowed(&target)
@@ -267,7 +307,7 @@ pub async fn ai_proxy_image(Json(req): Json<AiProxyImageRequest>) -> Result<Resp
         .header(reqwest::header::ACCEPT, "image/*,*/*;q=0.8")
         .send()
         .await
-        .map_err(map_ai_proxy_http_error)?;
+        .map_err(|error| map_ai_proxy_http_error(error, style))?;
 
     if let Some(length) = upstream.content_length() {
         if length > MAX_PROXY_IMAGE_BYTES {
@@ -286,7 +326,7 @@ pub async fn ai_proxy_image(Json(req): Json<AiProxyImageRequest>) -> Result<Resp
         .map_err(|e| AppError::BadRequest(e.to_string()))?;
     // read_body_limited 内部已做限量，超限在这里不可达
     if !status.is_success() {
-        return Ok(build_upstream_error_response(status, &body));
+        return Ok(build_upstream_error_response(status, &body, style));
     }
     // 上游 Content-Type 原样透传是自 XSS 面（客户端可控 url 让上游回
     // text/html）：图片代理只放行位图格式；image/svg+xml 等可携带脚本
@@ -318,7 +358,10 @@ fn is_allowed_proxy_image_content_type(content_type: &str) -> bool {
     )
 }
 
-async fn response_from_upstream(upstream: reqwest::Response) -> Result<Response, AppError> {
+async fn response_from_upstream(
+    upstream: reqwest::Response,
+    style: ProxyErrorStyle,
+) -> Result<Response, AppError> {
     let status = upstream.status();
     let content_type = upstream
         .headers()
@@ -330,7 +373,7 @@ async fn response_from_upstream(upstream: reqwest::Response) -> Result<Response,
         let body = crate::crawler::fetcher::read_body_limited(upstream, MAX_PROXY_RESPONSE_BYTES)
             .await
             .map_err(|e| AppError::BadRequest(e.to_string()))?;
-        return Ok(build_upstream_error_response(status, &body));
+        return Ok(build_upstream_error_response(status, &body, style));
     }
     // 成功响应流式转发：整包缓冲会把 stream:true 的客户端（TTS 大音频、长文本）
     // 憋到上游结束才一次性吐出，还会撞整包上限。流上累计计数做截断兜底：
@@ -381,13 +424,27 @@ fn build_response(
     response
 }
 
-fn build_upstream_error_response(status: reqwest::StatusCode, body: &bytes::Bytes) -> Response {
+fn build_upstream_error_response(
+    status: reqwest::StatusCode,
+    body: &bytes::Bytes,
+    style: ProxyErrorStyle,
+) -> Response {
     let body_text = std::str::from_utf8(body).unwrap_or("");
     let message = format_ai_proxy_upstream_error(status.as_u16(), body_text);
-    let status = StatusCode::from_u16(status.as_u16()).unwrap_or(StatusCode::BAD_GATEWAY);
-    let mut response = Json(ApiResponse::<Value>::err(message)).into_response();
-    *response.status_mut() = status;
-    response
+    match style {
+        // 模型服务的错误状态码原样透传（客户端按 401/429 分支处理）
+        ProxyErrorStyle::Legacy => {
+            let status = StatusCode::from_u16(status.as_u16()).unwrap_or(StatusCode::BAD_GATEWAY);
+            let mut response = Json(ApiResponse::<Value>::err(message)).into_response();
+            *response.status_mut() = status;
+            response
+        }
+        // /v1 契约：上游失败统一 502，真实状态码进 detail 与 upstreamCode
+        ProxyErrorStyle::Problem => Problem::new(ErrorCode::UpstreamFailed)
+            .detail(message)
+            .upstream_code(status.as_u16().to_string())
+            .into_response(),
+    }
 }
 
 /// AI 代理客户端：进程级复用（连接池/TLS 握手跨请求共享）。
@@ -407,9 +464,18 @@ fn ai_proxy_client() -> reqwest::Client {
     AI_PROXY_CLIENT.clone()
 }
 
-fn map_ai_proxy_http_error(error: reqwest::Error) -> AppError {
+fn map_ai_proxy_http_error(error: reqwest::Error, style: ProxyErrorStyle) -> AppError {
     if error.is_timeout() {
-        return AppError::BadRequest("模型服务请求超时，请检查模型地址或稍后重试".to_string());
+        let message = "模型服务请求超时，请检查模型地址或稍后重试".to_string();
+        return match style {
+            // legacy 一直把超时当 400 可读错误返回，保持旧客户端契约
+            ProxyErrorStyle::Legacy => AppError::BadRequest(message),
+            // v1 契约：上游超时是网关问题（502 / UPSTREAM_TIMEOUT）
+            ProxyErrorStyle::Problem => AppError::Upstream {
+                status: 408,
+                message,
+            },
+        };
     }
     AppError::Http(error)
 }

@@ -245,6 +245,91 @@ impl TestServer {
         let body: Value = response.json().await.unwrap();
         body["data"].clone()
     }
+
+    // -- v1：任务注册表 / 资料 / 模型状态 ---------------------------------
+
+    async fn start_task_v1(
+        &self,
+        token: &str,
+        book_id: &str,
+        kind: &str,
+        target: Option<i32>,
+    ) -> reqwest::Response {
+        self.client
+            .post(self.url(&format!("/v1/books/{book_id}/agent-tasks")))
+            .header("Authorization", format!("Bearer {token}"))
+            .json(&json!({"kind": kind, "targetChapterIndex": target}))
+            .send()
+            .await
+            .unwrap()
+    }
+
+    async fn task_view(&self, token: &str, task_id: &str) -> (reqwest::StatusCode, Value) {
+        let response = self
+            .client
+            .get(self.url(&format!("/v1/tasks/{task_id}")))
+            .header("Authorization", format!("Bearer {token}"))
+            .send()
+            .await
+            .unwrap();
+        let status = response.status();
+        (status, response.json().await.unwrap_or(Value::Null))
+    }
+
+    async fn wait_task_v1_done(&self, token: &str, task_id: &str) -> Value {
+        let deadline = Instant::now() + Duration::from_secs(30);
+        loop {
+            assert!(Instant::now() < deadline, "v1 task did not finish in time");
+            let (_, view) = self.task_view(token, task_id).await;
+            if matches!(
+                view["state"].as_str(),
+                Some("succeeded" | "failed" | "cancelled")
+            ) {
+                return view;
+            }
+            tokio::time::sleep(Duration::from_millis(150)).await;
+        }
+    }
+
+    async fn latest_agent_task_v1(
+        &self,
+        token: &str,
+        book_id: &str,
+    ) -> (reqwest::StatusCode, Value) {
+        let response = self
+            .client
+            .get(self.url(&format!("/v1/books/{book_id}/agent-task")))
+            .header("Authorization", format!("Bearer {token}"))
+            .send()
+            .await
+            .unwrap();
+        let status = response.status();
+        (status, response.json().await.unwrap_or(Value::Null))
+    }
+
+    async fn get_memory_v1(&self, token: &str, book_id: &str) -> (reqwest::StatusCode, Value) {
+        let response = self
+            .client
+            .get(self.url(&format!("/v1/books/{book_id}/ai-memory")))
+            .header("Authorization", format!("Bearer {token}"))
+            .send()
+            .await
+            .unwrap();
+        let status = response.status();
+        (status, response.json().await.unwrap_or(Value::Null))
+    }
+
+    async fn model_status_v1(&self, token: &str) -> Value {
+        self.client
+            .get(self.url("/v1/me/ai/model-status"))
+            .header("Authorization", format!("Bearer {token}"))
+            .send()
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap()
+    }
 }
 
 #[tokio::test]
@@ -712,4 +797,255 @@ async fn redraw_map_failure_falls_back_to_relationship_graph() {
         .unwrap_or_default()
         .contains("已显示关系图"));
     assert_eq!(memory["mapDirty"], json!(true));
+}
+
+#[tokio::test]
+async fn v1_agent_task_registry_updates_memory_and_latest_task() {
+    if !node_available() {
+        eprintln!("skip: Node 不可用，无法运行假 sidecar");
+        return;
+    }
+    let server = TestServer::start(30).await;
+    let token = server.login().await;
+
+    let content = "\
+第一章 开始
+主角登场。
+第二章 继续
+继续前行。";
+    let (book_id, _) = server.upload_txt(&token, "v1 任务.txt", content).await;
+
+    // 模型状态只给布尔值（配置本体不下发）
+    let status = server.model_status_v1(&token).await;
+    assert!(status["canUseServerModel"].is_boolean(), "{status}");
+    assert!(status["agentReady"].is_boolean(), "{status}");
+    // 响应契约是「恰好五个布尔字段」：以后顺手补 baseUrl/apiKey 会在这里失败
+    let mut keys: Vec<&str> = status
+        .as_object()
+        .unwrap()
+        .keys()
+        .map(String::as_str)
+        .collect();
+    keys.sort_unstable();
+    assert_eq!(
+        keys,
+        [
+            "agentReady",
+            "canUseServerModel",
+            "imageReady",
+            "speechReady",
+            "textReady"
+        ],
+        "模型状态只允许布尔字段：{status}"
+    );
+    let serialized = status.to_string().to_ascii_lowercase();
+    assert!(
+        !serialized.contains("baseurl") && !serialized.contains("apikey"),
+        "模型状态不得下发地址/Key：{status}"
+    );
+
+    // 尚未生成资料：404 AI_MEMORY_NOT_FOUND
+    let (code, body) = server.get_memory_v1(&token, &book_id).await;
+    assert_eq!(code.as_u16(), 404, "{body}");
+    assert_eq!(body["code"], json!("AI_MEMORY_NOT_FOUND"), "{body}");
+
+    // 负目标章 → 422
+    let invalid = server
+        .start_task_v1(&token, &book_id, "update-to-current", Some(-1))
+        .await;
+    assert_eq!(invalid.status().as_u16(), 422);
+
+    let response = server
+        .start_task_v1(&token, &book_id, "update-to-current", Some(1))
+        .await;
+    assert_eq!(response.status().as_u16(), 202);
+    let location = response
+        .headers()
+        .get("location")
+        .and_then(|value| value.to_str().ok())
+        .unwrap_or_default()
+        .to_string();
+    let queued: Value = response.json().await.unwrap();
+    let task_id = queued["id"].as_str().unwrap().to_string();
+    assert_eq!(location, format!("/v1/tasks/{task_id}"));
+    assert_eq!(queued["kind"], json!("ai-generate"));
+    assert_eq!(queued["progress"]["subjectId"], json!(book_id));
+
+    let done = server.wait_task_v1_done(&token, &task_id).await;
+    assert_eq!(done["state"], json!("succeeded"), "{done}");
+    assert_eq!(done["progress"]["subjectId"], json!(book_id), "{done}");
+    assert!(
+        done["progress"]["done"].as_u64().unwrap_or(0) >= 1,
+        "应至少推进 1 章：{done}"
+    );
+
+    // 按书取最近任务（页面刷新恢复显示）
+    let (code, latest) = server.latest_agent_task_v1(&token, &book_id).await;
+    assert_eq!(code.as_u16(), 200);
+    assert_eq!(latest["id"], json!(task_id));
+    assert_eq!(latest["state"], json!("succeeded"));
+
+    // bookId 别名（book_01）归一后仍能查到同一本书的任务
+    let alias = book_id.replacen("book_", "book_0", 1);
+    let (code, latest) = server.latest_agent_task_v1(&token, &alias).await;
+    assert_eq!(code.as_u16(), 200, "别名 bookId 应命中同一任务");
+    assert_eq!(latest["id"], json!(task_id));
+
+    let (code, memory) = server.get_memory_v1(&token, &book_id).await;
+    assert_eq!(code.as_u16(), 200, "{memory}");
+    assert_eq!(memory["processedChapterIndex"], json!(1), "{memory}");
+
+    // v1 写接口拒绝未知字段（契约 §4）
+    let unknown = server
+        .client
+        .put(server.url(&format!("/v1/books/{book_id}/ai-memory")))
+        .header("Authorization", format!("Bearer {token}"))
+        .json(&json!({"summary": "x", "bogus": 1}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(unknown.status().as_u16(), 422);
+    let body: Value = unknown.json().await.unwrap();
+    assert_eq!(body["code"], json!("UNKNOWN_FIELD"), "{body}");
+
+    // 整体替换写：summary 更新且 bookUrl 以登记表当前绑定为准
+    let mut edited = memory.clone();
+    edited["summary"] = json!("手动修订后的总览");
+    edited["bookUrl"] = json!("https://stale.example/not-current");
+    let response = server
+        .client
+        .put(server.url(&format!("/v1/books/{book_id}/ai-memory")))
+        .header("Authorization", format!("Bearer {token}"))
+        .json(&edited)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status().as_u16(), 200);
+    let saved: Value = response.json().await.unwrap();
+    assert_eq!(saved["summary"], json!("手动修订后的总览"));
+    assert_ne!(saved["bookUrl"], json!("https://stale.example/not-current"));
+
+    let response = server
+        .client
+        .delete(server.url(&format!("/v1/books/{book_id}/ai-memory")))
+        .header("Authorization", format!("Bearer {token}"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status().as_u16(), 204);
+    let (code, body) = server.get_memory_v1(&token, &book_id).await;
+    assert_eq!(code.as_u16(), 404, "{body}");
+}
+
+#[tokio::test]
+async fn v1_agent_task_cancel_drives_registry_state() {
+    if !node_available() {
+        eprintln!("skip: Node 不可用，无法运行假 sidecar");
+        return;
+    }
+    let server = TestServer::start(30).await;
+    let token = server.login().await;
+
+    let content = "\
+第一章 开始
+正文一。
+第二章 卡住
+永不回应。";
+    let (book_id, _) = server.upload_txt(&token, "v1 取消.txt", content).await;
+
+    let response = server
+        .start_task_v1(&token, &book_id, "update-to-current", Some(2))
+        .await;
+    assert_eq!(response.status().as_u16(), 202);
+    let queued: Value = response.json().await.unwrap();
+    let task_id = queued["id"].as_str().unwrap().to_string();
+
+    // sidecar 单任务在提交阶段就原子占位：不依赖 worker 先跑起来，
+    // 紧跟着的第二次提交必须直接 409（不能先 202 再异步失败）。
+    let duplicate = server
+        .start_task_v1(&token, &book_id, "update-to-current", None)
+        .await;
+    assert_eq!(duplicate.status().as_u16(), 409);
+    let body: Value = duplicate.json().await.unwrap();
+    assert_eq!(body["code"], json!("TASK_ALREADY_RUNNING"), "{body}");
+
+    // 等到任务真的跑起来（任务 running）
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let mut started = false;
+    while Instant::now() < deadline {
+        let (_, view) = server.task_view(&token, &task_id).await;
+        if view["state"] == json!("running") {
+            started = true;
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    assert!(started, "任务应已开始");
+
+    let cancelled = server
+        .client
+        .delete(server.url(&format!("/v1/books/{book_id}/agent-task")))
+        .header("Authorization", format!("Bearer {token}"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(cancelled.status().as_u16(), 204);
+
+    let view = server.wait_task_v1_done(&token, &task_id).await;
+    assert_eq!(view["state"], json!("cancelled"), "{view}");
+
+    // sidecar 最终也回到 idle，不留孤儿进程
+    let snapshot = server.wait_task_done(&token).await;
+    assert_eq!(snapshot["running"], json!(false), "{snapshot}");
+}
+
+#[tokio::test]
+async fn v1_generic_task_delete_cancels_sidecar_process() {
+    if !node_available() {
+        eprintln!("skip: Node 不可用，无法运行假 sidecar");
+        return;
+    }
+    let server = TestServer::start(30).await;
+    let token = server.login().await;
+
+    let content = "\
+第一章 开始
+正文一。
+第二章 卡住
+永不回应。";
+    let (book_id, _) = server.upload_txt(&token, "v1 通用取消.txt", content).await;
+
+    let response = server
+        .start_task_v1(&token, &book_id, "update-to-current", Some(2))
+        .await;
+    assert_eq!(response.status().as_u16(), 202);
+    let queued: Value = response.json().await.unwrap();
+    let task_id = queued["id"].as_str().unwrap().to_string();
+
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let mut started = false;
+    while Instant::now() < deadline {
+        let (_, view) = server.task_view(&token, &task_id).await;
+        if view["state"] == json!("running") {
+            started = true;
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    assert!(started, "任务应已开始");
+
+    // 通用任务取消也必须真停 sidecar（不能只把注册表状态改成 cancelled）
+    let response = server
+        .client
+        .delete(server.url(&format!("/v1/tasks/{task_id}")))
+        .header("Authorization", format!("Bearer {token}"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status().as_u16(), 204);
+
+    let view = server.wait_task_v1_done(&token, &task_id).await;
+    assert_eq!(view["state"], json!("cancelled"), "{view}");
+    let snapshot = server.wait_task_done(&token).await;
+    assert_eq!(snapshot["running"], json!(false), "{snapshot}");
 }

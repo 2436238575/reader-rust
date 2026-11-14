@@ -4,6 +4,40 @@
  */
 
 export interface paths {
+    "/v1/ai/proxy": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 通用模型代理：沿用 `/reader3/aiProxy` 的转发实现，成功流式透传。 */
+        post: operations["aiProxy"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/ai/proxy-image": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 图片代理：拉取远程位图并回传（上限 20MB，SVG/HTML 一律拒绝）。 */
+        post: operations["aiProxyImage"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/auth/login": {
         parameters: {
             query?: never;
@@ -107,6 +141,63 @@ export interface paths {
          *     本端点暂不收——传入即 422 `UNKNOWN_FIELD`。
          */
         patch: operations["patchBook"];
+        trace?: never;
+    };
+    "/v1/books/{bookId}/agent-task": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 这本书最近一次 AI 任务（含已结束；服务重启后任务随内存注册表消失）。 */
+        get: operations["getAgentTask"];
+        put?: never;
+        post?: never;
+        /** 取消这本书正在跑的 AI 任务（幂等；已结束或无任务都返回 204）。 */
+        delete: operations["cancelAgentTask"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/books/{bookId}/agent-tasks": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * 提交 AI 资料任务 → 202 `TaskView`（`Location: /v1/tasks/{id}`）。
+         * @description sidecar 单用户单任务：已有任务进行中返回 409 `TASK_ALREADY_RUNNING`。
+         */
+        post: operations["startAgentTask"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/books/{bookId}/ai-memory": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 读取书籍 AI 资料；尚未生成时 404 `AI_MEMORY_NOT_FOUND`。 */
+        get: operations["getAiBookMemory"];
+        /** 保存（整体替换）书籍 AI 资料；`bookUrl`/书名/作者以登记表当前绑定为准。 */
+        put: operations["putAiBookMemory"];
+        post?: never;
+        /** 删除书籍 AI 资料（幂等）。 */
+        delete: operations["deleteAiBookMemory"];
+        options?: never;
+        head?: never;
+        patch?: never;
         trace?: never;
     };
     "/v1/books/{bookId}/cache": {
@@ -612,6 +703,26 @@ export interface paths {
          * @description 时间字段统一由服务端下发，客户端时钟不参与任何比较（契约 §5.2）。
          */
         get: operations["getMe"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/me/ai/model-status": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * 后端 AI 模型只回报「是否配置可用」的布尔状态。
+         * @description 配置本体（地址/Key/模型名）只存在于服务端 env，从不下发到浏览器。
+         */
+        get: operations["getAiModelStatus"];
         put?: never;
         post?: never;
         delete?: never;
@@ -1397,6 +1508,201 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /** @enum {string} */
+        AgentTaskKindRequest: "update-to-current" | "redraw-map";
+        AiBookCharacter: {
+            /** @default [] */
+            aliases: string[];
+            /** @default null */
+            description: string | null;
+            /** @default null */
+            faction: string | null;
+            /** @default null */
+            importance: string | null;
+            /** @default null */
+            lastSeenChapter: string | null;
+            /** @default null */
+            location: string | null;
+            /** @default  */
+            name: string;
+            /** @default  */
+            status: string;
+        };
+        AiBookLocation: {
+            /** @default  */
+            description: string;
+            /** @default null */
+            firstSeenChapter: string | null;
+            /** @default null */
+            importance: string | null;
+            /** @default null */
+            kind: string | null;
+            /** @default  */
+            name: string;
+            /** @default null */
+            parentName: string | null;
+            /** @default [] */
+            relatedCharacters: string[];
+            /** @default null */
+            status: string | null;
+        };
+        AiBookMap: {
+            /** @default null */
+            fallback: string | null;
+            /** @default null */
+            fallbackReason: string | null;
+            /** @default null */
+            imageUrl: string | null;
+            /** @default null */
+            prompt: string | null;
+            /**
+             * Format: int32
+             * @default null
+             */
+            sourceChapterIndex: number | null;
+            /**
+             * Format: int64
+             * @default null
+             */
+            updatedAt: number | null;
+        };
+        AiBookMemory: {
+            /** @default null */
+            author: string | null;
+            /**
+             * @description 所属书籍的 bookId（`book_<n>`），存储主键；bookUrl 只是冗余数据
+             * @default null
+             */
+            bookId: string | null;
+            /** @default null */
+            bookName: string | null;
+            /** @default  */
+            bookUrl: string;
+            /** @default [] */
+            characters: components["schemas"]["AiBookCharacter"][];
+            /** @default false */
+            enabled: boolean;
+            /** @default null */
+            lastError: string | null;
+            /** @default [] */
+            locations: components["schemas"]["AiBookLocation"][];
+            /** @default null */
+            map: components["schemas"]["AiBookMap"] | null;
+            /** @default false */
+            mapDirty: boolean;
+            /**
+             * Format: int32
+             * @default null
+             */
+            processedChapterIndex: number | null;
+            /** @default null */
+            processedChapterTitle: string | null;
+            /** @default [] */
+            relationships: components["schemas"]["AiBookRelationship"][];
+            /** @default  */
+            summary: string;
+            /**
+             * Format: int64
+             * @default 0
+             */
+            updatedAt: number;
+            /** @default [] */
+            worldview: components["schemas"]["AiBookNote"][];
+        };
+        /**
+         * @description PUT 请求体：字段与 `AiBookMemory` 一致，但拒绝未知字段（v1 契约）。
+         *     `bookId`/`bookUrl` 即使传入也会被路径与登记表覆盖。
+         */
+        AiBookMemoryWrite: {
+            /** @default null */
+            author: string | null;
+            /** @default null */
+            bookId: string | null;
+            /** @default null */
+            bookName: string | null;
+            /** @default  */
+            bookUrl: string;
+            /** @default [] */
+            characters: components["schemas"]["AiBookCharacter"][];
+            /** @default false */
+            enabled: boolean;
+            /** @default null */
+            lastError: string | null;
+            /** @default [] */
+            locations: components["schemas"]["AiBookLocation"][];
+            /** @default null */
+            map: components["schemas"]["AiBookMap"] | null;
+            /** @default false */
+            mapDirty: boolean;
+            /**
+             * Format: int32
+             * @default null
+             */
+            processedChapterIndex: number | null;
+            /** @default null */
+            processedChapterTitle: string | null;
+            /** @default [] */
+            relationships: components["schemas"]["AiBookRelationship"][];
+            /** @default  */
+            summary: string;
+            /**
+             * Format: int64
+             * @default 0
+             */
+            updatedAt: number;
+            /** @default [] */
+            worldview: components["schemas"]["AiBookNote"][];
+        };
+        AiBookNote: {
+            /** @default null */
+            category: string | null;
+            /** @default null */
+            confidence: string | null;
+            /** @default  */
+            content: string;
+            /** @default null */
+            importance: string | null;
+            /** @default  */
+            title: string;
+        };
+        AiBookRelationship: {
+            /** @default null */
+            description: string | null;
+            /** @default null */
+            importance: string | null;
+            /** @default  */
+            relation: string;
+            /** @default  */
+            source: string;
+            /** @default null */
+            status: string | null;
+            /** @default  */
+            target: string;
+        };
+        /** @enum {string} */
+        AiModelKind: "text" | "image" | "speech";
+        AiModelStatus: {
+            /** @description AI 资料编排 sidecar 是否就绪（启动握手探测） */
+            agentReady: boolean;
+            /** @description 任一服务端模型可用（文本/图片/语音） */
+            canUseServerModel: boolean;
+            imageReady: boolean;
+            speechReady: boolean;
+            textReady: boolean;
+        };
+        AiProxyImageRequest: {
+            url: string;
+        };
+        AiProxyRequest: {
+            apiKey?: string | null;
+            baseUrl?: string;
+            /** @description 透传给上游的请求体（结构随模型接口而定） */
+            body: Record<string, never>;
+            fullUrl?: boolean;
+            kind?: components["schemas"]["AiModelKind"] | null;
+            path: string;
+            useServerConfig?: boolean;
+        };
         /**
          * @description 创建备份的可选本地配置快照。服务端不知道浏览器 localStorage，必须由
          *     前端把白名单键放进来；空对象表示「这些键当前都没有值」。
@@ -2225,7 +2531,7 @@ export interface components {
          *     新增取值是兼容变更（客户端必须有 default 分支），改已有取值的语义是破坏变更。
          * @enum {string}
          */
-        ErrorCode: "VALIDATION_FAILED" | "MALFORMED_REQUEST" | "INVALID_CURSOR" | "STALE_CURSOR" | "INVALID_CREDENTIALS" | "AUTH_EXPIRED" | "AUTH_REFRESH_REPLAYED" | "SESSION_INVALID" | "CSRF_HEADER_MISSING" | "SCOPE_FORBIDDEN" | "BOOK_NOT_FOUND" | "CHAPTER_NOT_FOUND" | "CHAPTER_EDIT_NOT_FOUND" | "SOURCE_NOT_FOUND" | "IMAGE_NOT_FOUND" | "TASK_NOT_FOUND" | "NOT_FOUND" | "REPLACE_RULE_NOT_FOUND" | "BOOK_NOT_IN_SHELF" | "SOURCE_DISABLED" | "SOURCE_LOGIN_FAILED" | "TASK_ALREADY_RUNNING" | "CONFLICT" | "VERSION_CONFLICT" | "PAYLOAD_TOO_LARGE" | "UNSUPPORTED_MEDIA_TYPE" | "RATE_LIMITED" | "UPSTREAM_BLOCKED" | "UPSTREAM_FAILED" | "UPSTREAM_TIMEOUT" | "PROCESSING_TIMEOUT" | "TASK_LIMIT" | "API_REMOVED" | "UNKNOWN_FIELD" | "INTERNAL";
+        ErrorCode: "VALIDATION_FAILED" | "MALFORMED_REQUEST" | "INVALID_CURSOR" | "STALE_CURSOR" | "INVALID_CREDENTIALS" | "AUTH_EXPIRED" | "AUTH_REFRESH_REPLAYED" | "SESSION_INVALID" | "CSRF_HEADER_MISSING" | "SCOPE_FORBIDDEN" | "BOOK_NOT_FOUND" | "CHAPTER_NOT_FOUND" | "CHAPTER_EDIT_NOT_FOUND" | "AI_MEMORY_NOT_FOUND" | "SOURCE_NOT_FOUND" | "IMAGE_NOT_FOUND" | "TASK_NOT_FOUND" | "NOT_FOUND" | "REPLACE_RULE_NOT_FOUND" | "BOOK_NOT_IN_SHELF" | "SOURCE_DISABLED" | "SOURCE_LOGIN_FAILED" | "TASK_ALREADY_RUNNING" | "CONFLICT" | "VERSION_CONFLICT" | "PAYLOAD_TOO_LARGE" | "UNSUPPORTED_MEDIA_TYPE" | "RATE_LIMITED" | "UPSTREAM_BLOCKED" | "UPSTREAM_FAILED" | "UPSTREAM_TIMEOUT" | "PROCESSING_TIMEOUT" | "TASK_LIMIT" | "API_REMOVED" | "UNKNOWN_FIELD" | "INTERNAL";
         FetchSourcesRequest: {
             url: string;
         };
@@ -3136,6 +3442,14 @@ export interface components {
             expiresAt: string;
             ticket: string;
         };
+        StartAgentTaskRequest: {
+            kind?: components["schemas"]["AgentTaskKindRequest"] | null;
+            /**
+             * Format: int32
+             * @description 目标章 index；缺省取书架阅读进度
+             */
+            targetChapterIndex?: number | null;
+        };
         TaskDoneEvent: {
             resultHref: string | null;
             state: components["schemas"]["TaskState"];
@@ -3380,6 +3694,126 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    aiProxy: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AiProxyRequest"];
+            };
+        };
+        responses: {
+            /** @description 上游响应原样透传（JSON 或音频/图片流） */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/octet-stream": unknown;
+                };
+            };
+            /** @description URL/路径非法或被出站守卫拦截 */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description 未登录或令牌失效 */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description 请求体超过 8MB */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description 模型服务失败（上游状态码在 upstreamCode） */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    aiProxyImage: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AiProxyImageRequest"];
+            };
+        };
+        responses: {
+            /** @description 图片字节（image/jpeg 等位图） */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/octet-stream": unknown;
+                };
+            };
+            /** @description URL 非法、被出站守卫拦截或上游不是位图 */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description 未登录或令牌失效 */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description 请求体超过 8MB */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description 模型服务失败（上游状态码在 upstreamCode） */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
     login: {
         parameters: {
             query?: never;
@@ -3620,6 +4054,294 @@ export interface operations {
             };
             /** @description 未知字段（本端点只收 name/author） */
             422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    getAgentTask: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description 书籍 id（book_<n>） */
+                bookId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 最近一次任务 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TaskView"];
+                };
+            };
+            /** @description 未登录或令牌失效 */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description 书籍不存在或该书还没有 AI 任务 */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    cancelAgentTask: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description 书籍 id（book_<n>） */
+                bookId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 已请求取消（幂等） */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description 未登录或令牌失效 */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description 书籍不存在 */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    startAgentTask: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description 书籍 id（book_<n>） */
+                bookId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["StartAgentTaskRequest"];
+            };
+        };
+        responses: {
+            /** @description 任务已入队 */
+            202: {
+                headers: {
+                    /** @description 任务资源地址 */
+                    Location?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TaskView"];
+                };
+            };
+            /** @description 未登录或令牌失效 */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description 书籍不存在 */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description 书籍未加入书架或已有 AI 任务进行中 */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description targetChapterIndex 为负数 */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description 并发任务超限，带 Retry-After */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    getAiBookMemory: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description 书籍 id（book_<n>） */
+                bookId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description AI 资料 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AiBookMemory"];
+                };
+            };
+            /** @description 未登录或令牌失效 */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description 书籍不存在或尚未生成 AI 资料 */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    putAiBookMemory: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description 书籍 id（book_<n>） */
+                bookId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AiBookMemoryWrite"];
+            };
+        };
+        responses: {
+            /** @description 保存后的 AI 资料 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AiBookMemory"];
+                };
+            };
+            /** @description 未登录或令牌失效 */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description 书籍不存在 */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description 资料超过 1MB */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    deleteAiBookMemory: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description 书籍 id（book_<n>） */
+                bookId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 已删除（幂等） */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description 未登录或令牌失效 */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description 书籍不存在 */
+            404: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -5262,6 +5984,35 @@ export interface operations {
             };
             /** @description 服务端错误 */
             500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    getAiModelStatus: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 各类型模型是否可用 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AiModelStatus"];
+                };
+            };
+            /** @description 未登录或令牌失效 */
+            401: {
                 headers: {
                     [name: string]: unknown;
                 };

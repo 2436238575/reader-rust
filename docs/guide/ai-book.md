@@ -102,14 +102,16 @@ AI资料支持两种模型来源。
 
 AI资料页面主要使用这些后端接口：
 
-| 接口                                | 用途                               |
-| ----------------------------------- | ---------------------------------- |
-| `GET/POST /reader3/getAiBookMemory` | 获取当前书籍 AI资料                |
-| `POST /reader3/saveAiBookMemory`    | 保存当前书籍 AI资料                |
-| `POST /reader3/deleteAiBookMemory`  | 重置当前书籍 AI资料                |
-| `GET /reader3/getAiModelConfig`     | 获取后端模型各类型的可用状态（布尔） |
-| `POST /reader3/aiProxy`             | 后端代理文本、图片、语音模型请求   |
-| `POST /reader3/aiProxyImage`        | 后端代理图片下载                   |
+| 接口                                       | 用途                                 |
+| ------------------------------------------ | ------------------------------------ |
+| `GET /v1/books/{bookId}/ai-memory`         | 获取当前书籍 AI资料                  |
+| `PUT /v1/books/{bookId}/ai-memory`         | 保存当前书籍 AI资料（整体替换）      |
+| `DELETE /v1/books/{bookId}/ai-memory`      | 重置当前书籍 AI资料                  |
+| `GET /v1/me/ai/model-status`               | 获取后端模型各类型的可用状态（布尔） |
+| `POST /v1/books/{bookId}/agent-tasks`      | 提交 AI 资料更新/重绘地图任务        |
+| `GET /v1/books/{bookId}/agent-task`        | 查询最近一次任务（刷新页面恢复进度） |
+| `POST /v1/ai/proxy`                        | 后端代理文本、图片、语音模型请求     |
+| `POST /v1/ai/proxy-image`                  | 后端代理图片下载                     |
 
 ## 常见问题
 

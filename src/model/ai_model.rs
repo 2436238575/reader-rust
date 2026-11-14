@@ -77,7 +77,7 @@ pub struct AiModelConfig {
     pub speech: AiSpeechModelConfig,
 }
 
-#[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq, utoipa::ToSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum AiModelKind {
     Text,

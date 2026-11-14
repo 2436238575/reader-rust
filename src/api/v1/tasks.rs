@@ -616,10 +616,22 @@ pub async fn cancel_task(
     V1User(user): V1User,
     Path(task_id): Path<String>,
 ) -> Result<StatusCode, Problem> {
-    let Some((_, newly_requested)) = state.task_service.request_cancel(&user.ns, &task_id) else {
+    let Some((task, newly_requested)) = state.task_service.request_cancel(&user.ns, &task_id)
+    else {
         return Err(task_not_found());
     };
     if newly_requested {
+        // AI 资料任务的实际执行体是 sidecar 子进程：只置注册表取消位不够，
+        // 工作器若卡住/未被调度，sidecar 会继续写资料。这里按书确认后
+        // 直接终止当前 sidecar 任务（不会误杀另一本书）。
+        if task.kind == TaskKind::AiGenerate {
+            if let Some(book_id) = task.progress.subject_id.as_deref() {
+                state
+                    .agent_sidecar_service
+                    .cancel_task_for_book(&user.ns, book_id)
+                    .await;
+            }
+        }
         let service = state.task_service.clone();
         let id = task_id.clone();
         tokio::spawn(async move {

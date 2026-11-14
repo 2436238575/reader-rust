@@ -29,11 +29,14 @@ describe('openaiSpeech', () => {
 
     expect(blob.type).toBe('audio/mpeg')
     expect(fetchMock).toHaveBeenCalledWith(
-      '/reader3/aiProxy',
+      '/v1/ai/proxy',
       expect.objectContaining({
         method: 'POST',
         credentials: 'same-origin',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Requested-With': 'XMLHttpRequest',
+        },
       })
     )
     const init = fetchMock.mock.calls[0]?.[1] as unknown as RequestInit
@@ -52,8 +55,32 @@ describe('openaiSpeech', () => {
     expect(String(init.body)).not.toContain('browser-key')
   })
 
-  it('refreshes once and retries an expired server speech request', async () => {
+  it('surfaces v1 problem+json detail for proxy failures', async () => {
     installLocalStorage()
+    const fetchMock = vi.fn(async () => ({
+      ok: false,
+      status: 502,
+      headers: new Headers({ 'content-type': 'application/problem+json' }),
+      json: async () => ({
+        code: 'UPSTREAM_FAILED',
+        detail: '模型服务返回 401 Unauthorized',
+      }),
+      text: async () => '',
+    }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    await expect(
+      requestOpenAISpeechAudio({
+        source: 'server',
+        baseUrl: '',
+        input: '你好',
+        model: 'server-model',
+        voice: 'server-voice',
+      })
+    ).rejects.toThrow('模型服务返回 401 Unauthorized')
+  })
+
+  it('refreshes once and retries an expired server speech request', async () => {    installLocalStorage()
     // v1 刷新端点：裸载荷 {accessToken, accessTokenExpiresAt, username}
     const post = vi.spyOn(axios, 'post').mockResolvedValue({
       data: {

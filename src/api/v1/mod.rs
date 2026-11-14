@@ -25,6 +25,7 @@ use axum::Router;
 use utoipa::openapi::security::{ApiKey, ApiKeyValue, Http, HttpAuthScheme, SecurityScheme};
 use utoipa::{Modify, OpenApi};
 
+mod ai;
 mod auth;
 mod books;
 mod cache;
@@ -59,6 +60,7 @@ pub fn router(
 ) -> Router {
     let v1 = Router::new()
         .merge(me::router())
+        .merge(ai::router())
         .merge(replace_rules::router())
         .merge(shelf::router())
         .merge(books::router())
@@ -89,6 +91,7 @@ pub fn router(
         .layer(axum::extract::DefaultBodyLimit::max(
             crate::api::router::PUBLIC_BODY_LIMIT_BYTES,
         ));
+    let proxy_concurrency = concurrency.clone();
     let v1 = match concurrency {
         Some(layer) => v1.layer(layer),
         None => v1,
@@ -112,6 +115,13 @@ pub fn router(
     // WebDAV 文件浏览/备份恢复同样是大文件域：自带 900s 超时与 100MB 体限，
     // 鉴权与 CSRF 在子路由自含（与 local-books 同模式）
     let v1 = v1.merge(webdav::router(state.clone(), upload_timeout));
+    // AI 代理是非流式长生成 + 8MB 体：与 /reader3 代理同档（900s），
+    // 成功响应流式透传、失败 problem+json，鉴权与 CSRF 在子路由自含
+    let v1 = v1.merge(ai::proxy_router(
+        state.clone(),
+        upload_timeout,
+        proxy_concurrency,
+    ));
     v1.layer(axum::middleware::from_fn(attach_problem_trace))
         .with_state(state)
 }
@@ -426,6 +436,15 @@ pub fn openapi_yaml() -> String {
     info(title = "reader-rust v1 API", version = "0.1.0"),
     paths(
         me::get_me,
+        ai::get_model_status,
+        ai::get_memory,
+        ai::put_memory,
+        ai::delete_memory,
+        ai::start_agent_task,
+        ai::get_agent_task,
+        ai::cancel_agent_task,
+        ai::proxy,
+        ai::proxy_image,
         books::list_chapters,
         books::search_cached_content,
         source_candidates::source_candidate_events,
@@ -520,6 +539,19 @@ pub fn openapi_yaml() -> String {
     ),
     components(schemas(
         me::Me,
+        ai::AiModelStatus,
+        ai::AgentTaskKindRequest,
+        ai::StartAgentTaskRequest,
+        ai::AiBookMemoryWrite,
+        crate::model::ai_book::AiBookMemory,
+        crate::model::ai_book::AiBookNote,
+        crate::model::ai_book::AiBookCharacter,
+        crate::model::ai_book::AiBookRelationship,
+        crate::model::ai_book::AiBookLocation,
+        crate::model::ai_book::AiBookMap,
+        crate::model::ai_proxy::AiProxyRequest,
+        crate::model::ai_proxy::AiProxyImageRequest,
+        crate::model::ai_model::AiModelKind,
         Problem,
         ErrorCode,
         crate::api::problem::FieldIssue,
@@ -653,6 +685,7 @@ pub fn openapi_yaml() -> String {
         (name = "auth", description = "会话认证"),
         (name = "sources", description = "书源"),
         (name = "books", description = "书籍与章节"),
+        (name = "ai", description = "AI 资料、编排任务与模型代理"),
         (name = "tasks", description = "任务、搜索与 SSE 事件流"),
         (name = "files", description = "服务器文件浏览与备份恢复"),
     ),

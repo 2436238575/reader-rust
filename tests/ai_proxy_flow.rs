@@ -33,6 +33,25 @@ async fn start_slow_upstream(delay: std::time::Duration) -> String {
     format!("http://{addr}")
 }
 
+/// 假模型上游：固定返回错误状态与 JSON 错误体。
+async fn start_error_upstream(status: axum::http::StatusCode, message: &'static str) -> String {
+    let app = Router::new().route(
+        "/v1/chat/completions",
+        post(move || async move {
+            (
+                status,
+                Json(serde_json::json!({ "error": { "message": message } })),
+            )
+        }),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        let _ = axum::serve(listener, app).await;
+    });
+    format!("http://{addr}")
+}
+
 struct TestServer {
     base_url: String,
     temp_dir: PathBuf,
@@ -150,5 +169,58 @@ async fn slow_non_streaming_generation_survives_inbound_timeout() {
     assert_eq!(
         body["choices"][0]["message"]["content"], "ok",
         "应透传上游 JSON 响应"
+    );
+
+    // v1 入口与 legacy 同档：同样不被 2s 常规入站超时掐死
+    let res = app
+        .client
+        .post(format!("{}/v1/ai/proxy", app.base_url))
+        .header("Authorization", format!("Bearer {token}"))
+        .json(&serde_json::json!({
+            "baseUrl": upstream,
+            "path": "/v1/chat/completions",
+            "body": { "messages": [{ "role": "user", "content": "hi" }] },
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(res.status(), reqwest::StatusCode::OK, "v1 代理也应等满");
+    let body: serde_json::Value = res.json().await.unwrap();
+    assert_eq!(body["choices"][0]["message"]["content"], "ok");
+}
+
+#[tokio::test]
+async fn v1_proxy_upstream_error_is_problem_json() {
+    let upstream = start_error_upstream(axum::http::StatusCode::UNAUTHORIZED, "bad api key").await;
+    let app = TestServer::start().await;
+    let token = app.login_token().await;
+
+    let res = app
+        .client
+        .post(format!("{}/v1/ai/proxy", app.base_url))
+        .header("Authorization", format!("Bearer {token}"))
+        .json(&serde_json::json!({
+            "baseUrl": upstream,
+            "path": "/v1/chat/completions",
+            "body": { "messages": [] },
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(res.status(), reqwest::StatusCode::BAD_GATEWAY);
+    assert_eq!(
+        res.headers()
+            .get("content-type")
+            .and_then(|value| value.to_str().ok()),
+        Some("application/problem+json")
+    );
+    let body: serde_json::Value = res.json().await.unwrap();
+    assert_eq!(body["code"], "UPSTREAM_FAILED", "{body}");
+    assert_eq!(body["upstreamCode"], "401", "{body}");
+    let detail = body["detail"].as_str().unwrap_or_default();
+    assert!(detail.contains("401"), "detail 应带真实状态码：{detail}");
+    assert!(
+        detail.contains("bad api key"),
+        "detail 应带上游原因：{detail}"
     );
 }

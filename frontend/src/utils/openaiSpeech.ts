@@ -1,6 +1,6 @@
 import { notifyNeedLogin } from './authEvents'
 import { summarizeHttpErrorBody } from './httpError'
-import { API_BASE } from './appBase'
+import { API_V1_BASE } from './appBase'
 import {
   RefreshNetworkError,
   SessionExpiredError,
@@ -41,13 +41,18 @@ async function readSpeechError(response: Response) {
   const contentType = response.headers.get('content-type') || ''
 
   try {
-    if (contentType.includes('application/json')) {
+    // `/v1` 的 problem+json 也走这个分支：只匹配 application/json 会把
+    // 代理错误当成纯文本，前端只能显示截断后的原始 JSON。
+    if (contentType.includes('json')) {
       const data = (await response.json()) as {
         error?: {
           message?: string
         }
+        // /v1 problem+json
+        detail?: string
+        code?: string
       }
-      return data.error?.message || fallback
+      return data.detail || data.error?.message || fallback
     }
 
     const text = (await response.text()).trim()
@@ -82,7 +87,9 @@ export async function requestOpenAISpeechAudio({
       'Content-Type': 'application/json',
       // 服务端代理请求靠同源 Cookie 携带会话，不再塞主 JWT；直连分支
       // 用的是用户自己的 API Key（不受会话改造影响）
-      ...(serverRequest ? {} : buildAuthHeaders(apiKey)),
+      ...(serverRequest
+        ? { 'X-Requested-With': 'XMLHttpRequest' }
+        : buildAuthHeaders(apiKey)),
     },
     // same-origin 与 fetch 默认一致，写明意图：后端请求带会话 Cookie，
     // 直连第三方 API 时不外发任何凭据
@@ -94,7 +101,7 @@ export async function requestOpenAISpeechAudio({
     ),
     signal,
   })
-  const url = serverRequest ? `${API_BASE}/aiProxy` : buildOpenAISpeechUrl(baseUrl)
+  const url = serverRequest ? `${API_V1_BASE}/ai/proxy` : buildOpenAISpeechUrl(baseUrl)
 
   let response = await fetch(url, requestInit())
   let refreshNetworkFailure = false

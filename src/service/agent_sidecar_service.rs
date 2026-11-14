@@ -19,7 +19,7 @@ use std::{
     path::PathBuf,
     process::Stdio,
     sync::{
-        atomic::{AtomicBool, AtomicU8, Ordering},
+        atomic::{AtomicBool, AtomicU64, AtomicU8, Ordering},
         Arc,
     },
     time::Duration,
@@ -199,6 +199,10 @@ type StderrTail = Arc<AsyncMutex<Vec<String>>>;
 const PROBE_UNKNOWN: u8 = 0;
 const PROBE_READY: u8 = 1;
 const PROBE_FAILED: u8 = 2;
+
+/// 任务 id 的进程内序号：`now_ts` 只到秒，同一秒对同一本书再开任务
+/// 会生成相同 id，旧 worker 可能把新任务的快照当成自己的。
+static JOB_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 /// 任务状态快照。注册表持久保留最后一条（含 lastError），直到下一个任务
 /// 或进程重启——关页不丢进度，重开页面轮询即恢复。
@@ -380,7 +384,9 @@ impl AgentSidecarService {
         }
         // 检查与写入必须在同一临界区完成，否则两个并发请求可双双通过检查
         let book_id = book.book_id.clone().unwrap_or_default();
-        let job_id = format!("agent-{}-{}", now_ts(), book_id);
+        // 秒级时间戳 + 进程内序号：同秒同书启动两次也得到不同 job id
+        let sequence = JOB_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+        let job_id = format!("agent-{}-{sequence}-{}", now_ts(), book_id);
         let task = Arc::new(ActiveTask {
             cancel: Arc::new(AtomicBool::new(false)),
             child: Arc::new(AsyncMutex::new(None)),
@@ -483,6 +489,31 @@ impl AgentSidecarService {
             return true;
         }
         false
+    }
+
+    /// 只取消当前确实在跑这本书的任务。
+    ///
+    /// sidecar 是全局单任务：书级取消/通用任务取消都必须先确认当前快照仍
+    /// 属于该书，否则「取消一本排队中的书」会误杀另一本书正在跑的任务。
+    pub async fn cancel_task_for_book(&self, user_ns: &str, book_id: &str) -> bool {
+        let active = self.active.lock().await.clone();
+        let Some(task) = active else {
+            return false;
+        };
+        if task.owner_ns != user_ns {
+            return false;
+        }
+        let matches = self.registry.lock().await.as_ref().is_some_and(|snapshot| {
+            snapshot.owner_ns == user_ns && snapshot.running && snapshot.book_id == book_id
+        });
+        if !matches {
+            return false;
+        }
+        task.cancel.store(true, Ordering::SeqCst);
+        if let Some(mut child) = task.child.lock().await.take() {
+            let _ = child.kill().await;
+        }
+        true
     }
 }
 

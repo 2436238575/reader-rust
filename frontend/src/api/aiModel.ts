@@ -1,4 +1,5 @@
 import http from './http'
+import { API_V1_BASE } from '../utils/appBase'
 import type { AiServerModelStatus } from '../types'
 
 /**
@@ -8,5 +9,7 @@ import type { AiServerModelStatus } from '../types'
  * 从不下发到浏览器；也没有保存接口——改配置只能改服务端环境变量。
  */
 export function getAiModelStatus() {
-  return http.get<AiServerModelStatus>('/getAiModelConfig').then((r) => r.data)
+  return http
+    .get<AiServerModelStatus>('/me/ai/model-status', { baseURL: API_V1_BASE })
+    .then((r) => r.data)
 }
