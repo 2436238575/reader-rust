@@ -62,23 +62,23 @@ impl BookGroupService {
     /// [`Self::reorder_groups`]。本方法保留给 WebDAV 恢复——恢复是「以备份
     /// 为准」的整表重建，删掉备份里没有的组正是期望行为。
     pub async fn save_groups(&self, user_ns: &str, groups: &[BookGroup]) -> Result<(), AppError> {
+        let mut tx = self.repo.begin().await?;
+        self.save_groups_on(&mut tx, user_ns, groups).await?;
+        tx.commit().await?;
+        Ok(())
+    }
+
+    /// 事务版整表覆盖（WebDAV 恢复的五域单事务）。
+    pub async fn save_groups_on(
+        &self,
+        tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+        user_ns: &str,
+        groups: &[BookGroup],
+    ) -> Result<(), AppError> {
         for group in groups {
             validate_group_id(group.group_id)?;
         }
-        // 整表提交语义：以提交的集合为准——不在集合里的视为已删除
-        //（repo.delete 会同步清掉书籍位掩码里的对应位）
-        let existing = self.repo.list(user_ns).await?;
-        let keep: std::collections::HashSet<i64> =
-            groups.iter().map(|group| group.group_id).collect();
-        for group in &existing {
-            if !keep.contains(&group.group_id) {
-                self.repo.delete(user_ns, group.group_id).await?;
-            }
-        }
-        for group in groups {
-            self.repo.upsert(user_ns, group).await?;
-        }
-        Ok(())
+        self.repo.save_groups_on(tx, user_ns, groups).await
     }
 
     /// 只改分组顺序（`POST /reader3/saveBookGroupOrder`）。

@@ -563,6 +563,131 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/me/backups": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * 生成服务端备份：快照当前账号的书架/分组/书源/书签/替换规则，原子写入
+         *     `/backups/reader-backup-<UTC 时间>-<随机后缀>.json`。
+         */
+        post: operations["createBackup"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/me/backups:inspect": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * 恢复前预览备份内容（不写库）：确认框展示各域条数，空书源等异常在
+         *     用户点「确定」之前可见。
+         */
+        post: operations["inspectBackup"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/me/backups:restore": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * 以备份为准恢复：删除当前书架/分组/书源/书签/替换规则后按文档重建。
+         *     返回各域条数与备份里的 localStorage 快照（前端只应用已知键）。
+         */
+        post: operations["restoreBackup"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/me/files": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * 目录列表（`?path=`，缺省根目录）。强 ETag 对响应字节取 md5，命中
+         *     `If-None-Match` 回 304。
+         */
+        get: operations["listFiles"];
+        put?: never;
+        /**
+         * multipart 上传：`?path=` 是目标目录，`file` 字段可重复（最多 20 个字段）。
+         *     目标目录不存在时自动创建（与 `/reader3/uploadFileToWebdav` 一致）。
+         */
+        post: operations["uploadFiles"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/me/files/{path}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * 下载文件（流式，不整读进内存）。显式 Content-Type 与 `sandbox` CSP
+         *     （路由层补）避免备份 JSON/HTML 被浏览器当页面执行。
+         */
+        get: operations["downloadFile"];
+        put?: never;
+        post?: never;
+        /** 递归删除文件或目录；不存在的路径按 404（幂等重试由客户端决定）。 */
+        delete: operations["deleteFile"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/me/files:batchDelete": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * 批量删除：先校验全部路径（任一非法整批 400，避免删一半才发现），
+         *     不存在的计入 `missing`。前端按 500 条分片调用。
+         */
+        post: operations["batchDeleteFiles"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/me/groups": {
         parameters: {
             query?: never;
@@ -1089,6 +1214,38 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /**
+         * @description 创建备份的可选本地配置快照。服务端不知道浏览器 localStorage，必须由
+         *     前端把白名单键放进来；空对象表示「这些键当前都没有值」。
+         */
+        BackupCreateRequest: {
+            /**
+             * @description 缺省 = 这份备份不含浏览器本地配置（恢复时不动 localStorage）
+             * @default null
+             */
+            localState: {
+                [key: string]: string;
+            } | null;
+        };
+        /** @description 备份文件摘要：恢复前的确认框用它在点下去之前展示条目数。 */
+        BackupInspectResult: {
+            /** Format: int32 */
+            bookSources: number;
+            /** Format: int32 */
+            bookmarks: number;
+            /** Format: int32 */
+            books: number;
+            /** Format: date-time */
+            createdAt: string;
+            /** Format: int32 */
+            groups: number;
+            /** @description 备份是否包含浏览器本地配置（null/缺失 = 不含） */
+            hasLocalState: boolean;
+            /** Format: int32 */
+            replaceRules: number;
+            /** Format: int32 */
+            version: number;
+        };
         BatchContentError: {
             code: components["schemas"]["ErrorCode"];
             detail?: string | null;
@@ -2084,6 +2241,32 @@ export interface components {
         RenameChapterRequest: {
             title: string;
         };
+        ReplaceRule: {
+            /** @default null */
+            group: string | null;
+            /**
+             * Format: int64
+             * @default 0
+             */
+            id: number;
+            /** @default false */
+            isEnabled: boolean;
+            /** @default false */
+            isRegex: boolean;
+            /** @default  */
+            name: string;
+            /**
+             * Format: int32
+             * @default 0
+             */
+            order: number;
+            /** @default  */
+            pattern: string;
+            /** @default  */
+            replacement: string;
+            /** @default null */
+            scope: string | null;
+        };
         /** @description 替换规则条目。`name` 是身份（书名内唯一）。 */
         ReplaceRuleItem: {
             group?: string | null;
@@ -2133,6 +2316,10 @@ export interface components {
              * @description 摘掉用户版本指针的章节数
              */
             cleared: number;
+        };
+        RestoreBackupRequest: {
+            /** @description 备份文件路径（相对用户 WebDAV 根目录） */
+            path: string;
         };
         /**
          * @description 一条评论（章评或段评）。
@@ -2816,6 +3003,130 @@ export interface components {
              * @default null
              */
             wordCount: string | null;
+        };
+        /**
+         * @description 备份里的书签。与 `Bookmark` 的唯一差别是多一个 `bookUrl`：书架外的书签
+         *     没有 `bookshelf.books` 条目可映射，恢复时按 URL 找回登记行，避免把
+         *     「已移出书架但仍有书签」的数据静默丢掉。旧备份没有该字段，按 id 映射
+         *     兜底（映射不上则计入 skipped）。
+         */
+        WebdavBackupBookmark: {
+            /** @default  */
+            bookAuthor: string;
+            /** @default  */
+            bookId: string;
+            /** @default  */
+            bookName: string;
+            /** @default  */
+            bookText: string;
+            /**
+             * @description 备份时的登记表 URL；书架内的书签可省略（按 bookId 映射即可）
+             * @default null
+             */
+            bookUrl: string | null;
+            /**
+             * Format: int32
+             * @default 0
+             */
+            chapterIndex: number;
+            /** @default  */
+            chapterName: string;
+            /**
+             * Format: int32
+             * @default 0
+             */
+            chapterPos: number;
+            /** @default  */
+            content: string;
+            /** @default  */
+            kind: string;
+            /**
+             * Format: int64
+             * @default 0
+             */
+            time: number;
+        };
+        WebdavBackupBookshelf: {
+            /** @description 书架顺序（`get_bookshelf_ordered` 的位置顺序） */
+            books: components["schemas"]["Book"][];
+            groups: components["schemas"]["BookGroup"][];
+        };
+        /**
+         * @description 备份文档。**必填域不能缺**：`bookshelf.books/groups`、`bookSources`、
+         *     `bookmarks`、`replaceRules` 少任何一个都会在反序列化阶段 422，绝不按
+         *     空数组继续——否则一个 `{"version":1}` 就能把全部数据清空。
+         */
+        WebdavBackupDocument: {
+            app?: string;
+            bookSources: components["schemas"]["BookSource"][];
+            bookmarks: components["schemas"]["WebdavBackupBookmark"][];
+            bookshelf: components["schemas"]["WebdavBackupBookshelf"];
+            /**
+             * Format: date-time
+             * @description RFC 3339 UTC；旧备份/手写文档允许缺省
+             */
+            createdAt?: string;
+            /** @description 浏览器本地配置快照；`None` = 这份备份不含本地配置（恢复时不清本地键） */
+            localState?: {
+                [key: string]: string;
+            } | null;
+            replaceRules: components["schemas"]["ReplaceRule"][];
+            /** Format: int32 */
+            version: number;
+        };
+        WebdavBatchDeleteRequest: {
+            paths: string[];
+        };
+        WebdavBatchDeleteResult: {
+            /** Format: int32 */
+            deleted: number;
+            /** Format: int32 */
+            missing: number;
+        };
+        /** @description 目录/文件条目。`modifiedAt` 与 v1 其他时间字段一致用 RFC 3339 UTC。 */
+        WebdavEntry: {
+            isDirectory: boolean;
+            /** Format: date-time */
+            modifiedAt: string;
+            name: string;
+            /** @description 相对用户 WebDAV 根目录的路径（`/backups/a.json`） */
+            path: string;
+            /** Format: int64 */
+            size: number;
+        };
+        /**
+         * @description 恢复结果：各域处理条数与需要前端落地的 localStorage 快照。
+         *
+         *     计数是**提交条数**：重复身份（同 URL 书源、同名规则、同五元组书签）会被
+         *     存储层 upsert 折叠，最终行数可能更少。
+         */
+        WebdavRestoreResult: {
+            /** Format: int32 */
+            bookSources: number;
+            /** Format: int32 */
+            bookmarks: number;
+            /** Format: int32 */
+            books: number;
+            /** Format: int32 */
+            groups: number;
+            /** @description `None` = 备份本身不含本地配置，前端不应改动现有 localStorage */
+            localState?: {
+                [key: string]: string;
+            } | null;
+            /** Format: int32 */
+            replaceRules: number;
+            /**
+             * Format: int32
+             * @description 指向备份书架之外的书籍而跳过的书签数
+             */
+            skippedBookmarks: number;
+        };
+        /**
+         * @description multipart 上传的表单形态（只服务 OpenAPI 文档；运行时由 `V1Multipart`
+         *     逐字段解析）。`file` 对应可重复的文件字段。
+         */
+        WebdavUploadForm: {
+            file: string[];
         };
     };
     responses: never;
@@ -4524,6 +4835,442 @@ export interface operations {
             };
             /** @description 服务端错误 */
             500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    createBackup: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["BackupCreateRequest"];
+            };
+        };
+        responses: {
+            /** @description 已写入的备份文件 */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WebdavEntry"];
+                };
+            };
+            /** @description 请求体含未知字段 */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description 未登录或令牌失效 */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    inspectBackup: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RestoreBackupRequest"];
+            };
+        };
+        responses: {
+            /** @description 备份摘要 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BackupInspectResult"];
+                };
+            };
+            /** @description 路径为空/非法 */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description 未登录或令牌失效 */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description 备份文件不存在 */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description 备份文件超过 100MB */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description 备份 JSON 非法、必填字段缺失或类型不符 */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    restoreBackup: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RestoreBackupRequest"];
+            };
+        };
+        responses: {
+            /** @description 恢复结果 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WebdavRestoreResult"];
+                };
+            };
+            /** @description 路径为空/非法、备份版本不支持或书籍缺少 bookUrl */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description 未登录或令牌失效 */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description 备份文件不存在 */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description 已有恢复任务正在执行 */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description 备份文件超过 100MB */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description 备份 JSON 非法、必填字段缺失或类型不符 */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    listFiles: {
+        parameters: {
+            query?: {
+                /** @description 目录路径，缺省 / */
+                path?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 目录条目（隐藏文件不列出） */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WebdavEntry"][];
+                };
+            };
+            /** @description If-None-Match 命中，无 body */
+            304: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description 路径非法 */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description 未登录或令牌失效 */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description 目录不存在 */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    uploadFiles: {
+        parameters: {
+            query?: {
+                /** @description 目标目录，缺省 / */
+                path?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "multipart/form-data": components["schemas"]["WebdavUploadForm"];
+            };
+        };
+        responses: {
+            /** @description 已写入条目 */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WebdavEntry"][];
+                };
+            };
+            /** @description 缺少文件字段、文件名非法或超过单文件 100MB */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description 未登录或令牌失效 */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    downloadFile: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description 相对用户根目录的文件路径（可含 /） */
+                path: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 文件内容（流式） */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description If-None-Match 命中，无 body */
+            304: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description 路径非法 */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description 未登录或令牌失效 */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description 文件不存在或是目录 */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    deleteFile: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description 相对用户根目录的路径（可含 /） */
+                path: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 已删除 */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description 路径为空或非法 */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description 未登录或令牌失效 */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description 路径不存在 */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    batchDeleteFiles: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["WebdavBatchDeleteRequest"];
+            };
+        };
+        responses: {
+            /** @description 删除/缺失条数 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WebdavBatchDeleteResult"];
+                };
+            };
+            /** @description 路径为空、超上限或含非法路径 */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description 未登录或令牌失效 */
+            401: {
                 headers: {
                     [name: string]: unknown;
                 };

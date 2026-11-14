@@ -46,4 +46,6 @@ pub struct AppState {
     pub task_service: Arc<crate::service::task_service::TaskService>,
     /// SSE 一次性票据（`?ticket=`，非浏览器客户端/导出用）
     pub sse_ticket_service: Arc<crate::service::sse_ticket_service::SseTicketService>,
+    /// WebDAV 备份快照/恢复（跨书架、分组、书源、书签、替换规则）
+    pub webdav_backup_service: Arc<crate::service::webdav_backup_service::WebdavBackupService>,
 }

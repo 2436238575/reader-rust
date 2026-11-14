@@ -136,6 +136,63 @@ impl BookService {
         Ok(book)
     }
 
+    /// 整架替换/恢复前的 URL 规范化。必须与 `save_books` 用同一套
+    /// `sanitize_book_urls`：恢复若用原始 URL 预校验，控制字符/bookUrl 清洗
+    /// 后的空串只会在清空书源/分组之后才暴露。
+    pub fn normalize_books_for_restore(&self, books: &mut [Book]) {
+        for book in books {
+            sanitize_book_urls(book);
+        }
+    }
+
+    /// 整架替换/恢复前的只读预校验：URL、bookId 格式与数量上限。
+    ///
+    /// `save_books` 与 WebDAV 恢复共用：恢复会先清空书源/分组等域，必须在
+    /// 任何删除之前用同一套规则拒绝超限或带非法 id 的备份。
+    /// `require_book_ids`：只有恢复语义才要求 `bookId` 是 `book_<n>`；普通
+    /// 整架替换（legacy `saveBooks` 裸数组）历来忽略客户端 id，不能收紧。
+    pub fn validate_restore_books(
+        &self,
+        books: &[Book],
+        require_book_ids: bool,
+    ) -> Result<(), AppError> {
+        for book in books {
+            if book.book_url.trim().is_empty() {
+                return Err(AppError::BadRequest("bookUrl required".to_string()));
+            }
+            if require_book_ids {
+                if let Some(book_id) = book.book_id.as_deref() {
+                    if crate::storage::db::repo::parse_book_id(book_id).is_none() {
+                        return Err(AppError::BadRequest(format!(
+                            "bookId 格式非法: {book_id:?}"
+                        )));
+                    }
+                }
+            }
+        }
+        // 整架替换按替换后的总量校验上限
+        let limit = self.user_book_limit as usize;
+        if limit > 0 && books.len() > limit {
+            return Err(AppError::BadRequest(format!(
+                "书架书籍数量不能超过 {limit} 本"
+            )));
+        }
+        // 本地书限额在整架替换后同样成立
+        let local_limit = self.user_local_book_limit as usize;
+        if local_limit > 0 {
+            let local_count = books
+                .iter()
+                .filter(|b| is_local_book_url(&b.book_url))
+                .count();
+            if local_count > local_limit {
+                return Err(AppError::BadRequest(format!(
+                    "本地书籍数量不能超过 {local_limit} 本"
+                )));
+            }
+        }
+        Ok(())
+    }
+
     /// 整架替换（含 WebDAV 恢复）。`restore=true` 时只清空当前用户的书架，
     /// 再按备份自带的 bookId 逐条登记/重建；全局登记表与正文历史不跟着清空，
     /// 书签等按 id 引用的数据仍然对齐。全路径单事务。
@@ -146,40 +203,32 @@ impl BookService {
         restore: bool,
     ) -> Result<Vec<Book>, AppError> {
         // 预校验（不落库）：URL 清洗与限额都在事务外完成
-        let mut prepared = Vec::with_capacity(books.len());
-        for mut book in books {
-            sanitize_book_urls(&mut book);
-            if book.book_url.trim().is_empty() {
-                return Err(AppError::BadRequest("bookUrl required".to_string()));
-            }
-            prepared.push(book);
-        }
-        // save_books 是整架替换（导入场景），按替换后的总量校验上限
-        let limit = self.user_book_limit as usize;
-        if limit > 0 && prepared.len() > limit {
-            return Err(AppError::BadRequest(format!(
-                "书架书籍数量不能超过 {limit} 本"
-            )));
-        }
-        // 本地书限额在整架替换后同样成立
-        let local_limit = self.user_local_book_limit as usize;
-        if local_limit > 0 {
-            let local_count = prepared
-                .iter()
-                .filter(|b| is_local_book_url(&b.book_url))
-                .count();
-            if local_count > local_limit {
-                return Err(AppError::BadRequest(format!(
-                    "本地书籍数量不能超过 {local_limit} 本"
-                )));
-            }
-        }
+        let mut prepared = books;
+        self.normalize_books_for_restore(&mut prepared);
+        self.validate_restore_books(&prepared, restore)?;
 
         let mut tx = self.book_repo.begin().await?;
+        let normalized = self
+            .save_books_on(&mut tx, user_ns, prepared, restore)
+            .await?;
+        tx.commit().await?;
+        Ok(normalized)
+    }
+
+    /// 事务版整架替换：调用方负责预校验（`normalize_books_for_restore` +
+    /// `validate_restore_books`）与事务提交。WebDAV 恢复用它把书架与
+    /// 书源/分组/书签/规则收进同一个事务。
+    pub async fn save_books_on(
+        &self,
+        tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+        user_ns: &str,
+        prepared: Vec<Book>,
+        restore: bool,
+    ) -> Result<Vec<Book>, AppError> {
         // 只清书架：books 是全部署共享的登记表，登记行和正文历史不能跟着
         // 一个用户的恢复操作一起删。恢复后重新登记同一 URL 会复用原 book_id。
         if restore {
-            self.shelf_repo.wipe_on(&mut tx, user_ns).await?;
+            self.shelf_repo.wipe_on(tx, user_ns).await?;
         }
         let mut normalized = Vec::with_capacity(prepared.len());
         for mut book in prepared {
@@ -197,16 +246,13 @@ impl BookService {
             };
             let book_id = self
                 .book_repo
-                .register_on(&mut tx, user_ns, item, desired)
+                .register_on(tx, user_ns, item, desired)
                 .await?;
             book.book_id = Some(book_id);
             normalized.push(book);
         }
         let rows = normalized.iter().map(shelf_row_of).collect();
-        self.shelf_repo
-            .replace_all_on(&mut tx, user_ns, rows)
-            .await?;
-        tx.commit().await?;
+        self.shelf_repo.replace_all_on(tx, user_ns, rows).await?;
         Ok(normalized)
     }
 

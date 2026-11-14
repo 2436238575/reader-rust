@@ -16,7 +16,7 @@ mod replace_rule;
 mod review;
 mod search_cache;
 mod user;
-mod webdav;
+pub(crate) mod webdav;
 
 pub use agent::*;
 pub use ai_book::*;
@@ -52,7 +52,7 @@ pub use user::{
 pub(crate) use webdav::sweep_webdav_upload_artifacts;
 pub use webdav::{
     delete_webdav_file, delete_webdav_file_list, get_webdav_file, get_webdav_file_list,
-    upload_file_to_webdav, webdav_handler,
+    upload_file_to_webdav, v1_webdav_handler, webdav_handler,
 };
 
 use crate::error::error::{ApiResponse, AppError};

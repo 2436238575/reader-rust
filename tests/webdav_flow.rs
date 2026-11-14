@@ -929,3 +929,1335 @@ async fn aborted_upload_does_not_leak_temp_file() {
         "中断的上传不得留下目标文件"
     );
 }
+
+// ─────────────────────────── /v1 文件域与备份恢复 ───────────────────────────
+
+impl TestServer {
+    /// `/v1` JSON 请求：Bearer 鉴权 + CSRF 头；空 body 响应返回 Null。
+    async fn v1_json(
+        &self,
+        token: &str,
+        method: Method,
+        path: &str,
+        body: Option<serde_json::Value>,
+    ) -> (StatusCode, serde_json::Value) {
+        let mut request = self
+            .client
+            .request(method, self.url(path))
+            .bearer_auth(token)
+            .header("x-requested-with", "XMLHttpRequest");
+        if let Some(body) = body {
+            request = request.json(&body);
+        }
+        let response = request.send().await.unwrap();
+        let status = response.status();
+        let text = response.text().await.unwrap_or_default();
+        let value = if text.trim().is_empty() {
+            serde_json::Value::Null
+        } else {
+            serde_json::from_str(&text).unwrap_or(serde_json::Value::String(text))
+        };
+        (status, value)
+    }
+
+    /// 手拼 multipart 上传（单文件）。
+    async fn v1_multipart_upload(
+        &self,
+        token: &str,
+        path: &str,
+        filename: &str,
+        content: &[u8],
+    ) -> (StatusCode, serde_json::Value) {
+        let boundary = "----webdav-v1-test";
+        let mut body = format!(
+            "--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"{filename}\"\r\nContent-Type: application/octet-stream\r\n\r\n"
+        )
+        .into_bytes();
+        body.extend_from_slice(content);
+        body.extend_from_slice(format!("\r\n--{boundary}--\r\n").as_bytes());
+        let response = self
+            .client
+            .post(self.url(path))
+            .bearer_auth(token)
+            .header("x-requested-with", "XMLHttpRequest")
+            .header(
+                "Content-Type",
+                format!("multipart/form-data; boundary={boundary}"),
+            )
+            .body(body)
+            .send()
+            .await
+            .unwrap();
+        let status = response.status();
+        let text = response.text().await.unwrap_or_default();
+        let value = if text.trim().is_empty() {
+            serde_json::Value::Null
+        } else {
+            serde_json::from_str(&text).unwrap_or(serde_json::Value::String(text))
+        };
+        (status, value)
+    }
+}
+
+#[tokio::test]
+async fn v1_protocol_mount_requires_basic_auth_and_shares_home() {
+    let app = TestServer::start().await;
+
+    // 未带 Basic 凭据：与 /reader3/webdav 同一个匿名 401 质询
+    let response = app
+        .client
+        .request(
+            Method::from_bytes(b"PROPFIND").unwrap(),
+            app.url("/v1/webdav/"),
+        )
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    assert_eq!(
+        response
+            .headers()
+            .get("www-authenticate")
+            .and_then(|value| value.to_str().ok()),
+        Some("Basic realm=\"reader\"")
+    );
+
+    // 裸根与尾斜杠都能进入 dav-server
+    for path in ["/v1/webdav", "/v1/webdav/"] {
+        let response = app
+            .dav("PROPFIND", path)
+            .header("Depth", "0")
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(
+            response.status(),
+            StatusCode::MULTI_STATUS,
+            "PROPFIND {path} 应返回 207"
+        );
+    }
+
+    // 协议写入落在与其他两个入口相同的用户家目录
+    let response = app
+        .dav("PUT", "/v1/webdav/mount.txt")
+        .body("v1 mount")
+        .send()
+        .await
+        .unwrap();
+    assert!(
+        response.status().is_success(),
+        "PUT /v1/webdav/mount.txt 失败: {}",
+        response.status()
+    );
+    assert_eq!(
+        std::fs::read_to_string(app.home().join("mount.txt")).unwrap(),
+        "v1 mount"
+    );
+    for path in ["/v1/webdav/mount.txt", "/reader3/webdav/mount.txt"] {
+        let response = app.dav("GET", path).send().await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(response.text().await.unwrap(), "v1 mount");
+    }
+}
+
+#[tokio::test]
+async fn v1_file_browser_upload_list_download_delete() {
+    let app = TestServer::start().await;
+    let token = app.login_token().await;
+
+    let (status, uploaded) = app
+        .v1_multipart_upload(
+            &token,
+            "/v1/me/files?path=/docs",
+            "a.txt",
+            b"hello v1 files",
+        )
+        .await;
+    assert_eq!(status, StatusCode::CREATED, "{uploaded}");
+    assert_eq!(uploaded[0]["name"], serde_json::json!("a.txt"));
+    assert_eq!(uploaded[0]["path"], serde_json::json!("/docs/a.txt"));
+    assert_eq!(uploaded[0]["isDirectory"], serde_json::json!(false));
+    assert_eq!(uploaded[0]["size"], serde_json::json!(14));
+    assert!(uploaded[0]["modifiedAt"]
+        .as_str()
+        .is_some_and(|value| value.ends_with('Z')));
+
+    let response = app
+        .client
+        .get(app.url("/v1/me/files"))
+        .bearer_auth(&token)
+        .query(&[("path", "/docs")])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let etag = response
+        .headers()
+        .get("etag")
+        .and_then(|value| value.to_str().ok())
+        .expect("列表必须带 ETag")
+        .to_string();
+    let list: serde_json::Value = response.json().await.unwrap();
+    assert_eq!(list.as_array().map(Vec::len), Some(1));
+    assert_eq!(list[0]["name"], serde_json::json!("a.txt"));
+
+    let response = app
+        .client
+        .get(app.url("/v1/me/files"))
+        .bearer_auth(&token)
+        .query(&[("path", "/docs")])
+        .header("if-none-match", etag)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::NOT_MODIFIED);
+    assert!(response.headers().contains_key("etag"));
+    assert_eq!(
+        response
+            .headers()
+            .get("cache-control")
+            .and_then(|value| value.to_str().ok()),
+        Some("private, no-cache")
+    );
+
+    let response = app
+        .client
+        .get(app.url("/v1/me/files/docs/a.txt"))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(
+        response
+            .headers()
+            .get("content-type")
+            .and_then(|value| value.to_str().ok()),
+        Some("text/plain; charset=utf-8")
+    );
+    let file_etag = response
+        .headers()
+        .get("etag")
+        .and_then(|value| value.to_str().ok())
+        .expect("下载必须带 ETag")
+        .to_string();
+    assert_eq!(response.text().await.unwrap(), "hello v1 files");
+
+    let response = app
+        .client
+        .get(app.url("/v1/me/files/docs/a.txt"))
+        .bearer_auth(&token)
+        .header("if-none-match", file_etag)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::NOT_MODIFIED);
+    assert!(response.headers().contains_key("etag"));
+    assert_eq!(
+        response
+            .headers()
+            .get("cache-control")
+            .and_then(|value| value.to_str().ok()),
+        Some("private, no-cache")
+    );
+
+    let response = app
+        .client
+        .delete(app.url("/v1/me/files/docs/a.txt"))
+        .bearer_auth(&token)
+        .header("x-requested-with", "XMLHttpRequest")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::NO_CONTENT);
+
+    let response = app
+        .client
+        .delete(app.url("/v1/me/files/docs/a.txt"))
+        .bearer_auth(&token)
+        .header("x-requested-with", "XMLHttpRequest")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    assert!(response
+        .headers()
+        .get("content-type")
+        .and_then(|value| value.to_str().ok())
+        .is_some_and(|value| value.starts_with("application/problem+json")));
+    let problem: serde_json::Value = response.json().await.unwrap();
+    assert_eq!(problem["code"], serde_json::json!("NOT_FOUND"));
+}
+
+#[tokio::test]
+async fn v1_file_browser_sanitizes_paths_and_batches_delete() {
+    let app = TestServer::start().await;
+    let token = app.login_token().await;
+
+    for name in ["a.txt", "b.txt"] {
+        let (status, _) = app
+            .v1_multipart_upload(&token, "/v1/me/files?path=/batch", name, b"x")
+            .await;
+        assert_eq!(status, StatusCode::CREATED);
+    }
+
+    let (status, problem) = app
+        .v1_json(&token, Method::GET, "/v1/me/files?path=/../..", None)
+        .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{problem}");
+    assert_eq!(problem["code"], serde_json::json!("MALFORMED_REQUEST"));
+
+    // 通配路径里的编码回溯同样被拦
+    let (status, _) = app
+        .v1_json(
+            &token,
+            Method::GET,
+            "/v1/me/files/..%2F..%2Fsecret.txt",
+            None,
+        )
+        .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+
+    // 批删：不存在的计入 missing
+    let (status, result) = app
+        .v1_json(
+            &token,
+            Method::POST,
+            "/v1/me/files:batchDelete",
+            Some(serde_json::json!({
+                "paths": ["/batch/a.txt", "/batch/missing.txt"]
+            })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{result}");
+    assert_eq!(result["deleted"], serde_json::json!(1));
+    assert_eq!(result["missing"], serde_json::json!(1));
+
+    // 非法路径整批拒绝，且预校验发生在删除之前：b.txt 必须还在
+    let (status, _) = app
+        .v1_json(
+            &token,
+            Method::POST,
+            "/v1/me/files:batchDelete",
+            Some(serde_json::json!({
+                "paths": ["/batch/b.txt", "../evil.txt"]
+            })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert!(app.home().join("batch").join("b.txt").exists());
+
+    let (status, _) = app
+        .v1_json(&token, Method::DELETE, "/v1/me/files/batch", None)
+        .await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    assert!(!app.home().join("batch").exists());
+}
+
+#[tokio::test]
+async fn v1_file_access_requires_session_and_sandboxes_active_content() {
+    let app = TestServer::start().await;
+
+    // 无凭据：problem+json 401
+    let response = app
+        .client
+        .get(app.url("/v1/me/files"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    let problem: serde_json::Value = response.json().await.unwrap();
+    assert_eq!(problem["code"], serde_json::json!("AUTH_EXPIRED"));
+
+    // 无凭据且缺 CSRF 头：CSRF 层先挡（403）
+    let response = app
+        .client
+        .post(app.url("/v1/me/files"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::FORBIDDEN);
+
+    let token = app.login_token().await;
+    let (status, _) = app
+        .v1_multipart_upload(
+            &token,
+            "/v1/me/files?path=/active",
+            "page.html",
+            b"<script>alert(1)</script>",
+        )
+        .await;
+    assert_eq!(status, StatusCode::CREATED);
+
+    let response = app
+        .client
+        .get(app.url("/v1/me/files/active/page.html"))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(
+        response
+            .headers()
+            .get("content-type")
+            .and_then(|value| value.to_str().ok()),
+        Some("text/html; charset=utf-8")
+    );
+    assert_eq!(
+        response
+            .headers()
+            .get("content-security-policy")
+            .and_then(|value| value.to_str().ok()),
+        Some("sandbox")
+    );
+}
+
+#[tokio::test]
+async fn v1_backup_create_and_restore_roundtrip() {
+    let app = TestServer::start().await;
+    let token = app.login_token().await;
+
+    // 一本本地书 + 分组 + 书源 + 书签 + 替换规则
+    let content = "第一章 开始\n正文一。\n第二章 中间\n正文二。\n".as_bytes();
+    let (status, book) = app
+        .v1_multipart_upload(&token, "/v1/local-books", "备份测试.txt", content)
+        .await;
+    assert_eq!(status, StatusCode::OK, "{book}");
+    let book_id = book["bookId"].as_str().expect("bookId").to_string();
+
+    let (status, _) = app
+        .v1_json(
+            &token,
+            Method::POST,
+            "/v1/me/groups",
+            Some(serde_json::json!({
+                "groupId": 2,
+                "groupName": "备份组",
+                "orderNo": 0
+            })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    let (status, _) = app
+        .v1_json(
+            &token,
+            Method::PATCH,
+            &format!("/v1/me/shelf/{book_id}"),
+            Some(serde_json::json!({ "group": 2 })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+
+    let (status, result) = app
+        .v1_json(
+            &token,
+            Method::POST,
+            "/v1/sources:batchUpsert",
+            Some(serde_json::json!({
+                "sources": [{
+                    "bookSourceName": "备份源",
+                    "bookSourceUrl": "https://example.com/backup-source"
+                }]
+            })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{result}");
+
+    let mark = serde_json::json!({
+        "bookId": book_id,
+        "time": 1_700_000_000_000_i64,
+        "bookName": "备份测试",
+        "bookAuthor": "作者",
+        "chapterIndex": 0,
+        "chapterPos": 0,
+        "chapterName": "第一章 开始",
+        "bookText": "",
+        "content": "",
+        "kind": "bookmark"
+    });
+    let (status, _) = app
+        .v1_json(&token, Method::POST, "/v1/me/marks", Some(mark.clone()))
+        .await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+
+    let (status, result) = app
+        .v1_json(
+            &token,
+            Method::POST,
+            "/v1/me/replace-rules",
+            Some(serde_json::json!({
+                "name": "备份规则",
+                "pattern": "a",
+                "replacement": "b",
+                "isEnabled": true
+            })),
+        )
+        .await;
+    assert!(status.is_success(), "{status} {result}");
+
+    // 备份落盘（localState 由前端采集后随请求体提交）
+    let (status, entry) = app
+        .v1_json(
+            &token,
+            Method::POST,
+            "/v1/me/backups",
+            Some(serde_json::json!({ "localState": { "theme": "dark" } })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::CREATED, "{entry}");
+    let backup_path = entry["path"].as_str().expect("backup path").to_string();
+    assert!(backup_path.starts_with("/backups/reader-backup-"));
+    assert!(backup_path.ends_with(".json"));
+    let on_disk = app.home().join(
+        backup_path
+            .trim_start_matches('/')
+            .replace('/', std::path::MAIN_SEPARATOR_STR),
+    );
+    let document: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&on_disk).unwrap()).unwrap();
+    assert_eq!(document["version"], serde_json::json!(1));
+    assert_eq!(document["app"], serde_json::json!("reader-rust"));
+    assert_eq!(
+        document["bookshelf"]["books"].as_array().map(Vec::len),
+        Some(1)
+    );
+    assert_eq!(
+        document["bookshelf"]["groups"].as_array().map(Vec::len),
+        Some(1)
+    );
+    assert_eq!(document["bookSources"].as_array().map(Vec::len), Some(1));
+    assert_eq!(document["bookmarks"].as_array().map(Vec::len), Some(1));
+    assert_eq!(document["replaceRules"].as_array().map(Vec::len), Some(1));
+    assert_eq!(
+        document["localState"],
+        serde_json::json!({ "theme": "dark" })
+    );
+
+    // 恢复前预览：条目数与本地配置标记必须与文档一致
+    let (status, info) = app
+        .v1_json(
+            &token,
+            Method::POST,
+            "/v1/me/backups:inspect",
+            Some(serde_json::json!({ "path": backup_path })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{info}");
+    assert_eq!(info["version"], serde_json::json!(1));
+    assert_eq!(info["books"], serde_json::json!(1));
+    assert_eq!(info["groups"], serde_json::json!(1));
+    assert_eq!(info["bookSources"], serde_json::json!(1));
+    assert_eq!(info["bookmarks"], serde_json::json!(1));
+    assert_eq!(info["replaceRules"], serde_json::json!(1));
+    assert_eq!(info["hasLocalState"], serde_json::json!(true));
+
+    // 清空本地状态，制造「恢复确实重建了数据」的落差
+    for (path, body) in [
+        (
+            "/v1/me/shelf:batchDelete",
+            serde_json::json!({ "bookIds": [book_id] }),
+        ),
+        (
+            "/v1/me/marks:batchDelete",
+            serde_json::json!([mark.clone()]),
+        ),
+        (
+            "/v1/me/replace-rules:batchDelete",
+            serde_json::json!({ "names": ["备份规则"] }),
+        ),
+        (
+            "/v1/sources",
+            serde_json::json!({ "confirm": "DELETE_ALL" }),
+        ),
+    ] {
+        let method = if path == "/v1/sources" {
+            Method::DELETE
+        } else {
+            Method::POST
+        };
+        let (status, result) = app.v1_json(&token, method, path, Some(body)).await;
+        assert!(status.is_success(), "{path} 清理失败: {status} {result}");
+    }
+    let (status, _) = app
+        .v1_json(&token, Method::DELETE, "/v1/me/groups/2", None)
+        .await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+
+    let (status, restored) = app
+        .v1_json(
+            &token,
+            Method::POST,
+            "/v1/me/backups:restore",
+            Some(serde_json::json!({ "path": backup_path })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{restored}");
+    assert_eq!(restored["books"], serde_json::json!(1));
+    assert_eq!(restored["groups"], serde_json::json!(1));
+    assert_eq!(restored["bookSources"], serde_json::json!(1));
+    assert_eq!(restored["bookmarks"], serde_json::json!(1));
+    assert_eq!(restored["skippedBookmarks"], serde_json::json!(0));
+    assert_eq!(restored["replaceRules"], serde_json::json!(1));
+    assert_eq!(
+        restored["localState"],
+        serde_json::json!({ "theme": "dark" })
+    );
+
+    // 各域都已重建，书籍分组位也保留
+    let (_, groups) = app
+        .v1_json(&token, Method::GET, "/v1/me/groups", None)
+        .await;
+    assert_eq!(groups[0]["groupId"], serde_json::json!(2));
+    let (_, shelf) = app
+        .v1_json(&token, Method::GET, "/v1/me/shelf?limit=100", None)
+        .await;
+    assert_eq!(shelf["items"].as_array().map(Vec::len), Some(1));
+    assert_eq!(shelf["items"][0]["group"], serde_json::json!(2));
+    let (_, marks) = app.v1_json(&token, Method::GET, "/v1/me/marks", None).await;
+    assert_eq!(marks.as_array().map(Vec::len), Some(1));
+    let (_, rules) = app
+        .v1_json(&token, Method::GET, "/v1/me/replace-rules", None)
+        .await;
+    assert_eq!(rules.as_array().map(Vec::len), Some(1));
+    assert_eq!(rules[0]["name"], serde_json::json!("备份规则"));
+    let (_, sources) = app.v1_json(&token, Method::GET, "/v1/sources", None).await;
+    assert_eq!(sources["items"][0]["name"], serde_json::json!("备份源"));
+}
+
+#[tokio::test]
+async fn v1_backup_restore_validates_filters_and_reports_skips() {
+    let app = TestServer::start().await;
+    let token = app.login_token().await;
+    let backups = app.home().join("backups");
+    std::fs::create_dir_all(&backups).unwrap();
+
+    // 合法文档：非法分组 id=3 应被丢弃，书签指向未登记书籍应计 skipped，
+    // localState 原样返回
+    let document = serde_json::json!({
+        "version": 1,
+        "createdAt": "2026-11-14T00:00:00Z",
+        "app": "reader-rust-frontend",
+        "bookshelf": {
+            "books": [],
+            "groups": [
+                { "groupId": 3, "groupName": "非法位", "orderNo": 0 },
+                { "groupId": 2, "groupName": "合法组", "orderNo": 1 }
+            ]
+        },
+        "bookSources": [],
+        "bookmarks": [{
+            "bookId": "book_999999",
+            "time": 1,
+            "bookName": "不存在",
+            "bookAuthor": "",
+            "chapterIndex": 0,
+            "chapterPos": 0,
+            "chapterName": "",
+            "bookText": "",
+            "content": "",
+            "kind": "bookmark"
+        }],
+        "replaceRules": [{
+            "id": 0,
+            "name": "带 空格 的旧规则",
+            "pattern": "x",
+            "replacement": "y",
+            "isEnabled": true,
+            "isRegex": false,
+            "order": 0
+        }],
+        "localState": { "theme": "dark" }
+    });
+    std::fs::write(
+        backups.join("crafted.json"),
+        serde_json::to_vec_pretty(&document).unwrap(),
+    )
+    .unwrap();
+
+    let (status, result) = app
+        .v1_json(
+            &token,
+            Method::POST,
+            "/v1/me/backups:restore",
+            Some(serde_json::json!({ "path": "/backups/crafted.json" })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{result}");
+    assert_eq!(result["groups"], serde_json::json!(1));
+    assert_eq!(result["bookmarks"], serde_json::json!(0));
+    assert_eq!(result["skippedBookmarks"], serde_json::json!(1));
+    assert_eq!(result["replaceRules"], serde_json::json!(1));
+    assert_eq!(result["localState"]["theme"], serde_json::json!("dark"));
+
+    let (_, groups) = app
+        .v1_json(&token, Method::GET, "/v1/me/groups", None)
+        .await;
+    assert_eq!(groups.as_array().map(Vec::len), Some(1));
+    assert_eq!(groups[0]["groupId"], serde_json::json!(2));
+    let (_, rules) = app
+        .v1_json(&token, Method::GET, "/v1/me/replace-rules", None)
+        .await;
+    assert_eq!(rules[0]["name"], serde_json::json!("带 空格 的旧规则"));
+
+    // 非法版本 / 非法 JSON / 路径不存在 / 路径回溯
+    std::fs::write(
+        backups.join("bad-version.json"),
+        br#"{"version":2,"createdAt":"","app":"","bookshelf":{"books":[],"groups":[]},"bookSources":[],"bookmarks":[],"replaceRules":[]}"#,
+    )
+    .unwrap();
+    std::fs::write(backups.join("bad-json.json"), b"not json").unwrap();
+
+    for (path, expected) in [
+        ("/backups/bad-version.json", StatusCode::BAD_REQUEST),
+        ("/backups/bad-json.json", StatusCode::UNPROCESSABLE_ENTITY),
+        ("/backups/missing.json", StatusCode::NOT_FOUND),
+        ("../reader.db", StatusCode::BAD_REQUEST),
+    ] {
+        let (status, problem) = app
+            .v1_json(
+                &token,
+                Method::POST,
+                "/v1/me/backups:restore",
+                Some(serde_json::json!({ "path": path })),
+            )
+            .await;
+        assert_eq!(status, expected, "{path}: {problem}");
+    }
+
+    // 结构不完整的文档必须 422，且不能动现有数据（一个 {"version":1}
+    // 就能清空全部域是旧实现最危险的回归）
+    let (status, _) = app
+        .v1_json(
+            &token,
+            Method::POST,
+            "/v1/me/groups",
+            Some(serde_json::json!({
+                "groupId": 4,
+                "groupName": "保留组",
+                "orderNo": 2
+            })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    std::fs::write(backups.join("incomplete.json"), br#"{"version":1}"#).unwrap();
+    let (status, problem) = app
+        .v1_json(
+            &token,
+            Method::POST,
+            "/v1/me/backups:restore",
+            Some(serde_json::json!({ "path": "/backups/incomplete.json" })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{problem}");
+
+    // 写库前预校验：非法 bookId / 书签 chapterPos 都应在清空任何域之前拒绝
+    std::fs::write(
+        backups.join("bad-book-id.json"),
+        br#"{"version":1,"createdAt":"","app":"","bookshelf":{"books":[{"bookUrl":"https://example.com/x","bookId":"book_bad"}],"groups":[]},"bookSources":[],"bookmarks":[],"replaceRules":[]}"#,
+    )
+    .unwrap();
+    std::fs::write(
+        backups.join("bad-mark-pos.json"),
+        br#"{"version":1,"createdAt":"","app":"","bookshelf":{"books":[],"groups":[]},"bookSources":[],"bookmarks":[{"bookId":"book_1","chapterIndex":0,"chapterPos":20000,"kind":"bookmark"}],"replaceRules":[]}"#,
+    )
+    .unwrap();
+    for path in ["/backups/bad-book-id.json", "/backups/bad-mark-pos.json"] {
+        let (status, problem) = app
+            .v1_json(
+                &token,
+                Method::POST,
+                "/v1/me/backups:restore",
+                Some(serde_json::json!({ "path": path })),
+            )
+            .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{path}: {problem}");
+    }
+    let (_, groups) = app
+        .v1_json(&token, Method::GET, "/v1/me/groups", None)
+        .await;
+    assert!(
+        groups
+            .as_array()
+            .is_some_and(|items| items.iter().any(|group| group["groupId"] == 2)),
+        "预校验失败后原分组必须保留: {groups}"
+    );
+    assert!(
+        groups
+            .as_array()
+            .is_some_and(|items| items.iter().any(|group| group["groupId"] == 4)),
+        "结构不完整文档不得删除现有分组: {groups}"
+    );
+}
+
+#[tokio::test]
+async fn v1_backup_restore_remaps_conflicting_book_ids() {
+    let app = TestServer::start().await;
+    let token = app.login_token().await;
+
+    // 先占住 book_1（本地书），备份里的另一本书也声明 book_1：恢复时必须
+    // 给新书分配新 id，并把书签与规则 scope 一起重写，而不是静默丢书签
+    let (status, local_book) = app
+        .v1_multipart_upload(
+            &token,
+            "/v1/local-books",
+            "占位书.txt",
+            "第一章 开始\n正文。\n".as_bytes(),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{local_book}");
+    assert_eq!(local_book["bookId"], serde_json::json!("book_1"));
+
+    let backups = app.home().join("backups");
+    std::fs::create_dir_all(&backups).unwrap();
+    let document = serde_json::json!({
+        "version": 1,
+        "createdAt": "2026-11-14T00:00:00Z",
+        "app": "reader-rust",
+        "bookshelf": {
+            "books": [{
+                "bookId": "book_1",
+                "bookUrl": "https://example.com/conflicting-book",
+                "name": "冲突书",
+                "author": "作者"
+            }],
+            "groups": []
+        },
+        "bookSources": [],
+        "bookmarks": [{
+            "bookId": "book_1",
+            "time": 1,
+            "bookName": "冲突书",
+            "bookAuthor": "作者",
+            "chapterIndex": 0,
+            "chapterPos": 0,
+            "chapterName": "第一章",
+            "bookText": "",
+            "content": "",
+            "kind": "bookmark"
+        }],
+        "replaceRules": [{
+            "id": 0,
+            "name": "映射规则",
+            "pattern": "a",
+            "replacement": "b",
+            "scope": "book:book_1",
+            "isEnabled": true,
+            "isRegex": false,
+            "order": 0
+        }],
+        "localState": {}
+    });
+    std::fs::write(
+        backups.join("conflict.json"),
+        serde_json::to_vec_pretty(&document).unwrap(),
+    )
+    .unwrap();
+
+    let (status, result) = app
+        .v1_json(
+            &token,
+            Method::POST,
+            "/v1/me/backups:restore",
+            Some(serde_json::json!({ "path": "/backups/conflict.json" })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{result}");
+    assert_eq!(result["bookmarks"], serde_json::json!(1));
+    assert_eq!(result["skippedBookmarks"], serde_json::json!(0));
+
+    let (_, shelf) = app
+        .v1_json(&token, Method::GET, "/v1/me/shelf?limit=100", None)
+        .await;
+    let restored_id = shelf["items"][0]["bookId"]
+        .as_str()
+        .expect("restored bookId")
+        .to_string();
+    assert_ne!(restored_id, "book_1", "book_1 已被本地书占用，必须重分配");
+    let (_, marks) = app.v1_json(&token, Method::GET, "/v1/me/marks", None).await;
+    assert_eq!(marks[0]["bookId"], serde_json::json!(restored_id));
+    let (_, rules) = app
+        .v1_json(&token, Method::GET, "/v1/me/replace-rules", None)
+        .await;
+    assert_eq!(
+        rules[0]["scope"],
+        serde_json::json!(format!("book:{restored_id}"))
+    );
+}
+
+#[tokio::test]
+async fn v1_backup_without_local_state_returns_null() {
+    let app = TestServer::start().await;
+    let token = app.login_token().await;
+    let backups = app.home().join("backups");
+    std::fs::create_dir_all(&backups).unwrap();
+
+    // 创建请求省略 localState：文档里应为 null，而不是空对象
+    let (status, entry) = app
+        .v1_json(
+            &token,
+            Method::POST,
+            "/v1/me/backups",
+            Some(serde_json::json!({})),
+        )
+        .await;
+    assert_eq!(status, StatusCode::CREATED, "{entry}");
+    let on_disk = app.home().join(
+        entry["path"]
+            .as_str()
+            .unwrap()
+            .trim_start_matches('/')
+            .replace('/', std::path::MAIN_SEPARATOR_STR),
+    );
+    let document: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&on_disk).unwrap()).unwrap();
+    assert_eq!(document["localState"], serde_json::Value::Null);
+
+    // 旧备份/手写文档可能没有 localState 字段：返回 null，前端据此不动本地键
+    std::fs::write(
+        backups.join("no-local-state.json"),
+        br#"{"version":1,"bookshelf":{"books":[],"groups":[]},"bookSources":[],"bookmarks":[],"replaceRules":[]}"#,
+    )
+    .unwrap();
+    let (status, info) = app
+        .v1_json(
+            &token,
+            Method::POST,
+            "/v1/me/backups:inspect",
+            Some(serde_json::json!({ "path": "/backups/no-local-state.json" })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{info}");
+    assert_eq!(info["hasLocalState"], serde_json::json!(false));
+    let (status, result) = app
+        .v1_json(
+            &token,
+            Method::POST,
+            "/v1/me/backups:restore",
+            Some(serde_json::json!({ "path": "/backups/no-local-state.json" })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{result}");
+    assert_eq!(result["localState"], serde_json::Value::Null);
+}
+
+#[tokio::test]
+async fn v1_file_and_restore_error_paths() {
+    let app = TestServer::start().await;
+    let token = app.login_token().await;
+
+    // multipart 文件名穿越：文件名不是纯文件名，整请求 400
+    let (status, problem) = app
+        .v1_multipart_upload(&token, "/v1/me/files", "../evil.txt", b"x")
+        .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{problem}");
+
+    // 目录不存在 404；对文件路径调列表 400
+    let (status, problem) = app
+        .v1_json(&token, Method::GET, "/v1/me/files?path=/missing", None)
+        .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    assert_eq!(problem["code"], serde_json::json!("NOT_FOUND"));
+
+    let (status, _) = app
+        .v1_multipart_upload(&token, "/v1/me/files?path=/docs", "a.txt", b"x")
+        .await;
+    assert_eq!(status, StatusCode::CREATED);
+    let (status, _) = app
+        .v1_json(&token, Method::GET, "/v1/me/files?path=/docs/a.txt", None)
+        .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+
+    // 下载目录按不存在处理；空批删 400
+    let (status, _) = app
+        .v1_json(&token, Method::GET, "/v1/me/files/docs", None)
+        .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    let (status, _) = app
+        .v1_json(
+            &token,
+            Method::POST,
+            "/v1/me/files:batchDelete",
+            Some(serde_json::json!({ "paths": [] })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+
+    // 恢复写库前拒绝：缺 bookUrl / 非法书签 kind
+    let backups = app.home().join("backups");
+    std::fs::create_dir_all(&backups).unwrap();
+    std::fs::write(
+        backups.join("no-book-url.json"),
+        br#"{"version":1,"bookshelf":{"books":[{"bookId":"book_1"}],"groups":[]},"bookSources":[],"bookmarks":[],"replaceRules":[]}"#,
+    )
+    .unwrap();
+    std::fs::write(
+        backups.join("bad-mark-kind.json"),
+        br#"{"version":1,"bookshelf":{"books":[],"groups":[]},"bookSources":[],"bookmarks":[{"bookId":"book_1","chapterIndex":0,"chapterPos":0,"kind":"bad"}],"replaceRules":[]}"#,
+    )
+    .unwrap();
+    for path in ["/backups/no-book-url.json", "/backups/bad-mark-kind.json"] {
+        let (status, problem) = app
+            .v1_json(
+                &token,
+                Method::POST,
+                "/v1/me/backups:restore",
+                Some(serde_json::json!({ "path": path })),
+            )
+            .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{path}: {problem}");
+    }
+
+    // 嵌套空实体 / 控制字符 URL 同样必须在删除前拒绝
+    let (status, _) = app
+        .v1_json(
+            &token,
+            Method::POST,
+            "/v1/me/groups",
+            Some(serde_json::json!({
+                "groupId": 8,
+                "groupName": "守卫组",
+                "orderNo": 3
+            })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    let invalid_documents = [
+        (
+            "empty-source.json",
+            r#"{"version":1,"bookshelf":{"books":[],"groups":[]},"bookSources":[{}],"bookmarks":[],"replaceRules":[]}"#,
+        ),
+        (
+            "empty-rule.json",
+            r#"{"version":1,"bookshelf":{"books":[],"groups":[]},"bookSources":[],"bookmarks":[],"replaceRules":[{}]}"#,
+        ),
+        (
+            "empty-mark.json",
+            r#"{"version":1,"bookshelf":{"books":[],"groups":[]},"bookSources":[],"bookmarks":[{}],"replaceRules":[]}"#,
+        ),
+        (
+            "control-url.json",
+            r#"{"version":1,"bookshelf":{"books":[{"bookUrl":"\u0001","bookId":"book_1"}],"groups":[]},"bookSources":[],"bookmarks":[],"replaceRules":[]}"#,
+        ),
+    ];
+    for (name, body) in invalid_documents {
+        std::fs::write(backups.join(name), body).unwrap();
+        let (status, problem) = app
+            .v1_json(
+                &token,
+                Method::POST,
+                "/v1/me/backups:restore",
+                Some(serde_json::json!({ "path": format!("/backups/{name}") })),
+            )
+            .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{name}: {problem}");
+    }
+    let (_, groups) = app
+        .v1_json(&token, Method::GET, "/v1/me/groups", None)
+        .await;
+    assert!(
+        groups.as_array().is_some_and(|items| items
+            .iter()
+            .any(|group| group["groupId"] == serde_json::json!(8))),
+        "嵌套实体校验失败后原分组必须保留: {groups}"
+    );
+
+    // 备份文件超过 100MB：先看元数据再读，不整读超大文件
+    let huge = backups.join("huge.json");
+    let file = std::fs::File::create(&huge).unwrap();
+    file.set_len(100 * 1024 * 1024 + 1).unwrap();
+    drop(file);
+    let (status, problem) = app
+        .v1_json(
+            &token,
+            Method::POST,
+            "/v1/me/backups:restore",
+            Some(serde_json::json!({ "path": "/backups/huge.json" })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::PAYLOAD_TOO_LARGE, "{problem}");
+}
+
+#[tokio::test]
+async fn v1_backup_restore_skips_bookmarks_outside_backup_shelf() {
+    let app = TestServer::start().await;
+    let token = app.login_token().await;
+
+    // book_1 在目标库已登记，但不在备份书架里：书签不能按旧 id 挂到它身上
+    let (status, book) = app
+        .v1_multipart_upload(
+            &token,
+            "/v1/local-books",
+            "旧书.txt",
+            "第一章 开始\n正文。\n".as_bytes(),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{book}");
+    assert_eq!(book["bookId"], serde_json::json!("book_1"));
+
+    let backups = app.home().join("backups");
+    std::fs::create_dir_all(&backups).unwrap();
+    std::fs::write(
+        backups.join("off-shelf-mark.json"),
+        br#"{"version":1,"bookshelf":{"books":[],"groups":[]},"bookSources":[],"bookmarks":[{"bookId":"book_1","time":1,"chapterIndex":0,"chapterPos":0,"kind":"bookmark"}],"replaceRules":[]}"#,
+    )
+    .unwrap();
+    let (status, result) = app
+        .v1_json(
+            &token,
+            Method::POST,
+            "/v1/me/backups:restore",
+            Some(serde_json::json!({ "path": "/backups/off-shelf-mark.json" })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{result}");
+    assert_eq!(result["bookmarks"], serde_json::json!(0));
+    assert_eq!(result["skippedBookmarks"], serde_json::json!(1));
+
+    let (_, marks) = app.v1_json(&token, Method::GET, "/v1/me/marks", None).await;
+    assert_eq!(marks.as_array().map(Vec::len), Some(0));
+}
+
+#[tokio::test]
+async fn v1_backup_preserves_bookmarks_for_off_shelf_books() {
+    let app = TestServer::start().await;
+    let token = app.login_token().await;
+
+    let (status, book) = app
+        .v1_multipart_upload(
+            &token,
+            "/v1/local-books",
+            "书架外.txt",
+            "第一章 开始\n正文。\n".as_bytes(),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{book}");
+    let book_id = book["bookId"].as_str().unwrap().to_string();
+
+    let mark = serde_json::json!({
+        "bookId": book_id,
+        "time": 1,
+        "bookName": "书架外",
+        "bookAuthor": "",
+        "chapterIndex": 0,
+        "chapterPos": 0,
+        "chapterName": "第一章 开始",
+        "bookText": "",
+        "content": "",
+        "kind": "bookmark"
+    });
+    let (status, _) = app
+        .v1_json(&token, Method::POST, "/v1/me/marks", Some(mark))
+        .await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    // 移出书架：登记行与书签都保留，快照必须给这条书签补 bookUrl
+    let (status, _) = app
+        .v1_json(
+            &token,
+            Method::POST,
+            "/v1/me/shelf:batchDelete",
+            Some(serde_json::json!({ "bookIds": [book_id] })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK);
+
+    let (status, entry) = app
+        .v1_json(
+            &token,
+            Method::POST,
+            "/v1/me/backups",
+            Some(serde_json::json!({})),
+        )
+        .await;
+    assert_eq!(status, StatusCode::CREATED, "{entry}");
+    let on_disk = app.home().join(
+        entry["path"]
+            .as_str()
+            .unwrap()
+            .trim_start_matches('/')
+            .replace('/', std::path::MAIN_SEPARATOR_STR),
+    );
+    let document: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&on_disk).unwrap()).unwrap();
+    assert!(
+        document["bookmarks"][0]["bookUrl"]
+            .as_str()
+            .is_some_and(|url| !url.is_empty()),
+        "书架外书签必须带 bookUrl: {}",
+        document["bookmarks"][0]
+    );
+
+    let (status, result) = app
+        .v1_json(
+            &token,
+            Method::POST,
+            "/v1/me/backups:restore",
+            Some(serde_json::json!({ "path": entry["path"] })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{result}");
+    assert_eq!(result["bookmarks"], serde_json::json!(1));
+    assert_eq!(result["skippedBookmarks"], serde_json::json!(0));
+    let (_, marks) = app.v1_json(&token, Method::GET, "/v1/me/marks", None).await;
+    assert_eq!(marks.as_array().map(Vec::len), Some(1));
+    assert_eq!(marks[0]["bookId"], serde_json::json!(book_id));
+}
+
+#[tokio::test]
+async fn v1_backup_restore_rebinds_books_to_restored_sources() {
+    let app = TestServer::start().await;
+    let token = app.login_token().await;
+    let backups = app.home().join("backups");
+    std::fs::create_dir_all(&backups).unwrap();
+    std::fs::write(
+        backups.join("source-bind.json"),
+        br#"{"version":1,"bookshelf":{"books":[{"bookId":"book_10","bookUrl":"https://example.com/b","bookSourceId":5,"name":"bound-book","author":""}],"groups":[]},"bookSources":[{"bookSourceId":5,"bookSourceName":"bound-source","bookSourceUrl":"https://example.com/s"}],"bookmarks":[],"replaceRules":[]}"#,
+    )
+    .unwrap();
+    let (status, result) = app
+        .v1_json(
+            &token,
+            Method::POST,
+            "/v1/me/backups:restore",
+            Some(serde_json::json!({ "path": "/backups/source-bind.json" })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{result}");
+    assert_eq!(result["books"], serde_json::json!(1));
+    assert_eq!(result["bookSources"], serde_json::json!(1));
+
+    let (_, shelf) = app
+        .v1_json(&token, Method::GET, "/v1/me/shelf?limit=100", None)
+        .await;
+    assert_eq!(shelf["items"][0]["bookId"], serde_json::json!("book_10"));
+    assert_eq!(shelf["items"][0]["sourceId"], serde_json::json!("src_5"));
+}
+
+#[tokio::test]
+async fn v1_backup_restore_is_atomic_on_midway_failure() {
+    let app = TestServer::start().await;
+    let token = app.login_token().await;
+
+    // 先建立一套完整旧状态
+    let (status, book) = app
+        .v1_multipart_upload(
+            &token,
+            "/v1/local-books",
+            "原子旧书.txt",
+            "第一章 开始\n正文。\n".as_bytes(),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{book}");
+    let book_id = book["bookId"].as_str().unwrap().to_string();
+    let mark = serde_json::json!({
+        "bookId": book_id,
+        "time": 1,
+        "bookName": "原子旧书",
+        "bookAuthor": "",
+        "chapterIndex": 0,
+        "chapterPos": 0,
+        "chapterName": "第一章 开始",
+        "bookText": "",
+        "content": "",
+        "kind": "bookmark"
+    });
+    let (status, _) = app
+        .v1_json(&token, Method::POST, "/v1/me/marks", Some(mark))
+        .await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    let (status, _) = app
+        .v1_json(
+            &token,
+            Method::POST,
+            "/v1/me/groups",
+            Some(serde_json::json!({
+                "groupId": 2,
+                "groupName": "旧组",
+                "orderNo": 0
+            })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    let (status, _) = app
+        .v1_json(
+            &token,
+            Method::POST,
+            "/v1/sources:batchUpsert",
+            Some(serde_json::json!({
+                "sources": [{
+                    "bookSourceName": "旧源",
+                    "bookSourceUrl": "https://example.com/old-source"
+                }]
+            })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK);
+    let (status, _) = app
+        .v1_json(
+            &token,
+            Method::POST,
+            "/v1/me/replace-rules",
+            Some(serde_json::json!({
+                "name": "旧规则",
+                "pattern": "a",
+                "replacement": "b",
+                "isEnabled": true
+            })),
+        )
+        .await;
+    assert!(status.is_success(), "{status}");
+
+    // 在最后一个域（replace_rules）注入 DB 错误，让 restore 走到第⑤步才失败
+    let pool = sqlx::SqlitePool::connect(&format!(
+        "sqlite:{}",
+        app.temp_dir.join("reader.db").display()
+    ))
+    .await
+    .unwrap();
+    sqlx::query(
+        "CREATE TRIGGER fail_restore_replace_rules BEFORE INSERT ON replace_rules \
+         BEGIN SELECT RAISE(ABORT, 'injected restore failure'); END",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    pool.close().await;
+
+    let backups = app.home().join("backups");
+    std::fs::create_dir_all(&backups).unwrap();
+    std::fs::write(
+        backups.join("atomic.json"),
+        br#"{"version":1,"bookshelf":{"books":[{"bookId":"book_10","bookUrl":"https://example.com/new-book","bookSourceId":9,"name":"new-book","author":""}],"groups":[{"groupId":4,"groupName":"new-group","orderNo":0}]},"bookSources":[{"bookSourceId":9,"bookSourceName":"new-source","bookSourceUrl":"https://example.com/new-source"}],"bookmarks":[],"replaceRules":[{"name":"new-rule","pattern":"x","replacement":"y","isEnabled":true}]}"#,
+    )
+    .unwrap();
+    let (status, problem) = app
+        .v1_json(
+            &token,
+            Method::POST,
+            "/v1/me/backups:restore",
+            Some(serde_json::json!({ "path": "/backups/atomic.json" })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR, "{problem}");
+
+    // 五个域必须全部保持旧状态（事务整体回滚）
+    let (_, sources) = app.v1_json(&token, Method::GET, "/v1/sources", None).await;
+    assert_eq!(sources["items"][0]["name"], serde_json::json!("旧源"));
+    assert_eq!(sources["items"].as_array().map(Vec::len), Some(1));
+    let (_, groups) = app
+        .v1_json(&token, Method::GET, "/v1/me/groups", None)
+        .await;
+    assert_eq!(groups[0]["groupId"], serde_json::json!(2));
+    assert_eq!(groups.as_array().map(Vec::len), Some(1));
+    let (_, shelf) = app
+        .v1_json(&token, Method::GET, "/v1/me/shelf?limit=100", None)
+        .await;
+    assert_eq!(shelf["items"][0]["bookId"], serde_json::json!(book_id));
+    let (_, marks) = app.v1_json(&token, Method::GET, "/v1/me/marks", None).await;
+    assert_eq!(marks.as_array().map(Vec::len), Some(1));
+    let (_, rules) = app
+        .v1_json(&token, Method::GET, "/v1/me/replace-rules", None)
+        .await;
+    assert_eq!(rules[0]["name"], serde_json::json!("旧规则"));
+    assert_eq!(rules.as_array().map(Vec::len), Some(1));
+}

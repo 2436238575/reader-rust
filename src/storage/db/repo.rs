@@ -407,14 +407,27 @@ impl BookSourceRepo {
         entries: &[(BookSource, String, Option<i64>)],
     ) -> Result<(), AppError> {
         let mut tx = self.pool.begin_with("BEGIN IMMEDIATE").await?;
+        self.import_many_on(&mut tx, entries).await?;
+        tx.commit().await?;
+        Ok(())
+    }
+
+    /// 事务版批量导入：供 WebDAV 恢复把书源与书架/书签/规则收进同一事务。
+    /// 返回 `URL → 实际 book_source_id`，调用方据此重绑定书籍。
+    pub async fn import_many_on(
+        &self,
+        tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+        entries: &[(BookSource, String, Option<i64>)],
+    ) -> Result<std::collections::HashMap<String, i64>, AppError> {
+        let mut mapping = std::collections::HashMap::with_capacity(entries.len());
         for (source, json, desired_id) in entries {
             let existing: Option<i64> = sqlx::query_scalar(
                 "SELECT book_source_id FROM book_sources WHERE book_source_url=?1",
             )
             .bind(&source.book_source_url)
-            .fetch_optional(&mut *tx)
+            .fetch_optional(&mut **tx)
             .await?;
-            if existing.is_some() {
+            if let Some(id) = existing {
                 sqlx::query(
                     "UPDATE book_sources SET book_source_name=?2, json=?3, updated_at=?4 \
                      WHERE book_source_url=?1",
@@ -423,8 +436,9 @@ impl BookSourceRepo {
                 .bind(&source.book_source_name)
                 .bind(json)
                 .bind(now_ts())
-                .execute(&mut *tx)
+                .execute(&mut **tx)
                 .await?;
+                mapping.insert(source.book_source_url.clone(), id);
                 continue;
             }
             let reversible_id = match desired_id {
@@ -433,7 +447,7 @@ impl BookSourceRepo {
                         "SELECT book_source_id FROM book_sources WHERE book_source_id=?1",
                     )
                     .bind(*d)
-                    .fetch_optional(&mut *tx)
+                    .fetch_optional(&mut **tx)
                     .await?;
                     if taken.is_some() {
                         None
@@ -443,7 +457,7 @@ impl BookSourceRepo {
                 }
                 None => None,
             };
-            if let Some(id) = reversible_id {
+            let id = if let Some(id) = reversible_id {
                 sqlx::query(
                     "INSERT INTO book_sources (book_source_id, book_source_url, book_source_name, json, updated_at) \
                      VALUES (?1, ?2, ?3, ?4, ?5)",
@@ -453,10 +467,11 @@ impl BookSourceRepo {
                 .bind(&source.book_source_name)
                 .bind(json)
                 .bind(now_ts())
-                .execute(&mut *tx)
+                .execute(&mut **tx)
                 .await?;
+                id
             } else {
-                sqlx::query(
+                let result = sqlx::query(
                     "INSERT INTO book_sources (book_source_url, book_source_name, json, updated_at) \
                      VALUES (?1, ?2, ?3, ?4)",
                 )
@@ -464,12 +479,13 @@ impl BookSourceRepo {
                 .bind(&source.book_source_name)
                 .bind(json)
                 .bind(now_ts())
-                .execute(&mut *tx)
+                .execute(&mut **tx)
                 .await?;
-            }
+                result.last_insert_rowid()
+            };
+            mapping.insert(source.book_source_url.clone(), id);
         }
-        tx.commit().await?;
-        Ok(())
+        Ok(mapping)
     }
 
     /// 返回是否真的删除了行（v1 批量删除的计数用；不存在的 id 忽略）。
@@ -485,6 +501,17 @@ impl BookSourceRepo {
     pub async fn delete_all(&self, _user_ns: &str) -> Result<u64, AppError> {
         let result = sqlx::query("DELETE FROM book_sources")
             .execute(&self.pool)
+            .await?;
+        Ok(result.rows_affected())
+    }
+
+    /// 事务版清空（WebDAV 恢复的五域单事务）。
+    pub async fn delete_all_on(
+        &self,
+        tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    ) -> Result<u64, AppError> {
+        let result = sqlx::query("DELETE FROM book_sources")
+            .execute(&mut **tx)
             .await?;
         Ok(result.rows_affected())
     }
@@ -1083,6 +1110,46 @@ impl BookmarkRepo {
         Ok(())
     }
 
+    /// 整表覆盖（WebDAV 恢复）：单事务清空当前用户全部书签后重建。
+    ///
+    /// 与逐条 `delete` + `upsert_many` 的差别是「清空」也在事务里——恢复
+    /// 失败时旧书签不会先被删掉一半。
+    pub async fn replace_all(
+        &self,
+        user_ns: &str,
+        items: &[(crate::model::bookmark::Bookmark, String)],
+    ) -> Result<(), AppError> {
+        let mut tx = self.pool.begin_with("BEGIN IMMEDIATE").await?;
+        self.replace_all_on(&mut tx, user_ns, items).await?;
+        tx.commit().await?;
+        Ok(())
+    }
+
+    /// 事务版整表覆盖：与书源/分组/书架/规则共用 WebDAV 恢复的同一事务。
+    pub async fn replace_all_on(
+        &self,
+        tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+        user_ns: &str,
+        items: &[(crate::model::bookmark::Bookmark, String)],
+    ) -> Result<(), AppError> {
+        sqlx::query("DELETE FROM bookmarks WHERE user_ns=?1")
+            .bind(user_ns)
+            .execute(&mut **tx)
+            .await?;
+        for (b, book_url) in items {
+            bookmark_upsert_query(user_ns, b, book_url)?
+                .execute(&mut **tx)
+                .await
+                .map_err(map_bookmark_write_error)?;
+        }
+        Ok(())
+    }
+
+    /// 开启 WebDAV 恢复的五域共享事务。
+    pub async fn begin_immediate(&self) -> Result<sqlx::Transaction<'_, sqlx::Sqlite>, AppError> {
+        Ok(self.pool.begin_with("BEGIN IMMEDIATE").await?)
+    }
+
     /// 按身份五元组删除；返回是否真的删除了行（v1 批量删除的计数用）。
     pub async fn delete(
         &self,
@@ -1145,6 +1212,32 @@ fn map_replace_rule(row: &sqlx::sqlite::SqliteRow) -> crate::model::replace_rule
 const REPLACE_RULE_COLS: &str =
     "id, name, group_name, pattern, replacement, scope, is_enabled, is_regex, rule_order";
 
+/// 按 `(user_ns, name)` upsert 的语句。单条写入与整表覆盖共用，避免两处
+/// SQL 漂移。
+fn replace_rule_upsert_query<'q>(
+    user_ns: &'q str,
+    r: &'q crate::model::replace_rule::ReplaceRule,
+) -> sqlx::query::Query<'q, sqlx::Sqlite, sqlx::sqlite::SqliteArguments> {
+    sqlx::query(
+        "INSERT INTO replace_rules (user_ns, name, id, group_name, pattern, replacement, scope, is_enabled, is_regex, rule_order) \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10) \
+         ON CONFLICT(user_ns, name) DO UPDATE SET \
+         id=excluded.id, group_name=excluded.group_name, pattern=excluded.pattern, \
+         replacement=excluded.replacement, scope=excluded.scope, is_enabled=excluded.is_enabled, \
+         is_regex=excluded.is_regex, rule_order=excluded.rule_order",
+    )
+    .bind(user_ns)
+    .bind(&r.name)
+    .bind(r.id)
+    .bind(r.group.as_deref())
+    .bind(&r.pattern)
+    .bind(&r.replacement)
+    .bind(r.scope.as_deref())
+    .bind(if r.is_enabled { 1i64 } else { 0i64 })
+    .bind(if r.is_regex { 1i64 } else { 0i64 })
+    .bind(i64::from(r.order))
+}
+
 impl ReplaceRuleRepo {
     pub fn new(pool: SqlitePool) -> Self {
         Self { pool }
@@ -1170,26 +1263,42 @@ impl ReplaceRuleRepo {
         user_ns: &str,
         r: &crate::model::replace_rule::ReplaceRule,
     ) -> Result<(), AppError> {
-        sqlx::query(
-            "INSERT INTO replace_rules (user_ns, name, id, group_name, pattern, replacement, scope, is_enabled, is_regex, rule_order) \
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10) \
-             ON CONFLICT(user_ns, name) DO UPDATE SET \
-             id=excluded.id, group_name=excluded.group_name, pattern=excluded.pattern, \
-             replacement=excluded.replacement, scope=excluded.scope, is_enabled=excluded.is_enabled, \
-             is_regex=excluded.is_regex, rule_order=excluded.rule_order",
-        )
-        .bind(user_ns)
-        .bind(&r.name)
-        .bind(r.id)
-        .bind(r.group.as_deref())
-        .bind(&r.pattern)
-        .bind(&r.replacement)
-        .bind(r.scope.as_deref())
-        .bind(if r.is_enabled { 1i64 } else { 0i64 })
-        .bind(if r.is_regex { 1i64 } else { 0i64 })
-        .bind(i64::from(r.order))
-        .execute(&self.pool)
-        .await?;
+        replace_rule_upsert_query(user_ns, r)
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
+
+    /// 整表覆盖（WebDAV 恢复）：单事务清空当前用户全部规则后重建。
+    ///
+    /// 恢复以备份为准——不在备份里的规则会被删除，与分组整表覆盖同语义。
+    pub async fn replace_all(
+        &self,
+        user_ns: &str,
+        rules: &[crate::model::replace_rule::ReplaceRule],
+    ) -> Result<(), AppError> {
+        let mut tx = self.pool.begin_with("BEGIN IMMEDIATE").await?;
+        self.replace_all_on(&mut tx, user_ns, rules).await?;
+        tx.commit().await?;
+        Ok(())
+    }
+
+    /// 事务版整表覆盖（WebDAV 恢复的五域单事务）。
+    pub async fn replace_all_on(
+        &self,
+        tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+        user_ns: &str,
+        rules: &[crate::model::replace_rule::ReplaceRule],
+    ) -> Result<(), AppError> {
+        sqlx::query("DELETE FROM replace_rules WHERE user_ns=?1")
+            .bind(user_ns)
+            .execute(&mut **tx)
+            .await?;
+        for rule in rules {
+            replace_rule_upsert_query(user_ns, rule)
+                .execute(&mut **tx)
+                .await?;
+        }
         Ok(())
     }
 
@@ -1256,6 +1365,15 @@ fn map_book_group(row: &sqlx::sqlite::SqliteRow) -> crate::model::book_group::Bo
         group_id: row.get::<i64, _>("group_id"),
         group_name: row.get::<String, _>("group_name"),
         order_no: row.get::<i32, _>("order_no"),
+    }
+}
+
+fn map_group_write_error(e: sqlx::Error) -> AppError {
+    match &e {
+        sqlx::Error::Database(db_err) if db_err.is_check_violation() => AppError::BadRequest(
+            "groupId 必须是 2 的幂且不超过 2^30（书籍分组是位掩码）".to_string(),
+        ),
+        _ => AppError::Internal(e.into()),
     }
 }
 
@@ -1333,12 +1451,56 @@ impl BookGroupRepo {
         .bind(group.order_no)
         .execute(&self.pool)
         .await
-        .map_err(|e| match &e {
-            sqlx::Error::Database(db_err) if db_err.is_check_violation() => AppError::BadRequest(
-                "groupId 必须是 2 的幂且不超过 2^30（书籍分组是位掩码）".to_string(),
-            ),
-            _ => AppError::Internal(e.into()),
-        })?;
+        .map_err(map_group_write_error)?;
+        Ok(())
+    }
+
+    /// 事务版 upsert（WebDAV 恢复的五域单事务）。
+    pub async fn upsert_on(
+        &self,
+        tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+        user_ns: &str,
+        group: &crate::model::book_group::BookGroup,
+    ) -> Result<(), AppError> {
+        sqlx::query(
+            "INSERT INTO book_groups (user_ns, group_id, group_name, order_no) \
+             VALUES (?1, ?2, ?3, ?4) \
+             ON CONFLICT(user_ns, group_id) DO UPDATE SET \
+             group_name=excluded.group_name, order_no=excluded.order_no",
+        )
+        .bind(user_ns)
+        .bind(group.group_id)
+        .bind(&group.group_name)
+        .bind(group.order_no)
+        .execute(&mut **tx)
+        .await
+        .map_err(map_group_write_error)?;
+        Ok(())
+    }
+
+    /// 整表覆盖（WebDAV 恢复）：不在 `groups` 里的组删除并清书籍位掩码，
+    /// 其余 upsert。必须与书架/书签/规则共用同一个事务。
+    pub async fn save_groups_on(
+        &self,
+        tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+        user_ns: &str,
+        groups: &[crate::model::book_group::BookGroup],
+    ) -> Result<(), AppError> {
+        let rows = sqlx::query("SELECT group_id FROM book_groups WHERE user_ns=?1")
+            .bind(user_ns)
+            .fetch_all(&mut **tx)
+            .await?;
+        let keep: std::collections::HashSet<i64> =
+            groups.iter().map(|group| group.group_id).collect();
+        for row in rows {
+            let group_id: i64 = row.get("group_id");
+            if !keep.contains(&group_id) {
+                self.delete_on(tx, user_ns, group_id).await?;
+            }
+        }
+        for group in groups {
+            self.upsert_on(tx, user_ns, group).await?;
+        }
         Ok(())
     }
 
@@ -1346,10 +1508,22 @@ impl BookGroupRepo {
     /// 旧书会自动「进」新组。两句收进同一事务。
     pub async fn delete(&self, user_ns: &str, group_id: i64) -> Result<(), AppError> {
         let mut tx = self.pool.begin_with("BEGIN IMMEDIATE").await?;
+        self.delete_on(&mut tx, user_ns, group_id).await?;
+        tx.commit().await?;
+        Ok(())
+    }
+
+    /// 事务版删组（两句在调用方事务内）。
+    pub async fn delete_on(
+        &self,
+        tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+        user_ns: &str,
+        group_id: i64,
+    ) -> Result<(), AppError> {
         sqlx::query("DELETE FROM book_groups WHERE user_ns=?1 AND group_id=?2")
             .bind(user_ns)
             .bind(group_id)
-            .execute(&mut *tx)
+            .execute(&mut **tx)
             .await?;
         sqlx::query(
             "UPDATE shelf_books SET group_bits = group_bits & ~?2 \
@@ -1357,9 +1531,8 @@ impl BookGroupRepo {
         )
         .bind(user_ns)
         .bind(group_id)
-        .execute(&mut *tx)
+        .execute(&mut **tx)
         .await?;
-        tx.commit().await?;
         Ok(())
     }
 

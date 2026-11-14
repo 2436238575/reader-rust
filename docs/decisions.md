@@ -233,4 +233,17 @@ goal 执行中遇到「决策表与 spec 都沉默」的问题时，按 §5.4 �
 - **待办（P2 收尾后）**：书源登录 `:login`/代理页与 `PATCH /v1/sources/{id}`（随启停域）、换源候选 SSE（`getAvailableBookSourceSSE`）、任务级 `traceId` 与失败源清单（目前部分源失败只记日志）、其他 `/v1` 查询参数迁移到 `V1Query`。
 - **新依赖**：`zhhz = 0.8`（繁简折叠）。选它而不是 `zhconv`：Apache-2.0（zhconv 是 GPL-2.0-or-later），纯 Rust 数据内嵌、无 C 依赖。
 
+## 2026-11-14 WebDAV 域纳入 /v1（协议挂载 + 文件浏览 + 备份恢复）
+
+- **JSON 资源名用 `/v1/me/files`，不复用协议名**：`webdav` 是传输协议，不是资源身份；`/v1/me/...` 下操作的是当前用户的服务器文件。`/v1/me/webdav` 读起来像「一个叫 webdav 的资源」，与 `/v1/me/shelf`、`/v1/me/marks` 的风格也不一致。
+- **备份端点放 `/v1/me/backups`，不塞进 `/v1/me/files/backups`**：文件下载/删除的 `{*path}` 是通配路径，静态段 `backups` 会与真实目录 `backups` 抢同一路径——静态路由优先后，该目录本身再也无法通过 API 下载/删除。备份是独立的资源集合，单列两个端点是更干净的切分。
+- **协议入口新增 `/v1/webdav`，`/reader3/webdav` 保留**：第三方 DAV 客户端需要协议根；旧客户端已配置 `/reader3/webdav`，删除是破坏性变更。三个入口（`/v1/webdav`、`/reader3/webdav` 两个前缀，加各自的裸根/尾斜杠/通配路由）共用 `storage/webdav/<ns>` 与同一套 Basic 认证/限速/路径加固，只有 dav-server 的 strip 前缀不同。协议路由仍在压缩层之后 merge（dav-server 的流式 body 重复轮询会 panic），也因此豁免入站 120s 超时与 JWT/CSRF。
+- **备份改为服务端快照**：旧前端逐接口拉书架/分组/书源/书签/规则再拼 JSON，恢复同样由前端逐接口清空重建；现在 `POST /v1/me/backups` 直接由 `WebdavBackupService` 生成文档并原子写入 `/backups/reader-backup-<UTC>-<随机后缀>.json`。备份字段与旧格式逐字兼容（`bookshelf.books/groups`、`bookSources`、`bookmarks`、`replaceRules`、`localState`），旧备份可直接恢复；`app` 标记新文件为 `reader-rust`。**必填域严格反序列化**：缺 `bookshelf`/四个数组任一即 422，绝不按空数组继续（否则 `{"version":1}` 就能清空全部数据）。
+- **`localState` 前端采集、服务端透传**：创建备份时前端把白名单键放进请求体，服务端原样存回文档；恢复时原样返回。`null`（字段缺失的旧备份）与显式空对象语义不同：前者前端不动本地键，后者按整份覆盖。服务端不解释白名单——那是浏览器存储布局。
+- **恢复语义**：书源清空重导（空表上 `bookSourceId` 原位保留）、分组整表覆盖（不在备份里的组删除并清书籍位掩码）、书架 `save_books(restore=true)`（只清当前用户书架，登记行与正文历史保留）、书签/替换规则 `replace_all` 清空重建。非法分组 id（旧版 `max_id+1` 遗留的 3）按旧前端同口径丢弃。**五个域共用同一个 `BEGIN IMMEDIATE` 事务**（repo 增加 `_on(&mut tx)` 变体，`save_books_on`/`save_groups_on`/`replace_all_on` 串联）：任何一步失败整体回滚，不再有「书源已换、书架已清」的半恢复状态；写库前集中预校验版本=1、书籍 URL/数量/ID、书签 kind/chapterPos，校验失败不开启事务。同一进程只允许一个恢复（`try_lock` 失败 409），避免并发恢复互相覆盖。`:inspect` 在恢复前返回条目数，前端确认框展示并提示空书源会清空现有书源。
+- **bookId 以恢复后的实际身份为准**：`save_books(restore=true)` 会用备份自带的 bookId 原位登记，但同 URL 的既有登记行优先复用原 id、备份 id 被别的 URL 占用时重新分配。恢复时用「备份 id → 实际 id」映射重写书签的 `bookId` 与替换规则的 `book:` / `source:` scope；**书架外的书签**在新备份里带 `bookUrl`，按 URL 找回登记行（旧备份没有该字段则计入 `skippedBookmarks`），避免按旧 id 挂错或静默丢数据。书籍的 `bookSourceId` 也按恢复后的 source id 重写，备份里没有的源一律解绑。`save_books` 的同一套预校验（先规范化 URL 再查数量/ID）抽成 `normalize_books_for_restore` + `validate_restore_books`，恢复在任何删除之前调用。
+- **文件接口细节**：列表 `modifiedAt` 用 RFC 3339 UTC（与 v1 时间口径一致），响应带强 ETag/304；下载带元数据 ETag、显式 Content-Type 与 `sandbox` CSP（`/reader3/getWebdavFile` 同一条中间件）；上传沿用 100MB/20 字段/流式落盘/取消清理，目标位置是符号链接时显式 400（与下载/删除的 canonicalize 守卫同口径）；批删先预校验全部路径再执行，单次上限 1000（前端 500 分片）。
+- **前端接线**：`api/webdav.ts` 全部切到 `/v1`；`WebdavView` 的「备份」直接调服务端快照，「恢复」调服务端恢复后只应用 `localState`。旧的 `utils/webdavBackup.ts`（前端拼装备份/恢复编排）与其单测删除，白名单逻辑迁到 `utils/webdavLocalState.ts` 并有单测。
+- **兼容面**：`/reader3` 的 JSON 文件接口与协议入口继续可用；前端已无调用方，保留给第三方脚本与已配置的 DAV 客户端。
+
 

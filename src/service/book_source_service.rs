@@ -40,6 +40,25 @@ impl BookSourceService {
         self.repo.import_many(user_ns, &entries).await
     }
 
+    /// 事务版整表替换（WebDAV 恢复）：清空 + 导入落在调用方事务内，返回
+    /// `URL → 实际 id` 供书籍重绑定。
+    pub async fn replace_all_on(
+        &self,
+        tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+        sources: Vec<BookSource>,
+    ) -> Result<std::collections::HashMap<String, i64>, AppError> {
+        let entries = sources
+            .iter()
+            .map(|s| {
+                serialize_without_id(s)
+                    .map(|json| (s.clone(), json, s.book_source_id))
+                    .map_err(|e| AppError::BadRequest(e.to_string()))
+            })
+            .collect::<Result<Vec<_>, AppError>>()?;
+        self.repo.delete_all_on(tx).await?;
+        self.repo.import_many_on(tx, &entries).await
+    }
+
     pub async fn get_by_id(&self, user_ns: &str, id: i64) -> Result<Option<BookSource>, AppError> {
         let row = self.repo.get_by_id(user_ns, id).await?;
         match row {

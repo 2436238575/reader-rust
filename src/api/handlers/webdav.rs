@@ -28,9 +28,9 @@ pub struct WebdavPathRequest {
 
 /// WebDAV 上传/PUT 单文件上限。multipart 字段不受 DefaultBodyLimit 约束，
 /// 直通 dav-server 的 PUT 体也不走 axum 提取器，两处都必须自行限量。
-const MAX_WEBDAV_UPLOAD_BYTES: usize = 100 * 1024 * 1024;
+pub(crate) const MAX_WEBDAV_UPLOAD_BYTES: usize = 100 * 1024 * 1024;
 /// 目录路径字段的上限，超出即异常请求。
-const MAX_WEBDAV_PATH_FIELD_BYTES: usize = 4 * 1024;
+pub(crate) const MAX_WEBDAV_PATH_FIELD_BYTES: usize = 4 * 1024;
 
 #[derive(Debug, Deserialize)]
 pub struct WebdavDeleteListRequest {
@@ -120,7 +120,7 @@ pub async fn get_webdav_file(
 
 /// 按扩展名给下载文件一个显式 Content-Type（小表覆盖常见格式，
 /// 与 dav-server 的 mime_guess 口径一致；未知扩展名一律 octet-stream）。
-fn download_content_type(path: &std::path::Path) -> &'static str {
+pub(crate) fn download_content_type(path: &std::path::Path) -> &'static str {
     let ext = path
         .extension()
         .and_then(|e| e.to_str())
@@ -212,7 +212,7 @@ pub async fn upload_file_to_webdav(
 /// 读进 Vec）。清理统一交给 [`TempUploadGuard`]：显式错误分支、**取消路径**
 /// （handler future 被丢弃——客户端断连、上传超时在收流中途触发、panic）都会
 /// 经守卫的 Drop 删除临时文件，不存在 async Drop 可靠性这回事。
-async fn stream_multipart_field_to_file(
+pub(crate) async fn stream_multipart_field_to_file(
     mut field: axum::extract::multipart::Field<'_>,
     target: &std::path::Path,
     limit: usize,
@@ -220,6 +220,13 @@ async fn stream_multipart_field_to_file(
     let dir = target.parent().ok_or_else(|| {
         AppError::Internal(anyhow::anyhow!("WebDAV 上传目标缺少父目录: {target:?}"))
     })?;
+    // 目标位置可能是用户/其他进程放下的符号链接：即使 rename 会替换链接
+    // 而不是跟随，也用显式 400 保持与下载/删除路径同一口径
+    if let Ok(meta) = fs::symlink_metadata(target).await {
+        if meta.file_type().is_symlink() {
+            return Err(AppError::BadRequest("上传目标不能是符号链接".to_string()));
+        }
+    }
     let stem = target
         .file_name()
         .and_then(|n| n.to_str())
@@ -700,6 +707,30 @@ pub async fn webdav_handler(
     headers: HeaderMap,
     req: Request,
 ) -> Response {
+    dispatch_webdav(state, "/reader3/webdav", addr, path, headers, req).await
+}
+
+/// `/v1` 命名空间下的协议入口：与 `/reader3/webdav` 共用同一份家目录与
+/// 全部路径加固，只有 dav-server 的 strip 前缀不同。v1 路由在鉴权/CSRF 层
+/// 之外单独挂载（协议自带 HTTP Basic），不经过 JWT。
+pub async fn v1_webdav_handler(
+    State(state): State<AppState>,
+    ConnectInfo(addr): ConnectInfo<std::net::SocketAddr>,
+    path: Option<Path<String>>,
+    headers: HeaderMap,
+    req: Request,
+) -> Response {
+    dispatch_webdav(state, "/v1/webdav", addr, path, headers, req).await
+}
+
+async fn dispatch_webdav(
+    state: AppState,
+    strip_prefix: &'static str,
+    addr: std::net::SocketAddr,
+    path: Option<Path<String>>,
+    headers: HeaderMap,
+    req: Request,
+) -> Response {
     // Basic 认证与登录接口共享限速，按客户端 IP 记账；对端命中
     // TRUSTED_PROXIES 时从 X-Forwarded-For 还原真实地址（挂 nginx/Docker
     // NAT 后全体请求同 socket IP，会互相连坐），否则一律用 socket 地址
@@ -715,7 +746,8 @@ pub async fn webdav_handler(
     };
     // dav-server 自己会拦路径逃逸（`..` 越级、段内 %2f），但不认识 Windows 的
     // 盘符/设备名/ADS/结尾点空格，分发前按原有规则再拦一遍（Path 通配值已
-    // percent-decode）。裸根路径 /reader3/webdav 无通配参数，path 为 None。
+    // percent-decode）。裸根路径 /reader3/webdav 或 /v1/webdav 无通配参数，
+    // path 为 None。
     let rel = format!("/{}", path.map(|p| p.0).unwrap_or_default());
     let Ok(parts) = normalize_rel_path(&rel) else {
         return StatusCode::BAD_REQUEST.into_response();
@@ -728,7 +760,7 @@ pub async fn webdav_handler(
     let dav = DavHandler::builder()
         .filesystem(LocalFs::new(&home, false, false, false))
         .locksystem(memls())
-        .strip_prefix("/reader3/webdav")
+        .strip_prefix(strip_prefix)
         .build_handler();
     let (parts, body) = req.into_parts();
     // DefaultBodyLimit 只约束 axum 提取器，直通 dav-server 的 PUT 体自行限量；
@@ -778,6 +810,17 @@ async fn resolve_webdav_user(
     {
         // 存储路径按 user_<uid> 隔离：username 只用于认证
         Ok(Some(user)) => Ok(crate::auth::middleware::user_ns_of(user.uid)),
+        // 限速命中不能伪装成 401：客户端会不断重试同一份错误密码，
+        // 带上 Retry-After 才可能退避（与登录接口同语义）
+        Err(AppError::TooManyRequests {
+            retry_after_secs, ..
+        }) => {
+            let mut response = StatusCode::TOO_MANY_REQUESTS.into_response();
+            response
+                .headers_mut()
+                .insert("Retry-After", HeaderValue::from(retry_after_secs));
+            Err(Box::new(response))
+        }
         _ => Err(Box::new(unauthorized())),
     }
 }
@@ -795,7 +838,7 @@ fn unauthorized() -> Response {
     res
 }
 
-async fn webdav_home(state: &AppState, user_ns: &str) -> Result<PathBuf, AppError> {
+pub(crate) async fn webdav_home(state: &AppState, user_ns: &str) -> Result<PathBuf, AppError> {
     let dir = PathBuf::from(&state.config.storage_dir)
         .join("webdav")
         .join(user_ns);
@@ -810,7 +853,7 @@ async fn webdav_home(state: &AppState, user_ns: &str) -> Result<PathBuf, AppErro
 /// 必须同时按 `/` 和 `\` 切分：Windows 上 `\` 是路径分隔符，只按 `/` 切会让
 /// `..\..\x` 成为"普通段"逃过 `..` 检查，join 后直接穿越出 webdav 根目录。
 /// `:` 一并拒绝（Windows 盘符前缀与 NTFS ADS）。
-fn normalize_rel_path(path: &str) -> Result<Vec<String>, AppError> {
+pub(crate) fn normalize_rel_path(path: &str) -> Result<Vec<String>, AppError> {
     let mut parts = Vec::new();
     for p in path.split(['/', '\\']) {
         if p.is_empty() || p == "." {
@@ -828,7 +871,7 @@ fn normalize_rel_path(path: &str) -> Result<Vec<String>, AppError> {
     Ok(parts)
 }
 
-fn join_parts(home: &std::path::Path, parts: &[String]) -> PathBuf {
+pub(crate) fn join_parts(home: &std::path::Path, parts: &[String]) -> PathBuf {
     let mut p = home.to_path_buf();
     for part in parts {
         p = p.join(part);
@@ -836,7 +879,7 @@ fn join_parts(home: &std::path::Path, parts: &[String]) -> PathBuf {
     p
 }
 
-fn build_relative_path(parts: &[String], name: &str) -> String {
+pub(crate) fn build_relative_path(parts: &[String], name: &str) -> String {
     if parts.is_empty() {
         format!("/{}", name)
     } else {

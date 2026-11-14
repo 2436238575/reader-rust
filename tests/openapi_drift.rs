@@ -102,6 +102,13 @@ const REQUIRED_PATHS: &[&str] = &[
     "/v1/tasks/{taskId}/result",
     "/v1/tasks/{taskId}/events",
     "/v1/sse-tickets",
+    // 服务器文件浏览 / 备份恢复（协议挂载 /v1/webdav 不在 OpenAPI 内）
+    "/v1/me/files",
+    "/v1/me/files/{path}",
+    "/v1/me/files:batchDelete",
+    "/v1/me/backups",
+    "/v1/me/backups:inspect",
+    "/v1/me/backups:restore",
 ];
 
 /// YAML 里 `paths` 的键固定是两空格缩进、以冒号结尾的一行。逐行精确
@@ -121,6 +128,40 @@ fn every_delivered_endpoint_is_registered_in_the_doc() {
             "OpenAPI 缺少已交付端点 {path}——检查 V1ApiDoc 的 paths(...) 注册"
         );
     }
+}
+
+/// 同名 schema 会被 utoipa 后注册者覆盖：WebDAV 批删曾用
+/// `BatchDeleteRequest`，把替换规则批删的 `names` 静默改成了 `paths`。
+/// 两个端点必须各自引用自己的 schema。
+#[test]
+fn batch_delete_schemas_do_not_collide() {
+    let yaml = generated_yaml();
+    let rules_schema = yaml
+        .split("    BatchDeleteRequest:\n")
+        .nth(1)
+        .expect("替换规则 BatchDeleteRequest schema 存在");
+    assert!(
+        rules_schema.contains("- names"),
+        "BatchDeleteRequest 必须保留 names 字段"
+    );
+    let files_schema = yaml
+        .split("    WebdavBatchDeleteRequest:\n")
+        .nth(1)
+        .expect("WebDAV WebdavBatchDeleteRequest schema 存在");
+    assert!(
+        files_schema.contains("- paths"),
+        "WebdavBatchDeleteRequest 必须有 paths 字段"
+    );
+    let rules_path = yaml
+        .split("  /v1/me/replace-rules:batchDelete:\n")
+        .nth(1)
+        .expect("替换规则批删路径存在");
+    assert!(rules_path.contains("'#/components/schemas/BatchDeleteRequest'"));
+    let files_path = yaml
+        .split("  /v1/me/files:batchDelete:\n")
+        .nth(1)
+        .expect("WebDAV 批删路径存在");
+    assert!(files_path.contains("'#/components/schemas/WebdavBatchDeleteRequest'"));
 }
 
 /// 查询参数必须是 `in: query`：`IntoParams` 默认生成 Path，`/v1/tasks` 的

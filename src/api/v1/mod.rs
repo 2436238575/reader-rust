@@ -42,6 +42,7 @@ mod shelf;
 mod source_tasks;
 mod sources;
 mod tasks;
+mod webdav;
 
 /// `/v1` 路由。并发层与 `/reader3` 的受保护组共享同一份许可
 /// （`GlobalConcurrencyLimitLayer` clone 共享内部信号量），两个命名空间
@@ -98,6 +99,9 @@ pub fn router(
     // trace 层在此之后挂，仍然包裹导入路由
     let v1 = v1.merge(chapter_imports::router(state.clone(), upload_timeout));
     let v1 = v1.merge(local_books::router(state.clone(), upload_timeout));
+    // WebDAV 文件浏览/备份恢复同样是大文件域：自带 900s 超时与 100MB 体限，
+    // 鉴权与 CSRF 在子路由自含（与 local-books 同模式）
+    let v1 = v1.merge(webdav::router(state.clone(), upload_timeout));
     v1.layer(axum::middleware::from_fn(attach_problem_trace))
         .with_state(state)
 }
@@ -308,6 +312,34 @@ where
     }
 }
 
+/// `/v1` 的 multipart 提取器：rejection 统一成 problem+json，
+/// 不让 axum 的 `MultipartRejection` 以 `text/plain` 泄漏到 `/v1`。
+#[derive(Debug)]
+pub struct V1Multipart(pub axum::extract::Multipart);
+
+impl axum::extract::FromRequest<AppState> for V1Multipart {
+    type Rejection = Problem;
+
+    async fn from_request(
+        req: axum::extract::Request,
+        state: &AppState,
+    ) -> Result<Self, Self::Rejection> {
+        match axum::extract::Multipart::from_request(req, state).await {
+            Ok(multipart) => Ok(V1Multipart(multipart)),
+            Err(rejection) => {
+                let code = if rejection.status() == axum::http::StatusCode::PAYLOAD_TOO_LARGE {
+                    ErrorCode::PayloadTooLarge
+                } else if rejection.status() == axum::http::StatusCode::UNSUPPORTED_MEDIA_TYPE {
+                    ErrorCode::UnsupportedMediaType
+                } else {
+                    ErrorCode::MalformedRequest
+                };
+                Err(Problem::new(code).detail(rejection.body_text()))
+            }
+        }
+    }
+}
+
 /// `/v1` 的身份提取器：rejection 是 `Problem`，杜绝 `ApiResponse` 形态
 /// 泄漏——即使某条 `/v1` 路由漏挂鉴权中间件，失败形态仍是 problem+json。
 #[derive(Debug, Clone)]
@@ -431,6 +463,14 @@ pub fn openapi_yaml() -> String {
         source_tasks::start_test_sources,
         source_tasks::start_test_source,
         source_tasks::import_sources,
+        webdav::list_files,
+        webdav::download_file,
+        webdav::upload_files,
+        webdav::delete_file,
+        webdav::batch_delete_files,
+        webdav::create_backup,
+        webdav::inspect_backup,
+        webdav::restore_backup,
         auth::login,
         auth::refresh,
         auth::logout,
@@ -543,6 +583,18 @@ pub fn openapi_yaml() -> String {
         crate::service::task_service::SourceImportError,
         source_tasks::SourceTestRequest,
         source_tasks::SourceImportRequest,
+        webdav::WebdavEntry,
+        webdav::WebdavUploadForm,
+        webdav::WebdavBatchDeleteRequest,
+        webdav::WebdavBatchDeleteResult,
+        webdav::BackupCreateRequest,
+        webdav::BackupInspectResult,
+        webdav::RestoreBackupRequest,
+        crate::service::webdav_backup_service::WebdavBackupDocument,
+        crate::service::webdav_backup_service::WebdavBackupBookshelf,
+        crate::service::webdav_backup_service::WebdavBackupBookmark,
+        crate::service::webdav_backup_service::WebdavRestoreResult,
+        crate::model::replace_rule::ReplaceRule,
     )),
     tags(
         (name = "me", description = "当前账号"),
@@ -550,6 +602,7 @@ pub fn openapi_yaml() -> String {
         (name = "sources", description = "书源"),
         (name = "books", description = "书籍与章节"),
         (name = "tasks", description = "任务、搜索与 SSE 事件流"),
+        (name = "files", description = "服务器文件浏览与备份恢复"),
     ),
     modifiers(&SecurityAddon)
 )]

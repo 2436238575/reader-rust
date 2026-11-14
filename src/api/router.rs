@@ -115,6 +115,12 @@ pub fn build_router(state: AppState) -> Router {
         .route("/reader3/webdav", any(handlers::webdav_handler))
         .route("/reader3/webdav/", any(handlers::webdav_handler))
         .route("/reader3/webdav/{*path}", any(handlers::webdav_handler))
+        // v1 协议挂载：与 JSON 浏览接口（/v1/me/files）分属不同前缀，
+        // 第三方客户端可直接把服务器地址改成 /v1/webdav。同样走 Basic 认证，
+        // 不经 JWT/CSRF；必须在压缩层之后并入（见下方 merge(webdav) 注释）
+        .route("/v1/webdav", any(handlers::v1_webdav_handler))
+        .route("/v1/webdav/", any(handlers::v1_webdav_handler))
+        .route("/v1/webdav/{*path}", any(handlers::v1_webdav_handler))
         // .html/.xml/.svg 以可渲染类型同源直出，直接打开时补沙箱 CSP
         .layer(middleware::from_fn(sandbox_active_webdav_content))
         .with_state(state.clone());
@@ -785,7 +791,7 @@ async fn sandbox_epub_svg_assets(
 /// 对这些 Content-Type 补 Content-Security-Policy: sandbox——保留渲染、
 /// 禁脚本与表单；不改成 Content-Disposition: attachment，那会牺牲备份
 /// 文件在浏览器里直接预览的可用性。if_not_present：不打翻已特化的值。
-async fn sandbox_active_webdav_content(
+pub(crate) async fn sandbox_active_webdav_content(
     request: axum::extract::Request,
     next: middleware::Next,
 ) -> axum::response::Response {

@@ -255,11 +255,6 @@ export function saveBooks(books: Partial<Book>[]) {
   return http.post<Book[]>('/saveBooks', books).then((r) => r.data)
 }
 
-/** WebDAV 恢复：整架覆盖 + 登记表清表重建（备份自带的 bookId 原位恢复） */
-export function restoreBooks(books: Partial<Book>[]) {
-  return http.post<Book[]>('/saveBooks', { books, restore: true }).then((r) => r.data)
-}
-
 /**
  * 上传本地书（v1）：TXT/EPUB 按扩展名分派（`.epub` 走 EPUB，其余按 TXT），
  * 响应是不带包装的 Book（已分配 bookId 且已在书架）。

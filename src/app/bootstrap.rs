@@ -282,6 +282,17 @@ pub async fn build_state(cfg: AppConfig) -> anyhow::Result<AppState> {
     });
 
     let task_outbound = cfg.task_outbound_concurrency as usize;
+    let bookmark_repo = db::repo::BookmarkRepo::new(pool.clone());
+    let replace_rule_repo = db::repo::ReplaceRuleRepo::new(pool.clone());
+    let webdav_backup_service = Arc::new(
+        crate::service::webdav_backup_service::WebdavBackupService::new(
+            book_service.clone(),
+            book_source_service.clone(),
+            book_group_service.clone(),
+            bookmark_repo.clone(),
+            replace_rule_repo.clone(),
+        ),
+    );
     Ok(AppState {
         config: cfg,
         image_service,
@@ -297,8 +308,8 @@ pub async fn build_state(cfg: AppConfig) -> anyhow::Result<AppState> {
             crate::service::chapter_diff_service::ChapterDiffService::new(),
         ),
         json_document_service,
-        bookmark_repo: db::repo::BookmarkRepo::new(pool.clone()),
-        replace_rule_repo: db::repo::ReplaceRuleRepo::new(pool.clone()),
+        bookmark_repo,
+        replace_rule_repo,
         chapter_title_override_repo: db::repo::ChapterTitleOverrideRepo::new(pool.clone()),
         ai_book_service,
         ai_model_service,
@@ -307,6 +318,7 @@ pub async fn build_state(cfg: AppConfig) -> anyhow::Result<AppState> {
             crate::service::task_service::TaskService::new().with_outbound_limit(task_outbound),
         ),
         sse_ticket_service: Arc::new(crate::service::sse_ticket_service::SseTicketService::new()),
+        webdav_backup_service,
     })
 }
 

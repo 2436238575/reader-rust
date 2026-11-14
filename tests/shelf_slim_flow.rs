@@ -135,3 +135,27 @@ async fn single_shelf_book_reports_cached_chapter_count() {
     assert_eq!(one["data"]["cachedChapterCount"], 0);
     assert!(one["data"]["cachedChapterCount"].is_i64());
 }
+
+/// 兼容性：legacy `saveBooks`（裸数组、restore=false）历来忽略客户端
+/// `bookId`；恢复专用的 `book_<n>` 格式校验不能收紧到普通整架替换。
+#[tokio::test]
+async fn legacy_save_books_ignores_client_book_id() {
+    let server = boot().await;
+    let saved = server
+        .post(
+            "saveBooks",
+            json!([{
+                "bookId": "uuid-123",
+                "name": "兼容书",
+                "author": "作者",
+                "bookUrl": "https://shelf-slim.example/legacy-id"
+            }]),
+        )
+        .await;
+    assert_eq!(saved["isSuccess"], serde_json::json!(true));
+    assert_ne!(
+        saved["data"][0]["bookId"],
+        serde_json::json!("uuid-123"),
+        "非恢复语义应忽略客户端 bookId"
+    );
+}

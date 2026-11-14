@@ -70,7 +70,7 @@
         </button>
 
         <span class="file-meta">{{ entry.isDirectory ? '目录' : formatBytes(entry.size) }}</span>
-        <span class="file-meta">{{ formatDateTime(entry.lastModified) }}</span>
+        <span class="file-meta">{{ formatDateTime(entry.modifiedAt) }}</span>
 
         <div class="file-actions">
           <button
@@ -108,21 +108,17 @@ import { ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAppStore } from '../stores/app'
 import {
+  createWebdavBackup,
   deleteWebdavFile,
   deleteWebdavFileList,
   getWebdavFileBlob,
   getWebdavFileList,
-  getWebdavFileText,
+  inspectWebdavBackup,
+  restoreWebdavBackup,
   type WebdavFileEntry,
   uploadFilesToWebdav,
-  uploadTextToWebdav,
 } from '../api/webdav'
-import {
-  createWebdavBackupPayload,
-  parseWebdavBackup,
-  restoreWebdavBackup,
-  serializeWebdavBackup,
-} from '../utils/webdavBackup'
+import { applyWebdavLocalState } from '../utils/webdavLocalState'
 import { formatBytes, formatDateTime } from '../utils/format'
 
 type EntryRow = WebdavFileEntry & { toParent?: boolean }
@@ -153,7 +149,8 @@ function goBack() {
 }
 
 function isBackupFile(name: string) {
-  return name.toLowerCase().endsWith('.json')
+  const lower = name.toLowerCase()
+  return lower.startsWith('reader-backup-') && lower.endsWith('.json')
 }
 
 function toParentPath(path: string) {
@@ -171,11 +168,16 @@ function toggleSelection(path: string) {
   }
 }
 
+let loadSeq = 0
+
 async function loadFiles(path = '/') {
+  const seq = ++loadSeq
   loading.value = true
   errorMessage.value = ''
   try {
     const list = await getWebdavFileList(path)
+    // 快速点目录时只接受最后一次请求，旧响应不能覆盖新目录
+    if (seq !== loadSeq) return
     currentPath.value = path
     selectedPaths.value = []
     const rows: EntryRow[] =
@@ -185,7 +187,7 @@ async function loadFiles(path = '/') {
               name: '..',
               size: 0,
               path: toParentPath(path),
-              lastModified: 0,
+              modifiedAt: '',
               isDirectory: true,
               toParent: true,
             },
@@ -199,10 +201,13 @@ async function loadFiles(path = '/') {
     )
     entries.value = rows
   } catch (error) {
+    if (seq !== loadSeq) return
     errorMessage.value = (error as Error).message || '无法读取服务器备份文件列表'
     entries.value = []
   } finally {
-    loading.value = false
+    if (seq === loadSeq) {
+      loading.value = false
+    }
   }
 }
 
@@ -220,14 +225,16 @@ async function handleUpload(event: Event) {
   const input = event.target as HTMLInputElement
   const files = Array.from(input.files || [])
   if (!files.length) return
+  // 上传期间用户仍可切目录：刷新固定回上传目标，不跟着 currentPath 漂移
+  const targetPath = currentPath.value
   working.value = true
   try {
     await uploadFilesToWebdav(
       files.map((file) => ({ file, name: file.name })),
-      currentPath.value
+      targetPath
     )
     appStore.showToast('文件已上传到服务器', 'success')
-    await loadFiles(currentPath.value)
+    await loadFiles(targetPath)
   } catch (error) {
     appStore.showToast((error as Error).message || '上传失败', 'error')
   } finally {
@@ -236,24 +243,33 @@ async function handleUpload(event: Event) {
   }
 }
 
-function buildBackupFilename() {
-  const now = new Date()
-  const pad = (value: number) => String(value).padStart(2, '0')
-  return `reader-backup-${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}-${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}.json`
-}
-
 async function createBackup() {
   working.value = true
   try {
-    const payload = await createWebdavBackupPayload()
-    await uploadTextToWebdav(serializeWebdavBackup(payload), buildBackupFilename(), '/backups')
-    appStore.showToast('备份已保存到 /backups', 'success')
+    const entry = await createWebdavBackup()
+    appStore.showToast(`备份已保存到 ${entry.path}`, 'success')
     await loadFiles('/backups')
   } catch (error) {
     appStore.showToast((error as Error).message || '备份失败', 'error')
   } finally {
     working.value = false
   }
+}
+
+/** 下载用 responseType=blob：problem+json 也会是 Blob，取出 detail 再提示。 */
+async function downloadErrorMessage(error: unknown) {
+  const data = (error as { response?: { data?: unknown } }).response?.data
+  if (data instanceof Blob) {
+    try {
+      const problem = JSON.parse(await data.text()) as { detail?: unknown }
+      if (typeof problem.detail === 'string' && problem.detail) {
+        return problem.detail
+      }
+    } catch {
+      // 非 JSON（反代 HTML 错误页等）回落 axios 文案
+    }
+  }
+  return (error as Error).message || '下载失败'
 }
 
 async function downloadEntry(entry: EntryRow) {
@@ -267,9 +283,10 @@ async function downloadEntry(entry: EntryRow) {
     document.body.appendChild(link)
     link.click()
     link.remove()
-    URL.revokeObjectURL(url)
+    // 立即 revoke 在部分浏览器会取消尚未开始的下载
+    window.setTimeout(() => URL.revokeObjectURL(url), 0)
   } catch (error) {
-    appStore.showToast((error as Error).message || '下载失败', 'error')
+    appStore.showToast(await downloadErrorMessage(error), 'error')
   } finally {
     working.value = false
   }
@@ -305,15 +322,30 @@ async function removeSelected() {
 }
 
 async function restoreBackup(entry: EntryRow) {
-  if (!confirm(`确定从 ${entry.name} 恢复数据吗？这会覆盖当前书架、书源、书签和相关本地配置。`)) {
-    return
-  }
-
   working.value = true
   try {
-    const raw = await getWebdavFileText(entry.path)
-    const payload = parseWebdavBackup(raw)
-    await restoreWebdavBackup(payload)
+    // 先预览条目数：空书源/不含本地配置等异常在用户点确定前可见
+    const info = await inspectWebdavBackup(entry.path)
+    const lines = [
+      `确定从 ${entry.name} 恢复数据吗？`,
+      '',
+      `备份包含：${info.books} 本书 / ${info.bookSources} 个书源 / ${info.groups} 个分组 / ${info.bookmarks} 条书签 / ${info.replaceRules} 条规则。`,
+      '',
+      '这会覆盖当前书架、书源、书签和相关本地配置。',
+    ]
+    if (info.bookSources === 0) {
+      lines.push('', '注意：这份备份不含书源，当前全部书源将被清空。')
+    }
+    if (!info.hasLocalState) {
+      lines.push('备份不含浏览器本地配置，本地配置保持不变。')
+    }
+    if (!confirm(lines.join('\n'))) {
+      working.value = false
+      return
+    }
+    const result = await restoreWebdavBackup(entry.path)
+    // 服务端只恢复数据库；浏览器本地配置由前端按白名单落地
+    applyWebdavLocalState(result.localState)
     appStore.showToast('恢复完成，正在刷新页面', 'success')
     window.setTimeout(() => {
       window.location.reload()
