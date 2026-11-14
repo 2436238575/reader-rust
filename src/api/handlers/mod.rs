@@ -10,7 +10,7 @@ mod cache;
 pub(crate) mod chapter_edit;
 mod chapter_image;
 pub(crate) mod chapter_import_upload;
-mod image;
+pub(crate) mod image;
 pub(crate) mod multipart;
 mod replace_rule;
 mod review;

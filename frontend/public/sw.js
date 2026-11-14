@@ -126,8 +126,12 @@ self.addEventListener('fetch', (event) => {
     return
   }
 
-  // 图片管道：id 即内容寻址（md5），同 id 内容不变，cache-first 安全
-  if (url.pathname.startsWith(`${BASE}reader3/image/`)) {
+  // 图片管道：id 即内容寻址（md5），同 id 内容不变，cache-first 安全。
+  // v1 前缀是当前输出；legacy 前缀过渡期仍可能出现在历史缓存/旧数据里。
+  if (
+    url.pathname.startsWith(`${BASE}v1/images/`) ||
+    url.pathname.startsWith(`${BASE}reader3/image/`)
+  ) {
     const key = request.url
     event.respondWith(
       caches.open(IMAGE_CACHE).then((cache) =>

@@ -222,9 +222,9 @@ async fn explore_returns_items_with_pipeline_covers() {
     assert_eq!(items.len(), 2);
     assert_eq!(items[0]["name"], json!("探索书一"));
     assert_eq!(items[0]["bookId"], json!("book_1"), "搜索/探索产出即登记");
-    // 封面收口：有封面的条目换成 /reader3/image/<id>，没有的原样缺失
+    // 封面收口：有封面的条目换成 /v1/images/<id>，没有的原样缺失
     let cover = items[0]["coverUrl"].as_str().unwrap();
-    assert!(cover.starts_with("/reader3/image/"), "封面收口: {cover}");
+    assert!(cover.starts_with("/v1/images/"), "封面收口: {cover}");
     assert!(items[1]["coverUrl"].is_null());
 
     server.cleanup();

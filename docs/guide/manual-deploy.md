@@ -190,7 +190,7 @@ COOKIE_PATH=/read/reader3
 要点：
 
 - 前端是 hash 路由（`https://example.org/read/#/reader`），不需要服务端 SPA 回落。
-- 服务端返回的图片路径（`/reader3/image/<id>`）由前端统一套上部署前缀，
+- 服务端返回的图片路径（`/v1/images/<id>`）由前端统一套上部署前缀，
   后端不需要感知静态资源与图片路径；但**会话 Cookie 的 `Path` 必须显式配置**
   （见上面第 3 步）。
 - PWA 的 Service Worker 与 manifest 都按自身位置推导作用域，

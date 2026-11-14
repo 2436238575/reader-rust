@@ -102,7 +102,7 @@ export interface ReviewReply {
   author?: boolean
   /** 作者赞过这条回复 */
   authorDigg?: boolean
-  /** 回复配图（已经过图片管道收口为 /reader3/image/<id>） */
+  /** 回复配图（已经过图片管道收口为 /v1/images/<id>） */
   images?: string[]
 }
 
@@ -119,7 +119,7 @@ export interface ReviewItem {
   author?: boolean
   /** 作者赞过这条评论 */
   authorDigg?: boolean
-  /** 评论配图。后端已挑好可渲染的格式，通常只有一个元素（`/reader3/image/<id>`） */
+  /** 评论配图。后端已挑好可渲染的格式，通常只有一个元素（`/v1/images/<id>`） */
   images: string[]
 }
 

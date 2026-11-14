@@ -325,7 +325,7 @@ async fn shelf_cover_is_rewritten_to_image_route() {
 
     let route = server.shelf_cover_route().await;
     assert!(
-        route.starts_with("/reader3/image/"),
+        route.starts_with("/v1/images/"),
         "书架里的封面应当是本站取图地址，实际 {route}"
     );
     // 前端拿到的地址里不该再有书源地址（更不该有过期签名）
@@ -410,8 +410,20 @@ async fn non_heic_images_pass_through_and_unknown_id_is_404() {
     );
 
     // 没登记过的 id：404，而不是把上游错误暴露出去
-    let resp = server.get_image("/reader3/image/deadbeefdeadbeef").await;
+    let resp = server
+        .get_image("/v1/images/deadbeefdeadbeefdeadbeefdeadbeef")
+        .await;
     assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+    let body: Value = resp.json().await.unwrap();
+    assert_eq!(body["code"], json!("IMAGE_NOT_FOUND"), "{body}");
+
+    // 路径穿越：显式校验在拼缓存路径之前就拒绝（不是靠「查库查不到」）
+    let resp = server
+        .get_image("/v1/images/..%2F..%2Fdata%2Ffoo.json")
+        .await;
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+    let body: Value = resp.json().await.unwrap();
+    assert_eq!(body["code"], json!("IMAGE_NOT_FOUND"), "{body}");
 }
 
 /// 并发首取同一张图：按 id 单飞，上游只被打一次，两个请求拿到相同字节。
@@ -437,7 +449,7 @@ async fn concurrent_first_load_of_same_image_hits_upstream_once() {
         .unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
     let route = server.shelf_cover_route().await;
-    assert!(route.starts_with("/reader3/image/"), "实际 {route}");
+    assert!(route.starts_with("/v1/images/"), "实际 {route}");
 
     let (a, b) = tokio::join!(server.get_image(&route), server.get_image(&route));
     assert_eq!(a.status(), StatusCode::OK);
@@ -484,7 +496,7 @@ async fn concurrent_first_load_of_heic_returns_fresh_content_type() {
         .unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
     let route = server.shelf_cover_route().await;
-    assert!(route.starts_with("/reader3/image/"), "实际 {route}");
+    assert!(route.starts_with("/v1/images/"), "实际 {route}");
 
     let (a, b) = tokio::join!(server.get_image(&route), server.get_image(&route));
     assert_eq!(a.status(), StatusCode::OK);
@@ -569,7 +581,7 @@ async fn image_endpoint_negotiates_webp_and_scales() {
     // 1) w=64 + Accept 含 image/webp：webp 输出 + Vary: Accept
     let resp = server
         .client
-        .get(format!("{}/reader3/image/{id}", server.base_url))
+        .get(format!("{}/v1/images/{id}", server.base_url))
         .query(&[("w", "64")])
         .header("Cookie", format!("reader_access={}", server.token))
         .header(
@@ -603,7 +615,7 @@ async fn image_endpoint_negotiates_webp_and_scales() {
     // 2) 同一 id 不带 webp 的 Accept：JPEG + Vary: Accept（同一 URL 两种表示）
     let resp = server
         .client
-        .get(format!("{}/reader3/image/{id}", server.base_url))
+        .get(format!("{}/v1/images/{id}", server.base_url))
         .query(&[("w", "64")])
         .header("Cookie", format!("reader_access={}", server.token))
         .header("Accept", "image/jpeg,image/png")
@@ -680,7 +692,7 @@ async fn refetching_original_invalidates_stale_variant() {
     // 取一张派生图，然后把字节换成标记——模拟「旧原图派生的过期缓存」
     let resp = server
         .client
-        .get(format!("{}/reader3/image/{id}", server.base_url))
+        .get(format!("{}/v1/images/{id}", server.base_url))
         .query(&[("w", "64")])
         .header("Cookie", format!("reader_access={}", server.token))
         .header("Accept", "image/webp")
@@ -698,7 +710,7 @@ async fn refetching_original_invalidates_stale_variant() {
     // 只取原图（不带 w、Accept 不含 webp）：触发重抓，旧派生图应被清掉
     let resp = server
         .client
-        .get(format!("{}/reader3/image/{id}", server.base_url))
+        .get(format!("{}/v1/images/{id}", server.base_url))
         .header("Cookie", format!("reader_access={}", server.token))
         .send()
         .await
@@ -712,7 +724,7 @@ async fn refetching_original_invalidates_stale_variant() {
     // 变体按需重建：返回的是新原图派生的 webp，而不是旧的标记字节
     let resp = server
         .client
-        .get(format!("{}/reader3/image/{id}", server.base_url))
+        .get(format!("{}/v1/images/{id}", server.base_url))
         .query(&[("w", "64")])
         .header("Cookie", format!("reader_access={}", server.token))
         .header("Accept", "image/webp")
@@ -726,4 +738,101 @@ async fn refetching_original_invalidates_stale_variant() {
         .decode()
         .expect("应重建出可解码的 webp");
     assert_eq!(decoded.width(), 64);
+}
+
+/// v1 图片入口：按 id 取图、按 URL 解析，与 legacy 入口共用同一份缓存。
+#[tokio::test]
+async fn v1_image_routes_share_pipeline_with_legacy_entries() {
+    let server = TestServer::start().await;
+    let plain = format!("{}/plain.jpg", server.upstream_url);
+
+    // v1 封面解析：任意 http(s) 地址登记后直接返回图片字节
+    let resp = server
+        .client
+        .get(format!("{}/v1/images:resolve", server.base_url))
+        .bearer_auth(&server.token)
+        .query(&[("url", plain.as_str())])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    assert_eq!(
+        resp.headers()
+            .get(header::CONTENT_TYPE)
+            .and_then(|v| v.to_str().ok()),
+        Some("image/jpeg")
+    );
+
+    // legacy 封面入口登记同一张图后，v1 与 legacy 两条按 id 取图路径都能命中
+    let resp = server
+        .client
+        .get(format!("{}/reader3/cover", server.base_url))
+        .bearer_auth(&server.token)
+        .query(&[("path", plain.as_str())])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let id = reader_rust::service::image_service::ImageService::image_key(&plain);
+    for route in [format!("/v1/images/{id}"), format!("/reader3/image/{id}")] {
+        let resp = server.get_image(&route).await;
+        assert_eq!(resp.status(), StatusCode::OK, "route={route}");
+        assert_eq!(
+            resp.headers()
+                .get(header::CONTENT_TYPE)
+                .and_then(|v| v.to_str().ok()),
+            Some("image/jpeg"),
+            "route={route}"
+        );
+    }
+    // 两个入口共用同一份磁盘缓存：v1 resolve 抓过一次后，后面三次都命中
+    let hits: HashMap<String, usize> = server
+        .client
+        .get(format!("{}/__hits", server.upstream_url))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(
+        hits.get("/plain.jpg").copied().unwrap_or(0),
+        1,
+        "v1/legacy 应共用同一份图片缓存: {hits:?}"
+    );
+
+    // v1 解析入口的参数校验：缺失与非 http(s) 都是 422 + /url pointer
+    for query in [vec![], vec![("url", "file:///etc/passwd")]] {
+        let resp = server
+            .client
+            .get(format!("{}/v1/images:resolve", server.base_url))
+            .bearer_auth(&server.token)
+            .query(&query)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::UNPROCESSABLE_ENTITY, "{query:?}");
+        let body: Value = resp.json().await.unwrap();
+        assert_eq!(body["code"], json!("VALIDATION_FAILED"), "{body}");
+        assert_eq!(body["errors"][0]["pointer"], json!("/url"), "{body}");
+    }
+}
+
+/// scheme 大小写不敏感：HTTP:// 也是合法地址，不能在校验与登记之间打架。
+#[tokio::test]
+async fn uppercase_http_scheme_is_accepted() {
+    let server = TestServer::start().await;
+    let upper = format!(
+        "HTTP://{}/plain.jpg",
+        server.upstream_url.trim_start_matches("http://")
+    );
+    let resp = server
+        .client
+        .get(format!("{}/v1/images:resolve", server.base_url))
+        .bearer_auth(&server.token)
+        .query(&[("url", upper.as_str())])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
 }

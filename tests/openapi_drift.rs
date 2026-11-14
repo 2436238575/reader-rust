@@ -63,6 +63,9 @@ const REQUIRED_PATHS: &[&str] = &[
     // cache
     "/v1/cache",
     "/v1/cache/stats",
+    // images
+    "/v1/images/{imageId}",
+    "/v1/images:resolve",
     // books / chapters
     "/v1/books/{bookId}",
     "/v1/books/{bookId}/source",

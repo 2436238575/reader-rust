@@ -11,12 +11,13 @@ use crate::api::AppState;
 use crate::auth::CurrentUser;
 use crate::error::error::AppError;
 
-/// `/reader3/cover?path=<封面地址>` 的入参。
+/// legacy `/reader3/cover?path=<封面地址>` 的入参。
 ///
 /// 自定义封面与兜底场景的图片管道入口：响应里的书源地址已被换成
-/// `/reader3/image/<id>`，走到这里的是用户自设的 `customCoverUrl`（任意
+/// `/v1/images/<id>`，走到这里的是用户自设的 `customCoverUrl`（任意
 /// http(s)/站内地址，前端 `getCoverUrl` 路由过来）与少数没被改写的兜底
-/// 地址。内部转成「登记 → 取图」，与 `/reader3/image/<id>` 完全同一条管道。
+/// 地址。内部转成「登记 → 取图」，与 `/v1/images/<id>` 完全同一条管道。
+/// v1 客户端应使用 `GET /v1/images:resolve?url=`。
 #[derive(Debug, Deserialize)]
 pub struct CoverQuery {
     pub path: Option<String>,
@@ -24,7 +25,7 @@ pub struct CoverQuery {
     pub w: Option<u32>,
 }
 
-/// `/reader3/image/<id>` 的查询参数。
+/// legacy `/reader3/image/<id>` 的查询参数（v1 见 `api/v1/images.rs`）。
 #[derive(Debug, Deserialize)]
 pub struct ImageQuery {
     /// 目标像素宽（64..=2048，只降不升）；缺省表示原图宽度。
@@ -32,18 +33,16 @@ pub struct ImageQuery {
 }
 
 /// 图片 id 只能是 md5 hex：axum 会把 `%2F` 解码进路径段，
-/// 不校验就把 `../` 拼进了缓存目录的文件路径。
+/// 不校验就把 `../` 拼进了缓存目录的文件路径。v1/legacy 两个 HTTP 入口
+/// 都在进核心前调用这里；`ImageService::record` 再用同一口径兜底。
 fn is_valid_image_id(id: &str) -> bool {
-    id.len() == 32
-        && id
-            .bytes()
-            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+    crate::service::image_service::ImageService::is_valid_image_id(id)
 }
 
 /// Accept 头里是否明确列了 `image/webp`。
 ///
 /// `*/*` 不算：没开口就不冒进，免得把 webp 硬塞给不认它的客户端。
-fn accepts_webp(headers: &HeaderMap) -> bool {
+pub(crate) fn accepts_webp(headers: &HeaderMap) -> bool {
     headers
         .get(header::ACCEPT)
         .and_then(|v| v.to_str().ok())
@@ -55,7 +54,7 @@ fn accepts_webp(headers: &HeaderMap) -> bool {
         .unwrap_or(false)
 }
 
-/// 本站取图：`/reader3/image/<id>`。
+/// 本站取图：`/v1/images/<id>`（legacy `/reader3/image/<id>` 继续可用）。
 ///
 /// 缓存命中直接返回；没命中就抓上游（HEIC 转 JPEG）后落盘，之后长期命中。
 /// 上游地址过期（签名失效）时，用登记时留下的书籍上下文回源刷新一次再试。
@@ -70,18 +69,27 @@ pub async fn get_image(
     Query(q): Query<ImageQuery>,
     headers: HeaderMap,
 ) -> Result<Response<Body>, AppError> {
-    if !is_valid_image_id(&id) {
+    load_image_variant(&state, &user.0.ns, &id, q.w, accepts_webp(&headers)).await
+}
+
+/// 按 id 取图（v1 与 legacy 共用的核心）。
+pub(crate) async fn load_image_variant(
+    state: &AppState,
+    user_ns: &str,
+    id: &str,
+    width: Option<u32>,
+    accept_webp: bool,
+) -> Result<Response<Body>, AppError> {
+    if !is_valid_image_id(id) {
         return Err(AppError::NotFound("图片不存在".to_string()));
     }
-    let user_ns = user.0.ns.clone();
-    let accept_webp = accepts_webp(&headers);
     match state
         .image_service
-        .load_variant(&id, q.w, accept_webp)
+        .load_variant(id, width, accept_webp)
         .await
     {
         Ok((bytes, content_type)) => Ok(image_response(bytes, content_type)),
-        Err(err) => match heal_source_url(&state, &user_ns, &id, q.w, accept_webp).await {
+        Err(err) => match heal_source_url(state, user_ns, id, width, accept_webp).await {
             Some((bytes, content_type)) => Ok(image_response(bytes, content_type)),
             None => Err(err),
         },
@@ -95,25 +103,38 @@ pub async fn get_book_cover(
     Query(q): Query<CoverQuery>,
     headers: HeaderMap,
 ) -> Result<Response<Body>, AppError> {
-    let user_ns = user.0.ns.clone();
     let Some(url) = q.path.as_deref().map(str::trim).filter(|u| !u.is_empty()) else {
         return Ok(StatusCode::NOT_FOUND.into_response());
     };
-    let accept_webp = accepts_webp(&headers);
+    match load_cover_variant(&state, &user.0.ns, url, q.w, accepts_webp(&headers)).await {
+        Ok(Some(response)) => Ok(response),
+        Ok(None) | Err(_) => Ok(StatusCode::NOT_FOUND.into_response()),
+    }
+}
+
+/// 任意地址的封面取图（v1 `images:resolve` 与 legacy `/reader3/cover` 共用）。
+///
+/// `None` 表示地址不是 http(s)（登记失败），调用方按参数错误/404 处理。
+pub(crate) async fn load_cover_variant(
+    state: &AppState,
+    user_ns: &str,
+    url: &str,
+    width: Option<u32>,
+    accept_webp: bool,
+) -> Result<Option<Response<Body>>, AppError> {
     let Some(id) = state.image_service.register("cover", url, None).await else {
-        return Ok(StatusCode::NOT_FOUND.into_response());
+        return Ok(None);
     };
     match state
         .image_service
-        .load_variant(&id, q.w, accept_webp)
+        .load_variant(&id, width, accept_webp)
         .await
     {
-        Ok((bytes, content_type)) => Ok(image_response(bytes, content_type)),
+        Ok((bytes, content_type)) => Ok(Some(image_response(bytes, content_type))),
         Err(err) => {
             // 该入口（customCoverUrl 等任意地址）登记时没有书籍上下文，无法回源刷新
-            let _ = heal_source_url(&state, &user_ns, &id, q.w, accept_webp).await;
-            let _ = err;
-            Ok(StatusCode::NOT_FOUND.into_response())
+            let _ = heal_source_url(state, user_ns, &id, width, accept_webp).await;
+            Err(err)
         }
     }
 }
@@ -185,7 +206,8 @@ fn image_response(bytes: Vec<u8>, content_type: String) -> Response<Body> {
 /// 包一层响应，并把书籍封面换成本站取图地址。
 ///
 /// 前端因此不需要知道书源地址（更不需要知道它什么时候过期）；没有改写
-/// 到的地方（如用户自设的 customCoverUrl）仍走 `/reader3/cover?path=`
+/// 到的地方（如用户自设的 customCoverUrl）仍走 `/v1/images:resolve?url=`
+/// （legacy `/reader3/cover?path=` 过渡期保留），所以这里只做「能改就改」。
 /// 入口，所以这里只做「能改就改」。
 pub(crate) async fn ok_with_cover_routes(
     state: &AppState,

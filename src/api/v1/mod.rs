@@ -34,6 +34,7 @@ mod chapter_edits;
 mod chapter_imports;
 mod content;
 mod groups;
+mod images;
 mod local_books;
 mod marks;
 mod me;
@@ -64,6 +65,7 @@ pub fn router(
         .merge(replace_rules::router())
         .merge(shelf::router())
         .merge(books::router())
+        .merge(images::router())
         .merge(content::router())
         .merge(sources::router())
         .merge(cache::router())
@@ -445,6 +447,8 @@ pub fn openapi_yaml() -> String {
         ai::cancel_agent_task,
         ai::proxy,
         ai::proxy_image,
+        images::get_image,
+        images::resolve_image,
         books::list_chapters,
         books::search_cached_content,
         source_candidates::source_candidate_events,
@@ -685,6 +689,7 @@ pub fn openapi_yaml() -> String {
         (name = "auth", description = "会话认证"),
         (name = "sources", description = "书源"),
         (name = "books", description = "书籍与章节"),
+        (name = "images", description = "图片管道（取图、宽度派生与 webp 协商）"),
         (name = "ai", description = "AI 资料、编排任务与模型代理"),
         (name = "tasks", description = "任务、搜索与 SSE 事件流"),
         (name = "files", description = "服务器文件浏览与备份恢复"),

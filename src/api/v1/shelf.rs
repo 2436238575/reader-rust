@@ -60,7 +60,7 @@ fn book_not_in_shelf() -> Problem {
 pub struct ShelfPutBody {
     pub name: Option<String>,
     pub author: Option<String>,
-    /// 封面：本站取图地址（`/reader3/image/<id>`）会还原成上游地址落库
+    /// 封面：本站取图地址（`/v1/images/<id>` 或 legacy `/reader3/image/<id>`）会还原成上游地址落库
     pub cover_url: Option<String>,
     pub intro: Option<String>,
     pub kind: Option<String>,
@@ -843,7 +843,7 @@ pub async fn get_book(
 }
 
 /// 封面出口的唯一拆分点：
-/// - 已是本站取图地址（`/reader3/image/<id>`）：取回 id；
+/// - 已是本站取图地址（`/v1/images/<id>` 或 legacy `/reader3/image/<id>`）：取回 id；
 /// - http(s) 上游地址：图片管道 id（`md5(去查询串地址)`），同一张图恒定；
 /// - 其余站内资源地址（本地 EPUB 的 `/reader3/localEpubAsset?...`）：管道不收，
 ///   原样走 `coverUrl`，客户端照常直接渲染；
@@ -876,8 +876,7 @@ pub struct BookDetail {
     pub book_url: String,
     pub intro: Option<String>,
     pub kind: Option<String>,
-    /// 封面在图片管道中的 id（md5(去查询串地址)）；取图地址随 images 域
-    /// 切换迁移（当前 /reader3/image/<id>）
+    /// 封面在图片管道中的 id（md5(去查询串地址)）；客户端取图走 `/v1/images/<id>`
     pub cover_image_id: Option<String>,
     /// 站内资源封面地址（本地 EPUB 的 `/reader3/localEpubAsset?...`）；
     /// 与 `coverImageId` 二选一，客户端直接渲染
@@ -933,7 +932,7 @@ pub struct ShelfItem {
     pub book_url: String,
     pub origin: String,
     pub origin_name: Option<String>,
-    /// 封面在图片管道中的 id；客户端取图走 `/reader3/image/<id>`
+    /// 封面在图片管道中的 id；客户端取图走 `/v1/images/<id>`
     pub cover_image_id: Option<String>,
     /// 站内资源封面地址（本地 EPUB）；与 `coverImageId` 二选一
     pub cover_url: Option<String>,
@@ -1216,11 +1215,13 @@ mod tests {
             Some(crate::service::image_service::ImageService::image_key(upstream).as_str())
         );
 
-        // 已是本站取图地址：还原 id，不再二次哈希
+        // 已是本站取图地址：还原 id，不再二次哈希（v1 与 legacy 前缀都认）
         let id = "0123456789abcdef0123456789abcdef";
-        let (parsed, route) = split_cover(Some(&format!("/reader3/image/{id}")));
-        assert_eq!(parsed.as_deref(), Some(id));
-        assert_eq!(route, None);
+        for image_route in [format!("/v1/images/{id}"), format!("/reader3/image/{id}")] {
+            let (parsed, route) = split_cover(Some(&image_route));
+            assert_eq!(parsed.as_deref(), Some(id));
+            assert_eq!(route, None);
+        }
 
         // 本地 EPUB 封面：站内资源地址进不了图片管道，原样透传
         let local = "/reader3/localEpubAsset?bookUrl=local-epub%3Aabc&path=OEBPS%2Fcover.jpg";

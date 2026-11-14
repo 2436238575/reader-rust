@@ -386,7 +386,7 @@ async fn chapter_comments_para_comments_and_index_flow() {
     assert_eq!(item["authorDigg"], json!(true));
     assert_eq!(item["replies"][0]["name"], json!("读者乙"));
 
-    // 段评：配图变体收口成单个 /reader3/image/<id>，且这张图能取回
+    // 段评：配图变体收口成单个 /v1/images/<id>，且这张图能取回
     let resp = server
         .get(&format!(
             "/v1/books/{}/chapters/0/comments?para=0",
@@ -398,7 +398,7 @@ async fn chapter_comments_para_comments_and_index_flow() {
     let images = body["data"]["items"][0]["images"].as_array().unwrap();
     assert_eq!(images.len(), 1, "变体应收口成单张");
     let route = images[0].as_str().unwrap();
-    assert!(route.starts_with("/reader3/image/"), "收口地址: {route}");
+    assert!(route.starts_with("/v1/images/"), "收口地址: {route}");
     let image_resp = server
         .client
         .get(format!("{}{route}", server.base_url))
@@ -469,7 +469,7 @@ async fn chapter_images_endpoint_registers_pipeline_ids() {
     assert_eq!(image["paraIndex"], json!(2));
     let route = image["url"].as_str().unwrap();
     assert!(
-        route.starts_with("/reader3/image/"),
+        route.starts_with("/v1/images/"),
         "签名上游地址应收口成图片管道 id: {route}"
     );
     let image_resp = server

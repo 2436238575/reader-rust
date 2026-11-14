@@ -315,7 +315,7 @@ async fn chapter_images_come_from_the_source_rule() {
     assert_eq!(images[0]["height"], json!(933));
     // 图片地址收口成本站取图接口：不再把带签名的书源地址交给前端
     let route = images[0]["url"].as_str().unwrap();
-    assert!(route.starts_with("/reader3/image/"), "实际 {route}");
+    assert!(route.starts_with("/v1/images/"), "实际 {route}");
     assert!(
         !route.contains("x-signature"),
         "不该把签名地址交给前端：{route}"

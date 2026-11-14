@@ -385,7 +385,7 @@ async fn search_task_dedupes_and_events_replay_from_last_event_id() {
     assert!(source_ids.len() == 2, "两个书源的命中应合并: {item}");
     // 封面已收口到本站取图地址，客户端不接触书源地址
     let cover = item["coverUrl"].as_str().unwrap();
-    assert!(cover.starts_with("/reader3/image/"), "{cover}");
+    assert!(cover.starts_with("/v1/images/"), "{cover}");
 
     // 事件流：progress/item/done，id 单调递增
     let response = server.events(&task_id, None).await;

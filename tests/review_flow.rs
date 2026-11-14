@@ -507,7 +507,7 @@ async fn chapter_and_para_comments_are_parsed_from_the_source_rules() {
     let images = item["images"].as_array().unwrap();
     assert_eq!(images.len(), 1, "应当只留一张：{images:?}");
     let route = images[0].as_str().unwrap();
-    assert!(route.starts_with("/reader3/image/"), "实际 {route}");
+    assert!(route.starts_with("/v1/images/"), "实际 {route}");
     assert!(!route.contains("heic"), "不该挑 HEIC 变体：{route}");
 
     // 真取一次：挑对了变体才会 200（HEIC 那条上游 403）

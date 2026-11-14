@@ -308,7 +308,7 @@ GET /reader3/getChapterImages
 }
 ```
 
-- `url`：**本站取图地址**（`/reader3/image/<id>`），不是书源原始地址——书源地址带时效签名，
+- `url`：**本站取图地址**（`/v1/images/<id>`），不是书源原始地址——书源地址带时效签名，
   收口到图片管道后签名过期也不影响（见「获取图片（封面等）」）。
 - `paraIndex`：插入位置，等于**正文按 `\n` 切分后的行号**（从 0 开始，插在该行之前）；
   为 `null` 时排在章末。
@@ -396,10 +396,10 @@ POST /reader3/saveReadProgress
 ## 获取图片（封面等）
 
 ```text
-GET /reader3/image/<id>?w=<像素宽>
+GET /v1/images/<id>?w=<像素宽>
 ```
 
-浏览器里 `<img>` 会自动携带 HttpOnly Cookie `reader_access`，URL 不需要再拼令牌；API 客户端仍可用 `Authorization: Bearer <jwt>`。其他路径的 `?accessToken=` 查询参数已不再接受。
+浏览器里 `<img>` 会自动携带 HttpOnly Cookie `reader_access`，URL 不需要再拼令牌；API 客户端仍可用 `Authorization: Bearer <jwt>`。其他路径的 `?accessToken=` 查询参数已不再接受。legacy `/reader3/image/<id>` 过渡期继续可用，语义相同。
 
 书源里的图片地址普遍是**带时效签名的短命 URL**（番茄图床的 `x-expires` / `x-signature`，
 签名还会随宿主会话轮换），而且格式不一定是浏览器能渲染的（番茄封面是 HEIC，Chrome 直接报错）。
@@ -414,6 +414,8 @@ GET /reader3/image/<id>?w=<像素宽>
 - **签名失效会自愈**：抓取失败时，用登记时留下的书籍上下文（`book_id`）重新求值一次书源的封面地址再试。
 - 映射与图片本体存放在 `<STORAGE_DIR>/cache/image/`：`<id>.json` 是记录（上游地址 + 所属书籍的 `book_id`，供按书清理与回源自愈），
   `<id>.bin` 是图片字节；目录本身即「id → 记录」的映射表。
+
+图片 id 必须是 32 位小写 md5 hex；格式非法、未登记或上游抓取失败都返回 **404 `IMAGE_NOT_FOUND`**（problem+json）。
 
 ### 按宽度缩放（`w`）与 webp 协商（`Accept`）
 
@@ -432,18 +434,23 @@ GET /reader3/image/<id>?w=<像素宽>
   容量上限与最旧优先淘汰，命中后不再重复编码。派生图随原图重抓落盘（上游地址失效自愈、
   本体被容量淘汰后重取）与按书删除一并清理，之后的请求按新原图按需重建。
 
-单个图片最大 32MiB；上游失败、id 未登记、出站守卫拦截都返回 404。目标地址同样过出站守卫。
+单个图片最大 32MiB；上游失败、id 未登记都返回 **404 `IMAGE_NOT_FOUND`**；目标地址被出站守卫拦截
+（私网/环回/保留地址）返回 **400 `UPSTREAM_BLOCKED`**。目标地址同样过出站守卫。
 
-## 获取封面（兼容入口）
+## 解析封面地址（兼容入口）
 
 ```text
-GET /reader3/cover?path=<封面URL>&w=<像素宽>
+GET /v1/images:resolve?url=<封面URL>&w=<像素宽>
 ```
 
-`customCoverUrl`（用户自定义封面）等历史入口存的还是书源地址，这个接口保留兼容：把 `path` 登记成 id
-后走上面同一条管道（转码、缓存、自愈一致），同样支持 `w` 缩放与 `Accept` 的 webp 协商。**需要登录**，
-浏览器由 HttpOnly Cookie 携带会话，
-API 客户端用 `Authorization` 头；`?accessToken=` 查询参数已不再接受。书源下发的封面地址（`coverUrl`）在响应里已被改写成 `/reader3/image/<id>`，正常调用方不需要走这个入口。
+`customCoverUrl`（用户自定义封面）等历史入口存的是书源地址，这个接口把它登记成 id 后走上面同一条管道
+（转码、缓存、自愈一致），同样支持 `w` 缩放与 `Accept` 的 webp 协商。`url` 只接受 http/https；
+缺失/为空/其他协议返回 **422 `VALIDATION_FAILED`**（`errors[0].pointer = /url`），上游抓取失败返回
+**404 `IMAGE_NOT_FOUND`**，目标地址被出站守卫拦截返回 **400 `UPSTREAM_BLOCKED`**。
+
+legacy `GET /reader3/cover?path=<封面URL>&w=` 过渡期保留，行为与旧版一致。**需要登录**，
+浏览器由 HttpOnly Cookie 携带会话，API 客户端用 `Authorization` 头。书源下发的封面地址
+（`coverUrl`）在响应里已被改写成 `/v1/images/<id>`，正常调用方不需要走这个入口。
 
 ## 获取本地 EPUB 资源
 

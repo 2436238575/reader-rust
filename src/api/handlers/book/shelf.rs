@@ -67,7 +67,8 @@ pub(crate) async fn ensure_user_local_book_limit(
 
 /// 把前端可能存回来的「本站取图地址」还原成书源地址。
 ///
-/// 封面在响应里被改写成了 `/reader3/image/<id>`，前端编辑/保存书籍时会把
+/// 封面在响应里被改写成了 `/v1/images/<id>`（legacy `/reader3/image/<id>` 也认），
+/// 前端编辑/保存书籍时会把
 /// 这个值原样发回来；直接落盘就等于把书源地址弄丢了，回源刷新也就没了依据。
 async fn restore_cover_urls(state: &AppState, books: &mut [Book]) {
     for book in books.iter_mut() {

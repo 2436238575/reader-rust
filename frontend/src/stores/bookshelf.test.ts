@@ -103,7 +103,7 @@ describe('bookshelf shelf writes', () => {
       author: '作者',
       bookUrl: 'https://book.example/1',
       origin: 'https://source.example',
-      coverUrl: '/reader3/image/abc',
+      coverUrl: '/v1/images/abc',
     } as never)
     const store = useBookshelfStore()
 
@@ -124,7 +124,7 @@ describe('bookshelf shelf writes', () => {
     expect(getShelfBook).toHaveBeenCalledWith('book_new')
     expect(result.bookId).toBe('book_new')
     // 封面以服务端落库形态为准（图片管道 id）
-    expect(result.coverUrl).toBe('/reader3/image/abc')
+    expect(result.coverUrl).toBe('/v1/images/abc')
     expect(store.books.map((book) => book.bookId)).toEqual(['book_new'])
     expect(store.books[0]).toMatchObject({
       name: '新书',

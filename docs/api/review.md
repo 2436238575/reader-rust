@@ -42,7 +42,7 @@
 
 ## 评论配图
 
-`images` 里给的是**本站取图地址**（`/reader3/image/<id>`），不是书源原始地址：
+`images` 里给的是**本站取图地址**（`/v1/images/<id>`），不是书源原始地址：
 
 - 站点常为同一张图给多个格式变体（番茄同时给 HEIC 与 JPEG），后端替客户端挑一张
   能渲染的，因此数组里**只会有一个元素**；
@@ -73,7 +73,7 @@
       "authorDigg": false
     }
   ],
-  "images": ["/reader3/image/<id>"]
+  "images": ["/v1/images/<id>"]
 }
 ```
 
@@ -81,7 +81,7 @@
 - `digg` / `replyCount` 解析不出时是 `0`。
 - `author` 表示评论者是作者本人，`authorDigg` 表示作者赞过这条评论；回复（`replies` 各项）同样带这两个字段。两者分别来自书源规则的 `authorRule` / `authorDiggRule` / `replyAuthorRule` / `replyAuthorDiggRule`，书源没配对应规则时恒为 `false`。
 - `replies` 是评论下方直接展开的那几条，`replyTo` 为空表示直接回复评论本身。章评与段评都会解析内联回复，**一律按时间升序**（早在上、晚在下）；时间字段不是时间戳时保持站点顺序。
-- `images` 是评论配图，每项都是本站取图地址 `/reader3/image/<id>`；站点为同一张图给出的多个格式变体（番茄同时给 HEIC 与 JPEG）已由后端挑好一张，见上文「评论配图」。
+- `images` 是评论配图，每项都是本站取图地址 `/v1/images/<id>`；站点为同一张图给出的多个格式变体（番茄同时给 HEIC 与 JPEG）已由后端挑好一张，见上文「评论配图」。
 - `avatar` 前端不再展示（站点头像经常 403），字段保留供其他客户端使用。
 
 ## `getChapterComments` — 章评

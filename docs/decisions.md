@@ -275,4 +275,15 @@ goal 执行中遇到「决策表与 spec 都沉默」的问题时，按 §5.4 �
 - **前端接线**：`api/aiBook.ts`、`api/aiModel.ts`、`api/agentTask.ts` 全部切 v1；`stores/aiBook.ts` 按当前 bookId 轮询 `GET /v1/books/{id}/agent-task` 并映射成既有 `AgentTaskSnapshot` 形状（视图层不改）；听书服务端 TTS 的裸 fetch 切 `/v1/ai/proxy`，补 CSRF 头并从 problem `detail` 取错误文案。
 - **兼容面**：`/reader3` 的 AI 端点全部保留，legacy 快照与 v1 注册表各自保留状态；前端已无调用方。
 
+## 2026-11-15 图片端点纳入 /v1（取图 + 封面解析）
+
+> 此前决策里「取图仍走 `/reader3/image/<id>`」的表述以本条为准；legacy 路径只作过渡兼容。
+
+- **取图改 `GET /v1/images/{imageId}`**：资源身份是图片 id（32 位小写 md5 hex），响应是原始图片字节而不是 JSON；保留 `?w=` 宽度派生与 `Accept` 的 webp 协商，`Cache-Control: public, max-age=31536000, immutable` 与 `Vary: Accept` 不变。id 非法、未登记、上游抓取失败统一 **404 `IMAGE_NOT_FOUND`**（problem+json）；出站守卫拦截仍走 400 `UPSTREAM_BLOCKED`。
+- **封面兼容入口改 `GET /v1/images:resolve?url=&w=`**：替代 `/reader3/cover?path=` 的「任意地址登记后取图」语义。`url` 缺失/为空/非 http(s) → 422 `VALIDATION_FAILED` + `/url` pointer；抓取失败 → 404 `IMAGE_NOT_FOUND`。内部复用同一套 `ImageService::register` + `load_variant`，转码/缓存/自愈/宽度派生完全一致。
+- **服务端生成地址切 v1**：`ImageService::route` 改为 `/v1/images/<id>`，书籍封面、章节配图、评论配图与搜索结果封面都返回新前缀；`id_from_route` 同时接受 v1 与 legacy 前缀，旧书架数据/旧客户端回传的 `/reader3/image/<id>` 仍能还原成上游地址落库。
+- **legacy 端点保留**：`/reader3/image/{id}` 与 `/reader3/cover` 继续可用（旧客户端/脚本），行为不变；两张入口共用同一份图片缓存，互不复制。
+- **前端**：`getCoverUrl` / `withImageWidth` 认 v1 与 legacy 四种本站地址；`customCoverUrl` 等任意地址改走 `/v1/images:resolve?url=`；新增 `isPipedImageUrl` 供评论配图判断收口地址。`coverImageId` 映射出的本站地址同步改为 `/v1/images/<id>`。
+- **文档与测试**：`docs/api/chapter.md` 图片管道段落改为 v1 契约并保留 legacy 兼容说明；`tests/image_pipeline.rs` 主路径改测 v1，新增「v1 resolve / v1 与 legacy 按 id 共用缓存 / 参数校验」用例；服务层 `id_from_route` 增加绝对 URL 伪装拒绝的断言。
+
 

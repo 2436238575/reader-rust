@@ -295,7 +295,7 @@ HTTP 请求
 
 **图片地址一律收口到图片管道**（`service/image_service.rs`）：书籍封面（`coverUrl`）、
 章节配图（`images[].url`）与评论配图（`items[].images`）在响应里都被换成
-`/reader3/image/<id>`，前端不接触书源地址。评论配图的多个格式变体由后端挑一张能渲染的
+`/v1/images/<id>`，前端不接触书源地址。评论配图的多个格式变体由后端挑一张能渲染的
 （`pick_renderable`，HEIC 会被管道转成 JPEG），所以数组里只剩一个元素。
 id = `md5(去掉查询串的地址)`；抓取失败时按登记时的书籍上下文回源刷新一次（封面走书籍详情，
 章节/评论配图靠下一次拉取重新登记）。取图支持 `?w=<像素宽>` 按宽度派生缓存（clamp 64..=2048、
@@ -306,7 +306,8 @@ id = `md5(去掉查询串的地址)`；抓取失败时按登记时的书籍上�
 GIF/WebP/AVIF/SVG/ICO 原样透传（不破坏动画与矢量），不带 `w` 也不要 webp 时原图直出。
 派生图解码有 16384 单边/256MiB 上限（`decode_with_limits`），超限与解码失败一样回退原图，不 500。
 前端按渲染场景给取图地址带宽度档位（`api/bookshelf.ts` 的 `getCoverUrl(coverUrl, width)` 与
-`withImageWidth(url, width)`，后者同时认 `/reader3/image/` 与 `/reader3/cover?` 两种本站地址）：
+`withImageWidth(url, width)`，后者同时认 `/v1/images/`、`/v1/images:resolve?` 与过渡期 legacy
+`/reader3/image/`、`/reader3/cover?` 四种本站地址）：
 封面列表 320、书籍详情 640、章节配图 1200、评论配图 480；宽度只是提示，后端只降不升；
 本地 epub 资源（`/reader3/localEpubAsset`）与第三方直链一律不加参数。
 

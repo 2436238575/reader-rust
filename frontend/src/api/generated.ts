@@ -426,7 +426,7 @@ export interface paths {
         };
         /**
          * 本章配图（书源没声明配图规则时 `enabled: false`）；地址收口成单个
-         *     `/reader3/image/<id>`。
+         *     `/v1/images/<id>`。
          */
         get: operations["getChapterImages"];
         put?: never;
@@ -663,6 +663,40 @@ export interface paths {
         };
         /** 各层缓存的当前占用（当前用户视角；图片目录全局共享，计入本用户统计）。 */
         get: operations["getCacheStats"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/images/{imageId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 按图片 id 取图。 */
+        get: operations["getImage"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/images:resolve": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 把任意 http(s) 图片地址登记成 id 并返回图片字节（自定义封面兼容入口）。 */
+        get: operations["resolveImage"];
         put?: never;
         post?: never;
         delete?: never;
@@ -1877,10 +1911,7 @@ export interface components {
             author?: string | null;
             /** @description 上游地址：只读诊断字段（红线 6 例外之外的只读输出） */
             bookUrl: string;
-            /**
-             * @description 封面在图片管道中的 id（md5(去查询串地址)）；取图地址随 images 域
-             *     切换迁移（当前 /reader3/image/<id>）
-             */
+            /** @description 封面在图片管道中的 id（md5(去查询串地址)）；客户端取图走 `/v1/images/<id>` */
             coverImageId?: string | null;
             /**
              * @description 站内资源封面地址（本地 EPUB 的 `/reader3/localEpubAsset?...`）；
@@ -3231,7 +3262,7 @@ export interface components {
             cachedChapters: number;
             canUpdate?: boolean | null;
             charset?: string | null;
-            /** @description 封面在图片管道中的 id；客户端取图走 `/reader3/image/<id>` */
+            /** @description 封面在图片管道中的 id；客户端取图走 `/v1/images/<id>` */
             coverImageId?: string | null;
             /** @description 站内资源封面地址（本地 EPUB）；与 `coverImageId` 二选一 */
             coverUrl?: string | null;
@@ -3307,7 +3338,7 @@ export interface components {
             /** @default null */
             author: string | null;
             /**
-             * @description 封面：本站取图地址（`/reader3/image/<id>`）会还原成上游地址落库
+             * @description 封面：本站取图地址（`/v1/images/<id>` 或 legacy `/reader3/image/<id>`）会还原成上游地址落库
              * @default null
              */
             coverUrl: string | null;
@@ -5896,6 +5927,102 @@ export interface operations {
             };
             /** @description 未登录或令牌失效 */
             401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    getImage: {
+        parameters: {
+            query?: {
+                /** @description 目标像素宽：clamp 到 64..=2048，只降不升；省略表示原图宽度 */
+                w?: number;
+            };
+            header?: never;
+            path: {
+                /** @description 图片 id（32 位小写 md5 hex） */
+                imageId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 图片字节（Content-Type 随原图或 Accept 协商格式；一年 immutable 缓存） */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/octet-stream": unknown;
+                };
+            };
+            /** @description 未登录或令牌失效 */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description 图片不存在、上游抓取失败或地址已失效 */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    resolveImage: {
+        parameters: {
+            query?: {
+                /** @description 上游图片地址（仅 http/https；由服务端登记后走图片管道） */
+                url?: string;
+                /** @description 目标像素宽：clamp 到 64..=2048，只降不升；省略表示原图宽度 */
+                w?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 图片字节（Content-Type 随原图或 Accept 协商格式；一年 immutable 缓存） */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/octet-stream": unknown;
+                };
+            };
+            /** @description 未登录或令牌失效 */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description 图片抓取失败或上游地址已失效 */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description url 缺失、为空或不是 http/https */
+            422: {
                 headers: {
                     [name: string]: unknown;
                 };

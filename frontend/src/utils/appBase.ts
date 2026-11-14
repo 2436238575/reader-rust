@@ -20,7 +20,7 @@ export const API_V1_BASE = `${APP_BASE.replace(/\/+$/, '')}/v1`
 /**
  * 给应用内的绝对路径套上部署前缀。
  *
- * 需要过这里的有两类：服务端返回的路径（封面 `/reader3/image/<id>`、
+ * 需要过这里的有两类：服务端返回的路径（封面 `/v1/images/<id>`、
  * 本地书资源 `/reader3/localEpubAsset`）与手工拼的接口地址。
  * 已经是完整 URL 或相对路径的原样返回。
  */

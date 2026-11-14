@@ -93,7 +93,7 @@ fn required(value: &Option<String>, name: &str) -> Result<String, AppError> {
 /// 评论配图收口到本站取图接口（签名会过期，id 不会），并带上书籍上下文。
 ///
 /// 站点给的多个格式变体在这里挑一张（管道会把 HEIC 转成 JPEG），
-/// 前端拿到的是单张 `/reader3/image/<id>`。
+/// 前端拿到的是单张 `/v1/images/<id>`。
 async fn ok_json_with_images<T: serde::Serialize>(
     state: &AppState,
     ctx: &ReviewContext,

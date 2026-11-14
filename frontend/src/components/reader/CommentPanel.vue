@@ -201,7 +201,7 @@
 <script setup lang="ts">
 import { computed, nextTick, ref, watch } from 'vue'
 import type { ReviewItem, ReviewPage, ReviewReply } from '../../types'
-import { withAuthQuery, withImageWidth } from '../../api/bookshelf'
+import { isPipedImageUrl, withAuthQuery, withImageWidth } from '../../api/bookshelf'
 import ImageLightbox from './ImageLightbox.vue'
 import { useReaderStore } from '../../stores/reader'
 import { useReaderConfigStore } from '../../stores/readerConfig'
@@ -543,7 +543,7 @@ function restoreScrollAnchor(anchor: ScrollAnchor | null) {
 /**
  * 一条评论的配图。
  *
- * 后端已经把配图收口成单张 `/reader3/image/<id>`（替我们挑好格式、必要时转成 JPEG），
+ * 后端已经把配图收口成单张 `/v1/images/<id>`（替我们挑好格式、必要时转成 JPEG），
  * 这种地址补个令牌直接用，并按 480 宽取派生图（只降不升）配合 webp 协商省流；
  * 只有历史缓存里还留着书源原始地址时才需要在多个格式变体里挑
  * （番茄同时给 HEIC 和 JPEG，浏览器渲染不了 HEIC）——第三方直链不加宽度参数。
@@ -551,19 +551,19 @@ function restoreScrollAnchor(anchor: ScrollAnchor | null) {
 function normalizeItem(item: ReviewItem): ReviewItem {
   const urls = item.images || []
   if (!urls.length) return { ...item, images: [] }
-  if (urls.every((url) => url.startsWith('/reader3/image/'))) {
+  if (urls.every((url) => isPipedImageUrl(url))) {
     return { ...item, images: urls.map((url) => withAuthQuery(withImageWidth(url, 480))) }
   }
   const renderable = urls.find((url) => RENDERABLE_IMAGE_EXTENSIONS.includes(extensionOf(url)))
   return { ...item, images: [withAuthQuery(renderable || urls[0])] }
 }
 
-// 回复配图同管道收口（/reader3/image/<id>），这里只补令牌与宽度；
+// 回复配图同管道收口（/v1/images/<id>），这里只补令牌与宽度；
 // 历史缓存里若还留着书源原始地址则走顶层评论那套挑可渲染变体
 function normalizeReply(reply: ReviewReply): ReviewReply {
   const urls = reply.images || []
   if (!urls.length) return { ...reply, images: [] }
-  if (urls.every((url) => url.startsWith('/reader3/image/'))) {
+  if (urls.every((url) => isPipedImageUrl(url))) {
     return { ...reply, images: urls.map((url) => withAuthQuery(withImageWidth(url, 480))) }
   }
   const renderable = urls.find((url) => RENDERABLE_IMAGE_EXTENSIONS.includes(extensionOf(url)))

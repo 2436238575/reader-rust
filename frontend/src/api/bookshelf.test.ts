@@ -32,10 +32,15 @@ const putMock = http.put as unknown as Mock
 const deleteMock = http.delete as unknown as Mock
 
 describe('getCoverUrl', () => {
-  it('后端取图地址直接可用，不再携带令牌（会话 Cookie 随 <img> 自动携带）', () => {
-    // 后端把书源地址改写成了本站取图地址：id 由后端映射表维护，前端原样使用
-    const url = getCoverUrl('/reader3/image/9a30fa276d46103ce2fdc0ef47f508d3')
-    expect(url).toBe('/reader3/image/9a30fa276d46103ce2fdc0ef47f508d3')
+  it('v1 取图地址直接可用，不再携带令牌（会话 Cookie 随 <img> 自动携带）', () => {
+    const url = getCoverUrl('/v1/images/9a30fa276d46103ce2fdc0ef47f508d3')
+    expect(url).toBe('/v1/images/9a30fa276d46103ce2fdc0ef47f508d3')
+  })
+
+  it('过渡期仍认 legacy 取图地址', () => {
+    expect(getCoverUrl('/reader3/image/9a30fa276d46103ce2fdc0ef47f508d3')).toBe(
+      '/reader3/image/9a30fa276d46103ce2fdc0ef47f508d3'
+    )
   })
 
   it('本地书资源地址保留查询串且不带令牌', () => {
@@ -43,32 +48,38 @@ describe('getCoverUrl', () => {
     expect(url).toBe('/reader3/localEpubAsset?path=user_1/a.epub')
   })
 
-  it('仍把书源原始地址走兼容封面入口，且不带令牌', () => {
+  it('书源原始地址走 v1 封面解析入口，且不带令牌', () => {
     // 历史书架记录里存的是书源地址（含签名），走兼容入口
     const url = getCoverUrl('https://img.example/a.heic?x-signature=abc')
-    expect(url.startsWith('/reader3/cover?path=')).toBe(true)
+    expect(url.startsWith('/v1/images:resolve?url=')).toBe(true)
     expect(url).not.toContain('accessToken')
     expect(url).toContain(encodeURIComponent('https://img.example/a.heic?x-signature=abc'))
   })
 
-  it('returns empty for missing cover', () => {
+  it('已是封面解析入口的地址不二次包装', () => {
+    const v1 = '/v1/images:resolve?url=https%3A%2F%2Fa.example%2Fx.jpg'
+    expect(getCoverUrl(v1, 320)).toBe(`${v1}&w=320`)
+    expect(getCoverUrl('/reader3/cover?path=x')).toBe('/reader3/cover?path=x')
+  })
+
+  it('缺失封面返回空串', () => {
     expect(getCoverUrl(undefined)).toBe('')
     expect(getCoverUrl('')).toBe('')
   })
 
-  it('本站取图地址带宽度：?w=<width>', () => {
-    const url = getCoverUrl('/reader3/image/9a30fa276d46103ce2fdc0ef47f508d3', 320)
-    expect(url).toBe('/reader3/image/9a30fa276d46103ce2fdc0ef47f508d3?w=320')
+  it('v1 取图地址带宽度：?w=<width>', () => {
+    const url = getCoverUrl('/v1/images/9a30fa276d46103ce2fdc0ef47f508d3', 320)
+    expect(url).toBe('/v1/images/9a30fa276d46103ce2fdc0ef47f508d3?w=320')
   })
 
-  it('本站取图地址已有查询串时用 & 拼宽度', () => {
-    const url = getCoverUrl('/reader3/image/9a30fa276d46103ce2fdc0ef47f508d3?x=1', 320)
-    expect(url).toBe('/reader3/image/9a30fa276d46103ce2fdc0ef47f508d3?x=1&w=320')
+  it('取图地址已有查询串时用 & 拼宽度', () => {
+    const url = getCoverUrl('/v1/images/9a30fa276d46103ce2fdc0ef47f508d3?x=1', 320)
+    expect(url).toBe('/v1/images/9a30fa276d46103ce2fdc0ef47f508d3?x=1&w=320')
   })
 
-  it('兼容封面入口（书源原始地址）同样带宽度', () => {
+  it('v1 封面解析入口同样带宽度', () => {
     const url = getCoverUrl('https://img.example/a.jpg', 640)
-    expect(url.startsWith('/reader3/cover?path=')).toBe(true)
+    expect(url.startsWith('/v1/images:resolve?url=')).toBe(true)
     expect(url).toContain('&w=640')
     expect(url).toContain(encodeURIComponent('https://img.example/a.jpg'))
   })
@@ -83,20 +94,26 @@ describe('getCoverUrl', () => {
   })
 
   it('不传宽度时地址保持原样', () => {
-    expect(getCoverUrl('/reader3/image/9a30fa276d46103ce2fdc0ef47f508d3')).toBe(
-      '/reader3/image/9a30fa276d46103ce2fdc0ef47f508d3'
+    expect(getCoverUrl('/v1/images/9a30fa276d46103ce2fdc0ef47f508d3')).toBe(
+      '/v1/images/9a30fa276d46103ce2fdc0ef47f508d3'
     )
     expect(getCoverUrl('https://img.example/a.jpg')).not.toContain('w=')
   })
 })
 
 describe('withImageWidth', () => {
-  it('本站取图地址追加 ?w=<width>', () => {
+  it('v1 取图地址追加 ?w=<width>', () => {
+    expect(withImageWidth('/v1/images/abc123', 1200)).toBe('/v1/images/abc123?w=1200')
+    // legacy 取图地址过渡期同样支持
     expect(withImageWidth('/reader3/image/abc123', 1200)).toBe('/reader3/image/abc123?w=1200')
   })
 
   it('已有查询串时用 & 拼接', () => {
-    expect(withImageWidth('/reader3/image/abc123?x=1', 480)).toBe('/reader3/image/abc123?x=1&w=480')
+    expect(withImageWidth('/v1/images/abc123?x=1', 480)).toBe('/v1/images/abc123?x=1&w=480')
+    expect(withImageWidth('/v1/images:resolve?url=https%3A%2F%2Fa.example%2Fx.jpg', 320)).toBe(
+      '/v1/images:resolve?url=https%3A%2F%2Fa.example%2Fx.jpg&w=320'
+    )
+    // legacy 封面入口仍被识别（旧地址可能来自历史缓存）
     expect(withImageWidth('/reader3/cover?path=https%3A%2F%2Fa.example%2Fx.jpg', 320)).toBe(
       '/reader3/cover?path=https%3A%2F%2Fa.example%2Fx.jpg&w=320'
     )
@@ -112,8 +129,8 @@ describe('withImageWidth', () => {
   })
 
   it('宽度缺失或非正数时不加参数', () => {
-    expect(withImageWidth('/reader3/image/abc123')).toBe('/reader3/image/abc123')
-    expect(withImageWidth('/reader3/image/abc123', 0)).toBe('/reader3/image/abc123')
+    expect(withImageWidth('/v1/images/abc123')).toBe('/v1/images/abc123')
+    expect(withImageWidth('/v1/images/abc123', 0)).toBe('/v1/images/abc123')
   })
 })
 
@@ -157,7 +174,7 @@ describe('书架读取（v1 ShelfItem）', () => {
     expect(book).toMatchObject({
       bookId: 'book_1',
       bookSourceId: 7,
-      coverUrl: '/reader3/image/abc123',
+      coverUrl: '/v1/images/abc123',
       group: 4,
       durChapterIndex: 3,
       durChapterPos: 2500,
@@ -473,7 +490,7 @@ describe('getBookInfo（v1 详情覆盖层）', () => {
       bookId: 'book_1',
       name: '书',
       bookSourceId: 7,
-      coverUrl: '/reader3/image/abc123',
+      coverUrl: '/v1/images/abc123',
       totalChapterNum: 100,
       latestChapterTitle: '最新章',
     })

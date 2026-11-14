@@ -8,7 +8,8 @@
 //! 因此这里做一层收口：
 //!
 //! - **前端只拿图片 id**：`id = md5(去掉查询串的地址)`，同一张图永远同一个 id，
-//!   前端请求 `/reader3/image/<id>`，不接触书源地址；
+//!   前端请求 `/v1/images/<id>`，不接触书源地址（legacy `/reader3/image/<id>`
+//!   过渡期继续可用）；
 //! - **首次取图时抓上游并落盘**：HEIC 转成 JPEG，其余格式原样缓存；
 //! - **之后长期命中本地缓存**：签名过期不影响已经抓下来的图；
 //! - **按宽度派生 + webp 协商**：`?w=` 缩放（只降不升）与 Accept 头协商的有损
@@ -33,8 +34,11 @@ use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::fs;
 
-/// 前端取图用的路径前缀。
-pub const IMAGE_ROUTE_PREFIX: &str = "/reader3/image/";
+/// 前端取图用的路径前缀（v1）。
+pub const IMAGE_ROUTE_PREFIX: &str = "/v1/images/";
+
+/// 过渡期兼容的 legacy 取图前缀：旧响应/旧数据里可能还存着这个地址。
+pub const LEGACY_IMAGE_ROUTE_PREFIX: &str = "/reader3/image/";
 
 /// 映射表与图片本体的落盘目录（相对 storage）。
 const IMAGE_DIR: &str = "cache/image";
@@ -103,6 +107,15 @@ pub struct ImageService {
 }
 
 impl ImageService {
+    /// 图片 id 只能是 32 位小写 md5 hex：所有拼缓存路径/读取记录的入口
+    /// 都必须先过这里，避免 `../`、反斜杠或大写 hex 逃出图片目录。
+    pub fn is_valid_image_id(id: &str) -> bool {
+        id.len() == 32
+            && id
+                .bytes()
+                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+    }
+
     pub fn new(http: HttpClient, storage_dir: impl Into<PathBuf>, limit_bytes: u64) -> Self {
         Self {
             http,
@@ -125,11 +138,20 @@ impl ImageService {
         format!("{IMAGE_ROUTE_PREFIX}{id}")
     }
 
-    /// 从本站取图地址里取回 id（`/reader3/image/<id>` 或完整 URL）。
+    /// 从本站取图地址里取回 id（v1 `/v1/images/<id>` 或 legacy
+    /// `/reader3/image/<id>`）。只认站内相对路径，绝对 URL 里包含同名字段
+    /// 不算——否则第三方地址会被误判成本站图片。
     pub fn id_from_route(value: &str) -> Option<&str> {
-        let rest = value.split_once(IMAGE_ROUTE_PREFIX)?.1;
+        let rest = value
+            .strip_prefix(IMAGE_ROUTE_PREFIX)
+            .or_else(|| value.strip_prefix(LEGACY_IMAGE_ROUTE_PREFIX))?;
         let id = rest.split(['?', '#', '/']).next()?.trim();
-        (!id.is_empty()).then_some(id)
+        Self::is_valid_image_id(id).then_some(id)
+    }
+
+    /// 是否本站取图地址（v1 或 legacy 前缀）。
+    pub fn is_route(value: &str) -> bool {
+        value.starts_with(IMAGE_ROUTE_PREFIX) || value.starts_with(LEGACY_IMAGE_ROUTE_PREFIX)
     }
 
     fn dir(&self) -> PathBuf {
@@ -154,6 +176,12 @@ impl ImageService {
 
     /// 读一条映射记录。
     pub async fn record(&self, id: &str) -> Option<ImageRecord> {
+        // 这里是「id → 文件路径」的最后一道闸：记录读不到，后续的
+        // load/fetch/store 都不会发生。即使某个新入口忘了在 handler 校验，
+        // `../`、反斜杠或超长 id 也到不了文件系统。
+        if !Self::is_valid_image_id(id) {
+            return None;
+        }
         let data = fs::read(self.record_path(id)).await.ok()?;
         serde_json::from_slice(&data).ok()
     }
@@ -175,7 +203,14 @@ impl ImageService {
     /// 缺省时沿用旧记录里的值。
     pub async fn register(&self, kind: &str, url: &str, book_id: Option<&str>) -> Option<String> {
         let url = url.trim();
-        if !url.starts_with("http://") && !url.starts_with("https://") {
+        // scheme 大小写不敏感（HTTP://… 也是合法 URL）；只收 http/https
+        let scheme_ok = url
+            .get(..8)
+            .is_some_and(|prefix| prefix.eq_ignore_ascii_case("https://"))
+            || url
+                .get(..7)
+                .is_some_and(|prefix| prefix.eq_ignore_ascii_case("http://"));
+        if !scheme_ok {
             return None;
         }
         let id = Self::image_key(url);
@@ -258,7 +293,7 @@ impl ImageService {
             else {
                 continue;
             };
-            if url.starts_with("/reader3/image/") {
+            if Self::is_route(url) {
                 continue;
             }
             match self.register("cover", url, book.book_id.as_deref()).await {
@@ -500,16 +535,22 @@ impl ImageService {
         id: &str,
         record: &mut ImageRecord,
     ) -> Result<(Vec<u8>, String), AppError> {
-        let res = self.fetch(&record.source_url).await.map_err(|err| {
-            tracing::warn!(
-                "图片抓取失败 id={} url={} err={:?}",
-                id,
-                // 上游地址带时效签名（x-signature 等），日志只留脱敏后的地址
-                crate::crawler::url_guard::redact_url_for_log(&record.source_url),
-                err
-            );
-            AppError::NotFound("图片抓取失败".to_string())
-        })?;
+        let res = match self.fetch(&record.source_url).await {
+            Ok(res) => res,
+            // 出站策略拒绝是可配置问题，保留原始错误（v1 → 400 UPSTREAM_BLOCKED，
+            // legacy 也给出可读原因）；其余上游失败统一收敛成 404。
+            Err(err @ AppError::Blocked(_)) => return Err(err),
+            Err(err) => {
+                tracing::warn!(
+                    "图片抓取失败 id={} url={} err={:?}",
+                    id,
+                    // 上游地址带时效签名（x-signature 等），日志只留脱敏后的地址
+                    crate::crawler::url_guard::redact_url_for_log(&record.source_url),
+                    err
+                );
+                return Err(AppError::NotFound("图片抓取失败".to_string()));
+            }
+        };
         // HEIC 解码 + JPEG 编码是百毫秒级的 CPU 活，不能占着 async worker
         let (bytes, content_type, ext) = tokio::task::spawn_blocking(move || transcode(res))
             .await
@@ -1015,13 +1056,42 @@ mod tests {
     fn route_round_trip() {
         let id = "0123456789abcdef0123456789abcdef";
         let route = ImageService::route(id);
-        assert_eq!(route, "/reader3/image/0123456789abcdef0123456789abcdef");
+        assert_eq!(route, "/v1/images/0123456789abcdef0123456789abcdef");
         assert_eq!(ImageService::id_from_route(&route), Some(id));
         assert_eq!(
-            ImageService::id_from_route("/reader3/image/abc?accessToken=t"),
-            Some("abc")
+            ImageService::id_from_route(&format!("/v1/images/{id}?accessToken=t")),
+            Some(id)
+        );
+        // 过渡期还认 legacy 前缀（旧数据/旧响应里可能存着）
+        assert_eq!(
+            ImageService::id_from_route(&format!("/reader3/image/{id}?accessToken=t")),
+            Some(id)
         );
         assert_eq!(ImageService::id_from_route("/reader3/cover?path=x"), None);
+        // id 必须是 32 位小写 md5 hex：短 id、大写、路径穿越一律拒绝
+        for invalid in [
+            "/v1/images/abc",
+            "/v1/images/0123456789ABCDEF0123456789ABCDEF",
+            "/v1/images/..\\..\\data\\foo",
+            "/v1/images/../../data/foo",
+            "/v1/images/0123456789abcdef0123456789abcde",
+        ] {
+            assert_eq!(ImageService::id_from_route(invalid), None, "{invalid}");
+        }
+        // 绝对/协议相对地址里包含同名字段不算本站路由
+        assert_eq!(
+            ImageService::id_from_route("https://evil.example/v1/images/x"),
+            None
+        );
+        assert_eq!(
+            ImageService::id_from_route("//evil.example/v1/images/x"),
+            None
+        );
+        assert!(ImageService::is_route(&route));
+        assert!(ImageService::is_route("/reader3/image/abc"));
+        assert!(!ImageService::is_route(
+            "https://evil.example/reader3/image/x"
+        ));
     }
 
     #[test]
@@ -1130,11 +1200,8 @@ mod tests {
 
         // 改写只动 coverUrl
         let pointer = targets[0].pointer.clone();
-        *value.pointer_mut(&pointer).unwrap() = json!("/reader3/image/deadbeef");
-        assert_eq!(
-            value["books"][0]["coverUrl"],
-            json!("/reader3/image/deadbeef")
-        );
+        *value.pointer_mut(&pointer).unwrap() = json!("/v1/images/deadbeef");
+        assert_eq!(value["books"][0]["coverUrl"], json!("/v1/images/deadbeef"));
         assert_eq!(
             value["books"][0]["customCoverUrl"],
             json!("https://user.example/mine.png")
@@ -1469,8 +1536,8 @@ mod tests {
         );
     }
 
-    /// 搜索结果封面收口不能把「绝对 URL 里包含 /reader3/image/」当成站内
-    /// 地址原样留下（客户端会直接请求上游），协议相对地址也要清空。
+    /// 搜索结果封面收口不能把「绝对 URL 里包含取图路由」当成站内地址
+    /// 原样留下（客户端会直接请求上游），协议相对地址也要清空。
     #[tokio::test]
     async fn search_cover_rewrite_never_leaks_non_route_urls() {
         let dir = std::env::temp_dir().join(format!(
@@ -1508,7 +1575,7 @@ mod tests {
 
         let first = books[0].cover_url.as_deref().unwrap();
         assert!(
-            first.starts_with("/reader3/image/"),
+            first.starts_with("/v1/images/"),
             "绝对地址应走图片管道而不是原样下发: {first}"
         );
         assert_eq!(books[1].cover_url, None, "协议相对地址应清空");
@@ -1516,7 +1583,7 @@ mod tests {
             .cover_url
             .as_deref()
             .unwrap()
-            .starts_with("/reader3/image/"));
+            .starts_with("/v1/images/"));
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

@@ -6,7 +6,7 @@
 //! - 章评与段评合并在同一路径：`?para=<block 下标>` 是段评，缺省是章评；
 //!   `?authorOnly=true` 忽略分页扫描作者评论（`comments/index` 是段评概览）；
 //! - 响应就是服务层的 typed 形状（`ReviewResponse<ReviewPage>` 等），
-//!   评论配图/章节配图在出口收口成单个 `/reader3/image/<id>`。
+//!   评论配图/章节配图在出口收口成单个 `/v1/images/<id>`。
 //!
 //! 契约 §8.5 的 `anchor`（blockMap 对齐）随 mark-anchoring 批次再做；
 //! 现状形状与 `/reader3` 一致，前端零映射迁移。
@@ -96,7 +96,7 @@ fn para_index_of(query: &CommentsQuery) -> Result<Option<i32>, Problem> {
 }
 
 /// 评论配图变体收口：同一张图的多个格式变体挑一张能渲染的，
-/// 替换成单个 `/reader3/image/<id>`（与 /reader3 的 rewrite_image_lists 同语义）。
+/// 替换成单个 `/v1/images/<id>`（与 /reader3 的 rewrite_image_lists 同语义）。
 async fn collapse_review_images(
     state: &AppState,
     book_id: &str,
@@ -292,7 +292,7 @@ pub async fn get_comment_index(
 }
 
 /// 本章配图（书源没声明配图规则时 `enabled: false`）；地址收口成单个
-/// `/reader3/image/<id>`。
+/// `/v1/images/<id>`。
 #[utoipa::path(
     get,
     path = "/v1/books/{bookId}/chapters/{index}/images",

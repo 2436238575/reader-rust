@@ -124,11 +124,10 @@ function mapShelfItem(item: ApiShelfItem): ShelfBook {
     bookUrl: item.bookUrl,
     origin: item.origin,
     originName: item.originName ?? undefined,
-    // 后端只给图片管道 id 或站内资源地址（本地 EPUB 封面）；
-    // 本站取图地址仍走 /reader3/image/<id>（图片域未迁）
+    // 后端只给图片管道 id 或站内资源地址（本地 EPUB 封面）
     coverUrl:
       item.coverUrl ??
-      (item.coverImageId ? `/reader3/image/${item.coverImageId}` : undefined),
+      (item.coverImageId ? `/v1/images/${item.coverImageId}` : undefined),
     customCoverUrl: item.customCoverUrl ?? undefined,
     intro: item.intro ?? undefined,
     kind: item.kind ?? undefined,
@@ -333,7 +332,7 @@ export function getBookInfo(bookId: string): Promise<BookInfoOverlay> {
         ...(d.coverUrl
           ? { coverUrl: d.coverUrl }
           : d.coverImageId
-            ? { coverUrl: `/reader3/image/${d.coverImageId}` }
+            ? { coverUrl: `/v1/images/${d.coverImageId}` }
             : {}),
         ...(d.lastChapter?.title
           ? { latestChapterTitle: d.lastChapter.title }
@@ -616,15 +615,33 @@ export function setBookSource(params: { bookId: string; targetBookId: string }) 
 }
 
 // ─── Cover helper ───
+const V1_IMAGE_ROUTE_PREFIX = '/v1/images/'
+const LEGACY_IMAGE_ROUTE_PREFIX = '/reader3/image/'
+const V1_IMAGE_RESOLVE_PREFIX = '/v1/images:resolve?'
+const LEGACY_COVER_PREFIX = '/reader3/cover?'
+
+/** 是否图片管道收口后的本站取图地址（v1 与过渡期 legacy 前缀都认）。 */
+export function isPipedImageUrl(url: string) {
+  return (
+    url.startsWith(V1_IMAGE_ROUTE_PREFIX) || url.startsWith(LEGACY_IMAGE_ROUTE_PREFIX)
+  )
+}
+
 /**
  * 给图片管道地址追加目标像素宽（`?w=`）：后端按宽度派生缓存（clamp 64..=2048、
- * 只降不升），配合 Accept 头的 webp 协商省流。只认 `/reader3/image/<id>` 与
- * `/reader3/cover?path=...`；本地 epub 资源、第三方直链与其他地址原样返回
- * （加了参数也没人认，反而污染缓存键之外的语义）。
+ * 只降不升），配合 Accept 头的 webp 协商省流。只认 v1/legacy 的取图地址与
+ * 封面解析入口；本地 epub 资源、第三方直链与其他地址原样返回（加了参数也没人认，
+ * 反而污染缓存键之外的语义）。
  */
 export function withImageWidth(url: string, width?: number) {
   if (!width || !Number.isFinite(width) || width <= 0) return url
-  if (!url.startsWith('/reader3/image/') && !url.startsWith('/reader3/cover?')) return url
+  if (
+    !isPipedImageUrl(url) &&
+    !url.startsWith(V1_IMAGE_RESOLVE_PREFIX) &&
+    !url.startsWith(LEGACY_COVER_PREFIX)
+  ) {
+    return url
+  }
   const sep = url.includes('?') ? '&' : '?'
   return `${url}${sep}w=${Math.round(width)}`
 }
@@ -634,15 +651,23 @@ export function getCoverUrl(coverUrl?: string, width?: number) {
   if (coverUrl.startsWith('/reader3/localEpubAsset')) {
     return withAppBase(coverUrl)
   }
-  // 后端已经把书源地址换成了本站取图地址（`/reader3/image/<id>`）：
+  // 后端已经把书源地址换成了本站取图地址（`/v1/images/<id>`）：
   // id 由后端映射表维护，前端不接触会过期的书源地址，会话 Cookie 随 <img> 自动携带
-  if (coverUrl.startsWith('/reader3/image/')) {
+  if (isPipedImageUrl(coverUrl)) {
+    return withAppBase(withImageWidth(coverUrl, width))
+  }
+  // 已经是封面解析/兼容入口的地址（历史 customCoverUrl 可能存了它）：
+  // 直接补宽度，不再二次包一层 resolve
+  if (
+    coverUrl.startsWith(V1_IMAGE_RESOLVE_PREFIX) ||
+    coverUrl.startsWith(LEGACY_COVER_PREFIX)
+  ) {
     return withAppBase(withImageWidth(coverUrl, width))
   }
   if (coverUrl.startsWith('http') || coverUrl.startsWith('/')) {
-    // 兼容入口：customCoverUrl 是用户自设的任意地址，走封面接口代理
-    const params = new URLSearchParams({ path: coverUrl })
-    return withAppBase(withImageWidth(`/reader3/cover?${params.toString()}`, width))
+    // 兼容入口：customCoverUrl 是用户自设的任意地址，走封面解析接口代理
+    const params = new URLSearchParams({ url: coverUrl })
+    return withAppBase(withImageWidth(`/v1/images:resolve?${params.toString()}`, width))
   }
   return coverUrl
 }
@@ -650,7 +675,7 @@ export function getCoverUrl(coverUrl?: string, width?: number) {
 /// 给需要鉴权的直链（本地书资源、封面、配图等）套上部署前缀。
 /// 会话凭据由 HttpOnly Cookie 承载，<img>/直链请求浏览器自动携带，URL 不再
 /// 拼任何令牌；完整的 http(s) 地址指向第三方主机，原样返回（约定上后端已把
-/// 书源图片收口为 /reader3/image/<id>，走到这里的外源地址是兜底场景，
+/// 书源图片收口为 /v1/images/<id>，走到这里的外源地址是兜底场景，
 /// 宁可不渲染）。
 export function withAuthQuery(url: string) {
   if (/^https?:\/\//i.test(url)) return url
