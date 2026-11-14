@@ -65,9 +65,10 @@ impl Drop for TestServer {
 }
 
 impl TestServer {
-    /// 常规接口的入站超时缩短到 2s：aiProxy 若仍挂在常规组里，
-    /// 3.5s 的上游生成会以 408 收场。（上游地址由客户端在请求体里自带，
-    /// 服务端配置不涉及。）
+    /// 常规接口的入站超时缩短到 5s：aiProxy 若仍挂在常规组里，
+    /// 6.5s 的上游生成会以 408 收场。留 3s 余量给登录（整套测试并行跑时
+    /// 2s 预算会被调度/磁盘抖动吃掉，出现「登录 504」的假失败）。
+    /// （上游地址由客户端在请求体里自带，服务端配置不涉及。）
     async fn start() -> Self {
         common::clean_stale_temp_dirs();
         let temp_dir =
@@ -94,7 +95,7 @@ impl TestServer {
             rate_limit_disabled: true,
             // 假上游监听 127.0.0.1：显式放行私网出站（默认拦截）
             allow_private_network: true,
-            inbound_request_timeout_secs: 2,
+            inbound_request_timeout_secs: 5,
             ..AppConfig::default()
         };
 
@@ -138,13 +139,12 @@ impl TestServer {
     }
 }
 
-/// 超过常规入站超时（2s）的非流式生成必须等满并透传上游响应：
+/// 超过常规入站超时（5s）的非流式生成必须等满并透传上游响应：
 /// aiProxy/aiProxyImage 与上传路由同档使用 `INBOUND_UPLOAD_TIMEOUT_SECS`
-/// （默认 900s），不在 120s 常规组里。挂错组时本用例会以 408
-/// 「请求超时」失败。
+/// （默认 900s），不在常规组里。挂错组时本用例会以 408「请求超时」失败。
 #[tokio::test]
 async fn slow_non_streaming_generation_survives_inbound_timeout() {
-    let upstream = start_slow_upstream(std::time::Duration::from_millis(3500)).await;
+    let upstream = start_slow_upstream(std::time::Duration::from_millis(6500)).await;
     let app = TestServer::start().await;
     let token = app.login_token().await;
 
@@ -163,7 +163,7 @@ async fn slow_non_streaming_generation_survives_inbound_timeout() {
     assert_eq!(
         res.status(),
         reqwest::StatusCode::OK,
-        "3.5s 的非流式生成不应被 2s 的常规入站超时掐死（应等满并透传）"
+        "6.5s 的非流式生成不应被 5s 的常规入站超时掐死（应等满并透传）"
     );
     let body: serde_json::Value = res.json().await.unwrap();
     assert_eq!(
@@ -171,7 +171,7 @@ async fn slow_non_streaming_generation_survives_inbound_timeout() {
         "应透传上游 JSON 响应"
     );
 
-    // v1 入口与 legacy 同档：同样不被 2s 常规入站超时掐死
+    // v1 入口与 legacy 同档：同样不被 5s 常规入站超时掐死
     let res = app
         .client
         .post(format!("{}/v1/ai/proxy", app.base_url))
