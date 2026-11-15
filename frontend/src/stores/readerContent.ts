@@ -86,7 +86,6 @@ export const useReaderContentStore = defineStore('readerContent', () => {
     )
     // 书源级「不支持评论/配图」结论也按书失效：换书/换源后重新判断
     extrasStore.resetChapterSupportFlags()
-    appStore.markBookOpened(b.bookId || b.bookUrl)
     readerStore.currentIndex = b.durChapterIndex || 0
     readerStore.chapterScrollProgress = 0
     readerStore.preloadedContent.clear()
@@ -193,6 +192,9 @@ export const useReaderContentStore = defineStore('readerContent', () => {
         session.chapterScrollProgress || 0
       )
       marksStore.markChapterAsRead(nextIndex)
+      if (readerStore.book?.bookId) {
+        appStore.markChapterRead(readerStore.book.bookId, nextIndex)
+      }
       // 恢复会话不经过 loadChapter，评论要在这里单独补一次（配图由 setActive 触发）
       void extrasStore.loadChapterReviews(nextIndex)
       return true
@@ -351,11 +353,9 @@ export const useReaderContentStore = defineStore('readerContent', () => {
 
       readerStore.setActiveChapterState(index, chapterContent, initialProgress)
       marksStore.markChapterAsRead(index)
-      appStore.markChapterRead(
-        currentBook.bookId || currentBook.bookUrl,
-        index,
-        readerStore.chapters.length
-      )
+      if (currentBook.bookId) {
+        appStore.markChapterRead(currentBook.bookId, index)
+      }
 
       if (!isOpeningSavedChapter) {
         await readerStore.persistProgress(index, 0)

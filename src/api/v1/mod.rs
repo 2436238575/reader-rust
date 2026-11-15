@@ -38,6 +38,7 @@ mod images;
 mod local_books;
 mod marks;
 mod me;
+mod read_stats;
 mod replace_rules;
 mod reviews;
 mod shelf;
@@ -61,6 +62,7 @@ pub fn router(
 ) -> Router {
     let v1 = Router::new()
         .merge(me::router())
+        .merge(read_stats::router())
         .merge(ai::router())
         .merge(replace_rules::router())
         .merge(shelf::router())
@@ -438,6 +440,8 @@ pub fn openapi_yaml() -> String {
     info(title = "reader-rust v1 API", version = "0.1.0"),
     paths(
         me::get_me,
+        read_stats::save_read_events,
+        read_stats::get_reading_stats,
         ai::get_model_status,
         ai::get_memory,
         ai::put_memory,
@@ -543,6 +547,10 @@ pub fn openapi_yaml() -> String {
     ),
     components(schemas(
         me::Me,
+        read_stats::ReadEventItem,
+        read_stats::ReadEventsBatchRequest,
+        crate::service::read_stats_service::ReadEventsBatchResult,
+        crate::service::read_stats_service::ReadingStats,
         ai::AiModelStatus,
         ai::AgentTaskKindRequest,
         ai::StartAgentTaskRequest,

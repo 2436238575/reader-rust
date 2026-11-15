@@ -2841,6 +2841,46 @@ paths:
       security:
       - cookieAuth: []
       - bearerAuth: []
+  /v1/me/read-events:batch:
+    post:
+      tags:
+      - me
+      summary: 批量上报阅读事件（按章当日累计秒数，服务端取 MAX）。
+      operationId: saveReadEvents
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ReadEventsBatchRequest'
+        required: true
+      responses:
+        '200':
+          description: 本批处理条数与服务端当前 dayKey
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReadEventsBatchResult'
+        '401':
+          description: 未登录或令牌失效
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '404':
+          description: 事件中的书籍不在登记表
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '422':
+          description: 事件超过 100 条、chapterIndex 为负数或字段非法
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+      security:
+      - cookieAuth: []
+      - bearerAuth: []
   /v1/me/replace-rules:
     get:
       tags:
@@ -3264,6 +3304,28 @@ paths:
                 $ref: '#/components/schemas/Problem'
         '422':
           description: 空数组 / 重复 id / 非法 id / 集合与当前书架不一致
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+      security:
+      - cookieAuth: []
+      - bearerAuth: []
+  /v1/me/stats:
+    get:
+      tags:
+      - me
+      summary: 当前用户的阅读统计（全部由明细表派生）。
+      operationId: getReadingStats
+      responses:
+        '200':
+          description: 累计/今日时长、已读章数、读完本数与连续天数
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReadingStats'
+        '401':
+          description: 未登录或令牌失效
           content:
             application/problem+json:
               schema:
@@ -6763,6 +6825,86 @@ components:
           format: double
           description: 0..1 的章内比例（服务端存万分比）
       additionalProperties: false
+    ReadEventItem:
+      type: object
+      required:
+      - bookId
+      - chapterIndex
+      - seconds
+      properties:
+        bookId:
+          type: string
+          description: 书籍 id（`book_<n>`；别名会在服务端归一）
+        chapterIndex:
+          type: integer
+          format: int32
+          description: 章节序号（≥0）
+          minimum: 0
+        seconds:
+          type: integer
+          format: int64
+          description: 该章当日的累计阅读秒数；服务端按 0..=86400 截断
+      additionalProperties: false
+    ReadEventsBatchRequest:
+      type: object
+      required:
+      - events
+      properties:
+        dayKey:
+          type:
+          - integer
+          - 'null'
+          format: int64
+          description: |-
+            客户端累计值所属的服务端 dayKey（上次响应拿到的值）。与当前日不同时
+            事件写回该历史日（跨日/离线缓冲），响应始终返回当前 dayKey；
+            缺省按当前日写入。
+        events:
+          type: array
+          items:
+            $ref: '#/components/schemas/ReadEventItem'
+          description: 最多 100 条；空数组合法（用于只取服务端 dayKey）
+          maxItems: 100
+      additionalProperties: false
+    ReadEventsBatchResult:
+      type: object
+      required:
+      - accepted
+      - dayKey
+      properties:
+        accepted:
+          type: integer
+          format: int32
+          description: 本批处理的事件条数
+          minimum: 0
+        dayKey:
+          type: integer
+          format: int64
+          description: 服务端当前自然日（epoch day）；客户端据此校准「当日累计秒数」的清零时机
+    ReadingStats:
+      type: object
+      required:
+      - totalSeconds
+      - todaySeconds
+      - readChapters
+      - finishedBooks
+      - streakDays
+      properties:
+        finishedBooks:
+          type: integer
+          format: int64
+        readChapters:
+          type: integer
+          format: int64
+        streakDays:
+          type: integer
+          format: int64
+        todaySeconds:
+          type: integer
+          format: int64
+        totalSeconds:
+          type: integer
+          format: int64
     RenameChapterRequest:
       type: object
       required:

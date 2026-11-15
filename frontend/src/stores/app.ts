@@ -17,16 +17,26 @@ import {
 } from '../utils/authSession'
 import { cancelUserdataQueue } from '../utils/userdataQueue'
 import { clearUserdataPrefetch, prefetchUserdata } from '../api/userdata'
-import { READ_HISTORY, READING_STATS, RECENT_BOOKS } from '../utils/userdataDocs'
+import { invalidateSessionForRetry } from '../utils/sessionEpoch'
+import { RECENT_BOOKS } from '../utils/userdataDocs'
+import { getReadingStats, type ReadingStats } from '../api/readStats'
 import {
-  loadLocalReadingStats,
-  persistLocalReadingStats,
-  pushReadingStatsToBackend,
-  syncReadingStatsFromBackend,
-  MAX_READ_CHAPTER_ENTRIES,
-  STATS_PUSH_DEBOUNCE_MS,
-  type ReadingStats,
-} from '../utils/readingStats'
+  accumulateReadSeconds,
+  flushReadEvents,
+  flushReadEventsKeepalive,
+  syncReadDayKey,
+  trackChapterRead,
+} from '../utils/readEvents'
+
+function formatReadingDuration(seconds: number) {
+  const safe = Math.max(0, Math.floor(seconds))
+  if (safe <= 0) return '0分钟'
+  const totalMinutes = Math.floor(safe / 60)
+  if (totalMinutes < 1) return `${safe}秒`
+  const hours = Math.floor(totalMinutes / 60)
+  const minutes = totalMinutes % 60
+  return hours ? `${hours}小时${minutes}分钟` : `${minutes}分钟`
+}
 
 export const useAppStore = defineStore('app', () => {
   // ─── Theme ───
@@ -72,24 +82,22 @@ export const useAppStore = defineStore('app', () => {
     userInfoFreshAt = Date.now()
   }
 
-  // 每个会话只做一次后端合并；登出后复位
-  let statsSynced = false
-
-  // 首屏三份 userdata 文档（阅读统计/最近阅读/已读标记）一次批量预读，
-  // 随后的批量读取命中 30s 一次性缓存，省三次往返；失败静默由读取方自行重试
+  // 最近阅读仍走 userdata；阅读统计/已读标记已改由服务端派生，不再预读
   function prefetchFirstScreenDocs() {
-    void prefetchUserdata([READING_STATS, RECENT_BOOKS, READ_HISTORY])
+    void prefetchUserdata([RECENT_BOOKS])
   }
 
-  /** 登录态就绪后从后端合并一次阅读统计（跨浏览器同步）；失败则继续用本地 */
-  function syncStatsOnce() {
-    if (!isLoggedIn.value || statsSynced) return
-    statsSynced = true
-    void syncReadingStatsFromBackend(readingStats.value)
-      .then((merged) => {
-        readingStats.value = merged
-      })
-      .catch(() => undefined)
+  /** 拉取服务端派生统计；失败保留上一次结果（统计页不是关键路径） */
+  async function refreshReadingStats() {
+    if (!isLoggedIn.value) {
+      serverReadingStats.value = null
+      return
+    }
+    try {
+      serverReadingStats.value = await getReadingStats()
+    } catch {
+      /* 离线/临时失败：保留上次快照 */
+    }
   }
 
   async function fetchUserInfo(options: { force?: boolean } = {}) {
@@ -117,7 +125,7 @@ export const useAppStore = defineStore('app', () => {
         // 刷新失败处理）；没有提示才按未登录处理
         if (!hasAuthHint()) isLoggedIn.value = false
       }
-      syncStatsOnce()
+      void refreshReadingStats()
     })().finally(() => {
       if (userInfoInFlight === request) userInfoInFlight = null
     })
@@ -151,7 +159,7 @@ export const useAppStore = defineStore('app', () => {
     })
     startAuthLifecycle()
     // 登录后不一定经过会调 fetchUserInfo 的页面，直接在登录点触发
-    syncStatsOnce()
+    void refreshReadingStats()
     prefetchFirstScreenDocs()
   }
 
@@ -208,7 +216,7 @@ export const useAppStore = defineStore('app', () => {
           // 这次响应就是权威登录态：随后的 fetchUserInfo 复用，不再重复请求
           markUserInfoFresh()
           startAuthLifecycle()
-          syncStatsOnce()
+          void refreshReadingStats()
           prefetchFirstScreenDocs()
           return
         }
@@ -228,7 +236,7 @@ export const useAppStore = defineStore('app', () => {
           syncHintUsername(data.userInfo!.username)
           markUserInfoFresh()
           startAuthLifecycle()
-          syncStatsOnce()
+          void refreshReadingStats()
           prefetchFirstScreenDocs()
         } else {
           // Cookie 刚换新仍取不到用户：会话确实没了
@@ -253,9 +261,11 @@ export const useAppStore = defineStore('app', () => {
   }
 
   function clearUser() {
+    // 登出/会话失效：在途请求的 401 不再触发静默刷新
+    invalidateSessionForRetry()
     userInfo.value = null
     isLoggedIn.value = false
-    statsSynced = false
+    serverReadingStats.value = null
     clearAuthHint()
     stopAuthLifecycle()
     // 会话 Cookie 已失效：取消 userdata 待写队列，否则残留的退避重试会
@@ -286,70 +296,107 @@ export const useAppStore = defineStore('app', () => {
   const deferredInstallPrompt = ref<any>(null)
   const waitingServiceWorker = ref<ServiceWorker | null>(null)
 
-  const readingStats = ref<ReadingStats>(loadLocalReadingStats())
+  const serverReadingStats = ref<ReadingStats | null>(null)
+  const STATS_TICK_MS = 15_000
   let readingSessionStartedAt = 0
-  let statsPushTimer: ReturnType<typeof setTimeout> | null = null
+  let lastReadingTickAt = 0
+  let readingStatsTimer: ReturnType<typeof setInterval> | null = null
+  let readingSessionPaused = false
+  let activeChapter: { bookId: string; chapterIndex: number } | null = null
 
-  function persistStats() {
-    persistLocalReadingStats(readingStats.value)
-    // 防抖推后端：快速连读多章时合并为一次写入
-    if (statsPushTimer) clearTimeout(statsPushTimer)
-    statsPushTimer = setTimeout(() => {
-      statsPushTimer = null
-      pushReadingStatsToBackend(readingStats.value)
-    }, STATS_PUSH_DEBOUNCE_MS)
+  /** 把上次 tick 以来的秒数记到当前章；切章/暂停/落页时都会先调一次。 */
+  function accrueActiveSeconds() {
+    if (!readingSessionStartedAt || readingSessionPaused) {
+      lastReadingTickAt = Date.now()
+      return
+    }
+    const now = Date.now()
+    if (!activeChapter) {
+      lastReadingTickAt = now
+      return
+    }
+    const elapsedSeconds = Math.floor((now - lastReadingTickAt) / 1000)
+    if (elapsedSeconds <= 0) return
+    accumulateReadSeconds(
+      activeChapter.bookId,
+      activeChapter.chapterIndex,
+      elapsedSeconds
+    )
+    lastReadingTickAt += elapsedSeconds * 1000
+  }
+
+  function tickReadingSession() {
+    if (readingSessionPaused) return
+    accrueActiveSeconds()
+    if (activeChapter) void flushReadEvents().catch(() => undefined)
   }
 
   function startReadingSession() {
-    if (!readingSessionStartedAt) readingSessionStartedAt = Date.now()
+    if (readingSessionStartedAt) return
+    readingSessionStartedAt = Date.now()
+    lastReadingTickAt = readingSessionStartedAt
+    readingSessionPaused = false
+    // 先把上一会话/跨日遗留的累计值按它所属的 dayKey 发出去，再校准当前日；
+    // 服务端会把这些事件写回旧 dayKey，不会污染今天。
+    void flushReadEvents()
+      .then(() => syncReadDayKey())
+      .catch(() => undefined)
+    if (readingStatsTimer) clearInterval(readingStatsTimer)
+    readingStatsTimer = setInterval(tickReadingSession, STATS_TICK_MS)
+  }
+
+  /** 页面隐藏/切后台时暂停计时，避免把挂机时间算成阅读。 */
+  function pauseReadingSession() {
+    if (!readingSessionStartedAt || readingSessionPaused) return
+    accrueActiveSeconds()
+    readingSessionPaused = true
+  }
+
+  function resumeReadingSession() {
+    if (!readingSessionStartedAt || !readingSessionPaused) return
+    readingSessionPaused = false
+    lastReadingTickAt = Date.now()
   }
 
   function stopReadingSession() {
     if (!readingSessionStartedAt) return
-    const delta = Math.max(0, Math.round((Date.now() - readingSessionStartedAt) / 1000))
-    readingStats.value.totalSeconds += delta
+    tickReadingSession()
     readingSessionStartedAt = 0
-    persistStats()
+    readingSessionPaused = false
+    activeChapter = null
+    if (readingStatsTimer) {
+      clearInterval(readingStatsTimer)
+      readingStatsTimer = null
+    }
+    void flushReadEvents().catch(() => undefined)
   }
 
-  function markBookOpened(bookUrl: string) {
-    if (!readingStats.value.openedBooks.includes(bookUrl)) {
-      readingStats.value.openedBooks.push(bookUrl)
-      persistStats()
-    }
+  /** pagehide/beforeunload 兜底：同步记完最后一段秒数并 keepalive 上报。 */
+  function flushReadingSessionKeepalive() {
+    accrueActiveSeconds()
+    flushReadEventsKeepalive()
   }
 
-  function markChapterRead(bookUrl: string, index: number, totalChapters: number) {
-    const key = `${bookUrl}#${index}`
-    if (!readingStats.value.readChapters.includes(key)) {
-      readingStats.value.readChapters.push(key)
-      // 无上限会随使用年限膨胀到数万条且每章全量 stringify；只统计总数，裁掉最旧的
-      if (readingStats.value.readChapters.length > MAX_READ_CHAPTER_ENTRIES) {
-        readingStats.value.readChapters.splice(
-          0,
-          readingStats.value.readChapters.length - MAX_READ_CHAPTER_ENTRIES
-        )
-      }
-    }
-    if (
-      totalChapters > 0 &&
-      index >= totalChapters - 1 &&
-      !readingStats.value.completedBooks.includes(bookUrl)
-    ) {
-      readingStats.value.completedBooks.push(bookUrl)
-    }
-    persistStats()
+  /** 翻章时调用：先把上一章剩余秒数记上，再切到新章并登记已读。 */
+  function markChapterRead(bookId: string, index: number) {
+    if (!bookId || !Number.isInteger(index) || index < 0) return
+    accrueActiveSeconds()
+    activeChapter = { bookId, chapterIndex: index }
+    lastReadingTickAt = Date.now()
+    trackChapterRead(bookId, index)
+    void flushReadEvents().catch(() => undefined)
   }
+
   const readingStatsSummary = computed(() => {
-    const totalMinutes = Math.floor(readingStats.value.totalSeconds / 60)
-    const hours = Math.floor(totalMinutes / 60)
-    const minutes = totalMinutes % 60
+    const stats = serverReadingStats.value
     return {
-      totalSeconds: readingStats.value.totalSeconds,
-      totalTimeText: hours ? `${hours}小时${minutes}分钟` : `${Math.max(1, totalMinutes)}分钟`,
-      openedBooks: readingStats.value.openedBooks.length,
-      readChapters: readingStats.value.readChapters.length,
-      completedBooks: readingStats.value.completedBooks.length,
+      totalSeconds: stats?.totalSeconds ?? 0,
+      todaySeconds: stats?.todaySeconds ?? 0,
+      totalTimeText: formatReadingDuration(stats?.totalSeconds ?? 0),
+      todayTimeText: formatReadingDuration(stats?.todaySeconds ?? 0),
+      readChapters: stats?.readChapters ?? 0,
+      finishedBooks: stats?.finishedBooks ?? 0,
+      streakDays: stats?.streakDays ?? 0,
     }
   })
 
@@ -374,6 +421,13 @@ export const useAppStore = defineStore('app', () => {
 
   function setOnlineStatus(value: boolean) {
     isOnline.value = value
+    // 恢复联网后先把离线缓冲按它所属的 dayKey 发出，再校准当前日；
+    // 反序会让跨日缓冲被当成旧数据清掉。
+    if (value) {
+      void flushReadEvents()
+        .then(() => syncReadDayKey())
+        .catch(() => undefined)
+    }
   }
 
   function setPwaReady(value: boolean) {
@@ -433,11 +487,14 @@ export const useAppStore = defineStore('app', () => {
     setWaitingServiceWorker,
     installPwa,
     applyPwaUpdate,
-    readingStats,
+    serverReadingStats,
     readingStatsSummary,
+    refreshReadingStats,
     startReadingSession,
     stopReadingSession,
-    markBookOpened,
+    pauseReadingSession,
+    resumeReadingSession,
+    flushReadingSessionKeepalive,
     markChapterRead,
     toasts,
     showToast,

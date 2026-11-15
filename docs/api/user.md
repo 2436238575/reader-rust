@@ -173,6 +173,78 @@ GET /reader3/getTxtTocRules
 
 > **未实现**：当前恒返回空数组（依据：`src/api/handlers/book.rs` 的 `get_txt_toc_rules`），TXT 导入使用内置默认章节规则。
 
+## 阅读统计（v1）
+
+阅读统计已从 userdata 迁到服务端明细表，前端不再写 `reading-stats` /
+`readChapterHistory` 两份文档。天边界按服务器时区固定偏移计算：**本地 04:00
+起算新一天**（凌晨 03:59:59 仍属前一天），不处理 DST。
+
+### 上报阅读事件
+
+```text
+POST /v1/me/read-events:batch
+```
+
+请求体：
+
+```json
+{
+  "dayKey": 20340,
+  "events": [
+    { "bookId": "book_1", "chapterIndex": 3, "seconds": 120 }
+  ]
+}
+```
+
+- `events` 最多 **100** 条；空数组合法（用于只取服务端 `dayKey`）；
+- `dayKey` 可选：客户端本地累计值所属的服务端 dayKey（上次响应拿到的值）。
+  与当前日不同时事件写回该历史日（跨日/离线缓冲），响应始终返回当前 dayKey；
+  缺省按当前日写入。离线跨多日时客户端仍只有最后一次成功响应的 dayKey，
+  这些秒数会归到该日，不按自然日拆分；
+- `seconds` 是该章**当日累计秒数**，服务端截断到 `0..=86400` 并按
+  `(用户, 书, 章, 日)` 取 `MAX(旧值, 新值)`——重复上报不会翻倍；
+- `chapterIndex` 必须 ≥0；书不在 `books` 登记表 → **整批 404 `BOOK_NOT_FOUND`**
+  （不做部分成功）；
+- 同一事务里把该书 `shelf_books.dur_chapter_time` 推进到 `MAX(现有, now)`。
+
+响应：
+
+```json
+{ "accepted": 1, "dayKey": 20340 }
+```
+
+`dayKey` 是服务端当前自然日（整数 epoch day）。客户端用它校准「当日累计秒数」
+的清零时机：`dayKey` 变化时把本地累计值整体清零。
+
+### 读取统计
+
+```text
+GET /v1/me/stats
+```
+
+```json
+{
+  "totalSeconds": 12345,
+  "todaySeconds": 600,
+  "readChapters": 87,
+  "finishedBooks": 2,
+  "streakDays": 5
+}
+```
+
+- `totalSeconds`：全部明细秒数之和 + 旧版 `reading-stats.totalSeconds` 回填总额；
+- `todaySeconds`：今天（服务端 dayKey）的真实阅读秒数，排除回填行；
+- `readChapters`：去重后的 `(bookId, chapterIndex)` 数（含回填）；
+- `finishedBooks`：书架内「最后一章在明细表里有行」的本数（网络书按章节登记表
+  的最大 index，本地书回退书架 `totalChapterNum - 1`）；
+- `streakDays`：从今天往前连续、每天真实阅读秒数 >0 的天数；**今天还没读时从
+  昨天起算**（只要没整天不读就还在连击中），今天与昨天都没读则为 0；排除回填日。
+
+> 启动时会幂等回填一次旧 userdata：`readChapterHistory` 的已读章节按当前目录
+> 反查 index（查不到的丢弃），全部落在回填当天并标 `backfilled=1`（不计今日/
+> 连续天数）；`reading-stats.totalSeconds` 记入 `read_stats_legacy`。
+> `readChapterHistory` 仍可被旧浏览器读取，但前端新版本不再写入。
+
 ## 读取用户数据文档
 
 ```text
@@ -181,7 +253,7 @@ GET /reader3/getUserdata?name=<文档名>
 
 > **废弃**：保留兼容，新客户端请改用 [批量读取](#批量读取用户数据文档)（`GET /reader3/getUserdataBatch`，单文档传单元素 `names` 即可）。
 
-读取当前用户命名空间下的一个 JSON 文档，用于**跨浏览器同步**的轻量用户数据（最近阅读、阅读统计等）。文档不存在时 `data` 为 `null`。
+读取当前用户命名空间下的一个 JSON 文档，用于**跨浏览器同步**的轻量用户数据（如最近阅读）。文档不存在时 `data` 为 `null`。阅读统计/已读标记已迁到 `/v1/me/stats` 与 `/v1/me/read-events:batch`，不再写入这两个文档。
 
 - `name` 仅允许字母数字、`.`、`_`、`-`，首字符必须是字母数字，长度 ≤128（文档名历史上曾拼进文件路径，约束保留下来以保持键形态一致）；
 - 存储在 `json_documents` 表（按 `namespace + name` 唯一），与阅读进度等共用一套用户命名空间。
@@ -206,12 +278,12 @@ POST /reader3/saveUserdata
 
 ```json
 {
-  "name": "reading-stats",
-  "value": { "totalSeconds": 3600 }
+  "name": "recent-books",
+  "value": [{ "bookId": "book_1" }]
 }
 ```
 
-**整文档覆盖写**：`value` 可以是任意 JSON（对象/数组/标量），服务端不做合并——多端合并语义由客户端负责（前端内置的最近阅读与阅读统计会在启动时做并集/取大合并后回写）。响应 `data` 为空字符串；`name` 不合法或缺少 `value` 时返回 `isSuccess: false`。
+**整文档覆盖写**：`value` 可以是任意 JSON（对象/数组/标量），服务端不做合并——多端合并语义由客户端负责（前端内置的最近阅读会在启动时做并集合并后回写）。响应 `data` 为空字符串；`name` 不合法或缺少 `value` 时返回 `isSuccess: false`。
 
 ## 批量读取用户数据文档
 
@@ -219,7 +291,7 @@ POST /reader3/saveUserdata
 GET /reader3/getUserdataBatch?names=<名称1>,<名称2>,...
 ```
 
-一次读取当前用户的多个 JSON 文档，把首屏的 N 次单文档 GET（最近阅读、阅读统计、已读标记等）合成一次往返。
+一次读取当前用户的多个 JSON 文档，把首屏的 N 次单文档 GET（如最近阅读）合成一次往返。
 
 - `names` 逗号分隔，**最多 20 个**，逐个校验 `name` 规则（同上），任一非法返回 400；`names` 缺失或为空返回 400；
 - 同名条目在响应映射里只出现一次；
@@ -230,8 +302,8 @@ GET /reader3/getUserdataBatch?names=<名称1>,<名称2>,...
   "isSuccess": true,
   "data": {
     "docs": {
-      "reading-stats": { "totalSeconds": 3600 },
-      "recent-books": null
+      "recent-books": [{ "bookId": "book_1" }],
+      "personal-config": null
     }
   },
   "errorMsg": ""
@@ -240,7 +312,7 @@ GET /reader3/getUserdataBatch?names=<名称1>,<名称2>,...
 
 ## 批量保存用户数据文档
 
-> **v1**：`PUT /v1/me/userdata:batch`，请求体相同；文档级非法→422 + JSON Pointer，单文档超 4MB→413；前端写队列与 pagehide keepalive 已切。批量读 `GET /reader3/getUserdataBatch` 仍留 legacy（随 userdata 产品语义重设计迁移）。
+> **v1**：`PUT /v1/me/userdata:batch`，请求体相同；文档级非法→422 + JSON Pointer，单文档超 4MB→413；前端写队列与 pagehide keepalive 已切。批量读 `GET /reader3/getUserdataBatch` 仍留 legacy 且**只读兼容**——阅读统计/已读标记已迁到 v1，不再有写入方。
 
 ```text
 POST /reader3/saveUserdataBatch
@@ -251,8 +323,8 @@ POST /reader3/saveUserdataBatch
 ```json
 {
   "docs": [
-    { "name": "reading-stats", "value": { "totalSeconds": 3600 } },
-    { "name": "recent-books", "value": [] }
+    { "name": "recent-books", "value": [{ "bookId": "book_1" }] },
+    { "name": "personal-config", "value": { "theme": "dark" } }
   ]
 }
 ```

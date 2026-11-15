@@ -181,6 +181,7 @@ pub async fn build_state(cfg: AppConfig) -> anyhow::Result<AppState> {
     let book_repo = db::repo::BookRepo::new(pool.clone());
     let shelf_repo = db::repo::ShelfBookRepo::new(pool.clone());
     let chapters_repo = db::chapters_repo::ChaptersRepo::new(pool.clone());
+    let read_stats_chapters = chapters_repo.clone();
 
     let http = HttpClient::new(cfg.request_timeout_secs, None)?;
     // 书源 JS 的 java.ajax 等内部请求与主抓取共用同一超时口径
@@ -223,6 +224,15 @@ pub async fn build_state(cfg: AppConfig) -> anyhow::Result<AppState> {
     ));
     // 唯一账号的建号与 ADMIN_PASSWORD 强制重置都在这里完成
     user_service.bootstrap_admin().await?;
+    let read_stats_service = Arc::new(crate::service::read_stats_service::ReadStatsService::new(
+        db::read_stats_repo::ReadStatsRepo::new(pool.clone()),
+        json_document_service.as_ref().clone(),
+        read_stats_chapters,
+    ));
+    // 回填旧 userdata（已读章节/累计时长）；幂等，失败只记 warn，不阻塞启动
+    if let Err(error) = read_stats_service.backfill_all().await {
+        tracing::warn!(%error, "阅读统计历史回填失败，将在下次启动重试");
+    }
     let book_group_service = Arc::new(BookGroupService::new(
         crate::storage::db::repo::BookGroupRepo::new(pool.clone()),
     ));
@@ -308,6 +318,7 @@ pub async fn build_state(cfg: AppConfig) -> anyhow::Result<AppState> {
             crate::service::chapter_diff_service::ChapterDiffService::new(),
         ),
         json_document_service,
+        read_stats_service,
         bookmark_repo,
         replace_rule_repo,
         chapter_title_override_repo: db::repo::ChapterTitleOverrideRepo::new(pool.clone()),

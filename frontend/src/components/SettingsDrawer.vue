@@ -43,16 +43,20 @@
                 <small>累计阅读时长</small>
               </div>
               <div class="status-card">
-                <span>{{ appStore.readingStatsSummary.openedBooks }}</span>
-                <small>打开过的书籍</small>
+                <span>{{ appStore.readingStatsSummary.todayTimeText }}</span>
+                <small>今日阅读</small>
               </div>
               <div class="status-card">
                 <span>{{ appStore.readingStatsSummary.readChapters }}</span>
                 <small>阅读章节数</small>
               </div>
               <div class="status-card">
-                <span>{{ appStore.readingStatsSummary.completedBooks }}</span>
+                <span>{{ appStore.readingStatsSummary.finishedBooks }}</span>
                 <small>读完书籍数</small>
+              </div>
+              <div class="status-card">
+                <span>{{ appStore.readingStatsSummary.streakDays }} 天</span>
+                <small>连续阅读</small>
               </div>
             </div>
           </section>
@@ -260,7 +264,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, reactive, ref, toRef } from 'vue'
+import { computed, nextTick, reactive, ref, toRef, watch } from 'vue'
 import { useEscClose } from '../composables/useEscClose'
 import { useFocusTrap } from '../composables/useFocusTrap'
 import { useRouter } from 'vue-router'
@@ -282,6 +286,13 @@ const drawerRef = ref<HTMLElement>()
 useFocusTrap(toRef(props, 'modelValue'), drawerRef)
 
 const appStore = useAppStore()
+// 统计由服务端派生：每次打开设置抽屉刷新一次，关闭期间读的章节也能看到
+watch(
+  () => props.modelValue,
+  (open) => {
+    if (open) void appStore.refreshReadingStats()
+  }
+)
 const shelfStore = useBookshelfStore()
 const router = useRouter()
 const appVersion = __APP_VERSION__
@@ -627,5 +638,10 @@ function handleApplyUpdate() {
 
 .stats-grid .status-card {
   margin-bottom: 0;
+}
+
+/* 5 张卡片时最后一张占满整行，避免右下角留一个空槽 */
+.stats-grid .status-card:last-child:nth-child(odd) {
+  grid-column: 1 / -1;
 }
 </style>

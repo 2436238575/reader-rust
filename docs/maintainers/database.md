@@ -2,7 +2,7 @@
 
 运行期数据存在 SQLite（默认 `storage/reader.db`，`DATABASE_URL` 可改）。sqlx 访问，连接池 10 条，WAL 模式（`synchronous=NORMAL`），启动时自动执行 `src/storage/db/migrations/` 下的迁移。数据库保存结构化数据（书源、书架、进度、书签、AI 记忆等），以及**全部章节正文与版本历史**；图片与上传资源仍保存在文件系统里，目录布局见[数据存储结构](/maintainers/storage)。
 
-表结构定义在 `src/storage/db/migrations/` 下：`0001_init.sql`（基础表结构、书籍/书源登记表、正文池与版本时间线）+ `0002_bookmarks_replace_rules.sql`（书签/替换规则实体表）+ `0004_book_groups.sql`（分组实体表）+ `0005_refresh_tokens.sql`（Refresh Token 轮换状态）。新增结构请新建迁移文件，不要改已发布的迁移——sqlx 按校验和核对已应用的迁移，改动历史文件会让旧库无法启动；确需重写时按破坏性变更处理：删除 `storage/reader.db` 重建。当前处于第一个 beta 之前，正文池相关的结构变更不提供就地迁移，升级时删除 `storage/` 重建。
+表结构定义在 `src/storage/db/migrations/` 下：`0001_init.sql`（基础表结构、书籍/书源登记表、正文池与版本时间线）+ `0002_bookmarks_replace_rules.sql`（书签/替换规则实体表）+ `0004_book_groups.sql`（分组实体表）+ `0005_refresh_tokens.sql`（Refresh Token 轮换状态）+ `0006_chapter_title_overrides.sql`（章节标题覆盖）+ `0007_chapters.sql`（章节登记表与目录状态）+ `0008_read_stats.sql`（阅读统计明细与旧统计总额）。新增结构请新建迁移文件，不要改已发布的迁移——sqlx 按校验和核对已应用的迁移，改动历史文件会让旧库无法启动；确需重写时按破坏性变更处理：删除 `storage/reader.db` 重建。当前处于第一个 beta 之前，正文池相关的结构变更不提供就地迁移，升级时删除 `storage/` 重建。
 
 三张底表的身份模型：
 
@@ -286,10 +286,13 @@ WHERE content_id NOT IN (SELECT content_id FROM chapter_versions);
 
 ## json_documents
 
-通用 JSON 文档存取。书分组、AI 模型配置、userdata（最近阅读/阅读统计等）存这张表，不各建新表。主键 `(user_ns, name)`。
+通用 JSON 文档存取。书分组、AI 模型配置、最近阅读（recent-books）等存这张表，不各建新表。主键 `(user_ns, name)`。
 
 > 书签与替换规则曾是这里的两个文档，2026-10 拆为实体表（见下两节）——
 > 整文档读改写有并发互覆、无 delete、删书级联要全量过滤三个老问题。
+> 阅读统计与已读标记曾是 `reading-stats` / `readChapterHistory` 两个文档，
+> 2026-11 改为 `read_chapter_days` 明细表 + `/v1/me/stats` 派生；旧文档只在
+> 启动回填时读取，前端不再写入（`readChapterHistory` 仍可按旧缓存只读）。
 
 | 字段         | 类型    | 用途                                                          |
 | ------------ | ------- | ------------------------------------------------------------- |
@@ -297,6 +300,44 @@ WHERE content_id NOT IN (SELECT content_id FROM chapter_versions);
 | `name`       | TEXT    | 文档名；userdata 类文档名走白名单校验（只允许字母数字与 `._-`） |
 | `json`       | TEXT    | 文档内容，整份 JSON                                           |
 | `updated_at` | INTEGER | 更新时间，毫秒时间戳                                          |
+
+## read_chapter_days
+
+阅读统计明细（0008）。按 `(用户, 书籍, 章节, 自然日)` 存秒数，不存聚合；
+`GET /v1/me/stats` 的总时长/今日/已读章数/读完本数/连续天数全部从这张表派生。
+
+- `day_key` 是整数 epoch day，本地 **04:00** 起算新一天；服务层启动时取一次
+  服务器时区偏移并固定，不处理 DST。
+- 客户端上报「该章当日累计秒数」，upsert 取 `MAX(旧值, 新值)`，重复上报不翻倍。
+- `backfilled=1` 是旧 `readChapterHistory` 的回填行（秒数 0，全部落在回填当天）：
+  计入已读章数/读完判定，但**不计入今日时长与连续天数**；之后该章有真实秒数
+  上报时 upsert 会把标记清 0。
+- 同一事务内把该书 `shelf_books.dur_chapter_time` 推进到 `MAX(现有, now)`。
+
+| 字段            | 类型    | 用途                                                   |
+| --------------- | ------- | ------------------------------------------------------ |
+| `user_ns`       | TEXT    | 数据隔离键                                             |
+| `book_id`       | INTEGER | 关联 books 登记表                                      |
+| `chapter_index` | INTEGER | 章节序号                                               |
+| `day_key`       | INTEGER | 自然日（epoch day，本地 04:00 边界）                   |
+| `seconds`       | INTEGER | 该章当日累计秒数（0..=86400）                          |
+| `updated_at`    | INTEGER | 最近写入时间，秒级时间戳                               |
+| `backfilled`    | INTEGER | 1 = 历史回填行（排除今日/连续天数）；0 = 真实阅读      |
+
+索引：主键 `(user_ns, book_id, chapter_index, day_key)`；`(user_ns, day_key)`
+供今日时长与连续天数查询。
+
+## read_stats_legacy
+
+旧版阅读统计总额（0008）。旧 `json_documents['reading-stats']` 只有总秒数，
+没有明细，无法拆到自然日/章节；启动回填时把总额单独存这里，统计总时长时相加。
+`backfilled_at > 0` 表示该用户已完成一次回填；文档读取失败时不写标记，下次启动重试。
+
+| 字段                   | 类型    | 用途                                   |
+| ---------------------- | ------- | -------------------------------------- |
+| `user_ns`              | TEXT    | 数据隔离键（主键）                     |
+| `legacy_total_seconds` | INTEGER | 旧版 `reading-stats.totalSeconds` 总额 |
+| `backfilled_at`        | INTEGER | 回填完成时间，秒级时间戳；0 表示未回填 |
 
 ## bookmarks
 

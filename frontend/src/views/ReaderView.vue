@@ -1329,16 +1329,25 @@ async function goBack() {
 function handlePageHide() {
   store.flushReaderSessionSave()
   persistReadingProgressKeepalive()
+  appStore.flushReadingSessionKeepalive()
+  appStore.pauseReadingSession()
 }
 
 function handleBeforeUnload() {
   store.flushReaderSessionSave()
   persistReadingProgressKeepalive()
+  appStore.flushReadingSessionKeepalive()
+  appStore.pauseReadingSession()
 }
 
 function handleVisibilityChange() {
-  if (document.visibilityState !== 'hidden') return
-  persistReadingProgressTemporaryKeepalive()
+  if (document.visibilityState === 'hidden') {
+    appStore.pauseReadingSession()
+    persistReadingProgressTemporaryKeepalive()
+    return
+  }
+  // bfcache/切回前台：从恢复时刻重新计时，不把隐藏期间算作阅读
+  appStore.resumeReadingSession()
 }
 
 async function persistReadingProgressBeforeLeave() {

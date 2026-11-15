@@ -12,24 +12,31 @@ import {
   storeAuthHint,
 } from '../utils/secureAccess'
 import type { UserInfo } from '../types'
+import { getReadingStats } from '../api/readStats'
+import { flushReadEvents, trackChapterRead } from '../utils/readEvents'
 
 vi.mock('../api/user', () => ({
   getUserInfo: vi.fn(),
 }))
 
-// syncStatsOnce 背后的后端阅读统计同步：单测不真发请求
-vi.mock('../utils/readingStats', () => ({
-  loadLocalReadingStats: () => ({
+// 阅读统计改由服务端派生：单测不真发请求
+vi.mock('../api/readStats', () => ({
+  getReadingStats: vi.fn(async () => ({
     totalSeconds: 0,
-    openedBooks: [],
-    readChapters: [],
-    completedBooks: [],
-  }),
-  persistLocalReadingStats: vi.fn(),
-  pushReadingStatsToBackend: vi.fn(),
-  syncReadingStatsFromBackend: vi.fn(async (stats: unknown) => stats),
-  MAX_READ_CHAPTER_ENTRIES: 5000,
-  STATS_PUSH_DEBOUNCE_MS: 2000,
+    todaySeconds: 0,
+    readChapters: 0,
+    finishedBooks: 0,
+    streakDays: 0,
+  })),
+}))
+
+// 阅读事件队列在单测里只验证调用编排，不碰 localStorage/网络
+vi.mock('../utils/readEvents', () => ({
+  accumulateReadSeconds: vi.fn(),
+  flushReadEvents: vi.fn(async () => undefined),
+  flushReadEventsKeepalive: vi.fn(),
+  syncReadDayKey: vi.fn(async () => null),
+  trackChapterRead: vi.fn(),
 }))
 
 // startAuthLifecycle 会挂定时器，单测不需要真实的续期编排；
@@ -77,8 +84,8 @@ const cancelUserdataQueueMock = vi.mocked(cancelUserdataQueue)
 const prefetchUserdataMock = vi.mocked(prefetchUserdata)
 const clearUserdataPrefetchMock = vi.mocked(clearUserdataPrefetch)
 
-// 三份首屏文档名是与后端约定的线缆契约，断言用字面量而不是常量，防止常量改错无人察觉
-const FIRST_SCREEN_DOCS = ['reading-stats', 'recent-books', 'readChapterHistory']
+// 首屏只剩最近阅读一份 userdata 文档；阅读统计/已读标记已改服务端派生
+const FIRST_SCREEN_DOCS = ['recent-books']
 
 function createUserInfo(username = 'admin'): UserInfo {
   return { username }
@@ -437,3 +444,38 @@ describe('app store 会话失效清理', () => {
     expect(hasAuthHint()).toBe(false)
   })
 })
+
+describe('app store 阅读统计（服务端派生）', () => {
+  it('refreshReadingStats 用 /v1/me/stats 填充 summary', async () => {
+    vi.mocked(getReadingStats).mockResolvedValue({
+      totalSeconds: 3660,
+      todaySeconds: 90,
+      readChapters: 12,
+      finishedBooks: 2,
+      streakDays: 3,
+    })
+    const store = useAppStore()
+    store.setUser(createSession())
+
+    await store.refreshReadingStats()
+
+    expect(store.readingStatsSummary).toMatchObject({
+      totalSeconds: 3660,
+      todaySeconds: 90,
+      totalTimeText: '1小时1分钟',
+      todayTimeText: '1分钟',
+      readChapters: 12,
+      finishedBooks: 2,
+      streakDays: 3,
+    })
+  })
+
+  it('markChapterRead 登记到离线缓冲并触发 flush', () => {
+    const store = useAppStore()
+    store.markChapterRead('book_1', 3)
+
+    expect(trackChapterRead).toHaveBeenCalledWith('book_1', 3)
+    expect(flushReadEvents).toHaveBeenCalled()
+  })
+})
+

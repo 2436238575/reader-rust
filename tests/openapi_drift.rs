@@ -45,6 +45,8 @@ const REQUIRED_PATHS: &[&str] = &[
     "/v1/auth/password",
     // me / shelf
     "/v1/me",
+    "/v1/me/stats",
+    "/v1/me/read-events:batch",
     "/v1/me/shelf",
     "/v1/me/shelf/{bookId}",
     "/v1/me/shelf:batchDelete",

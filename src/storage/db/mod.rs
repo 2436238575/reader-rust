@@ -1,5 +1,6 @@
 pub mod chapters_repo;
 pub mod content_repo;
+pub mod read_stats_repo;
 pub mod repo;
 
 use sqlx::{

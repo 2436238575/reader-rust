@@ -3,13 +3,18 @@ import type { ApiResponse } from '../types'
 import { hasAuthHint } from '../utils/secureAccess'
 import { API_BASE } from '../utils/appBase'
 import { notifyNeedLogin } from '../utils/authEvents'
+import { currentSessionEpoch } from '../utils/sessionEpoch'
 import {
   RefreshNetworkError,
   SessionExpiredError,
   refreshAccessToken,
 } from '../utils/authSession'
 
-type RetriableConfig = InternalAxiosRequestConfig & { _authRetried?: boolean }
+type RetriableConfig = InternalAxiosRequestConfig & {
+  _authRetried?: boolean
+  /** 请求发出时的会话代际；登出后旧代际的 401 不再触发刷新 */
+  sessionEpoch?: number
+}
 
 /**
  * 大文件上传的超时，与后端 `INBOUND_UPLOAD_TIMEOUT_SECS`（默认 900 秒）对齐。
@@ -46,6 +51,12 @@ const DEAD_CREDENTIAL_CODES = new Set([
   'AUTH_REFRESH_REPLAYED',
   'SESSION_INVALID',
 ])
+
+// ─── Request interceptor: 记录会话代际 ───
+http.interceptors.request.use((config) => {
+  ;(config as RetriableConfig).sessionEpoch = currentSessionEpoch()
+  return config
+})
 
 // ─── Response interceptor: unwrap ApiResponse, refresh on 401 ───
 // 请求侧不再注入 Authorization：浏览器会自动带上 HttpOnly Cookie。
@@ -89,6 +100,12 @@ http.interceptors.response.use(
     // Cookie 换新）并重放一次；换不到才拉起登录框。并发 401 由
     // authSession 的单飞逻辑合并。
     if (status === 401) {
+      const requestEpoch = (config as RetriableConfig | undefined)?.sessionEpoch
+      // 登出/清会话已发生：在途请求的 401 直接把错误抛给调用方，不能刷新——
+      // 否则会把刚清掉的会话 Cookie 又换回来。
+      if (requestEpoch != null && requestEpoch !== currentSessionEpoch()) {
+        return Promise.reject(withStatus(new Error('登录状态已变更'), status))
+      }
       const canRetry =
         !!config &&
         !config._authRetried &&
@@ -99,6 +116,10 @@ http.interceptors.response.use(
         config._authRetried = true
         try {
           await refreshAccessToken()
+          // 刷新期间用户登出：即使刷新成功也不再重放
+          if (requestEpoch != null && requestEpoch !== currentSessionEpoch()) {
+            return Promise.reject(withStatus(new Error('登录状态已变更'), status))
+          }
           return http.request(config)
         } catch (refreshError) {
           if (refreshError instanceof RefreshNetworkError) {

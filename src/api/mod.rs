@@ -14,7 +14,8 @@ use crate::service::{
     book_service::BookService, book_source_service::BookSourceService,
     chapter_content_service::ChapterContentService, image_service::ImageService,
     json_document_service::JsonDocumentService, local_epub_book::LocalEpubBookService,
-    local_txt_book::LocalTxtBookService, user_service::UserService,
+    local_txt_book::LocalTxtBookService, read_stats_service::ReadStatsService,
+    user_service::UserService,
 };
 use std::sync::Arc;
 
@@ -34,6 +35,8 @@ pub struct AppState {
     /// 章节 diff：进程内 imara-diff 计算，无外部进程依赖
     pub chapter_diff_service: Arc<crate::service::chapter_diff_service::ChapterDiffService>,
     pub json_document_service: Arc<JsonDocumentService>,
+    /// 阅读统计明细、派生统计与启动回填
+    pub read_stats_service: Arc<ReadStatsService>,
     pub bookmark_repo: crate::storage::db::repo::BookmarkRepo,
     pub replace_rule_repo: crate::storage::db::repo::ReplaceRuleRepo,
     /// 章节标题持久覆盖层（用户改名，读取时叠加在目录缓存之上）

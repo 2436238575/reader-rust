@@ -19,7 +19,7 @@ import {
   deleteBookmarks as apiDeleteBookmarks,
 } from '../api/bookmark'
 import { getUserdataBatch } from '../api/userdata'
-import { queueUserdataSave } from '../utils/userdataQueue'
+import { trackChapterRead } from '../utils/readEvents'
 import { READ_HISTORY } from '../utils/userdataDocs'
 import type { Book, Bookmark } from '../types'
 import {
@@ -52,6 +52,44 @@ export const useReaderMarksStore = defineStore('readerMarks', () => {
     }
   }
 
+  /**
+   * 旧本地已读文档一次性转成阅读事件（按书、每本只做一次）：
+   * `index:K` 与本地书 `local-txt/local-epub:<book>#K` 前端可直接解析；
+   * 网络书的 URL 形已读由服务端启动回填按目录反查，不在这里猜。
+   * 只处理当前打开的书（必然已登记），避免旧文档里已不存在的书让整批事件 404。
+   */
+  function queueLegacyReadEventsOnce(bookId: string) {
+    const FLAG = `reader-read-history-events-v1:${bookId}`
+    try {
+      if (localStorage.getItem(FLAG)) return
+    } catch {
+      return
+    }
+    const keys = readReadHistoryDoc()[bookId]
+    if (Array.isArray(keys)) {
+      for (const raw of keys) {
+        if (typeof raw !== 'string' || !raw.startsWith(`${bookId}::`)) continue
+        const rest = raw.slice(bookId.length + 2)
+        let index: number | undefined
+        if (rest.startsWith('index:')) {
+          const text = rest.slice('index:'.length)
+          if (/^\d+$/.test(text)) index = Number(text)
+        } else if (
+          rest.startsWith('local-txt:') ||
+          rest.startsWith('local-epub:')
+        ) {
+          const hash = rest.lastIndexOf('#')
+          const text = hash >= 0 ? rest.slice(hash + 1) : ''
+          if (/^\d+$/.test(text)) index = Number(text)
+        }
+        if (index != null && Number.isInteger(index) && index >= 0) {
+          trackChapterRead(bookId, index)
+        }
+      }
+    }
+    safeLocalSet(FLAG, '1')
+  }
+
   function buildReadChapterKey(
     index: number,
     chapter?: { url?: string } | null,
@@ -71,6 +109,7 @@ export const useReaderMarksStore = defineStore('readerMarks', () => {
       readChapterKeys.value = new Set()
       return
     }
+    queueLegacyReadEventsOnce(bookId)
     const doc = readReadHistoryDoc()
     readChapterKeys.value = new Set(Array.isArray(doc[bookId]) ? doc[bookId] : [])
     // 已读标记存在 localStorage，天然单浏览器；与后端文档做并集合并实现跨浏览器同步。
@@ -84,38 +123,12 @@ export const useReaderMarksStore = defineStore('readerMarks', () => {
     const doc = readReadHistoryDoc()
     doc[bookId] = Array.from(readChapterKeys.value)
     safeLocalSet(READER_READ_HISTORY_KEY, JSON.stringify(doc))
-    scheduleReadHistoryPush(currentBook)
+    // 统计已改由服务端 read-events 派生：本地文档只作离线镜像与旧浏览器
+    // 缓存读取，不再写 userdata。新读的章节由 app store 的阅读事件队列上报。
   }
 
-  // ─── 已读标记的跨浏览器同步（userdata 文档：{ [bookId]: string[] }，经批量接口读写） ───
+  // ─── 已读标记的跨浏览器同步（userdata 文档：{ [bookId]: string[] }，只读） ───
   const READ_HISTORY_DOC = READ_HISTORY
-
-  let readHistoryPushTimer: ReturnType<typeof setTimeout> | null = null
-  function scheduleReadHistoryPush(currentBook?: Book | null) {
-    const bookId = currentBook?.bookId
-    if (!bookId) return
-    if (readHistoryPushTimer) clearTimeout(readHistoryPushTimer)
-    readHistoryPushTimer = setTimeout(() => {
-      readHistoryPushTimer = null
-      void pushReadHistory(bookId, Array.from(readChapterKeys.value))
-    }, 1500)
-  }
-
-  // 读-改-写整文档：只动当前书的分片，别的浏览器写的其他书不受影响
-  async function pushReadHistory(bookId: string, keys: string[]) {
-    try {
-      const docs = await getUserdataBatch<Record<string, string[]>>([READ_HISTORY_DOC])
-      const doc = docs[READ_HISTORY_DOC] || {}
-      const remote = new Set(Array.isArray(doc[bookId]) ? doc[bookId] : [])
-      const merged = Array.from(new Set([...remote, ...keys]))
-      if (merged.length === remote.size) return
-      doc[bookId] = merged
-      // 推入批量写队列：与其他 userdata 文档合并为一次批量写，失败由队列退避重试
-      queueUserdataSave(READ_HISTORY_DOC, doc)
-    } catch {
-      // 离线/未登录：本地已持久化，下次同步会补上
-    }
-  }
 
   async function syncReadChapterHistoryFromBackend(currentBook?: Book | null) {
     const bookId = currentBook?.bookId
@@ -137,10 +150,7 @@ export const useReaderMarksStore = defineStore('readerMarks', () => {
       readChapterKeys.value = merged
       persistReadChapterHistory(currentBook)
     }
-    // 本地多出来的（在别的浏览器里读的）推回后端
-    if (merged.size !== remote.size) {
-      void pushReadHistory(bookId, Array.from(merged))
-    }
+    // 旧文档只读：不在前端再写回。新读章节由 /v1/me/read-events:batch 记录。
   }
 
   function markChapterAsRead(index: number) {

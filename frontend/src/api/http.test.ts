@@ -8,6 +8,10 @@ import {
   refreshAccessToken,
 } from '../utils/authSession'
 import { storeAuthHint } from '../utils/secureAccess'
+import {
+  invalidateSessionForRetry,
+  resetSessionEpochForTest,
+} from '../utils/sessionEpoch'
 
 vi.mock('../utils/authSession', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../utils/authSession')>()
@@ -64,6 +68,7 @@ function seedHint() {
 
 beforeEach(() => {
   localStorage.clear()
+  resetSessionEpochForTest()
   refreshMock.mockReset()
 })
 
@@ -110,6 +115,19 @@ describe('http auth interceptor', () => {
     await expect(http.get('/getBookshelf')).rejects.toThrow('需要登录')
     expect(calls).toBe(2)
     expect(refreshMock).toHaveBeenCalledTimes(1)
+  })
+
+  it('登出后旧代际的 401 不再触发静默刷新', async () => {
+    seedHint()
+    refreshMock.mockResolvedValue(undefined)
+    http.defaults.adapter = async (config) => {
+      // 模拟请求在途期间用户点了退出登录（代际已自增）
+      invalidateSessionForRetry()
+      return unauthorized(config)
+    }
+
+    await expect(http.get('/me/stats')).rejects.toThrow('登录状态已变更')
+    expect(refreshMock).not.toHaveBeenCalled()
   })
 
   it('reports expiry when the refresh is rejected', async () => {

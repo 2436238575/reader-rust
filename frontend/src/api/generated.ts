@@ -994,6 +994,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/me/read-events:batch": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 批量上报阅读事件（按章当日累计秒数，服务端取 MAX）。 */
+        post: operations["saveReadEvents"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/me/replace-rules": {
         parameters: {
             query?: never;
@@ -1151,6 +1168,23 @@ export interface paths {
          *     拒绝（422「书架已变化，请刷新后重试」），避免部分提交把顺序写乱。
          */
         patch: operations["reorderShelf"];
+        trace?: never;
+    };
+    "/v1/me/stats": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 当前用户的阅读统计（全部由明细表派生）。 */
+        get: operations["getReadingStats"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
         trace?: never;
     };
     "/v1/me/userdata:batch": {
@@ -2781,6 +2815,55 @@ export interface components {
              * @description 0..1 的章内比例（服务端存万分比）
              */
             offset?: number | null;
+        };
+        ReadEventItem: {
+            /** @description 书籍 id（`book_<n>`；别名会在服务端归一） */
+            bookId: string;
+            /**
+             * Format: int32
+             * @description 章节序号（≥0）
+             */
+            chapterIndex: number;
+            /**
+             * Format: int64
+             * @description 该章当日的累计阅读秒数；服务端按 0..=86400 截断
+             */
+            seconds: number;
+        };
+        ReadEventsBatchRequest: {
+            /**
+             * Format: int64
+             * @description 客户端累计值所属的服务端 dayKey（上次响应拿到的值）。与当前日不同时
+             *     事件写回该历史日（跨日/离线缓冲），响应始终返回当前 dayKey；
+             *     缺省按当前日写入。
+             */
+            dayKey?: number | null;
+            /** @description 最多 100 条；空数组合法（用于只取服务端 dayKey） */
+            events: components["schemas"]["ReadEventItem"][];
+        };
+        ReadEventsBatchResult: {
+            /**
+             * Format: int32
+             * @description 本批处理的事件条数
+             */
+            accepted: number;
+            /**
+             * Format: int64
+             * @description 服务端当前自然日（epoch day）；客户端据此校准「当日累计秒数」的清零时机
+             */
+            dayKey: number;
+        };
+        ReadingStats: {
+            /** Format: int64 */
+            finishedBooks: number;
+            /** Format: int64 */
+            readChapters: number;
+            /** Format: int64 */
+            streakDays: number;
+            /** Format: int64 */
+            todaySeconds: number;
+            /** Format: int64 */
+            totalSeconds: number;
         };
         RenameChapterRequest: {
             title: string;
@@ -6898,6 +6981,57 @@ export interface operations {
             };
         };
     };
+    saveReadEvents: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ReadEventsBatchRequest"];
+            };
+        };
+        responses: {
+            /** @description 本批处理条数与服务端当前 dayKey */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReadEventsBatchResult"];
+                };
+            };
+            /** @description 未登录或令牌失效 */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description 事件中的书籍不在登记表 */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description 事件超过 100 条、chapterIndex 为负数或字段非法 */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
     listReplaceRules: {
         parameters: {
             query?: never;
@@ -7395,6 +7529,35 @@ export interface operations {
             };
             /** @description 空数组 / 重复 id / 非法 id / 集合与当前书架不一致 */
             422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    getReadingStats: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 累计/今日时长、已读章数、读完本数与连续天数 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReadingStats"];
+                };
+            };
+            /** @description 未登录或令牌失效 */
+            401: {
                 headers: {
                     [name: string]: unknown;
                 };

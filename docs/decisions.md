@@ -286,4 +286,20 @@ goal 执行中遇到「决策表与 spec 都沉默」的问题时，按 §5.4 �
 - **前端**：`getCoverUrl` / `withImageWidth` 认 v1 与 legacy 四种本站地址；`customCoverUrl` 等任意地址改走 `/v1/images:resolve?url=`；新增 `isPipedImageUrl` 供评论配图判断收口地址。`coverImageId` 映射出的本站地址同步改为 `/v1/images/<id>`。
 - **文档与测试**：`docs/api/chapter.md` 图片管道段落改为 v1 契约并保留 legacy 兼容说明；`tests/image_pipeline.rs` 主路径改测 v1，新增「v1 resolve / v1 与 legacy 按 id 共用缓存 / 参数校验」用例；服务层 `id_from_route` 增加绝对 URL 伪装拒绝的断言。
 
+## 2026-11-15 阅读统计改服务端派生（read-events + stats）
+
+- **不存聚合，只存明细**：新表 `read_chapter_days(user_ns, book_id, chapter_index, day_key, seconds, updated_at, backfilled)`，主键前四列，索引 `(user_ns, day_key)`。总时长/今日/已读章数/读完本数/连续天数全部查询时派生；避免聚合行被重复累加后无法对账。
+- **天边界固定偏移**：`day_key = div_euclid(utc_secs + offset_secs - 4*3600, 86400)`，本地 04:00 起算新一天。`offset_secs` 在服务启动时取一次 `chrono::Local` 当前偏移并固定，不引入时区库、不处理 DST。响应 `dayKey` 交给客户端校准本地累计值的清零时机。
+- **客户端报当日累计、服务端取 MAX**：`POST /v1/me/read-events:batch` 的 `seconds` 是该章当日累计值，截断到 `0..=86400`；upsert `MAX(旧值, 新值)`，不做 eventId 去重。请求可带客户端上次响应拿到的 `dayKey`：与当前日不同时事件写回该历史日（跨日/离线缓冲），响应始终返回当前 dayKey，避免把昨天累计值记进今天；离线跨多日仍归到最后已知 dayKey。单批 ≤100，空数组合法（只取 dayKey）。书不在 `books` 登记表（含非法 bookId）**整批 404 `BOOK_NOT_FOUND`**，不做部分成功。同一事务把该书 `shelf_books.dur_chapter_time` 推进到 `MAX(现有, now)`。
+- **统计口径**：`totalSeconds` = 明细 `SUM(seconds)` + `read_stats_legacy.legacy_total_seconds`；`todaySeconds` 只算今天且 `backfilled=0`；`readChapters` = `COUNT(DISTINCT book_id, chapter_index)`；`finishedBooks` = 书架内最后一章在明细表有行的本数（目录完整的网络书取 `chapters` 最大 index，目录未完整但已知 `totalChapterNum` 时用 `total-1`，本地书回退 `totalChapterNum - 1`）；`streakDays` 从今天往前数连续、每天真实秒数 >0 的 `day_key`，**今天还没读时从昨天起算**（今天与昨天都没读为 0），回填日排除。
+- **旧数据回填**：启动时按账号幂等执行，已有明细或 `read_stats_legacy.backfilled_at > 0` 则跳过；文档读取失败时不写标记，下次启动重试。`readChapterHistory` 的 `book_N::<chapterUrl>` / `book_N::index:K` 按当前目录把 URL 反查 index（本地 TXT/EPUB 的 `local-*:<book>#<index>` 从 `#` 后解析；查不到丢弃），全部落在回填当天、`backfilled=1`、秒数 0；`reading-stats.totalSeconds` 记入 `read_stats_legacy`。回填行之后被真实上报命中时 upsert 清零标记，开始计入今日/连续天数。
+- **前端**：新增 `utils/readEvents.ts` 离线缓冲（localStorage，按章累计 + `lastSentSeconds` 脏标记，只发有变化的条目），每 15 秒或切章 flush，pagehide/beforeUnload 用裸 fetch + keepalive 补发；页面隐藏/切后台暂停计时，恢复可见时重新计时，避免挂机时间算成阅读。`readerMarks` 首次打开某本书时把该书本地的 `index:K` 与本地书 `local-*:#K` 旧标记转成 0 秒事件补交（每本一次）；网络书 URL 形旧标记由服务端启动回填处理。`/v1/me/stats` 只在打开设置抽屉时刷新。`reading-stats` / `readChapterHistory` 两份文档不再写；后者仍可只读旧文档用于老浏览器缓存。`recent-books` 本次不动。
+- **兼容面**：`/reader3/getUserdataBatch` 保留只读（web 老缓存版本仍会读），不再有写入方；`PATCH /v1/me/shelf/{bookId}` 仍是纯位置语义，不承担统计写入。
+- **已知取舍**：跨浏览器已读标记的实时并集不再经过 userdata 文档（本地镜像仍用于当前浏览器渲染）；离线跨多日的秒数会归到最后已知的服务端 dayKey；同一章同日的多端累计值按 MAX 合并而非求和（累计值语义的必然结果）。
+
+## 2026-11-15 登出与在途请求的 401 刷新竞态
+
+- **会话代际（`utils/sessionEpoch.ts`）**：HTTP 请求发出时在 config 上记录当前代际；`apiLogout()` 开始时与 `clearUser()` 都自增代际。401 拦截器只有在「请求代际 == 当前代际」时才允许静默刷新；旧代际请求直接抛「登录状态已变更」，不再刷新、不再触发登录弹窗。刷新期间用户登出，刷新成功后也不重放请求。
+- **动机**：设置抽屉打开即拉 `/v1/me/stats`，用户紧接着退出登录时，这条在途请求可能在 Cookie 已清后返回 401；旧逻辑会静默刷新并把刚清掉的会话 Cookie 重新换回来，表现为「到了登录页，会话却还活着」。修复放在拦截器侧，未来任何「打开就发」的请求都不会重演该路径。
+
 

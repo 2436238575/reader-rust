@@ -1,12 +1,10 @@
 /**
- * 后端 userdata 文档名（读 /reader3/getUserdataBatch；写 PUT /v1/me/userdata:batch）的统一出口。
- * 首屏三份文档由 stores/app.ts 在登录后批量预读（api/userdata 的 prefetchUserdata）；
+ * 后端 userdata 文档名的统一出口（读 /reader3/getUserdataBatch；
+ * 写 PUT /v1/me/userdata:batch，但阅读统计/已读标记已不再写）。
  * 常量收在不依赖 store 的独立模块里，避免 app.ts 直接 import store 造成循环依赖。
  */
 
-/** 阅读统计（utils/readingStats） */
-export const READING_STATS = 'reading-stats'
 /** 最近阅读（utils/recentBooks） */
 export const RECENT_BOOKS = 'recent-books'
-/** 已读标记（stores/reader 的 readChapterKeys 跨浏览器同步） */
+/** 旧版已读标记文档：只读兼容，前端不再写入（新统计走 /v1/me/read-events:batch） */
 export const READ_HISTORY = 'readChapterHistory'

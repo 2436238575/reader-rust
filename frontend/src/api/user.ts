@@ -1,6 +1,7 @@
 import http from './http'
 import type { UserInfo } from '../types'
 import { API_V1_BASE } from '../utils/appBase'
+import { invalidateSessionForRetry } from '../utils/sessionEpoch'
 import type { components } from './generated'
 
 /** v1 生成的具名 schema（契约 §3.1：手写接口与生成物重复会被打回） */
@@ -22,6 +23,9 @@ export function login(username: string, password: string) {
 }
 
 export function logout() {
+  // 先让在途请求的 401 失效：登出请求本身不清 Cookie 之前，别的请求返回
+  // 401 也不能再触发静默刷新，否则会把刚登出的会话换回来。
+  invalidateSessionForRetry()
   // 204 + 吊销 refresh 会话家族；本地清 hint 由 store 的 clearUser 负责
   return http.post('/auth/logout', {}, { baseURL: API_V1_BASE }).catch(() => {
     // Logout always clears local state
