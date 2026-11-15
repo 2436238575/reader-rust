@@ -48,7 +48,7 @@ function toLegacySummary(item: ApiSourceSummary): BookSourceSummary {
 
 /**
  * 摘要列表：走 v1 游标分页接口拉全量后适配（书源数量在几百级，200/页最多几个来回）。
- * 摘要不含规则 JSON；编辑器等按 id 取全量的场景继续走 /reader3（sources 写批次迁移）。
+ * 摘要不含规则 JSON；编辑器等按 id 取全量走 GET /v1/sources/{id}。
  */
 export async function getBookSourceList(): Promise<BookSourceSummary[]> {
   const out: BookSourceSummary[] = []

@@ -6,7 +6,7 @@
 
 ## 书源的身份键：`bookSourceId`
 
-**`bookSourceId`（整数）是书源的身份键**，由后端在书源首次入库时自增分配；`bookSourceUrl` 只是数据字段，同时充当导入时的去重键。所有按书源寻址的接口（`getBookSource`、`deleteBookSource(s)`、`loginBookSource`、`getExploreKinds`、`testBookSources`、`bookSourceProxy`、`bookSourceDebugSSE`、`exploreBook` 等）一律只认 `bookSourceId`；列表与保存响应里都会带上它。
+**`bookSourceId`（整数）是书源的身份键**，由后端在书源首次入库时自增分配；`bookSourceUrl` 只是数据字段，同时充当导入时的去重键。`/v1` 对外使用 `src_<n>` 作为不透明 id（由它映射到数字身份）；所有按书源寻址的接口（详情、删除、登录、`explore-kinds`、测试、代理、`explore` 等）都按这个身份定位。
 
 ## 获取书源列表
 
@@ -75,14 +75,10 @@ POST /reader3/loginBookSource
 ## 获取发现页分类
 
 ```text
-POST /reader3/getExploreKinds
+GET /v1/sources/{sourceId}/explore-kinds
 ```
 
-请求参数：
-
-| 参数           | 类型   | 必填 | 说明     |
-| -------------- | ------ | ---- | -------- |
-| `bookSourceId` | number | 是   | 书源 ID  |
+按书源 `exploreUrl`（JSON / JS / `标题::地址`）解析分类清单，不下发上游请求。返回 `[{title, url: string|null, style: object|null}]`；书源不存在返回 404 `SOURCE_NOT_FOUND`。
 
 ## 添加/更新书源
 
@@ -157,13 +153,13 @@ POST /reader3/deleteInvalidBookSources
 
 删除被标记为失效分组（`invalid_book_sources`）的书源。响应：`data` 形如 `{ "deleted": 3 }`。
 
-## 获取失效书源列表
+## 获取失效书源列表（v1）
 
 ```text
-POST /reader3/getInvalidBookSources
+GET /v1/sources?state=invalid
 ```
 
-响应：`data` 为失效书源数组。
+按「失效」分组过滤书源摘要页；`state=active` 排除失效源，省略则不过滤。旧版 `getInvalidBookSources` 读取的文件缓存已无写入方，端点已删除。
 
 ## 测试书源
 
@@ -202,66 +198,44 @@ POST /reader3/readSourceFile
 
 上传 `multipart/form-data` 文件（`.json` 或 `.txt`），返回解析出的书源对象数组。单文件上限 32MB；单请求 multipart 字段数上限 20 个（超限 400）。
 
-## 书源代理限定令牌
-
-> **v1**：`POST /v1/sources/{sourceId}/proxy-token`，TTL 600 秒、scope=`bookSourceProxy`、bsid 绑定单一源，只能访问 `/reader3/bookSourceProxy` 前缀；legacy 端点仍为 30 分钟。
+## 书源代理限定令牌（v1）
 
 ```text
-POST /reader3/mintBookSourceProxyToken
+POST /v1/sources/{sourceId}/proxy-token
 ```
 
-请求体：
+签发 10 分钟、`scope=bookSourceProxy`、`bsid` 绑定单一书源的限定令牌：
 
 ```json
-{ "bookSourceId": 12 }
+{ "token": "<限定令牌>", "expiresIn": 600 }
 ```
 
-返回：
+需要登录（Cookie 或 Bearer）；书源不存在返回 404 `SOURCE_NOT_FOUND`。限定令牌只能访问该书的 `/v1/sources/{sourceId}/proxy` 与 `.../proxy/client-log`，不能当主令牌调用任何普通接口。
 
-```json
-{ "token": "<30 分钟限定令牌>", "expiresIn": 1800 }
-```
-
-受保护接口（浏览器由 HttpOnly Cookie 自动携带，API 客户端用 `Authorization`）。令牌的 claims 带 `scope=bookSourceProxy` 与 `bsid`，只能访问 `bookSourceProxy` / `bookSourceClientLog` 两个路径，且只能代理这一本书源。前端打开书源登录预览时先用它换令牌，再拼 iframe URL；**主 JWT 不进 URL**。
-
-## 书源代理
+## 书源代理页（v1）
 
 ```text
-ANY /reader3/bookSourceProxy
+GET|POST /v1/sources/{sourceId}/proxy?url=<目标URL>&accessToken=<限定令牌>
 ```
 
-查询参数：
+将目标站点的 HTML 页面注入代理脚本后返回，使页面内相对链接、表单、脚本自动走本代理。
 
-| 参数           | 类型   | 必填 | 说明                         |
-| -------------- | ------ | ---- | ---------------------------- |
-| `bookSourceId` | number | 是   | 书源 ID                      |
-| `url`          | string | 是   | 需要代理请求的完整或部分 URL |
-| `accessToken`  | string | 是   | 上面接口签发的限定令牌（仅此路径与 `bookSourceClientLog` 接受查询串令牌） |
+- **只认查询串 `accessToken`**：不接受 Cookie/Bearer，因此不走 `/v1` 的 CSRF 检查；令牌必须绑定路径里的书源，错绑返回 403 `SCOPE_FORBIDDEN`，缺令牌 401。
+- 服务端每次响应重签 30 分钟页面令牌并写进重写后的 URL/JS；HTML 响应带 `Content-Security-Policy: sandbox allow-scripts allow-forms`（不含 `allow-same-origin`），直接打开或嵌入 iframe 都会进入不透明源。
+- 转发上游时剔除 `reader_access` / `reader_refresh`，只保留书源站点自己的 Cookie；出站目标仍过 SSRF 守卫。
+- 代理页 Cookie 的 `Path` 收紧到 `<部署前缀>/v1/sources/src_<n>/proxy`（前缀由 `COOKIE_PATH` 推导），不会外溢到其他书源或主站接口。
 
-将目标站点的 HTML 页面注入代理脚本后返回，使页面内相对链接、表单、脚本自动走本代理。支持 GET/POST。
-
-安全设计：注入页面的 `accessToken` 是**限定用途令牌**——短寿命（30 分钟）、通过 claims 里的 `bsid` 绑定单个书源（`bookSourceId`）、且只能访问 `bookSourceProxy` / `bookSourceClientLog` 两个路径；即使被代理页面的第三方脚本窃取，也不能用它调用其它接口或代理其它书源。HTML 响应带 `Content-Security-Policy: sandbox allow-scripts allow-forms`（不含 `allow-same-origin`），直接打开或嵌入 iframe 都会进入不透明源，读不到主站存储与会话 Cookie。前端嵌入代理页面时应使用无 `allow-same-origin` 的 sandbox iframe。
-
-## 书源客户端日志
+## 书源客户端日志（v1）
 
 ```text
-ANY /reader3/bookSourceClientLog
+GET|POST /v1/sources/{sourceId}/proxy/client-log?accessToken=<限定令牌>&message=&source=&lineno=&colno=&stack=
 ```
 
-书源页面运行时的前端错误上报接口。查询参数：`message`、`source`、`lineno`、`colno`、`stack`。服务端仅记录日志，响应 `data` 为 `{ "logged": true }`。
+书源页面运行时的前端错误上报。同样要求绑定该书源的限定令牌；服务端截断字段、按 source 限频后写 warn 日志，响应 `{ "logged": true }`。
 
-## 书源调试（流式）
+## 书源调试
 
-```text
-GET /reader3/bookSourceDebugSSE
-```
-
-调试搜索规则的 SSE 流式接口。查询参数：
-
-| 参数           | 类型   | 必填 | 说明             |
-| -------------- | ------ | ---- | ---------------- |
-| `bookSourceId` | number | 是   | 书源 ID          |
-| `keyword`      | string | 否   | 调试用搜索关键词 |
+legacy `GET /reader3/bookSourceDebugSSE` 实际只是跑一次搜索并流式输出消息；该端点已删除。调试搜索请用 `POST /v1/searches`（`sourceIds` 指定单源）+ `GET /v1/tasks/{taskId}/events`。
 
 ## 导入书源
 

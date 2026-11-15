@@ -164,13 +164,16 @@ impl LocalEpubBookService {
             .iter()
             .find(|chapter| chapter.index == requested_index)
             .ok_or_else(|| AppError::BadRequest("章节不存在".to_string()))?;
-        fs::read_to_string(
+        let content = fs::read_to_string(
             self.book_dir(user_ns, &book_url)?
                 .join("chapters")
                 .join(&chapter.file_name),
         )
         .await
-        .map_err(map_local_epub_read_error)
+        .map_err(map_local_epub_read_error)?;
+        // 存量书正文里还是 legacy 资源 URL：读时改写，避免为迁移旧文件
+        // 引入一次性磁盘扫描。新导入的内容直接生成 v1 URL。
+        Ok(rewrite_legacy_asset_urls(&content))
     }
 
     pub async fn get_asset(
@@ -1123,7 +1126,7 @@ fn content_type_for_path(path: &str) -> String {
     .to_string()
 }
 
-/// EPUB SVG 资产的沙箱 CSP：SVG 经 /reader3/localEpubAsset 以
+/// EPUB SVG 资产的沙箱 CSP：SVG 经 /v1/local-books/assets 以
 /// image/svg+xml **同源**直出，直接打开时内嵌脚本会在主站源下执行。
 /// 关掉全部资源加载与脚本，只保留 `<img>` 渲染与内联样式；不能用
 /// Content-Disposition: attachment 替代——那会破坏 EPUB 插画的展示。
@@ -1137,13 +1140,70 @@ pub fn needs_sandbox_csp(content_type: &str) -> bool {
         .starts_with("image/svg+xml")
 }
 
+/// 本地书 URL（`local-epub:<hash>`）→ 资源引用（hash）。
+///
+/// 资源 URL 在导入时就要生成，此时 bookId 尚未分配；hash 是稳定引用，
+/// 服务端再用 user_ns + hash 还原书籍并校验登记。
+pub fn asset_ref_from_book_url(book_url: &str) -> Option<&str> {
+    book_url.trim().strip_prefix("local-epub:").filter(|value| {
+        value.len() == LOCAL_EPUB_HASH_LEN && value.chars().all(|ch| ch.is_ascii_hexdigit())
+    })
+}
+
+/// 资源引用 → 本地书 URL；非法引用返回 None。
+pub fn local_url_from_asset_ref(book_ref: &str) -> Option<String> {
+    let book_ref = book_ref.trim();
+    if book_ref.len() != LOCAL_EPUB_HASH_LEN || !book_ref.chars().all(|ch| ch.is_ascii_hexdigit()) {
+        return None;
+    }
+    Some(format!("{}:{}", LOCAL_EPUB_ORIGIN, book_ref))
+}
+
 fn build_asset_url(book_url: &str, path: &str) -> String {
+    let hash = asset_ref_from_book_url(book_url).unwrap_or_default();
     format!(
-        "/reader3/localEpubAsset?bookUrl={}&path={}",
-        urlencoding::encode(book_url),
+        "/v1/local-books/assets/{}?path={}",
+        hash,
         urlencoding::encode(path)
     )
 }
+
+/// 旧版 `/reader3/localEpubAsset?bookUrl=...&path=...` 的读时兼容：
+/// 把存量 EPUB 正文/封面里的 URL 改写成 v1 资源路径。返回 None 表示
+/// 不是本地书资源地址或解析失败，调用方保留原值。
+pub fn rewrite_legacy_asset_url(url: &str) -> Option<String> {
+    let caps = LEGACY_ASSET_URL_RE.captures(url)?;
+    let encoded_book_url = caps.get(1)?.as_str();
+    let book_url = urlencoding::decode(encoded_book_url).ok()?;
+    let hash = asset_ref_from_book_url(book_url.as_ref())?;
+    let path = caps.get(2)?.as_str();
+    Some(format!("/v1/local-books/assets/{hash}?path={path}"))
+}
+
+/// 批量版本：用于整章 HTML。匹配 `&amp;` 是因为正文里的属性值经过了
+/// HTML 转义；替换结果保留原 path 的编码形态。
+pub fn rewrite_legacy_asset_urls(html: &str) -> String {
+    LEGACY_ASSET_URL_RE
+        .replace_all(html, |caps: &regex::Captures<'_>| {
+            let Some(encoded_book_url) = caps.get(1).map(|m| m.as_str()) else {
+                return caps.get(0).map(|m| m.as_str()).unwrap_or("").to_string();
+            };
+            let Ok(book_url) = urlencoding::decode(encoded_book_url) else {
+                return caps.get(0).map(|m| m.as_str()).unwrap_or("").to_string();
+            };
+            let Some(hash) = asset_ref_from_book_url(book_url.as_ref()) else {
+                return caps.get(0).map(|m| m.as_str()).unwrap_or("").to_string();
+            };
+            let path = caps.get(2).map(|m| m.as_str()).unwrap_or_default();
+            format!("/v1/local-books/assets/{hash}?path={path}")
+        })
+        .into_owned()
+}
+
+static LEGACY_ASSET_URL_RE: once_cell::sync::Lazy<Regex> = once_cell::sync::Lazy::new(|| {
+    Regex::new(r#"/reader3/localEpubAsset\?bookUrl=([^&"']+)&(?:amp;)?path=([^"'\s]+)"#)
+        .expect("legacy local epub asset url regex")
+});
 
 fn is_allowed_html_tag(tag: &str) -> bool {
     matches!(
@@ -1257,6 +1317,39 @@ mod tests {
             SVG_ASSET_CSP,
             "default-src 'none'; style-src 'unsafe-inline'"
         );
+    }
+
+    #[test]
+    fn legacy_asset_urls_rewrite_to_v1() {
+        let hash = "0123456789abcdef0123456789abcdef";
+        assert_eq!(
+            local_url_from_asset_ref(hash).as_deref(),
+            Some("local-epub:0123456789abcdef0123456789abcdef")
+        );
+        let legacy = format!(
+            "/reader3/localEpubAsset?bookUrl=local-epub%3A{hash}&path=OEBPS%2FImages%2Fpic.png"
+        );
+        assert_eq!(
+            rewrite_legacy_asset_url(&legacy).unwrap(),
+            format!("/v1/local-books/assets/{hash}?path=OEBPS%2FImages%2Fpic.png")
+        );
+
+        // 正文属性里的 & 经过 HTML 转义，批量改写要能识别 &amp;
+        let html = format!(
+            "<img src=\"{legacy}\"/><img src=\"/reader3/localEpubAsset?bookUrl=local-epub%3A{hash}&amp;path=OEBPS%2Fpic.png\"/>"
+        );
+        let rewritten = rewrite_legacy_asset_urls(&html);
+        assert!(rewritten.contains(&format!(
+            "/v1/local-books/assets/{hash}?path=OEBPS%2FImages%2Fpic.png"
+        )));
+        assert!(rewritten.contains(&format!(
+            "/v1/local-books/assets/{hash}?path=OEBPS%2Fpic.png"
+        )));
+        assert!(!rewritten.contains("/reader3/localEpubAsset"));
+
+        assert_eq!(rewrite_legacy_asset_url("/v1/images/abc"), None);
+        assert_eq!(rewrite_legacy_asset_url("not a url"), None);
+        assert_eq!(local_url_from_asset_ref("../evil"), None);
     }
 
     fn build_zip_with_entry(name: &str, payload: &[u8]) -> Vec<u8> {

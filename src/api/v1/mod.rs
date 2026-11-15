@@ -45,6 +45,7 @@ mod shelf;
 mod source_actions;
 mod source_candidates;
 mod source_files;
+mod source_proxy;
 mod source_tasks;
 mod sources;
 mod tasks;
@@ -81,6 +82,7 @@ pub fn router(
         .merge(source_tasks::router())
         .merge(source_actions::router())
         .merge(source_files::router())
+        .merge(local_books::asset_router())
         .merge(auth::authed_router())
         .route_layer(axum::middleware::from_fn_with_state(
             state.clone(),
@@ -96,6 +98,7 @@ pub fn router(
             crate::api::router::PUBLIC_BODY_LIMIT_BYTES,
         ));
     let proxy_concurrency = concurrency.clone();
+    let source_proxy_concurrency = concurrency.clone();
     let v1 = match concurrency {
         Some(layer) => v1.layer(layer),
         None => v1,
@@ -125,6 +128,13 @@ pub fn router(
         state.clone(),
         upload_timeout,
         proxy_concurrency,
+    ));
+    // 书源登录代理：iframe 只带限定令牌（不认 Cookie/Bearer），因此挂在
+    // 标准鉴权/CSRF 层之外，子路由自带 token 校验与 problem 超时。
+    let v1 = v1.merge(source_proxy::router(
+        state.clone(),
+        inbound_timeout,
+        source_proxy_concurrency,
     ));
     v1.layer(axum::middleware::from_fn(attach_problem_trace))
         .with_state(state)
@@ -467,6 +477,7 @@ pub fn openapi_yaml() -> String {
         sources::delete_all_sources,
         sources::delete_invalid_sources,
         sources::explore_source,
+        sources::list_explore_kinds,
         source_files::parse_source_file,
         source_files::fetch_source_file,
         source_files::export_sources,
@@ -496,6 +507,7 @@ pub fn openapi_yaml() -> String {
         marks::save_mark,
         marks::save_marks_batch,
         marks::delete_marks_batch,
+        userdata::read_userdata_batch,
         userdata::save_userdata_batch,
         groups::list_groups,
         groups::save_group,
@@ -522,6 +534,7 @@ pub fn openapi_yaml() -> String {
         chapter_imports::upload_chapter_import_chunk,
         chapter_imports::get_chapter_import_diff,
         local_books::upload_local_book,
+        local_books::get_local_book_asset,
         tasks::create_search,
         tasks::list_tasks,
         tasks::get_task,
@@ -572,6 +585,7 @@ pub fn openapi_yaml() -> String {
         auth::SessionTokens,
         sources::SourceSummary,
         sources::SourcePage,
+        sources::SourceState,
         books::ChapterItem,
         books::ChapterPage,
         books::CachedSearchHitItem,
@@ -600,6 +614,7 @@ pub fn openapi_yaml() -> String {
         source_actions::SourceProxyTokenResult,
         shelf::ChangeSourceRequest,
         crate::model::book_source::BookSource,
+        crate::model::book_source::ExploreKind,
         crate::model::bookmark::Bookmark,
         crate::model::book_group::BookGroup,
         crate::model::book_group::BookGroupOrderItem,
@@ -608,6 +623,7 @@ pub fn openapi_yaml() -> String {
         userdata::UserdataBatchDoc,
         userdata::UserdataBatchSaveRequest,
         userdata::UserdataBatchSaveResult,
+        userdata::UserdataBatchReadResult,
         crate::model::review::ReviewPage,
         crate::model::review::ReviewItem,
         crate::model::review::ReviewReply,

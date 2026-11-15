@@ -137,16 +137,16 @@ storage/
 
 ### 旧版 userConfig.json
 
-`data/<ns>/userConfig.json` 是旧版本的用户配置快照。当前配置保存在 `json_documents` 表（文档名 `userConfig`），读取时如果表里没有，会把旧文件读进表然后删除文件。新部署不会再生成这个文件。
+`data/<ns>/userConfig.json` 是旧版本的用户配置快照。用户配置 API（`getUserConfig`/`saveUserConfig`）已退役，服务端不再读取或迁移这个文件；新部署不会再生成它。
 
 ## assets/：上传资源
 
 路径：`assets/<ns>/<类型>/<文件名>`，对外地址是 `/assets/<ns>/<类型>/<文件名>`。
 
-- 类型来自 `uploadFile` 的 `fileType` 参数，默认 `images`，只允许字母、数字、下划线与连字符。
-- 单文件上限 32 MB；文件名经过白名单校验，拒绝路径分隔符、`..` 与 Windows 保留设备名。
+- 通用上传/删除 API（`uploadFile`/`deleteFile`）已退役；目录只由内部写入方使用（当前是 AI 资料地图）。
+- 类型段只允许字母、数字、下划线与连字符；文件名经过白名单校验，拒绝路径分隔符、`..` 与 Windows 保留设备名。
 - AI 资料生成的地图图片写入 `assets/<ns>/ai-maps/`，文件名由时间戳与内容摘要组成。
-- 这些文件不会自动过期，也不会随删书自动删除。自定义封面等引用关系由前端维护，删除文件走 `deleteFile` 或手工清理。
+- 这些文件不会自动过期，也不会随删书自动删除；需要清理时手工处理。
 - 静态路由先查前端构建产物 `WEB_ROOT/assets`，未命中再查 `ASSETS_DIR`，两处目录不会混淆。
 
 ## webdav/

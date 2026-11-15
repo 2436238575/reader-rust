@@ -1,8 +1,8 @@
 //! 安全响应头与上传类型白名单的端到端行为。
 //!
 //! 起真实监听端口的服务，覆盖：全局 nosniff/Referrer-Policy/X-Frame-Options、
-//! 首页 HTML 的 CSP、/assets 的 sandbox CSP、uploadFile 的位图扩展名白名单、
-//! EPUB SVG 资产的沙箱 CSP，以及 aiProxyImage 对 SVG 上游的拒绝
+//! 首页 HTML 的 CSP、/assets 的 sandbox CSP、EPUB SVG 资产的沙箱 CSP，
+//! 以及 aiProxyImage 对 SVG 上游的拒绝
 //! （上游用本地假服务，不触真实网络）。
 
 mod common;
@@ -267,60 +267,13 @@ async fn assets_responses_carry_nosniff_and_sandbox_csp() {
 }
 
 #[tokio::test]
-async fn upload_file_rejects_non_bitmap_extensions() {
-    let server = TestServer::start().await;
-    let token = server.login().await;
-
-    // SVG 与主站同源直出会是脚本落脚点：400
-    let response = server
-        .upload(
-            "/reader3/uploadFile?type=images",
-            &token,
-            &[(
-                "file",
-                "evil.svg",
-                "image/svg+xml",
-                b"<svg onload=\"alert(1)\"/>".to_vec(),
-            )],
-        )
-        .await;
-    assert_eq!(response.status(), 400, "SVG 上传应被拒绝");
-    let body: serde_json::Value = response.json().await.unwrap();
-    assert_eq!(body["isSuccess"], serde_json::json!(false));
-    assert!(body["errorMsg"].as_str().unwrap().contains("图片"));
-
-    // 位图放行，大小写不敏感
-    let response = server
-        .upload(
-            "/reader3/uploadFile?type=images",
-            &token,
-            &[(
-                "file",
-                "pic.PNG",
-                "image/png",
-                vec![0x89, b'P', b'N', b'G', b'\r', b'\n', 0x1a, b'\n'],
-            )],
-        )
-        .await;
-    assert_eq!(response.status(), 200, "PNG 上传应成功");
-    let body: serde_json::Value = response.json().await.unwrap();
-    assert_eq!(
-        body["isSuccess"],
-        serde_json::json!(true),
-        "PNG 上传应成功: {body}"
-    );
-    let urls = body["data"].as_array().unwrap();
-    assert_eq!(urls.len(), 1);
-}
-
-#[tokio::test]
 async fn epub_svg_asset_is_served_with_sandbox_csp() {
     let server = TestServer::start().await;
     let token = server.login().await;
 
     let response = server
         .upload(
-            "/reader3/uploadEpubBook",
+            "/v1/local-books",
             &token,
             &[(
                 "file",
@@ -332,15 +285,15 @@ async fn epub_svg_asset_is_served_with_sandbox_csp() {
         .await;
     assert_eq!(response.status(), 200, "EPUB 导入应成功");
     let body: serde_json::Value = response.json().await.unwrap();
-    let book_id = body["data"]["bookId"]
-        .as_str()
-        .expect("响应应含 bookId")
-        .to_string();
+    let book_url = body["bookUrl"].as_str().expect("响应应含 bookUrl");
+    let book_ref = book_url
+        .strip_prefix("local-epub:")
+        .expect("本地 EPUB URL 前缀");
 
     let response = server
         .client
         .get(server.url(&format!(
-            "/reader3/localEpubAsset?bookId={book_id}&path=OEBPS/Images/art.svg"
+            "/v1/local-books/assets/{book_ref}?path=OEBPS/Images/art.svg"
         )))
         .bearer_auth(&token)
         .send()
@@ -356,6 +309,39 @@ async fn epub_svg_asset_is_served_with_sandbox_csp() {
         response.headers().get("content-security-policy").unwrap(),
         "default-src 'none'; style-src 'unsafe-inline'"
     );
+    assert!(
+        body["coverUrl"].is_null(),
+        "该夹具没有封面（封面 URL 生成由 service 单测覆盖）"
+    );
+
+    // 未认证 / 非法引用 / 路径遍历
+    let response = server
+        .client
+        .get(server.url(&format!(
+            "/v1/local-books/assets/{book_ref}?path=OEBPS/Images/art.svg"
+        )))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 401);
+    let response = server
+        .client
+        .get(server.url("/v1/local-books/assets/not-a-ref?path=x"))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 404);
+    let response = server
+        .client
+        .get(server.url(&format!(
+            "/v1/local-books/assets/{book_ref}?path=../evil.png"
+        )))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 400, "路径遍历应被拒绝");
 }
 
 #[tokio::test]

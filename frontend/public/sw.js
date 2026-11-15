@@ -1,7 +1,7 @@
-const SHELL_CACHE = 'reader-shell-v1-0-5'
-const RUNTIME_CACHE = 'reader-runtime-v1-0-5'
-const API_CACHE = 'reader-api-v1-0-5'
-const IMAGE_CACHE = 'reader-image-v1-0-5'
+const SHELL_CACHE = 'reader-shell-v1-0-6'
+const RUNTIME_CACHE = 'reader-runtime-v1-0-6'
+const API_CACHE = 'reader-api-v1-0-6'
+const IMAGE_CACHE = 'reader-image-v1-0-6'
 // 部署前缀按 SW 自身的位置推导（`/read/sw.js` → `/read/`）：
 // public/ 下的文件不经过构建处理，写死根路径在子路径部署下会全部 404
 const BASE = new URL('./', self.location).pathname
@@ -20,19 +20,16 @@ const SHELL_ASSETS = [
 // 单用户应用 + 同源，URL 即缓存键（令牌在请求头里，不进缓存键）。
 // POST 接口（正文/目录等）进不了 Cache API，由前端 IndexedDB 兜底。
 const API_CACHE_PATHS = [
-  'getBookshelf',
-  'getShelfBookWithCacheInfo',
-  'getBookGroups',
-  'getBookmarks',
-  'getReplaceRules',
-  'getUserInfo',
-  'getUserConfig',
-  // 单文档 getUserdata 已无调用方；批量读走 getUserdataBatch?names=a,b，
-  // 上方按 pathname 精确匹配，查询串随 request.url 进缓存键、按文档名组合分条目
-  'getUserdataBatch',
-  'getBookSourceList',
-  'getBookSources',
-].map((name) => `${BASE}reader3/${name}`)
+  `${BASE}v1/me`,
+  `${BASE}v1/me/shelf`,
+  `${BASE}v1/me/groups`,
+  `${BASE}v1/me/marks`,
+  `${BASE}v1/me/replace-rules`,
+  `${BASE}v1/me/userdata:batch`,
+  `${BASE}v1/sources`,
+]
+// 资源详情按前缀匹配（书架单条、书源详情）；查询串仍随 request.url 进缓存键。
+const API_CACHE_PREFIXES = [`${BASE}v1/me/shelf/`, `${BASE}v1/sources/`]
 
 // 不在 install 里 skipWaiting：新 SW 安装完成后停留在 waiting 状态，
 // 由用户在设置里点「更新应用」后通过 message 事件触发 SKIP_WAITING 接管，
@@ -147,7 +144,10 @@ self.addEventListener('fetch', (event) => {
     return
   }
 
-  if (API_CACHE_PATHS.includes(url.pathname)) {
+  if (
+    API_CACHE_PATHS.includes(url.pathname) ||
+    API_CACHE_PREFIXES.some((prefix) => url.pathname.startsWith(prefix))
+  ) {
     event.respondWith(networkFirstApi(request))
     return
   }

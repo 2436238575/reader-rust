@@ -36,12 +36,6 @@ pub struct BookSourceIdParam {
     book_source_id: Option<i64>,
 }
 
-#[derive(Debug, Deserialize)]
-pub struct ExploreKindsRequest {
-    #[serde(rename = "bookSourceId")]
-    book_source_id: Option<i64>,
-}
-
 #[derive(Debug, Deserialize, Default)]
 #[serde(default, rename_all = "camelCase")]
 pub struct TestBookSourcesRequest {
@@ -176,28 +170,6 @@ pub async fn login_book_source(
         .login_book_source(&user_ns, &source)
         .await?;
     Ok(Json(ApiResponse::ok(result)))
-}
-
-pub async fn get_explore_kinds(
-    State(state): State<AppState>,
-    user: CurrentUser,
-    Json(req): Json<ExploreKindsRequest>,
-) -> Result<Json<ApiResponse<serde_json::Value>>, AppError> {
-    let user_ns = user.0.ns.clone();
-
-    let id = req
-        .book_source_id
-        .ok_or_else(|| AppError::BadRequest("bookSourceId required".to_string()))?;
-    let source = state
-        .book_source_service
-        .get_by_id(&user_ns, id)
-        .await?
-        .ok_or_else(|| AppError::NotFound("bookSource not found".to_string()))?;
-
-    let kinds = state.book_service.explore_kinds(&user_ns, &source).await?;
-    Ok(Json(ApiResponse::ok(
-        serde_json::to_value(kinds).unwrap_or_default(),
-    )))
 }
 
 pub async fn test_book_sources(
@@ -357,29 +329,36 @@ pub async fn delete_invalid_book_sources(
     }))))
 }
 
-#[derive(Debug, Deserialize)]
-pub struct BookSourceProxyParam {
-    #[serde(rename = "bookSourceId")]
-    book_source_id: Option<i64>,
-    url: Option<String>,
+/// 代理请求的入口参数包（clippy too_many_arguments 收敛）。
+pub(crate) struct ProxyInvocation<'a> {
+    pub source_id: i64,
+    pub target_url: &'a str,
+    pub method: &'a Method,
+    pub headers: &'a HeaderMap,
+    pub body: Bytes,
+    pub proxy_base: &'a str,
+    pub client_log_path: &'a str,
 }
 
-pub async fn book_source_proxy(
-    State(state): State<AppState>,
-    user: CurrentUser,
-    method: Method,
-    headers: HeaderMap,
-    Query(q): Query<BookSourceProxyParam>,
-    body: Bytes,
+/// 代理请求核心：校验、出站守卫、Cookie 落库与转发。
+///
+/// 鉴权与路径解析由 `/v1` 代理子路由负责（限定令牌）；这里只接受已经
+/// 绑定到 `source_id` 的身份，避免把主 JWT/Cookie 的语义混进代理链路。
+pub(crate) async fn book_source_proxy_request(
+    state: &AppState,
+    user: &crate::auth::extractor::AuthUser,
+    req: ProxyInvocation<'_>,
 ) -> Result<Response, AppError> {
-    let user_ns = user.0.ns.clone();
-
-    let source_id = q
-        .book_source_id
-        .ok_or_else(|| AppError::BadRequest("bookSourceId required".to_string()))?;
-    let raw_target_url = q
-        .url
-        .ok_or_else(|| AppError::BadRequest("url required".to_string()))?;
+    let user_ns = user.ns.clone();
+    let ProxyInvocation {
+        source_id,
+        target_url: raw_target_url,
+        method,
+        headers,
+        body,
+        proxy_base,
+        client_log_path,
+    } = req;
 
     let source = state
         .book_source_service
@@ -389,17 +368,17 @@ pub async fn book_source_proxy(
 
     // ── 校验全部前置，通过后才允许产生任何副作用 ──
     // 限定令牌只能继续代理它绑定的那个书源
-    if let Some(bound) = user.0.proxy_source {
+    if let Some(bound) = user.proxy_source {
         if bound != source_id {
             return Err(AppError::BadRequest("代理令牌与书源不匹配".to_string()));
         }
     }
-    let target_url = resolve_proxy_target_url(&raw_target_url, &source.book_source_url)?;
+    let target_url = resolve_proxy_target_url(raw_target_url, &source.book_source_url)?;
     // 出站守卫：代理目标由查询参数决定，可能指向内网/云元数据地址
     url_guard::ensure_outbound_url_str_allowed(&target_url)
         .await
         .map_err(AppError::BadRequest)?;
-    let upstream_referer = extract_upstream_referer(&headers);
+    let upstream_referer = extract_upstream_referer(headers);
 
     // 校验通过：把请求里的 Cookie 写进该书源的会话存储（首个副作用）。
     // 必须先剔除本站会话 Cookie：代理页与主站同源，浏览器请求会带上
@@ -417,23 +396,23 @@ pub async fn book_source_proxy(
 
     // 被代理页面是第三方书源的 HTML/JS，与主站同源吐出：嵌进去的必须是
     // 限定令牌（短寿命、绑定书源、只能访问代理路径），而不是主 JWT。
-    let page_token = mint_proxy_token(&state, &user.0, source_id)?;
-    let response = forward_book_source_request(
-        &state,
+    let page_token = mint_proxy_token(state, user, source_id)?;
+    forward_book_source_request(
+        state,
         &source,
         &user_ns,
         ProxyRequest {
             access_token: Some(page_token.as_str()),
-            method: &method,
-            headers: &headers,
+            method,
+            headers,
             target_url: &target_url,
             upstream_referer: upstream_referer.as_deref(),
             body,
+            proxy_base,
+            client_log_path,
         },
     )
-    .await?;
-
-    Ok(response)
+    .await
 }
 
 /// 代理令牌有效期：每次页面响应都会重签一把新的，30 分钟足够完成一次登录流程。
@@ -467,47 +446,12 @@ pub(crate) fn mint_proxy_token_with_ttl(
     crate::auth::jwt::encode_token(&claims, state.auth.jwt_secret())
 }
 
-/// 为书源登录预览签发限定代理令牌（30 分钟、scope=代理、绑定该书源）。
-///
-/// 前端打开 iframe 前先取这把令牌拼 URL，主 JWT 不再出现在 URL 里。
-/// 参数与存在性校验口径与 `bookSourceProxy` 一致（按当前用户命名空间读）。
-pub async fn mint_book_source_proxy_token(
-    State(state): State<AppState>,
-    user: CurrentUser,
-    Json(param): Json<BookSourceIdParam>,
-) -> Result<Json<ApiResponse<serde_json::Value>>, AppError> {
-    let source_id = param
-        .book_source_id
-        .ok_or_else(|| AppError::BadRequest("bookSourceId required".to_string()))?;
-    // 校验口径与 bookSourceProxy 一致：书源必须存在于当前用户命名空间
-    if state
-        .book_source_service
-        .get_by_id(&user.0.ns, source_id)
-        .await?
-        .is_none()
-    {
-        return Err(AppError::NotFound("bookSource not found".to_string()));
-    }
-    let token = mint_proxy_token(&state, &user.0, source_id)?;
-    Ok(Json(ApiResponse::ok(serde_json::json!({
-        "token": token,
-        "expiresIn": PROXY_TOKEN_TTL_SECS,
-    }))))
-}
-
-#[derive(Debug, Deserialize)]
-pub struct BookSourceClientLogParam {
-    message: Option<String>,
-    source: Option<String>,
-    lineno: Option<i64>,
-    colno: Option<i64>,
-    stack: Option<String>,
-}
-
 /// 客户端日志单字段的截断长度。
 const LOG_FIELD_MAX_CHARS: usize = 500;
 /// 客户端日志限频：同一 source 每分钟最多入库的条数。
 const CLIENT_LOG_MAX_PER_MINUTE: usize = 30;
+/// 限流桶的硬上限：超过后整表清空，避免长期累积。
+const CLIENT_LOG_MAX_SOURCES: usize = 1024;
 
 static CLIENT_LOG_BUCKETS: Lazy<
     std::sync::Mutex<
@@ -515,10 +459,14 @@ static CLIENT_LOG_BUCKETS: Lazy<
     >,
 > = Lazy::new(|| std::sync::Mutex::new(std::collections::HashMap::new()));
 
-fn allow_client_log(source: &str) -> bool {
+fn allow_client_log(bucket_key: &str) -> bool {
     let mut map = CLIENT_LOG_BUCKETS.lock().unwrap_or_else(|e| e.into_inner());
+    // 键已经收口到书源 id；仍给 map 一个硬上限，防书源删除/重建长期累积。
+    if !map.contains_key(bucket_key) && map.len() >= CLIENT_LOG_MAX_SOURCES {
+        map.clear();
+    }
     let now = std::time::Instant::now();
-    let bucket = map.entry(source.to_string()).or_default();
+    let bucket = map.entry(bucket_key.to_string()).or_default();
     bucket.retain(|t| now.duration_since(*t) < std::time::Duration::from_secs(60));
     if bucket.len() >= CLIENT_LOG_MAX_PER_MINUTE {
         return false;
@@ -527,30 +475,40 @@ fn allow_client_log(source: &str) -> bool {
     true
 }
 
-pub async fn book_source_client_log(
-    Query(q): Query<BookSourceClientLogParam>,
-) -> Json<ApiResponse<serde_json::Value>> {
-    // 上报内容完全不可信：截断后再落日志；同一 source 超频的整条丢弃，
-    // 防止登录用户刷 warn 日志把日志文件撑爆
-    let allow = allow_client_log(q.source.as_deref().unwrap_or_default());
+/// 日志字段不可信：截断、去控制字符（换行会伪造日志行），URL 去查询串。
+fn sanitize_log_text(value: Option<&str>) -> String {
+    value
+        .unwrap_or_default()
+        .chars()
+        .map(|ch| if ch.is_control() { ' ' } else { ch })
+        .take(LOG_FIELD_MAX_CHARS)
+        .collect()
+}
+
+/// 记录代理页上报的客户端错误。内容完全不可信：截断后再落日志；
+/// 同一书源超频的整条丢弃，防止登录用户刷 warn 日志把日志文件撑爆。
+/// 限流键用路径里已校验的 `source_id`，客户端传来的 `source` 只作展示。
+pub(crate) fn record_client_log(
+    source_id: i64,
+    source: Option<&str>,
+    lineno: Option<i64>,
+    colno: Option<i64>,
+    message: Option<&str>,
+    stack: Option<&str>,
+) -> bool {
+    let allow = allow_client_log(&format!("src_{source_id}"));
     if allow {
-        let clip = |value: Option<&str>| {
-            value
-                .unwrap_or_default()
-                .chars()
-                .take(LOG_FIELD_MAX_CHARS)
-                .collect::<String>()
-        };
+        let source = redact_url_query(source.unwrap_or_default());
         tracing::warn!(
             "bookSourceProxy client error: source={} line={} col={} message={} stack={}",
-            clip(q.source.as_deref()),
-            q.lineno.unwrap_or_default(),
-            q.colno.unwrap_or_default(),
-            clip(q.message.as_deref()),
-            clip(q.stack.as_deref())
+            sanitize_log_text(Some(&source)),
+            lineno.unwrap_or_default(),
+            colno.unwrap_or_default(),
+            sanitize_log_text(message),
+            sanitize_log_text(stack)
         );
     }
-    Json(ApiResponse::ok(serde_json::json!({ "logged": allow })))
+    allow
 }
 
 pub async fn delete_book_source(
@@ -599,6 +557,9 @@ struct ProxyRequest<'a> {
     target_url: &'a str,
     upstream_referer: Option<&'a str>,
     body: Bytes,
+    /// 代理入口基路径（`/v1/sources/{id}/proxy`），用于 HTML/JS 重写与 Cookie Path
+    proxy_base: &'a str,
+    client_log_path: &'a str,
 }
 
 async fn forward_book_source_request(
@@ -614,6 +575,8 @@ async fn forward_book_source_request(
         target_url,
         upstream_referer,
         body,
+        proxy_base,
+        client_log_path,
     } = req;
     let client = state
         .book_service
@@ -627,11 +590,15 @@ async fn forward_book_source_request(
 
     let mut builder = client.request(req_method, target_url);
 
+    let mut has_source_cookie = false;
     if let Some(header_str) = &source.header {
         if let Ok(source_headers) =
             serde_json::from_str::<std::collections::HashMap<String, String>>(header_str)
         {
             for (k, v) in source_headers {
+                if k.eq_ignore_ascii_case("cookie") {
+                    has_source_cookie = true;
+                }
                 builder = builder.header(k, v);
             }
         }
@@ -651,12 +618,23 @@ async fn forward_book_source_request(
         }
     }
 
-    if let Some(cookie) = headers
+    let browser_cookie = headers
         .get(header::COOKIE)
         .and_then(|value| value.to_str().ok())
-        .and_then(sanitize_upstream_cookie)
-    {
-        builder = builder.header(header::COOKIE, cookie);
+        .and_then(sanitize_upstream_cookie);
+    match browser_cookie {
+        Some(cookie) => {
+            builder = builder.header(header::COOKIE, cookie);
+        }
+        // 显式写一个空 Cookie 头，阻止 reqwest 用户级 cookie jar 为目标域
+        // 自动补 Cookie：代理请求只允许带浏览器为代理路径带来的书源 Cookie。
+        // 否则持有书源 A 令牌的页面可以代理到书源 B 的域名，让服务端带着
+        // B 在共享 jar 里的会话去请求 B（跨书源 CSRF/数据外带）。
+        // 书源 header 里显式配置的 Cookie 保留（由用户为该书源维护）。
+        None if !has_source_cookie => {
+            builder = builder.header(header::COOKIE, "");
+        }
+        None => {}
     }
 
     let referer_value = upstream_referer.unwrap_or(target_url);
@@ -741,7 +719,7 @@ async fn forward_book_source_request(
         }
     }
     for cookie in upstream_set_cookies {
-        if let Some(rewritten) = rewrite_set_cookie_for_proxy(&cookie) {
+        if let Some(rewritten) = rewrite_set_cookie_for_proxy(&cookie, proxy_base) {
             if let Ok(value) = HeaderValue::from_str(&rewritten) {
                 response_headers.append(header::SET_COOKIE, value);
             }
@@ -760,11 +738,26 @@ async fn forward_book_source_request(
             header::CONTENT_SECURITY_POLICY,
             HeaderValue::from_static("sandbox allow-scripts allow-forms"),
         );
+    } else if is_active_content(content_type.as_deref()) {
+        // XHTML/SVG/XML 同样能带脚本；登录页需要脚本/表单，但这几类不需要，
+        // 只用纯 sandbox（不 allow-scripts），保持同源直出也不可执行。
+        response_headers.append(
+            header::CONTENT_SECURITY_POLICY,
+            HeaderValue::from_static("sandbox"),
+        );
     }
 
     let body = if is_html {
         let text = String::from_utf8_lossy(&bytes).to_string();
-        rewrite_login_html(&text, &final_url, source.book_source_id, access_token).into_bytes()
+        rewrite_login_html(
+            &text,
+            &final_url,
+            source.book_source_id,
+            access_token,
+            proxy_base,
+            client_log_path,
+        )
+        .into_bytes()
     } else {
         bytes.to_vec()
     };
@@ -820,6 +813,15 @@ fn redact_url_query(raw: &str) -> String {
     url_guard::redact_url_for_log(raw)
 }
 
+fn is_active_content(content_type: Option<&str>) -> bool {
+    content_type.map(str::to_ascii_lowercase).is_some_and(|ct| {
+        ct.contains("image/svg+xml")
+            || ct.contains("application/xhtml+xml")
+            || ct.contains("application/xml")
+            || ct.contains("text/xml")
+    })
+}
+
 fn is_html_response(content_type: Option<&str>, body: &[u8]) -> bool {
     if let Some(ct) = content_type {
         if ct.to_ascii_lowercase().contains("text/html") {
@@ -835,9 +837,17 @@ fn rewrite_login_html(
     upstream_url: &str,
     book_source_id: Option<i64>,
     access_token: Option<&str>,
+    proxy_base: &str,
+    client_log_path: &str,
 ) -> String {
     let base_href = html_escape_attr(upstream_url);
-    let proxy_script = build_proxy_script(upstream_url, book_source_id, access_token);
+    let proxy_script = build_proxy_script(
+        upstream_url,
+        book_source_id,
+        access_token,
+        proxy_base,
+        client_log_path,
+    );
     let mut output = if html.contains("<head") {
         html.replace(
             "</head>",
@@ -849,8 +859,20 @@ fn rewrite_login_html(
         )
     };
 
-    output = rewrite_proxy_actions(&output, upstream_url, book_source_id, access_token);
-    output = rewrite_script_root_relative_urls(&output, upstream_url, book_source_id, access_token);
+    output = rewrite_proxy_actions(
+        &output,
+        upstream_url,
+        book_source_id,
+        access_token,
+        proxy_base,
+    );
+    output = rewrite_script_root_relative_urls(
+        &output,
+        upstream_url,
+        book_source_id,
+        access_token,
+        proxy_base,
+    );
     output
 }
 
@@ -858,10 +880,15 @@ fn build_proxy_script(
     upstream_url: &str,
     book_source_id: Option<i64>,
     access_token: Option<&str>,
+    proxy_base: &str,
+    client_log_path: &str,
 ) -> String {
     let upstream_json = serde_json::to_string(upstream_url).unwrap_or_else(|_| "\"\"".to_string());
     let token_json =
         serde_json::to_string(access_token.unwrap_or("")).unwrap_or_else(|_| "\"\"".to_string());
+    let proxy_path_json = serde_json::to_string(proxy_base).unwrap_or_else(|_| "\"\"".to_string());
+    let client_log_json =
+        serde_json::to_string(client_log_path).unwrap_or_else(|_| "\"\"".to_string());
     let source_id = book_source_id.unwrap_or_default();
     format!(
         r#"<script>
@@ -869,16 +896,16 @@ fn build_proxy_script(
   const upstreamBase = {upstream_json};
   const bookSourceId = {source_id};
   const accessToken = {token_json};
-  const proxyPath = "/reader3/bookSourceProxy";
-  const alreadyProxyPattern = /^\/reader3\/bookSourceProxy(?:\?|$)/i;
+  const proxyPath = {proxy_path_json};
+  const alreadyProxyPrefix = proxyPath + "?";
   const skipPattern = /^(#|javascript:|data:|mailto:|tel:)/i;
   function toAbsolute(url) {{
     try {{ return new URL(url, upstreamBase).href; }} catch (_e) {{ return url; }}
   }}
   function toProxy(url) {{
-    if (!url || skipPattern.test(url) || alreadyProxyPattern.test(url)) return url;
+    if (!url || skipPattern.test(url) || url.indexOf(alreadyProxyPrefix) === 0) return url;
     const absolute = toAbsolute(url);
-    if (String(absolute).indexOf("/reader3/bookSourceProxy?") !== -1) return absolute;
+    if (String(absolute).indexOf(alreadyProxyPrefix) !== -1) return absolute;
     const params = new URLSearchParams();
     if (accessToken) params.set("accessToken", accessToken);
     params.set("bookSourceId", String(bookSourceId));
@@ -927,7 +954,8 @@ fn build_proxy_script(
           params.set(key, String(value));
         }}
       }});
-      const url = "/reader3/bookSourceClientLog?" + params.toString();
+      if (accessToken) params.set("accessToken", accessToken);
+      const url = {client_log_json} + "?" + params.toString();
       if (navigator.sendBeacon) {{
         navigator.sendBeacon(url);
       }} else if (rawFetch) {{
@@ -974,6 +1002,7 @@ fn rewrite_proxy_actions(
     upstream_url: &str,
     book_source_id: Option<i64>,
     access_token: Option<&str>,
+    proxy_base: &str,
 ) -> String {
     let tag_re = &*TAG_RE;
     let double_quoted = &*DOUBLE_QUOTED_ATTR_RE;
@@ -983,11 +1012,25 @@ fn rewrite_proxy_actions(
         .replace_all(html, |tag_caps: &Captures| {
             let tag = tag_caps.get(0).map(|m| m.as_str()).unwrap_or("");
             let output = double_quoted.replace_all(tag, |caps: &Captures| {
-                rewrite_proxy_attr(caps, upstream_url, book_source_id, access_token, "\"")
+                rewrite_proxy_attr(
+                    caps,
+                    upstream_url,
+                    book_source_id,
+                    access_token,
+                    proxy_base,
+                    "\"",
+                )
             });
             single_quoted
                 .replace_all(&output, |caps: &Captures| {
-                    rewrite_proxy_attr(caps, upstream_url, book_source_id, access_token, "'")
+                    rewrite_proxy_attr(
+                        caps,
+                        upstream_url,
+                        book_source_id,
+                        access_token,
+                        proxy_base,
+                        "'",
+                    )
                 })
                 .into_owned()
         })
@@ -999,12 +1042,19 @@ fn rewrite_proxy_attr(
     upstream_url: &str,
     book_source_id: Option<i64>,
     access_token: Option<&str>,
+    proxy_base: &str,
     quote: &str,
 ) -> String {
     let attr = caps.get(1).map(|m| m.as_str()).unwrap_or("href");
     let value = caps.get(2).map(|m| m.as_str()).unwrap_or("");
-    let proxied = build_proxy_url(value, upstream_url, book_source_id, access_token)
-        .unwrap_or_else(|| value.to_string());
+    let proxied = build_proxy_url(
+        value,
+        upstream_url,
+        book_source_id,
+        access_token,
+        proxy_base,
+    )
+    .unwrap_or_else(|| value.to_string());
     format!(r#"{attr}={quote}{proxied}{quote}"#)
 }
 
@@ -1013,6 +1063,7 @@ fn build_proxy_url(
     upstream_url: &str,
     book_source_id: Option<i64>,
     access_token: Option<&str>,
+    proxy_base: &str,
 ) -> Option<String> {
     let trimmed = raw_value.trim();
     if trimmed.is_empty()
@@ -1021,7 +1072,7 @@ fn build_proxy_url(
         || trimmed.starts_with("data:")
         || trimmed.starts_with("mailto:")
         || trimmed.starts_with("tel:")
-        || trimmed.starts_with("/reader3/bookSourceProxy")
+        || trimmed.starts_with(proxy_base)
     {
         return None;
     }
@@ -1036,7 +1087,7 @@ fn build_proxy_url(
     if let Some(token) = access_token.filter(|v| !v.is_empty()) {
         params.push(format!("accessToken={}", urlencoding::encode(token)));
     }
-    Some(format!("/reader3/bookSourceProxy?{}", params.join("&")))
+    Some(format!("{proxy_base}?{}", params.join("&")))
 }
 
 fn rewrite_script_root_relative_urls(
@@ -1044,6 +1095,7 @@ fn rewrite_script_root_relative_urls(
     upstream_url: &str,
     book_source_id: Option<i64>,
     access_token: Option<&str>,
+    proxy_base: &str,
 ) -> String {
     let script_re = &*SCRIPT_BLOCK_RE;
     let double_quoted = &*DOUBLE_QUOTED_ROOT_REL_RE;
@@ -1053,7 +1105,14 @@ fn rewrite_script_root_relative_urls(
         .replace_all(html, |script_caps: &Captures| {
             let script = script_caps.get(0).map(|m| m.as_str()).unwrap_or("");
             let output = double_quoted.replace_all(script, |caps: &Captures| {
-                rewrite_script_url_literal(caps, upstream_url, book_source_id, access_token, "\"")
+                rewrite_script_url_literal(
+                    caps,
+                    upstream_url,
+                    book_source_id,
+                    access_token,
+                    proxy_base,
+                    "\"",
+                )
             });
             single_quoted
                 .replace_all(&output, |caps: &Captures| {
@@ -1062,6 +1121,7 @@ fn rewrite_script_root_relative_urls(
                         upstream_url,
                         book_source_id,
                         access_token,
+                        proxy_base,
                         "'",
                     )
                 })
@@ -1075,11 +1135,18 @@ fn rewrite_script_url_literal(
     upstream_url: &str,
     book_source_id: Option<i64>,
     access_token: Option<&str>,
+    proxy_base: &str,
     quote: &str,
 ) -> String {
     let raw_value = caps.get(1).map(|m| m.as_str()).unwrap_or("");
-    let proxied = build_proxy_url(raw_value, upstream_url, book_source_id, access_token)
-        .unwrap_or_else(|| raw_value.to_string());
+    let proxied = build_proxy_url(
+        raw_value,
+        upstream_url,
+        book_source_id,
+        access_token,
+        proxy_base,
+    )
+    .unwrap_or_else(|| raw_value.to_string());
     format!("{quote}{proxied}{quote}")
 }
 
@@ -1091,7 +1158,7 @@ fn html_escape_attr(value: &str) -> String {
         .replace('>', "&gt;")
 }
 
-fn rewrite_set_cookie_for_proxy(raw: &str) -> Option<String> {
+fn rewrite_set_cookie_for_proxy(raw: &str, proxy_base: &str) -> Option<String> {
     let mut parts = raw
         .split(';')
         .map(|part| part.trim())
@@ -1101,10 +1168,7 @@ fn rewrite_set_cookie_for_proxy(raw: &str) -> Option<String> {
         return None;
     }
 
-    let mut attrs = vec![
-        first.to_string(),
-        "Path=/reader3/bookSourceProxy".to_string(),
-    ];
+    let mut attrs = vec![first.to_string(), format!("Path={proxy_base}")];
     for attr in parts {
         let lower = attr.to_ascii_lowercase();
         if lower.starts_with("domain=") || lower.starts_with("path=") || lower == "secure" {

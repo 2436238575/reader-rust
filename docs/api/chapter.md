@@ -455,7 +455,7 @@ legacy `GET /reader3/cover?path=<封面URL>&w=` 过渡期保留，行为与旧�
 ## 获取本地 EPUB 资源
 
 ```text
-GET /reader3/localEpubAsset?bookId=<book_n>&path=<包内路径>
+GET /v1/local-books/assets/{bookRef}?path=<包内路径>
 ```
 
-读取已导入本地 EPUB 的包内资源（封面图、样式等）。`bookId` 必须是本地 EPUB 书（`bookUrl` 为 `local-epub:` 前缀）；`path` 只能命中该书 manifest 中登记的资源，否则 404。响应为资源字节流（带对应 Content-Type）。
+读取已导入本地 EPUB 的包内图片资源（封面图、插图等）。`bookRef` 是本地书 URL `local-epub:<hash>` 里的 32 位 hash；导入时 bookId 尚未分配，章节 HTML 与封面 URL 因此使用这个稳定引用。`path` 只能命中该书 manifest 中登记的资源；路径遍历/未登记资源返回 400，书籍未登记或引用非法返回 404 `BOOK_NOT_FOUND`。响应为资源字节流（Content-Type 按扩展名映射，`Cache-Control: private, max-age=3600`），SVG 资源额外带沙箱 CSP。旧版 `/reader3/localEpubAsset` 已删除；存量正文/封面在服务端读取时自动改写成新路径。

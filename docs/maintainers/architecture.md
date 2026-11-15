@@ -6,7 +6,7 @@
 
 ```
 frontend/  (Vue 3 + Vite + Pinia)
-     │  HTTP /reader3/*   统一 { isSuccess, errorMsg, data } 包装
+     │  HTTP /v1/* 裸 JSON + problem+json；遗留 /reader3/* 仍用 { isSuccess, errorMsg, data }
      ▼
 src/api/          路由匹配、鉴权提取、参数解析、响应包装（axum）
      ▼
@@ -45,7 +45,7 @@ let books = self.parser.search_books(source, &res.body, &res.url);  // parser �
 
 | 文件        | 职责                                                                                                                                                                                                                                               |
 | ----------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `router.rs` | **路由真相来源**。全部业务路由挂在 `/reader3` 下，唯一例外是根路径 `GET /health`；鉴权中间件按公开 / 可选 / 需登录分组挂载                                             |
+| `router.rs` | **路由真相来源**。契约路由在 `/v1`，未迁移的过渡路由在 `/reader3`；唯一不带命名空间的业务路径是 `GET /health`。鉴权中间件按公开 / 可选 / 需登录 / 限定令牌代理分组挂载                                             |
 | `mod.rs`    | `AppState`：共享配置与各 service 实例                                                                                                                                              |
 | `handlers/` | 按领域拆分，共 17 个领域模块：`book`、`book_source`、`book_group`、`bookmark`、`cache`、`chapter_image`、`chapter_edit`、`image`、`review`、`search_cache`、`user`、`ai_book`、`ai_model`、`ai_proxy`、`agent`、`replace_rule`、`webdav`；另有共享的 `multipart`（multipart 字段限量读取） |
 
@@ -156,9 +156,9 @@ Access Token 只负责访问业务接口；登录 / 改密同时下发一枚一�
 登录成功后签发一对令牌，并写进两枚 HttpOnly Cookie：
 
 - **Access Token**：HS256 JWT，载荷为 `{ sub, uid, iat, exp, ver }`（`sub` 是用户名，仅登录与展示；`uid` 是自增身份 id），默认 6 小时，Cookie 名 `reader_access`；
-- **Refresh Token**：`rt_` + 32 字节随机数，默认 7 天滑动续期，Cookie 名 `reader_refresh`，只发给 `POST /reader3/refreshToken`。
+- **Refresh Token**：`rt_` + 32 字节随机数，默认 7 天滑动续期，Cookie 名 `reader_refresh`，只发给 `POST /v1/auth/refresh`。
 
-两枚 Cookie 都是 `HttpOnly; SameSite=Strict; Path=/reader3`、host-only；`Secure` 由 `COOKIE_SECURE`（`auto`/`true`/`false`）决定，工具在 `src/auth/cookie.rs`。
+两枚 Cookie 都是 `HttpOnly; SameSite=Lax`、host-only；access `Path=/`，refresh `Path=/v1/auth`（子路径部署由 `COOKIE_PATH` 推导）。`Secure` 由 `COOKIE_SECURE`（`auto`/`true`/`false`）决定，工具在 `src/auth/cookie.rs`。
 
 令牌传递方式：
 
@@ -166,9 +166,9 @@ Access Token 只负责访问业务接口；登录 / 改密同时下发一枚一�
 | -------- | ------------------------------------- | ------------------------------------------------ |
 | Cookie   | `reader_access` / `reader_refresh`    | 浏览器、SSE、`<img>`；浏览器自动携带             |
 | 请求头   | `Authorization: Bearer <jwt>`         | API 客户端                                       |
-| 查询参数 | `accessToken=<30 分钟限定令牌>`       | 仅 `bookSourceProxy` / `bookSourceClientLog`     |
+| 查询参数 | `accessToken=<限定令牌>`              | 仅 `/v1/sources/{id}/proxy` 与 `.../proxy/client-log` |
 
-取令牌顺序是请求头 → `reader_access` Cookie → 查询参数；非代理路径的查询串令牌一律忽略。Refresh Token 只随 `reader_refresh` Cookie 发给刷新接口（body 里的 `refreshToken` 字段不受理）。登录/刷新/改密的 JSON 仍返回 `accessToken` 供 API 客户端使用，但不再返回 `refreshToken`。
+普通鉴权取令牌顺序是请求头 → `reader_access` Cookie；查询串令牌只由 `/v1/sources/{id}/proxy` 子路由自行读取，其他路径一律忽略。Refresh Token 只随 `reader_refresh` Cookie 发给刷新接口（body 里的 `refreshToken` 字段不受理）。登录/刷新/改密的 JSON 仍返回 `accessToken` 供 API 客户端使用，但不再返回 `refreshToken`。
 
 前端不再从 localStorage 读写令牌，只保留非敏感 `reader-auth-hint`（用户名 + Access Token 过期时间）供路由守卫、离线 UI 与提前续期。`utils/authSession.ts` 凭 Cookie 做单飞刷新与到期前 5 分钟主动续期，并用 Web Locks（可用时）避免多标签页同时刷新。
 
@@ -178,10 +178,11 @@ Access Token 只负责访问业务接口；登录 / 改密同时下发一枚一�
 
 | 分组     | 中间件          | 内容                                             |
 | -------- | --------------- | ------------------------------------------------ |
-| 公开     | 无              | `/health`、`/reader3/login`、`/reader3/refreshToken` |
-| 可选鉴权 | `optional_auth` | `getUserInfo`、`logout`                          |
-| 需登录   | `require_auth`  | 其余全部 `/reader3/*`                            |
-| WebDAV   | 自带 HTTP Basic | `/reader3/webdav/*path`，不经 JWT                |
+| 公开     | 无              | `/health`、`/v1/auth/login`、`/v1/auth/refresh` |
+| 可选鉴权 | `optional_auth` | `/reader3/getUserInfo`（过渡）                   |
+| 需登录   | `require_auth`  | `/v1` 其余接口 + 未迁移的 `/reader3/*`          |
+| 代理     | 限定令牌（query） | `/v1/sources/{id}/proxy`，不认 Cookie/Bearer/CSRF |
+| WebDAV   | 自带 HTTP Basic | `/reader3/webdav/*path`、`/v1/webdav/*path`，不经 JWT |
 
 失败时的状态码：未登录/令牌无效或过期 → **401 + `errorMsg="需要登录"`**（用户可读文案，前端会原样 toast；识别只靠 401 状态码）。
 
@@ -274,9 +275,9 @@ frontend/src/
 
 两个关键约定：
 
-- `api/http.ts` 里的 axios 实例 `baseURL = /reader3`，超时 120 秒。请求拦截器用 `utils/secureAccess` 的 `readAccessToken(localStorage)` 取出 JWT，注入 `Authorization: Bearer <jwt>`。
-- 响应拦截器会自动拆掉 `{ isSuccess, errorMsg, data }` 外壳，业务代码直接拿 `data`。HTTP 401 时派发 `need-login` 事件拉起登录框（同一时间 1.5 秒内只派发一次，避免并发请求弹出多个登录框）；`errorMsg` 是用户可读的文案，作为错误信息原样抛出。
-- SSE 与 `<img>` 这类带不了请求头的请求用 `appendAuthQueryParams` 把令牌放进查询串，后端中间件会回退到该参数。
+- `api/http.ts` 里的 axios 实例 `baseURL = /v1`，超时 120 秒；会话凭据在 HttpOnly Cookie 里，浏览器自动携带，前端不再从 localStorage 读令牌。
+- `/v1` 成功响应是裸 JSON，失败为 problem+json（`detail` 给用户、`code` 给分支）；HTTP 401 时派发 `need-login` 事件拉起登录框（同一时间 1.5 秒内只派发一次，避免并发请求弹出多个登录框）。
+- SSE 与 `<img>` 这类带不了请求头的请求依赖浏览器自动携带的会话 Cookie；只有书源登录代理 iframe 使用 URL 查询串里的限定令牌。
 
 对返回裸数据（封面图、文件下载等没有 `isSuccess` 字段的响应）的接口，拦截器会原样放行。
 

@@ -16,20 +16,13 @@ pub async fn require_auth(
 ) -> Result<Response, AppError> {
     let token = extract_token(&request).ok_or_else(unauthorized)?;
     let user = authenticate(&state.auth, token).await?;
-    // 限定用途令牌（书源登录代理）只能访问代理自身的路径，不能当主令牌用
-    if user.scope.is_some() && !scoped_token_path_allowed(request.uri().path()) {
+    // 限定用途令牌（书源登录代理）由 `/v1/sources/{id}/proxy` 子路由自行
+    // 校验 query token，不能当主令牌访问任何普通接口。
+    if user.scope.is_some() {
         return Err(unauthorized());
     }
     request.extensions_mut().insert(user);
     Ok(next.run(request).await)
-}
-
-/// 限定令牌允许访问的路径：代理本身 + 代理页面的错误上报。
-fn scoped_token_path_allowed(path: &str) -> bool {
-    matches!(
-        path,
-        "/reader3/bookSourceProxy" | "/reader3/bookSourceClientLog"
-    )
 }
 
 /// 可选鉴权：携带有效令牌时注入身份，否则静默放行。
@@ -78,14 +71,12 @@ pub fn user_ns_of(uid: i64) -> String {
     format!("user_{uid}")
 }
 
-/// 令牌取值顺序：`Authorization: Bearer` 头 → Cookie `reader_access` →
-/// 查询参数 `accessToken`。
+/// 令牌取值顺序：`Authorization: Bearer` 头 → Cookie `reader_access`。
 ///
 /// 浏览器会话走 Cookie（HttpOnly，见 `auth::cookie`）；API 客户端/e2e 走
-/// Bearer 头。查询串令牌会进反代访问日志与浏览器历史，只保留给书源登录
-/// 代理页的 30 分钟限定令牌（`bookSourceProxy` / `bookSourceClientLog`，
-/// 与限定令牌的路径白名单同一份口径）；SSE 与 `<img>` 无法设置请求头，
-/// 改由浏览器自动携带的会话 Cookie 鉴权，其他路径不再接受查询串令牌。
+/// Bearer 头。查询串令牌会进反代访问日志与浏览器历史，普通接口一律不再
+/// 接受；书源登录代理的限定令牌由 `/v1/sources/{id}/proxy` 子路由直接从
+/// 查询串读取并校验，不经过这里。
 pub(crate) fn extract_token<B>(request: &axum::http::Request<B>) -> Option<String> {
     if let Some(raw) = request
         .headers()
@@ -96,19 +87,7 @@ pub(crate) fn extract_token<B>(request: &axum::http::Request<B>) -> Option<Strin
             return Some(token);
         }
     }
-    if let Some(token) =
-        crate::auth::cookie::cookie_value(request.headers(), crate::auth::cookie::ACCESS_COOKIE)
-    {
-        return Some(token);
-    }
-    if !scoped_token_path_allowed(request.uri().path()) {
-        return None;
-    }
-    let query = request.uri().query()?;
-    url::form_urlencoded::parse(query.as_bytes())
-        .find(|(key, _)| key == "accessToken")
-        .map(|(_, value)| value.into_owned())
-        .filter(|value| !value.trim().is_empty())
+    crate::auth::cookie::cookie_value(request.headers(), crate::auth::cookie::ACCESS_COOKIE)
 }
 
 fn parse_bearer(raw: &str) -> Option<String> {
@@ -197,77 +176,17 @@ mod tests {
     }
 
     #[test]
-    fn query_token_is_accepted_only_on_proxy_paths() {
-        // SSE 等浏览器端点改由 Cookie 鉴权，查询串主 JWT 不再放行
-        let request = Request::builder()
-            .uri("/reader3/searchBookMultiSSE?key=x&accessToken=token-from-query")
-            .body(())
-            .unwrap();
-        assert_eq!(extract_token(&request), None);
-
-        // 代理页的限定令牌仍走查询串（iframe/内嵌脚本拼 URL 最简单）
-        let request = Request::builder()
-            .uri("/reader3/bookSourceProxy?url=x&accessToken=token-from-query")
-            .body(())
-            .unwrap();
-        assert_eq!(extract_token(&request).as_deref(), Some("token-from-query"));
-    }
-
-    #[test]
-    fn header_wins_over_cookie_and_query_parameter() {
-        let mut request = request_with_header("token-from-header");
-        request
-            .headers_mut()
-            .insert(header::COOKIE, "reader_access=from-cookie".parse().unwrap());
-        *request.uri_mut() = "/reader3/x?accessToken=from-query".parse().unwrap();
-        assert_eq!(
-            extract_token(&request).as_deref(),
-            Some("token-from-header")
-        );
-    }
-
-    #[test]
-    fn cookie_wins_over_query_parameter() {
-        let mut request = request_with_cookie("reader_access=from-cookie");
-        *request.uri_mut() = "/reader3/x?accessToken=from-query".parse().unwrap();
-        assert_eq!(
-            extract_token(&request).as_deref(),
-            Some("from-cookie"),
-            "非代理路径的查询串令牌本就忽略，Cookie 也应排在它前面"
-        );
-    }
-
-    #[test]
-    fn cookie_on_proxy_path_still_beats_query_parameter() {
-        let mut request = request_with_cookie("reader_access=from-cookie");
-        *request.uri_mut() = "/reader3/bookSourceProxy?accessToken=from-query"
-            .parse()
-            .unwrap();
-        assert_eq!(extract_token(&request).as_deref(), Some("from-cookie"));
-    }
-
-    #[test]
-    fn blank_query_token_is_ignored() {
-        let request = Request::builder()
-            .uri("/reader3/bookSourceProxy?accessToken=%20")
-            .body(())
-            .unwrap();
-        assert_eq!(extract_token(&request), None);
-    }
-
-    #[test]
-    fn missing_token_yields_none() {
-        let request = Request::builder().uri("/reader3/x").body(()).unwrap();
-        assert_eq!(extract_token(&request), None);
-    }
-
-    #[test]
-    fn scoped_tokens_are_confined_to_proxy_paths() {
-        assert!(scoped_token_path_allowed("/reader3/bookSourceProxy"));
-        assert!(scoped_token_path_allowed("/reader3/bookSourceClientLog"));
-        assert!(!scoped_token_path_allowed("/reader3/getBookSources"));
-        assert!(!scoped_token_path_allowed("/reader3/bookSourceProxy2"));
-        assert!(!scoped_token_path_allowed("/"));
+    fn query_token_is_ignored_everywhere() {
+        // 查询串令牌只由 /v1 代理子路由自行读取；普通鉴权链一律不认，
+        // 避免访问日志/浏览器历史里的令牌被当成主令牌使用。
+        for uri in [
+            "/reader3/searchBookMultiSSE?key=x&accessToken=token-from-query",
+            "/reader3/bookSourceProxy?url=x&accessToken=token-from-query",
+            "/v1/me?accessToken=token-from-query",
+        ] {
+            let request = Request::builder().uri(uri).body(()).unwrap();
+            assert_eq!(extract_token(&request), None, "{uri}");
+        }
     }
 
     #[test]

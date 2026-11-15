@@ -44,7 +44,8 @@ describe('prefetchUserdata 首屏批量预读', () => {
 
     expect(httpGet).toHaveBeenCalledTimes(1)
     expect(httpGet).toHaveBeenCalledWith(
-      '/getUserdataBatch?names=reading-stats,recent-books,readChapterHistory'
+      '/me/userdata:batch?names=reading-stats,recent-books,readChapterHistory',
+      { baseURL: API_V1_BASE }
     )
   })
 
@@ -61,7 +62,7 @@ describe('prefetchUserdata 首屏批量预读', () => {
     mockBatchOnce({ 'reading-stats': { totalSeconds: 5 } })
     const docs = await getUserdataBatch<{ totalSeconds: number }>(['reading-stats'])
     expect(httpGet).toHaveBeenCalledTimes(2)
-    expect(httpGet).toHaveBeenLastCalledWith('/getUserdataBatch?names=reading-stats')
+    expect(httpGet).toHaveBeenLastCalledWith('/me/userdata:batch?names=reading-stats', { baseURL: API_V1_BASE })
     expect(docs['reading-stats']).toEqual({ totalSeconds: 5 })
   })
 })
@@ -97,7 +98,7 @@ describe('getUserdataBatch 消费预读缓存', () => {
     mockBatchOnce({ 'reading-stats': { totalSeconds: 9 } })
     const docs = await getUserdataBatch<{ totalSeconds: number }>(['reading-stats'])
     expect(httpGet).toHaveBeenCalledTimes(2)
-    expect(httpGet).toHaveBeenLastCalledWith('/getUserdataBatch?names=reading-stats')
+    expect(httpGet).toHaveBeenLastCalledWith('/me/userdata:batch?names=reading-stats', { baseURL: API_V1_BASE })
     expect(docs['reading-stats']).toEqual({ totalSeconds: 9 })
   })
 
@@ -115,13 +116,13 @@ describe('getUserdataBatch 消费预读缓存', () => {
     vi.advanceTimersByTime(31_000)
     mockBatchOnce({ 'reading-stats': 3 })
     await expect(getUserdataBatch(['reading-stats'])).resolves.toEqual({ 'reading-stats': 3 })
-    expect(httpGet).toHaveBeenLastCalledWith('/getUserdataBatch?names=reading-stats')
+    expect(httpGet).toHaveBeenLastCalledWith('/me/userdata:batch?names=reading-stats', { baseURL: API_V1_BASE })
   })
 
   it('未预读的文档发批量 GET，name 做 URL 编码', async () => {
     mockBatchOnce({ 'a b': null })
     const docs = await getUserdataBatch(['a b'])
-    expect(httpGet).toHaveBeenCalledWith('/getUserdataBatch?names=a%20b')
+    expect(httpGet).toHaveBeenCalledWith('/me/userdata:batch?names=a%20b', { baseURL: API_V1_BASE })
     expect(docs).toEqual({ 'a b': null })
   })
 
@@ -133,7 +134,7 @@ describe('getUserdataBatch 消费预读缓存', () => {
     const docs = await getUserdataBatch(['reading-stats', 'recent-books'])
 
     expect(httpGet).toHaveBeenCalledTimes(2) // 预读 1 次 + miss 1 次
-    expect(httpGet).toHaveBeenLastCalledWith('/getUserdataBatch?names=recent-books')
+    expect(httpGet).toHaveBeenLastCalledWith('/me/userdata:batch?names=recent-books', { baseURL: API_V1_BASE })
     expect(docs).toEqual({ 'reading-stats': { totalSeconds: 7 }, 'recent-books': [] })
   })
 })
@@ -153,7 +154,7 @@ describe('写后缓存失效', () => {
     // 被写的文档失效；未被写的文档仍命中缓存
     mockBatchOnce({ 'reading-stats': 3 })
     await expect(getUserdataBatch(['reading-stats'])).resolves.toEqual({ 'reading-stats': 3 })
-    expect(httpGet).toHaveBeenLastCalledWith('/getUserdataBatch?names=reading-stats')
+    expect(httpGet).toHaveBeenLastCalledWith('/me/userdata:batch?names=reading-stats', { baseURL: API_V1_BASE })
     httpGet.mockClear()
     await expect(getUserdataBatch(['recent-books'])).resolves.toEqual({ 'recent-books': [] })
     expect(httpGet).not.toHaveBeenCalled()
@@ -184,7 +185,7 @@ describe('invalidateUserdataPrefetch 按文档名失效', () => {
     // 被失效的文档回落批量 GET；未失效的文档仍命中缓存，不发请求
     mockBatchOnce({ 'reading-stats': 2 })
     await expect(getUserdataBatch(['reading-stats'])).resolves.toEqual({ 'reading-stats': 2 })
-    expect(httpGet).toHaveBeenLastCalledWith('/getUserdataBatch?names=reading-stats')
+    expect(httpGet).toHaveBeenLastCalledWith('/me/userdata:batch?names=reading-stats', { baseURL: API_V1_BASE })
     httpGet.mockClear()
     await expect(getUserdataBatch(['recent-books'])).resolves.toEqual({ 'recent-books': [] })
     expect(httpGet).not.toHaveBeenCalled()
@@ -200,6 +201,6 @@ describe('clearUserdataPrefetch 登出清理', () => {
 
     mockBatchOnce({ 'reading-stats': 2 })
     await expect(getUserdataBatch(['reading-stats'])).resolves.toEqual({ 'reading-stats': 2 })
-    expect(httpGet).toHaveBeenLastCalledWith('/getUserdataBatch?names=reading-stats')
+    expect(httpGet).toHaveBeenLastCalledWith('/me/userdata:batch?names=reading-stats', { baseURL: API_V1_BASE })
   })
 })

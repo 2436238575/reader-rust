@@ -50,7 +50,7 @@ export function invalidateUserdataPrefetch(names: string[]) {
  * 批量读取当前用户的 JSON 文档（一次 ≤20 个），把首屏的 N 次读取合成一次
  * 往返；单文档读取传单元素数组即可。命中预读缓存且未过期的条目直接返回
  * （一次性消费，避免长期陈旧），只对 miss/过期的条目发请求。
- * 对应后端 /reader3/getUserdataBatch?names=a,b,c；
+ * 对应后端 GET /v1/me/userdata:batch?names=a,b,c；
  * 缺失的文档在返回映射里为 null。
  */
 export function getUserdataBatch<T = unknown>(names: string[]) {
@@ -71,10 +71,12 @@ export function getUserdataBatch<T = unknown>(names: string[]) {
   }
   if (!misses.length) return Promise.resolve(hits)
   const query = misses.map((name) => encodeURIComponent(name)).join(',')
-  return http.get<unknown>(`/getUserdataBatch?names=${query}`).then((r) => {
-    const docs = (r.data as { docs?: Record<string, T | null> } | null)?.docs ?? {}
-    return { ...docs, ...hits }
-  })
+  return http
+    .get<unknown>(`/me/userdata:batch?names=${query}`, { baseURL: API_V1_BASE })
+    .then((r) => {
+      const docs = (r.data as { docs?: Record<string, T | null> } | null)?.docs ?? {}
+      return { ...docs, ...hits }
+    })
 }
 
 /**

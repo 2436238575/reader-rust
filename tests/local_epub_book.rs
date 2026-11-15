@@ -154,11 +154,11 @@ async fn epub_import_saves_manifest_chapters_and_assets() {
         .cover_url
         .as_deref()
         .unwrap_or_default()
-        .contains("localEpubAsset"));
+        .contains("/v1/local-books/assets/"));
     assert_eq!(chapters.len(), 2);
     assert_eq!(chapters[0].title, "第一章 导入");
     assert!(content.contains("<h1>第一章</h1>"));
-    assert!(content.contains("localEpubAsset"));
+    assert!(content.contains("/v1/local-books/assets/"));
     assert!(content.contains("<img"));
     assert!(!content.contains("unlisted.png"));
     assert!(!content.contains("<script"));
@@ -261,7 +261,7 @@ async fn real_sample_epub_imports_from_repo_epub_folder_when_present() {
 
     assert_eq!(book.name, "盘龙");
     assert!(chapters.len() > 100);
-    assert!(content.contains("localEpubAsset"));
+    assert!(content.contains("/v1/local-books/assets/"));
 
     common::remove_dir_retried(storage_dir);
 }

@@ -78,6 +78,10 @@ struct TestServer {
 
 impl TestServer {
     async fn start() -> Self {
+        Self::start_with_cookie_path("/reader3").await
+    }
+
+    async fn start_with_cookie_path(cookie_path: &str) -> Self {
         common::clean_stale_temp_dirs();
         let temp_dir =
             std::env::temp_dir().join(format!("reader-rust-proxy-{}", uuid::Uuid::new_v4()));
@@ -94,6 +98,7 @@ impl TestServer {
             admin_username: TEST_USERNAME.to_string(),
             admin_password: TEST_PASSWORD.to_string(),
             rate_limit_disabled: true,
+            cookie_path: cookie_path.to_string(),
             // 假上游监听 127.0.0.1：显式放行私网出站（默认拦截）
             allow_private_network: true,
             ..AppConfig::default()
@@ -125,8 +130,9 @@ impl TestServer {
     async fn save_source(&self, name: &str, url: &str, search_url: &str) -> i64 {
         let resp = self
             .client
-            .post(format!("{}/reader3/saveBookSource", self.base_url))
+            .post(format!("{}/v1/sources", self.base_url))
             .bearer_auth(&self.token)
+            .header("x-requested-with", "XMLHttpRequest")
             .json(&serde_json::json!({
                 "bookSourceName": name,
                 "bookSourceUrl": url,
@@ -136,11 +142,20 @@ impl TestServer {
             .send()
             .await
             .unwrap();
-        assert_eq!(resp.status(), 200, "保存书源 {name} 应成功");
+        assert!(
+            matches!(
+                resp.status(),
+                reqwest::StatusCode::OK | reqwest::StatusCode::CREATED
+            ),
+            "保存书源 {name} 应成功，实际 {}",
+            resp.status()
+        );
         let body: serde_json::Value = resp.json().await.unwrap();
-        body["data"]["bookSourceId"]
-            .as_i64()
-            .expect("保存响应应含 bookSourceId")
+        body["id"]
+            .as_str()
+            .and_then(|id| id.strip_prefix("src_"))
+            .and_then(|id| id.parse::<i64>().ok())
+            .expect("保存响应应含 src_<n> id")
     }
 
     /// 通过书源 B 触发一次 searchBook 抓取（fetch_source_url 会带上
@@ -221,23 +236,25 @@ async fn rejected_proxy_request_writes_no_source_cookie() {
         )
         .await;
 
-    // 绑定 A 的限定令牌去代理 B：应 400 拒绝
+    // 绑定 A 的限定令牌去代理 B：应在鉴权层直接拒绝
     let token_a = server.mint_proxy_token(source_a);
     let resp = server
         .client
-        .get(format!("{}/reader3/bookSourceProxy", server.base_url))
-        .bearer_auth(&token_a)
+        .get(format!(
+            "{}/v1/sources/src_{source_b}/proxy",
+            server.base_url
+        ))
         .header("Cookie", "victim=1")
         .query(&[
-            ("bookSourceId", source_b.to_string()),
+            ("accessToken", token_a.clone()),
             ("url", format!("{upstream}/probe")),
         ])
         .send()
         .await
         .unwrap();
-    assert_eq!(resp.status(), 400, "令牌与书源不匹配应 400");
+    assert_eq!(resp.status(), 403, "令牌与书源不匹配应 403");
     let body: serde_json::Value = resp.json().await.unwrap();
-    assert_eq!(body["errorMsg"], serde_json::json!("代理令牌与书源不匹配"));
+    assert_eq!(body["code"], serde_json::json!("SCOPE_FORBIDDEN"));
 
     // 拒绝的请求不允许产生副作用：通过 B 抓一次搜索，上游不应看到 victim cookie
     server.trigger_search_fetch(source_b).await;
@@ -250,15 +267,18 @@ async fn rejected_proxy_request_writes_no_source_cookie() {
         );
     }
 
-    // 对照组（证明观测通道本身有效）：主令牌的合法代理请求带 Cookie，
+    // 对照组（证明观测通道本身有效）：绑定 B 的合法代理请求带 Cookie，
     // 会写入存储并被后续 searchBook 抓取带上
+    let token_b = server.mint_proxy_token(source_b);
     let resp = server
         .client
-        .get(format!("{}/reader3/bookSourceProxy", server.base_url))
-        .bearer_auth(&server.token)
+        .get(format!(
+            "{}/v1/sources/src_{source_b}/proxy",
+            server.base_url
+        ))
         .header("Cookie", "legit=1")
         .query(&[
-            ("bookSourceId", source_b.to_string()),
+            ("accessToken", token_b.clone()),
             ("url", format!("{upstream}/probe")),
         ])
         .send()
@@ -277,8 +297,79 @@ async fn rejected_proxy_request_writes_no_source_cookie() {
     }
 }
 
-/// mintBookSourceProxyToken：返回的限定令牌 30 分钟、scope=代理、绑定该书源；
-/// 参数校验与存在性校验与 bookSourceProxy 一致；令牌可走查询串进代理路径。
+/// 代理请求绝不能从用户级 cookie jar 补目标域 Cookie：书源 A 的令牌
+/// 代理到书源 B 的域名时，B 在共享 jar 里的会话不能被带出去。
+#[tokio::test]
+async fn proxy_does_not_inject_shared_jar_cookies_for_other_sources() {
+    let (upstream, cookie_log) = start_upstream().await;
+    let server = TestServer::start().await;
+
+    let source_b = server
+        .save_source("源B", &upstream, &format!("{upstream}/search"))
+        .await;
+    let source_a = server
+        .save_source(
+            "源A",
+            "http://source-a.example",
+            "http://source-a.example/s",
+        )
+        .await;
+
+    // 先通过 B 的代理把 legit=1 写进用户级 jar
+    let token_b = server.mint_proxy_token(source_b);
+    let resp = server
+        .client
+        .get(format!(
+            "{}/v1/sources/src_{source_b}/proxy",
+            server.base_url
+        ))
+        .header("Cookie", "legit=1")
+        .query(&[
+            ("accessToken", token_b.clone()),
+            ("url", format!("{upstream}/probe")),
+        ])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    // 证明 jar 里确实有 B 的 cookie（searchBook 抓取会带上）
+    server.trigger_search_fetch(source_b).await;
+    assert!(
+        cookie_log
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|cookie| cookie.as_deref().is_some_and(|c| c.contains("legit=1"))),
+        "前置条件失败：B 的 cookie 未进入用户级 jar"
+    );
+    cookie_log.lock().unwrap().clear();
+
+    // A 的令牌代理到 B 的域名，且浏览器不带 Cookie：jar 不能被注入
+    let token_a = server.mint_proxy_token(source_a);
+    let resp = server
+        .client
+        .get(format!(
+            "{}/v1/sources/src_{source_a}/proxy",
+            server.base_url
+        ))
+        .query(&[
+            ("accessToken", token_a.clone()),
+            ("url", format!("{upstream}/probe")),
+        ])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let log = cookie_log.lock().unwrap();
+    assert!(
+        log.iter()
+            .all(|cookie| !cookie.as_deref().is_some_and(|c| c.contains("legit=1"))),
+        "代理请求不应从共享 jar 带出其它书源的 Cookie，实际 {log:?}"
+    );
+}
+
+/// v1 proxy-token：返回 10 分钟、scope=代理、绑定该书源的限定令牌；
+/// 未登记 id 404、未认证 401；令牌只能代理绑定的书源。
 #[tokio::test]
 async fn mint_book_source_proxy_token_binds_the_source_with_scoped_claims() {
     let (upstream, _cookie_log) = start_upstream().await;
@@ -299,100 +390,99 @@ async fn mint_book_source_proxy_token_binds_the_source_with_scoped_claims() {
         )
         .await;
 
-    // 缺 bookSourceId 400
-    let resp = server
-        .client
-        .post(format!(
-            "{}/reader3/mintBookSourceProxyToken",
-            server.base_url
-        ))
-        .bearer_auth(&server.token)
-        .json(&serde_json::json!({}))
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(resp.status(), 400, "缺 bookSourceId 应 400");
-
     // 不存在的书源 404
     let resp = server
         .client
         .post(format!(
-            "{}/reader3/mintBookSourceProxyToken",
+            "{}/v1/sources/src_9999/proxy-token",
             server.base_url
         ))
         .bearer_auth(&server.token)
-        .json(&serde_json::json!({ "bookSourceId": 9999 }))
+        .header("x-requested-with", "XMLHttpRequest")
         .send()
         .await
         .unwrap();
     assert_eq!(resp.status(), 404, "未登记的书源应 404");
 
-    // 未认证 401（受保护接口）
+    // 未认证 401
     let resp = server
         .client
         .post(format!(
-            "{}/reader3/mintBookSourceProxyToken",
+            "{}/v1/sources/src_{source_b}/proxy-token",
             server.base_url
         ))
-        .json(&serde_json::json!({ "bookSourceId": source_b }))
+        .header("x-requested-with", "XMLHttpRequest")
         .send()
         .await
         .unwrap();
     assert_eq!(resp.status(), 401);
 
-    // 正常签发：30 分钟、scope=代理、绑定书源
+    // 正常签发：10 分钟、scope=代理、绑定书源
     let resp = server
         .client
         .post(format!(
-            "{}/reader3/mintBookSourceProxyToken",
+            "{}/v1/sources/src_{source_a}/proxy-token",
             server.base_url
         ))
         .bearer_auth(&server.token)
-        .json(&serde_json::json!({ "bookSourceId": source_a }))
+        .header("x-requested-with", "XMLHttpRequest")
         .send()
         .await
         .unwrap();
     assert_eq!(resp.status(), 200);
     let body: serde_json::Value = resp.json().await.unwrap();
-    assert_eq!(body["data"]["expiresIn"], serde_json::json!(1800));
-    let token = body["data"]["token"]
-        .as_str()
-        .expect("应返回 token")
-        .to_string();
+    assert_eq!(body["expiresIn"], serde_json::json!(600));
+    let token = body["token"].as_str().expect("应返回 token").to_string();
     let claims = decode_token(&token, TEST_JWT_SECRET.as_bytes()).unwrap();
     assert_eq!(claims.scope.as_deref(), Some(PROXY_TOKEN_SCOPE));
     assert_eq!(claims.bsid, Some(source_a));
-    assert_eq!(claims.exp - claims.iat, 1800, "限定令牌 30 分钟");
+    assert_eq!(claims.exp - claims.iat, 600, "v1 限定令牌 10 分钟");
 
-    // 绑定 A 的令牌代理 B：400 拒绝（与 bookSourceProxy 的绑定校验一致）
+    // 绑定 A 的令牌代理 B：403（鉴权层校验路径书源）
     let resp = server
         .client
-        .get(format!("{}/reader3/bookSourceProxy", server.base_url))
-        .bearer_auth(&token)
+        .get(format!(
+            "{}/v1/sources/src_{source_b}/proxy",
+            server.base_url
+        ))
         .query(&[
-            ("bookSourceId", source_b.to_string()),
+            ("accessToken", token.clone()),
             ("url", format!("{upstream}/probe")),
         ])
         .send()
         .await
         .unwrap();
-    assert_eq!(resp.status(), 400, "绑定 A 的令牌不能代理 B");
+    assert_eq!(resp.status(), 403, "绑定 A 的令牌不能代理 B");
 
-    // 代理页脚本把令牌放查询串：代理路径仍接受（无 Bearer 头）
+    // 查询串限定令牌 + 正确路径：接受（无 Bearer/Cookie）
     let resp = server
         .client
         .get(format!(
-            "{}/reader3/bookSourceProxy?accessToken={token}",
+            "{}/v1/sources/src_{source_a}/proxy",
             server.base_url
         ))
         .query(&[
-            ("bookSourceId", source_a.to_string()),
+            ("accessToken", token.clone()),
             ("url", format!("{upstream}/probe")),
         ])
         .send()
         .await
         .unwrap();
     assert_eq!(resp.status(), 200, "查询串限定令牌在代理路径应被接受");
+
+    // 主 JWT 不能当代理令牌用（代理只认查询串限定令牌）
+    let resp = server
+        .client
+        .get(format!(
+            "{}/v1/sources/src_{source_a}/proxy",
+            server.base_url
+        ))
+        .bearer_auth(&server.token)
+        .query(&[("url", format!("{upstream}/probe"))])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 401, "主 JWT 不应通过代理鉴权");
 }
 
 /// 代理 HTML 响应带 CSP sandbox（不透明源，读不到主站）并保留 no-store；
@@ -409,12 +499,12 @@ async fn proxy_html_response_carries_sandbox_csp() {
         )
         .await;
 
+    let token = server.mint_proxy_token(source);
     let resp = server
         .client
-        .get(format!("{}/reader3/bookSourceProxy", server.base_url))
-        .bearer_auth(&server.token)
+        .get(format!("{}/v1/sources/src_{source}/proxy", server.base_url))
         .query(&[
-            ("bookSourceId", source.to_string()),
+            ("accessToken", token.clone()),
             ("url", format!("{upstream}/login")),
         ])
         .send()
@@ -451,18 +541,33 @@ async fn proxy_html_response_carries_sandbox_csp() {
         body.contains("readerBookSourceProxy"),
         "代理脚本应注入 HTML: {body}"
     );
+    assert!(
+        body.contains(&format!("/v1/sources/src_{source}/proxy?")),
+        "HTML 重写后的链接应指向 v1 代理路径: {body}"
+    );
+    assert!(
+        body.contains("accessToken="),
+        "重写后的链接应带限定令牌: {body}"
+    );
+    assert!(
+        body.contains(&format!("/v1/sources/src_{source}/proxy/client-log")),
+        "client-log 地址应指向 v1 子路径: {body}"
+    );
 
     // 对照：JSON 上游响应不加 sandbox（CSP 只针对 HTML）
     let (json_upstream, _log) = start_upstream().await;
     let json_source = server
         .save_source("JSON源", &json_upstream, &format!("{json_upstream}/s"))
         .await;
+    let json_token = server.mint_proxy_token(json_source);
     let resp = server
         .client
-        .get(format!("{}/reader3/bookSourceProxy", server.base_url))
-        .bearer_auth(&server.token)
+        .get(format!(
+            "{}/v1/sources/src_{json_source}/proxy",
+            server.base_url
+        ))
         .query(&[
-            ("bookSourceId", json_source.to_string()),
+            ("accessToken", json_token.clone()),
             ("url", format!("{json_upstream}/probe")),
         ])
         .send()
@@ -476,4 +581,91 @@ async fn proxy_html_response_carries_sandbox_csp() {
             .is_none_or(|v| !v.contains("sandbox")),
         "非 HTML 响应不应带 sandbox CSP"
     );
+}
+
+#[tokio::test]
+async fn proxy_urls_include_deployment_prefix() {
+    let upstream = start_html_upstream().await;
+    let server = TestServer::start_with_cookie_path("/read/reader3").await;
+    let source = server
+        .save_source("前缀源", &upstream, &format!("{upstream}/search"))
+        .await;
+    let token = server.mint_proxy_token(source);
+
+    let resp = server
+        .client
+        .get(format!("{}/v1/sources/src_{source}/proxy", server.base_url))
+        .query(&[("accessToken", token), ("url", format!("{upstream}/login"))])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let body = resp.text().await.unwrap();
+    assert!(
+        body.contains(&format!("/read/v1/sources/src_{source}/proxy?")),
+        "子路径部署下重写 URL 应带 /read 前缀: {body}"
+    );
+    assert!(
+        body.contains(&format!("/read/v1/sources/src_{source}/proxy/client-log")),
+        "client-log 地址应带部署前缀: {body}"
+    );
+}
+
+#[tokio::test]
+async fn proxy_client_log_requires_the_bound_token() {
+    let (upstream, _log) = start_upstream().await;
+    let server = TestServer::start().await;
+    let source = server
+        .save_source("日志源", &upstream, &format!("{upstream}/s"))
+        .await;
+    let token = server.mint_proxy_token(source);
+
+    let response = server
+        .client
+        .post(format!(
+            "{}/v1/sources/src_{source}/proxy/client-log",
+            server.base_url
+        ))
+        .query(&[
+            ("accessToken", token.clone()),
+            ("message", "boom".to_string()),
+            ("source", "login.js".to_string()),
+        ])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    let body: serde_json::Value = response.json().await.unwrap();
+    assert_eq!(body["logged"], serde_json::json!(true));
+
+    let response = server
+        .client
+        .post(format!(
+            "{}/v1/sources/src_{source}/proxy/client-log",
+            server.base_url
+        ))
+        .query(&[("message", "boom".to_string())])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 401);
+
+    let other = server
+        .save_source("另一源", "http://other.example", "http://other.example/s")
+        .await;
+    let other_token = server.mint_proxy_token(other);
+    let response = server
+        .client
+        .post(format!(
+            "{}/v1/sources/src_{source}/proxy/client-log",
+            server.base_url
+        ))
+        .query(&[
+            ("accessToken", other_token),
+            ("message", "boom".to_string()),
+        ])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 403);
 }

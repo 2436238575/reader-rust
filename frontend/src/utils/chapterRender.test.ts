@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { describe, expect, it } from 'vitest'
 import {
+  appendLocalEpubAssetAuth,
   applyDiffMarks,
   applyUnderlineMarks,
   buildBaseChapterHtml,
@@ -486,5 +487,27 @@ describe('isProbablyChapterHtml 的 HTML 判定', () => {
     const el = root(buildBaseChapterHtml('<p>甲</p><br><img src="x">', opts))
     expect(el.querySelector('br')).not.toBeNull()
     expect(el.querySelector('img')?.getAttribute('src')).toBe('x')
+  })
+})
+
+describe('appendLocalEpubAssetAuth', () => {
+  const hash = '0123456789abcdef0123456789abcdef'
+
+  it('legacy 本地资源改写成 v1 资源路径', () => {
+    const el = root(
+      `<img src="/reader3/localEpubAsset?bookUrl=local-epub%3A${hash}&path=OEBPS%2Fpic.png">`
+    )
+    appendLocalEpubAssetAuth(el)
+    expect(el.querySelector('img')?.getAttribute('src')).toBe(
+      `/v1/local-books/assets/${hash}?path=OEBPS%2Fpic.png`
+    )
+  })
+
+  it('v1 本地资源只套部署前缀', () => {
+    const el = root(`<img src="/v1/local-books/assets/${hash}?path=OEBPS%2Fpic.png">`)
+    appendLocalEpubAssetAuth(el)
+    expect(el.querySelector('img')?.getAttribute('src')).toBe(
+      `/v1/local-books/assets/${hash}?path=OEBPS%2Fpic.png`
+    )
   })
 })

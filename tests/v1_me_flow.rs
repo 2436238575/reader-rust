@@ -140,28 +140,37 @@ async fn unregistered_v1_path_gets_problem_404() {
 async fn scoped_proxy_token_cannot_access_v1() {
     let server = TestServer::start().await;
 
-    // 用 /reader3 的限定令牌铸造端点换一枚 30 分钟限定令牌（绑定书源 1）
+    // 先建一个真实书源，再用 v1 端点铸限定令牌（不再依赖已删除的 legacy 端点）
     let resp = server
         .client
-        .post(format!(
-            "{}/reader3/mintBookSourceProxyToken",
-            server.base_url
-        ))
+        .post(format!("{}/v1/sources", server.base_url))
         .bearer_auth(&server.token)
-        .json(&json!({ "bookSourceId": 1, "ttlSeconds": 60 }))
+        .header("x-requested-with", "XMLHttpRequest")
+        .json(&json!({
+            "bookSourceName": "代理测试源",
+            "bookSourceUrl": "https://proxy-test.example"
+        }))
         .send()
         .await
         .unwrap();
-    if resp.status() != StatusCode::OK {
-        // 铸造端点在部分口径下要求书源存在；拿不到限定令牌时本用例退化跳过
-        server.cleanup();
-        return;
-    }
+    assert_eq!(resp.status(), StatusCode::CREATED);
     let body: Value = resp.json().await.unwrap();
-    let Some(scoped) = body["data"]["accessToken"].as_str().map(str::to_string) else {
-        server.cleanup();
-        return;
-    };
+    let source_id = body["id"].as_str().unwrap().to_string();
+
+    let resp = server
+        .client
+        .post(format!(
+            "{}/v1/sources/{source_id}/proxy-token",
+            server.base_url
+        ))
+        .bearer_auth(&server.token)
+        .header("x-requested-with", "XMLHttpRequest")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body: Value = resp.json().await.unwrap();
+    let scoped = body["token"].as_str().expect("应返回限定令牌").to_string();
 
     let resp = server.get("/v1/me", Some(&scoped)).await;
     assert_eq!(resp.status(), StatusCode::FORBIDDEN);

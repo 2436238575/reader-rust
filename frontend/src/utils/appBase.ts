@@ -8,21 +8,19 @@
  */
 export const APP_BASE = import.meta.env.BASE_URL || '/'
 
-/** 接口基址（axios / EventSource / 裸 fetch 共用）。 */
-export const API_BASE = `${APP_BASE.replace(/\/+$/, '')}/reader3`
-
 /**
- * `/v1` 契约命名空间基址。axios 的 baseURL 拼接只对相对路径生效，
- * `/v1` 端点一律以 `{ baseURL: API_V1_BASE, url: '/auth/login' }` 的形式调用。
+ * `/v1` 接口基址（axios / EventSource / 裸 fetch 共用）。axios 的 baseURL
+ * 拼接只对相对路径生效，端点一律以 `{ baseURL: API_V1_BASE, url: '/auth/login' }`
+ * 的形式调用。
  */
 export const API_V1_BASE = `${APP_BASE.replace(/\/+$/, '')}/v1`
 
 /**
  * 给应用内的绝对路径套上部署前缀。
  *
- * 需要过这里的有两类：服务端返回的路径（封面 `/v1/images/<id>`、
- * 本地书资源 `/reader3/localEpubAsset`）与手工拼的接口地址。
- * 已经是完整 URL 或相对路径的原样返回。
+ * 需要过这里的是服务端返回的站内路径（封面 `/v1/images/<id>`、本地书
+ * 资源 `/v1/local-books/assets/...`）与手工拼的接口地址。已经是完整 URL
+ * 或相对路径的原样返回。
  */
 export function withAppBase(path: string) {
   if (!path.startsWith('/')) return path

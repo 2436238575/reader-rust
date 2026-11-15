@@ -493,7 +493,7 @@ async fn proxy_never_forwards_reader_session_cookies() {
     );
     let response = server
         .client
-        .get(server.url(&format!("/reader3/bookSourceProxy?{query}")))
+        .get(server.url(&format!("/v1/sources/{id}/proxy?{query}")))
         .header("Cookie", cookie)
         .send()
         .await
@@ -507,6 +507,81 @@ async fn proxy_never_forwards_reader_session_cookies() {
         "主 JWT 不能转发给书源: {body}"
     );
     assert!(!body.contains("reader_refresh"), "{body}");
+
+    server.cleanup();
+}
+
+#[tokio::test]
+async fn explore_kinds_and_invalid_state_filter() {
+    let server = TestServer::start("http://127.0.0.1:1").await;
+
+    let (status, body) = server
+        .req(
+            reqwest::Method::POST,
+            "/v1/sources",
+            Some(json!({
+                "bookSourceName": "分类源",
+                "bookSourceUrl": "https://kinds.example",
+                "exploreUrl": "玄幻::/x && 都市::/y"
+            })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::CREATED, "{body}");
+    let id = body["id"].as_str().unwrap().to_string();
+
+    let (status, kinds) = server
+        .req(
+            reqwest::Method::GET,
+            &format!("/v1/sources/{id}/explore-kinds"),
+            None,
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{kinds}");
+    assert_eq!(kinds.as_array().unwrap().len(), 2, "{kinds}");
+    assert_eq!(kinds[0]["title"], json!("玄幻"));
+    assert_eq!(kinds[1]["url"], json!("/y"));
+
+    let (status, problem) = server
+        .req(
+            reqwest::Method::GET,
+            "/v1/sources/src_999999/explore-kinds",
+            None,
+        )
+        .await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "{problem}");
+
+    // 把源写进「失效」分组后，state 过滤能把它单独列出来
+    let (status, body) = server
+        .req(
+            reqwest::Method::POST,
+            "/v1/sources",
+            Some(json!({
+                "bookSourceName": "分类源",
+                "bookSourceUrl": "https://kinds.example",
+                "bookSourceGroup": "失效",
+                "exploreUrl": "玄幻::/x"
+            })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+
+    let (status, invalid) = server
+        .req(reqwest::Method::GET, "/v1/sources?state=invalid", None)
+        .await;
+    assert_eq!(status, StatusCode::OK, "{invalid}");
+    assert_eq!(invalid["total"], json!(1), "{invalid}");
+    assert_eq!(invalid["items"][0]["id"], json!(id));
+
+    let (status, active) = server
+        .req(reqwest::Method::GET, "/v1/sources?state=active", None)
+        .await;
+    assert_eq!(status, StatusCode::OK, "{active}");
+    assert_eq!(active["total"], json!(0), "{active}");
+
+    let (status, problem) = server
+        .req(reqwest::Method::GET, "/v1/sources?state=broken", None)
+        .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{problem}");
 
     server.cleanup();
 }

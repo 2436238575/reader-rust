@@ -133,7 +133,7 @@
 <script setup lang="ts">
 import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 import { onBeforeRouteLeave, useRouter } from 'vue-router'
-import { API_BASE } from '../utils/appBase'
+import { API_V1_BASE } from '../utils/appBase'
 import {
   buildSourceId,
   exportBookSources,
@@ -212,7 +212,8 @@ const loginPreviewUrl = ref('')
 // 保存/导入/同步都改书源并整表重载：串行化，挡住连点产生的并发写
 const sourceIoBusy = ref(false)
 const loginPreviewFrameUrl = ref('')
-// 当前预览使用的书源代理限定令牌：只绑定该书源、30 分钟有效，主 JWT 不进 URL
+// 当前预览使用的书源代理限定令牌：只绑定该书源、v1 签发 10 分钟有效
+//（代理页内每次响应会重签 30 分钟页面令牌），主 JWT 不进 URL
 const loginPreviewToken = ref('')
 
 // 预览关闭（或切换到下一个书源重新领取）即作废缓存的限定令牌，缩短暴露窗口
@@ -586,7 +587,7 @@ async function handleSourceLogin() {
 
     const result = await loginBookSource(sourceId)
     if (result.previewUrl?.trim()) {
-      // 预览 iframe 走 /reader3/bookSourceProxy：先领取绑定该书源的限定令牌，
+      // 预览 iframe 走 /v1/sources/{id}/proxy：先领取绑定该书源的限定令牌，
       // 失败就 toast 并保持预览关闭；主 JWT 任何情况下都不进 iframe URL
       const minted = await mintBookSourceProxyToken({ bookSourceId: sourceId })
       loginPreviewToken.value = minted.token
@@ -612,7 +613,7 @@ function buildLoginProxyUrl(bookSourceId: number, targetUrl: string, proxyToken:
   params.set('accessToken', proxyToken)
   params.set('bookSourceId', String(bookSourceId))
   params.set('url', targetUrl)
-  return `${API_BASE}/bookSourceProxy?${params.toString()}`
+  return `${API_V1_BASE}/sources/${buildSourceId(bookSourceId)}/proxy?${params.toString()}`
 }
 
 function triggerFileImport() {

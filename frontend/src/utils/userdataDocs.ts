@@ -1,5 +1,5 @@
 /**
- * 后端 userdata 文档名的统一出口（读 /reader3/getUserdataBatch；
+ * 后端 userdata 文档名的统一出口（读 GET /v1/me/userdata:batch；
  * 写 PUT /v1/me/userdata:batch，但阅读统计/已读标记已不再写）。
  * 常量收在不依赖 store 的独立模块里，避免 app.ts 直接 import store 造成循环依赖。
  */

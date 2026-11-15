@@ -28,10 +28,10 @@ pub enum TimeoutShape {
 
 /// 入站请求超时中间件：`tokio::time::timeout` 包住 `next.run(request)`。
 ///
-/// - 超时返回 **HTTP 408** + 统一 JSON 契约（`isSuccess=false`、
-///   `errorMsg="请求超时"`、`data=null`），与 `AppError` 的响应形态一致。
-/// - 日志只记 method / path / 超时秒数，**不记 query**：`accessToken` 允许
-///   经查询串传递（SSE 无法设请求头），口径与 router.rs 的 TraceLayer 对齐。
+/// - `TimeoutShape::Legacy`（`/reader3`）返回 **HTTP 408** + `ApiResponse`；
+///   `TimeoutShape::Problem`（`/v1`）返回 **504** + problem `PROCESSING_TIMEOUT`。
+/// - 日志只记 method / path / 超时秒数，**不记 query**：书源代理子路由的
+///   限定令牌会出现在查询串，避免把凭据写进访问日志。
 /// - 中间件只约束到 handler **产出 Response** 为止。SSE 端点立即返回流式
 ///   响应、事件流在 body 里继续，因此 SSE 不需要白名单；`Body::from_stream`
 ///   的流式透传（如 aiProxy 的 stream:true）同理——但前提是**响应头已到达**。

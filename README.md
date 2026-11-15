@@ -70,7 +70,7 @@ npm run build      # 构建产物输出到 frontend/dist/，由后端直接托�
 npm run dev        # 或启动 Vite 开发服务器（默认 http://localhost:5173）
 ```
 
-开发服务器会把 `/reader3` 反向代理到后端，代理目标端口需与后端 `SERVER_PORT` 一致。
+开发服务器会把 `/v1` 反向代理到后端，代理目标端口需与后端 `SERVER_PORT` 一致。
 
 ### 验证服务
 

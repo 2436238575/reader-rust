@@ -2180,6 +2180,55 @@ paths:
       security:
       - cookieAuth: []
       - bearerAuth: []
+  /v1/local-books/assets/{bookRef}:
+    get:
+      tags:
+      - books
+      summary: 读取本地 EPUB 的内部资源（封面、插图等）。
+      description: |-
+        `bookRef` 是本地书 URL `local-epub:<hash>` 里的 32 位 hash——导入时还没
+        分配 bookId，章节 HTML 与封面 URL 只能带这个稳定引用。服务端确认登记行
+        存在后，用调用者的 `user_ns` 拼资源目录读取；跨用户隔离由目录前缀完成
+        （`books` 登记表本身是整部署共享的）。旧数据里的 legacy 资源 URL 由
+        服务层在读正文/封面时改写成本路径。
+      operationId: getLocalBookAsset
+      parameters:
+      - name: bookRef
+        in: path
+        description: 本地 EPUB 的 32 位 hash（local-epub:<hash> 的 hash 部分）
+        required: true
+        schema:
+          type: string
+      - name: path
+        in: query
+        description: EPUB 内部资源路径
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: 资源字节；Content-Type 按 EPUB manifest 给出
+        '400':
+          description: 资源路径非法或资源不存在
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '401':
+          description: 未登录或令牌失效
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '404':
+          description: 本地书不存在或未登记
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+      security:
+      - cookieAuth: []
+      - bearerAuth: []
   /v1/me:
     get:
       tags:
@@ -3334,6 +3383,46 @@ paths:
       - cookieAuth: []
       - bearerAuth: []
   /v1/me/userdata:batch:
+    get:
+      tags:
+      - me
+      summary: 批量读取当前用户的 JSON 文档：`?names=a,b,c`，最多 20 个，缺失文档为 null。
+      operationId: readUserdataBatch
+      parameters:
+      - name: names
+        in: query
+        description: 逗号分隔的文档名，最多 20 个；不存在于返回映射的文档为 null
+        required: false
+        schema:
+          type: string
+      responses:
+        '200':
+          description: 文档名到文档值的映射；缺失文档为 null
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserdataBatchReadResult'
+        '401':
+          description: 未登录或令牌失效
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '413':
+          description: 读取结果超过 16MB
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '422':
+          description: names 缺失/为空/超上限或文档名非法
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+      security:
+      - cookieAuth: []
+      - bearerAuth: []
     put:
       tags:
       - me
@@ -3459,6 +3548,12 @@ paths:
         required: false
         schema:
           type: string
+      - name: state
+        in: query
+        description: active（排除失效）或 invalid（只看失效）
+        required: false
+        schema:
+          $ref: '#/components/schemas/SourceState'
       - name: cursor
         in: query
         description: 上一页的 nextCursor
@@ -3681,6 +3776,43 @@ paths:
             application/problem+json:
               schema:
                 $ref: '#/components/schemas/Problem'
+        '401':
+          description: 未登录或令牌失效
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '404':
+          description: 书源不存在
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+      security:
+      - cookieAuth: []
+      - bearerAuth: []
+  /v1/sources/{sourceId}/explore-kinds:
+    get:
+      tags:
+      - sources
+      summary: 发现分类清单：按书源 `exploreUrl`（JSON/JS/`标题::地址`）解析，不抓上游。
+      operationId: listSourceExploreKinds
+      parameters:
+      - name: sourceId
+        in: path
+        description: 书源 id（src_<n>）
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: 发现分类清单
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/ExploreKind'
         '401':
           description: 未登录或令牌失效
           content:
@@ -5136,7 +5268,7 @@ components:
           - string
           - 'null'
           description: |-
-            站内资源封面地址（本地 EPUB 的 `/reader3/localEpubAsset?...`）；
+            站内资源封面地址（本地 EPUB 的 `/v1/local-books/assets/...`）；
             与 `coverImageId` 二选一，客户端直接渲染
         id:
           type: string
@@ -6454,6 +6586,25 @@ components:
       - API_REMOVED
       - UNKNOWN_FIELD
       - INTERNAL
+    ExploreKind:
+      type: object
+      properties:
+        style:
+          type:
+          - object
+          - 'null'
+          default: null
+          additionalProperties: {}
+          propertyNames:
+            type: string
+        title:
+          type: string
+          default: ''
+        url:
+          type:
+          - string
+          - 'null'
+          default: null
     FetchSourcesRequest:
       type: object
       required:
@@ -7961,6 +8112,11 @@ components:
           format: int64
         token:
           type: string
+    SourceState:
+      type: string
+      enum:
+      - active
+      - invalid
     SourceSummary:
       type: object
       description: 书源摘要：展示字段 + `exploreUrl`，不含规则 JSON。
@@ -8413,6 +8569,16 @@ components:
         value:
           description: 整文档新值；缺失 422（不能把「忘传内容」当成删文档）
       additionalProperties: false
+    UserdataBatchReadResult:
+      type: object
+      description: 批量读取结果：文档名 → 文档值；缺失文档为 null。
+      required:
+      - docs
+      properties:
+        docs:
+          type: object
+          description: 文档名 → 任意 JSON 值；缺失的文档为 null
+          additionalProperties: true
     UserdataBatchSaveRequest:
       type: object
       required:

@@ -77,7 +77,7 @@ npm run test:e2e
 写文档时的硬要求：
 
 - **不在文档里写本机绝对路径**，一律用仓库相对路径或占位符
-- 接口路径、HTTP 方法必须与 `src/api/router.rs` 逐字一致（含 `bookSourceDebugSSE` 这类大写）
+- 接口路径、HTTP 方法必须与 `src/api/router.rs`（`/reader3`）或 `src/api/v1/`（`/v1`）逐字一致
 - 响应字段用**序列化后的名字**（本项目 `model/` 里大量 `#[serde(rename)]`）
 - 示例代码块标注语言；中文文档用中文标点，代码与标识符保持原样
 

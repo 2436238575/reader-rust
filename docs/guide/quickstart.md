@@ -58,7 +58,7 @@ cd frontend
 npm run dev        # 默认 http://localhost:5173
 ```
 
-开发服务器会把 `/reader3` 反向代理到后端（见 `frontend/vite.config.ts`）。若你改了后端端口，记得同步修改代理目标。
+开发服务器会把 `/v1` 反向代理到后端（见 `frontend/vite.config.ts`）。若你改了后端端口，记得同步修改代理目标。
 
 ## 验证安装
 

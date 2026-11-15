@@ -155,7 +155,6 @@ pub fn build_router(state: AppState) -> Router {
             "/reader3/importChapterVersion",
             post(handlers::import_chapter_version),
         )
-        .route("/reader3/uploadFile", post(handlers::upload_file))
         .route(
             "/reader3/uploadFileToWebdav",
             post(handlers::upload_file_to_webdav),
@@ -218,26 +217,12 @@ pub fn build_router(state: AppState) -> Router {
             post(handlers::login_book_source),
         )
         .route(
-            "/reader3/getExploreKinds",
-            post(handlers::get_explore_kinds),
-        )
-        .route(
             "/reader3/testBookSources",
             post(handlers::test_book_sources),
         )
         .route(
             "/reader3/deleteInvalidBookSources",
             post(handlers::delete_invalid_book_sources),
-        )
-        .route("/reader3/bookSourceProxy", any(handlers::book_source_proxy))
-        .route(
-            "/reader3/bookSourceClientLog",
-            any(handlers::book_source_client_log),
-        )
-        // 书源登录预览的限定令牌签发：前端拼 iframe URL 前先取它，主 JWT 不进 URL
-        .route(
-            "/reader3/mintBookSourceProxyToken",
-            post(handlers::mint_book_source_proxy_token),
         )
         .route("/reader3/saveBookSource", post(handlers::save_book_source))
         .route(
@@ -293,14 +278,6 @@ pub fn build_router(state: AppState) -> Router {
         .route(
             "/reader3/saveBookGroupId",
             post(handlers::save_book_group_id),
-        )
-        .route(
-            "/reader3/addBookGroupMulti",
-            post(handlers::add_book_group_multi),
-        )
-        .route(
-            "/reader3/removeBookGroupMulti",
-            post(handlers::remove_book_group_multi),
         )
         .route("/reader3/saveBook", post(handlers::save_book))
         .route("/reader3/saveBooks", post(handlers::save_books))
@@ -405,10 +382,6 @@ pub fn build_router(state: AppState) -> Router {
             "/reader3/searchCachedContent",
             get(handlers::search_cached_content).post(handlers::search_cached_content),
         )
-        .route(
-            "/reader3/getInvalidBookSources",
-            post(handlers::get_invalid_book_sources),
-        )
         .route("/reader3/cacheBookSSE", get(handlers::cache_book_sse))
         .route(
             "/reader3/searchBookMultiSSE",
@@ -426,17 +399,9 @@ pub fn build_router(state: AppState) -> Router {
             "/reader3/getAvailableBookSourceSSE",
             get(handlers::get_available_book_source_sse),
         )
-        .route(
-            "/reader3/bookSourceDebugSSE",
-            get(handlers::book_source_debug_sse),
-        )
         .route("/reader3/cover", get(handlers::get_book_cover))
         // 图片管道：前端只拿 id，不接触书源地址（见 service/image_service.rs）
         .route("/reader3/image/{id}", get(handlers::get_image))
-        .route(
-            "/reader3/localEpubAsset",
-            get(handlers::get_local_epub_asset).layer(middleware::from_fn(sandbox_epub_svg_assets)),
-        )
         .route("/reader3/getBookmarks", get(handlers::get_bookmarks))
         .route("/reader3/saveBookmark", post(handlers::save_bookmark))
         .route("/reader3/saveBookmarks", post(handlers::save_bookmarks))
@@ -501,19 +466,6 @@ pub fn build_router(state: AppState) -> Router {
             "/reader3/deleteWebdavFileList",
             post(handlers::delete_webdav_file_list),
         )
-        .route("/reader3/saveUserConfig", post(handlers::save_user_config))
-        .route("/reader3/getUserConfig", get(handlers::get_user_config))
-        .route("/reader3/getUserdata", get(handlers::get_userdata))
-        .route("/reader3/saveUserdata", post(handlers::save_userdata))
-        .route(
-            "/reader3/getUserdataBatch",
-            get(handlers::get_userdata_batch),
-        )
-        .route(
-            "/reader3/saveUserdataBatch",
-            post(handlers::save_userdata_batch),
-        )
-        .route("/reader3/deleteFile", post(handlers::delete_file))
         // 组级默认上限（8MB）：挂在普通路由之后、合并放宽子路由之前，
         // 只包住本组常规接口；放宽路由在各自子路由上已带更内侧的上限
         .layer(DefaultBodyLimit::max(PROTECTED_BODY_LIMIT_BYTES));
@@ -766,7 +718,7 @@ async fn apply_html_csp(
 /// 提供）：SVG 以 image/svg+xml 同源直出，直接打开时内嵌脚本会在主站
 /// 源下执行。CSP 关掉所有资源加载与脚本，只保留 `<img>` 渲染与内联样式；
 /// 不改成 Content-Disposition: attachment——那会破坏 EPUB 插画。
-async fn sandbox_epub_svg_assets(
+pub(crate) async fn sandbox_epub_svg_assets(
     request: axum::extract::Request,
     next: middleware::Next,
 ) -> axum::response::Response {

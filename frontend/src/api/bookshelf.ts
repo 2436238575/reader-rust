@@ -162,15 +162,6 @@ async function fetchAllShelfV1(): Promise<ShelfBook[]> {
   return books
 }
 
-/**
- * 书架列表（带服务端缓存章数）。仍保留 WebDAV 备份专用 `getBookshelf`
- * 走 `/reader3`：备份快照要完整 Book（tocUrl/infoHtml 等在 v1 书架条目里
- * 不暴露），备份域切换时一并迁移。
- */
-export function getBookshelf() {
-  return http.get<Book[]>('/getBookshelf').then((r) => r.data)
-}
-
 export function getBookshelfWithCacheInfo() {
   return fetchAllShelfV1()
 }
@@ -619,6 +610,30 @@ const V1_IMAGE_ROUTE_PREFIX = '/v1/images/'
 const LEGACY_IMAGE_ROUTE_PREFIX = '/reader3/image/'
 const V1_IMAGE_RESOLVE_PREFIX = '/v1/images:resolve?'
 const LEGACY_COVER_PREFIX = '/reader3/cover?'
+const V1_LOCAL_BOOK_ASSET_PREFIX = '/v1/local-books/assets/'
+const LEGACY_LOCAL_BOOK_ASSET_PREFIX = '/reader3/localEpubAsset'
+
+/**
+ * 旧 IndexedDB/书架数据里可能还有 `/reader3/localEpubAsset?bookUrl=local-epub:<hash>&path=`
+ * （legacy 路由已删除）；能解析出 32 位 hash 时改写成 v1 资源路径。
+ */
+export function normalizeLocalBookAssetUrl(url: string): string {
+  if (!url.startsWith(LEGACY_LOCAL_BOOK_ASSET_PREFIX)) return url
+  try {
+    const parsed = new URL(url, window.location.origin)
+    const bookUrl = parsed.searchParams.get('bookUrl') ?? ''
+    const path = parsed.searchParams.get('path') ?? ''
+    const hash = bookUrl.startsWith('local-epub:')
+      ? bookUrl.slice('local-epub:'.length)
+      : ''
+    if (/^[0-9a-f]{32}$/i.test(hash) && path) {
+      return `${V1_LOCAL_BOOK_ASSET_PREFIX}${hash}?path=${encodeURIComponent(path)}`
+    }
+  } catch {
+    // 保持原值，交给调用方的兜底逻辑
+  }
+  return url
+}
 
 /** 是否图片管道收口后的本站取图地址（v1 与过渡期 legacy 前缀都认）。 */
 export function isPipedImageUrl(url: string) {
@@ -648,7 +663,11 @@ export function withImageWidth(url: string, width?: number) {
 
 export function getCoverUrl(coverUrl?: string, width?: number) {
   if (!coverUrl) return ''
-  if (coverUrl.startsWith('/reader3/localEpubAsset')) {
+  if (coverUrl.startsWith(LEGACY_LOCAL_BOOK_ASSET_PREFIX)) {
+    // 能解析出 hash 的旧地址改写成 v1；解析不了的保持原样（不误走图片解析）
+    return withAppBase(normalizeLocalBookAssetUrl(coverUrl))
+  }
+  if (coverUrl.startsWith(V1_LOCAL_BOOK_ASSET_PREFIX)) {
     return withAppBase(coverUrl)
   }
   // 后端已经把书源地址换成了本站取图地址（`/v1/images/<id>`）：

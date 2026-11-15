@@ -7,14 +7,28 @@
 //! 100MB 体限、鉴权与 CSRF。
 
 use crate::api::problem::{ErrorCode, Problem};
-use crate::api::v1::V1User;
+use crate::api::v1::{V1Query, V1User};
 use crate::api::AppState;
 use crate::model::book::Book;
-use axum::extract::{Multipart, Query, State};
-use axum::routing::post;
+use crate::service::local_epub_book;
+use axum::body::Body;
+use axum::extract::{Multipart, Path, Query, State};
+use axum::http::header;
+use axum::response::Response;
+use axum::routing::{get, post};
 use axum::Json;
 use axum::Router;
 use serde::Deserialize;
+
+/// 本地书资源读取：挂在 v1 常规鉴权/并发/超时组里（GET，无上传体）。
+pub fn asset_router() -> Router<AppState> {
+    Router::new().route(
+        "/v1/local-books/assets/{bookRef}",
+        get(get_local_book_asset).layer(axum::middleware::from_fn(
+            crate::api::router::sandbox_epub_svg_assets,
+        )),
+    )
+}
 
 pub fn router(state: AppState, upload_timeout: std::time::Duration) -> Router<AppState> {
     Router::new()
@@ -168,4 +182,71 @@ pub async fn upload_local_book(
         .await
         .map_err(Problem::from)?;
     Ok(Json(saved))
+}
+
+#[derive(Debug, Deserialize)]
+pub struct LocalBookAssetQuery {
+    /// EPUB 内部资源路径（zip 内相对路径）
+    pub path: String,
+}
+
+/// 读取本地 EPUB 的内部资源（封面、插图等）。
+///
+/// `bookRef` 是本地书 URL `local-epub:<hash>` 里的 32 位 hash——导入时还没
+/// 分配 bookId，章节 HTML 与封面 URL 只能带这个稳定引用。服务端确认登记行
+/// 存在后，用调用者的 `user_ns` 拼资源目录读取；跨用户隔离由目录前缀完成
+/// （`books` 登记表本身是整部署共享的）。旧数据里的 legacy 资源 URL 由
+/// 服务层在读正文/封面时改写成本路径。
+#[utoipa::path(
+    get,
+    path = "/v1/local-books/assets/{bookRef}",
+    tag = "books",
+    operation_id = "getLocalBookAsset",
+    params(
+        ("bookRef" = String, Path, description = "本地 EPUB 的 32 位 hash（local-epub:<hash> 的 hash 部分）"),
+        ("path" = String, Query, description = "EPUB 内部资源路径"),
+    ),
+    security(("cookieAuth" = []), ("bearerAuth" = [])),
+    responses(
+        (status = 200, description = "资源字节；Content-Type 按 EPUB manifest 给出"),
+        (status = 400, description = "资源路径非法或资源不存在", body = Problem, content_type = "application/problem+json"),
+        (status = 401, description = "未登录或令牌失效", body = Problem, content_type = "application/problem+json"),
+        (status = 404, description = "本地书不存在或未登记", body = Problem, content_type = "application/problem+json"),
+    )
+)]
+pub async fn get_local_book_asset(
+    State(state): State<AppState>,
+    V1User(user): V1User,
+    Path(book_ref): Path<String>,
+    V1Query(query): V1Query<LocalBookAssetQuery>,
+) -> Result<Response, Problem> {
+    let book_url = local_epub_book::local_url_from_asset_ref(&book_ref)
+        .ok_or_else(|| Problem::new(ErrorCode::BookNotFound).detail("本地书资源不存在"))?;
+    // 本地 EPUB 的 hash 由 user_ns + 文件名 + 内容共同决定，路径本身也按
+    // user_ns 隔离；这里再确认登记行存在，避免对任意 hash 做无谓的文件探测。
+    let registered = state
+        .book_service
+        .book_repo()
+        .get_by_url(&user.ns, &book_url)
+        .await
+        .map_err(Problem::from)?
+        .is_some();
+    if !registered {
+        return Err(Problem::new(ErrorCode::BookNotFound).detail("本地书资源不存在"));
+    }
+    let asset = state
+        .local_epub_book_service
+        .get_asset(&user.ns, &book_url, &query.path)
+        .await
+        .map_err(Problem::from)?;
+    let mut response = Response::new(Body::from(asset.bytes));
+    let headers = response.headers_mut();
+    headers.insert(
+        header::CACHE_CONTROL,
+        header::HeaderValue::from_static("private, max-age=3600"),
+    );
+    if let Ok(value) = header::HeaderValue::from_str(&asset.content_type) {
+        headers.insert(header::CONTENT_TYPE, value);
+    }
+    Ok(response)
 }

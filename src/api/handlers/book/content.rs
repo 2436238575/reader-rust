@@ -5,7 +5,7 @@ use crate::api::extract::QueryOrBody;
 use crate::api::AppState;
 use crate::auth::CurrentUser;
 use crate::error::error::{ApiResponse, AppError};
-use crate::service::local_epub_book::is_local_epub_url;
+use crate::service::local_epub_book::{is_local_epub_url, rewrite_legacy_asset_urls};
 use crate::service::local_txt_book::is_local_txt_url;
 use crate::util::text::repair_encoded_url;
 use axum::{extract::State, Json};
@@ -582,7 +582,7 @@ where
         }
         Err(error) => return Err(error),
     };
-    let data = local_content_data(
+    let mut data = local_content_data(
         state,
         upstream,
         user_view,
@@ -590,6 +590,12 @@ where
         force_upstream,
     )
     .await;
+    // 本地 EPUB 的用户编辑版本来自正文池，不经过 LocalEpubBookService::get_content
+    // 的读时改写；这里统一兜底，避免编辑版里的旧资源 URL 指向已删除的
+    // /reader3/localEpubAsset。
+    if label == "本地 EPUB" {
+        data.content = rewrite_legacy_asset_urls(&data.content);
+    }
     Ok(data)
 }
 

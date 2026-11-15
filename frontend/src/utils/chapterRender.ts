@@ -2,7 +2,7 @@
 // 消毒/段落样式的基础渲染、章节配图插入、段评气泡、EPUB 资源改写、搜索高亮。
 // 全部是「输入 → DOM/HTML 字符串」的确定性函数，不持有响应式状态。
 
-import { withAuthQuery, withImageWidth } from '../api/bookshelf'
+import { normalizeLocalBookAssetUrl, withAuthQuery, withImageWidth } from '../api/bookshelf'
 import { sanitizeUntrustedHtml } from './sanitize'
 import type { ChapterImage, ParaReviewCount } from '../types'
 import { inlineDiff, type ParagraphDiffOp } from './chapterDiff'
@@ -442,13 +442,14 @@ export function renderChapterImageFigures(images: ChapterImage[], paragraphText:
     .join('')
 }
 
-/** 本地 EPUB 的 <img> 资源地址补令牌（<img> 带不了请求头）。 */
+/** 本地 EPUB 的 <img> 资源地址补部署前缀（会话 Cookie 由浏览器自动携带）。 */
 export function appendLocalEpubAssetAuth(root: HTMLElement) {
   const images = Array.from(root.querySelectorAll('img')) as HTMLImageElement[]
   images.forEach((image) => {
     const src = image.getAttribute('src') || ''
-    if (src.startsWith('/reader3/localEpubAsset')) {
-      image.setAttribute('src', withAuthQuery(src))
+    const normalized = normalizeLocalBookAssetUrl(src)
+    if (normalized.startsWith('/v1/local-books/assets/')) {
+      image.setAttribute('src', withAuthQuery(normalized))
     }
   })
 }

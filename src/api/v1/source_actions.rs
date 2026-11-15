@@ -4,7 +4,7 @@
 //!   落 Cookie；返回 `{ok, message, cookieCount, previewUrl?}`。失败 422
 //!   `SOURCE_LOGIN_FAILED`，只给可读原因，**不回显任何 Cookie 值/响应体**。
 //! - `POST /v1/sources/{sourceId}/proxy-token`：10 分钟、scope=bookSourceProxy、
-//!   绑定单个 source（bsid）的限定令牌，只能访问 `/reader3/bookSourceProxy`
+//!   绑定单个 source（bsid）的限定令牌，只能访问 `/v1/sources/{id}/proxy`
 //!   前缀；主 JWT 不进入 iframe URL。
 
 use crate::api::handlers::book_source::mint_proxy_token_with_ttl;

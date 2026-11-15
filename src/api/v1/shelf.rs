@@ -793,7 +793,7 @@ pub async fn get_book(
         }
     };
     // 封面出口：http(s) 进图片管道只给 id（签名的上游直出地址会过期，
-    // 不能给客户端）；本地 EPUB 封面是站内资源地址（/reader3/localEpubAsset），
+    // 不能给客户端）；本地 EPUB 封面是站内资源地址（/v1/local-books/assets/...），
     // 进不了只收 http(s) 的图片管道，原样给 coverUrl
     let (cover_image_id, cover_url) = split_cover(info.cover_url.as_deref());
     // 本地书的目录不在章节登记表里，统计切片取自本地索引（Book 快照）
@@ -845,8 +845,9 @@ pub async fn get_book(
 /// 封面出口的唯一拆分点：
 /// - 已是本站取图地址（`/v1/images/<id>` 或 legacy `/reader3/image/<id>`）：取回 id；
 /// - http(s) 上游地址：图片管道 id（`md5(去查询串地址)`），同一张图恒定；
-/// - 其余站内资源地址（本地 EPUB 的 `/reader3/localEpubAsset?...`）：管道不收，
-///   原样走 `coverUrl`，客户端照常直接渲染；
+/// - 其余站内资源地址（本地 EPUB 的 `/v1/local-books/assets/...`）：管道不收，
+///   原样走 `coverUrl`，客户端照常直接渲染；存量 `/reader3/localEpubAsset`
+///   地址在这里改写为 v1 资源路径；
 /// - 空串：无封面（md5("") 会指向一张不存在的图）。
 fn split_cover(cover_url: Option<&str>) -> (Option<String>, Option<String>) {
     use crate::service::image_service::ImageService;
@@ -858,6 +859,8 @@ fn split_cover(cover_url: Option<&str>) -> (Option<String>, Option<String>) {
     }
     if url.starts_with("http://") || url.starts_with("https://") {
         (Some(ImageService::image_key(url)), None)
+    } else if let Some(rewritten) = crate::service::local_epub_book::rewrite_legacy_asset_url(url) {
+        (None, Some(rewritten))
     } else {
         (None, Some(url.to_string()))
     }
@@ -878,7 +881,7 @@ pub struct BookDetail {
     pub kind: Option<String>,
     /// 封面在图片管道中的 id（md5(去查询串地址)）；客户端取图走 `/v1/images/<id>`
     pub cover_image_id: Option<String>,
-    /// 站内资源封面地址（本地 EPUB 的 `/reader3/localEpubAsset?...`）；
+    /// 站内资源封面地址（本地 EPUB 的 `/v1/local-books/assets/...`）；
     /// 与 `coverImageId` 二选一，客户端直接渲染
     pub cover_url: Option<String>,
     /// 章节登记表的章节数（目录未抓时缺省）
@@ -1223,11 +1226,23 @@ mod tests {
             assert_eq!(route, None);
         }
 
-        // 本地 EPUB 封面：站内资源地址进不了图片管道，原样透传
-        let local = "/reader3/localEpubAsset?bookUrl=local-epub%3Aabc&path=OEBPS%2Fcover.jpg";
-        let (id, route) = split_cover(Some(local));
+        // 本地 EPUB 封面：站内资源地址进不了图片管道；存量 legacy URL 改写为 v1
+        let hash = "0123456789abcdef0123456789abcdef";
+        let local =
+            format!("/reader3/localEpubAsset?bookUrl=local-epub%3A{hash}&path=OEBPS%2Fcover.jpg");
+        let (id, route) = split_cover(Some(&local));
         assert_eq!(id, None);
-        assert_eq!(route.as_deref(), Some(local));
+        assert_eq!(
+            route,
+            Some(format!(
+                "/v1/local-books/assets/{hash}?path=OEBPS%2Fcover.jpg"
+            ))
+        );
+        // 已经是 v1 资源地址：原样透传
+        let v1_local = format!("/v1/local-books/assets/{hash}?path=OEBPS%2Fcover.jpg");
+        let (id, route) = split_cover(Some(&v1_local));
+        assert_eq!(id, None);
+        assert_eq!(route.as_deref(), Some(v1_local.as_str()));
 
         // 空串/空白：无封面（md5("") 会指向不存在的图）
         assert_eq!(split_cover(Some("")), (None, None));

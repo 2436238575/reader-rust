@@ -725,6 +725,30 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/local-books/assets/{bookRef}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * 读取本地 EPUB 的内部资源（封面、插图等）。
+         * @description `bookRef` 是本地书 URL `local-epub:<hash>` 里的 32 位 hash——导入时还没
+         *     分配 bookId，章节 HTML 与封面 URL 只能带这个稳定引用。服务端确认登记行
+         *     存在后，用调用者的 `user_ns` 拼资源目录读取；跨用户隔离由目录前缀完成
+         *     （`books` 登记表本身是整部署共享的）。旧数据里的 legacy 资源 URL 由
+         *     服务层在读正文/封面时改写成本路径。
+         */
+        get: operations["getLocalBookAsset"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/me": {
         parameters: {
             query?: never;
@@ -1194,7 +1218,8 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        get?: never;
+        /** 批量读取当前用户的 JSON 文档：`?names=a,b,c`，最多 20 个，缺失文档为 null。 */
+        get: operations["readUserdataBatch"];
         /** 批量保存当前用户的 JSON 文档（各自整文档覆盖写）。 */
         put: operations["saveUserdataBatch"];
         post?: never;
@@ -1279,6 +1304,23 @@ export interface paths {
         };
         /** 探索发现（按书源的 `exploreUrl` 分类地址拉书单）。 */
         get: operations["exploreSource"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/sources/{sourceId}/explore-kinds": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 发现分类清单：按书源 `exploreUrl`（JSON/JS/`标题::地址`）解析，不抓上游。 */
+        get: operations["listSourceExploreKinds"];
         put?: never;
         post?: never;
         delete?: never;
@@ -1948,7 +1990,7 @@ export interface components {
             /** @description 封面在图片管道中的 id（md5(去查询串地址)）；客户端取图走 `/v1/images/<id>` */
             coverImageId?: string | null;
             /**
-             * @description 站内资源封面地址（本地 EPUB 的 `/reader3/localEpubAsset?...`）；
+             * @description 站内资源封面地址（本地 EPUB 的 `/v1/local-books/assets/...`）；
              *     与 `coverImageId` 二选一，客户端直接渲染
              */
             coverUrl?: string | null;
@@ -2597,6 +2639,16 @@ export interface components {
          * @enum {string}
          */
         ErrorCode: "VALIDATION_FAILED" | "MALFORMED_REQUEST" | "INVALID_CURSOR" | "STALE_CURSOR" | "INVALID_CREDENTIALS" | "AUTH_EXPIRED" | "AUTH_REFRESH_REPLAYED" | "SESSION_INVALID" | "CSRF_HEADER_MISSING" | "SCOPE_FORBIDDEN" | "BOOK_NOT_FOUND" | "CHAPTER_NOT_FOUND" | "CHAPTER_EDIT_NOT_FOUND" | "AI_MEMORY_NOT_FOUND" | "SOURCE_NOT_FOUND" | "IMAGE_NOT_FOUND" | "TASK_NOT_FOUND" | "NOT_FOUND" | "REPLACE_RULE_NOT_FOUND" | "BOOK_NOT_IN_SHELF" | "SOURCE_DISABLED" | "SOURCE_LOGIN_FAILED" | "TASK_ALREADY_RUNNING" | "CONFLICT" | "VERSION_CONFLICT" | "PAYLOAD_TOO_LARGE" | "UNSUPPORTED_MEDIA_TYPE" | "RATE_LIMITED" | "UPSTREAM_BLOCKED" | "UPSTREAM_FAILED" | "UPSTREAM_TIMEOUT" | "PROCESSING_TIMEOUT" | "TASK_LIMIT" | "API_REMOVED" | "UNKNOWN_FIELD" | "INTERNAL";
+        ExploreKind: {
+            /** @default null */
+            style: {
+                [key: string]: unknown;
+            } | null;
+            /** @default  */
+            title: string;
+            /** @default null */
+            url: string | null;
+        };
         FetchSourcesRequest: {
             url: string;
         };
@@ -3485,6 +3537,8 @@ export interface components {
             expiresIn: number;
             token: string;
         };
+        /** @enum {string} */
+        SourceState: "active" | "invalid";
         /** @description 书源摘要：展示字段 + `exploreUrl`，不含规则 JSON。 */
         SourceSummary: {
             /** Format: int32 */
@@ -3667,6 +3721,13 @@ export interface components {
             name: string;
             /** @description 整文档新值；缺失 422（不能把「忘传内容」当成删文档） */
             value: unknown;
+        };
+        /** @description 批量读取结果：文档名 → 文档值；缺失文档为 null。 */
+        UserdataBatchReadResult: {
+            /** @description 文档名 → 任意 JSON 值；缺失的文档为 null */
+            docs: {
+                [key: string]: unknown;
+            };
         };
         UserdataBatchSaveRequest: {
             docs: components["schemas"]["UserdataBatchDoc"][];
@@ -6165,6 +6226,57 @@ export interface operations {
             };
         };
     };
+    getLocalBookAsset: {
+        parameters: {
+            query: {
+                /** @description EPUB 内部资源路径 */
+                path: string;
+            };
+            header?: never;
+            path: {
+                /** @description 本地 EPUB 的 32 位 hash（local-epub:<hash> 的 hash 部分） */
+                bookRef: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 资源字节；Content-Type 按 EPUB manifest 给出 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description 资源路径非法或资源不存在 */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description 未登录或令牌失效 */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description 本地书不存在或未登记 */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
     getMe: {
         parameters: {
             query?: never;
@@ -7567,6 +7679,56 @@ export interface operations {
             };
         };
     };
+    readUserdataBatch: {
+        parameters: {
+            query?: {
+                /** @description 逗号分隔的文档名，最多 20 个；不存在于返回映射的文档为 null */
+                names?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 文档名到文档值的映射；缺失文档为 null */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UserdataBatchReadResult"];
+                };
+            };
+            /** @description 未登录或令牌失效 */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description 读取结果超过 16MB */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description names 缺失/为空/超上限或文档名非法 */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
     saveUserdataBatch: {
         parameters: {
             query?: never;
@@ -7706,6 +7868,8 @@ export interface operations {
             query?: {
                 /** @description 名称或 URL 的大小写不敏感子串 */
                 q?: string;
+                /** @description active（排除失效）或 invalid（只看失效） */
+                state?: components["schemas"]["SourceState"];
                 /** @description 上一页的 nextCursor */
                 cursor?: string;
                 /** @description 页大小，默认 50，上限 200 */
@@ -7959,6 +8123,47 @@ export interface operations {
                 };
                 content: {
                     "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description 未登录或令牌失效 */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description 书源不存在 */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    listSourceExploreKinds: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description 书源 id（src_<n>） */
+                sourceId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 发现分类清单 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ExploreKind"][];
                 };
             };
             /** @description 未登录或令牌失效 */

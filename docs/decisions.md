@@ -302,4 +302,20 @@ goal 执行中遇到「决策表与 spec 都沉默」的问题时，按 §5.4 �
 - **会话代际（`utils/sessionEpoch.ts`）**：HTTP 请求发出时在 config 上记录当前代际；`apiLogout()` 开始时与 `clearUser()` 都自增代际。401 拦截器只有在「请求代际 == 当前代际」时才允许静默刷新；旧代际请求直接抛「登录状态已变更」，不再刷新、不再触发登录弹窗。刷新期间用户登出，刷新成功后也不重放请求。
 - **动机**：设置抽屉打开即拉 `/v1/me/stats`，用户紧接着退出登录时，这条在途请求可能在 Cookie 已清后返回 401；旧逻辑会静默刷新并把刚清掉的会话 Cookie 重新换回来，表现为「到了登录页，会话却还活着」。修复放在拦截器侧，未来任何「打开就发」的请求都不会重演该路径。
 
+## 2026-11-15 v1 未覆盖功能收尾（本地书资产/代理页/userdata 读/发现分类）
+
+- **本地书资产改 `GET /v1/local-books/assets/{bookRef}?path=`**：`bookRef` 是 `local-epub:<hash>` 的 32 位 hash。导入时 bookId 尚未分配，章节 HTML 与封面只能带这个稳定引用；handler 还原 `local-epub:<hash>`、确认登记行后复用 `get_asset`。旧版 `/reader3/localEpubAsset?bookUrl=...` 的存量正文/封面在 `get_content` 与 `split_cover` 读时改写为 v1 路径，不做磁盘迁移。**同时修复了旧 URL 生成器用 `bookUrl`、handler 只收 `bookId` 的既有不一致**（生成 URL 缺 bookId 会 400；原测试只断言字符串，没有真正 GET）。
+- **代理页改 `/v1/sources/{sourceId}/proxy`**：代理是 iframe 里的第三方 HTML，只认查询串限定令牌（scope=代理、bsid 绑定单一书源），**不接受 Cookie/Bearer、不走 CSRF**；因此子路由放在 v1 标准鉴权/CSRF 层之外，handler 内 `require_proxy_token`。HTML/JS URL 重写、`Set-Cookie Path`、client-log 地址全部参数化到新路径（`/v1/sources/src_<n>/proxy[/client-log]`）；每次响应重签 30 分钟页面令牌。前端 `buildLoginProxyUrl` 切 `API_V1_BASE`。部署前缀从 `COOKIE_PATH` 推导（`/read/reader3` → `/read`），重写 URL 与 Cookie Path 都带前缀；新代理子路由与其余 v1 端点共享 `INBOUND_MAX_CONCURRENCY`。
+- **代理请求不读取用户级 Cookie jar**：`book_service.http_client(user_ns)` 的 jar 按用户共享；若目标域在 jar 里有 Cookie，reqwest 会自动补上，导致书源 A 的令牌可借 B 的会话来请求 B。代理转发现在显式写 `Cookie` 头（浏览器带来的书源 Cookie，或空串），阻止 jar 注入；书源 header 里显式配置的 Cookie 除外。回归测试用两个书源 + 本地假上游验证。
+- **本机用户编辑版本也改写旧资源 URL**：本地 EPUB 的 `get_content` 只覆盖上游原文；用户编辑版本来自正文池，因此在 `local_book_content` 统一对 EPUB 结果再跑一次 `rewrite_legacy_asset_urls`。SVG/XHTML/XML 代理响应也补 `sandbox` CSP（HTML 仍保留 allow-scripts/forms）。
+- **userdata 读改 `GET /v1/me/userdata:batch?names=`**：返回 `{docs:{name:value|null}}`，最多 20 个、名称白名单、缺失 null、响应总大小上限 16MB。legacy 单文档/批量读与写路由删除；`recent-books` 仍走该通用文档存储，前端 `getUserdataBatch` 切 v1。
+- **发现分类改 `GET /v1/sources/{sourceId}/explore-kinds`**：直接返回 `[ExploreKind]`（`style` 是任意对象，OpenAPI 显式例外）；不下发上游请求。
+- **失效书源清单不迁移文件数据源**：legacy `getInvalidBookSources` 读的 `invalid_sources` 文件已无写入方，实际恒空。v1 用 `GET /v1/sources?state=active|invalid` 按「失效」分组过滤，取代该端点。
+- **退役而非迁移**（前端/安卓均无调用方，或已被替代）：
+  - `getUserConfig`/`saveUserConfig`：设置由前端本地保存，服务端不再提供用户配置文档；
+  - `uploadFile`/`deleteFile`：无调用方；AI 地图落盘走内部 `util::asset`，`/assets` 静态服务保留；
+  - `addBookGroupMulti`/`removeBookGroupMulti`：单本分组走 `PATCH /v1/me/shelf/{bookId}` 的 `group`；
+  - `bookSourceDebugSSE`：legacy 实际只跑一次搜索，`POST /v1/searches` + `/v1/tasks/{id}/events` 已覆盖。
+- **兼容面**：上述 legacy 路由与 handler 本次直接删除，不再保留旧缓存/旧客户端兼容层；`/reader3` 其余未触及的域保持现状。
+
 

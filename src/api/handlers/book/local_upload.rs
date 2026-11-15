@@ -1,4 +1,4 @@
-//! 本地书上传（TXT / EPUB）与 EPUB 书内资源访问端点。
+//! 本地书上传（TXT / EPUB）。EPUB 书内资源访问在 `/v1/local-books/assets`。
 
 use super::shelf::ensure_user_local_book_limit;
 use crate::api::handlers::multipart::read_limited_multipart_field;
@@ -7,22 +7,11 @@ use crate::auth::CurrentUser;
 use crate::error::error::{ApiResponse, AppError};
 use crate::service::local_epub_book::MAX_EPUB_UPLOAD_BYTES;
 use crate::service::local_txt_book::MAX_TXT_UPLOAD_BYTES;
-use axum::body::Body;
-use axum::http::header;
-use axum::response::Response;
 use axum::{
-    extract::{Multipart, Query, State},
+    extract::{Multipart, State},
     Json,
 };
-use serde::Deserialize;
 use serde_json::Value;
-
-#[derive(Debug, Deserialize)]
-pub struct LocalEpubAssetQuery {
-    #[serde(rename = "bookId")]
-    book_id: String,
-    path: String,
-}
 
 pub async fn upload_txt_book(
     State(state): State<AppState>,
@@ -124,32 +113,4 @@ pub async fn upload_epub_book(
     Ok(Json(ApiResponse::ok(
         serde_json::to_value(saved).unwrap_or_default(),
     )))
-}
-
-pub async fn get_local_epub_asset(
-    State(state): State<AppState>,
-    user: CurrentUser,
-    Query(q): Query<LocalEpubAssetQuery>,
-) -> Result<Response, AppError> {
-    let user_ns = user.0.ns.clone();
-    let row = state
-        .book_service
-        .book_repo()
-        .get(&user_ns, &q.book_id)
-        .await?
-        .ok_or_else(|| AppError::NotFound("书籍不存在".to_string()))?;
-    let asset = state
-        .local_epub_book_service
-        .get_asset(&user_ns, &row.book_url, &q.path)
-        .await?;
-    let mut resp = Response::new(Body::from(asset.bytes));
-    let headers = resp.headers_mut();
-    headers.insert(
-        header::CACHE_CONTROL,
-        header::HeaderValue::from_static("private, max-age=3600"),
-    );
-    if let Ok(v) = header::HeaderValue::from_str(&asset.content_type) {
-        headers.insert(header::CONTENT_TYPE, v);
-    }
-    Ok(resp)
 }

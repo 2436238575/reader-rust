@@ -1,7 +1,7 @@
 import axios, { type InternalAxiosRequestConfig } from 'axios'
 import type { ApiResponse } from '../types'
 import { hasAuthHint } from '../utils/secureAccess'
-import { API_BASE } from '../utils/appBase'
+import { API_V1_BASE } from '../utils/appBase'
 import { notifyNeedLogin } from '../utils/authEvents'
 import { currentSessionEpoch } from '../utils/sessionEpoch'
 import {
@@ -25,13 +25,13 @@ type RetriableConfig = InternalAxiosRequestConfig & {
 export const UPLOAD_TIMEOUT_MS = 900_000
 
 const http = axios.create({
-  baseURL: API_BASE,
+  baseURL: API_V1_BASE,
   timeout: 120000,
   // 会话凭据在 HttpOnly Cookie 里，浏览器自动携带；跨域 CORS 部署也要发凭据
   withCredentials: true,
   headers: {
     'Content-Type': 'application/json',
-    // `/v1` 的非 GET 一律要求该头（CSRF 双保险）；`/reader3` 忽略它，无害
+    // `/v1` 的非 GET 一律要求该头（CSRF 双保险）；/reader3 已不再由前端使用
     'X-Requested-With': 'XMLHttpRequest',
   },
 })
@@ -86,10 +86,15 @@ http.interceptors.response.use(
     // 413 可能来自反向代理（nginx 默认 client_max_body_size 只有 1m），
     // 此时响应体是 HTML，没有 errorMsg；给一句能直接照着改配置的提示。
     if (status === 413) {
+      // v1 的 413 是 problem+json，detail 比反代提示更准确；只有响应体不是
+      // JSON（nginx 默认 1m 上限返回 HTML）时才回落到 client_max_body_size 提示。
+      const detail =
+        typeof data?.detail === 'string' && data.detail.trim() ? data.detail : undefined
       return Promise.reject(
         withStatus(
           new Error(
-            '上传内容过大（HTTP 413）：请检查 nginx/OpenResty 的 client_max_body_size（建议 ≥100m）与上游 WAF 的上传上限'
+            detail ??
+              '上传内容过大（HTTP 413）：请检查 nginx/OpenResty 的 client_max_body_size（建议 ≥100m）与上游 WAF 的上传上限'
           ),
           status
         )

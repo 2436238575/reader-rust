@@ -91,7 +91,7 @@
 - 新增 / 编辑 / 删除书源，支持批量保存、批量删除、清空全部
 - 本地文件导入与远程 URL 导入书源
 - 书源登录（`loginBookSource`）
-- 获取探索分类（`getExploreKinds`）
+- 获取探索分类（`GET /v1/sources/{sourceId}/explore-kinds`）
 - 无效书源检测与一键清理
 - 书源测试与实时调试（SSE）
 

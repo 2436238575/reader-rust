@@ -10,9 +10,7 @@ use crate::util::time::now_ts;
 use serde_json::Value;
 use sqlx::{sqlite::SqliteRow, Row, SqlitePool};
 use std::collections::HashMap;
-use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
-use tokio::fs;
 
 /// 登录限速：用户名与 IP 双维度，进程内实现（单实例部署足够）。
 ///
@@ -122,10 +120,6 @@ impl std::fmt::Debug for IssuedSession {
 #[derive(Clone)]
 pub struct UserService {
     cfg: AppConfig,
-    data_root: PathBuf,
-    /// 用户配置存 json_documents 表（单行 upsert，原子）；data/<ns>/userConfig.json
-    /// 是旧形态，读取时一次性迁移进表后删文件
-    docs: crate::service::json_document_service::JsonDocumentService,
     pool: SqlitePool,
     jwt_secret: Arc<Vec<u8>>,
     /// Refresh Token 的签发与轮换状态（明文不落库，只存哈希）
@@ -153,11 +147,8 @@ impl UserService {
     }
 
     pub fn new(cfg: AppConfig, pool: SqlitePool, jwt_secret: Arc<Vec<u8>>) -> Self {
-        let storage_root = PathBuf::from(&cfg.storage_dir);
         let refresh_store = RefreshTokenStore::new(pool.clone(), cfg.refresh_token_ttl_secs);
         Self {
-            data_root: storage_root.join("data"),
-            docs: crate::service::json_document_service::JsonDocumentService::new(pool.clone()),
             cfg,
             pool,
             jwt_secret,
@@ -457,34 +448,6 @@ impl UserService {
         Ok(serde_json::json!({ "userInfo": info }))
     }
 
-    /// 用户配置备份存 json_documents 表（文档名 userConfig，单行 upsert 原子写）。
-    pub async fn save_user_config(&self, user_ns: &str, config: Value) -> Result<(), AppError> {
-        let mut cfg = config;
-        if let Some(obj) = cfg.as_object_mut() {
-            obj.insert("@updateTime".to_string(), Value::from(now_ts() * 1000));
-        }
-        self.docs.set_value(user_ns, "userConfig", &cfg).await
-    }
-
-    pub async fn get_user_config(&self, user_ns: &str) -> Result<Value, AppError> {
-        if let Some(value) = self.docs.get_value(user_ns, "userConfig").await? {
-            return Ok(value);
-        }
-        // 一次性迁移：老部署的 data/<ns>/userConfig.json 读进表后删文件
-        let path = self.data_root.join(user_ns).join("userConfig.json");
-        if !path.exists() {
-            return Err(AppError::BadRequest("没有备份文件".to_string()));
-        }
-        let data = fs::read_to_string(&path)
-            .await
-            .map_err(|e| AppError::Internal(e.into()))?;
-        let v: Value =
-            serde_json::from_str(&data).map_err(|e| AppError::BadRequest(e.to_string()))?;
-        self.docs.set_value(user_ns, "userConfig", &v).await?;
-        let _ = fs::remove_file(&path).await;
-        Ok(v)
-    }
-
     /// 修改密码，返回换发的 Access Token 与新会话家族的 Refresh Token。
     ///
     /// 版本号自增会让所有旧 Access Token 失效（等价于「改密码踢掉其他设备」），
@@ -706,6 +669,8 @@ mod tests {
     use super::*;
     use crate::auth::jwt::decode_token;
     use crate::storage::db;
+    use std::path::PathBuf;
+    use tokio::fs;
 
     const TEST_SECRET: &[u8] = b"unit-test-secret";
 

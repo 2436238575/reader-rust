@@ -50,11 +50,11 @@ npm test                       # vitest 单元测试
 - `npm run build` 会先执行 `vue-tsc -b`，**类型错误会直接导致构建失败**。
 - 部署到子路径（nginx 反代 `https://example.org/read/`）时用
   `VITE_BASE_PATH=/read/ npm run build`；**新增任何绝对路径都要过
-  `utils/appBase.ts`**（`API_BASE` 给接口/SSE，`withAppBase` 给服务端返回的
-  `/reader3/...` 路径），否则子路径部署下会 404。
-  后端侧要同步设 `COOKIE_PATH=/read/reader3`（见配置表），否则会话 Cookie 的
-  `Path` 不覆盖实际 API 地址，登录成功后所有接口仍 401。
-- 开发服务器把 `/reader3` 反向代理到后端（见 `frontend/vite.config.ts`）。代理目标端口必须与后端 `SERVER_PORT` 保持一致。
+  `utils/appBase.ts`**（`API_V1_BASE` 给接口/SSE，`withAppBase` 给服务端返回的
+  `/v1/...` 等站内路径），否则子路径部署下会 404。
+  后端侧要同步设 `COOKIE_PATH=/read/reader3`（见配置表），否则 refresh Cookie
+  与书源代理页的路径前缀不带 `/read/`，刷新/代理请求会失败。
+- 开发服务器把 `/v1` 反向代理到后端（见 `frontend/vite.config.ts`）。代理目标端口必须与后端 `SERVER_PORT` 保持一致。
 - 前端可用脚本只有 `dev` / `build` / `preview` / `test`，**没有 `lint` 或 `serve` 脚本**。
 
 ### 端到端测试（Playwright）
@@ -239,7 +239,7 @@ HTTP 请求
 - `/reader3/aiProxyImage` 目前**无前端调用方**（AI 资料的地图图片改由后端直接下载落盘到
   `ASSETS_DIR`），端点保留备用。
 
-鉴权说明：**单用户**，采用 **Access Token + Refresh Token** 双令牌。唯一账号由启动时的 bootstrap 创建：用户名取 `ADMIN_USERNAME`，密码取 `ADMIN_PASSWORD`（非空则每次启动强制覆盖，兼作找回通道），都为空则首启随机生成并打印到启动 stderr（不写入滚动日志文件）；不提供注册、用户管理与角色/权限分层——登录即拥有全部能力。登录、刷新、改密成功时服务端设置两枚 HttpOnly Cookie（认证端点已全部迁到 `/v1/auth/*`，`/reader3` 不再提供登录/刷新/登出/改密）：`reader_access`（HS256 JWT，默认 6 小时，载荷 `{ sub, uid, iat, exp, ver }`；`sub` 是用户名，仅登录与展示；`uid` 是自增身份 id，存储命名空间一律用 `user_<uid>`，`Path=/` 覆盖两个命名空间）与 `reader_refresh`（`rt_` + 32 字节随机串，默认 7 天滑动续期，数据库只存 SHA-256 摘要，`Path` 收紧到 `/v1/auth`，子路径部署由 `COOKIE_PATH` 推导同前缀）。两枚都是 `HttpOnly; SameSite=Lax`、host-only；`Secure` 由 `COOKIE_SECURE`（`auto`/`true`/`false`）决定。浏览器的业务请求、SSE 与 `<img>` 都由浏览器自动携带 Cookie，前端不再从 localStorage 读写令牌；localStorage 只留非敏感 `reader-auth-hint`（用户名 + Access Token 过期时间）用于路由守卫、离线 UI 与提前续期。`/v1/auth/*` 的 JSON 响应保留 `accessToken` / `accessTokenExpiresAt` / `username`（供 API 客户端用 `Authorization: Bearer` 与前端 hint），`refreshToken` 永不返回。`/v1` 的非 GET 一律要求 `X-Requested-With: XMLHttpRequest`（CSRF 双保险，Bearer 在场豁免）；`/reader3` 过渡期不要求。取令牌顺序：`Authorization` 头 → `reader_access` Cookie → 查询参数 `accessToken`；查询串只允许 `bookSourceProxy` / `bookSourceClientLog` 的 30 分钟限定令牌，其他路径不再接受。Refresh Token 只随 `reader_refresh` Cookie 发给 `/v1/auth/refresh`（body 里的 `refreshToken` 字段不受理）。刷新是**一次性轮换**：换取成功即消费旧令牌并下发新的一对；已消费令牌有 30 秒宽限窗口（断网重试/双标签页并发），窗口外重放视为泄露并吊销整条登录会话（family）。中间件位于 `src/auth/middleware.rs`，分 `require_auth` / `optional_auth` 两档，在 `api/router.rs` 里按分组挂载；handler 通过 `CurrentUser` 提取器取身份，不再自行解析凭据。撤销分两层：改密码自增 `users.token_version` 并吊销全部 Refresh Token（旧 Access Token 立即失效）；登出清两枚 Cookie 并吊销当前 Refresh family，当前 Access Token 最迟 6 小时后自然过期。书源登录预览先用 `POST /reader3/mintBookSourceProxyToken` 换 30 分钟限定令牌（带 `scope`/`bsid`、只能访问代理路径、绑定单个书源 id），主 JWT 不进 iframe URL；代理 HTML 响应带 `Content-Security-Policy: sandbox allow-scripts allow-forms`，直接打开或嵌入都进入不透明源。前端在 `utils/authSession.ts` 里凭 Cookie 做单飞刷新（Web Locks/软锁协调多标签页）、到期前 5 分钟主动续期。
+鉴权说明：**单用户**，采用 **Access Token + Refresh Token** 双令牌。唯一账号由启动时的 bootstrap 创建：用户名取 `ADMIN_USERNAME`，密码取 `ADMIN_PASSWORD`（非空则每次启动强制覆盖，兼作找回通道），都为空则首启随机生成并打印到启动 stderr（不写入滚动日志文件）；不提供注册、用户管理与角色/权限分层——登录即拥有全部能力。登录、刷新、改密成功时服务端设置两枚 HttpOnly Cookie（认证端点已全部迁到 `/v1/auth/*`，`/reader3` 不再提供登录/刷新/登出/改密）：`reader_access`（HS256 JWT，默认 6 小时，载荷 `{ sub, uid, iat, exp, ver }`；`sub` 是用户名，仅登录与展示；`uid` 是自增身份 id，存储命名空间一律用 `user_<uid>`，`Path=/` 覆盖两个命名空间）与 `reader_refresh`（`rt_` + 32 字节随机串，默认 7 天滑动续期，数据库只存 SHA-256 摘要，`Path` 收紧到 `/v1/auth`，子路径部署由 `COOKIE_PATH` 推导同前缀）。两枚都是 `HttpOnly; SameSite=Lax`、host-only；`Secure` 由 `COOKIE_SECURE`（`auto`/`true`/`false`）决定。浏览器的业务请求、SSE 与 `<img>` 都由浏览器自动携带 Cookie，前端不再从 localStorage 读写令牌；localStorage 只留非敏感 `reader-auth-hint`（用户名 + Access Token 过期时间）用于路由守卫、离线 UI 与提前续期。`/v1/auth/*` 的 JSON 响应保留 `accessToken` / `accessTokenExpiresAt` / `username`（供 API 客户端用 `Authorization: Bearer` 与前端 hint），`refreshToken` 永不返回。`/v1` 的非 GET 一律要求 `X-Requested-With: XMLHttpRequest`（CSRF 双保险，Bearer 在场豁免）；`/reader3` 过渡期不要求。取令牌顺序：`Authorization` 头 → `reader_access` Cookie；查询串令牌只由 `/v1/sources/{sourceId}/proxy` 子路由自行读取并校验，普通接口不再接受。Refresh Token 只随 `reader_refresh` Cookie 发给 `/v1/auth/refresh`（body 里的 `refreshToken` 字段不受理）。刷新是**一次性轮换**：换取成功即消费旧令牌并下发新的一对；已消费令牌有 30 秒宽限窗口（断网重试/双标签页并发），窗口外重放视为泄露并吊销整条登录会话（family）。中间件位于 `src/auth/middleware.rs`，分 `require_auth` / `optional_auth` 两档，在 `api/router.rs` 里按分组挂载；handler 通过 `CurrentUser` 提取器取身份，不再自行解析凭据。撤销分两层：改密码自增 `users.token_version` 并吊销全部 Refresh Token（旧 Access Token 立即失效）；登出清两枚 Cookie 并吊销当前 Refresh family，当前 Access Token 最迟 6 小时后自然过期。书源登录预览先用 `POST /v1/sources/{sourceId}/proxy-token` 换 10 分钟限定令牌（带 `scope`/`bsid`、只能访问该书的代理路径、绑定单个书源 id），主 JWT 不进 iframe URL；代理 HTML 响应带 `Content-Security-Policy: sandbox allow-scripts allow-forms`，直接打开或嵌入都进入不透明源。前端在 `utils/authSession.ts` 里凭 Cookie 做单飞刷新（Web Locks/软锁协调多标签页）、到期前 5 分钟主动续期。
 
 ### 静态资源与 404
 
@@ -309,7 +309,7 @@ GIF/WebP/AVIF/SVG/ICO 原样透传（不破坏动画与矢量），不带 `w` �
 `withImageWidth(url, width)`，后者同时认 `/v1/images/`、`/v1/images:resolve?` 与过渡期 legacy
 `/reader3/image/`、`/reader3/cover?` 四种本站地址）：
 封面列表 320、书籍详情 640、章节配图 1200、评论配图 480；宽度只是提示，后端只降不升；
-本地 epub 资源（`/reader3/localEpubAsset`）与第三方直链一律不加参数。
+本地 epub 资源（`/v1/local-books/assets/{bookRef}`）与第三方直链一律不加参数。
 
 ### 解析方式识别
 
@@ -370,7 +370,7 @@ XPath 有资源上限（长度 8KB / 嵌套 64 层 / 总步数 100、`//` 50）�
 
 - SQLite 通过 `sqlx` 访问，连接池 10 条连接，开启 WAL（`synchronous=NORMAL`），启动时自动执行 `src/storage/db/migrations/` 下的迁移。
 - 主要表：`book_sources`（书源 JSON，整部署共享，`book_source_id INTEGER PRIMARY KEY AUTOINCREMENT` + `book_source_url` 唯一索引；**`book_source_id` 是书源的身份键**，删除后不复用，导入/订阅按 URL 去重时保号）、`books`（**书籍登记表**，整部署共享：`book_id INTEGER PRIMARY KEY AUTOINCREMENT` + `book_url` 唯一索引；对外一律 `book_<n>` 文本，repo 边界转换，绑定 `book_source_id`，换源只改绑不改 id；本地书 source_id 为 NULL；登记行不随清缓存删除）、`chapters`（**章节登记表**，0007，整部署共享：`(book_id, chapter_index)` 主键 + `(book_id, url) WHERE url != ''` 部分唯一索引；index 的持久载体，服务端可只凭 (bookId, index) 定位章节；换源 / refresh=1 整表替换，用户级清缓存与书籍级清缓存（deleteBookCache / scope=book / 移出书架）都只重置抓取状态不动登记行）、`book_toc_state`（目录抓取状态，complete + fetched_at，完整 1h/未完成 60s TTL）、`shelf_books`（**书架**，`(user_ns, book_id)` 主键，全列展开进度/分组/排序/元数据快照，读取时 JOIN books 注入 bookUrl/origin 等绑定字段）、`users`（`uid` 主键、用户数据命名空间锚点，命名空间一律 `user_<uid>`；username 仅登录与展示，唯一索引）、`json_documents`（`(user_ns, name)` 主键，通用键值；userdata 另有 `getUserdataBatch`/`saveUserdataBatch` 批量读写接口，单次 ≤20 个文档、任一条目非法整批 400 不落库、批量写走单事务任一失败整体回滚）、`read_chapter_days`（**阅读统计明细**，0008，`(user_ns, book_id, chapter_index, day_key)` 主键 + `(user_ns, day_key)` 索引，秒数按章/日存，不存聚合）、`read_stats_legacy`（0008，`user_ns` 主键：旧版 `reading-stats.totalSeconds` 的回填总额 + 回填完成标记）、`bookmarks`（书签/划线实体表，`(user_ns, book_id, chapter_index, chapter_pos, kind)` 主键——kind 区分章书签 bookmark / 划线 underline，`chapter_pos` 是万分比章内进度 0–10000、章书签恒 0；删书级联 `DELETE WHERE book_id`）、`replace_rules`（替换规则实体表）、`ai_book_memories`（`(user_ns, book_id)` 主键，`book_url` 只作数据快照）、`book_groups`（书架分组实体表：`(user_ns, group_id)` 主键；**group_id 是位域、分配 2 的幂**（1/2/4/8…），与阅读3.0 的位掩码约定一致）。逐字段说明见 docs/maintainers/database.md。
-- 前端 userdata 写入统一收口到 `frontend/src/utils/userdataQueue.ts` 的批量写队列：按文档名合并（同名后写覆盖前写）、200ms 防抖合成一次 `saveUserdataBatch`、单飞在途、失败按退避重试至多 3 次；成功清理按版本号判断是否被新写覆盖（每次入队分配递增版本，落地回调只删版本未变的条目——按引用相等会把在途期间的新值误删）；`pagehide` 与 `visibilitychange=hidden` 时用裸 fetch + `keepalive` 补发最后一次批量写（URL 走 `API_BASE`，不经 axios），同样按版本清理；登出前先 `flushUserdataQueue()`。**阅读统计与已读标记已不再走 userdata**：阅读秒数/章节由 `utils/readEvents.ts` 走 `/v1/me/read-events:batch`（15 秒/切章 flush，pagehide keepalive），最近阅读仍走该队列。
+- 前端 userdata 写入统一收口到 `frontend/src/utils/userdataQueue.ts` 的批量写队列：按文档名合并（同名后写覆盖前写）、200ms 防抖合成一次 `saveUserdataBatch`、单飞在途、失败按退避重试至多 3 次；成功清理按版本号判断是否被新写覆盖（每次入队分配递增版本，落地回调只删版本未变的条目——按引用相等会把在途期间的新值误删）；`pagehide` 与 `visibilitychange=hidden` 时用裸 fetch + `keepalive` 补发最后一次批量写（URL 走 `API_V1_BASE`，不经 axios），同样按版本清理；登出前先 `flushUserdataQueue()`。**阅读统计与已读标记已不再走 userdata**：阅读秒数/章节由 `utils/readEvents.ts` 走 `/v1/me/read-events:batch`（15 秒/切章 flush，pagehide keepalive），最近阅读仍走该队列。
 - 前端 userdata 首屏读取走批量预读：`stores/app.ts` 登录成功（`setUser`）与 `bootstrapAuth` 确认已登录后 fire-and-forget 调 `api/userdata.prefetchUserdata`，只预读 `recent-books`（文档名常量在 `utils/userdataDocs.ts`）；`getUserdataBatch` 命中即删、只对 miss/过期条目发请求；写成功与登出使对应缓存失效。`readChapterHistory` 改为**只读兼容**（老浏览器写过的旧文档仍可读，不再写回）；`reading-stats` 前端不再读写。
 - 书源列表在前端有一份 localStorage 冷启动快照（`reader-source-snapshot-v1`，24h TTL、最多 1000 条）：只存名称/链接/分组/启用状态等非敏感字段，**不落 header/loginUrl/jsLib/任何规则字段**。`stores/source.ts` 首屏先用快照渲染（`partial` 标记）再后台拉全量替换；书源编辑/批量写前一律先 `ensureFullSources()` 拿到全量对象，避免用残缺快照对象保存把规则清空。批量导入（`saveSources`）落库成功后的整表重拉是 **best-effort**：重拉失败只置 `partial`（本地列表暂缺新导入项，由下一次 `ensureFullSources` 补全），不把已成功的导入报成失败。
 - 书源分组字段的拆分以后端 `split_source_groups`（`src/service/book_source_service.rs`）为唯一权威：分隔符仅半角逗号/分号、全角分号、顿号（全角逗号、竖线、斜杠都不是分隔符）；前端 `splitBookSourceGroups` 保持同口径、不得更宽，否则「删除失效书源」的本地移除会与后端实际删除范围不一致。
@@ -456,7 +456,7 @@ XPath 有资源上限（长度 8KB / 嵌套 64 层 / 总步数 100、`//` 50）�
 | `README.md`                           | 访客 / 使用者        | 项目简介、特性、最快上手路径           |
 | `AGENTS.md`（本文件）                 | AI 编码代理 / 贡献者 | 工程约定：命令、配置要点、结构、开发约定 |
 | `docs/guide/`                         | 部署者 / 最终用户    | 安装部署、配置、功能说明、用户手册     |
-| `docs/api/`                           | 接口集成方           | `/reader3/*` 接口参考                  |
+| `docs/api/`                           | 接口集成方           | `/v1` 契约与 `/reader3` 过渡接口参考   |
 | `docs/book-source/`                   | 书源作者             | 书源规则编写教程                       |
 | `docs/reference/book-source-rules.md` | 书源作者 / 实现者    | 阅读3.0 规则完整兼容规格               |
 | `docs/maintainers/`                   | 维护者               | 架构说明、数据库、数据存储结构、发布流程 |

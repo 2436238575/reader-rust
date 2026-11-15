@@ -48,27 +48,6 @@ pub struct AvailableBookSourceResponse {
     has_more: bool,
 }
 
-pub async fn get_invalid_book_sources(
-    State(state): State<AppState>,
-    user: CurrentUser,
-) -> Result<Json<ApiResponse<Value>>, AppError> {
-    let user_ns = user.0.ns.clone();
-    let path = state.book_service.invalid_sources_path(&user_ns);
-    if !path.exists() {
-        return Ok(Json(ApiResponse::ok(serde_json::json!([]))));
-    }
-    let data = tokio::fs::read_to_string(path)
-        .await
-        .map_err(|e| AppError::Internal(e.into()))?;
-    let val: Value =
-        serde_json::from_str(&data).map_err(|e| AppError::BadRequest(e.to_string()))?;
-    if let Value::Array(_) = val {
-        Ok(Json(ApiResponse::ok(val)))
-    } else {
-        Ok(Json(ApiResponse::ok(serde_json::json!([val]))))
-    }
-}
-
 pub async fn get_available_book_source(
     State(state): State<AppState>,
     user: CurrentUser,

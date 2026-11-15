@@ -15,9 +15,9 @@
 
 use crate::api::etag::if_none_match_matches;
 use crate::api::problem::{ErrorCode, Problem};
-use crate::api::v1::{V1Json, V1User};
+use crate::api::v1::{V1Json, V1Query, V1User};
 use crate::api::AppState;
-use crate::model::book_source::{book_source_from_value, BookSource};
+use crate::model::book_source::{book_source_from_value, BookSource, ExploreKind};
 use crate::model::search::SearchBook;
 use crate::service::book_source_service::{book_source_has_group, INVALID_BOOK_SOURCE_GROUP};
 use axum::extract::{Path, Query, State};
@@ -54,6 +54,10 @@ pub fn router() -> Router<AppState> {
         .route("/v1/sources:batchDelete", post(batch_delete_sources))
         .route("/v1/sources:deleteInvalid", post(delete_invalid_sources))
         .route("/v1/sources/{sourceId}/explore", get(explore_source))
+        .route(
+            "/v1/sources/{sourceId}/explore-kinds",
+            get(list_explore_kinds),
+        )
         // 批量导入的请求体放宽：整站打包的源文件远超 /v1 默认 1MB。
         // 挂在 MethodRouter 上（内层），晚于 v1 mod 的外层 1MB 生效
         .route(
@@ -64,10 +68,21 @@ pub fn router() -> Router<AppState> {
         )
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, ToSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum SourceState {
+    /// 排除「失效」分组
+    Active,
+    /// 只看「失效」分组
+    Invalid,
+}
+
 #[derive(Debug, Deserialize, ToSchema)]
 pub struct ListSourcesQuery {
     /// 名称或 URL 的大小写不敏感子串过滤
     pub q: Option<String>,
+    /// 启用状态过滤：`active` 排除「失效」分组，`invalid` 只看失效分组
+    pub state: Option<SourceState>,
     /// 上一页返回的 nextCursor；空表示第一页
     pub cursor: Option<String>,
     pub limit: Option<u32>,
@@ -141,6 +156,7 @@ fn decode_cursor(raw: &str) -> Result<i64, Problem> {
     description = "书源摘要页。排序固定为 id 升序（创建顺序）；游标 keyset 依赖不可变排序键。",
     params(
         ("q" = Option<String>, Query, description = "名称或 URL 的大小写不敏感子串"),
+        ("state" = Option<SourceState>, Query, description = "active（排除失效）或 invalid（只看失效）"),
         ("cursor" = Option<String>, Query, description = "上一页的 nextCursor"),
         ("limit" = Option<u32>, Query, description = "页大小，默认 50，上限 200"),
     ),
@@ -156,7 +172,7 @@ fn decode_cursor(raw: &str) -> Result<i64, Problem> {
 pub async fn list_sources(
     State(state): State<AppState>,
     V1User(user): V1User,
-    Query(query): Query<ListSourcesQuery>,
+    V1Query(query): V1Query<ListSourcesQuery>,
     headers: HeaderMap,
 ) -> Result<Response, Problem> {
     let limit = query.limit.unwrap_or(DEFAULT_LIMIT);
@@ -174,6 +190,13 @@ pub async fn list_sources(
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .map(str::to_lowercase);
+    // `state=invalid` 取代 legacy 失效清单文件：失效是书源分组上的标记，
+    // 不是独立数据源。空值等同不过滤；未知值按 malformed 拒绝。
+    let only_invalid = match query.state {
+        None => None,
+        Some(SourceState::Active) => Some(false),
+        Some(SourceState::Invalid) => Some(true),
+    };
 
     let mut items: Vec<SourceSummary> = state
         .book_source_service
@@ -183,6 +206,18 @@ pub async fn list_sources(
         .into_iter()
         .filter_map(|summary| {
             let id = summary.book_source_id?;
+            if let Some(want_invalid) = only_invalid {
+                let is_invalid = book_source_has_group(
+                    &BookSource {
+                        book_source_group: summary.book_source_group.clone(),
+                        ..BookSource::default()
+                    },
+                    INVALID_BOOK_SOURCE_GROUP,
+                );
+                if is_invalid != want_invalid {
+                    return None;
+                }
+            }
             if let Some(needle) = &needle {
                 let name = summary.book_source_name.to_lowercase();
                 let url = summary.book_source_url.to_lowercase();
@@ -312,6 +347,40 @@ pub async fn explore_source(
         }
     }
     Ok(Json(items))
+}
+
+/// 发现分类清单：按书源 `exploreUrl`（JSON/JS/`标题::地址`）解析，不抓上游。
+#[utoipa::path(
+    get,
+    path = "/v1/sources/{sourceId}/explore-kinds",
+    tag = "sources",
+    operation_id = "listSourceExploreKinds",
+    params(("sourceId" = String, Path, description = "书源 id（src_<n>）")),
+    security(("cookieAuth" = []), ("bearerAuth" = [])),
+    responses(
+        (status = 200, description = "发现分类清单", body = [ExploreKind]),
+        (status = 401, description = "未登录或令牌失效", body = Problem, content_type = "application/problem+json"),
+        (status = 404, description = "书源不存在", body = Problem, content_type = "application/problem+json"),
+    )
+)]
+pub async fn list_explore_kinds(
+    State(state): State<AppState>,
+    V1User(user): V1User,
+    Path(source_id): Path<String>,
+) -> Result<Json<Vec<ExploreKind>>, Problem> {
+    let numeric = parse_source_path_id(&source_id)?;
+    let source = state
+        .book_source_service
+        .get_by_id(&user.ns, numeric)
+        .await
+        .map_err(Problem::from)?
+        .ok_or_else(|| Problem::new(ErrorCode::SourceNotFound).detail("书源不存在"))?;
+    let kinds = state
+        .book_service
+        .explore_kinds(&user.ns, &source)
+        .await
+        .map_err(Problem::from)?;
+    Ok(Json(kinds))
 }
 
 /// 探索查询参数。

@@ -183,9 +183,10 @@ location /read/ {
 COOKIE_PATH=/read/reader3
 ```
 
-反代剥掉前缀后，后端看到的请求仍是 `/reader3/*`，默认会把 Cookie 的
-`Path` 写成 `/reader3`；而浏览器实际地址是 `/read/reader3/*`，路径不匹配
-就不会回传 Cookie，表现为「登录成功但所有接口 401」。
+反代剥掉前缀后，后端看到的请求仍是 `/v1/*`；`COOKIE_PATH` 用来推导
+refresh Cookie 与书源代理页的前缀（`/read/reader3` → `/read/v1/auth`、
+`/read/v1/sources/...`）。不设时浏览器实际地址带 `/read/` 前缀而 Cookie
+路径不带，refresh/代理请求就不会回传 Cookie。
 
 要点：
 

@@ -82,18 +82,12 @@ POST /reader3/saveBookGroupId
 
 书籍不在书架时返回 404。响应 `data` 为 `"success"`。
 
-## 批量加入分组
+## 批量加入/移出分组
+
+legacy `POST /reader3/addBookGroupMulti` 与 `removeBookGroupMulti` 已删除（前端无调用方）。单本书的分组归属改走：
 
 ```text
-POST /reader3/addBookGroupMulti
+PATCH /v1/me/shelf/{bookId}
 ```
 
-请求体：`{ "bookIds": ["book_12", "book_13"], "groupId": 0 }`。按位或并入分组（`group` 是位掩码字段，与阅读3.0 一致）；不在书架的书籍静默跳过。响应 `data` 为 `"success"`。
-
-## 批量移出分组
-
-```text
-POST /reader3/removeBookGroupMulti
-```
-
-请求体：`{ "bookIds": ["book_12", "book_13"], "groupId": 0 }`。按位清除（`group & ~groupId`）。响应 `data` 为 `"success"`。
+请求体 `{ "group": <位掩码> }`；`0` 表示移出全部分组，非 0 必须是已存在的合法幂位。批量场景由客户端逐本调用。

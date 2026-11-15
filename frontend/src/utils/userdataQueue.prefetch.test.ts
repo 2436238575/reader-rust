@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { API_V1_BASE } from './appBase'
 
 const { httpGet, httpPost } = vi.hoisted(() => ({
   httpGet: vi.fn(),
@@ -50,7 +51,7 @@ describe('keepalive 直发的预读缓存失效', () => {
     // 被直发的文档：预读缓存已失效，读取回落批量 GET
     httpGet.mockResolvedValueOnce({ data: { docs: { 'reading-stats': 2 } } })
     await expect(api.getUserdataBatch(['reading-stats'])).resolves.toEqual({ 'reading-stats': 2 })
-    expect(httpGet).toHaveBeenLastCalledWith('/getUserdataBatch?names=reading-stats')
+    expect(httpGet).toHaveBeenLastCalledWith('/me/userdata:batch?names=reading-stats', { baseURL: API_V1_BASE })
 
     // 未被直发的文档：预读缓存仍命中，不发请求
     httpGet.mockClear()

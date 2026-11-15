@@ -174,7 +174,7 @@ impl BookSourceSummary {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default, ts_rs::TS)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default, ts_rs::TS, utoipa::ToSchema)]
 #[serde(default, rename_all = "camelCase")]
 #[ts(
     export,
@@ -183,9 +183,12 @@ impl BookSourceSummary {
 )]
 pub struct ExploreKind {
     pub title: String,
-    #[ts(optional)]
     pub url: Option<String>,
-    #[ts(optional, type = "unknown")]
+    #[ts(type = "Record<string, unknown> | null")]
+    #[schema(
+        value_type = std::collections::BTreeMap<String, serde_json::Value>,
+        nullable = true
+    )]
     pub style: Option<Value>,
 }
 

@@ -13,23 +13,28 @@ use crate::api::handlers::user::{
     validate_userdata_name, MAX_USERDATA_BATCH, MAX_USER_DOCUMENT_BYTES,
 };
 use crate::api::problem::{ErrorCode, FieldIssue, Problem};
-use crate::api::v1::{V1Json, V1User};
+use crate::api::v1::{V1Json, V1Query, V1User};
 use crate::api::AppState;
 use axum::extract::State;
-use axum::routing::put;
+use axum::routing::get;
 use axum::{Json, Router};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use utoipa::ToSchema;
+use std::collections::BTreeMap;
+use utoipa::{IntoParams, ToSchema};
 
 /// 批量请求体上限：单文档 4MB × 最多 2 个已到 8MB；更大批次由客户端拆分。
 /// 与 legacy `/reader3` 受保护组的默认 8MB 对齐。
 const BATCH_BODY_LIMIT_BYTES: usize = 8 * 1024 * 1024;
+/// 批量读取的响应总大小上限：写接口保证单文档 ≤4MB，20 个文档最坏 80MB；
+/// 读接口一次拉这么多没有意义，超过 16MB 直接拒绝。
+const MAX_USERDATA_READ_BYTES: usize = 16 * 1024 * 1024;
 
 pub fn router() -> Router<AppState> {
     Router::new().route(
         "/v1/me/userdata:batch",
-        put(save_userdata_batch)
+        get(read_userdata_batch)
+            .put(save_userdata_batch)
             .layer(axum::extract::DefaultBodyLimit::max(BATCH_BODY_LIMIT_BYTES)),
     )
 }
@@ -55,6 +60,24 @@ pub struct UserdataBatchSaveResult {
     pub saved: u32,
 }
 
+/// 批量读取查询：`names` 逗号分隔，最多 20 个。
+#[derive(Debug, Deserialize, IntoParams)]
+#[serde(rename_all = "camelCase")]
+#[into_params(parameter_in = Query)]
+pub struct UserdataBatchReadQuery {
+    /// 逗号分隔的文档名，最多 20 个；不存在于返回映射的文档为 null
+    pub names: Option<String>,
+}
+
+/// 批量读取结果：文档名 → 文档值；缺失文档为 null。
+#[derive(Debug, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct UserdataBatchReadResult {
+    /// 文档名 → 任意 JSON 值；缺失的文档为 null
+    #[schema(additional_properties = true)]
+    pub docs: BTreeMap<String, Value>,
+}
+
 fn field_error(pointer: String, code: &str, detail: &str) -> Problem {
     Problem::new(ErrorCode::ValidationFailed)
         .detail(detail)
@@ -63,6 +86,80 @@ fn field_error(pointer: String, code: &str, detail: &str) -> Problem {
             code: code.to_string(),
             detail: Some(detail.to_string()),
         }])
+}
+
+/// 批量读取当前用户的 JSON 文档：`?names=a,b,c`，最多 20 个，缺失文档为 null。
+#[utoipa::path(
+    get,
+    path = "/v1/me/userdata:batch",
+    tag = "me",
+    operation_id = "readUserdataBatch",
+    params(UserdataBatchReadQuery),
+    security(("cookieAuth" = []), ("bearerAuth" = [])),
+    responses(
+        (status = 200, description = "文档名到文档值的映射；缺失文档为 null", body = UserdataBatchReadResult),
+        (status = 401, description = "未登录或令牌失效", body = Problem, content_type = "application/problem+json"),
+        (status = 413, description = "读取结果超过 16MB", body = Problem, content_type = "application/problem+json"),
+        (status = 422, description = "names 缺失/为空/超上限或文档名非法", body = Problem, content_type = "application/problem+json"),
+    )
+)]
+pub async fn read_userdata_batch(
+    State(state): State<AppState>,
+    V1User(user): V1User,
+    V1Query(query): V1Query<UserdataBatchReadQuery>,
+) -> Result<Json<UserdataBatchReadResult>, Problem> {
+    let raw = query.names.unwrap_or_default();
+    let raw_names: Vec<&str> = raw
+        .split(',')
+        .map(str::trim)
+        .filter(|name| !name.is_empty())
+        .collect();
+    // 上限按原始条目计（与写入侧一致），去重只减少实际查询量，不能绕过上限。
+    if raw_names.len() > MAX_USERDATA_BATCH {
+        return Err(field_error(
+            "/names".to_string(),
+            "TOO_MANY",
+            &format!("一次最多读取 {MAX_USERDATA_BATCH} 个文档"),
+        ));
+    }
+    let mut names: Vec<String> = Vec::new();
+    for name in raw_names {
+        if !validate_userdata_name(name) {
+            return Err(field_error(
+                "/names".to_string(),
+                "INVALID_FORMAT",
+                "文档名不合法",
+            ));
+        }
+        if !names.iter().any(|existing| existing == name) {
+            names.push(name.to_string());
+        }
+    }
+    if names.is_empty() {
+        return Err(field_error(
+            "/names".to_string(),
+            "REQUIRED",
+            "names 不能为空",
+        ));
+    }
+
+    let rows = state
+        .json_document_service
+        .get_many(&user.ns, &names)
+        .await
+        .map_err(Problem::from)?;
+    let mut docs = BTreeMap::new();
+    for (name, value) in rows {
+        docs.insert(name, value.unwrap_or(Value::Null));
+    }
+    let size = serde_json::to_vec(&docs)
+        .expect("userdata docs serialize")
+        .len();
+    if size > MAX_USERDATA_READ_BYTES {
+        return Err(Problem::new(ErrorCode::PayloadTooLarge)
+            .detail("批量读取结果超过 16MB，请减少文档数量"));
+    }
+    Ok(Json(UserdataBatchReadResult { docs }))
 }
 
 /// 批量保存当前用户的 JSON 文档（各自整文档覆盖写）。

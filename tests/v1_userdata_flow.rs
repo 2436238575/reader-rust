@@ -55,11 +55,11 @@ impl TestServer {
         (status, payload)
     }
 
-    async fn read_legacy(&self, names: &str) -> Value {
+    async fn read(&self, names: &str) -> Value {
         let response = self
             .client
             .get(format!(
-                "{}/reader3/getUserdataBatch?names={names}",
+                "{}/v1/me/userdata:batch?names={names}",
                 self.base_url
             ))
             .bearer_auth(&self.token)
@@ -85,15 +85,9 @@ async fn userdata_batch_saves_all_docs_and_last_write_wins() {
     assert_eq!(status, StatusCode::OK, "{payload}");
     assert_eq!(payload["saved"], json!(2));
 
-    let docs = server.read_legacy("reading-stats,recent-books").await;
-    assert_eq!(
-        docs["data"]["docs"]["reading-stats"]["totalSeconds"],
-        json!(1)
-    );
-    assert_eq!(
-        docs["data"]["docs"]["recent-books"][0]["bookId"],
-        json!("book_1")
-    );
+    let docs = server.read("reading-stats,recent-books").await;
+    assert_eq!(docs["docs"]["reading-stats"]["totalSeconds"], json!(1));
+    assert_eq!(docs["docs"]["recent-books"][0]["bookId"], json!("book_1"));
 
     // 同名文档按最后一次为准
     let (status, payload) = server
@@ -106,11 +100,8 @@ async fn userdata_batch_saves_all_docs_and_last_write_wins() {
         .await;
     assert_eq!(status, StatusCode::OK, "{payload}");
     assert_eq!(payload["saved"], json!(1));
-    let docs = server.read_legacy("reading-stats").await;
-    assert_eq!(
-        docs["data"]["docs"]["reading-stats"]["totalSeconds"],
-        json!(3)
-    );
+    let docs = server.read("reading-stats").await;
+    assert_eq!(docs["docs"]["reading-stats"]["totalSeconds"], json!(3));
 
     server.cleanup();
 }
@@ -142,8 +133,8 @@ async fn userdata_batch_rejects_invalid_docs_before_writing() {
     assert_eq!(problem["errors"][0]["pointer"], json!("/docs"));
 
     // 非法批次一个都不落库
-    let docs = server.read_legacy("ok-doc").await;
-    assert_eq!(docs["data"]["docs"]["ok-doc"], Value::Null);
+    let docs = server.read("ok-doc").await;
+    assert_eq!(docs["docs"]["ok-doc"], Value::Null);
 
     // 合法 + 非法混合：整批拒绝，合法条目也不落库
     let (status, problem) = server
@@ -155,8 +146,8 @@ async fn userdata_batch_rejects_invalid_docs_before_writing() {
         }))
         .await;
     assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{problem}");
-    let docs = server.read_legacy("atomic-ok").await;
-    assert_eq!(docs["data"]["docs"]["atomic-ok"], Value::Null);
+    let docs = server.read("atomic-ok").await;
+    assert_eq!(docs["docs"]["atomic-ok"], Value::Null);
 
     server.cleanup();
 }
@@ -179,6 +170,84 @@ async fn userdata_batch_accepts_over_1mb_and_rejects_doc_over_4mb() {
         .save(json!({ "docs": [{ "name": "too-large-doc", "value": too_large }] }))
         .await;
     assert_eq!(status, StatusCode::PAYLOAD_TOO_LARGE, "{problem}");
+
+    server.cleanup();
+}
+
+#[tokio::test]
+async fn userdata_batch_read_requires_auth() {
+    let server = TestServer::start().await;
+    let response = server
+        .client
+        .get(format!(
+            "{}/v1/me/userdata:batch?names=recent-books",
+            server.base_url
+        ))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    server.cleanup();
+}
+
+#[tokio::test]
+async fn userdata_batch_read_returns_null_for_missing_and_dedupes_names() {
+    let server = TestServer::start().await;
+
+    let (status, _) = server
+        .save(json!({ "docs": [{ "name": "recent-books", "value": [] }] }))
+        .await;
+    assert_eq!(status, StatusCode::OK);
+
+    let docs = server.read("recent-books,missing-doc,recent-books").await;
+    assert_eq!(docs["docs"]["recent-books"], json!([]));
+    assert_eq!(docs["docs"]["missing-doc"], Value::Null);
+
+    server.cleanup();
+}
+
+#[tokio::test]
+async fn userdata_batch_read_validates_names() {
+    let server = TestServer::start().await;
+
+    for names in ["", "%20", "../evil"] {
+        let response = server
+            .client
+            .get(format!(
+                "{}/v1/me/userdata:batch?names={names}",
+                server.base_url
+            ))
+            .bearer_auth(&server.token)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(
+            response.status(),
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "names={names}"
+        );
+        let problem: Value = response.json().await.unwrap();
+        assert_eq!(problem["code"], json!("VALIDATION_FAILED"), "{problem}");
+        assert_eq!(problem["errors"][0]["pointer"], json!("/names"));
+    }
+
+    let too_many = (0..21)
+        .map(|index| format!("doc-{index}"))
+        .collect::<Vec<_>>()
+        .join(",");
+    let response = server
+        .client
+        .get(format!(
+            "{}/v1/me/userdata:batch?names={too_many}",
+            server.base_url
+        ))
+        .bearer_auth(&server.token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    let problem: Value = response.json().await.unwrap();
+    assert_eq!(problem["errors"][0]["pointer"], json!("/names"));
 
     server.cleanup();
 }

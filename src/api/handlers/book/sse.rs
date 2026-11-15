@@ -56,13 +56,6 @@ pub struct SearchBookSourceSseRequest {
     refresh: Option<i32>,
 }
 
-#[derive(Debug, Deserialize)]
-pub struct BookSourceDebugRequest {
-    #[serde(rename = "bookSourceId")]
-    book_source_id: Option<i64>,
-    keyword: Option<String>,
-}
-
 pub async fn cache_book_sse(
     State(state): State<AppState>,
     user: CurrentUser,
@@ -496,94 +489,10 @@ pub async fn search_book_source_sse(
     Ok(Sse::new(ReceiverStream::new(rx).map(Ok)).keep_alive(KeepAlive::default()))
 }
 
-pub async fn book_source_debug_sse(
-    State(state): State<AppState>,
-    user: CurrentUser,
-    Query(q): Query<BookSourceDebugRequest>,
-) -> Result<Sse<impl futures::Stream<Item = Result<Event, Infallible>>>, AppError> {
-    let user_ns = user.0.ns.clone();
-    let book_source_id = q.book_source_id;
-    let keyword = q.keyword.unwrap_or_default();
-
-    // 参数与书源存在性校验在建流前完成（400），流内只余运行期错误
-    let Some(source_id) = book_source_id else {
-        return Err(AppError::BadRequest("未配置书源".to_string()));
-    };
-    let source = match state
-        .book_source_service
-        .get_by_id(&user_ns, source_id)
-        .await
-    {
-        Ok(Some(s)) => s,
-        _ => return Err(AppError::BadRequest("未配置书源".to_string())),
-    };
-
-    let (tx, rx) = mpsc::channel::<Event>(16);
-    let state_clone = state.clone();
-
-    tokio::spawn(async move {
-        let keyword = if keyword.trim().is_empty() {
-            source
-                .rule_search
-                .as_ref()
-                .and_then(|rule| rule.check_key_word.clone())
-                .unwrap_or_default()
-        } else {
-            keyword.clone()
-        };
-        if keyword.trim().is_empty() {
-            let _ = tx
-                .send(
-                    Event::default()
-                        .event("error")
-                        .data(json_err("请输入搜索关键词")),
-                )
-                .await;
-            let _ = tx
-                .send(Event::default().event("end").data(json_end(0)))
-                .await;
-            return;
-        }
-        let _ = tx
-            .send(Event::default().data(json_msg("start search")))
-            .await;
-        match state_clone
-            .book_service
-            .search_book(&user_ns, &source, &keyword, 1)
-            .await
-        {
-            Ok(list) => {
-                let msg = format!("found {} items", list.len());
-                let _ = tx.send(Event::default().data(json_msg(&msg))).await;
-                let payload = serde_json::json!({"data": list});
-                let _ = tx.send(Event::default().data(payload.to_string())).await;
-            }
-            Err(e) => {
-                let _ = tx
-                    .send(
-                        Event::default()
-                            .event("error")
-                            .data(json_err(&e.to_string())),
-                    )
-                    .await;
-            }
-        }
-        let _ = tx
-            .send(Event::default().event("end").data(json_end(0)))
-            .await;
-    });
-
-    Ok(Sse::new(ReceiverStream::new(rx).map(Ok)).keep_alive(KeepAlive::default()))
-}
-
 fn json_err(msg: &str) -> String {
     serde_json::json!({"errorMsg": msg}).to_string()
 }
 
 fn json_end(last_index: i32) -> String {
     serde_json::json!({"lastIndex": last_index}).to_string()
-}
-
-fn json_msg(msg: &str) -> String {
-    serde_json::json!({"msg": msg}).to_string()
 }

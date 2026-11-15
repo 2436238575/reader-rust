@@ -7,7 +7,7 @@
 // 换新 Cookie 后重连，避免原生重连一直撞 401。刷新失败按 SessionExpiredError
 // （refreshAccessToken 已广播登录通知，这里关闭连接）/RefreshNetworkError
 // （退避重试）处理。
-import { API_BASE } from './appBase'
+import { API_V1_BASE } from './appBase'
 import { RefreshNetworkError, SessionExpiredError, refreshAccessToken } from './authSession'
 import { readAccessTokenExpiresAt } from './secureAccess'
 
@@ -55,7 +55,7 @@ class AuthedEventSource implements SseConnection {
   constructor(
     path: string,
     params: Record<string, string | number | boolean | undefined>,
-    baseUrl: string = API_BASE
+    baseUrl: string = API_V1_BASE
   ) {
     this.path = path
     this.params = params
@@ -210,7 +210,7 @@ class AuthedEventSource implements SseConnection {
 export function createAuthedEventSource(
   path: string,
   params: Record<string, string | number | boolean | undefined>,
-  baseUrl: string = API_BASE
+  baseUrl: string = API_V1_BASE
 ): SseConnection {
   return new AuthedEventSource(path, params, baseUrl)
 }

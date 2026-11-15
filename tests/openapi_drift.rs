@@ -47,6 +47,7 @@ const REQUIRED_PATHS: &[&str] = &[
     "/v1/me",
     "/v1/me/stats",
     "/v1/me/read-events:batch",
+    "/v1/me/ai/model-status",
     "/v1/me/shelf",
     "/v1/me/shelf/{bookId}",
     "/v1/me/shelf:batchDelete",
@@ -74,6 +75,9 @@ const REQUIRED_PATHS: &[&str] = &[
     "/v1/books/{bookId}/cache",
     "/v1/books/{bookId}/chapter-marks",
     "/v1/books/{bookId}/chapters",
+    "/v1/books/{bookId}/ai-memory",
+    "/v1/books/{bookId}/agent-task",
+    "/v1/books/{bookId}/agent-tasks",
     "/v1/books/{bookId}/cache-search",
     "/v1/books/{bookId}/source-candidates/events",
     "/v1/books/{bookId}/chapters:batchContent",
@@ -98,6 +102,7 @@ const REQUIRED_PATHS: &[&str] = &[
     "/v1/sources",
     "/v1/sources/{id}",
     "/v1/sources/{sourceId}/explore",
+    "/v1/sources/{sourceId}/explore-kinds",
     "/v1/sources:batchUpsert",
     "/v1/sources:batchDelete",
     "/v1/sources:deleteInvalid",
@@ -110,6 +115,9 @@ const REQUIRED_PATHS: &[&str] = &[
     "/v1/sources/{sourceId}/login",
     "/v1/sources/{sourceId}/proxy-token",
     "/v1/local-books",
+    "/v1/local-books/assets/{bookRef}",
+    // 书源登录代理（/v1/sources/{id}/proxy 与 client-log）返回 HTML/字节，
+    // 与 WebDAV 一样不进入 OpenAPI；契约见 docs/api/book-source.md。
     // tasks / searches / SSE tickets（P2）
     "/v1/searches",
     "/v1/tasks",
@@ -124,6 +132,9 @@ const REQUIRED_PATHS: &[&str] = &[
     "/v1/me/backups",
     "/v1/me/backups:inspect",
     "/v1/me/backups:restore",
+    // AI 代理
+    "/v1/ai/proxy",
+    "/v1/ai/proxy-image",
 ];
 
 /// YAML 里 `paths` 的键固定是两空格缩进、以冒号结尾的一行。逐行精确

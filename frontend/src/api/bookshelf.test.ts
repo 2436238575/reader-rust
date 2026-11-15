@@ -44,8 +44,14 @@ describe('getCoverUrl', () => {
   })
 
   it('本地书资源地址保留查询串且不带令牌', () => {
-    const url = getCoverUrl('/reader3/localEpubAsset?path=user_1/a.epub')
-    expect(url).toBe('/reader3/localEpubAsset?path=user_1/a.epub')
+    const v1 = '/v1/local-books/assets/0123456789abcdef0123456789abcdef?path=OEBPS%2Fcover.jpg'
+    expect(getCoverUrl(v1)).toBe(v1)
+    const legacy = '/reader3/localEpubAsset?path=user_1/a.epub'
+    expect(getCoverUrl(legacy)).toBe(legacy)
+    // 带 local-epub:<hash> 的旧地址改写成 v1
+    const legacyWithRef =
+      '/reader3/localEpubAsset?bookUrl=local-epub%3A0123456789abcdef0123456789abcdef&path=OEBPS%2Fcover.jpg'
+    expect(getCoverUrl(legacyWithRef)).toBe(v1)
   })
 
   it('书源原始地址走 v1 封面解析入口，且不带令牌', () => {
@@ -85,6 +91,8 @@ describe('getCoverUrl', () => {
   })
 
   it('本地 epub 资源与非本站地址不加宽度', () => {
+    const v1 = '/v1/local-books/assets/0123456789abcdef0123456789abcdef?path=OEBPS%2Fcover.jpg'
+    expect(getCoverUrl(v1, 320)).toBe(v1)
     expect(getCoverUrl('/reader3/localEpubAsset?path=user_1/a.epub', 320)).toBe(
       '/reader3/localEpubAsset?path=user_1/a.epub'
     )
