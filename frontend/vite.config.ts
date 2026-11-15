@@ -17,7 +17,7 @@ export default defineConfig(({ mode }) => {
   // 代理键要跟着 base 走：子路径部署时前端请求的是 `/read/reader3/...`；
   // 转发前剥掉前缀，与文档里的 nginx 写法（`proxy_pass http://后端/;`）保持一致
   const proxy = {
-    [`${base}reader3`]: {
+    [`${base}v1`]: {
       target: 'http://127.0.0.1:8080',
       changeOrigin: true,
       rewrite: (path: string) =>
