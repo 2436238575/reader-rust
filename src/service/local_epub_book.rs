@@ -384,12 +384,11 @@ fn import_epub_blocking(
             continue;
         };
         let html = decode_utf8_lossy(&raw);
-        let title = title_map
-            .get(&item.path)
-            .cloned()
-            .or_else(|| extract_html_title(&html))
-            .unwrap_or_else(|| format!("第 {} 章", chapters.len() + 1));
         let content = sanitize_chapter_html(&html, &item.path, book_url, &asset_paths);
+        let title = title_map.get(&item.path).cloned().unwrap_or_else(|| {
+            derive_chapter_title(&html, &content, package.title.as_deref())
+                .unwrap_or_else(|| format!("第 {} 章", chapters.len() + 1))
+        });
         char_len += plain_text_len(&content);
         let index = chapters.len();
         let file_name = format!("{index}.html");
@@ -678,12 +677,40 @@ fn parse_nav_titles(xml: &str, base: &str) -> HashMap<String, String> {
     titles
 }
 
-fn extract_html_title(html: &str) -> Option<String> {
+/// nav/NCX 没有给出标题时的回退链：`<title>` → 首个非空 h1–h3 →
+/// 图片页标作「插图」。生成器常把所有页面的 `<title>` 统一写成书名，
+/// 与书名相同的回退值没有信息量，按无标题处理（由调用方落回「第 N 章」）。
+fn derive_chapter_title(html: &str, content: &str, book_title: Option<&str>) -> Option<String> {
+    let book_title = book_title
+        .map(collapse_ws)
+        .filter(|value| !value.is_empty());
+    let (title, heading) = extract_html_heading_and_title(html);
+    if let Some(value) = title {
+        if book_title.as_deref() != Some(value.as_str()) {
+            return Some(value);
+        }
+    }
+    if let Some(value) = heading {
+        if book_title.as_deref() != Some(value.as_str()) {
+            return Some(value);
+        }
+    }
+    // 整页只有图片（固定布局 EPUB 的封面/插页）：不再回退书名，标作插图
+    if plain_text_len(content) == 0 && content.contains("<img") {
+        return Some("插图".to_string());
+    }
+    None
+}
+
+/// 提取 `<title>` 与首个非空 h1–h3，两者都可能为空。
+fn extract_html_heading_and_title(html: &str) -> (Option<String>, Option<String>) {
     let mut reader = Reader::from_str(html);
     reader.config_mut().trim_text(true);
     let mut buf = Vec::new();
     let mut capture: Option<String> = None;
     let mut captured_text = String::new();
+    let mut title: Option<String> = None;
+    let mut heading: Option<String> = None;
 
     loop {
         match reader.read_event_into(&mut buf) {
@@ -700,9 +727,13 @@ fn extract_html_title(html: &str) -> Option<String> {
             Ok(Event::End(e)) => {
                 let tag = local_name(e.name().as_ref());
                 if capture.as_deref() == Some(tag.as_str()) {
-                    let title = collapse_ws(&captured_text);
-                    if !title.is_empty() {
-                        return Some(title);
+                    let value = collapse_ws(&captured_text);
+                    if !value.is_empty() {
+                        match tag.as_str() {
+                            "title" if title.is_none() => title = Some(value),
+                            "h1" | "h2" | "h3" if heading.is_none() => heading = Some(value),
+                            _ => {}
+                        }
                     }
                     capture = None;
                 }
@@ -713,7 +744,7 @@ fn extract_html_title(html: &str) -> Option<String> {
         }
         buf.clear();
     }
-    None
+    (title, heading)
 }
 
 fn sanitize_chapter_html(
@@ -743,6 +774,7 @@ fn sanitize_chapter_html_inner(
     let mut out = String::new();
     let mut in_body = !body_only;
     let mut skip_depth = 0usize;
+    let mut svg_depth = 0usize;
     let base = parent_zip_dir(chapter_path);
 
     loop {
@@ -751,6 +783,21 @@ fn sanitize_chapter_html_inner(
                 let tag = local_name(e.name().as_ref());
                 if tag == "body" {
                     in_body = true;
+                    buf.clear();
+                    continue;
+                }
+                // 固定布局 EPUB 用 <svg><image xlink:href> 排整页插图：svg 壳
+                // 不进输出，<image> 转成 <img>，其余 svg 内部标签与文本全部吞掉
+                if tag == "svg" {
+                    svg_depth += 1;
+                    buf.clear();
+                    continue;
+                }
+                if svg_depth > 0 {
+                    if tag == "image" && in_body {
+                        let img = svg_image_as_img(&e, &base, book_url, asset_paths);
+                        out.push_str(&img.unwrap_or_default());
+                    }
                     buf.clear();
                     continue;
                 }
@@ -768,6 +815,18 @@ fn sanitize_chapter_html_inner(
             }
             Ok(Event::Empty(e)) => {
                 let tag = local_name(e.name().as_ref());
+                if tag == "svg" {
+                    buf.clear();
+                    continue;
+                }
+                if svg_depth > 0 {
+                    if tag == "image" && in_body {
+                        let img = svg_image_as_img(&e, &base, book_url, asset_paths);
+                        out.push_str(&img.unwrap_or_default());
+                    }
+                    buf.clear();
+                    continue;
+                }
                 if in_body && skip_depth == 0 && is_allowed_html_tag(&tag) {
                     out.push('<');
                     out.push_str(&tag);
@@ -779,6 +838,15 @@ fn sanitize_chapter_html_inner(
                 let tag = local_name(e.name().as_ref());
                 if tag == "body" {
                     in_body = false;
+                    buf.clear();
+                    continue;
+                }
+                if tag == "svg" && svg_depth > 0 {
+                    svg_depth -= 1;
+                    buf.clear();
+                    continue;
+                }
+                if svg_depth > 0 {
                     buf.clear();
                     continue;
                 }
@@ -797,10 +865,10 @@ fn sanitize_chapter_html_inner(
                     out.push('>');
                 }
             }
-            Ok(Event::Text(e)) if in_body && skip_depth == 0 => {
+            Ok(Event::Text(e)) if in_body && skip_depth == 0 && svg_depth == 0 => {
                 out.push_str(&escape_html(&e.html_content()));
             }
-            Ok(Event::CData(e)) if in_body && skip_depth == 0 => {
+            Ok(Event::CData(e)) if in_body && skip_depth == 0 && svg_depth == 0 => {
                 out.push_str(&escape_html(&e));
             }
             Ok(Event::Eof) => break,
@@ -812,6 +880,34 @@ fn sanitize_chapter_html_inner(
         buf.clear();
     }
     out
+}
+
+/// SVG `<image>`（`xlink:href` 或 `href`）→ `<img src>`；地址不在资产
+/// 清单里时返回 None（调用方丢弃）。
+fn svg_image_as_img(
+    e: &BytesStart<'_>,
+    base: &str,
+    book_url: &str,
+    asset_paths: &HashSet<String>,
+) -> Option<String> {
+    let href = attr_by_name(e, "href")?;
+    let path = join_zip_path(base, &href)?;
+    if !asset_paths.contains(&path) {
+        return None;
+    }
+    let mut out = String::from("<img src=\"");
+    out.push_str(&escape_attr(&build_asset_url(book_url, &path)));
+    out.push('"');
+    if let Some(alt) = attr_by_name(e, "alt") {
+        let alt = alt.trim();
+        if !alt.is_empty() {
+            out.push_str(" alt=\"");
+            out.push_str(&escape_attr(alt));
+            out.push('"');
+        }
+    }
+    out.push_str("/>");
+    Some(out)
 }
 
 fn push_safe_attrs(
@@ -1426,5 +1522,215 @@ mod tests {
                 .unwrap()
                 .is_none()
         );
+    }
+
+    const TEST_BOOK_URL: &str = "local-epub:0123456789abcdef0123456789abcdef";
+
+    fn asset_set(paths: &[&str]) -> HashSet<String> {
+        paths.iter().map(|value| value.to_string()).collect()
+    }
+
+    /// 固定布局 EPUB 的 `<svg><image xlink:href>` 整页插图必须转成 `<img>`
+    /// 资产地址，而不是被白名单剥掉后整章留空。
+    #[test]
+    fn svg_page_converts_image_to_img_asset_url() {
+        let html = concat!(
+            "<html><head><title>书名</title></head><body><div class=\"main\">",
+            "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"100%\" height=\"100%\" ",
+            "viewBox=\"0 0 1443 2048\"><image width=\"1443\" height=\"2048\" ",
+            "xlink:href=\"../image/cover.jpg\"/></svg>",
+            "</div></body></html>"
+        );
+        let assets = asset_set(&["OEBPS/image/cover.jpg"]);
+        let out = sanitize_chapter_html(html, "OEBPS/xhtml/p-cover.xhtml", TEST_BOOK_URL, &assets);
+        assert_eq!(
+            out,
+            "<div class=\"main\"><img src=\"/v1/local-books/assets/0123456789abcdef0123456789abcdef?path=OEBPS%2Fimage%2Fcover.jpg\"/></div>"
+        );
+        assert!(!out.contains("svg"));
+    }
+
+    /// svg 内部的非 image 标签与文本一律吞掉；不在资产清单的 image 丢弃；
+    /// svg 之后的正文不受影响（svg 嵌套/未闭合不会破坏后续输出）。
+    #[test]
+    fn svg_internals_are_swallowed_and_body_after_svg_is_kept() {
+        let html = concat!(
+            "<body><svg><text>勿输出</text><g><image xlink:href=\"../image/missing.jpg\"/>",
+            "<image href=\"../image/ok.png\"/></g><p>svg 内段落</p></svg>",
+            "<p>外部正文</p></body>"
+        );
+        let assets = asset_set(&["OEBPS/image/ok.png"]);
+        let out = sanitize_chapter_html(html, "OEBPS/xhtml/p-1.xhtml", TEST_BOOK_URL, &assets);
+        assert!(!out.contains("勿输出"));
+        assert!(!out.contains("missing"));
+        assert!(!out.contains("svg 内段落"));
+        assert!(out.contains("OEBPS%2Fimage%2Fok.png"));
+        assert!(out.contains("<p>外部正文</p>"));
+        assert!(out.contains("</p>"));
+    }
+
+    /// 图片整页（svg 转出的 img，无任何文本）在 nav 没给标题时标作「插图」；
+    /// `<title>` 与书名相同时不作为回退值。
+    #[test]
+    fn image_only_page_title_falls_to_illustration_label() {
+        let html = concat!(
+            "<html><head><title>魔法少女的魔女审判</title></head><body><div class=\"main\">",
+            "<svg><image xlink:href=\"../image/cover.jpg\"/></svg></div></body></html>"
+        );
+        let assets = asset_set(&["OEBPS/image/cover.jpg"]);
+        let content = sanitize_chapter_html(html, "OEBPS/xhtml/p-2.xhtml", TEST_BOOK_URL, &assets);
+        assert_eq!(
+            derive_chapter_title(html, &content, Some("魔法少女的魔女审判")),
+            Some("插图".to_string())
+        );
+    }
+
+    /// 文本页 `<title>` 等于书名时视为无标题（落回「第 N 章」），
+    /// 与书名不同时保留原值。
+    #[test]
+    fn page_title_equal_to_book_title_is_treated_as_missing() {
+        let html = "<html><head><title>书名</title></head><body><p>正文文本</p></body></html>";
+        let content = sanitize_chapter_html(
+            html,
+            "OEBPS/xhtml/p-3.xhtml",
+            TEST_BOOK_URL,
+            &HashSet::new(),
+        );
+        assert_eq!(derive_chapter_title(html, &content, Some("书名")), None);
+        assert_eq!(
+            derive_chapter_title(html, &content, Some("另一本书")),
+            Some("书名".to_string())
+        );
+    }
+
+    /// 标题回退链里 h1–h3 救援 `<title>`==书名 的页面。
+    #[test]
+    fn heading_rescues_page_whose_title_equals_book_title() {
+        let html = concat!(
+            "<html><head><title>书名</title></head><body><h2>第二章　光之处刑</h2>",
+            "<p>正文文本</p></body></html>"
+        );
+        let (title, heading) = extract_html_heading_and_title(html);
+        assert_eq!(title.as_deref(), Some("书名"));
+        assert_eq!(heading.as_deref(), Some("第二章 光之处刑"));
+        let content = sanitize_chapter_html(
+            html,
+            "OEBPS/xhtml/p-4.xhtml",
+            TEST_BOOK_URL,
+            &HashSet::new(),
+        );
+        assert_eq!(
+            derive_chapter_title(html, &content, Some("书名")),
+            Some("第二章 光之处刑".to_string())
+        );
+    }
+
+    /// 把多个条目写进一个 zip（内存构造最小 EPUB 用）。
+    fn build_epub_zip(entries: &[(&str, &[u8])]) -> Vec<u8> {
+        let mut cursor = Cursor::new(Vec::new());
+        {
+            let mut writer = zip::ZipWriter::new(&mut cursor);
+            let options = zip::write::SimpleFileOptions::default()
+                .compression_method(zip::CompressionMethod::Deflated);
+            for (name, data) in entries {
+                writer.start_file(*name, options).unwrap();
+                writer.write_all(data).unwrap();
+            }
+            writer.finish().unwrap();
+        }
+        cursor.into_inner()
+    }
+
+    /// 端到端：BookWalker 式固定布局 EPUB（svg 整页图 + nav 目录）导入后，
+    /// 插图章有 `<img>` 内容、标题按 nav/插图/第 N 章落位。
+    #[test]
+    fn fixed_layout_epub_import_keeps_svg_pages_and_titles() {
+        let container = r#"<?xml version="1.0"?><container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container"><rootfiles><rootfile full-path="OEBPS/content.opf" media-type="application/oebps-package+xml"/></rootfiles></container>"#;
+        let opf = r#"<?xml version="1.0" encoding="UTF-8"?>
+<package xmlns="http://www.idpf.org/2007/opf" version="3.0" unique-identifier="uid">
+<metadata xmlns:dc="http://purl.org/dc/elements/1.1/">
+<dc:title>魔法少女的魔女审判</dc:title>
+<dc:creator>Acacia</dc:creator>
+<meta name="cover" content="cover-img"/>
+</metadata>
+<manifest>
+<item id="nav" href="nav.xhtml" media-type="application/xhtml+xml" properties="nav"/>
+<item id="cover-img" href="image/cover.jpg" media-type="image/jpeg" properties="cover-image"/>
+<item id="illust-img" href="image/illust.png" media-type="image/png"/>
+<item id="p-cover" href="p-cover.xhtml" media-type="application/xhtml+xml"/>
+<item id="p-illust" href="p-illust.xhtml" media-type="application/xhtml+xml"/>
+<item id="p-text" href="p-text.xhtml" media-type="application/xhtml+xml"/>
+<item id="p-notice" href="p-notice.xhtml" media-type="application/xhtml+xml"/>
+</manifest>
+<spine>
+<itemref idref="p-cover"/>
+<itemref idref="p-illust"/>
+<itemref idref="p-text"/>
+<itemref idref="p-notice"/>
+</spine>
+</package>"#;
+        let nav = r#"<?xml version="1.0" encoding="UTF-8"?>
+<html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops">
+<body><nav epub:type="toc"><ol>
+<li><a href="p-cover.xhtml">封面</a></li>
+<li><a href="p-text.xhtml#start">第一章　开端</a></li>
+</ol></nav></body></html>"#;
+        let svg_page = |image: &str| {
+            format!(
+                "<html><head><title>魔法少女的魔女审判</title></head><body><div class=\"main\">\
+<svg xmlns=\"http://www.w3.org/2000/svg\" xmlns:xlink=\"http://www.w3.org/1999/xlink\">\
+<image width=\"100\" height=\"100\" xlink:href=\"image/{image}\"/></svg>\
+</div></body></html>"
+            )
+        };
+        let text_page = "<html><head><title>魔法少女的魔女审判</title></head><body><p id=\"start\">　正文第一段。</p></body></html>";
+        let notice_page = "<html><head><title>魔法少女的魔女审判</title></head><body><p>　出版说明。</p></body></html>";
+        let bytes = build_epub_zip(&[
+            ("META-INF/container.xml", container.as_bytes()),
+            ("OEBPS/content.opf", opf.as_bytes()),
+            ("OEBPS/nav.xhtml", nav.as_bytes()),
+            ("OEBPS/p-cover.xhtml", svg_page("cover.jpg").as_bytes()),
+            ("OEBPS/p-illust.xhtml", svg_page("illust.png").as_bytes()),
+            ("OEBPS/p-text.xhtml", text_page.as_bytes()),
+            ("OEBPS/p-notice.xhtml", notice_page.as_bytes()),
+            ("OEBPS/image/cover.jpg", b"fake-jpeg"),
+            ("OEBPS/image/illust.png", b"fake-png"),
+        ]);
+
+        let book_dir = std::env::temp_dir().join(format!(
+            "reader-rust-epub-import-test-{}-{}",
+            std::process::id(),
+            chrono_millis()
+        ));
+        let index =
+            import_epub_blocking(&bytes, &book_dir, TEST_BOOK_URL, "test.epub", bytes.len())
+                .unwrap();
+
+        let titles: Vec<&str> = index.chapters.iter().map(|c| c.title.as_str()).collect();
+        assert_eq!(titles, ["封面", "插图", "第一章　开端", "第 4 章"]);
+
+        let cover_html = std::fs::read_to_string(book_dir.join("chapters").join("0.html")).unwrap();
+        assert!(cover_html.contains(
+            "/v1/local-books/assets/0123456789abcdef0123456789abcdef?path=OEBPS%2Fimage%2Fcover.jpg"
+        ));
+        let illust_html =
+            std::fs::read_to_string(book_dir.join("chapters").join("1.html")).unwrap();
+        assert!(illust_html.contains("OEBPS%2Fimage%2Fillust.png"));
+        let text_html = std::fs::read_to_string(book_dir.join("chapters").join("2.html")).unwrap();
+        assert!(text_html.contains("正文第一段"));
+        assert!(index
+            .cover_url
+            .unwrap()
+            .contains("OEBPS%2Fimage%2Fcover.jpg"));
+        assert!(index.char_len > 0);
+        let _ = std::fs::remove_dir_all(&book_dir);
+    }
+
+    /// `std::time::SystemTime` 毫秒值（临时目录防撞名用）。
+    fn chrono_millis() -> u128 {
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis()
     }
 }
