@@ -331,6 +331,32 @@ where
     Ok(())
 }
 
+/// 读取 TEXT 列并宽松解码。
+///
+/// SQLite 的 TEXT 列不校验 UTF-8：外部工具（GBK 代码页下的 sqlite3 CLI、
+/// 某些数据库 GUI）写入的字节不会经过 Rust 的 `&str`；而 sqlx 的 `String`
+/// 解码遇到非法字节会 panic。这里按字节读取，把非法序列替换为 U+FFFD 并
+/// 记一条 WARN，让坏行仍能被列出、编辑或删除，而不是让整个请求失败。
+fn text_lossy(bytes: Vec<u8>, column: &str, row_id: i64) -> String {
+    match String::from_utf8(bytes) {
+        Ok(text) => text,
+        Err(error) => {
+            tracing::warn!(
+                column,
+                row_id,
+                valid_up_to = error.utf8_error().valid_up_to(),
+                "数据库文本列包含非法 UTF-8 字节，已按替换字符解码"
+            );
+            String::from_utf8_lossy(error.as_bytes()).into_owned()
+        }
+    }
+}
+
+fn optional_text_lossy(row: &sqlx::sqlite::SqliteRow, column: &str, row_id: i64) -> Option<String> {
+    row.get::<Option<Vec<u8>>, _>(column)
+        .map(|bytes| text_lossy(bytes, column, row_id))
+}
+
 #[derive(Clone)]
 pub struct BookSourceRepo {
     pool: SqlitePool,
@@ -528,8 +554,12 @@ impl BookSourceRepo {
                 .await?;
         Ok(row.map(|r| {
             (
-                r.get::<String, _>("book_source_url"),
-                r.get::<String, _>("json"),
+                text_lossy(
+                    r.get::<Vec<u8>, _>("book_source_url"),
+                    "book_sources.book_source_url",
+                    id,
+                ),
+                text_lossy(r.get::<Vec<u8>, _>("json"), "book_sources.json", id),
             )
         }))
     }
@@ -543,9 +573,10 @@ impl BookSourceRepo {
         Ok(rows
             .into_iter()
             .map(|r| {
+                let id = r.get::<i64, _>("book_source_id");
                 (
-                    r.get::<i64, _>("book_source_id"),
-                    r.get::<String, _>("json"),
+                    id,
+                    text_lossy(r.get::<Vec<u8>, _>("json"), "book_sources.json", id),
                 )
             })
             .collect())
@@ -626,6 +657,7 @@ fn map_shelf_entry_list(row: &sqlx::sqlite::SqliteRow) -> ShelfEntry {
 }
 
 fn map_shelf_entry_with(row: &sqlx::sqlite::SqliteRow, wide: bool) -> ShelfEntry {
+    let book_id = row.get::<i64, _>("book_id");
     let (info_html, toc_html) = if wide {
         (
             row.get::<Option<String>, _>("info_html"),
@@ -636,7 +668,7 @@ fn map_shelf_entry_with(row: &sqlx::sqlite::SqliteRow, wide: bool) -> ShelfEntry
     };
     ShelfEntry {
         shelf: ShelfBookRow {
-            book_id: format_book_id(row.get::<i64, _>("book_id")),
+            book_id: format_book_id(book_id),
             position: row.get::<i64, _>("position"),
             group_bits: row.get::<Option<i64>, _>("group_bits"),
             dur_chapter_index: row.get::<Option<i32>, _>("dur_chapter_index"),
@@ -665,8 +697,8 @@ fn map_shelf_entry_with(row: &sqlx::sqlite::SqliteRow, wide: bool) -> ShelfEntry
         toc_url: row.get::<Option<String>, _>("toc_url"),
         name: row.get::<String, _>("name"),
         author: row.get::<String, _>("author"),
-        origin_url: row.get::<Option<String>, _>("origin_url"),
-        origin_name: row.get::<Option<String>, _>("origin_name"),
+        origin_url: optional_text_lossy(row, "origin_url", book_id),
+        origin_name: optional_text_lossy(row, "origin_name", book_id),
     }
 }
 
