@@ -60,7 +60,9 @@
                 <h3>{{ item.name }}</h3>
                 <p>{{ item.author || '未知作者' }}</p>
                 <div class="cache-stats">
-                  <span>服务端 {{ item.serverCachedCount }} 章正文</span>
+                  <span title="正文池中已有正文的章数（含已脱离当前目录的历史章节）"
+                    >服务端 {{ item.serverCachedCount }} 章正文</span
+                  >
                   <span>浏览器 {{ item.browserCachedCount }} 章</span>
                 </div>
               </div>
@@ -114,7 +116,9 @@
                 <div class="layer-row readonly">
                   <div class="layer-info">
                     <span class="layer-label">正文历史</span>
-                    <small>所有上游与用户版本永久保留，不提供清理</small>
+                    <small
+                      >所有上游与用户版本永久保留，不提供清理；章数含已脱离当前目录的历史章节</small
+                    >
                   </div>
                   <span class="layer-usage">{{ contentHistoryUsage }}</span>
                 </div>

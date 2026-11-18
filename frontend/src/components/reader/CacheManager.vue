@@ -17,7 +17,9 @@
         <div class="summary-card">
           <span class="summary-label">服务端缓存</span>
           <strong>{{ serverCachedCount }}</strong>
-          <small>已缓存章节</small>
+          <small title="正文池中已有正文的章数（含已脱离当前目录的历史章节）"
+            >已缓存章节（含历史）</small
+          >
         </div>
         <div class="summary-card">
           <span class="summary-label">浏览器缓存</span>

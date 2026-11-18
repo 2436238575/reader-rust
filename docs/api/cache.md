@@ -84,7 +84,7 @@ GET /reader3/cacheStats?username=<自己的命名空间>
 | `username` | 目标命名空间；缺省为自己，显式传入时必须等于自己的命名空间，否则 400 |
 | `all`      | `true` 时汇总全部命名空间                                       |
 
-响应 `data` 为各层的文件数与字节数。`content` 是正文历史的只读统计，额外带章节数与版本数，且不受 `username` 影响（正文整部署共享）：
+响应 `data` 为各层的文件数与字节数。`content` 是正文历史的只读统计，额外带章节数与版本数，且不受 `username` 影响（正文整部署共享）。`content.chapters` 按 `chapter_latest` 统计正文池中已有正文的章节，包含已脱离当前目录的旧 URL 章节，不是当前目录的缓存覆盖率：
 
 ```json
 {

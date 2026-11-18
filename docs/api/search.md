@@ -268,7 +268,7 @@ GET /reader3/getShelfBook
 GET /reader3/getShelfBookWithCacheInfo
 ```
 
-与 `getBookshelf` 相同，但每项书籍对象额外返回 `cachedChapterCount`（number，已缓存章节数）。
+与 `getBookshelf` 相同，但每项书籍对象额外返回 `cachedChapterCount`（number，正文池中该书已有正文的章数；按 `chapter_url` 统计，包含已脱离当前目录的旧 URL 章节，**不是**当前目录的缓存覆盖率）。
 
 ```json
 {

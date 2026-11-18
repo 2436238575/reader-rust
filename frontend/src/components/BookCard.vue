@@ -89,7 +89,10 @@
           <span v-if="browserCachedCount > 0" class="cache-chip primary"
             >本地 {{ browserCachedCount }} 章</span
           >
-          <span v-if="serverCachedCount > 0" class="cache-chip"
+          <span
+            v-if="serverCachedCount > 0"
+            class="cache-chip"
+            title="正文池中已有正文的章数（含已脱离当前目录的历史章节）"
             >远程 {{ serverCachedCount }} 章</span
           >
         </div>
